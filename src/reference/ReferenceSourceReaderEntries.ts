@@ -2,7 +2,12 @@ import { readdir, readlink, realpath } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import { entryFailure, safeSize } from "./ReferenceSourceReaderErrors.js";
+import {
+  cancelled,
+  entryFailure,
+  filesystemFailureDetail,
+  safeSize,
+} from "./ReferenceSourceReaderErrors.js";
 import { isPathWithinRoot } from "../domain/localPath.js";
 import { pathFromRoot } from "./ReferenceSourceReaderPaths.js";
 import { readStableFile } from "./ReferenceSourceReaderFile.js";
@@ -28,7 +33,9 @@ export const traverseDirectory = async (
     state.root,
     state.rootIdentity,
     current.path,
+    state.signal,
   );
+  if (isAborted(state.signal)) return { ok: false, error: cancelled() };
   if (!before.ok) {
     state.entries.push(
       entryFailure(
@@ -41,6 +48,7 @@ export const traverseDirectory = async (
     return { ok: true, value: undefined };
   }
   const names = await readDirectoryNames(current.path);
+  if (isAborted(state.signal)) return { ok: false, error: cancelled() };
   if (!names.ok) {
     state.entries.push(
       entryFailure(
@@ -52,20 +60,14 @@ export const traverseDirectory = async (
     );
     return { ok: true, value: undefined };
   }
-  if (isAborted(state.signal))
-    return {
-      ok: false,
-      error: {
-        tag: "reference-source-reader",
-        code: "cancelled",
-        message: "Reference source traversal cancelled",
-      },
-    };
+  if (isAborted(state.signal)) return { ok: false, error: cancelled() };
   const after = await validateDirectory(
     state.root,
     state.rootIdentity,
     current.path,
+    state.signal,
   );
+  if (isAborted(state.signal)) return { ok: false, error: cancelled() };
   if (!after.ok || !sameFile(before.stats, after.stats)) {
     state.entries.push(
       entryFailure(
@@ -98,8 +100,13 @@ const readDirectoryNames = async (
       ok: true,
       value: (await readdir(path)).sort(compareUnicodeCodePoints),
     };
-  } catch {
-    return { ok: false, message: "Directory could not be read" };
+  } catch (cause: unknown) {
+    const message = filesystemFailureDetail(
+      cause,
+      "Directory could not be read",
+    );
+    if (message === undefined) throw cause;
+    return { ok: false, message };
   }
 };
 
@@ -111,8 +118,13 @@ const readMetadata = async (
 > => {
   try {
     return { ok: true, value: await bigLstat(path) };
-  } catch {
-    return { ok: false, message: "Entry metadata could not be read" };
+  } catch (cause: unknown) {
+    const message = filesystemFailureDetail(
+      cause,
+      "Entry metadata could not be read",
+    );
+    if (message === undefined) throw cause;
+    return { ok: false, message };
   }
 };
 
@@ -122,15 +134,7 @@ const processEntry = async (
   name: string,
   directories: PendingDirectory[],
 ): Promise<ReferenceSourceResult<undefined>> => {
-  if (isAborted(state.signal))
-    return {
-      ok: false,
-      error: {
-        tag: "reference-source-reader",
-        code: "cancelled",
-        message: "Reference source traversal cancelled",
-      },
-    };
+  if (isAborted(state.signal)) return { ok: false, error: cancelled() };
   const absolute = join(current.path, name);
   const path = pathFromRoot(state.root, absolute);
   const excluded = applyExclusion(state.shouldExclude, path);
@@ -145,6 +149,7 @@ const processEntry = async (
     };
   if (excluded.value) return { ok: true, value: undefined };
   const metadata = await readMetadata(absolute);
+  if (isAborted(state.signal)) return { ok: false, error: cancelled() };
   if (!metadata.ok) {
     state.entries.push(entryFailure(path, "unknown", "io", metadata.message));
     return { ok: true, value: undefined };
@@ -159,7 +164,9 @@ const processEntry = async (
       },
     };
   if (metadata.value.isSymbolicLink())
-    state.entries.push(await describeSymlink(state.root, absolute, path));
+    state.entries.push(
+      await describeSymlink(state.root, absolute, path, state.signal),
+    );
   else if (metadata.value.isDirectory()) {
     state.entries.push({ status: "read", kind: "directory", path });
     directories.push({ path: absolute });
@@ -200,6 +207,7 @@ const describeSymlink = async (
   root: string,
   absolute: string,
   path: string,
+  signal?: AbortSignal,
 ): Promise<ReferenceSourceEntry> => {
   try {
     const rawTarget = await readlink(absolute);
@@ -229,7 +237,24 @@ const describeSymlink = async (
             target: canonicalTarget,
             targetState: "external",
           };
-    } catch {
+    } catch (cause: unknown) {
+      if (isAborted(signal))
+        return entryFailure(
+          path,
+          "symlink",
+          "cancelled",
+          "Symlink inspection cancelled",
+        );
+      const code =
+        cause instanceof Error ? Reflect.get(cause, "code") : undefined;
+      if (code !== "ENOENT") {
+        const message = filesystemFailureDetail(
+          cause,
+          "Symbolic link target could not be resolved",
+        );
+        if (message === undefined) throw cause;
+        return entryFailure(path, "symlink", "io", message);
+      }
       const missingOutsideRoot = !isPathWithinRoot(root, lexicalTarget);
       return {
         status: "read",
@@ -241,13 +266,20 @@ const describeSymlink = async (
         targetState: "missing",
       };
     }
-  } catch {
-    return entryFailure(
-      path,
-      "symlink",
-      "io",
+  } catch (cause: unknown) {
+    if (isAborted(signal))
+      return entryFailure(
+        path,
+        "symlink",
+        "cancelled",
+        "Symlink inspection cancelled",
+      );
+    const message = filesystemFailureDetail(
+      cause,
       "Symbolic link target could not be read",
     );
+    if (message === undefined) throw cause;
+    return entryFailure(path, "symlink", "io", message);
   }
 };
 

@@ -346,6 +346,32 @@ describe("provider process output and cleanup primitives", () => {
   });
 });
 
+describe("provider process host injection", () => {
+  it("uses injected host platform and environment when spawning", async () => {
+    const spawned = await spawnOwnedProviderProcess({
+      command: process.execPath,
+      arguments: ["-e", "process.stdout.write(process.env.REA_HOST_TEST)"],
+      runId: "injected-host-run",
+      platform: "win32",
+      hostEnvironment: { PATH: process.env.PATH, REA_HOST_TEST: "host-value" },
+      env: { REA_HOST_TEST: "spawn-override" },
+    });
+    try {
+      const supervisor = new ProviderProcessSupervisor({
+        process: spawned.process,
+        ownsProcessLifetime: true,
+      });
+      expect(await supervisor.waitForExit(2_000)).toBe(true);
+      expect(supervisor.snapshot().stdout.text).toBe("spawn-override");
+    } finally {
+      if (spawned.process.exitCode === null)
+        await new Promise<void>((resolve) =>
+          spawned.process.once("close", () => resolve()),
+        );
+    }
+  });
+});
+
 describe("provider process spawning primitives", () => {
   it("spawns an owned process group with exact identity coordinates", async () => {
     const runId = "provider-process-run";

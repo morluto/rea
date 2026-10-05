@@ -1,4 +1,3 @@
-import canonicalize from "canonicalize";
 import { z } from "zod";
 
 import {
@@ -12,6 +11,7 @@ import {
   type InventorySet,
 } from "./artifactInventoryEvidence.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
+import { canonicalJson } from "./comparisonSemantics.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const comparisonStatusSchema = z.enum([
@@ -324,15 +324,6 @@ const metadataChanged = (
   JSON.stringify(left.limitations) !== JSON.stringify(right.limitations) ||
   JSON.stringify(input.leftOccurrence?.limitations) !==
     JSON.stringify(input.rightOccurrence?.limitations);
-
-const canonicalJson = (value: unknown): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined)
-    throw new TypeError(
-      "Artifact comparison could not canonicalize graph data",
-    );
-  return encoded;
-};
 
 const nodeFor = (
   occurrence: ArtifactOccurrence | undefined,

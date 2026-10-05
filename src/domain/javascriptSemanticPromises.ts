@@ -19,7 +19,12 @@ import {
   range,
   sourceRangesEqual,
 } from "./javascriptStaticAnalysisHelpers.js";
-import { dataEffectMemberCallee } from "./javascriptSemanticDataEffectHelpers.js";
+import {
+  assignedSemanticResultBindings,
+  containsSemanticNode,
+  dataEffectMemberCallee,
+  scalarAssignedResultBinding,
+} from "./javascriptSemanticDataEffectHelpers.js";
 
 type PromiseMethod = JavaScriptSemanticPromiseOperation["method"];
 type PromiseKind = JavaScriptSemanticPromiseOperation["kind"];
@@ -244,21 +249,15 @@ const assignedPromiseBinding = (
   ancestor: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): string | null | undefined => {
-  if (
-    t.isVariableDeclarator(ancestor) &&
-    ancestor.init !== null &&
-    t.isIdentifier(ancestor.id)
-  )
-    return (
-      resolveSemanticBindingState(state, ancestor.id, ancestor.id.name)
-        ?.bindingId ?? null
-    );
-  if (t.isAssignmentExpression(ancestor) && t.isIdentifier(ancestor.left))
-    return (
-      resolveSemanticBindingState(state, ancestor.left, ancestor.left.name)
-        ?.bindingId ?? null
-    );
-  return undefined;
+  if (!t.isVariableDeclarator(ancestor) && !t.isAssignmentExpression(ancestor))
+    return undefined;
+  const source = t.isVariableDeclarator(ancestor)
+    ? ancestor.init
+    : ancestor.right;
+  if (source == null) return undefined;
+  return scalarAssignedResultBinding(
+    assignedSemanticResultBindings(source, [ancestor], state),
+  );
 };
 
 const returnedPromiseOwnership = (
@@ -280,29 +279,19 @@ const outerConsumesCandidate = (
     (t.isCallExpression(outer.node) || t.isOptionalCallExpression(outer.node))
   ) {
     const member = dataEffectMemberCallee(outer.node);
-    return member !== null && containsNode(member.object, candidate.node);
+    return (
+      member !== null && containsSemanticNode(member.object, candidate.node)
+    );
   }
   if (
     outer.kind === "aggregate" &&
     (t.isCallExpression(outer.node) || t.isOptionalCallExpression(outer.node))
   ) {
     const input = outer.node.arguments[0];
-    return t.isNode(input) && containsNode(input, candidate.node);
+    return t.isNode(input) && containsSemanticNode(input, candidate.node);
   }
   return false;
 };
-
-const containsNode = (outer: t.Node, inner: t.Node): boolean =>
-  outer.start !== null &&
-  outer.start !== undefined &&
-  outer.end !== null &&
-  outer.end !== undefined &&
-  inner.start !== null &&
-  inner.start !== undefined &&
-  inner.end !== null &&
-  inner.end !== undefined &&
-  outer.start <= inner.start &&
-  outer.end >= inner.end;
 
 const emptyOwnership = (
   ownership: JavaScriptSemanticPromiseOperation["ownership"],

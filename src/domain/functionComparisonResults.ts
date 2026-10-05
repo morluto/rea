@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
-
-import canonicalize from "canonicalize";
-
+import {
+  canonicalDigest,
+  canonicalJson as encodeCanonicalJson,
+} from "./comparisonSemantics.js";
 import type {
   DimensionName,
   FunctionComparisonResult,
@@ -94,11 +94,8 @@ export const summarize = (dimensions: readonly FunctionDimension[]) => ({
 });
 
 export const canonicalJson = (value: unknown): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined)
-    throw new TypeError("Function comparison could not canonicalize data");
-  return encoded;
+  return encodeCanonicalJson(value, "Function comparison");
 };
 
 const digest = (value: unknown): string =>
-  createHash("sha256").update(canonicalJson(value)).digest("hex");
+  canonicalDigest(value, "Function comparison");

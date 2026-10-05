@@ -55,8 +55,13 @@ shutdown rules still apply; REA never kills a process it cannot prove it owns.
 
 ## Tool results
 
-Evidence-producing tools return their result and Evidence context inline. Read
-that result directly. Use `get_evidence_bundle` when the task needs broader
+Evidence-producing tools return `{ result, evidence_id, evidence }` in both
+text and structured content. `evidence` is the complete canonical Evidence
+record, including `normalized_result`, which equals `result`. The same record
+is retained in the session bundle. Read `result` directly, or pass `evidence`
+to a compatible comparison tool: `analyze_function` Evidence can be passed
+directly to `compare_functions`, and `inspect_artifact` Evidence to
+`compare_artifacts`. Use `get_evidence_bundle` when the task needs broader
 retained session history or an explicit bundle for transfer.
 
 ## Aggregate native context

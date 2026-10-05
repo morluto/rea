@@ -108,12 +108,18 @@ const rejectDeclaration = (
     return unresolvedOutcome(input, "rejected", [
       "NUL and backslash path syntax are not admitted for canonical artifact paths.",
     ]);
-  if (/%(?:2e|2f|5c)/iu.test(declared))
+  if (!admitsCanonicalPathSyntax(declared))
     return unresolvedOutcome(input, "rejected", [
       "Encoded dot or separator bytes are rejected before artifact path resolution.",
     ]);
   return null;
 };
+
+/** Path syntax admitted for a canonical artifact path. */
+const admitsCanonicalPathSyntax = (value: string): boolean =>
+  !value.includes("\0") &&
+  !value.includes("\\") &&
+  !/%(?:2e|2f|5c)/iu.test(value);
 
 const contextualCandidate = (
   input: ResolveArtifactPathInput,
@@ -206,24 +212,53 @@ const htmlCandidate = (
   input: ResolveArtifactPathInput,
 ): string | ArtifactPathResolution => {
   const declared = stripQueryAndFragment(input.declaredPath);
-  if (hasScheme(declared))
+  if (hasScheme(declared) || declared.startsWith("//"))
     return unresolvedOutcome(input, "external", [
       "External HTML references are not mapped to local artifact assets.",
     ]);
-  if (declared.startsWith("/")) return declared.slice(1);
-  const base = input.htmlBaseHref;
-  if (base === undefined || base === null || base === "")
-    return posix.join(posix.dirname(input.sourcePath), declared);
-  if (hasScheme(base))
+  const rawBase = input.htmlBaseHref;
+  const base =
+    rawBase === undefined || rawBase === null
+      ? rawBase
+      : stripQueryAndFragment(rawBase);
+  if (
+    base !== undefined &&
+    base !== null &&
+    (hasScheme(base) || base.startsWith("//"))
+  )
     return unresolvedOutcome(input, "external", [
       "The document base href is external, so its script reference is not a local artifact path.",
+    ]);
+  if (declared.startsWith("/")) return declared.slice(1);
+  if (base === undefined || base === null || base === "")
+    return posix.join(posix.dirname(input.sourcePath), declared);
+  // A local base href is a second untrusted path input; apply the same
+  // admission rules a declared path gets so it cannot smuggle traversal or
+  // separator syntax past canonicalization.
+  if (!admitsCanonicalPathSyntax(base))
+    return unresolvedOutcome(input, "rejected", [
+      "The document base href uses NUL, backslash, or encoded dot and separator bytes that are not admitted for canonical artifact paths.",
     ]);
   const basePath = base.startsWith("/")
     ? base.slice(1)
     : posix.join(posix.dirname(input.sourcePath), base);
-  const baseDirectory = base.endsWith("/") ? basePath : posix.dirname(basePath);
-  return posix.join(baseDirectory, declared);
+  return posix.join(htmlBaseDirectory(base, basePath), declared);
 };
+
+/**
+ * The directory a relative HTML reference resolves against. A base path
+ * ending in "/" or in a "." or ".." segment is already a directory, because a
+ * relative reference resolves against the base URL's directory and those
+ * segments are dropped rather than stepped through.
+ */
+const htmlBaseDirectory = (base: string, basePath: string): string =>
+  base.endsWith("/") ||
+  base.endsWith("/.") ||
+  base.endsWith("/..") ||
+  base === "." ||
+  base === ".."
+    ? basePath
+    : posix.dirname(basePath);
 
 const confineCandidate = (
   input: ResolveArtifactPathInput,
@@ -282,6 +317,14 @@ const resolveCandidate = (
       status: "unavailable",
       limitations: [
         `Directory package metadata ${packagePath} is not valid package JSON.`,
+      ],
+    };
+  if (main.status === "unmatched")
+    return {
+      resolvedPath: null,
+      status: "external",
+      limitations: [
+        `Directory package metadata ${packagePath} declares no exports target for the active conditions; it declares ${main.declared.join(", ")}.`,
       ],
     };
   if (packageChain.has(packagePath)) {
@@ -366,7 +409,8 @@ const packageEntry = (
       readonly source: "legacy" | "exports";
     }
   | { readonly status: "missing" }
-  | { readonly status: "invalid" } => {
+  | { readonly status: "invalid" }
+  | { readonly status: "unmatched"; readonly declared: readonly string[] } => {
   try {
     const value: unknown = JSON.parse(text);
     if (typeof value !== "object" || value === null)
@@ -394,9 +438,7 @@ const packageEntry = (
 const packageExport = (
   value: unknown,
   moduleKind: ResolveArtifactPathInput["moduleKind"],
-):
-  | { readonly status: "value"; readonly value: string }
-  | { readonly status: "invalid" } => {
+): PackageExportOutcome => {
   if (typeof value === "string") return packagePathValue(value);
   if (typeof value !== "object" || value === null || Array.isArray(value))
     return { status: "invalid" };
@@ -404,10 +446,70 @@ const packageExport = (
   if (typeof root === "string") return packagePathValue(root);
   if (typeof root !== "object" || root === null || Array.isArray(root))
     return { status: "invalid" };
-  const condition =
-    Reflect.get(root, moduleKind ?? "default") ?? Reflect.get(root, "default");
-  return packagePathValue(condition);
+  const flattened = exportTargets(root, packageExportConditions(moduleKind));
+  if (flattened.kind === "invalid") return { status: "invalid" };
+  const first = flattened.values[0];
+  return first === undefined
+    ? { status: "unmatched", declared: Object.keys(root) }
+    : { status: "value", value: first };
 };
+
+type ExportTargets =
+  | { readonly kind: "targets"; readonly values: readonly string[] }
+  | { readonly kind: "invalid" };
+
+/**
+ * Flatten one exports target into the ordered strings Node would consider.
+ * A condition object stops at its first active key, so a null or unmatched
+ * nested target ends the search rather than falling through to a later key. An
+ * array instead skips the entries it cannot resolve and concatenates the rest.
+ */
+const exportTargets = (
+  value: unknown,
+  conditions: ReadonlySet<string>,
+): ExportTargets => {
+  if (typeof value === "string")
+    return value.length > 0
+      ? { kind: "targets", values: [value] }
+      : { kind: "invalid" };
+  if (value === null) return { kind: "targets", values: [] };
+  if (Array.isArray(value)) {
+    const values: string[] = [];
+    for (const entry of value) {
+      const nested = exportTargets(entry, conditions);
+      if (nested.kind === "invalid") return nested;
+      values.push(...nested.values);
+    }
+    return { kind: "targets", values };
+  }
+  if (typeof value !== "object") return { kind: "invalid" };
+  for (const [condition, target] of Object.entries(value)) {
+    if (!conditions.has(condition)) continue;
+    return exportTargets(target, conditions);
+  }
+  return { kind: "targets", values: [] };
+};
+
+/**
+ * Node selects an exports target by walking the declared keys in order and
+ * taking the first whose condition is active for the calling resolver.
+ * "default" is always active, and "node" plus "node-addons" are active for the
+ * built-in resolver that owns installed-package imports and requires.
+ */
+const packageExportConditions = (
+  moduleKind: ResolveArtifactPathInput["moduleKind"],
+): ReadonlySet<string> =>
+  new Set([
+    "node",
+    "node-addons",
+    ...(moduleKind === undefined ? [] : [moduleKind]),
+    "default",
+  ]);
+
+type PackageExportOutcome =
+  | { readonly status: "value"; readonly value: string }
+  | { readonly status: "invalid" }
+  | { readonly status: "unmatched"; readonly declared: readonly string[] };
 
 const packagePathValue = (
   value: unknown,

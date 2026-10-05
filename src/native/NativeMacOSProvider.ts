@@ -25,7 +25,7 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
   ProviderAdapterError,
-  type AnalysisError,
+  AnalysisError,
 } from "../domain/errors.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import {
@@ -162,6 +162,7 @@ class NativeMacOSClient implements AnalysisClient {
           }),
         );
       } catch (cause) {
+        if (cause instanceof AnalysisError) return err(cause);
         return err(
           options?.signal?.aborted
             ? new AnalysisCancelledError(operation)

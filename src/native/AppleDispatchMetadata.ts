@@ -7,6 +7,10 @@ import {
   type ObjcSwiftMetadata,
 } from "../domain/objcSwiftMetadata.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
+import {
+  AnalysisCancelledError,
+  EvidenceIntegrityError,
+} from "../domain/errors.js";
 import { decodeSwiftClassVtables } from "./AppleSwiftVtables.js";
 import { createObjcProtocolReader } from "./AppleObjcProtocols.js";
 
@@ -31,30 +35,8 @@ export const decodeAppleDispatchMetadata = (
   provenance: { path: string; sha256: string },
   architecture = "arm64",
 ): ObjcSwiftMetadata => {
-  let slice = 0;
-  let sliceEnd = bytes.length;
   if (bytes.length < 32) throw new RangeError("Truncated Mach-O header");
-  if (bytes.readUInt32BE(0) === 0xcafebabe) {
-    const count = bytes.readUInt32BE(4);
-    if (count > 128 || 8 + count * 20 > bytes.length)
-      throw new RangeError("Malformed FAT architecture table");
-    const cpu = architecture === "arm64" ? 0x0100000c : 0x01000007;
-    let selected: number | undefined;
-    for (let index = 0; index < count; index++) {
-      const offset = 8 + index * 20;
-      if (bytes.readUInt32BE(offset) === cpu) {
-        if (selected !== undefined)
-          throw new TypeError("Ambiguous FAT architecture slice");
-        selected = bytes.readUInt32BE(offset + 8);
-        sliceEnd = selected + bytes.readUInt32BE(offset + 12);
-        if (sliceEnd > bytes.length || selected < 8 + count * 20)
-          throw new RangeError("FAT slice exceeds file");
-      }
-    }
-    if (selected === undefined)
-      throw new TypeError("Requested FAT architecture is absent");
-    slice = selected;
-  }
+  const { slice, sliceEnd } = selectMachoSlice(bytes, architecture);
   if (slice + 32 > sliceEnd || bytes.readUInt32LE(slice) !== 0xfeedfacf)
     throw new TypeError(
       "Only little-endian 64-bit Mach-O metadata is supported",
@@ -646,11 +628,12 @@ export const inspectAppleDispatchMetadata = async (
       throw new RangeError(
         "Apple metadata target must be a regular file no larger than 64 MiB",
       );
-    if (signal?.aborted) throw new Error("cancelled");
+    if (signal?.aborted)
+      throw new AnalysisCancelledError("inspect_native_dispatch_metadata");
     const bytes = await handle.readFile({ signal });
     const digest = createHash("sha256").update(bytes).digest("hex");
     if (digest !== target.sha256)
-      throw new Error(
+      throw new EvidenceIntegrityError(
         "Apple metadata target digest changed after session binding",
       );
     return nativeDispatchMetadataResultSchema.parse({
@@ -671,4 +654,36 @@ export const inspectAppleDispatchMetadata = async (
   } finally {
     await handle.close();
   }
+};
+
+const selectMachoSlice = (bytes: Buffer, architecture: string) => {
+  const magic = bytes.readUInt32BE(0);
+  if (magic !== 0xcafebabe && magic !== 0xcafebabf)
+    return { slice: 0, sliceEnd: bytes.length };
+  const fat64 = magic === 0xcafebabf;
+  const stride = fat64 ? 32 : 20;
+  const count = bytes.readUInt32BE(4);
+  const headerEnd = 8 + count * stride;
+  if (count > 128 || headerEnd > bytes.length)
+    throw new RangeError("Malformed FAT architecture table");
+  const cpu = architecture === "arm64" ? 0x0100000c : 0x01000007;
+  let selected: { slice: number; sliceEnd: number } | undefined;
+  for (let index = 0; index < count; index++) {
+    const offset = 8 + index * stride;
+    if (bytes.readUInt32BE(offset) !== cpu) continue;
+    if (selected !== undefined)
+      throw new TypeError("Ambiguous FAT architecture slice");
+    const start = fat64
+      ? bytes.readBigUInt64BE(offset + 8)
+      : BigInt(bytes.readUInt32BE(offset + 8));
+    const size = fat64
+      ? bytes.readBigUInt64BE(offset + 16)
+      : BigInt(bytes.readUInt32BE(offset + 12));
+    if (start < BigInt(headerEnd) || start + size > BigInt(bytes.length))
+      throw new RangeError("FAT slice exceeds file");
+    selected = { slice: Number(start), sliceEnd: Number(start + size) };
+  }
+  if (selected === undefined)
+    throw new TypeError("Requested FAT architecture is absent");
+  return selected;
 };

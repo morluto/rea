@@ -237,6 +237,7 @@ const finishProcessRun = async (options: {
 
 const completeCapture = async (options: {
   readonly scenario: ProcessScenario;
+  readonly hostPlatform: NodeJS.Platform;
   readonly runtime: StartedCaptureRuntime;
   readonly runId: string;
   readonly temporaryRoot: string;
@@ -258,6 +259,7 @@ const completeCapture = async (options: {
     selectCapturedProcessGroupIds(runtime.terminal.pid, options.samples),
     scenario.settle_ms,
     options.recordEvent,
+    options.hostPlatform,
   );
   const samplingPartial = (await runtime.stopSampler()).partial;
   await settleProcessCaptureJournal(options.eventJournal);
@@ -285,6 +287,7 @@ const completeCapture = async (options: {
     scenario,
     runtime.startedAt,
     new Date(),
+    { platform: options.hostPlatform, architecture: process.arch },
   );
   const truncated =
     options.initiallyTruncated ||
@@ -317,6 +320,7 @@ const runProcessScenario = async (
   scenario: ProcessScenario,
   signal?: AbortSignal,
   hostEnvironment: Readonly<Record<string, string | undefined>> = process.env,
+  hostPlatform: NodeJS.Platform = process.platform,
 ): Promise<ProcessCapture> => {
   const { temporaryRoot, runId, before } = await prepareProcessCapture(
     scenario,
@@ -363,6 +367,7 @@ const runProcessScenario = async (
     });
     capture = await completeCapture({
       scenario,
+      hostPlatform,
       runtime,
       runId,
       temporaryRoot,
@@ -414,7 +419,9 @@ export const captureProcessScenario = async (
       scenario,
       environment,
     );
-    return ok(await runProcessScenario(resolvedScenario, signal, environment));
+    return ok(
+      await runProcessScenario(resolvedScenario, signal, environment, platform),
+    );
   } catch (cause: unknown) {
     return err(
       cause instanceof ProcessCaptureError

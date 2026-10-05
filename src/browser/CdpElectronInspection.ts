@@ -15,8 +15,8 @@ import {
   recordsValue,
   requiredRecord,
   stringValue,
-  type UnknownRecord,
 } from "./CdpCaptureValues.js";
+import { walkFrameTrees } from "./CdpCaptureDocuments.js";
 import {
   ingestElectronScriptEvent,
   type ElectronScriptDraft,
@@ -233,15 +233,11 @@ const captureFrames = async (
   const frameTree = recordValue(requiredRecord(result).frameTree);
   if (frameTree === undefined)
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
-  const pending: Array<{
-    readonly tree: UnknownRecord;
-    readonly parent: string | null;
-  }> = [{ tree: frameTree, parent: null }];
   const frames: ElectronPageInspection["frames"] = [];
-  while (pending.length > 0) {
-    const current = pending.shift();
-    if (current === undefined) break;
-    const frame = recordValue(current.tree.frame);
+  for (const tree of walkFrameTrees(frameTree, () =>
+    completeness.exclude("frames", "invalid_protocol_value"),
+  )) {
+    const frame = recordValue(tree.frame);
     const frameId = stringValue(frame?.id);
     const path = await authorizedElectronFile(stringValue(frame?.url) ?? "");
     if (frameId === undefined || path === undefined) {
@@ -250,11 +246,9 @@ const captureFrames = async (
     }
     frames.push({
       frame_id: frameId,
-      parent_frame_id: current.parent,
+      parent_frame_id: stringValue(frame?.parentId) ?? null,
       file_path: path,
     });
-    for (const child of recordsValue(current.tree.childFrames))
-      pending.push({ tree: child, parent: frameId });
   }
   return frames;
 };

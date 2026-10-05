@@ -72,6 +72,7 @@ export interface DoctorHost {
   readonly platform: NodeJS.Platform;
   readonly architecture: NodeJS.Architecture;
   readonly nodeVersion: string;
+  readonly homeDirectory?: string;
   readonly configuredHopperPath?: string;
   readonly configuredIlspyCmdPath?: string;
   macosVersion(): Promise<string | undefined>;
@@ -277,8 +278,27 @@ const installationState = (
 ): DoctorIdentity["installations"]["state"] =>
   paths.length === 0 ? "unknown" : paths.length === 1 ? "single" : "multiple";
 
+const homeFromEnvironment = (
+  environment: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): string => {
+  const selected =
+    platform === "win32"
+      ? (environment.USERPROFILE ??
+        (environment.HOMEDRIVE !== undefined &&
+        environment.HOMEPATH !== undefined
+          ? `${environment.HOMEDRIVE}${environment.HOMEPATH}`
+          : environment.HOME))
+      : (environment.HOME ?? environment.USERPROFILE);
+  return selected ?? homedir();
+};
+
 /** Optional outer-adapter diagnostics composed without reversing dependencies. */
 export interface SystemDoctorHostOptions {
+  readonly platform?: NodeJS.Platform;
+  readonly architecture?: NodeJS.Architecture;
+  readonly environment?: NodeJS.ProcessEnv;
+  readonly execFileOutput?: typeof execFileOutput;
   readonly providerInspections?: () => Promise<
     readonly DoctorProviderInspection[]
   >;
@@ -288,81 +308,117 @@ export interface SystemDoctorHostOptions {
 /** Create diagnostics backed by the current process and host commands. */
 export const systemDoctorHost = (
   options: SystemDoctorHostOptions = {},
-): DoctorHost => ({
-  platform: process.platform,
-  architecture: process.arch,
-  nodeVersion: process.versions.node,
-  ...(process.env.HOPPER_LAUNCHER_PATH === undefined
-    ? {}
-    : { configuredHopperPath: process.env.HOPPER_LAUNCHER_PATH }),
-  ...(process.env.REA_ILSPY_CMD_PATH === undefined
-    ? {}
-    : { configuredIlspyCmdPath: process.env.REA_ILSPY_CMD_PATH }),
-  macosVersion: readMacosVersion,
-  linuxDistribution: readLinuxDistribution,
-  async validTarget(path) {
-    return (await parseBinaryTarget(path)).ok;
-  },
-  executable: executableAvailable,
-  linuxDemoRuntimeCheck:
-    options.linuxDemoRuntimeCheck ?? uncomposedLinuxDemoRuntimeCheck,
-  supportedLinuxHopper: linuxHopperBinarySupported,
-  async brewHopperPath() {
-    return probeHomebrew(async (command) => {
+): DoctorHost => {
+  const platform = options.platform ?? process.platform;
+  const architecture = options.architecture ?? process.arch;
+  const environment = options.environment ?? process.env;
+  const hostExecFileOutput = options.execFileOutput ?? execFileOutput;
+  const homeDirectory = homeFromEnvironment(environment, platform);
+  const commandEnvironment = { env: environment };
+  return {
+    platform,
+    architecture,
+    nodeVersion: process.versions.node,
+    homeDirectory,
+    ...(environment.HOPPER_LAUNCHER_PATH === undefined
+      ? {}
+      : { configuredHopperPath: environment.HOPPER_LAUNCHER_PATH }),
+    ...(environment.REA_ILSPY_CMD_PATH === undefined
+      ? {}
+      : { configuredIlspyCmdPath: environment.REA_ILSPY_CMD_PATH }),
+    macosVersion: () =>
+      readMacosVersion(hostExecFileOutput, commandEnvironment),
+    linuxDistribution: readLinuxDistribution,
+    async validTarget(path) {
+      return (await parseBinaryTarget(path, process.cwd(), architecture)).ok;
+    },
+    executable: (path) =>
+      executableAvailable(
+        path,
+        platform,
+        hostExecFileOutput,
+        commandEnvironment,
+      ),
+    linuxDemoRuntimeCheck:
+      options.linuxDemoRuntimeCheck ?? uncomposedLinuxDemoRuntimeCheck,
+    supportedLinuxHopper: linuxHopperBinarySupported,
+    async brewHopperPath() {
+      return probeHomebrew(async (command) => {
+        try {
+          const prefix = (
+            await hostExecFileOutput(
+              command,
+              ["--prefix", "--cask", "hopper-disassembler"],
+              commandEnvironment,
+            )
+          ).stdout.trim();
+          return `${prefix}/Hopper Disassembler.app/Contents/MacOS/hopper`;
+        } catch {
+          return undefined;
+        }
+      });
+    },
+    manualHopperPaths: () => manualHopperPaths(homeDirectory),
+    ...(options.providerInspections === undefined
+      ? {}
+      : { providerInspections: options.providerInspections }),
+    async ilspyCmdVersion(path) {
       try {
-        const prefix = (
-          await execFileOutput(command, [
-            "--prefix",
-            "--cask",
-            "hopper-disassembler",
-          ])
-        ).stdout.trim();
-        return `${prefix}/Hopper Disassembler.app/Contents/MacOS/hopper`;
+        await access(path, constants.X_OK);
+        return firstIlspyVersionLine(
+          (
+            await hostExecFileOutput(path, ["--version"], {
+              timeout: 10_000,
+              ...commandEnvironment,
+            })
+          ).stdout,
+        );
       } catch {
         return undefined;
       }
-    });
-  },
-  manualHopperPaths,
-  ...(options.providerInspections === undefined
-    ? {}
-    : { providerInspections: options.providerInspections }),
-  async ilspyCmdVersion(path) {
-    try {
-      await access(path, constants.X_OK);
-      return firstIlspyVersionLine(
-        (await execFileOutput(path, ["--version"], { timeout: 10_000 })).stdout,
-      );
-    } catch {
-      return undefined;
-    }
-  },
-  async installationPaths() {
-    try {
-      const command = process.platform === "win32" ? "where" : "which";
-      const arguments_ = process.platform === "win32" ? ["rea"] : ["-a", "rea"];
-      return uniqueLines((await execFileOutput(command, arguments_)).stdout);
-    } catch {
-      return [];
-    }
-  },
-  installedSkillIdentity,
-  clientRegistrations: () => readClientRegistrationStatuses(homedir()),
-});
+    },
+    async installationPaths() {
+      try {
+        const command = platform === "win32" ? "where" : "which";
+        const arguments_ = platform === "win32" ? ["rea"] : ["-a", "rea"];
+        return uniqueLines(
+          (await hostExecFileOutput(command, arguments_, commandEnvironment))
+            .stdout,
+        );
+      } catch {
+        return [];
+      }
+    },
+    installedSkillIdentity: () => installedSkillIdentity(homeDirectory),
+    clientRegistrations: () =>
+      readClientRegistrationStatuses(homeDirectory, undefined, {
+        platform,
+        environment,
+      }),
+  };
+};
 
-const readMacosVersion = async (): Promise<string | undefined> => {
+const readMacosVersion = async (
+  run: typeof execFileOutput = execFileOutput,
+  options: { readonly env: NodeJS.ProcessEnv } = { env: process.env },
+): Promise<string | undefined> => {
   try {
-    return (await execFileOutput("sw_vers", ["-productVersion"])).stdout.trim();
+    return (await run("sw_vers", ["-productVersion"], options)).stdout.trim();
   } catch {
     return undefined;
   }
 };
 
-const executableAvailable = async (path: string): Promise<boolean> => {
+const executableAvailable = async (
+  path: string,
+  platform: NodeJS.Platform = process.platform,
+  run: typeof execFileOutput = execFileOutput,
+  options: { readonly env: NodeJS.ProcessEnv } = { env: process.env },
+): Promise<boolean> => {
   try {
     await access(path, constants.X_OK);
-    if (process.platform !== "linux") return true;
-    const linked = await execFileOutput("ldd", [path]);
+    if (platform !== "linux") return true;
+    const linked = await run("ldd", [path], options);
     return linuxSharedLibrariesAvailable(`${linked.stdout}\n${linked.stderr}`);
   } catch {
     return false;
@@ -378,9 +434,11 @@ const uncomposedLinuxDemoRuntimeCheck = (): Promise<DoctorCheck> =>
     remediation: "Run rea doctor through the production CLI adapter.",
   });
 
-const manualHopperPaths = async (): Promise<readonly string[]> => {
+const manualHopperPaths = async (
+  home: string = homedir(),
+): Promise<readonly string[]> => {
   const paths: string[] = [];
-  for (const root of ["/Applications", join(homedir(), "Applications")]) {
+  for (const root of ["/Applications", join(home, "Applications")]) {
     try {
       for (const entry of await readdir(root, { withFileTypes: true })) {
         if (entry.isDirectory() && /^Hopper.*\.app$/i.test(entry.name))
@@ -393,17 +451,17 @@ const manualHopperPaths = async (): Promise<readonly string[]> => {
   return paths;
 };
 
-const readInstalledSkill = (): Promise<string> =>
+const readInstalledSkill = (home: string): Promise<string> =>
   readFile(
-    join(homedir(), ".agents/skills", PRODUCT_IDENTITY.skillName, "SKILL.md"),
+    join(home, ".agents/skills", PRODUCT_IDENTITY.skillName, "SKILL.md"),
     "utf8",
   );
 
-const installedSkillIdentity = async (): Promise<
-  InstalledSkillIdentity | undefined
-> => {
+const installedSkillIdentity = async (
+  home: string,
+): Promise<InstalledSkillIdentity | undefined> => {
   try {
-    const content = await readInstalledSkill();
+    const content = await readInstalledSkill(home);
     const countText = /^\s{2}tool_count:\s*(\d+)\s*$/mu.exec(content)?.[1];
     return {
       version: /^\s{2}version:\s*"([^"]+)"\s*$/mu.exec(content)?.[1] ?? null,
