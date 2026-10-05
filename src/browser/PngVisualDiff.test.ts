@@ -49,6 +49,73 @@ describe("PNG visual diff", () => {
     ).toMatchObject({ status: "dimension_mismatch", compared_pixels: 0 });
   });
 
+  it("preserves RGB transparent-color samples when comparing RGBA pixels", () => {
+    const header = Buffer.alloc(13);
+    header.writeUInt32BE(2, 0);
+    header.writeUInt32BE(1, 4);
+    header[8] = 8;
+    header[9] = 2;
+    const transparent = Buffer.alloc(6);
+    transparent.writeUInt16BE(10, 0);
+    transparent.writeUInt16BE(20, 2);
+    transparent.writeUInt16BE(30, 4);
+    const rgb = createWebScreenshotArtifact(
+      Buffer.concat([
+        Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+        chunk("IHDR", header),
+        chunk("tRNS", transparent),
+        chunk("IDAT", deflateSync(Buffer.from([0, 10, 20, 30, 10, 20, 31]))),
+        chunk("IEND", Buffer.alloc(0)),
+      ]),
+    );
+    const rgba = artifact(2, 1, [10, 20, 30, 0, 10, 20, 31, 255]);
+    expect(
+      comparePngScreenshots(
+        compareWebScreenshotsInputSchema.parse({ before: rgb, after: rgba }),
+      ),
+    ).toMatchObject({
+      status: "identical",
+      changed_pixels: 0,
+      maximum_channel_delta: 0,
+    });
+  });
+
+  it("keeps 8-bit samples opaque when a 16-bit transparency key exceeds 255", () => {
+    const key = Buffer.alloc(6);
+    key.writeUInt16BE(266, 0);
+    key.writeUInt16BE(20, 2);
+    key.writeUInt16BE(30, 4);
+    const rgb = transparencyArtifact(2, key, [10, 20, 30]);
+    const result = comparePngScreenshots(
+      compareWebScreenshotsInputSchema.parse({
+        before: rgb,
+        after: artifact(1, 1, [10, 20, 30, 255]),
+      }),
+    );
+    expect(result).toMatchObject({ status: "identical", changed_pixels: 0 });
+    expect(result.limitations).toContain(
+      "PNG tRNS transparency is accepted only as a six-byte RGB color key; tRNS on RGBA or with another length is rejected.",
+    );
+  });
+
+  it.each([0, 5, 7])("rejects an RGB tRNS chunk of length %i", (length) => {
+    const image = transparencyArtifact(2, Buffer.alloc(length), [10, 20, 30]);
+    expect(() =>
+      comparePngScreenshots(
+        compareWebScreenshotsInputSchema.parse({ before: image, after: image }),
+      ),
+    ).toThrow("Unsupported PNG transparency");
+  });
+
+  it("rejects tRNS on an RGBA image instead of dropping its transparency data", () => {
+    const image = transparencyArtifact(6, Buffer.alloc(6), [10, 20, 30, 255]);
+    expect(() =>
+      comparePngScreenshots(
+        compareWebScreenshotsInputSchema.parse({ before: image, after: image }),
+      ),
+    ).toThrow("Unsupported PNG transparency");
+  });
+
   it("rejects malformed PNG dimensions after validating image data", () => {
     const image = artifact(32_000_001, 1, [0, 0, 0, 255]);
     expect(() =>
@@ -116,4 +183,25 @@ const chunk = (type: string, data: Buffer): Buffer => {
     8 + data.byteLength,
   );
   return result;
+};
+
+const transparencyArtifact = (
+  colorType: number,
+  transparency: Buffer,
+  pixels: readonly number[],
+) => {
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(1, 0);
+  header.writeUInt32BE(1, 4);
+  header[8] = 8;
+  header[9] = colorType;
+  return createWebScreenshotArtifact(
+    Buffer.concat([
+      Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+      chunk("IHDR", header),
+      chunk("tRNS", transparency),
+      chunk("IDAT", deflateSync(Buffer.from([0, ...pixels]))),
+      chunk("IEND", Buffer.alloc(0)),
+    ]),
+  );
 };

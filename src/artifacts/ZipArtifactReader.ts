@@ -106,10 +106,29 @@ export class ZipArtifactReader implements ArtifactReader {
 
 const extractStream = (entry: FileEntry, signal?: AbortSignal): Readable => {
   const output = new PassThrough();
+  const controller = new AbortController();
+  const onAbort = (): void => {
+    controller.abort(signal?.reason);
+    // AbortSignal listeners dispatch synchronously, so this destroy wins the race
+    // against `getData` rejecting with its own AbortError. That ordering is what
+    // keeps the caller-visible failure typed as `cancelled`.
+    output.destroy(
+      new ArtifactReaderFailure("cancelled", "ZIP operation cancelled"),
+    );
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
+  // `close` covers both a consumer walking away mid-entry and normal completion
+  // after `end()`; aborting then is harmless because `getData` has already
+  // resolved, and it releases the producer in the abandoned-consumer case.
+  output.once("close", () => {
+    signal?.removeEventListener("abort", onAbort);
+    controller.abort();
+  });
   const writable = new WritableStream<Uint8Array>({
     write: async (chunk) => {
       abortIfNeeded(signal);
-      if (!output.write(Buffer.from(chunk))) await once(output, "drain");
+      if (!output.write(Buffer.from(chunk)))
+        await once(output, "drain", { signal: controller.signal });
     },
     close: () => {
       output.end();
@@ -120,6 +139,7 @@ const extractStream = (entry: FileEntry, signal?: AbortSignal): Readable => {
   });
   void entry
     .getData(writable, {
+      signal: controller.signal,
       checkSignature: true,
       checkOverlappingEntry: true,
       onprogress: () => abortIfNeeded(signal),
