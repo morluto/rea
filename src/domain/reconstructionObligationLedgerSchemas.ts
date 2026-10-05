@@ -1,9 +1,10 @@
 import { z } from "zod";
 
 import { evidenceBundleSchema } from "./evidenceBundle.js";
+import { digestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
+const evidenceIdSchema = prefixedDigestSchema("ev");
 const stableIdSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9._:/-]*$/u);
 const textSchema = z.string().trim().min(1);
 
@@ -235,7 +236,7 @@ const countBySchema = <Schema extends z.ZodType>(
 
 export const reconstructionObligationLedgerSchema = z.strictObject({
   schema: z.literal("ReconstructionObligationLedger"),
-  ledger_id: z.string().regex(/^rol_[a-f0-9]{64}$/u),
+  ledger_id: prefixedDigestSchema("rol"),
   closure_digest: digestSchema,
   status: z.enum(["ready", "open", "failed", "unknown"]),
   coverage: z.strictObject({

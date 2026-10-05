@@ -1,8 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { z } from "zod";
-
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
+import { digestSchema } from "./../domain/digests.js";
 
 export const javascriptExportInstrumentationInputSchema = z.strictObject({
   artifact_path: z.string().min(1),

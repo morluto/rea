@@ -1,10 +1,11 @@
 import { z } from "zod";
 
 import { evidenceSchema } from "./evidence.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
-const graphIdSchema = z.string().regex(/^jag_[a-f0-9]{64}$/u);
-const nodeIdSchema = z.string().regex(/^jag_node_[a-f0-9]{64}$/u);
+const evidenceIdSchema = prefixedDigestSchema("ev");
+const graphIdSchema = prefixedDigestSchema("jag");
+const nodeIdSchema = prefixedDigestSchema("jag_node");
 const textSchema = z.string().min(1);
 const selectorTextSchema = textSchema;
 const semanticPrimitiveSchema = z.union([
@@ -229,7 +230,7 @@ const discriminantSchema = z.strictObject({
 });
 
 const comparisonChangeSchema = z.strictObject({
-  change_id: z.string().regex(/^jesc_change_[a-f0-9]{64}$/u),
+  change_id: prefixedDigestSchema("jesc_change"),
   status: z.enum(["added", "removed", "changed", "unknown"]),
   path: jsonPointerSchema,
   discriminant: discriminantSchema.nullable(),
@@ -243,7 +244,7 @@ const comparisonChangeSchema = z.strictObject({
 
 /** Static export-return comparison with explicit unknown semantics. */
 export const javaScriptExportShapeComparisonResultSchema = z.strictObject({
-  comparison_id: z.string().regex(/^jesc_[a-f0-9]{64}$/u),
+  comparison_id: prefixedDigestSchema("jesc"),
   left: selectorResultSchema,
   right: selectorResultSchema,
   summary: z.strictObject({

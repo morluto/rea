@@ -30,9 +30,10 @@ import {
   addBoundaryNodes,
   addMemberNodes,
 } from "./managedApplicationGraphNodes.js";
+import { digestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
+const evidenceIdSchema = prefixedDigestSchema("ev");
 const textSchema = z.string().min(1);
 
 /** Authenticated managed Evidence records projected into the application graph. */
@@ -57,7 +58,7 @@ export const projectManagedApplicationGraphInputSchema = z
 
 /** Managed-code projection result containing a validated application graph. */
 export const managedApplicationGraphResultSchema = z.strictObject({
-  projection_id: z.string().regex(/^magp_[a-f0-9]{64}$/u),
+  projection_id: prefixedDigestSchema("magp"),
   root_artifact_sha256: digestSchema,
   source_evidence: z.strictObject({
     managed_artifact_evidence_id: evidenceIdSchema.nullable(),

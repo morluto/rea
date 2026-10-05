@@ -14,6 +14,7 @@ import {
   type ProviderRejectionCode,
 } from "./providerSelection.js";
 import { analysisErrorProjectionSchema } from "./errorSchemas.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
 /** Inline result with its complete Evidence record. */
 export const inlineEvidenceRecordSchema = evidenceEnvelopeSchema.omit({
@@ -23,7 +24,7 @@ export const inlineEvidenceRecordSchema = evidenceEnvelopeSchema.omit({
 export const evidenceResultOf = (schema: z.ZodType) =>
   z.strictObject({
     result: schema,
-    evidence_id: z.string().regex(/^ev_[a-f0-9]{64}$/u),
+    evidence_id: prefixedDigestSchema("ev"),
     evidence: inlineEvidenceRecordSchema,
   });
 

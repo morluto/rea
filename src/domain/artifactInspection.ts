@@ -9,13 +9,14 @@ import {
 } from "./artifactGraph.js";
 import { evidenceSchema, parseEvidence, type Evidence } from "./evidence.js";
 import { jsonValueSchema } from "./jsonValue.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
 const textSchema = z.string().min(1);
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
-const artifactIdSchema = z.string().regex(/^art_[a-f0-9]{64}$/u);
+const evidenceIdSchema = prefixedDigestSchema("ev");
+const artifactIdSchema = prefixedDigestSchema("art");
 
 const inspectionObservationSchema = z.strictObject({
-  observation_id: z.string().regex(/^aio_[a-f0-9]{64}$/u),
+  observation_id: prefixedDigestSchema("aio"),
   kind: z.enum(["root-manifest", "artifact", "occurrence", "integrity"]),
   subject: textSchema,
   value: jsonValueSchema,
@@ -23,7 +24,7 @@ const inspectionObservationSchema = z.strictObject({
 });
 
 const inspectionRelationshipSchema = z.strictObject({
-  relationship_id: z.string().regex(/^air_[a-f0-9]{64}$/u),
+  relationship_id: prefixedDigestSchema("air"),
   relation: z.enum([
     "contains",
     "extracts",
@@ -35,13 +36,13 @@ const inspectionRelationshipSchema = z.strictObject({
   ]),
   source_artifact_id: artifactIdSchema,
   target_artifact_id: artifactIdSchema,
-  occurrence_id: z.string().regex(/^occ_[a-f0-9]{64}$/u),
+  occurrence_id: prefixedDigestSchema("occ"),
   logical_path: textSchema.nullable(),
   evidence_id: evidenceIdSchema,
 });
 
 const inspectionHypothesisSchema = z.strictObject({
-  hypothesis_id: z.string().regex(/^aih_[a-f0-9]{64}$/u),
+  hypothesis_id: prefixedDigestSchema("aih"),
   statement: textSchema,
   confidence: z.enum(["medium", "low"]),
   basis_evidence_ids: z.array(evidenceIdSchema).min(1),
@@ -49,9 +50,9 @@ const inspectionHypothesisSchema = z.strictObject({
 });
 
 const inspectionContradictionSchema = z.strictObject({
-  contradiction_id: z.string().regex(/^aic_[a-f0-9]{64}$/u),
+  contradiction_id: prefixedDigestSchema("aic"),
   statement: textSchema,
-  occurrence_id: z.string().regex(/^occ_[a-f0-9]{64}$/u),
+  occurrence_id: prefixedDigestSchema("occ"),
   declared_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
   observed_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
   evidence_id: evidenceIdSchema,
@@ -69,7 +70,7 @@ const nextProbeSchema = z.strictObject({
 });
 
 const unexploredBranchSchema = z.strictObject({
-  branch_id: z.string().regex(/^aib_[a-f0-9]{64}$/u),
+  branch_id: prefixedDigestSchema("aib"),
   reason: z.enum(["format-specific-analysis-required", "unknown-format"]),
   detail: textSchema,
   next_probe: nextProbeSchema.nullable(),
@@ -78,9 +79,9 @@ const unexploredBranchSchema = z.strictObject({
 
 /** Provider-neutral inspection result with its atomic source Evidence. */
 export const artifactInspectionResultSchema = z.strictObject({
-  inspection_id: z.string().regex(/^ai_[a-f0-9]{64}$/u),
+  inspection_id: prefixedDigestSchema("ai"),
   subject: z.strictObject({
-    manifest_id: z.string().regex(/^agm_[a-f0-9]{64}$/u),
+    manifest_id: prefixedDigestSchema("agm"),
     root_artifact_id: artifactIdSchema,
     root_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
     root_format: textSchema,
@@ -88,7 +89,7 @@ export const artifactInspectionResultSchema = z.strictObject({
   substeps: z
     .array(
       z.strictObject({
-        substep_id: z.string().regex(/^ais_[a-f0-9]{64}$/u),
+        substep_id: prefixedDigestSchema("ais"),
         operation: z.literal("inventory_artifact"),
         status: z.literal("completed"),
         evidence_id: evidenceIdSchema,

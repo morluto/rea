@@ -9,8 +9,9 @@ import {
 } from "./analysisProfile.js";
 import type { BinaryTarget } from "./binaryTarget.js";
 import { jsonValueSchema, type JsonValue } from "./jsonValue.js";
+import { digestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
 /** Provider identity schema shared by evidence-bearing persistence formats. */
 export const providerSchema = z.object({
   id: z.string().min(1),
@@ -82,7 +83,7 @@ const executionEnvironmentSchema = z.object({
 
 const evidenceBaseSchema = z
   .object({
-    evidence_id: z.string().regex(/^ev_[a-f0-9]{64}$/u),
+    evidence_id: prefixedDigestSchema("ev"),
     subject: subjectSchema.nullable(),
     provider: providerSchema,
     predicate_type: z.string().min(1),
@@ -95,7 +96,7 @@ const evidenceBaseSchema = z
     environment: executionEnvironmentSchema.nullable(),
     limitations: z.array(z.string()),
     locations: z.array(evidenceLocationSchema),
-    evidence_links: z.array(z.string().regex(/^ev_[a-f0-9]{64}$/u)),
+    evidence_links: z.array(prefixedDigestSchema("ev")),
   })
   .strict();
 

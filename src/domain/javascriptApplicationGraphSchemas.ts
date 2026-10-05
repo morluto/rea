@@ -6,6 +6,7 @@ import {
   applicationNodeIdentitySchema,
 } from "./javascriptApplicationEvidenceSchemas.js";
 import { jsonValueSchema } from "./jsonValue.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
 const boundedTextSchema = z.string().min(1);
 
@@ -84,7 +85,7 @@ const applicationNodeObservationInputSchema = z.strictObject({
 /** One immutable, evidence-bearing observation attached to an entity. */
 export const applicationNodeObservationSchema =
   applicationNodeObservationInputSchema.extend({
-    observation_id: z.string().regex(/^jag_observation_[a-f0-9]{64}$/u),
+    observation_id: prefixedDigestSchema("jag_observation"),
     identifier_strategy: z.strictObject({
       strategy: z.literal("semantic-content-sha256"),
       stability: z.literal("observation-exact"),
@@ -100,7 +101,7 @@ export const applicationNodeInputSchema = z.strictObject({
 
 /** One stable application entity with one or more bounded observations. */
 export const applicationNodeSchema = z.strictObject({
-  node_id: z.string().regex(/^jag_node_[a-f0-9]{64}$/u),
+  node_id: prefixedDigestSchema("jag_node"),
   kind: applicationNodeKindSchema,
   identity: applicationNodeIdentitySchema,
   observations: z.array(applicationNodeObservationSchema).min(1),
@@ -108,8 +109,8 @@ export const applicationNodeSchema = z.strictObject({
 
 /** One directed relationship before its semantic identifier is derived. */
 export const applicationEdgeInputSchema = z.strictObject({
-  source_node_id: z.string().regex(/^jag_node_[a-f0-9]{64}$/u),
-  target_node_id: z.string().regex(/^jag_node_[a-f0-9]{64}$/u),
+  source_node_id: prefixedDigestSchema("jag_node"),
+  target_node_id: prefixedDigestSchema("jag_node"),
   relation: applicationRelationSchema,
   properties: applicationPropertiesSchema,
   evidence: applicationGraphEvidenceSchema,
@@ -117,7 +118,7 @@ export const applicationEdgeInputSchema = z.strictObject({
 
 /** One directed, evidence-bearing application relationship. */
 export const applicationEdgeSchema = applicationEdgeInputSchema.extend({
-  edge_id: z.string().regex(/^jag_edge_[a-f0-9]{64}$/u),
+  edge_id: prefixedDigestSchema("jag_edge"),
   identifier_strategy: z.strictObject({
     strategy: z.literal("semantic-content-sha256"),
     stability: z.literal("relationship-exact"),
@@ -127,7 +128,7 @@ export const applicationEdgeSchema = applicationEdgeInputSchema.extend({
 /** Graph content before its top-level semantic identifier is derived. */
 export const javascriptApplicationGraphInputSchema = z.strictObject({
   schema: z.literal("JavaScriptApplicationGraph"),
-  root_node_ids: z.array(z.string().regex(/^jag_node_[a-f0-9]{64}$/u)).min(1),
+  root_node_ids: z.array(prefixedDigestSchema("jag_node")).min(1),
   nodes: z.array(applicationNodeSchema).min(1),
   edges: z.array(applicationEdgeSchema),
   coverage: applicationCoverageSchema,
@@ -137,7 +138,7 @@ export const javascriptApplicationGraphInputSchema = z.strictObject({
 /** Strict stored shape for a JavaScript Application Graph. */
 export const javascriptApplicationGraphRecordSchema =
   javascriptApplicationGraphInputSchema.extend({
-    graph_id: z.string().regex(/^jag_[a-f0-9]{64}$/u),
+    graph_id: prefixedDigestSchema("jag"),
   });
 
 /** Immutable entity in a JavaScript Application Graph. */

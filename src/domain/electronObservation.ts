@@ -3,6 +3,7 @@ import { z } from "zod";
 import { browserCompletenessSchema } from "./browserCompleteness.js";
 import { browserEndpointSchema } from "./browserObservation.js";
 import { webTextArtifactSchema } from "./webContentArtifact.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
 const approvedElectronInput = {
   cdp_endpoint: browserEndpointSchema,
@@ -102,7 +103,7 @@ export const electronPageInspectionSchema = z.object({
     total: z.number().int().min(0),
     items: z.array(
       z.object({
-        script_key: z.string().regex(/^electron_script_[a-f0-9]{64}$/u),
+        script_key: prefixedDigestSchema("electron_script"),
         frame_id: z.string().nullable().default(null),
         file_path: z.string(),
         cdp_hash: z.string(),
@@ -115,7 +116,7 @@ export const electronPageInspectionSchema = z.object({
   }),
   resources: z.array(
     z.object({
-      resource_key: z.string().regex(/^electron_resource_[a-f0-9]{64}$/u),
+      resource_key: prefixedDigestSchema("electron_resource"),
       file_path: z.string(),
       type: z.string(),
       mime_type: z.string(),

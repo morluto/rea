@@ -1,8 +1,8 @@
 import { z } from "zod";
 
 import { evidenceEnvelopeSchema } from "./evidence.js";
+import { digestSchema } from "./../domain/digests.js";
 
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
 const absolutePathSchema = z.string().startsWith("/");
 const aliasSchema = z
   .string()

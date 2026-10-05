@@ -4,9 +4,10 @@ import { z } from "zod";
 
 import { javascriptApplicationGraphSchema } from "./javascriptApplicationGraph.js";
 import { javaScriptSemanticGraphSchema } from "./javascriptSemanticGraph.js";
+import { digestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
 const countSchema = z.number().int().min(0);
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
 
 /** Public target-free request for static JavaScript application analysis. */
 export const analyzeJavaScriptApplicationInputSchema = z.strictObject({
@@ -61,7 +62,7 @@ export const javascriptApplicationAnalysisResultSchema = z
     input_path: z.string().min(1),
     format: z.enum(["asar", "directory"]),
     root_artifact_sha256: digestSchema,
-    inventory_manifest_id: z.string().regex(/^agm_[a-f0-9]{64}$/u),
+    inventory_manifest_id: prefixedDigestSchema("agm"),
     inventory_graph_sha256: digestSchema,
     graph: javascriptApplicationGraphSchema,
     summary: electronBoundarySummarySchema,

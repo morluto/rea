@@ -4,9 +4,10 @@ import { emptyArraySchema } from "./emptyArraySchema.js";
 import { evidenceSchema } from "./evidence.js";
 import { javascriptApplicationGraphSchema } from "./javascriptApplicationGraph.js";
 import { JAVASCRIPT_APPLICATION_NODE_KINDS } from "./javascriptApplicationGraphSchemas.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
-const nodeIdSchema = z.string().regex(/^jag_node_[a-f0-9]{64}$/u);
+const evidenceIdSchema = prefixedDigestSchema("ev");
+const nodeIdSchema = prefixedDigestSchema("jag_node");
 const textSchema = z.string().min(1);
 
 /** Two authenticated application versions and their native observations. */
@@ -93,7 +94,7 @@ const rightAmbiguousMatchSchema = z.strictObject({
 });
 
 const comparisonItemContextShape = {
-  item_id: z.string().regex(/^javc_item_[a-f0-9]{64}$/u),
+  item_id: prefixedDigestSchema("javc_item"),
   node_kind: z.enum(JAVASCRIPT_APPLICATION_NODE_KINDS),
   dimensions: z.array(
     z.enum([
@@ -158,15 +159,15 @@ const comparisonCoverageSchema = z.strictObject({
 /** Tiered module/entity matching plus its complete cross-version change graph. */
 export const applicationVersionComparisonResultSchema = z
   .strictObject({
-    comparison_id: z.string().regex(/^javc_[a-f0-9]{64}$/u),
+    comparison_id: prefixedDigestSchema("javc"),
     left: z.strictObject({
       evidence_id: evidenceIdSchema,
-      graph_id: z.string().regex(/^jag_[a-f0-9]{64}$/u),
+      graph_id: prefixedDigestSchema("jag"),
       root_artifact_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
     }),
     right: z.strictObject({
       evidence_id: evidenceIdSchema,
-      graph_id: z.string().regex(/^jag_[a-f0-9]{64}$/u),
+      graph_id: prefixedDigestSchema("jag"),
       root_artifact_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
     }),
     summary: z.strictObject({

@@ -19,6 +19,7 @@ import {
   closeBinaryInputSchema,
 } from "./sessionLifecycleInputs.js";
 import { binarySessionInputSchema } from "./sessionStatusContract.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
 /** Return the current canonical Evidence bundle inline. */
 export const getEvidenceBundleInputSchema = z.strictObject({});
@@ -58,7 +59,7 @@ export const listUnknownsInputSchema = z.strictObject({
 
 /** Exact residual-unknown identity to revalidate. */
 export const verifyUnknownResolutionInputSchema = z.strictObject({
-  unknown_id: z.string().regex(/^unk_[a-f0-9]{64}$/u),
+  unknown_id: prefixedDigestSchema("unk"),
 });
 
 export {

@@ -2,8 +2,9 @@ import { createHash } from "node:crypto";
 
 import canonicalize from "canonicalize";
 import { z } from "zod";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
+const evidenceIdSchema = prefixedDigestSchema("ev");
 const claimIdSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9._-]*$/u);
 
 /** Terminal outcome recorded for one verifier claim. */
@@ -33,7 +34,7 @@ const completionSummarySchema = z.strictObject({
 });
 
 const completionLedgerObjectSchema = z.strictObject({
-  ledger_id: z.string().regex(/^ecl_[a-f0-9]{64}$/u),
+  ledger_id: prefixedDigestSchema("ecl"),
   records: z.array(evidenceCompletionRecordSchema).min(1),
   summary: completionSummarySchema,
 });

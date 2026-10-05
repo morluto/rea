@@ -8,9 +8,10 @@ import {
   evidenceCompletionRecordSchema,
   type EvidenceCompletionLedger,
 } from "./evidenceCompletionLedger.js";
+import { digestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
 const identifierSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9._-]*$/u);
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
 const identitySchema = z.strictObject({
   id: identifierSchema,
   version: z.string().min(1),
@@ -110,7 +111,7 @@ const manifestClaimSchema = reportClaimSchema.omit({
   evidence_ids: true,
 });
 const completionManifestObjectSchema = z.strictObject({
-  manifest_id: z.string().regex(/^ecm_[a-f0-9]{64}$/u),
+  manifest_id: prefixedDigestSchema("ecm"),
   verifier: identitySchema,
   environment: environmentSchema,
   skill_digests: z.array(skillDigestSchema).min(1),

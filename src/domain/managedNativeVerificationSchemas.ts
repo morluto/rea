@@ -3,9 +3,10 @@ import { z } from "zod";
 import { emptyArraySchema } from "./emptyArraySchema.js";
 import { evidenceSchema } from "./evidence.js";
 import { cliMetadataGuidSchema } from "./managedArtifact.js";
+import { digestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
+const evidenceIdSchema = prefixedDigestSchema("ev");
 const tokenSchema = z.string().regex(/^0x[0-9a-f]{8}$/u);
 const textSchema = z.string().min(1);
 
@@ -22,7 +23,7 @@ const nativeSymbolSchema = z.strictObject({
 export type NativeSymbol = z.infer<typeof nativeSymbolSchema>;
 
 const pinvokeVerificationContextShape = {
-  item_id: z.string().regex(/^mnv_pinvoke_[a-f0-9]{64}$/u),
+  item_id: prefixedDigestSchema("mnv_pinvoke"),
   managed: z.strictObject({
     token: tokenSchema,
     member_token: tokenSchema.nullable(),
@@ -126,7 +127,7 @@ const verificationCoverageSchema = z.strictObject({
 /** Provider-neutral managed/native verification result. */
 export const managedNativeVerificationResultSchema = z
   .strictObject({
-    verification_id: z.string().regex(/^mnv_[a-f0-9]{64}$/u),
+    verification_id: prefixedDigestSchema("mnv"),
     algorithm: z.strictObject({
       name: z.literal("rea-managed-native-verification"),
       token_identity: z.literal("build-local"),

@@ -11,8 +11,9 @@ import {
   comparisonStatusSchema,
   processCaptureComparisonSchema,
 } from "./processCapture.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
+const evidenceIdSchema = prefixedDigestSchema("ev");
 const functionDimensionSchema = z.enum([
   "identity",
   "pseudocode",
@@ -92,7 +93,7 @@ export const staticRuntimeCorrelationInputSchema = z
   .strict();
 
 const correlationItemSchema = z.object({
-  correlation_id: z.string().regex(/^cor_[a-f0-9]{64}$/u),
+  correlation_id: prefixedDigestSchema("cor"),
   static: z.object({
     comparison_evidence_id: evidenceIdSchema,
     selector: staticSelectorSchema,

@@ -5,8 +5,9 @@ import {
   javaScriptSemanticQueryInputSchema,
   javaScriptSemanticQueryResultSchema,
 } from "./javascriptSemanticQuerySchemas.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
+const evidenceIdSchema = prefixedDigestSchema("ev");
 
 /** Authenticated application Evidence plus one bounded semantic query. */
 export const traceJavaScriptSemanticsInputSchema = z.strictObject({

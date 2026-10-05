@@ -18,9 +18,10 @@ import {
   buildMethodItems,
 } from "./managedMemberComparisonItems.js";
 import { keyMembers, sha256 } from "./managedMemberComparisonMatch.js";
+import { digestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
+const evidenceIdSchema = prefixedDigestSchema("ev");
 const tokenSchema = z.string().regex(/^0x[0-9a-f]{8}$/u);
 const boundedTextSchema = z.string().min(1);
 
@@ -120,7 +121,7 @@ const comparisonItemContextShape = {
 const methodComparisonItemSchema = comparisonItemSchema(
   {
     ...comparisonItemContextShape,
-    item_id: z.string().regex(/^mmc_method_[a-f0-9]{64}$/u),
+    item_id: prefixedDigestSchema("mmc_method"),
     dimensions: z.array(
       z.enum([
         "signature",
@@ -139,14 +140,14 @@ const methodComparisonItemSchema = comparisonItemSchema(
 const fieldComparisonItemSchema = comparisonItemSchema(
   {
     ...comparisonItemContextShape,
-    item_id: z.string().regex(/^mmc_field_[a-f0-9]{64}$/u),
+    item_id: prefixedDigestSchema("mmc_field"),
   },
   memberIdentitySchema.omit({ normalized_il_sha256: true }),
 );
 
 /** Obfuscation-resistant, execution-free managed member comparison. */
 export const managedMemberComparisonResultSchema = z.strictObject({
-  comparison_id: z.string().regex(/^mmc_[a-f0-9]{64}$/u),
+  comparison_id: prefixedDigestSchema("mmc"),
   algorithm: z.strictObject({
     name: z.literal("rea-managed-member-comparison"),
     token_identity: z.literal("build-local"),

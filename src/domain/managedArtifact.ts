@@ -1,6 +1,6 @@
 import { z } from "zod";
+import { digestSchema } from "./../domain/digests.js";
 
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
 const tokenSchema = z.string().regex(/^0x[0-9a-f]{8}$/u);
 const offsetSchema = z.number().int().min(0);
 

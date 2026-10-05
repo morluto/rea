@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { evidenceSchema } from "./evidence.js";
+import { digestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
 const comparisonStatusSchema = z.enum([
   "unchanged",
@@ -17,8 +19,7 @@ const dimensionNameSchema = z.enum([
   "strings_names",
   "cfg",
 ]);
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
+const evidenceIdSchema = prefixedDigestSchema("ev");
 
 /** Inputs for explicit function-to-function comparison. */
 export const functionComparisonInputSchema = z.strictObject({

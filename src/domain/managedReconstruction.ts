@@ -10,9 +10,10 @@ import {
   type ManagedMemberInspection,
 } from "./managedArtifact.js";
 import type { JsonValue } from "./jsonValue.js";
+import { digestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
+const evidenceIdSchema = prefixedDigestSchema("ev");
 const tokenSchema = z.string().regex(/^0x[0-9a-f]{8}$/u);
 const textSchema = z.string().min(1);
 
@@ -78,7 +79,7 @@ const importedMethodSchema = z.strictObject({
 });
 
 export const managedReconstructionImportResultSchema = z.strictObject({
-  reconstruction_id: z.string().regex(/^mre_[a-f0-9]{64}$/u),
+  reconstruction_id: prefixedDigestSchema("mre"),
   phase: z.literal("reconstruction-import"),
   executed: z.literal(false),
   static_observation: z.strictObject({

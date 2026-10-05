@@ -2,9 +2,10 @@ import { createHash } from "node:crypto";
 
 import canonicalize from "canonicalize";
 import { z } from "zod";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
-const unknownIdSchema = z.string().regex(/^unk_[a-f0-9]{64}$/u);
+const evidenceIdSchema = prefixedDigestSchema("ev");
+const unknownIdSchema = prefixedDigestSchema("unk");
 const text = z.string().trim().min(1);
 const environmentRequirementSchema = z.object({
   id: z.string().min(1).nullable(),

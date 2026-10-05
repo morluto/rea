@@ -7,6 +7,7 @@ import {
   type SourceToBundleCandidate,
   type SourceToBundleSignal,
 } from "./sourceToBundleComparisonSchemas.js";
+import { isDigest } from "./digests.js";
 
 type SourceFile = Extract<
   HistoricalSourceGraph["entries"][number],
@@ -309,8 +310,6 @@ const addIndexValue = (
   values.add(nodeId);
   index.set(key, values);
 };
-
-const isDigest = (value: string): boolean => /^[a-f0-9]{64}$/u.test(value);
 
 const compareText = (left: string, right: string): number =>
   left < right ? -1 : left > right ? 1 : 0;

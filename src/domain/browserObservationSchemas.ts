@@ -3,6 +3,7 @@ import { z } from "zod";
 import { browserCompletenessSchema } from "./browserCompleteness.js";
 import { webTextArtifactSchema } from "./webContentArtifact.js";
 import { jsonShapeSchema } from "./jsonShape.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
 const browserVersionSchema = z.object({
   product: z.string(),
@@ -96,7 +97,7 @@ const browserScriptSchema = z.object({
   source: browserScriptSourceSchema,
 });
 const browserResourceSchema = z.object({
-  resource_key: z.string().regex(/^res_[a-f0-9]{64}$/u),
+  resource_key: prefixedDigestSchema("res"),
   url: z.string(),
   origin: z.string().nullable(),
   type: z.string(),

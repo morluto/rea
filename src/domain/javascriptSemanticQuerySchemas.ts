@@ -8,9 +8,10 @@ import {
   javaScriptSemanticUnknownSchema,
 } from "./javascriptSemanticGraphSchemas.js";
 import { jsonValueSchema } from "./jsonValue.js";
+import { digestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
-const semanticNodeIdSchema = z.string().regex(/^jsrg_node_[a-f0-9]{64}$/u);
+const semanticNodeIdSchema = prefixedDigestSchema("jsrg_node");
 
 const literalSeedSchema = z.strictObject({
   kind: z.literal("literal"),
@@ -32,7 +33,7 @@ export const javaScriptSemanticQuerySeedSchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({
     kind: z.literal("application-node"),
-    node_id: z.string().regex(/^jag_node_[a-f0-9]{64}$/u),
+    node_id: prefixedDigestSchema("jag_node"),
   }),
   literalSeedSchema,
   z.strictObject({
@@ -87,8 +88,8 @@ export const javaScriptSemanticQueryInputSchema = z.strictObject({
 
 /** Deterministic semantic trace result. */
 export const javaScriptSemanticQueryResultSchema = z.strictObject({
-  query_id: z.string().regex(/^jsrq_[a-f0-9]{64}$/u),
-  source_graph_id: z.string().regex(/^jsrg_[a-f0-9]{64}$/u),
+  query_id: prefixedDigestSchema("jsrq"),
+  source_graph_id: prefixedDigestSchema("jsrg"),
   seed: javaScriptSemanticQuerySeedSchema,
   direction: javaScriptSemanticQueryInputSchema.shape.direction,
   status: z.enum(["found", "no-match", "ambiguous", "partial", "unsupported"]),

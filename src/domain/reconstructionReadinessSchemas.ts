@@ -2,9 +2,10 @@ import { z } from "zod";
 
 import { evidenceBundleSchema } from "./evidenceBundle.js";
 import { reconstructionObligationLedgerSchema } from "./reconstructionObligationLedgerSchemas.js";
+import { digestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
+const evidenceIdSchema = prefixedDigestSchema("ev");
 const stableIdSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9._:/-]*$/u);
 const boundedTextSchema = z.string().trim().min(1);
 
@@ -244,7 +245,7 @@ const findingSchema = z.strictObject({
 
 export const reconstructionReadinessReportSchema = z.strictObject({
   schema: z.literal("ReconstructionReadinessReport"),
-  report_id: z.string().regex(/^rr_[a-f0-9]{64}$/u),
+  report_id: prefixedDigestSchema("rr"),
   source_digest: digestSchema,
   report_digest: digestSchema,
   status: readinessStatusSchema,

@@ -5,8 +5,8 @@ import { z } from "zod";
 import { emptyArraySchema } from "./emptyArraySchema.js";
 import { sanitizedBrowserUrlSchema } from "./browserObservation.js";
 import { webScreenshotArtifactSchema } from "./webScreenshot.js";
+import { digestSchema } from "./../domain/digests.js";
 
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
 const textArtifactSchema = z
   .strictObject({
     sha256: digestSchema,

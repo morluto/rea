@@ -9,9 +9,10 @@ import {
   managedMemberInspectionSchema,
 } from "./managedArtifact.js";
 import type { JsonValue } from "./jsonValue.js";
+import { digestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
+const evidenceIdSchema = prefixedDigestSchema("ev");
 const tokenSchema = z.string().regex(/^0x[0-9a-f]{8}$/u);
 const boundedTextSchema = z.string().min(1);
 
@@ -56,7 +57,7 @@ export const managedRuntimeCorrelationInputSchema = z.strictObject({
 });
 
 export const managedRuntimeCorrelationResultSchema = z.strictObject({
-  correlation_id: z.string().regex(/^mrc_[a-f0-9]{64}$/u),
+  correlation_id: prefixedDigestSchema("mrc"),
   phase: z.literal("admission-plan"),
   executed: z.literal(false),
   authority_model: z.strictObject({

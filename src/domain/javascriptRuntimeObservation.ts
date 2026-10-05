@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { browserEndpointSchema } from "./browserObservation.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
 const observationTextSchema = z.string().min(1);
 
@@ -102,7 +103,7 @@ export type JavaScriptRuntimeTargetList = z.infer<
 >;
 
 const javascriptRuntimeScriptSchema = z.strictObject({
-  script_key: z.string().regex(/^v8_script_[a-f0-9]{64}$/u),
+  script_key: prefixedDigestSchema("v8_script"),
   location: javascriptRuntimeLocationSchema,
   execution_context_key: z.string().nullable(),
   cdp_hash: z.string().nullable(),

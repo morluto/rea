@@ -8,10 +8,11 @@ import {
   compareCodePoints,
   javascriptApplicationGraphSchema,
 } from "./javascriptApplicationGraph.js";
+import { digestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
-const nodeIdSchema = z.string().regex(/^jag_node_[a-f0-9]{64}$/u);
+const evidenceIdSchema = prefixedDigestSchema("ev");
+const nodeIdSchema = prefixedDigestSchema("jag_node");
 const boundedTextSchema = z.string().min(1);
 const safePrefixSchema = z
   .string()
@@ -137,10 +138,10 @@ export const reconcileJavaScriptRuntimeInputSchema = z
   });
 
 const layerSummarySchema = z.strictObject({
-  layer_id: z.string().regex(/^jrl_[a-f0-9]{64}$/u),
+  layer_id: prefixedDigestSchema("jrl"),
   role: z.enum(["application", "cache", "assets"]),
   evidence_id: evidenceIdSchema,
-  graph_id: z.string().regex(/^jag_[a-f0-9]{64}$/u),
+  graph_id: prefixedDigestSchema("jag"),
   root_artifact_sha256: digestSchema,
   input_path: z.string().min(1),
   format: z.enum(["asar", "directory"]),
@@ -178,7 +179,7 @@ const reconciliationReasonSchema = z.enum([
 ]);
 
 const reconciliationItemShape = {
-  reconciliation_id: z.string().regex(/^jrr_item_[a-f0-9]{64}$/u),
+  reconciliation_id: prefixedDigestSchema("jrr_item"),
   entity_kind: z.enum(["target", "frame", "script", "worker"]),
   runtime_evidence_id: evidenceIdSchema,
   runtime_node_id: nodeIdSchema,
@@ -196,7 +197,7 @@ const reconciliationItemShape = {
   candidate_static_count: z.number().int().min(0),
   candidate_static_nodes: z.array(
     z.strictObject({
-      static_layer_id: z.string().regex(/^jrl_[a-f0-9]{64}$/u),
+      static_layer_id: prefixedDigestSchema("jrl"),
       static_node_id: nodeIdSchema,
     }),
   ),
@@ -204,7 +205,7 @@ const reconciliationItemShape = {
 const reconciliationItemSchema = z.union([
   z.strictObject({
     ...reconciliationItemShape,
-    static_layer_id: z.string().regex(/^jrl_[a-f0-9]{64}$/u),
+    static_layer_id: prefixedDigestSchema("jrl"),
     static_node_id: nodeIdSchema,
     status: z.literal("matched"),
   }),
@@ -217,7 +218,7 @@ const reconciliationItemSchema = z.union([
 ]);
 
 const staticLoadStateSchema = z.strictObject({
-  static_layer_id: z.string().regex(/^jrl_[a-f0-9]{64}$/u),
+  static_layer_id: prefixedDigestSchema("jrl"),
   static_node_id: nodeIdSchema,
   kind: z.enum(["javascript-asset", "javascript-chunk", "javascript-module"]),
   status: z.enum([
@@ -238,7 +239,7 @@ const staticLoadStateSchema = z.strictObject({
 
 /** Deterministic static/passive-runtime reconciliation with a combined JAG. */
 export const javascriptRuntimeReconciliationResultSchema = z.strictObject({
-  reconciliation_id: z.string().regex(/^jrr_[a-f0-9]{64}$/u),
+  reconciliation_id: prefixedDigestSchema("jrr"),
   static_layers: z.array(layerSummarySchema).min(1),
   runtime_captures: z.array(captureSummarySchema).min(1),
   graph: javascriptApplicationGraphSchema,

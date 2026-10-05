@@ -5,14 +5,15 @@ import { z } from "zod";
 
 import { parseArtifactInventoryEvidence } from "./artifactInventoryEvidence.js";
 import { evidenceSchema } from "./evidence.js";
+import { digestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
+const evidenceIdSchema = prefixedDigestSchema("ev");
 const pathSchema = z.string().min(1);
 
 const componentSchema = z.strictObject({
   path: pathSchema,
-  artifact_id: z.string().regex(/^art_[a-f0-9]{64}$/u),
+  artifact_id: prefixedDigestSchema("art"),
   sha256: digestSchema,
   format: z.string().min(1),
 });
@@ -24,7 +25,7 @@ export const appleApplicationProjectionInputSchema = z.strictObject({
 
 /** Deterministic, execution-free Apple application inventory projection. */
 export const appleApplicationProjectionResultSchema = z.strictObject({
-  projection_id: z.string().regex(/^aap_[a-f0-9]{64}$/u),
+  projection_id: prefixedDigestSchema("aap"),
   root_sha256: digestSchema,
   root_format: z.literal("ipa"),
   source_evidence_ids: z.array(evidenceIdSchema).min(1),

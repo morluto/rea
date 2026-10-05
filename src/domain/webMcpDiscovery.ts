@@ -6,6 +6,7 @@ import {
   browserEndpointSchema,
 } from "./browserObservation.js";
 import { jsonShapeSchema } from "./jsonShape.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
 /** Input for passive discovery of page-registered WebMCP tools. */
 export const discoverWebMcpToolsInputSchema = z.strictObject({
@@ -27,7 +28,7 @@ const browserVersionSchema = z.object({
 });
 
 const webMcpToolSchema = z.object({
-  tool_key: z.string().regex(/^webmcp_[a-f0-9]{64}$/u),
+  tool_key: prefixedDigestSchema("webmcp"),
   name: z.string(),
   description: z.string(),
   frame_id: z.string(),

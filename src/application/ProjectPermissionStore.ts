@@ -23,6 +23,7 @@ import {
   type PermissionGrant,
 } from "../domain/permissionPolicy.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
 const grantSchema = z.object({
   grant_id: z.string().min(1),
@@ -39,7 +40,7 @@ const grantSchema = z.object({
 });
 
 const storeSchema = z.object({
-  project_id: z.string().regex(/^project_[a-f0-9]{64}$/u),
+  project_id: prefixedDigestSchema("project"),
   project_root: z.string(),
   grants: z.array(grantSchema),
 });

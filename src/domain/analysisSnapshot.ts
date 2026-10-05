@@ -26,8 +26,9 @@ import {
   jsonValueSchema,
   type JsonValue,
 } from "./jsonValue.js";
+import { digestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
 const architectureSchema = z.enum(["x86", "x86_64", "arm", "arm64"]);
 const formatSchema = z.enum([
   "analysis-database",
@@ -86,7 +87,7 @@ const bindingSchema = z
       });
   });
 const entrySchema = z.object({
-  query_id: z.string().regex(/^query_[a-f0-9]{64}$/u),
+  query_id: prefixedDigestSchema("query"),
   operation: z.string().min(1),
   parameters: jsonObjectSchema,
   execution: z.object({

@@ -1,8 +1,9 @@
 import { z } from "zod";
+import { digestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
-const unknownIdSchema = z.string().regex(/^unk_[a-f0-9]{64}$/u);
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
+const evidenceIdSchema = prefixedDigestSchema("ev");
+const unknownIdSchema = prefixedDigestSchema("unk");
 const claimIdSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9._-]*$/u);
 const titleSchema = z.string().trim().min(1);
 const verificationStatusSchema = z.enum(["pass", "fail", "unknown"]);

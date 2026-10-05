@@ -31,12 +31,13 @@ import {
 } from "./reconstructionUnknowns.js";
 import type { ResidualUnknown } from "./residualUnknown.js";
 
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
+const evidenceIdSchema = prefixedDigestSchema("ev");
 
 export {
   reconstructionVerificationInputSchema,
   reconstructionVerificationResultSchema,
 } from "./reconstructionVerificationSchemas.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 export type { ReconstructionVerificationResult } from "./reconstructionVerificationSchemas.js";
 
 const providers = {

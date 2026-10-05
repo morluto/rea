@@ -1,12 +1,13 @@
 import { z } from "zod";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/u);
-const artifactIdSchema = z.string().regex(/^art_[a-f0-9]{64}$/u);
-const occurrenceIdSchema = z.string().regex(/^occ_[a-f0-9]{64}$/u);
-const edgeIdSchema = z.string().regex(/^edge_[a-f0-9]{64}$/u);
-const manifestIdSchema = z.string().regex(/^agm_[a-f0-9]{64}$/u);
-const extractionIdSchema = z.string().regex(/^aex_[a-f0-9]{64}$/u);
-const contradictionIdSchema = z.string().regex(/^ic_[a-f0-9]{64}$/u);
+const artifactIdSchema = prefixedDigestSchema("art");
+const occurrenceIdSchema = prefixedDigestSchema("occ");
+const edgeIdSchema = prefixedDigestSchema("edge");
+const manifestIdSchema = prefixedDigestSchema("agm");
+const extractionIdSchema = prefixedDigestSchema("aex");
+const contradictionIdSchema = prefixedDigestSchema("ic");
 const boundedRelativePathSchema = z
   .string()
   .min(1)

@@ -3,10 +3,11 @@ import { z } from "zod";
 import { evidenceSchema } from "./evidence.js";
 import { JAVASCRIPT_APPLICATION_NODE_KINDS } from "./javascriptApplicationGraphSchemas.js";
 import { historicalSourceGraphSchema } from "./referenceSourceGraph.js";
+import { digestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
-const nodeIdSchema = z.string().regex(/^jag_node_[a-f0-9]{64}$/u);
+const evidenceIdSchema = prefixedDigestSchema("ev");
+const nodeIdSchema = prefixedDigestSchema("jag_node");
 const textSchema = z.string().min(1);
 
 export const SOURCE_TO_BUNDLE_SIGNAL_WEIGHTS = [
@@ -49,7 +50,7 @@ const sourceToBundleCandidateSchema = z.strictObject({
 });
 
 const sourceToBundleItemSchema = z.strictObject({
-  mapping_id: z.string().regex(/^stbc_item_[a-f0-9]{64}$/u),
+  mapping_id: prefixedDigestSchema("stbc_item"),
   source_path: textSchema,
   source_sha256: digestSchema.nullable(),
   source_language: textSchema.nullable(),
@@ -70,14 +71,14 @@ const sourceToBundleItemSchema = z.strictObject({
 
 /** Deterministic, evidence-bearing historical-source to shipped-bundle comparison. */
 export const sourceToBundleComparisonResultSchema = z.strictObject({
-  comparison_id: z.string().regex(/^stbc_[a-f0-9]{64}$/u),
+  comparison_id: prefixedDigestSchema("stbc"),
   reference: z.strictObject({
     root_sha256: digestSchema,
     inventory_state: z.enum(["complete", "partial", "unknown"]),
   }),
   application: z.strictObject({
     evidence_id: evidenceIdSchema,
-    graph_id: z.string().regex(/^jag_[a-f0-9]{64}$/u),
+    graph_id: prefixedDigestSchema("jag"),
     root_artifact_sha256: digestSchema,
   }),
   scoring: z.strictObject({

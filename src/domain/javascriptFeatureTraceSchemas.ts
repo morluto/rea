@@ -2,11 +2,12 @@ import { z } from "zod";
 
 import { evidenceSchema, providerSchema } from "./evidence.js";
 import { javascriptApplicationGraphSchema } from "./javascriptApplicationGraph.js";
+import { digestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
-const nodeIdSchema = z.string().regex(/^jag_node_[a-f0-9]{64}$/u);
-const edgeIdSchema = z.string().regex(/^jag_edge_[a-f0-9]{64}$/u);
+const evidenceIdSchema = prefixedDigestSchema("ev");
+const nodeIdSchema = prefixedDigestSchema("jag_node");
+const edgeIdSchema = prefixedDigestSchema("jag_edge");
 const boundedTextSchema = z.string().min(1);
 
 /** Literal starting point for one application feature trace. */
@@ -51,7 +52,7 @@ const seedMatchSchema = z.strictObject({
 });
 
 const tracePathSchema = z.strictObject({
-  path_id: z.string().regex(/^jatp_[a-f0-9]{64}$/u),
+  path_id: prefixedDigestSchema("jatp"),
   start_node_id: nodeIdSchema,
   end_node_id: nodeIdSchema,
   end_kind: z.string().min(1),
@@ -83,9 +84,9 @@ const nativeHandoffSchema = z.strictObject({
 
 /** Evidence-preserving complete reachable subgraph and native-analysis handoffs. */
 export const applicationFeatureTraceResultSchema = z.strictObject({
-  trace_id: z.string().regex(/^jatr_[a-f0-9]{64}$/u),
+  trace_id: prefixedDigestSchema("jatr"),
   source_evidence_id: evidenceIdSchema,
-  source_graph_id: z.string().regex(/^jag_[a-f0-9]{64}$/u),
+  source_graph_id: prefixedDigestSchema("jag"),
   seed: applicationFeatureSeedSchema,
   direction: z.enum(["outgoing", "incoming", "both"]),
   seed_matches: z.array(seedMatchSchema),

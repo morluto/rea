@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { emptyArraySchema } from "./emptyArraySchema.js";
 import { evidenceSchema } from "./evidence.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
 const addressSchema = z
   .string()
@@ -16,7 +17,7 @@ const inputAddressSchema = z
       .replace(/%[0-9a-fA-F]{2}/gu, (escape) => escape.toUpperCase());
     return `${space}0x${BigInt(address.slice(separator)).toString(16)}`;
   });
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
+const evidenceIdSchema = prefixedDigestSchema("ev");
 
 /** Normalize a hexadecimal offset while preserving its optional address space. */
 export const parseCallPathAddress = (input: unknown): string =>

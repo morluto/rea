@@ -2,10 +2,11 @@ import { z } from "zod";
 
 import { applicationGraphEvidenceSchema } from "./javascriptApplicationEvidenceSchemas.js";
 import { jsonValueSchema } from "./jsonValue.js";
+import { digestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
 const boundedTextSchema = z.string().min(1);
-const semanticNodeIdSchema = z.string().regex(/^jsrg_node_[a-f0-9]{64}$/u);
+const semanticNodeIdSchema = prefixedDigestSchema("jsrg_node");
 const semanticRelationIdSchema = z
   .string()
   .regex(/^jsrg_relation_[a-f0-9]{64}$/u);
@@ -203,7 +204,7 @@ export const javaScriptSemanticNodeInputSchema = z.strictObject({
   kind: z.enum(JAVASCRIPT_SEMANTIC_NODE_KINDS),
   identity: semanticNodeIdentitySchema,
   function_node_id: semanticNodeIdSchema.nullable(),
-  application_node_ids: z.array(z.string().regex(/^jag_node_[a-f0-9]{64}$/u)),
+  application_node_ids: z.array(prefixedDigestSchema("jag_node")),
   label: z.string().min(1).nullable(),
   properties: semanticPropertiesSchema,
   evidence: applicationGraphEvidenceSchema,
@@ -300,7 +301,7 @@ export const javaScriptSemanticFingerprintInputSchema = z.strictObject({
 /** One canonical function fingerprint record. */
 export const javaScriptSemanticFingerprintSchema =
   javaScriptSemanticFingerprintInputSchema.extend({
-    fingerprint_id: z.string().regex(/^jsrg_fingerprint_[a-f0-9]{64}$/u),
+    fingerprint_id: prefixedDigestSchema("jsrg_fingerprint"),
     fingerprint_sha256: digestSchema,
   });
 
@@ -331,7 +332,7 @@ const graphCoverageSchema = z.strictObject({
 export const javaScriptSemanticGraphInputSchema = z.strictObject({
   schema: z.literal("JavaScriptSemanticRelationGraph"),
   root_artifact_sha256: digestSchema,
-  application_graph_id: z.string().regex(/^jag_[a-f0-9]{64}$/u),
+  application_graph_id: prefixedDigestSchema("jag"),
   root_node_ids: z.array(semanticNodeIdSchema).min(1),
   nodes: z.array(javaScriptSemanticNodeSchema).min(1),
   relations: z.array(javaScriptSemanticRelationSchema),
@@ -344,7 +345,7 @@ export const javaScriptSemanticGraphInputSchema = z.strictObject({
 /** Stored JavaScript Semantic Relation Graph. */
 export const javaScriptSemanticGraphRecordSchema =
   javaScriptSemanticGraphInputSchema.extend({
-    graph_id: z.string().regex(/^jsrg_[a-f0-9]{64}$/u),
+    graph_id: prefixedDigestSchema("jsrg"),
   });
 
 /** Canonical semantic node. */

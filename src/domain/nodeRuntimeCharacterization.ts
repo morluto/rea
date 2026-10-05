@@ -11,8 +11,8 @@ import {
 } from "./javascriptExportInstrumentation.js";
 import { runtimeCharacterizationPlanSchema } from "./runtimeCharacterization.js";
 import { evidenceRecordSchema } from "./evidence.js";
+import { digestSchema } from "./../domain/digests.js";
 
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
 const nodeCharacterizationExpectedEffectSchema = z.enum([
   "pure",
   "observation-only",

@@ -5,9 +5,10 @@ import { z } from "zod";
 
 import { parseArtifactInventoryEvidence } from "./artifactInventoryEvidence.js";
 import { evidenceSchema } from "./evidence.js";
+import { digestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
+const evidenceIdSchema = prefixedDigestSchema("ev");
 const runtimeFamilySchema = z.enum([
   "android",
   "apple",
@@ -18,7 +19,7 @@ const runtimeFamilySchema = z.enum([
 ]);
 const observationSchema = z.strictObject({
   path: z.string().min(1),
-  artifact_id: z.string().regex(/^art_[a-f0-9]{64}$/u),
+  artifact_id: prefixedDigestSchema("art"),
   sha256: digestSchema,
   format: z.string().min(1),
 });
@@ -54,7 +55,7 @@ const runtimeIdentificationInputSchema = z.strictObject({
 
 /** Provider-neutral runtime identification with explicit tooling availability. */
 export const runtimeIdentificationResultSchema = z.strictObject({
-  identification_id: z.string().regex(/^rid_[a-f0-9]{64}$/u),
+  identification_id: prefixedDigestSchema("rid"),
   root_sha256: digestSchema,
   root_format: z.string().min(1),
   source_evidence_ids: z.array(evidenceIdSchema).min(1),

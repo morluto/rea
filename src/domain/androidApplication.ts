@@ -5,13 +5,14 @@ import { z } from "zod";
 
 import { parseArtifactInventoryEvidence } from "./artifactInventoryEvidence.js";
 import { evidenceSchema } from "./evidence.js";
+import { digestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
+const evidenceIdSchema = prefixedDigestSchema("ev");
 const pathSchema = z.string().min(1);
 const componentSchema = z.strictObject({
   path: pathSchema,
-  artifact_id: z.string().regex(/^art_[a-f0-9]{64}$/u),
+  artifact_id: prefixedDigestSchema("art"),
   sha256: digestSchema,
   format: z.string().min(1),
 });
@@ -23,7 +24,7 @@ export const androidApplicationProjectionInputSchema = z.strictObject({
 
 /** Deterministic, execution-free Android application inventory projection. */
 export const androidApplicationProjectionResultSchema = z.strictObject({
-  projection_id: z.string().regex(/^adp_[a-f0-9]{64}$/u),
+  projection_id: prefixedDigestSchema("adp"),
   root_sha256: digestSchema,
   root_format: z.literal("apk"),
   source_evidence_ids: z.array(evidenceIdSchema).min(1),

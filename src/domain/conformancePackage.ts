@@ -6,8 +6,9 @@ import { z } from "zod";
 import { evidenceEnvelopeSchema } from "./evidence.js";
 import { evidenceBundleSchema } from "./evidenceBundle.js";
 import { err, ok, type Result } from "./result.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const conformancePackageIdSchema = z.string().regex(/^cp_[a-f0-9]{64}$/u);
+const conformancePackageIdSchema = prefixedDigestSchema("cp");
 
 const scenarioIdSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9._-]*$/u);
 

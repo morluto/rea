@@ -1,6 +1,7 @@
 import { z } from "zod";
+import { digestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
 const boundedTextSchema = z.string().min(1);
 const boundedKeySchema = z.string().min(1);
 const unsafePathSegments = new Set(["", ".", ".."]);
@@ -68,7 +69,7 @@ const unavailableFactSchema = z.strictObject({
 const availableArtifactSchema = z
   .strictObject({
     available: z.literal(true),
-    artifact_id: z.string().regex(/^art_[a-f0-9]{64}$/u),
+    artifact_id: prefixedDigestSchema("art"),
     sha256: digestSchema,
   })
   .superRefine((artifact, context) => {
@@ -265,7 +266,7 @@ const applicationGraphEvidenceBaseSchema = z.strictObject({
   extractor: applicationExtractorSchema,
   coverage: applicationCoverageSchema,
   limitations: z.array(boundedTextSchema),
-  evidence_ids: z.array(z.string().regex(/^ev_[a-f0-9]{64}$/u)),
+  evidence_ids: z.array(prefixedDigestSchema("ev")),
 });
 
 type EvidenceValue = z.infer<typeof applicationGraphEvidenceBaseSchema>;

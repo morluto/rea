@@ -11,8 +11,9 @@ import {
   parseArtifactInventoryEvidence,
   type InventorySet,
 } from "./artifactInventoryEvidence.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
+const evidenceIdSchema = prefixedDigestSchema("ev");
 const comparisonStatusSchema = z.enum([
   "unchanged",
   "added",
@@ -73,8 +74,8 @@ const artifactChangeSchema = z.object({
 /** Deterministic artifact comparison with every change returned inline. */
 export const artifactComparisonResultSchema = z.object({
   status: comparisonStatusSchema,
-  left_manifest_id: z.string().regex(/^agm_[a-f0-9]{64}$/u),
-  right_manifest_id: z.string().regex(/^agm_[a-f0-9]{64}$/u),
+  left_manifest_id: prefixedDigestSchema("agm"),
+  right_manifest_id: prefixedDigestSchema("agm"),
   summary: z.object({
     unchanged: z.number().int().min(0),
     added: z.number().int().min(0),

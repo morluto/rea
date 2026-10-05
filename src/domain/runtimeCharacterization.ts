@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 
 import canonicalize from "canonicalize";
 import { z } from "zod";
+import { digestSchema } from "./../domain/digests.js";
 
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
 const stableIdSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9._:/-]*$/u);
 
 const runtimeIdentitySchema = z.strictObject({

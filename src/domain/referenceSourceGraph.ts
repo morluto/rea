@@ -5,7 +5,8 @@ import canonicalize from "canonicalize";
 import { z } from "zod";
 
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
+import { digestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 const boundedTextSchema = z.string().min(1);
 const relativePathSchema = z
   .string()
@@ -200,7 +201,7 @@ const historicalSourceGraphInputSchema = z.strictObject({
 const historicalSourceManifestBaseSchema = z.strictObject({
   schema: z.literal("HistoricalSourceManifest"),
   authority: z.literal("historical-reference"),
-  manifest_id: z.string().regex(/^hsm_[a-f0-9]{64}$/u),
+  manifest_id: prefixedDigestSchema("hsm"),
   graph_sha256: digestSchema,
   root_sha256: digestSchema,
   inventory_state: z.enum(["complete", "partial", "unknown"]),

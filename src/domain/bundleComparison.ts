@@ -8,9 +8,10 @@ import {
   type EvidenceBundle,
 } from "./evidenceBundle.js";
 import type { ResidualUnknown } from "./residualUnknown.js";
+import { digestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
+const evidenceIdSchema = prefixedDigestSchema("ev");
 const classificationSchema = z.enum([
   "added",
   "removed",

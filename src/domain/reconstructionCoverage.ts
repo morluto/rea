@@ -12,9 +12,10 @@ import {
   recommendedReconstructionProbes,
   type ReconstructionEvaluationContext,
 } from "./reconstructionCoverageEvaluation.js";
+import { digestSchema } from "./../domain/digests.js";
+import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
+const evidenceIdSchema = prefixedDigestSchema("ev");
 const stableIdSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9._:/-]{0,199}$/u);
 const boundedTextSchema = z.string().trim().min(1);
 

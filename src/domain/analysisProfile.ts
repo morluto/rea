@@ -4,8 +4,7 @@ import canonicalize from "canonicalize";
 import { z } from "zod";
 
 import { jsonObjectSchema, type JsonValue } from "./jsonValue.js";
-
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
+import { digestSchema } from "./../domain/digests.js";
 
 /** Concrete provider identity committed by an analysis profile. */
 export const committedProviderSchema = z.object({
