@@ -27,6 +27,7 @@ const subjectSchema = z.object({
     "mach-o",
     "elf",
     "pe",
+    "dos-mz",
     "zip",
     "ipa",
     "apk",

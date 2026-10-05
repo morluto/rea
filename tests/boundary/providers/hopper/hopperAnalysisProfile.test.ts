@@ -21,6 +21,16 @@ afterEach(async () => {
 });
 
 describe("Hopper analysis profiles", () => {
+  it("does not map DOS MZ to the 32-bit Hopper loader", () => {
+    expect(hopperLoaderArgsForTarget(target("dos-mz", "x86"))).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "ProviderAdapterError",
+        operation: "resolve_analysis_profile",
+      },
+    });
+  });
+
   it.each([
     [target("mach-o", "arm64"), ["-l", "Mach-O", "--aarch64"]],
     [target("elf", "x86_64"), ["-l", "ELF", "--intel-64"]],
@@ -143,7 +153,7 @@ describe("Hopper analysis profiles", () => {
 });
 
 const target = (
-  format: "mach-o" | "elf" | "pe",
+  format: "mach-o" | "elf" | "pe" | "dos-mz",
   architecture: "x86" | "x86_64" | "arm" | "arm64",
 ): BinaryTarget =>
   format === "pe"

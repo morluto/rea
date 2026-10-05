@@ -347,6 +347,12 @@ export class GhidraClient {
       providerVersion: this.#options.providerVersion,
       profileDigest: this.#options.profileDigest,
       targetSha256: this.#options.targetSha256,
+      ...(this.#options.expectedLanguageId === undefined
+        ? {}
+        : { expectedLanguageId: this.#options.expectedLanguageId }),
+      ...(this.#options.expectedCompilerSpecId === undefined
+        ? {}
+        : { expectedCompilerSpecId: this.#options.expectedCompilerSpecId }),
     });
     if (parsed.ok) return parsed;
     return err(

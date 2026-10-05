@@ -5,10 +5,22 @@ export const ghidraFunctionClassification = () => ({
   provenance: "ghidra-function-manager" as const,
 });
 
+/** Wire-boundary fixture, not evidence that a real Ghidra run was performed. */
+export const ghidraFunctionBody = () => ({
+  available: true as const,
+  provenance: "ghidra-function-body-address-set",
+  ranges: [{ start: "0x401000", end: "0x401005" }],
+  total_bytes: 6,
+  span_bytes: 6,
+  non_contiguous: false,
+  contains_entry: true,
+});
+
 export const ghidraFunctionIdentity = () => ({
   address: "0x401000",
   name: "fixture_main",
   classification: ghidraFunctionClassification(),
+  body: ghidraFunctionBody(),
 });
 
 const ghidraReferenceKind = () => ({

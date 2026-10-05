@@ -16,6 +16,7 @@ import { isPathWithinRoot } from "../domain/localPath.js";
 import { BinaryTargetError } from "../domain/errors.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { mzWindowsHeaderOffset } from "../domain/dosMz.js";
 import {
   hasZipSignature,
   zipPackageFormatForPath,
@@ -98,7 +99,7 @@ const detectArtifactFormat = async (
 ): Promise<
   | Exclude<
       BinaryTarget["format"],
-      "analysis-database" | "mach-o" | "elf" | "pe"
+      "analysis-database" | "mach-o" | "elf" | "pe" | "dos-mz"
     >
   | undefined
 > => {
@@ -140,7 +141,7 @@ const namedArtifactFormat = (
 const isArchiveFormat = (
   format: Exclude<
     BinaryTarget["format"],
-    "analysis-database" | "mach-o" | "elf" | "pe"
+    "analysis-database" | "mach-o" | "elf" | "pe" | "dos-mz"
   >,
 ): format is Extract<BinaryTarget, { kind: "archive" }>["format"] =>
   ["zip", "ipa", "apk", "msix", "appx", "asar", "dmg", "pkg"].includes(format);
@@ -247,9 +248,35 @@ const readExecutableMetadata = async (
   const prefix = Buffer.alloc(4096);
   const prefixRead = await handle.read(prefix, 0, prefix.length, 0);
   const bytes = prefix.subarray(0, prefixRead.bytesRead);
-  if (bytes.length >= 64 && bytes[0] === 0x4d && bytes[1] === 0x5a) {
-    const offset = bytes.readUInt32LE(0x3c);
-    return readPeMetadata(handle, offset);
+  if (bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a) {
+    const offset = mzWindowsHeaderOffset(bytes);
+    if (offset !== null) {
+      if (offset < 64)
+        return err("invalid Windows new-header offset in MZ image");
+      return readPeMetadata(handle, offset);
+    }
+    // MZ relocation records may extend past the initial probe; their format
+    // bounds are at most 65535 records inside a 65535-paragraph header.
+    const tableEnd =
+      bytes.length >= 28
+        ? bytes.readUInt16LE(24) + bytes.readUInt16LE(6) * 4
+        : 0;
+    const headerBytes = bytes.length >= 28 ? bytes.readUInt16LE(8) * 16 : 0;
+    const fileSize = (await handle.stat()).size;
+    if (
+      tableEnd > bytes.length &&
+      tableEnd <= headerBytes &&
+      tableEnd <= fileSize
+    ) {
+      const table = Buffer.alloc(tableEnd);
+      const observed = await handle.read(table, 0, table.length, 0);
+      return parseExecutableHeader(
+        table.subarray(0, observed.bytesRead),
+        hostArchitecture,
+        fileSize,
+      );
+    }
+    return parseExecutableHeader(bytes, hostArchitecture, fileSize);
   }
   if (bytes.length >= 8) {
     const magic = bytes.readUInt32BE(0);
@@ -283,6 +310,9 @@ const readPeMetadata = async (
   );
   if (fileHeaderRead.bytesRead !== fileHeader.length)
     return err("invalid or truncated PE header");
+  const signature = fileHeader.toString("ascii", 0, 2);
+  if (["NE", "LE", "LX"].includes(signature))
+    return err(`unsupported ${signature} executable in MZ image`);
   const optionalHeaderSize = fileHeader.readUInt16LE(20);
   if (optionalHeaderSize > 4096) return err("invalid PE optional header size");
   const record = Buffer.alloc(24 + optionalHeaderSize);

@@ -10,6 +10,7 @@ import type {
   ArtifactOccurrence,
 } from "../domain/artifactGraph.js";
 import { zipPackageFormatForPath } from "../domain/zipPackageFormat.js";
+import { mzWindowsHeaderOffset, parseDosMzHeader } from "../domain/dosMz.js";
 
 /** Mutable internal occurrence used until root-bound IDs are known. */
 export interface MutableOccurrence {
@@ -131,7 +132,9 @@ export const createRootNode = (input: {
         input.format,
       )
         ? "container"
-        : classifyArtifactPath(input.path).kind,
+        : input.format === "dos-mz"
+          ? "executable"
+          : classifyArtifactPath(input.path).kind,
     format: input.format,
     executable: false,
     contentState: "materialized",
@@ -283,6 +286,7 @@ export const classifyArtifactPath = (
 export const classifyArtifactContent = (
   path: string,
   prefix: Buffer,
+  fileSize = prefix.length,
 ): Pick<ArtifactNode, "kind" | "format"> => {
   const byPath = classifyArtifactPath(path);
   if (prefix.length >= 4) {
@@ -307,11 +311,32 @@ export const classifyArtifactContent = (
         format: "elf",
       };
   }
-  if (prefix.length >= 2 && prefix[0] === 0x4d && prefix[1] === 0x5a)
-    return {
-      kind: byPath.kind === "native-addon" ? "native-addon" : "executable",
-      format: "pe",
-    };
+  if (prefix.length >= 2 && prefix[0] === 0x4d && prefix[1] === 0x5a) {
+    if (
+      !Number.isSafeInteger(fileSize) ||
+      fileSize < prefix.length ||
+      prefix.length < Math.min(fileSize, 64)
+    )
+      return { kind: "unknown", format: "unknown" };
+    const windowsOffset = mzWindowsHeaderOffset(prefix);
+    if (windowsOffset !== null) {
+      if (
+        windowsOffset >= 64 &&
+        windowsOffset <= prefix.length - 4 &&
+        prefix
+          .subarray(windowsOffset, windowsOffset + 4)
+          .equals(Buffer.from([0x50, 0x45, 0, 0]))
+      )
+        return {
+          kind: byPath.kind === "native-addon" ? "native-addon" : "executable",
+          format: "pe",
+        };
+    } else if (parseDosMzHeader(prefix, fileSize).ok) {
+      return { kind: "executable", format: "dos-mz" };
+    }
+    // Missing bounded evidence and malformed MZ bytes both remain unclassified.
+    return { kind: "unknown", format: "unknown" };
+  }
   return byPath;
 };
 

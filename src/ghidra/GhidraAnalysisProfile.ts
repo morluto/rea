@@ -28,6 +28,7 @@ export const resolveGhidraAnalysisProfile = (
       err(new ProviderAdapterError(identity.id, "resolve_analysis_profile")),
     );
   const provider = { ...identity, version: installation.providerVersion };
+  const dosMz = target.format === "dos-mz";
   return Promise.resolve(
     ok({
       profile: createAnalysisProfile(provider, {
@@ -38,14 +39,21 @@ export const resolveGhidraAnalysisProfile = (
           ...(target.availableArchitectures ?? []),
         ].sort(),
         import_mode: "ephemeral-read-only",
-        loader: "auto-from-header",
-        language_id: "auto-from-header",
-        compiler_spec_id: "auto-default",
+        function_body_evidence: "complete-inclusive-ranges-v1",
+        loader: dosMz ? "MzLoader" : "auto-from-header",
+        language_id: dosMz ? "x86:LE:16:Real Mode" : "auto-from-header",
+        compiler_spec_id: dosMz ? "default" : "auto-default",
+        ...(dosMz
+          ? {
+              load_segment: "0x1000",
+              address_coordinates: "linear-byte-offset",
+            }
+          : {}),
         analyzer_preset: "ghidra-default",
       }),
       compatibility: {
-        languageId: "auto",
-        compilerSpecId: "auto",
+        languageId: dosMz ? "x86:LE:16:Real Mode" : "auto",
+        compilerSpecId: dosMz ? "default" : "auto",
       },
     }),
   );

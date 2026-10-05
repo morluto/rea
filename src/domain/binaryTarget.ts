@@ -1,12 +1,13 @@
 import type { BinaryArchitecture } from "./binaryTargetTypes.js";
 import { err, ok, type Result } from "./result.js";
+import { mzWindowsHeaderOffset, parseDosMzHeader } from "./dosMz.js";
 
 export type { BinaryArchitecture, BinaryTarget } from "./binaryTargetTypes.js";
 
 /** Format and architecture facts recovered from an executable header. */
 export type ExecutableMetadata =
   | {
-      readonly format: "mach-o" | "elf";
+      readonly format: "mach-o" | "elf" | "dos-mz";
       readonly architecture: BinaryArchitecture;
       readonly availableArchitectures: readonly BinaryArchitecture[];
     }
@@ -28,6 +29,7 @@ export type ExecutableMetadata =
 export const parseExecutableHeader = (
   bytes: Buffer,
   hostArchitecture: NodeJS.Architecture,
+  fileSize = bytes.length,
 ): Result<ExecutableMetadata, string> => {
   if (
     bytes.length >= 4 &&
@@ -35,7 +37,7 @@ export const parseExecutableHeader = (
   )
     return parseElf(bytes);
   if (bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a)
-    return parsePe(bytes);
+    return parseMz(bytes, fileSize);
   if (bytes.length < 8) return err("truncated or unsupported binary header");
   const magic = bytes.readUInt32BE(0);
   if ([0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe].includes(magic))
@@ -116,11 +118,27 @@ const parseElf = (bytes: Buffer): Result<ExecutableMetadata, string> => {
   });
 };
 
-const parsePe = (bytes: Buffer): Result<ExecutableMetadata, string> => {
-  if (bytes.length < 64) return err("truncated PE DOS header");
-  const offset = bytes.readUInt32LE(0x3c);
-  if (offset > bytes.length - 24) return err("invalid or truncated PE header");
-  return parsePeRecord(bytes.subarray(offset));
+const parseMz = (
+  bytes: Buffer,
+  fileSize: number,
+): Result<ExecutableMetadata, string> => {
+  const offset = mzWindowsHeaderOffset(bytes);
+  if (offset !== null) {
+    if (offset < 64 || offset > bytes.length - 24)
+      return err("invalid or truncated Windows executable header in MZ image");
+    const signature = bytes.toString("ascii", offset, offset + 2);
+    if (["NE", "LE", "LX"].includes(signature))
+      return err(`unsupported ${signature} executable in MZ image`);
+    return parsePeRecord(bytes.subarray(offset));
+  }
+  const parsed = parseDosMzHeader(bytes, fileSize);
+  return parsed.ok
+    ? ok({
+        format: "dos-mz",
+        architecture: "x86",
+        availableArchitectures: ["x86"],
+      })
+    : parsed;
 };
 
 /** Parse a bounded PE signature, COFF record, and optional header without I/O. */

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { parseConfig } from "../config.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
+import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import {
   GHIDRA_PROVIDER_IDENTITY,
   GHIDRA_PROVIDER_TOOL_CONTRACTS,
@@ -39,6 +40,55 @@ const provider = (
 };
 
 describe("Ghidra provider", () => {
+  it("separates complete body evidence from legacy length-only cache profiles", async () => {
+    const resolved = await provider().resolveAnalysisProfile(
+      executableTarget("elf", "x86_64"),
+    );
+    if (!resolved.ok || resolved.value.profile === null)
+      throw new Error("expected a committed Ghidra profile");
+    const profile = resolved.value.profile;
+    const legacy = createAnalysisProfile(
+      profile.provider,
+      Object.fromEntries(
+        Object.entries(profile.parameters).filter(
+          ([key]) => key !== "function_body_evidence",
+        ),
+      ),
+    );
+    expect(profile.digest).not.toBe(legacy.digest);
+    expect(profile.parameters.function_body_evidence).toBe(
+      "complete-inclusive-ranges-v1",
+    );
+  });
+
+  it("commits DOS loader and real-mode language while retaining the CPU family", async () => {
+    const ghidra = provider();
+    const target: BinaryTarget = {
+      path: "/tmp/legacy.exe",
+      sha256: "a".repeat(64),
+      kind: "executable",
+      format: "dos-mz",
+      architecture: "x86",
+      availableArchitectures: ["x86"],
+    };
+    expect(ghidra.inspectTargetSupport(target).status).toBe("supported");
+    const resolved = await ghidra.resolveAnalysisProfile(target);
+    expect(resolved.ok && resolved.value).toMatchObject({
+      profile: {
+        parameters: {
+          target_format: "dos-mz",
+          architecture: "x86",
+          loader: "MzLoader",
+          language_id: "x86:LE:16:Real Mode",
+          compiler_spec_id: "default",
+          load_segment: "0x1000",
+          address_coordinates: "linear-byte-offset",
+        },
+      },
+    });
+    const windows = provider({ ...installationHost(), platform: "win32" });
+    expect(windows.inspectTargetSupport(target).status).toBe("unsupported");
+  });
   it("discovers the exact installation once without launching Ghidra", () => {
     let probeCount = 0;
     const host: GhidraInstallationHost = {

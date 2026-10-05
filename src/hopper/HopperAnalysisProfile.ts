@@ -90,6 +90,10 @@ export const hopperLoaderArgsForTarget = (
       return ok(["-l", "ELF", flag]);
     case "pe":
       return ok(["-l", "WinPE", flag]);
+    case "dos-mz":
+      return err(
+        new ProviderAdapterError("hopper", "resolve_analysis_profile"),
+      );
   }
 };
 

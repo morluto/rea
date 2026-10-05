@@ -238,7 +238,7 @@ const familiesFor = (format: string, path: string): RuntimeFamily[] => {
   if (format === "javascript-bundle") families.add("javascript");
   if (format === "jvm-class" || /(?:^|\/)[^/]+\.class$/iu.test(path))
     families.add("jvm");
-  if (["elf", "mach-o", "mach-o-universal", "pe"].includes(format))
+  if (["elf", "mach-o", "mach-o-universal", "pe", "dos-mz"].includes(format))
     families.add("native");
   if (format === "webassembly" || /(?:^|\/)[^/]+\.wasm$/iu.test(path))
     families.add("webassembly");

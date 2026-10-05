@@ -59,3 +59,19 @@ export const pe = (
   }
   return bytes;
 };
+
+/** Build a DOS MZ image with a 32-byte header and a 16-bit entry point. */
+export const dosMz = (moduleSize = 128): Buffer => {
+  const size = 32 + moduleSize;
+  const bytes = Buffer.alloc(size);
+  bytes.write("MZ", 0, "ascii");
+  bytes.writeUInt16LE(size % 512, 2);
+  bytes.writeUInt16LE(Math.ceil(size / 512), 4);
+  bytes.writeUInt16LE(2, 8);
+  bytes.writeUInt16LE(0xffff, 12);
+  bytes.writeUInt16LE(28, 24);
+  bytes.set([0xb8, 0x00, 0x4c, 0xcd, 0x21], 32);
+  // This is module data, not an e_lfanew field in a Windows DOS stub.
+  if (size >= 64) bytes.writeUInt32LE(0xfedcba98, 60);
+  return bytes;
+};

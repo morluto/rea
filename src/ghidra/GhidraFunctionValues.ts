@@ -7,6 +7,7 @@ import {
 
 import { AnalysisInputError, AnalysisOutputError } from "../domain/errors.js";
 import {
+  functionBodyEntryAgrees,
   functionInstructionWindowSchema,
   functionDossierSchema,
   type FunctionDossier,
@@ -18,6 +19,9 @@ import { err, ok, type Result } from "../domain/result.js";
 import {
   ghidraIdentifierSchema,
   ghidraCanonicalAddressSchema,
+  ghidraFunctionClassificationSchema as classification,
+  ghidraFunctionBodySchema as ghidraFunctionBody,
+  ghidraProcedureIdentitySchema as procedureIdentity,
 } from "./GhidraInventoryValues.js";
 
 /** Read-only function operations admitted by the Ghidra adapter. */
@@ -104,21 +108,6 @@ export const parseGhidraFunctionInput = (
     : err(new AnalysisInputError(operation, { cause: parsed.error }));
 };
 
-const classification = z
-  .object({
-    external: z.boolean(),
-    thunk: z.boolean(),
-    thunk_target: ghidraCanonicalAddressSchema.nullable(),
-    provenance: z.literal("ghidra-function-manager"),
-  })
-  .strict();
-const procedureIdentity = z
-  .object({
-    address: ghidraCanonicalAddressSchema,
-    name: z.string().min(1),
-    classification,
-  })
-  .strict();
 const localVariable = z
   .object({
     description: z.string(),
@@ -179,8 +168,21 @@ const procedureInfo = z
     signature: z.string().nullable(),
     locals: z.array(localVariable),
     classification,
+    body: ghidraFunctionBody,
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (
+      !functionBodyEntryAgrees(value.body, value.entrypoint) ||
+      (value.body.available &&
+        (value.length !== value.body.total_bytes ||
+          (!value.classification.external && !value.body.contains_entry)))
+    )
+      context.addIssue({
+        code: "custom",
+        message: "Ghidra function body disagrees with entry point or length",
+      });
+  });
 
 const ghidraNativeApiBoundary = nativeApiBoundarySchema.superRefine(
   (value, context) => {
@@ -263,6 +265,10 @@ const ghidraNativeValueFlow = nativeValueFlowSchema.superRefine(
 
 const ghidraFunctionDossier = functionDossierSchema
   .extend({
+    procedure: functionDossierSchema.shape.procedure.safeExtend({
+      classification,
+      body: ghidraFunctionBody,
+    }),
     native_api: ghidraNativeApiBoundary,
     native_value_flow: ghidraNativeValueFlow,
   })
@@ -307,7 +313,13 @@ const ghidraFunctionDossier = functionDossierSchema
     ];
     if (
       identities.some(
-        ({ classification: facts }) => !classification.safeParse(facts).success,
+        (identity) =>
+          !classification.safeParse(identity.classification).success ||
+          !ghidraFunctionBody.safeParse(identity.body).success ||
+          !functionBodyEntryAgrees(identity.body, identity.address) ||
+          (identity.body.available &&
+            identity.classification?.external === false &&
+            !identity.body.contains_entry),
       )
     )
       context.addIssue({

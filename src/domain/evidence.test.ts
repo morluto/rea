@@ -190,3 +190,26 @@ it("derives byte-stable bundle manifests independent of record order", () => {
     captures: [{ evidence_id: captureEvidence.evidence_id }],
   });
 });
+
+describe("DOS analysis evidence identity", () => {
+  it("retains DOS MZ identity independently of PE identity", () => {
+    const target = {
+      path: TARGET.path,
+      sha256: TARGET.sha256,
+      kind: "executable" as const,
+      format: "dos-mz" as const,
+      architecture: "x86" as const,
+      availableArchitectures: ["x86" as const],
+    };
+    const observation = { operation: "health", parameters: {}, result: true };
+    const evidence = createEvidence(target, PROVIDER, observation);
+    expect(parseEvidence(evidence).subject).toMatchObject({
+      format: "dos-mz",
+      architecture: "x86",
+    });
+    expect(evidence.evidence_id).not.toBe(
+      createEvidence({ ...target, format: "pe" }, PROVIDER, observation)
+        .evidence_id,
+    );
+  });
+});

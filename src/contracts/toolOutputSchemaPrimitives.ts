@@ -5,6 +5,7 @@ import {
   procedureIdentitySchema,
   localVariableSchema,
   functionDossierSchema,
+  functionBodySchema,
 } from "../domain/hopperValues.js";
 import { analysisProfileSchema } from "../domain/analysisProfile.js";
 import { evidenceEnvelopeSchema } from "../domain/evidence.js";
@@ -49,6 +50,7 @@ export const targetFormatSchema = z.enum([
   "mach-o",
   "elf",
   "pe",
+  "dos-mz",
   "zip",
   "ipa",
   "apk",
@@ -467,6 +469,10 @@ export const procedureInfoOutput = resultOf(
     signature: nullableText,
     locals: z.array(localVariable),
     classification: procedureClassificationSchema.nullable().default(null),
+    body: functionBodySchema.default({
+      available: false,
+      reason: "The provider did not report complete function body ranges.",
+    }),
   }),
 );
 

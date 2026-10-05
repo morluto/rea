@@ -9,6 +9,7 @@ import {
 } from "./GhidraFunctionValues.js";
 import {
   ghidraFunctionClassification,
+  ghidraFunctionBody,
   ghidraFunctionDossier,
   ghidraFunctionIdentity,
   ghidraNativeApiBoundary,
@@ -96,6 +97,7 @@ describe("Ghidra function-analysis result values", () => {
           },
         ],
         classification: ghidraFunctionClassification(),
+        body: ghidraFunctionBody(),
       }),
     ).toMatchObject({ ok: true });
     expect(
@@ -321,3 +323,109 @@ const malformedOutputs = (): Array<
     ],
   ];
 };
+
+// Inclusive ranges are a wire-boundary fixture, not a claim of real-provider acceptance.
+describe("complete Ghidra function body range evidence", () => {
+  const body = () => ({
+    available: true,
+    provenance: "ghidra-function-body-address-set",
+    ranges: [
+      { start: "0x401000", end: "0x401002" },
+      { start: "0x401010", end: "0x401011" },
+    ],
+    total_bytes: 5,
+    span_bytes: 18,
+    non_contiguous: true,
+    contains_entry: true,
+  });
+  const info = () => ({
+    name: "fixture_main",
+    entrypoint: "0x401000",
+    basicblock_count: 2,
+    length: 5,
+    signature: null,
+    locals: [],
+    classification: ghidraFunctionClassification(),
+    body: body(),
+  });
+  it("preserves inclusive disjoint ranges and distinguishes owned bytes from enclosing span", () => {
+    expect(parseGhidraFunctionResult("procedure_info", info())).toMatchObject({
+      ok: true,
+      value: { body: body(), length: 5 },
+    });
+  });
+  it("rejects omitted body evidence instead of accepting a length as complete coverage", () => {
+    const { body: omitted, ...withoutBody } = info();
+    expect(omitted.total_bytes).toBe(5);
+    expect(parseGhidraFunctionResult("procedure_info", withoutBody).ok).toBe(
+      false,
+    );
+  });
+  it("requires local entry coverage but permits an observed empty external body", () => {
+    const empty = {
+      ...body(),
+      ranges: [],
+      total_bytes: 0,
+      span_bytes: 0,
+      non_contiguous: false,
+      contains_entry: false,
+    };
+    expect(
+      parseGhidraFunctionResult("procedure_info", {
+        ...info(),
+        body: empty,
+        length: 0,
+      }).ok,
+    ).toBe(false);
+    expect(
+      parseGhidraFunctionResult("procedure_info", {
+        ...info(),
+        classification: { ...ghidraFunctionClassification(), external: true },
+        body: empty,
+        length: 0,
+      }).ok,
+    ).toBe(true);
+  });
+  it("rejects a missing body on nested dossier identities", () => {
+    const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+    const { body: omitted, ...identity } = ghidraFunctionIdentity();
+    expect(omitted.total_bytes).toBe(6);
+    expect(
+      parseGhidraFunctionResult("analyze_function", {
+        ...dossier,
+        callers: [identity],
+      }).ok,
+    ).toBe(false);
+  });
+  it("requires body length and Ghidra-specific body provenance", () => {
+    expect(
+      parseGhidraFunctionResult("procedure_info", { ...info(), length: 18 }).ok,
+    ).toBe(false);
+    expect(
+      parseGhidraFunctionResult("procedure_info", {
+        ...info(),
+        body: { ...body(), provenance: "unreviewed" },
+      }).ok,
+    ).toBe(false);
+  });
+  it.each([
+    { total_bytes: 18 },
+    { span_bytes: 5 },
+    { non_contiguous: false },
+    { contains_entry: false },
+    {
+      ranges: [
+        { start: "0x401000", end: "0x401002" },
+        { start: "0x401002", end: "0x401004" },
+      ],
+    },
+    { ranges: [{ start: "0x401002", end: "0x401000" }] },
+  ])("rejects contradictory complete body facts %j", (change) => {
+    expect(
+      parseGhidraFunctionResult("procedure_info", {
+        ...info(),
+        body: { ...body(), ...change },
+      }).ok,
+    ).toBe(false);
+  });
+});

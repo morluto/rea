@@ -35,6 +35,7 @@ const formatSchema = z.enum([
   "mach-o",
   "elf",
   "pe",
+  "dos-mz",
   "zip",
   "ipa",
   "apk",

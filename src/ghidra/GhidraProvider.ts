@@ -189,6 +189,13 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     );
     if (!prerequisites.ok) return unavailableClient(prerequisites.error);
     const committedProfile = prerequisites.value.profile;
+    const targetLimitations =
+      target.format === "dos-mz"
+        ? [
+            "DOS MZ uses 16-bit x86 real mode with the Ghidra load segment 0x1000. Returned addresses are linear byte coordinates; they do not identify a unique segment:offset alias.",
+            "Static DOS analysis does not emulate BIOS, DOS interrupts, device ports, or self-modifying unpacking code. Packed targets require a separately identified unpacked artifact for original-program analysis; appended overlays are not the initialized load module.",
+          ]
+        : [];
     const providerLimitations =
       installation.platform === "win32"
         ? windowsP0Limitations
@@ -206,6 +213,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         bridgeScriptPath: fileURLToPath(
           new URL("../../bridge/ghidra/ReaGhidraBridge.java", import.meta.url),
         ),
+        ...(target.format === "dos-mz" ? { dosMz: true } : {}),
         platform: installation.platform,
       }),
       targetPath: target.path,
@@ -216,6 +224,12 @@ export class GhidraProvider implements AnalysisProviderCandidate {
           : "unix-socket",
       providerVersion: prerequisites.value.providerVersion,
       profileDigest: committedProfile.digest,
+      ...(target.format === "dos-mz"
+        ? {
+            expectedLanguageId: "x86:LE:16:Real Mode",
+            expectedCompilerSpecId: "default",
+          }
+        : {}),
       ...(context === undefined ? {} : { runId: context.runId }),
       logger: this.logger.child({ layer: "ghidra-bridge" }),
     });
@@ -240,7 +254,11 @@ export class GhidraProvider implements AnalysisProviderCandidate {
           return ok(
             createAnalysisExecution(started.value, committedProfile.provider, {
               analysisProfile: committedProfile,
-              limitations: [...healthLimitations, ...providerLimitations],
+              limitations: [
+                ...healthLimitations,
+                ...providerLimitations,
+                ...targetLimitations,
+              ],
             }),
           );
         }
@@ -263,7 +281,11 @@ export class GhidraProvider implements AnalysisProviderCandidate {
           createAnalysisExecution(result.value, committedProfile.provider, {
             rawResult: called.value,
             analysisProfile: committedProfile,
-            limitations: [...limitationsFor(operation), ...providerLimitations],
+            limitations: [
+              ...limitationsFor(operation),
+              ...providerLimitations,
+              ...targetLimitations,
+            ],
           }),
         );
       },

@@ -1,6 +1,10 @@
 import { z } from "zod";
 
 import { AnalysisInputError, AnalysisOutputError } from "../domain/errors.js";
+import {
+  functionBodySchema,
+  functionBodyEntryAgrees,
+} from "../domain/hopperValues.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 
@@ -87,9 +91,52 @@ const procedureFacts = z
     thunk_target: canonicalAddress.nullable(),
   })
   .strict();
-const functionClassification = procedureFacts
+/** Ghidra FunctionManager classification, independent of body ownership inference. */
+export const ghidraFunctionClassificationSchema = procedureFacts
   .extend({ provenance: z.literal("ghidra-function-manager") })
   .strict();
+/** Require complete canonical AddressSet evidence on every Ghidra function identity. */
+export const ghidraFunctionBodySchema = functionBodySchema.superRefine(
+  (body, context) => {
+    if (
+      !body.available ||
+      body.provenance !== "ghidra-function-body-address-set" ||
+      body.ranges.some(
+        ({ start, end }) =>
+          !ghidraCanonicalAddressSchema.safeParse(start).success ||
+          !ghidraCanonicalAddressSchema.safeParse(end).success,
+      )
+    )
+      context.addIssue({
+        code: "custom",
+        message:
+          "Ghidra omitted complete canonical function-body AddressSet evidence",
+      });
+  },
+);
+
+/** Strict provider identity shared by inventory and function-analysis results. */
+export const ghidraProcedureIdentitySchema = z
+  .object({
+    address: ghidraCanonicalAddressSchema,
+    name: z.string().min(1),
+    classification: ghidraFunctionClassificationSchema,
+    body: ghidraFunctionBodySchema,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (
+      !functionBodyEntryAgrees(value.body, value.address) ||
+      (value.body.available &&
+        !value.classification.external &&
+        !value.body.contains_entry)
+    )
+      context.addIssue({
+        code: "custom",
+        message: "Ghidra function body disagrees with its entry point",
+      });
+  });
+
 const stringFacts = z
   .object({
     encoding: z.string().min(1),
@@ -138,15 +185,24 @@ const containingProcedure = z.discriminatedUnion("found", [
     .object({
       query_address: canonicalAddress,
       found: z.literal(true),
-      procedure: z
-        .object({
-          address: canonicalAddress,
-          name: z.string().min(1),
-          classification: functionClassification,
-        })
-        .strict(),
+      procedure: ghidraProcedureIdentitySchema,
     })
-    .strict(),
+    .strict()
+    .superRefine((value, context) => {
+      const body = value.procedure.body;
+      if (
+        body.available &&
+        !functionBodyEntryAgrees(
+          { ...body, contains_entry: true },
+          value.query_address,
+        )
+      )
+        context.addIssue({
+          code: "custom",
+          message:
+            "Found containing procedure body does not contain the query address",
+        });
+    }),
   z
     .object({
       query_address: canonicalAddress,

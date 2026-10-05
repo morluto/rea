@@ -1,9 +1,19 @@
 import { describe, expect, it } from "vitest";
 
 import { parseExecutableHeader } from "./binaryTarget.js";
-import { elf, fat, pe, thinMach } from "./binaryTarget.fixture.js";
+import { dosMz, elf, fat, pe, thinMach } from "./binaryTarget.fixture.js";
 
 describe("executable header parsing", () => {
+  it("recognizes a DOS MZ without interpreting load-module bytes as e_lfanew", () => {
+    expect(parseExecutableHeader(dosMz(), "x64")).toEqual({
+      ok: true,
+      value: {
+        format: "dos-mz",
+        architecture: "x86",
+        availableArchitectures: ["x86"],
+      },
+    });
+  });
   it.each([
     [elf(1, 1, 62), "elf", "x86_64"],
     [elf(2, 2, 183), "elf", "arm64"],

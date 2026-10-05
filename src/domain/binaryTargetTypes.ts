@@ -26,7 +26,7 @@ type ExecutableTarget = BinaryTargetIdentity & {
  */
 export type BinaryTarget =
   | (ExecutableTarget & {
-      readonly format: "mach-o" | "elf";
+      readonly format: "mach-o" | "elf" | "dos-mz";
       readonly executableRole?: never;
       readonly managed?: never;
     })

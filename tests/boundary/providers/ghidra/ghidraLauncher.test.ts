@@ -65,6 +65,27 @@ afterEach(async () => {
 });
 
 describe("Ghidra headless launcher", () => {
+  it("forces the admitted real-mode language and loader for DOS MZ", () => {
+    const arguments_ = ghidraHeadlessArguments({
+      projectRoot: "/tmp/project",
+      targetPath: "/tmp/target",
+      bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
+      descriptorPath: "/tmp/session.json",
+      ghidraLogPath: "/tmp/ghidra.log",
+      scriptLogPath: "/tmp/script.log",
+      dosMz: true,
+    });
+    expect(arguments_.slice(4, 10)).toEqual([
+      "-loader",
+      "MzLoader",
+      "-processor",
+      "x86:LE:16:Real Mode",
+      "-cspec",
+      "default",
+    ]);
+    expect(arguments_).toContain("-readOnly");
+    expect(arguments_).toContain("-deleteProject");
+  });
   it("builds a read-only import in deterministic order", () => {
     expect(
       ghidraHeadlessArguments({

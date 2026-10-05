@@ -116,6 +116,18 @@ the CLI and stdio MCP, including special filenames, unresolved discovery
 locations, and independently resolved loaded scripts. Double-quote filenames
 are tested on POSIX only because Windows does not support them.
 
+## DOS Ghidra analysis
+
+`npm run verify:ghidra:dos` requires the supported Ghidra and JDK installation
+on Linux x64 or macOS x64/arm64. It generates a source-owned MZ fixture without
+a DOS emulator or compiler, then checks real 16-bit decoding, segment
+relocation, near/far calls, decompilation, disjoint function body ranges,
+stable CLI/MCP observations, unchanged source bytes, and owned process/project
+cleanup. Raw p-code address-space selector tokens are reported separately from
+the stable observation comparison. Linux x64 is verified; macOS DOS remains
+unverified. This lane is separate from host-native and optional cross-format
+verification. See [DOS analysis](ghidra-dos.md).
+
 ## Apple Interface Builder archives
 
 `npm run verify:interface-builder` compiles the source-owned AppKit XIB into a

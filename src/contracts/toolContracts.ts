@@ -225,7 +225,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "procedure_info",
-    "Return provider metadata for one procedure identified by symbol or address: entrypoint, signature, locals, size, and block count.",
+    "Return provider metadata for one procedure identified by symbol or address: entrypoint, signature, locals, size, block count, and complete inclusive body ranges when observed. Body byte count and enclosing span remain distinct; unavailable extent is explicit.",
     z.object({ procedure, document }),
   ),
   official(

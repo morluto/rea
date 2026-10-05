@@ -42,3 +42,6 @@ test-results.xml
 # OS
 .DS_Store
 Thumbs.db
+
+# Local reference sources and analysis artifacts
+/_reference/

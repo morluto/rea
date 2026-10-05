@@ -51,6 +51,8 @@ import ghidra.app.decompiler.DecompiledFunction;
 import ghidra.framework.Application;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSpace;
+import ghidra.program.model.address.AddressRange;
+import ghidra.program.model.address.AddressRangeIterator;
 import ghidra.program.model.block.BasicBlockModel;
 import ghidra.program.model.block.CodeBlock;
 import ghidra.program.model.block.CodeBlockIterator;
@@ -440,7 +442,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.addProperty("name", procedureName(function));
         result.addProperty("entrypoint", canonicalAddress(function.getEntryPoint()));
         result.addProperty("basicblock_count", basicBlocks(function).size());
-        result.addProperty("length", function.getBody().getNumAddresses());
+        JsonObject body = functionBody(function);
+        result.addProperty("length", body.get("total_bytes").getAsLong());
+        result.add("body", body);
         result.addProperty("signature", function.getPrototypeString(false, true));
         result.add("locals", functionLocals(function));
         result.add("classification", functionClassification(function));
@@ -774,6 +778,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
         limitations.add(
             "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
         );
+        if (decompilation != null && decompilation.getErrorMessage() != null &&
+            !decompilation.getErrorMessage().isBlank()) {
+            limitations.add("Ghidra decompiler diagnostic: " + decompilation.getErrorMessage());
+        }
         result.add("limitations", limitations);
         return result;
     }
@@ -2351,7 +2359,65 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.addProperty("address", canonicalAddress(function.getEntryPoint()));
         result.addProperty("name", procedureName(function));
         result.add("classification", functionClassification(function));
+        result.add("body", functionBody(function));
         return result;
+    }
+
+    /** Observe the entire AddressSet; range endpoints are inclusive, not a guessed span. */
+    private static JsonObject functionBody(Function function) {
+        JsonArray ranges = new JsonArray();
+        BigInteger total = BigInteger.ZERO;
+        Address first = null;
+        Address last = null;
+        AddressSpace space = null;
+        boolean multipleSpaces = false;
+        AddressRangeIterator iterator = function.getBody().getAddressRanges(true);
+        while (iterator.hasNext()) {
+            AddressRange range = iterator.next();
+            Address start = range.getMinAddress();
+            Address end = range.getMaxAddress();
+            if (start.getAddressSpace().getAddressableUnitSize() != 1) {
+                throw new IllegalStateException("Function body byte coverage requires a byte-addressed space");
+            }
+            JsonObject value = new JsonObject();
+            value.addProperty("start", canonicalAddress(start));
+            value.addProperty("end", canonicalAddress(end));
+            ranges.add(value);
+            BigInteger begin = new BigInteger(Long.toUnsignedString(start.getOffset()));
+            BigInteger finish = new BigInteger(Long.toUnsignedString(end.getOffset()));
+            total = total.add(finish.subtract(begin).add(BigInteger.ONE));
+            if (first == null) {
+                first = start;
+                space = start.getAddressSpace();
+            } else if (!space.equals(start.getAddressSpace())) {
+                multipleSpaces = true;
+            }
+            last = end;
+        }
+        JsonObject result = new JsonObject();
+        result.addProperty("available", true);
+        result.addProperty("provenance", "ghidra-function-body-address-set");
+        result.add("ranges", ranges);
+        result.addProperty("total_bytes", safeBodyByteCount(total));
+        if (multipleSpaces) {
+            result.add("span_bytes", JsonNull.INSTANCE);
+        } else {
+            BigInteger span = first == null ? BigInteger.ZERO :
+                new BigInteger(Long.toUnsignedString(last.getOffset()))
+                    .subtract(new BigInteger(Long.toUnsignedString(first.getOffset())))
+                    .add(BigInteger.ONE);
+            result.addProperty("span_bytes", safeBodyByteCount(span));
+        }
+        result.addProperty("non_contiguous", ranges.size() > 1);
+        result.addProperty("contains_entry", function.getBody().contains(function.getEntryPoint()));
+        return result;
+    }
+
+    private static long safeBodyByteCount(BigInteger value) {
+        if (value.signum() < 0 || value.compareTo(BigInteger.valueOf(9007199254740991L)) > 0) {
+            throw new IllegalStateException("Function body byte coverage exceeds exact JSON integer range");
+        }
+        return value.longValueExact();
     }
 
     private static String exclusiveEnd(MemoryBlock block) {

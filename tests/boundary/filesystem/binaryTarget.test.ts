@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
-import { pe, thinMach } from "../../../src/domain/binaryTarget.fixture.js";
+import {
+  dosMz,
+  pe,
+  thinMach,
+} from "../../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("binary target I/O", () => {
@@ -155,6 +159,24 @@ describe("binary target I/O", () => {
     expect(result.ok && result.value).toMatchObject({
       format: "pe",
       architecture: "x86_64",
+    });
+  });
+});
+
+describe("DOS binary target I/O", () => {
+  it("validates a complete DOS file beyond the initial metadata probe", async () => {
+    const directory = await createTestTempDirectory("rea-dos-target-");
+    const path = join(directory, "legacy.exe");
+    const bytes = dosMz(8192);
+    await writeFile(path, bytes);
+    expect(await parseBinaryTarget(path)).toMatchObject({
+      ok: true,
+      value: { format: "dos-mz", architecture: "x86", kind: "executable" },
+    });
+    await writeFile(path, bytes.subarray(0, bytes.length - 1));
+    expect(await parseBinaryTarget(path)).toMatchObject({
+      ok: false,
+      error: { message: "Cannot open artifact: truncated DOS MZ load module" },
     });
   });
 });

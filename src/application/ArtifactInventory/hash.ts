@@ -10,6 +10,9 @@ export type HashResult = {
   readonly prefix: Buffer;
 };
 
+/** Bounded classification evidence; this is not an executable format size limit. */
+export const ARTIFACT_CLASSIFICATION_PREFIX_BYTES = 8_192;
+
 export const abortIfNeeded = (signal?: AbortSignal): void => {
   if (signal?.aborted === true)
     throw new ArtifactReaderFailure(
@@ -31,8 +34,11 @@ export const hashReadable = async (
     const chunk = streamChunkToBuffer(raw);
     bytes += chunk.length;
     hash.update(chunk);
-    if (prefixBytes < 16) {
-      const selected = chunk.subarray(0, 16 - prefixBytes);
+    if (prefixBytes < ARTIFACT_CLASSIFICATION_PREFIX_BYTES) {
+      const selected = chunk.subarray(
+        0,
+        ARTIFACT_CLASSIFICATION_PREFIX_BYTES - prefixBytes,
+      );
       prefixes.push(selected);
       prefixBytes += selected.length;
     }

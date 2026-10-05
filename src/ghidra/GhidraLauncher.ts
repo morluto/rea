@@ -61,6 +61,8 @@ export interface GhidraHeadlessLauncherOptions {
   readonly bridgeScriptPath: string;
   readonly platform?: NodeJS.Platform;
   readonly comSpec?: string;
+  /** Select the admitted 16-bit real-mode MZ import instead of auto-detection. */
+  readonly dosMz?: true;
 }
 
 /** Launch Ghidra without copying scripts into or modifying its installation. */
@@ -109,6 +111,9 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         descriptorPath: paths.descriptorPath,
         ghidraLogPath: paths.ghidraLogPath,
         scriptLogPath: paths.scriptLogPath,
+        ...(this.options.dosMz === undefined
+          ? {}
+          : { dosMz: this.options.dosMz }),
       });
       const command = ghidraHeadlessCommand({
         platform,
@@ -255,6 +260,7 @@ export interface GhidraHeadlessArgumentOptions {
   readonly descriptorPath: string;
   readonly ghidraLogPath: string;
   readonly scriptLogPath: string;
+  readonly dosMz?: true;
 }
 
 /** Build the complete read-only headless invocation in deterministic order. */
@@ -265,6 +271,16 @@ export const ghidraHeadlessArguments = (
   "rea-project",
   "-import",
   options.targetPath,
+  ...(options.dosMz === true
+    ? [
+        "-loader",
+        "MzLoader",
+        "-processor",
+        "x86:LE:16:Real Mode",
+        "-cspec",
+        "default",
+      ]
+    : []),
   "-readOnly",
   "-deleteProject",
   "-log",

@@ -56,6 +56,8 @@ export const parseGhidraSessionInfo = (
     readonly providerVersion: string;
     readonly profileDigest: string;
     readonly targetSha256: string;
+    readonly expectedLanguageId?: string;
+    readonly expectedCompilerSpecId?: string;
   },
 ): Result<GhidraSessionInfo, Error> => {
   const parsed = sessionInfoSchema.safeParse(value);
@@ -65,6 +67,11 @@ export const parseGhidraSessionInfo = (
     parsed.data.provider.version !== expected.providerVersion ||
     parsed.data.profile_digest !== expected.profileDigest ||
     parsed.data.target.sha256 !== expected.targetSha256 ||
+    (expected.expectedLanguageId !== undefined &&
+      parsed.data.target.language_id !== expected.expectedLanguageId) ||
+    (expected.expectedCompilerSpecId !== undefined &&
+      parsed.data.target.compiler_spec_id !==
+        expected.expectedCompilerSpecId) ||
     new Set(parsed.data.capabilities).size !==
       GHIDRA_SESSION_CAPABILITIES.length ||
     GHIDRA_SESSION_CAPABILITIES.some(
