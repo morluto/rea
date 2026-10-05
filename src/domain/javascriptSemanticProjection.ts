@@ -98,25 +98,37 @@ export const collectSemanticReferences = (
   const output: JavaScriptSemanticReference[] = [];
   const seen = new Set<string>();
   traverseJavaScriptAst(program, {
-    enter: (node, parent) => {
+    enter: (node, parent, ancestors) => {
       if (!t.isIdentifier(node) || parent === null) return;
-      const role = semanticReferenceRole(node, parent);
+      const role = semanticIdentifierRole(node, parent, ancestors);
       if (role === null) return;
-      const key = `${String(node.start)}:${role}:${node.name}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-      const binding = resolveSemanticBindingState(state, node, node.name);
-      const blocked =
-        binding === undefined &&
-        semanticResolutionBlocked(state, node, node.name);
-      output.push({
-        name: node.name,
-        role,
-        location: range(node),
-        bindingId: binding?.bindingId ?? null,
-        resolution:
-          binding !== undefined ? "resolved" : blocked ? "unknown" : "unbound",
-      });
+      // A compound assignment or update reads before it writes; emit both so
+      // reference consumers see the read they actually execute.
+      const roles =
+        role === "write" && semanticReadsBeforeWrite(node, parent)
+          ? (["read", "write"] as const)
+          : ([role] as const);
+      for (const resolvedRole of roles) {
+        const key = `${String(node.start)}:${resolvedRole}:${node.name}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const binding = resolveSemanticBindingState(state, node, node.name);
+        const blocked =
+          binding === undefined &&
+          semanticResolutionBlocked(state, node, node.name);
+        output.push({
+          name: node.name,
+          role: resolvedRole,
+          location: range(node),
+          bindingId: binding?.bindingId ?? null,
+          resolution:
+            binding !== undefined
+              ? "resolved"
+              : blocked
+                ? "unknown"
+                : "unbound",
+        });
+      }
     },
   });
   return output;
@@ -395,6 +407,111 @@ const declarationCallableId = (
     : semanticCallableIdForNode(declarator.init);
 };
 
+/**
+ * True when writing `node` also reads it first: a compound assignment
+ * (`+=`, `||=`, …) or an update (`++`/`--`). A plain `=` writes only.
+ *
+ * One predicate serves both member operations and identifier references so the
+ * two can never disagree about what counts as a read-modify-write.
+ */
+export const semanticReadsBeforeWrite = (
+  node: t.Node,
+  parent: t.Node,
+): boolean =>
+  (t.isAssignmentExpression(parent) &&
+    parent.left === node &&
+    parent.operator !== "=") ||
+  (t.isUpdateExpression(parent) && parent.argument === node);
+
+/**
+ * Role of one identifier occurrence, given the node's ancestry.
+ *
+ * A binding inside a destructuring pattern has an ObjectProperty/ArrayPattern
+ * as its direct parent, so the immediate parent cannot tell a declaration
+ * (`const {a} = o`, `catch ({message})`) from an assignment target
+ * (`({a} = o)`, `for (a of list)`). Walking the ancestry to the nearest
+ * pattern-owning construct is what makes the distinction possible.
+ */
+export const semanticIdentifierRole = (
+  node: t.Identifier,
+  parent: t.Node,
+  ancestors: readonly t.Node[],
+): JavaScriptSemanticReference["role"] | null => {
+  const patternAncestor = enclosingPatternAncestor(node, parent, ancestors);
+  if (patternAncestor !== null) {
+    if (isPatternOwnerDeclaration(patternAncestor)) return null;
+    return "write";
+  }
+  return semanticReferenceRole(node, parent);
+};
+
+/**
+ * The nearest ancestor that owns this identifier as a *bound* pattern slot, or
+ * null when the identifier is not being bound. A binding inside a pattern has
+ * an ObjectProperty/ArrayPattern parent, so the immediate parent cannot say
+ * whether the identifier declares a binding or is assigned to.
+ *
+ * Only the bound side counts: `{a = compute()}` binds `a` but merely *reads*
+ * `compute`, so the default-value side must not be mistaken for a binding.
+ */
+const enclosingPatternAncestor = (
+  node: t.Identifier,
+  parent: t.Node,
+  ancestors: readonly t.Node[],
+): t.Node | null => {
+  const chain = [...ancestors, parent];
+  for (let index = chain.length - 1; index >= 0; index -= 1) {
+    const ancestor = chain[index];
+    if (ancestor === undefined || !isPatternNode(ancestor)) continue;
+    if (!bindsIdentifier(ancestor, parent, node)) continue;
+    // Found the binding slot; now find what owns the pattern.
+    for (let owner = index - 1; owner >= 0; owner -= 1) {
+      const candidate = chain[owner];
+      if (candidate === undefined) continue;
+      if (
+        t.isAssignmentExpression(candidate) ||
+        t.isForInStatement(candidate) ||
+        t.isForOfStatement(candidate)
+      )
+        return candidate;
+      if (isPatternOwnerDeclaration(candidate)) return candidate;
+    }
+    return null;
+  }
+  return null;
+};
+
+/** True when `parent` places `node` in the bound slot of `pattern`. */
+const bindsIdentifier = (
+  pattern: t.Node,
+  parent: t.Node,
+  node: t.Identifier,
+): boolean => {
+  // The identifier sits directly in the pattern: `[b]`, `({b})`, `{b = 1}`.
+  if (parent === pattern) return patternContains(pattern, node);
+  if (t.isObjectPattern(pattern))
+    return (
+      t.isObjectProperty(parent) &&
+      (parent.value === node || (parent.shorthand && parent.key === node))
+    );
+  if (t.isArrayPattern(pattern))
+    return pattern.elements.some((element) => element === parent);
+  if (t.isAssignmentPattern(pattern)) return pattern.left === parent;
+  return t.isRestElement(pattern) && pattern.argument === parent;
+};
+
+const isPatternNode = (node: t.Node): boolean =>
+  t.isObjectPattern(node) ||
+  t.isArrayPattern(node) ||
+  t.isAssignmentPattern(node) ||
+  t.isRestElement(node);
+
+const isPatternOwnerDeclaration = (node: t.Node): boolean =>
+  (t.isVariableDeclarator(node) && t.isPattern(node.id)) ||
+  (t.isFunction(node) &&
+    node.params.some((value): value is t.Pattern => t.isPattern(value))) ||
+  (t.isCatchClause(node) && node.param !== null && t.isPattern(node.param));
+
 /** Classify one identifier occurrence consistently with semantic references. */
 export const semanticReferenceRole = (
   node: t.Identifier,
@@ -404,7 +521,9 @@ export const semanticReferenceRole = (
     return null;
   if (
     (t.isAssignmentExpression(parent) && parent.left === node) ||
-    t.isUpdateExpression(parent)
+    t.isUpdateExpression(parent) ||
+    ((t.isForInStatement(parent) || t.isForOfStatement(parent)) &&
+      parent.left === node)
   )
     return "write";
   if (t.isExportSpecifier(parent) && parent.local === node) return "export";

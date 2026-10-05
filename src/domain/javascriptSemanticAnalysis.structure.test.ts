@@ -341,6 +341,48 @@ describe("JavaScript semantic analysis: structure 2", () => {
     );
   });
 
+  it("classifies destructuring and loop targets as writes, not reads", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      let a, b, c;
+      ({ a } = source);
+      [b] = list;
+      ({ nested: { c } } = source);
+      for (a of list) {}
+      let d;
+      try { risky(); } catch ({ message }) { report(message); }
+    `);
+    const roles = (name: string): string[] =>
+      ir.references
+        .filter((reference) => reference.name === name)
+        .map(({ role }) => role);
+    expect(roles("a")).toEqual(["write", "write"]);
+    expect(roles("b")).toEqual(["write"]);
+    expect(roles("c")).toEqual(["write"]);
+    // A catch binding is a declaration, so its only later use is a read.
+    expect(roles("message")).toEqual(["read"]);
+  });
+
+  it("retains the read a compound assignment or update performs", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      let total = 0;
+      total += 1;
+      total++;
+      total = 2;
+      const observed = total;
+    `);
+    const roles = ir.references
+      .filter(({ name }) => name === "total")
+      .map(({ role }) => role);
+    expect(roles).toEqual([
+      "read",
+      "write", // total += 1
+      "read",
+      "write", // total++
+      "write", // total = 2
+      "read", // const observed = total
+    ]);
+  });
+
   it("keeps function, class, and method identities separate from bindings", () => {
     const ir = analyzeJavaScriptSemantics(`
       class Service {

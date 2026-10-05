@@ -6,6 +6,7 @@ import type {
 } from "./javascriptSemanticIr.js";
 import {
   semanticCallableIdForNode,
+  semanticReadsBeforeWrite,
   semanticStaticPropertyName,
 } from "./javascriptSemanticProjection.js";
 import {
@@ -79,9 +80,7 @@ const collectMember = (
   const write =
     (t.isAssignmentExpression(parent) && parent.left === node) ||
     (t.isUpdateExpression(parent) && parent.argument === node);
-  const readsBeforeWrite =
-    (t.isAssignmentExpression(parent) && parent.operator !== "=" && write) ||
-    (t.isUpdateExpression(parent) && write);
+  const readsBeforeWrite = write && semanticReadsBeforeWrite(node, parent);
   if (readsBeforeWrite)
     addObjectOperation(
       {
