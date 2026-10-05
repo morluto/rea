@@ -218,7 +218,7 @@ Setup은 Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, Devin
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@3.2.1", "mcp"]
+      "args": ["-y", "rea-agents@4.0.0", "mcp"]
     }
   }
 }
