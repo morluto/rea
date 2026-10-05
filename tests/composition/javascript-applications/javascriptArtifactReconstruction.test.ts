@@ -1,4 +1,4 @@
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { createPackageWithOptions } from "@electron/asar";
@@ -152,6 +152,57 @@ it("produces deterministic ASAR graphs with unpacked native linkage and complete
         resolved_path: "native/addon.node",
       }),
     }),
+  );
+});
+
+it("keeps suffix-named ASAR directories in the graph and analyzes their files", async () => {
+  const root = await createTestTempDirectory(
+    "rea-javascript-asar-suffix-directory-",
+  );
+  const source = join(root, "source");
+  const zipDirectory = join(source, "node_modules", "@zip.js");
+  await mkdir(zipDirectory, { recursive: true });
+  await writeJavaScriptArtifactFixture(source);
+  await writeFile(
+    join(zipDirectory, "entry.js"),
+    "export const packed = true;\n",
+  );
+  const archive = join(root, "app.asar");
+  await createPackageWithOptions(source, archive, {});
+
+  const snapshot = await scanArtifactInventory(archive);
+  const zipDirectoryOccurrence = snapshot.occurrences.find(
+    ({ logical_path }) => logical_path === "node_modules/@zip.js",
+  );
+  expect(zipDirectoryOccurrence).toMatchObject({
+    entry_kind: "directory",
+    artifact_id: expect.stringMatching(/^art_[a-f0-9]{64}$/u),
+  });
+  expect(
+    snapshot.nodes.some(
+      ({ artifact_id }) => artifact_id === zipDirectoryOccurrence?.artifact_id,
+    ),
+  ).toBe(true);
+
+  const result = await reconstructJavaScriptArtifact({
+    input_path: archive,
+    format: "asar",
+  });
+
+  expect(result.statistics.parsed_javascript_files).toBeGreaterThan(0);
+  expect(result.graph.nodes).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "javascript-asset",
+        observations: expect.arrayContaining([
+          expect.objectContaining({
+            properties: expect.objectContaining({
+              path: "node_modules/@zip.js/entry.js",
+            }),
+          }),
+        ]),
+      }),
+    ]),
   );
 });
 

@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 
@@ -30,6 +30,84 @@ const archiveFixture = async () => {
     },
   };
 };
+
+describe("ASAR path boundary", () => {
+  it("keeps inventory paths portable and opens nested entries from a packed archive", async () => {
+    const root = await createTestTempDirectory("rea-asar-paths-");
+    const source = join(root, "source");
+    await mkdir(join(source, "nested"), { recursive: true });
+    await writeFile(join(source, "nested", "main.js"), CONTENT);
+    const archive = join(root, "paths.asar");
+    await createPackage(source, archive);
+    const reader = new AsarArtifactReader(archive);
+
+    try {
+      const entries = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      expect(entries.map(({ path, kind }) => [path, kind])).toEqual([
+        ["nested", "directory"],
+        ["nested/main.js", "file"],
+      ]);
+      const nestedFile = entries.find(({ path }) => path === "nested/main.js");
+      if (!nestedFile) throw new Error("Expected packed nested ASAR file");
+      expect((await buffer(await reader.open(nestedFile))).toString()).toBe(
+        CONTENT,
+      );
+    } finally {
+      await reader.close();
+    }
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "reports packed ASAR symlinks without following them",
+    async () => {
+      const root = await createTestTempDirectory("rea-asar-symlink-");
+      const source = join(root, "source");
+      await mkdir(join(source, "nested"), { recursive: true });
+      await writeFile(join(source, "nested", "main.js"), CONTENT);
+      await symlink("nested/main.js", join(source, "alias.js"));
+      const archive = join(root, "symlink.asar");
+      await createPackage(source, archive);
+      const reader = new AsarArtifactReader(archive);
+
+      try {
+        const entries = [];
+        for await (const entry of reader.entries()) entries.push(entry);
+        expect(entries.find(({ path }) => path === "alias.js")).toMatchObject({
+          kind: "symlink",
+          path: "alias.js",
+        });
+      } finally {
+        await reader.close();
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "preserves literal backslashes in POSIX ASAR filenames",
+    async () => {
+      const root = await createTestTempDirectory("rea-asar-backslash-");
+      const source = join(root, "source");
+      await mkdir(source);
+      await writeFile(join(source, "literal\\name.js"), CONTENT);
+      const archive = join(root, "backslash.asar");
+      await createPackage(source, archive);
+      const reader = new AsarArtifactReader(archive);
+
+      try {
+        const entries = [];
+        for await (const entry of reader.entries()) entries.push(entry);
+        const file = entries.find(({ path }) => path === "literal\\name.js");
+        if (!file) throw new Error("Expected literal-backslash ASAR entry");
+        expect((await buffer(await reader.open(file))).toString()).toBe(
+          CONTENT,
+        );
+      } finally {
+        await reader.close();
+      }
+    },
+  );
+});
 
 describe("ASAR inventory freshness", () => {
   it.each(["archive", "bundle"] as const)(

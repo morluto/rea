@@ -255,6 +255,10 @@ const expectedInventory = (
         "integrity",
         `Artifact inventory node is missing: ${occurrence.logical_path}`,
       );
+    // Inventory occurrences can have content identities for directories too.
+    // Suffixes only describe file candidates; a directory such as
+    // node_modules/@zip.js remains a graph node and must never be opened.
+    if (occurrence.entry_kind !== "file") continue;
     if (occurrence.logical_path.toLowerCase().endsWith(".asar"))
       containers.set(occurrence.logical_path, {
         path: occurrence.logical_path,

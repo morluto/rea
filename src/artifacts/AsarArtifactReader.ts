@@ -1,3 +1,4 @@
+import { sep } from "node:path";
 import { Readable } from "node:stream";
 
 import { extractFile, listPackage, statFile, uncache } from "@electron/asar";
@@ -33,11 +34,18 @@ export class AsarArtifactReader implements ArtifactReader {
     }
     for (const listed of paths) {
       abortIfNeeded(signal);
-      const path = listed.replace(/^\/+|\/+$/gu, "");
+      // @electron/asar returns paths assembled with the host path module.
+      // Keep that spelling for its API calls, but expose archive paths with
+      // portable separators. On POSIX, backslashes can be literal filename
+      // characters and must remain untouched.
+      const path = toArtifactPath(listed);
       if (path.length === 0) continue;
+      const providerPath = listed.startsWith(sep)
+        ? listed.slice(sep.length)
+        : listed;
       let metadata: ReturnType<typeof statFile>;
       try {
-        metadata = statFile(this.path, path, false);
+        metadata = statFile(this.path, providerPath, false);
       } catch (cause: unknown) {
         throw asarFailure(this.path, `stat ${path}`, cause);
       }
@@ -68,7 +76,7 @@ export class AsarArtifactReader implements ArtifactReader {
             : [
                 "Official ASAR extraction buffers each individually bounded file.",
               ],
-        adapterKey: path,
+        adapterKey: providerPath,
       };
     }
   }
@@ -117,6 +125,11 @@ export class AsarArtifactReader implements ArtifactReader {
 const abortIfNeeded = (signal?: AbortSignal): void => {
   if (signal?.aborted === true)
     throw new ArtifactReaderFailure("cancelled", "ASAR operation cancelled");
+};
+
+const toArtifactPath = (listed: string): string => {
+  const portable = sep === "\\" ? listed.replaceAll("\\", "/") : listed;
+  return portable.replace(/^\/+|\/+$/gu, "");
 };
 
 const asarFailure = (
