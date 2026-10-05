@@ -16,6 +16,7 @@ import {
 } from "./javascriptSemanticProjection.js";
 import {
   resolveSemanticBindingState,
+  isUnshadowedGlobal,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
@@ -380,9 +381,7 @@ const collectDynamicScope = (
 ): void => {
   const reason = t.isWithStatement(node)
     ? "`with` introduces a runtime binding environment; names inside are not statically resolvable."
-    : t.isCallExpression(node) &&
-        t.isIdentifier(node.callee) &&
-        node.callee.name === "eval"
+    : t.isCallExpression(node) && isUnshadowedGlobal(node.callee, state, "eval")
       ? "`eval` can declare bindings at runtime; names inside the evaluated source are not statically resolvable."
       : null;
   if (reason === null) return;

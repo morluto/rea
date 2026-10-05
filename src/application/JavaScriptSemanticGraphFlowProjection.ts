@@ -260,18 +260,19 @@ export const projectSemanticFrontiers = (
   context: SemanticFlowProjectionContext,
 ): void => {
   for (const frontier of context.ir.frontiers) {
-    // `with`/`eval` change which bindings exist at all, so the honest family is
-    // object flow: we cannot say which value any name resolves to.
+    // Dynamic environments leave identifier reads and writes unresolved.
     const family =
       frontier.kind === "dynamic-call"
         ? "call-flow"
-        : frontier.kind === "dynamic-property"
-          ? "object-flow"
+        : frontier.kind === "dynamic-scope"
+          ? "data-flow"
           : "object-flow";
     const relationKinds =
       frontier.kind === "dynamic-call"
         ? (["calls"] as const)
-        : (["reads-property", "writes-property"] as const);
+        : frontier.kind === "dynamic-scope"
+          ? (["reads", "writes"] as const)
+          : (["reads-property", "writes-property"] as const);
     const unknown = createJavaScriptSemanticGraphUnknown({
       node_id:
         frontier.callableId === null

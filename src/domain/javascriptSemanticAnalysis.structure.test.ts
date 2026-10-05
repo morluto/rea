@@ -382,7 +382,9 @@ describe("JavaScript semantic analysis: structure 2", () => {
       "read", // const observed = total
     ]);
   });
+});
 
+describe("JavaScript semantic analysis: dynamic and case scopes", () => {
   it("marks with and eval as unresolved dynamic scope instead of staying silent", () => {
     const ir = analyzeJavaScriptSemantics(`
       function load(source) {
@@ -403,6 +405,9 @@ describe("JavaScript semantic analysis: structure 2", () => {
       function shadowed(module, exports) {
         module.exports.value = 1;
         exports.other = 2;
+        exports[key] = 3;
+        module.exports[key] = 4;
+        unrelated[key] = 5;
       }
     `);
     expect(

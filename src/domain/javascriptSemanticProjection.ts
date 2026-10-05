@@ -10,6 +10,7 @@ import type {
 import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
+  isUnshadowedGlobal,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticScopeState,
 } from "./javascriptSemanticState.js";
@@ -610,21 +611,6 @@ const defaultDeclarationName = (
     ? declaration.id.name
     : null;
 
-/**
- * True when `node` is the unshadowed global named `name`.
- *
- * A local binding or a blocking construct means the name refers to something
- * else, so treating it as the runtime global would invent a CommonJS export.
- */
-const isUnshadowedGlobal = (
-  node: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-  name: string,
-): boolean =>
-  t.isIdentifier(node, { name }) &&
-  resolveSemanticBindingState(state, node, name) === undefined &&
-  !semanticResolutionBlocked(state, node, name);
-
 const commonJsExportName = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
@@ -636,14 +622,14 @@ const commonJsExportName = (
   // `exports[key]`/`module.exports[key]` assign an export whose name is not
   // knowable. Report the wildcard rather than the variable name, and never
   // collapse it into `default`, which would claim a real default export.
-  if (key === null) return "*";
-  if (isUnshadowedGlobal(node.object, state, "exports")) return key || "*";
+  if (isUnshadowedGlobal(node.object, state, "exports"))
+    return key === null ? "*" : key || "*";
   if (
     t.isMemberExpression(node.object) &&
     isUnshadowedGlobal(node.object.object, state, "module") &&
     memberKey(node.object) === "exports"
   )
-    return key || "default";
+    return key === null ? "*" : key || "default";
   if (
     isUnshadowedGlobal(node.object, state, "module") &&
     memberKey(node) === "exports"

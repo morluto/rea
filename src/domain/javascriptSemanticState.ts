@@ -138,3 +138,13 @@ export const semanticVariableScope = (
   }
   return candidate;
 };
+
+/** Identify a global name only when no lexical or dynamic environment shadows it. */
+export const isUnshadowedGlobal = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  name: string,
+): boolean =>
+  t.isIdentifier(node, { name }) &&
+  resolveSemanticBindingState(state, node, name) === undefined &&
+  !semanticResolutionBlocked(state, node, name);

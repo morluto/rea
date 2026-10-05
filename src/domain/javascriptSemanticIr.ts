@@ -44,7 +44,13 @@ export type JavaScriptBindingProvenance =
 export interface JavaScriptSemanticScope {
   readonly scopeId: string;
   readonly parentScopeId: string | null;
-  readonly kind: "program" | "function" | "block" | "class" | "catch";
+  readonly kind:
+    | "program"
+    | "function"
+    | "block"
+    | "static-block"
+    | "class"
+    | "catch";
   readonly location: JavaScriptSourceRange;
   readonly bindingsComplete: boolean;
   readonly bindingIds: readonly string[];
