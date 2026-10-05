@@ -1,6 +1,3 @@
-import { DirectedGraph } from "graphology";
-import { bidirectional } from "graphology-shortest-path/unweighted.js";
-
 import {
   callPathInputSchema,
   callPathResultSchema,
@@ -17,8 +14,58 @@ import {
 export { callPathInputSchema, callPathResultSchema };
 export type { CallPathInput, CallPathResult };
 
+/** Minimal directed caller-to-callee adjacency for call-path search. */
+class CallGraph {
+  private readonly successors = new Map<string, Set<string>>();
+
+  mergeNode(node: string): void {
+    if (!this.successors.has(node)) this.successors.set(node, new Set());
+  }
+
+  mergeDirectedEdge(source: string, target: string): void {
+    this.mergeNode(source);
+    this.mergeNode(target);
+    this.successors.get(source)?.add(target);
+  }
+
+  hasNode(node: string): boolean {
+    return this.successors.has(node);
+  }
+
+  outDegree(node: string): number {
+    return this.successors.get(node)?.size ?? 0;
+  }
+
+  outNeighbors(node: string): string[] {
+    return [...(this.successors.get(node) ?? [])];
+  }
+}
+
+/** Breadth-first shortest depth from start to goal, or null when unreachable. */
+const shortestPathDepth = (
+  graph: CallGraph,
+  start: string,
+  goal: string,
+): number | null => {
+  if (start === goal) return 0;
+  const depth = new Map<string, number>([[start, 0]]);
+  const queue = [start];
+  for (let index = 0; index < queue.length; index += 1) {
+    const node = queue[index] ?? "";
+    const next = (depth.get(node) ?? 0) + 1;
+    for (const neighbor of graph.outNeighbors(node)) {
+      if (neighbor === goal) return next;
+      if (!depth.has(neighbor)) {
+        depth.set(neighbor, next);
+        queue.push(neighbor);
+      }
+    }
+  }
+  return null;
+};
+
 interface SearchState {
-  readonly graph: DirectedGraph;
+  readonly graph: CallGraph;
   readonly snapshots: ReadonlyMap<string, FunctionSnapshot>;
   readonly reached: ReadonlyMap<string, number>;
   readonly exhaustive: boolean;
@@ -35,18 +82,18 @@ export const buildCallPath = (input: CallPathInput): CallPathResult => {
     start: parsed.start.address,
     goal: parsed.goal.address,
   });
-  const shortest =
+  const shortestDepth =
     graph.hasNode(parsed.start.address) && graph.hasNode(parsed.goal.address)
-      ? bidirectional(graph, parsed.start.address, parsed.goal.address)
+      ? shortestPathDepth(graph, parsed.start.address, parsed.goal.address)
       : null;
   const paths =
-    shortest === null
+    shortestDepth === null
       ? []
       : enumeratePaths({
           graph,
           start: parsed.start.address,
           goal: parsed.goal.address,
-          shortestDepth: shortest.length - 1,
+          shortestDepth,
         }).paths.map((path) => citePath(path, snapshots));
   const shortestHops = paths[0]?.hops;
   const found = shortestHops !== undefined;
@@ -80,7 +127,7 @@ export const buildCallPath = (input: CallPathInput): CallPathResult => {
 };
 
 const summarizeSearch = (
-  graph: DirectedGraph,
+  graph: CallGraph,
   reached: ReadonlyMap<string, number>,
 ) => ({
   nodes: reached.size,
@@ -141,8 +188,8 @@ const assertCompatible = (
 
 const createGraph = (
   snapshots: ReadonlyMap<string, FunctionSnapshot>,
-): DirectedGraph => {
-  const graph = new DirectedGraph({ allowSelfLoops: true, multi: false });
+): CallGraph => {
+  const graph = new CallGraph();
   for (const [address, snapshot] of snapshots) {
     graph.mergeNode(address);
     for (const callee of snapshot.collections.callees.items) {
@@ -155,7 +202,7 @@ const createGraph = (
 };
 
 interface SearchInput {
-  readonly graph: DirectedGraph;
+  readonly graph: CallGraph;
   readonly snapshots: ReadonlyMap<string, FunctionSnapshot>;
   readonly start: string;
   readonly goal: string;
@@ -211,7 +258,7 @@ const inspectSearch = ({
 };
 
 interface EnumerationInput {
-  readonly graph: DirectedGraph;
+  readonly graph: CallGraph;
   readonly start: string;
   readonly goal: string;
   readonly shortestDepth: number;
@@ -238,7 +285,7 @@ const enumeratePaths = ({
 };
 
 interface EnumerationState {
-  readonly graph: DirectedGraph;
+  readonly graph: CallGraph;
   readonly goal: string;
   readonly path: string[];
   readonly visited: Set<string>;

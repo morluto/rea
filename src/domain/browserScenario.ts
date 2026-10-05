@@ -14,9 +14,6 @@ import {
 } from "./browserScenarioValues.js";
 
 export {
-  browserScenarioActionSchema,
-  browserScenarioUrlSchema,
-  browserScenarioValueSchema,
   type BrowserScenarioAction,
   type BrowserScenarioUrl,
   type BrowserScenarioValue,

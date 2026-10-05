@@ -10,18 +10,7 @@ import { OFFICIAL_TOOL_CONTRACTS } from "./officialToolContracts.js";
 import { ENHANCED_TOOL_CONTRACTS } from "./enhancedToolContracts.js";
 import { SESSION_TOOL_CONTRACTS } from "./sessionToolContracts.js";
 
-export {
-  addressContextInputSchema,
-  binarySessionInputSchema,
-  importEvidenceBundleInputSchema,
-  listUnknownsInputSchema,
-  navigationContextInputSchema,
-  processComparisonInputSchema,
-  getEvidenceBundleInputSchema,
-  verifyUnknownResolutionInputSchema,
-} from "./sessionToolSchemas.js";
-
-export type { ToolContract, ToolExample } from "./toolContractTypes.js";
+export type { ToolContract } from "./toolContractTypes.js";
 
 /** Complete ordered public inventory used by registration and verification. */
 export const TOOL_CONTRACTS = [

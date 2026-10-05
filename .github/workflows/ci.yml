@@ -374,9 +374,3 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run docs:check
-      - run: npm run docs:api:cached
-      - uses: actions/upload-artifact@v4
-        with:
-          name: api-docs
-          path: build/api-docs
-          retention-days: 14

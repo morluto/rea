@@ -396,9 +396,3 @@ export {
   PROCESS_COMPARISON_DIMENSIONS,
   processCaptureComparisonSchema,
 } from "./processComparison.js";
-export {
-  compareProcessTraces,
-  processTraceComparisonResultSchema,
-  processTraceSourceSchema,
-  processTraceSpecificationSchema,
-} from "./processTraceComparison.js";

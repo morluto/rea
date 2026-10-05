@@ -7,13 +7,11 @@ import type {
 export type { BrowserObservationOperation } from "./browserObservationErrors.js";
 import {
   hopperStartupFailure,
-  type HopperStartupDiagnostic,
   type HopperStartupFailureDiagnostic,
   type HopperStartupFailureCode,
 } from "./hopperStartupFailure.js";
 export {
   hopperStartupFailure,
-  type HopperStartupDiagnostic,
   type HopperStartupFailureDiagnostic,
   type HopperStartupFailureCode,
 };

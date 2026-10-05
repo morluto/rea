@@ -12,12 +12,9 @@ import {
 export {
   processTraceComparisonResultSchema,
   type ProcessTraceComparisonResult,
-  type ProcessTraceLocation,
 } from "./processTraceEvaluation.js";
 export {
-  processTraceSourceSchema,
   processTraceSpecificationSchema,
-  type ProcessTraceSource,
   type ProcessTraceSpecification,
 } from "./processTraceSpecification.js";
 

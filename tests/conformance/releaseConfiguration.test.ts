@@ -101,10 +101,13 @@ describe("release configuration", () => {
     });
   });
 
-  it("keeps TypeDoc unversioned and outside the tracked documentation tree", async () => {
-    await expect(readJson("typedoc.json")).resolves.toMatchObject({
-      includeVersion: false,
-      out: "build/api-docs",
+  it("keeps generated API HTML out of the tracked tree", async () => {
+    await expect(readFile("typedoc.json", "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
     });
+    const packageJson = (await readJson("package.json")) as {
+      scripts?: Record<string, string>;
+    };
+    expect(packageJson.scripts?.["docs:api"]).toBeUndefined();
   });
 });

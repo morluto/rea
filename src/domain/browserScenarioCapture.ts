@@ -8,11 +8,9 @@ import {
 
 export {
   classifyBrowserScenarioCompleteness,
-  browserScenarioCompletenessSchema,
   browserScenarioEventSchema,
   browserScenarioStepSchema,
   browserStepArtifactsSchema,
-  captureStateSchema,
   type BrowserScenarioCompleteness,
   type BrowserScenarioCompletenessSection,
   type BrowserScenarioEvent,

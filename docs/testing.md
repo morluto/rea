@@ -182,8 +182,7 @@ behavior, and complete CI evidence before merging.
 | `npm run test:watch:all`          | Changed tests from every project; builds at startup, so rebuild after production edits before relying on compiled tests |
 | `npm run check:changed`           | Cached typecheck/lint and branch-related source feedback                                                                |
 | `npm run check:pr`                | Opt-in complete local deterministic gate and generated-file checks                                                      |
-| `npm run docs:check`              | Committed generated-document freshness, without API HTML rendering                                                      |
-| `npm run docs:api:cached`         | Explicit cached API HTML rendering                                                                                      |
+| `npm run docs:check`              | Committed generated-document freshness                                                                                  |
 
 For example:
 

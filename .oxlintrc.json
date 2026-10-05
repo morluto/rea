@@ -19,6 +19,15 @@
   "overrides": [
     {
       "files": [
+        "scripts/electron-active-hook*.cjs",
+        "tests/conformance/readiness/electron/*.js"
+      ],
+      "rules": {
+        "no-var-requires": "off"
+      }
+    },
+    {
+      "files": [
         "src/{contracts,domain,server}/**/*.ts",
         "src/application/**/*.ts"
       ],

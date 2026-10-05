@@ -69,7 +69,6 @@ export {
   changedBehaviorInputSchema,
   closeBinaryInputSchema,
   functionComparisonInputSchema,
-  jsonValueSchema,
   openBinaryInputSchema,
   processScenarioSchema,
   reconstructionVerificationInputSchema,
