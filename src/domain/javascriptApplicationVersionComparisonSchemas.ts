@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { emptyArraySchema } from "./emptyArraySchema.js";
 import { evidenceSchema } from "./evidence.js";
 import { javascriptApplicationGraphSchema } from "./javascriptApplicationGraph.js";
 import { JAVASCRIPT_APPLICATION_NODE_KINDS } from "./javascriptApplicationGraphSchemas.js";
@@ -37,7 +38,7 @@ export const compareApplicationVersionsInputSchema = z
     }
   });
 
-const emptyCandidateNodesSchema = z.tuple([]);
+const emptyCandidateNodesSchema = emptyArraySchema;
 const candidateNodesSchema = z.tuple([nodeIdSchema]).rest(nodeIdSchema);
 const exactMatchSchema = z.strictObject({
   status: z.literal("matched"),

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { emptyArraySchema } from "./emptyArraySchema.js";
 import { evidenceSchema } from "./evidence.js";
 import {
   cliMetadataGuidSchema,
@@ -48,15 +49,15 @@ const matchedComparisonSchema = z.strictObject({
   status: z.literal("matched"),
   basis: concreteMatchBasisSchema,
   confidence: z.enum(["exact", "high"]),
-  candidate_left_tokens: z.tuple([]),
-  candidate_right_tokens: z.tuple([]),
+  candidate_left_tokens: emptyArraySchema,
+  candidate_right_tokens: emptyArraySchema,
 });
 const unmatchedComparisonSchema = z.strictObject({
   status: z.literal("unmatched"),
   basis: z.literal("none"),
   confidence: z.literal("unknown"),
-  candidate_left_tokens: z.tuple([]),
-  candidate_right_tokens: z.tuple([]),
+  candidate_left_tokens: emptyArraySchema,
+  candidate_right_tokens: emptyArraySchema,
 });
 const ambiguousComparisonSchema = z.strictObject({
   status: z.literal("ambiguous"),

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { emptyArraySchema } from "./emptyArraySchema.js";
 import { webPageInspectionSchema } from "./browserObservation.js";
 import { webMcpDiscoverySchema } from "./webMcpDiscovery.js";
 
@@ -21,7 +22,7 @@ const changeSchema = z.object({
 });
 const emptyDimensionShape = {
   total_changes: z.literal(0),
-  changes: z.tuple([]),
+  changes: emptyArraySchema,
 };
 const dimensionSchema = z.union([
   z

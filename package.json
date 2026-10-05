@@ -200,6 +200,7 @@
     "@types/write-file-atomic": "4.0.3",
     "@types/ws": "8.18.1",
     "@vitest/coverage-v8": "4.1.10",
+    "ajv": "8.20.0",
     "husky": "9.1.7",
     "jscpd": "5.0.12",
     "knip": "6.26.0",

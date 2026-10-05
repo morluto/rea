@@ -2,6 +2,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { format } from "prettier";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { McpServer } from "@modelcontextprotocol/server";
 
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
@@ -28,6 +29,16 @@ const sessionToolNames = new Set([
   ...MANAGED_WORKFLOW_TOOL_CONTRACTS.map(({ name }) => name),
 ]);
 const advertisedTools = await sdkToolCatalog();
+const ajv = new Ajv2020({ strict: false, validateFormats: false });
+for (const tool of advertisedTools.values()) {
+  for (const kind of ["inputSchema", "outputSchema"]) {
+    const schema = tool[kind];
+    if (schema !== undefined && !ajv.validateSchema(schema))
+      throw new Error(
+        `Invalid JSON Schema for ${tool.name}.${kind}: ${ajv.errorsText(ajv.errors)}`,
+      );
+  }
+}
 const catalog = TOOL_CONTRACTS.map((contract) => {
   const advertised = advertisedTools.get(contract.name);
   if (advertised === undefined)

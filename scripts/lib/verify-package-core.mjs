@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { lstat } from "node:fs/promises";
 import { promisify } from "node:util";
+import { Ajv2020 } from "ajv/dist/2020.js";
 
 /** Promisified child_process execution helper. */
 export const exec = promisify(execFile);
@@ -28,9 +29,19 @@ export const runWithStatus = async (command, args, env) => {
 /** Parse JSON from a command output string. */
 export const json = (text) => JSON.parse(text);
 
-/** Verify that the complete advertised MCP catalog matches session metadata. */
+/** Verify schema validity and that the MCP catalog matches session metadata. */
 export const verifyCompleteToolCatalog = async (client, options) => {
   const listed = await client.listTools(undefined, options);
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  for (const tool of listed.tools) {
+    for (const kind of ["inputSchema", "outputSchema"]) {
+      const schema = tool[kind];
+      if (schema !== undefined && !ajv.validateSchema(schema))
+        throw new Error(
+          `packaged MCP has invalid ${tool.name}.${kind}: ${ajv.errorsText(ajv.errors)}`,
+        );
+    }
+  }
   const status = await client.callTool(
     { name: "binary_session", arguments: {} },
     options,

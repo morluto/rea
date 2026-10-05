@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { emptyArraySchema } from "./emptyArraySchema.js";
 import { evidenceSchema } from "./evidence.js";
 
 const addressSchema = z
@@ -87,14 +88,14 @@ export const callPathResultSchema = z.union([
     status: z.literal("not_found"),
     shortest_hops: z.null(),
     search_scope: z.object({ exhaustive: z.literal(true) }),
-    paths: z.tuple([]),
+    paths: emptyArraySchema,
   }),
   z.object({
     ...resultContextShape,
     status: z.literal("unknown"),
     shortest_hops: z.null(),
     search_scope: z.object({ exhaustive: z.literal(false) }),
-    paths: z.tuple([]),
+    paths: emptyArraySchema,
   }),
 ]);
 

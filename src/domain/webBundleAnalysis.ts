@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { emptyArraySchema } from "./emptyArraySchema.js";
 import { inspectWebPageWithSourceInputSchema } from "./browserObservation.js";
 import { webTextArtifactSchema } from "./webContentArtifact.js";
 
@@ -71,9 +72,9 @@ const sourceMapSchema = z.union([
     ...parsedSourceMapShape,
     status: z.enum(["fetch_failed", "invalid", "policy_filtered"]),
     artifact: z.null(),
-    original_sources: z.tuple([]),
-    original_module_edges: z.tuple([]),
-    mappings: z.tuple([]),
+    original_sources: emptyArraySchema,
+    original_module_edges: emptyArraySchema,
+    mappings: emptyArraySchema,
     limitation: z.string(),
   }),
 ]);

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { z } from "zod";
 
+import { emptyArraySchema } from "./emptyArraySchema.js";
 import { sanitizedBrowserUrlSchema } from "./browserObservation.js";
 import { webScreenshotArtifactSchema } from "./webScreenshot.js";
 
@@ -229,14 +230,14 @@ export const browserScenarioCompletenessSchema = z.discriminatedUnion(
     z.strictObject({
       status: z.literal("complete"),
       equality_eligible: z.literal(true),
-      missing_sections: z.tuple([]),
-      truncated_sections: z.tuple([]),
+      missing_sections: emptyArraySchema,
+      truncated_sections: emptyArraySchema,
     }),
     z.strictObject({
       status: z.literal("incomplete"),
       equality_eligible: z.literal(false),
       missing_sections: z.array(completenessSectionSchema).min(1),
-      truncated_sections: z.tuple([]),
+      truncated_sections: emptyArraySchema,
     }),
     z.strictObject({
       status: z.literal("truncated"),

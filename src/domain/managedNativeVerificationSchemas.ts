@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { emptyArraySchema } from "./emptyArraySchema.js";
 import { evidenceSchema } from "./evidence.js";
 import { cliMetadataGuidSchema } from "./managedArtifact.js";
 
@@ -72,7 +73,7 @@ export const pinvokeVerificationSchema = z.discriminatedUnion("status", [
     basis: z.enum(["no-native-candidate", "unsupported-native-evidence"]),
     confidence: z.literal("unknown"),
     matched_native: z.null(),
-    candidates: z.tuple([]),
+    candidates: emptyArraySchema,
   }),
   z.strictObject({
     ...pinvokeVerificationContextShape,
