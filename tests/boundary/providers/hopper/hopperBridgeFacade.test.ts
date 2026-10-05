@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { OFFICIAL_TOOL_CONTRACTS } from "../../../../src/contracts/toolContracts.js";
 
 const execute = promisify(execFile);
 const bridgePath = new URL(
@@ -21,12 +22,42 @@ const probeResultSchema = z.strictObject({
   }),
   current_document: z.literal("fixture"),
   current_address: z.literal("0x401000"),
+  containing_procedure: z.strictObject({
+    query_address: z.literal("0x401000"),
+    found: z.literal(true),
+    procedure: z.strictObject({
+      address: z.literal("0x401000"),
+      name: z.literal("fixture-procedure"),
+      classification: z.null(),
+      body: z.strictObject({
+        available: z.literal(false),
+        reason: z.string(),
+      }),
+    }),
+  }),
+  procedure_info: z.strictObject({
+    name: z.literal("fixture-procedure"),
+    entrypoint: z.literal("0x401000"),
+    basicblock_count: z.literal(1),
+    length: z.number(),
+    signature: z.literal("int fixture-procedure()"),
+    locals: z.array(z.unknown()),
+    classification: z.null(),
+    body: z.strictObject({
+      available: z.literal(false),
+      reason: z.string(),
+    }),
+  }),
   strings: z.strictObject({ "0x401234": z.literal("fixture string") }),
   procedure_references: z.strictObject({
     procedure: z.strictObject({
       address: z.literal("0x401000"),
       name: z.literal("fixture-procedure"),
       classification: z.null(),
+      body: z.strictObject({
+        available: z.literal(false),
+        reason: z.string(),
+      }),
     }),
     direction: z.literal("outgoing"),
     reference_kinds_available: z.literal(false),
@@ -117,6 +148,19 @@ describe("Hopper API facade", () => {
       },
     );
     const result = probeResultSchema.parse(JSON.parse(stdout));
+    for (const [name, value] of [
+      ["resolve_containing_procedure", result.containing_procedure],
+      ["procedure_references", result.procedure_references],
+      ["procedure_info", result.procedure_info],
+    ] as const) {
+      const contract = OFFICIAL_TOOL_CONTRACTS.find(
+        (candidate) => candidate.name === name,
+      );
+      if (contract === undefined) throw new Error(`missing ${name} contract`);
+      const parsed = contract.outputSchema.shape.result.safeParse(value);
+      if (!parsed.success) throw new Error(`${name}: ${parsed.error.message}`);
+      expect(parsed.success, name).toBe(true);
+    }
     expect(result.provider_faults.map((reply) => reply.error.message)).toEqual([
       "TypeError: Hopper bridge operation failed",
       "ValueError: Hopper bridge operation failed",
@@ -168,11 +212,44 @@ describe("Hopper API facade", () => {
         address: "0x401000",
         name: "fixture-procedure",
         classification: null,
+        body: {
+          available: false,
+          reason:
+            "Hopper's public Python API does not expose complete function body ranges",
+        },
       },
       direction: "outgoing",
       reference_kinds_available: false,
       unresolved_calls: [],
       references: [],
+    });
+    expect(result.containing_procedure).toEqual({
+      query_address: "0x401000",
+      found: true,
+      procedure: {
+        address: "0x401000",
+        name: "fixture-procedure",
+        classification: null,
+        body: {
+          available: false,
+          reason:
+            "Hopper's public Python API does not expose complete function body ranges",
+        },
+      },
+    });
+    expect(result.procedure_info).toEqual({
+      name: "fixture-procedure",
+      entrypoint: "0x401000",
+      basicblock_count: 1,
+      length: 4,
+      signature: "int fixture-procedure()",
+      locals: [],
+      classification: null,
+      body: {
+        available: false,
+        reason:
+          "Hopper's public Python API does not expose complete function body ranges",
+      },
     });
     expect(stdout).not.toContain("supersecret");
     expect(result.analysis_guard.message).toContain(

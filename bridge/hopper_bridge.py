@@ -241,6 +241,10 @@ def _procedure_identity(procedure):
         "address": _hex(procedure.getEntryPoint()),
         "name": _procedure_name(procedure),
         "classification": None,
+        "body": {
+            "available": False,
+            "reason": "Hopper's public Python API does not expose complete function body ranges",
+        },
     }
 
 
@@ -559,7 +563,11 @@ def _analyze_function(document, params):
     referenced_strings.sort(key=lambda item: (int(item["address"], 16), int(item["source_address"], 16)))
     referenced_names.sort(key=lambda item: (int(item["address"], 16), int(item["source_address"], 16)))
     return {
-        "procedure": {"address": _hex(procedure.getEntryPoint()), "name": _procedure_name(procedure), "classification": None, "signature": procedure.signatureString(), "locals": _procedure_locals(procedure)},
+        "procedure": {
+            **_procedure_identity(procedure),
+            "signature": procedure.signatureString(),
+            "locals": _procedure_locals(procedure),
+        },
         "pseudocode": pseudo,
         "assembly": assembly_lines,
         "comments": comments,
@@ -770,7 +778,16 @@ def _dispatch(method, params):
         if method == "procedure_info":
             blocks = list(procedure.basicBlockIterator())
             length = sum(max(0, block.getEndingAddress() - block.getStartingAddress()) for block in blocks)
-            return {"name": _procedure_name(procedure), "entrypoint": _hex(procedure.getEntryPoint()), "basicblock_count": procedure.getBasicBlockCount(), "length": length, "signature": procedure.signatureString(), "locals": _procedure_locals(procedure), "classification": None}
+            return {
+                "name": _procedure_name(procedure),
+                "entrypoint": _hex(procedure.getEntryPoint()),
+                "basicblock_count": procedure.getBasicBlockCount(),
+                "length": length,
+                "signature": procedure.signatureString(),
+                "locals": _procedure_locals(procedure),
+                "classification": None,
+                "body": _procedure_identity(procedure)["body"],
+            }
     if method == "set_address_name":
         address = _address(document, params.get("address"))
         try:

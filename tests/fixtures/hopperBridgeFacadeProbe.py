@@ -101,6 +101,26 @@ class FakeProcedure:
     def getSegment(self):
         return self.segment
 
+    def basicBlockIterator(self):
+        return [FakeBlock()]
+
+    def getBasicBlockCount(self):
+        return 1
+
+    def signatureString(self):
+        return "int fixture-procedure()"
+
+    def getLocalVariableList(self):
+        return []
+
+
+class FakeBlock:
+    def getStartingAddress(self):
+        return 0x401000
+
+    def getEndingAddress(self):
+        return 0x401004
+
 
 class FakeStringsDocument:
     def getSegmentsList(self):
@@ -185,9 +205,19 @@ def main():
     bridge["_procedure"] = lambda document, value=None: reference_procedure
     bridge["_instruction_addresses"] = lambda procedure: [0x401000]
     bridge["_segment"] = lambda document, address: reference_segment
+    bridge["_containing_procedure"] = lambda document, address: (
+        reference_procedure,
+        None,
+    )
+    containing_procedure = bridge["_dispatch"](
+        "resolve_containing_procedure", {"address": "0x401000"}
+    )
     procedure_references = bridge["_dispatch"](
         "procedure_references",
         {"procedure": "0x401000", "direction": "outgoing"},
+    )
+    procedure_info = bridge["_dispatch"](
+        "procedure_info", {"procedure": "0x401000"}
     )
     inventories = bridge_replies(bridge, [
         request(method, params, index)
@@ -251,7 +281,9 @@ def main():
                 "current_address": current_address,
                 "strings": strings,
                 "inventory_replies": inventories,
+                "containing_procedure": containing_procedure,
                 "procedure_references": procedure_references,
+                "procedure_info": procedure_info,
                 "provider_faults": provider_faults,
                 "malformed_requests": malformed_requests,
                 "session_document_reused": selected,
