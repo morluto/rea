@@ -117,6 +117,43 @@ describe("managed member comparison", () => {
 });
 
 describe("managed member comparison uncertainty", () => {
+  it("does not infer a structural method match from undecoded signature fields", () => {
+    const left = inspect(
+      buildManagedPeFixture({ methodSignature: Buffer.from([0xff]) }),
+      "/tmp/unknown-left.dll",
+    );
+    const right = inspect(
+      buildManagedPeFixture({ methodSignature: Buffer.from([0xfe]) }),
+      "/tmp/unknown-right.dll",
+    );
+    expect(left.result.methods[0]?.signature.parse_status).not.toBe("decoded");
+    expect(right.result.methods[0]?.signature.parse_status).not.toBe("decoded");
+    const result = compareManagedMembers(
+      {
+        evidenceId: left.evidenceId,
+        result: {
+          ...left.result,
+          coverage: { ...left.result.coverage, state: "partial" },
+        },
+      },
+      {
+        evidenceId: right.evidenceId,
+        result: {
+          ...right.result,
+          coverage: { ...right.result.coverage, state: "partial" },
+        },
+      },
+    );
+    expect(result.matching.structural_method_shape).toBe(0);
+    expect(result.methods).toHaveLength(2);
+    expect(
+      result.methods.every(
+        ({ status, match }) =>
+          status === "unknown" && match.status === "unmatched",
+      ),
+    ).toBe(true);
+  });
+
   it("keeps unmatched members unknown when opposite metadata is incomplete", () => {
     const left = inspect(buildManagedPeFixture(), "/tmp/left-partial.dll");
     const right = inspect(buildManagedPeFixture(), "/tmp/right-partial.dll");

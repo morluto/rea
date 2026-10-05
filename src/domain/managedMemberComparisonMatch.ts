@@ -68,7 +68,7 @@ const keyMethod = (item: Method): Keyed<Method> => ({
         ])
       : null,
   structuralKey:
-    item.body.status === "present"
+    item.signature.parse_status === "decoded" && item.body.status === "present"
       ? stableKey([
           "method-structural",
           item.signature.kind,
