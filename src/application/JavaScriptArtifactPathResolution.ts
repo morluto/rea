@@ -404,9 +404,10 @@ const packageExport = (
   if (typeof root === "string") return packagePathValue(root);
   if (typeof root !== "object" || root === null || Array.isArray(root))
     return { status: "invalid" };
-  const condition =
-    Reflect.get(root, moduleKind ?? "default") ?? Reflect.get(root, "default");
-  return packagePathValue(condition);
+  for (const [condition, target] of Object.entries(root))
+    if (condition === "default" || condition === moduleKind)
+      return packagePathValue(target);
+  return { status: "invalid" };
 };
 
 const packagePathValue = (
