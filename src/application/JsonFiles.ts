@@ -17,7 +17,11 @@ export const readJsonFile = async (
     const encoded = await readFile(canonicalPath);
     let decoded: unknown;
     try {
-      decoded = JSON.parse(encoded.toString("utf8"));
+      decoded = JSON.parse(
+        new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+          encoded,
+        ),
+      );
     } catch (cause: unknown) {
       return err(new EvidenceFileError("read", "invalid-json", { cause }));
     }

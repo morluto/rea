@@ -16,7 +16,7 @@ export const parseCliJsonInput = async (
   if (["{", "["].includes(value.trimStart()[0] ?? ""))
     return { ok: false, error: inputError(operation) };
   try {
-    const parsed = parseJson(await readFile(value, "utf8"));
+    const parsed = parseJson(await readFile(value));
     return parsed === undefined
       ? jsonFileError(value, operation, "invalid-json")
       : { ok: true, value: parsed };
@@ -25,9 +25,15 @@ export const parseCliJsonInput = async (
   }
 };
 
-const parseJson = (value: string): unknown => {
+const parseJson = (value: string | Uint8Array): unknown => {
   try {
-    return JSON.parse(value);
+    return JSON.parse(
+      typeof value === "string"
+        ? value
+        : new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+            value,
+          ),
+    );
   } catch {
     return undefined;
   }
