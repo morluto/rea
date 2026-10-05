@@ -44,7 +44,13 @@ export type JavaScriptBindingProvenance =
 export interface JavaScriptSemanticScope {
   readonly scopeId: string;
   readonly parentScopeId: string | null;
-  readonly kind: "program" | "function" | "block" | "class" | "catch";
+  readonly kind:
+    | "program"
+    | "function"
+    | "block"
+    | "static-block"
+    | "class"
+    | "catch";
   readonly location: JavaScriptSourceRange;
   readonly bindingsComplete: boolean;
   readonly bindingIds: readonly string[];
@@ -369,7 +375,12 @@ export interface JavaScriptSemanticObjectOperation {
 
 /** One syntax location where exact local semantic continuation is unavailable. */
 export interface JavaScriptSemanticFrontier {
-  readonly kind: "dynamic-call" | "dynamic-property";
+  /**
+   * `dynamic-call`/`dynamic-property` mark a callee or key the analyzer could
+   * not resolve. `dynamic-scope` marks `with`/`eval`, where the binding
+   * environment itself is not statically knowable.
+   */
+  readonly kind: "dynamic-call" | "dynamic-property" | "dynamic-scope";
   readonly callableId: string | null;
   readonly location: JavaScriptSourceRange;
   readonly reason: string;

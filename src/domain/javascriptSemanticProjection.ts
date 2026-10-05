@@ -10,6 +10,7 @@ import type {
 import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
+  isUnshadowedGlobal,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticScopeState,
 } from "./javascriptSemanticState.js";
@@ -357,7 +358,7 @@ const collectCommonJsExport = (
   node: t.AssignmentExpression,
   state: JavaScriptSemanticAnalysisState,
 ): void => {
-  const exportedName = commonJsExportName(node.left);
+  const exportedName = commonJsExportName(node.left, state);
   if (exportedName === undefined) return;
   const origin = semanticModuleOrigin(node.right, [], state);
   addModuleLink(state, {
@@ -610,24 +611,27 @@ const defaultDeclarationName = (
     ? declaration.id.name
     : null;
 
-const commonJsExportName = (node: t.Node): string | undefined => {
-  if (t.isIdentifier(node, { name: "exports" })) return "default";
+const commonJsExportName = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): string | undefined => {
+  if (isUnshadowedGlobal(node, state, "exports")) return "default";
   if (!t.isMemberExpression(node) && !t.isOptionalMemberExpression(node))
     return undefined;
   const key = memberKey(node);
   // `exports[key]`/`module.exports[key]` assign an export whose name is not
   // knowable. Report the wildcard rather than the variable name, and never
   // collapse it into `default`, which would claim a real default export.
-  if (key === null) return "*";
-  if (t.isIdentifier(node.object, { name: "exports" })) return key || "*";
+  if (isUnshadowedGlobal(node.object, state, "exports"))
+    return key === null ? "*" : key || "*";
   if (
     t.isMemberExpression(node.object) &&
-    t.isIdentifier(node.object.object, { name: "module" }) &&
+    isUnshadowedGlobal(node.object.object, state, "module") &&
     memberKey(node.object) === "exports"
   )
-    return key || "default";
+    return key === null ? "*" : key || "default";
   if (
-    t.isIdentifier(node.object, { name: "module" }) &&
+    isUnshadowedGlobal(node.object, state, "module") &&
     memberKey(node) === "exports"
   )
     return "default";
