@@ -50,7 +50,10 @@ const compareWithNode = async (
   exportsMap: unknown,
   moduleKind: "import" | "require",
   present: readonly string[] = TARGETS,
-): Promise<{ readonly node: string | null; readonly outcome: ArtifactPathResolution }> => {
+): Promise<{
+  readonly node: string | null;
+  readonly outcome: ArtifactPathResolution;
+}> => {
   const root = await createTestTempDirectory("rea-exports-");
   const packageDirectory = join(root, "node_modules", "example");
   await mkdir(packageDirectory, { recursive: true });
@@ -100,7 +103,11 @@ const expectNodeAgreement = async (
   moduleKind: "import" | "require" = "import",
   present: readonly string[] = TARGETS,
 ): Promise<ArtifactPathResolution> => {
-  const { node, outcome } = await compareWithNode(exportsMap, moduleKind, present);
+  const { node, outcome } = await compareWithNode(
+    exportsMap,
+    moduleKind,
+    present,
+  );
   expect(node).toBe(expected);
   expect(resolvedLeaf(outcome)).toBe(expected);
   return outcome;
@@ -159,16 +166,22 @@ describe("ordered package exports conditions", () => {
 });
 describe("nested and array package export targets", () => {
   it.each([
-    [{ import: { node: "./nested.cjs", default: "./default.cjs" } }, "nested.cjs"],
+    [
+      { import: { node: "./nested.cjs", default: "./default.cjs" } },
+      "nested.cjs",
+    ],
     [{ import: { default: "./default.cjs" } }, "default.cjs"],
     [{ import: { node: { default: "./default.cjs" } } }, "default.cjs"],
     [{ import: [{ node: "./nested.cjs" }, "./array.cjs"] }, "nested.cjs"],
     [{ import: [{ browser: "./x.cjs" }, "./array.cjs"] }, "array.cjs"],
     [{ import: [null, "./array.cjs"] }, "array.cjs"],
     [{ import: ["./specific.cjs", "./array.cjs"] }, "specific.cjs"],
-  ] as const)("selects the same target as Node for %j", async (exportsMap, expected) => {
-    await expectNodeAgreement(exportsMap, expected);
-  });
+  ] as const)(
+    "selects the same target as Node for %j",
+    async (exportsMap, expected) => {
+      await expectNodeAgreement(exportsMap, expected);
+    },
+  );
   it.each([
     [{ import: { browser: "./x.cjs" } }, "external"],
     [{ import: { node: null, default: "./default.cjs" } }, "external"],
