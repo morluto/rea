@@ -107,8 +107,10 @@
         ".nvmrc",
         "package.json",
         "package-lock.json",
-        "src/**/*.ts",
-        "tests/**/*.ts",
+        "src/**",
+        "tests/**",
+        "scripts/**",
+        "bridge/**",
         "vitest.config.ts"
       ]
     },
