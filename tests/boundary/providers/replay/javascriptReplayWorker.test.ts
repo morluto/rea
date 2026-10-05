@@ -4,6 +4,8 @@ import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import type { WorkerModule } from "../../../../src/replay/JavaScriptReplayWorkerTypes.js";
+
 const fixture = async (name: string): Promise<string> =>
   readFile(resolve("tests/fixtures/replay", name), "utf8");
 
@@ -220,6 +222,130 @@ describe("disposable JavaScript replay worker", () => {
             buffer: "undefined",
             timer: "undefined",
           },
+        },
+      ],
+    });
+  });
+});
+
+describe("replay ESM graph linking", () => {
+  const module = (
+    alias: string,
+    source: string,
+    dependencies: Record<string, string> = {},
+  ): WorkerModule => ({ alias, source, dependencies, format: "esm" });
+  it.each([
+    {
+      name: "two-module cycle",
+      value: 8,
+      modules: [
+        module(
+          "entry",
+          "import { value } from './dep'; export default function(){ return value(); } export function base(){ return 7; }",
+          { "./dep": "dep" },
+        ),
+        module(
+          "dep",
+          "import { base } from './entry'; export function value(){ return base()+1; }",
+          { "./entry": "entry" },
+        ),
+      ],
+    },
+    {
+      name: "three-module cycle",
+      value: 8,
+      modules: [
+        module(
+          "entry",
+          "import { value } from './dep'; export default function(){ return value(); } export function base(){ return 7; }",
+          { "./dep": "dep" },
+        ),
+        module(
+          "dep",
+          "import { value as next } from './third'; export function value(){ return next(); }",
+          { "./third": "third" },
+        ),
+        module(
+          "third",
+          "import { base } from './entry'; export function value(){ return base()+1; }",
+          { "./entry": "entry" },
+        ),
+      ],
+    },
+    {
+      name: "acyclic evaluation order",
+      value: 8,
+      modules: [
+        module(
+          "entry",
+          "import { value } from './dep'; const answer=value+1; export default function(){ return answer; }",
+          { "./dep": "dep" },
+        ),
+        module("dep", "export const value=7;"),
+      ],
+    },
+    {
+      name: "diamond single initialization",
+      value: [1, 1],
+      modules: [
+        module(
+          "entry",
+          "import { a } from './a'; import { b } from './b'; export default function(){ return [a,b]; }",
+          { "./a": "a", "./b": "b" },
+        ),
+        module("a", "import { value } from './shared'; export const a=value;", {
+          "./shared": "shared",
+        }),
+        module("b", "import { value } from './shared'; export const b=value;", {
+          "./shared": "shared",
+        }),
+        module(
+          "shared",
+          "globalThis.initializations=(globalThis.initializations??0)+1; export const value=globalThis.initializations;",
+        ),
+      ],
+    },
+    {
+      name: "mixed CommonJS factory",
+      value: 8,
+      modules: [
+        module(
+          "entry",
+          "import value from './dep'; export default function(){ return value.answer; }",
+          { "./dep": "dep" },
+        ),
+        {
+          alias: "dep",
+          source: "function(module) { module.exports={answer:8}; }",
+          dependencies: {},
+          format: "commonjs-factory" as const,
+        },
+      ],
+    },
+  ])("links $name before evaluation", async ({ modules, value }) => {
+    const workerRequest = await request("parser.mjs", "esm", "default", []);
+    workerRequest.left.modules = modules;
+    const result = await runWorker(workerRequest);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      left: [{ outcome: "return", value }],
+    });
+  });
+
+  it("still denies undeclared static imports", async () => {
+    const workerRequest = await request("parser.mjs", "esm", "default", []);
+    workerRequest.left.modules = [
+      module(
+        "entry",
+        "import './undeclared'; export default function(){ return 1; }",
+      ),
+    ];
+    const result = await runWorker(workerRequest);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      left: [
+        {
+          outcome: "denied",
+          exception: { message: "Undeclared import: ./undeclared" },
         },
       ],
     });

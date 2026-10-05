@@ -213,7 +213,7 @@ const loadEntry = async (
     return module.exports;
   };
 
-  const loadEsm = async (alias: string): Promise<Module> => {
+  const loadEsm = (alias: string): Module => {
     const cached = esmCache.get(alias);
     if (cached !== undefined) return cached;
     const descriptor = requiredModule(modules, alias);
@@ -245,13 +245,6 @@ const loadEntry = async (
       });
     }
     esmCache.set(alias, module);
-    await module.link(async (specifier) => {
-      const dependency = descriptor.dependencies[specifier];
-      if (dependency === undefined)
-        throw new ReplayDeniedError(`Undeclared import: ${specifier}`);
-      return loadEsm(dependency);
-    });
-    await module.evaluate();
     return module;
   };
 
@@ -262,7 +255,19 @@ const loadEntry = async (
       ? (exported.default ?? exported)
       : exported[side.entryExport];
   }
-  const namespace = (await loadEsm(side.entryAlias)).namespace;
+  const module = loadEsm(side.entryAlias);
+  await module.link((specifier, referencingModule) => {
+    const descriptor = requiredModule(
+      modules,
+      referencingModule.identifier.slice("rea:".length),
+    );
+    const dependency = descriptor.dependencies[specifier];
+    if (dependency === undefined)
+      throw new ReplayDeniedError(`Undeclared import: ${specifier}`);
+    return loadEsm(dependency);
+  });
+  await module.evaluate();
+  const namespace = module.namespace;
   return Reflect.get(namespace, side.entryExport);
 };
 
