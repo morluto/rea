@@ -1,5 +1,12 @@
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
+import {
+  AnalysisCancelledError,
+  AnalysisError,
+  ProviderAdapterError,
+} from "../domain/errors.js";
+import { err } from "../domain/result.js";
+import { ABORTED, waitForAbortable } from "./AbortablePromise.js";
 import type {
   AnalysisClient,
   AnalysisClientContext,
@@ -11,6 +18,9 @@ import type {
 } from "./AnalysisProvider.js";
 
 type LoadAnalysisProvider = () => Promise<AnalysisProvider>;
+
+const isAborted = (signal: AbortSignal | undefined): boolean =>
+  signal?.aborted === true;
 
 /**
  * Preserve synchronous provider discovery while loading implementation modules
@@ -51,7 +61,7 @@ export class LazyAnalysisProvider implements AnalysisProvider {
     return new LazyAnalysisClient(async () => {
       const provider = await this.#load();
       return provider.createClient(target, profile, context);
-    });
+    }, this.#providerIdentity.id);
   }
 
   async #load(): Promise<AnalysisProvider> {
@@ -65,12 +75,14 @@ export class LazyAnalysisProvider implements AnalysisProvider {
 
 class LazyAnalysisClient implements AnalysisClient {
   readonly #loadClient: () => Promise<AnalysisClient>;
+  readonly #providerId: string;
   #client: AnalysisClient | undefined;
   #loading: Promise<AnalysisClient> | undefined;
   #closed = false;
 
-  constructor(loadClient: () => Promise<AnalysisClient>) {
+  constructor(loadClient: () => Promise<AnalysisClient>, providerId: string) {
     this.#loadClient = loadClient;
+    this.#providerId = providerId;
   }
 
   execute: AnalysisClient["execute"] = async (
@@ -78,8 +90,23 @@ class LazyAnalysisClient implements AnalysisClient {
     parameters,
     options,
   ) => {
-    const client = await this.#load();
-    return client.execute(operation, parameters, options);
+    try {
+      if (isAborted(options?.signal))
+        return err(new AnalysisCancelledError(operation));
+      const loaded = await waitForAbortable(
+        this.#load(operation),
+        options?.signal,
+      );
+      if (loaded === ABORTED) return err(new AnalysisCancelledError(operation));
+      return await loaded.execute(operation, parameters, options);
+    } catch (cause: unknown) {
+      if (cause instanceof AnalysisError) return err(cause);
+      return err(
+        new ProviderAdapterError(this.#providerId, operation, {
+          cause,
+        }),
+      );
+    }
   };
 
   runtimeLineageSnapshots(): readonly ProviderRuntimeLineageSnapshot[] {
@@ -97,8 +124,11 @@ class LazyAnalysisClient implements AnalysisClient {
     await client.close();
   }
 
-  async #load(): Promise<AnalysisClient> {
-    if (this.#closed) throw new Error("Lazy analysis client is closed");
+  async #load(operation: string): Promise<AnalysisClient> {
+    if (this.#closed)
+      throw new ProviderAdapterError(this.#providerId, operation, {
+        diagnostics: { reason: "client_closed" },
+      });
     this.#loading ??= this.#loadClient()
       .then((client) => {
         this.#client = client;

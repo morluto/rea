@@ -50,6 +50,7 @@ interface ScanContext {
   readonly pendingContradictions: PendingIntegrityContradiction[];
   readonly occurrenceByPath: Map<string, MutableOccurrence>;
   readonly registry: ArtifactPathRegistry;
+  readonly expandedContainerIds: Set<string>;
 }
 
 export const scanReader = async (
@@ -73,14 +74,18 @@ export const scanReader = async (
     pendingContradictions,
     occurrenceByPath: new Map<string, MutableOccurrence>(),
     registry: new ArtifactPathRegistry(),
+    expandedContainerIds: new Set<string>(),
   };
   await visitArtifactEntries(context, reader, "");
   // Archive directories may appear after their children. Resolve containment
   // against the complete index before directory identities are materialized.
   for (const occurrence of occurrences)
     occurrence.parent_occurrence_id =
-      nearestParent(occurrence.logical_path, context.occurrenceByPath)
-        ?.occurrence_id ?? null;
+      nearestParent(
+        occurrence.logical_path,
+        context.occurrenceByPath,
+        context.expandedContainerIds,
+      )?.occurrence_id ?? null;
   return { nodes, occurrences, pendingContradictions };
 };
 
@@ -154,6 +159,8 @@ const visitArtifactEntries = async (
       context.occurrenceByPath.set(logicalPath, occurrence);
       if (expandableAsar && digested?.mismatched !== true) {
         const nested = new AsarArtifactReader(entry.adapterKey);
+        // Only traversed containers can own members, not opaque ASAR-named files.
+        context.expandedContainerIds.add(occurrence.occurrence_id);
         stack.push({
           reader: nested,
           prefix: logicalPath,

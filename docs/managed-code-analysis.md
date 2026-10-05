@@ -221,15 +221,18 @@ The workflow produces separate observation, inference, validation, and unknown
 tables. It may say that a method is a strong candidate for a role; it cannot
 turn that role into the method's durable identity.
 
-Cross-version matching is two-stage:
+Cross-version matching first prefers exact CIL/signature identity. When that
+does not match, it pairs an exact declared type, method name, and raw signature
+before trying structural body shape. The exact-signature key uses names only
+as part of that full tuple; names alone never select a pair. Duplicate tuples
+remain ambiguous rather than being paired by token order.
 
-1. Exact identity requires compatible artifact/module commitments and exact
-   raw CIL identity; no standalone complete-method-body digest is exposed.
-2. Structural identity compares normalized signatures, the limited
-   decoded-CIL tuple fingerprint, constants, and bounded shape context. It
-   reports all candidates at the winning score and remains ambiguous when the
-   evidence does not distinguish them. The digest does not itself remap
-   metadata tokens.
+For a matched method, an unavailable or partial body makes body-shape facets
+unknown while preserving observed signature differences. Structural identity
+compares normalized signatures, the limited decoded-CIL tuple fingerprint,
+constants, and bounded shape context. It reports all candidates at the winning
+score and remains ambiguous when the evidence does not distinguish them. The
+digest does not itself remap metadata tokens.
 
 Tokens are always remapped through observed structure. A caller cannot carry
 `0x06001234` into a new MVID and assume it names the same method.

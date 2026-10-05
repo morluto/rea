@@ -176,3 +176,102 @@ describe("virtual directory relative-path identity", () => {
     );
   });
 });
+
+const tiedPermutations = [
+  ["a", "a\u200b", "a\u200c"],
+  ["a", "a\u200c", "a\u200b"],
+  ["a\u200b", "a", "a\u200c"],
+  ["a\u200b", "a\u200c", "a"],
+  ["a\u200c", "a", "a\u200b"],
+  ["a\u200c", "a\u200b", "a"],
+];
+
+describe("virtual directory collation ties", () => {
+  it.each([
+    { suffix: ".txt", equalBytes: false },
+    { suffix: ".txt", equalBytes: true },
+    { suffix: "/data.txt", equalBytes: false },
+    { suffix: "/data.txt", equalBytes: true },
+  ])(
+    "keeps tied $suffix names stable with equalBytes=$equalBytes",
+    async ({ suffix, equalBytes }) => {
+      const observe = (directory: string, names: readonly string[]) =>
+        observeZip([
+          [`${directory}/`, ""],
+          ...names.map((name): readonly [string, string] => [
+            `${directory}/${name}${suffix}`,
+            equalBytes ? "identical bytes" : `bytes for ${name}`,
+          ]),
+        ]);
+      const names = ["a", "a\u200b", "a\u200c"];
+      const reference = await observe("pkg", names);
+      for (const permutation of tiedPermutations) {
+        const observed = await observe("pkg", permutation);
+        expect(occurrenceAt(observed.inventory, "pkg").artifact_id).toBe(
+          occurrenceAt(reference.inventory, "pkg").artifact_id,
+        );
+        for (const name of names) {
+          const path = `pkg/${name}${suffix}`;
+          expect(occurrenceAt(observed.inventory, path).artifact_id).toBe(
+            occurrenceAt(reference.inventory, path).artifact_id,
+          );
+        }
+        const comparison = compareArtifacts(
+          reference.evidence,
+          observed.evidence,
+        );
+        expect(
+          comparison.changes.map(({ logical_path }) => logical_path),
+        ).toEqual(
+          reference.inventory.manifest.root_sha256 ===
+            observed.inventory.manifest.root_sha256
+            ? []
+            : ["."],
+        );
+      }
+      const moved = await observe("moved", names);
+      expect(occurrenceAt(moved.inventory, "moved").artifact_id).toBe(
+        occurrenceAt(reference.inventory, "pkg").artifact_id,
+      );
+    },
+  );
+
+  it("retains the legacy non-tied Unicode ordering and exact identity", async () => {
+    const { inventory } = await observeZip([
+      ["pkg/", ""],
+      ["pkg/z.txt", "Z"],
+      ["pkg/ä.txt", "A"],
+      ["empty/", ""],
+    ]);
+    expect("z.txt".localeCompare("ä.txt")).not.toBe(0);
+    expect(occurrenceAt(inventory, "pkg").artifact_id).toBe(
+      legacyDirectoryId(inventory, ["pkg/z.txt", "pkg/ä.txt"]),
+    );
+    expect(occurrenceAt(inventory, "empty").artifact_id).toBe(
+      legacyDirectoryId(inventory, []),
+    );
+  });
+
+  it("keeps distinct collating-equal names significant during a rename", async () => {
+    const left = await observeZip([
+      ["pkg/", ""],
+      ["pkg/a.txt", "same bytes"],
+    ]);
+    const right = await observeZip([
+      ["pkg/", ""],
+      ["pkg/a\u200b.txt", "same bytes"],
+    ]);
+    expect("a.txt".localeCompare("a\u200b.txt")).toBe(0);
+    expect(occurrenceAt(left.inventory, "pkg").artifact_id).not.toBe(
+      occurrenceAt(right.inventory, "pkg").artifact_id,
+    );
+    expect(
+      compareArtifacts(left.evidence, right.evidence).changes,
+    ).toContainEqual(
+      expect.objectContaining({
+        logical_path: "pkg",
+        classification: "changed",
+      }),
+    );
+  });
+});

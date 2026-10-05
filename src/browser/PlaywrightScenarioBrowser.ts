@@ -11,6 +11,7 @@ import {
 
 import type { BrowserScenario } from "../domain/browserScenario.js";
 import { BrowserObservationError } from "../domain/errors.js";
+import { withPlaywrightExecutionBoundary } from "./PlaywrightExecutionBoundary.js";
 
 const OPERATION = "capture_browser_scenario" as const;
 
@@ -18,6 +19,12 @@ export interface OpenedScenarioBrowser {
   readonly context: BrowserContext;
   readonly page: Page;
   readonly browser: Browser;
+  readonly profilePath: string | undefined;
+}
+
+interface CloseableScenarioBrowser {
+  readonly context: Pick<BrowserContext, "close">;
+  readonly browser: Pick<Browser, "close">;
   readonly profilePath: string | undefined;
 }
 
@@ -156,16 +163,27 @@ export const openPlaywrightScenarioBrowser = async (
   }
 };
 
-export const closePlaywrightScenarioBrowser = async ({
-  context,
-  browser,
-  profilePath,
-}: OpenedScenarioBrowser): Promise<void> => {
+export const closePlaywrightScenarioBrowser = async (
+  { context, browser, profilePath }: CloseableScenarioBrowser,
+  signal?: AbortSignal,
+): Promise<void> => {
+  const cleanup = (async () => {
+    try {
+      // In connect mode Playwright's Browser.close disconnects its CDP client;
+      // it does not close the externally owned browser process.
+      if (profilePath === undefined) await browser.close();
+      else await context.close();
+    } finally {
+      if (profilePath !== undefined)
+        await rm(profilePath, { recursive: true, force: true, maxRetries: 3 });
+    }
+  })();
+  void cleanup.catch(() => undefined);
+  // The shared execution boundary rejects cancellation/timeouts instead of
+  // returning a successful capture whose browser or profile may still exist.
   try {
-    if (profilePath === undefined) await browser.close();
-    else await context.close();
-  } finally {
-    if (profilePath !== undefined)
-      await rm(profilePath, { recursive: true, force: true, maxRetries: 3 });
+    await withPlaywrightExecutionBoundary(() => cleanup, 1_000, signal);
+  } catch (cause: unknown) {
+    throw new BrowserObservationError(OPERATION, "cleanup_failed", { cause });
   }
 };

@@ -20,6 +20,9 @@ import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
   dataEffectLiteralString,
   dataEffectMemberCallee,
+  assignedSemanticResultBindings,
+  scalarAssignedResultBinding,
+  semanticProjectedBindingFacts,
 } from "./javascriptSemanticDataEffectHelpers.js";
 
 const EVENT_REGISTER_METHODS = [
@@ -61,14 +64,19 @@ interface TimerCandidate {
   readonly kind: JavaScriptSemanticTimerOperation["kind"];
   readonly ownerCallableId: string | null;
   readonly handleBindingId: string | null;
+  readonly projectedResultBindings: readonly {
+    readonly bindingId: string;
+    readonly projectionPath: readonly (string | number | null)[];
+    readonly resolution: "complete" | "partial";
+  }[];
 }
 
 interface TimerCollectionInput {
   readonly node: t.CallExpression | t.OptionalCallExpression;
-  readonly parent: t.Node | null;
   readonly ownerCallableId: string | null;
   readonly state: JavaScriptSemanticAnalysisState;
   readonly output: TimerCandidate[];
+  readonly ancestors: readonly t.Node[];
 }
 
 /** Recover explicit EventEmitter and Node timer candidates from inert syntax. */
@@ -81,19 +89,28 @@ export const collectJavaScriptSemanticAsyncEffects = (
   const timers: TimerCandidate[] = [];
   const callableIds = new Set(callables.map(({ callableId }) => callableId));
   const callableStack: string[] = [];
+  const ancestors: t.Node[] = [];
   traverseJavaScriptAst(program, {
-    enter: (node, parent) => {
+    enter: (node) => {
       const callableId = semanticCallableIdForNode(node);
       if (callableId !== null && callableIds.has(callableId))
         callableStack.push(callableId);
-      if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
-        return;
-      const ownerCallableId = callableStack.at(-1) ?? null;
-      collectEvent(node, ownerCallableId, state, events);
-      collectTimer({ node, parent, ownerCallableId, state, output: timers });
+      if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+        const ownerCallableId = callableStack.at(-1) ?? null;
+        collectEvent(node, ownerCallableId, state, events);
+        collectTimer({
+          node,
+          ownerCallableId,
+          state,
+          output: timers,
+          ancestors,
+        });
+      }
+      ancestors.push(node);
     },
     exit: (node) => {
       const callableId = semanticCallableIdForNode(node);
+      ancestors.pop();
       if (callableId !== null && callableStack.at(-1) === callableId)
         callableStack.pop();
     },
@@ -187,12 +204,17 @@ const emitterIdentity = (
 };
 
 const collectTimer = (input: TimerCollectionInput): void => {
-  const { node, parent, ownerCallableId, state, output } = input;
+  const { node, ownerCallableId, state, output, ancestors } = input;
   const method = timerMethod(node.callee, state);
   if (method === null) return;
   const kind = TIMER_SCHEDULE_METHODS.some((candidate) => candidate === method)
     ? "schedule"
     : "cancel";
+  const projectedResultBindings = assignedSemanticResultBindings(
+    node,
+    ancestors,
+    state,
+  );
   output.push({
     node,
     method,
@@ -200,8 +222,16 @@ const collectTimer = (input: TimerCollectionInput): void => {
     ownerCallableId,
     handleBindingId:
       kind === "schedule"
-        ? assignedBindingId(parent, node, state)
+        ? scalarAssignedResultBinding(projectedResultBindings)
         : bindingId(node.arguments[0], state),
+    projectedResultBindings:
+      kind === "schedule"
+        ? semanticProjectedBindingFacts(
+            projectedResultBindings.filter(
+              ({ projectionPath }) => projectionPath.length > 0,
+            ),
+          )
+        : [],
   });
 };
 
@@ -210,11 +240,18 @@ const resolveTimers = (
 ): JavaScriptSemanticTimerOperation[] => {
   const schedulesByBinding = new Map<string, TimerCandidate[]>();
   for (const candidate of candidates) {
-    if (candidate.kind !== "schedule" || candidate.handleBindingId === null)
-      continue;
-    const existing = schedulesByBinding.get(candidate.handleBindingId) ?? [];
-    existing.push(candidate);
-    schedulesByBinding.set(candidate.handleBindingId, existing);
+    if (candidate.kind !== "schedule") continue;
+    const ids = [
+      ...(candidate.handleBindingId === null
+        ? []
+        : [candidate.handleBindingId]),
+      ...candidate.projectedResultBindings.map(({ bindingId }) => bindingId),
+    ];
+    for (const id of ids) {
+      const existing = schedulesByBinding.get(id) ?? [];
+      existing.push(candidate);
+      schedulesByBinding.set(id, existing);
+    }
   }
   return candidates.map((candidate) => {
     const linked =
@@ -228,6 +265,7 @@ const resolveTimers = (
       location: range(candidate.node),
       ownerCallableId: candidate.ownerCallableId,
       handleBindingId: candidate.handleBindingId,
+      projectedResultBindings: candidate.projectedResultBindings,
       linkedTimerId:
         linked.length === 1 && linked[0] !== undefined
           ? timerId(linked[0])
@@ -236,7 +274,10 @@ const resolveTimers = (
       resolution:
         candidate.kind === "schedule"
           ? "complete"
-          : linked.length === 1
+          : linked.length === 1 &&
+              !linked[0]?.projectedResultBindings.some(
+                ({ bindingId }) => bindingId === candidate.handleBindingId,
+              )
             ? "complete"
             : linked.length > 1
               ? "partial"
@@ -302,27 +343,6 @@ const timerNamespaceBinding = (
 
 const timerModule = (specifier: string): boolean =>
   specifier === "timers" || specifier === "node:timers";
-
-const assignedBindingId = (
-  parent: t.Node | null,
-  node: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-): string | null => {
-  const identifier =
-    t.isVariableDeclarator(parent) &&
-    parent.init === node &&
-    t.isIdentifier(parent.id)
-      ? parent.id
-      : t.isAssignmentExpression(parent) &&
-          parent.right === node &&
-          t.isIdentifier(parent.left)
-        ? parent.left
-        : null;
-  return identifier === null
-    ? null
-    : (resolveSemanticBindingState(state, identifier, identifier.name)
-        ?.bindingId ?? null);
-};
 
 const bindingId = (
   node:

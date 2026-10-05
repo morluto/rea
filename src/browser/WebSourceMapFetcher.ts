@@ -1,6 +1,9 @@
+import * as t from "@babel/types";
 import { AnyMap, eachMapping } from "@jridgewell/trace-mapping";
 
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
+import { analyzeParsedJavaScriptSemantics } from "../domain/javascriptSemanticAnalysis.js";
+import { parseJavaScriptSource } from "../domain/javascriptSourceParser.js";
 import { hasValidSourceMapContents } from "../domain/sourceMapContents.js";
 import type {
   AnalyzeWebBundleInput,
@@ -22,7 +25,10 @@ interface SourceMapFetchHost {
 
 type SourceMaps = WebSourceMaps;
 type SourceMapItem = WebSourceMapItem;
-type ParsedSourceMapItem = Extract<SourceMapItem, { status: "included" }>;
+type ParsedSourceMapItem = Extract<
+  SourceMapItem,
+  { status: "included" | "partial" }
+>;
 
 /** Fetch and validate approved source maps without browser credentials. */
 export const fetchWebSourceMaps = async (
@@ -36,14 +42,17 @@ export const fetchWebSourceMaps = async (
     if (signal?.aborted === true) throw signal.reason;
     items.push(await fetchOne(request, input, signal, host));
   }
-  const included = items.filter(({ status }) => status === "included").length;
+  const retained = items.filter(
+    ({ status }) => status === "included" || status === "partial",
+  ).length;
   return webSourceMapsSchema.parse({
     status:
       items.length === 0
         ? "unavailable"
-        : included === items.length
+        : retained === items.length &&
+            !items.some(({ status }) => status === "partial")
           ? "included"
-          : included > 0
+          : retained > 0
             ? "partial"
             : "unavailable",
     requested: requests.length,
@@ -176,10 +185,16 @@ const normalizeSourceMap = (
       ...sourceMapContext(request),
       artifact: createWebTextArtifact(text, "application/source-map+json"),
       original_sources: originalSources,
-      original_module_edges: modules,
+      original_module_edges: modules.edges,
       mappings,
     };
-    return { ...parsed, status: "included", limitation: null };
+    return modules.incomplete.length === 0
+      ? { ...parsed, status: "included", limitation: null }
+      : {
+          ...parsed,
+          status: "partial",
+          limitation: `Module edges are incomplete: ${modules.incomplete.length} of ${originalSources.filter(({ artifact }) => artifact !== null).length} original sources could not be parsed in full (${modules.incomplete.join(", ")}).`,
+        };
   } catch {
     return emptySourceMapItem(
       request,
@@ -189,30 +204,68 @@ const normalizeSourceMap = (
   }
 };
 
+interface OriginalModuleEdges {
+  readonly edges: ParsedSourceMapItem["original_module_edges"];
+  /** Original sources whose dependency edges may be incomplete. */
+  readonly incomplete: readonly string[];
+}
+
 const originalModuleEdges = (
   sources: ParsedSourceMapItem["original_sources"],
-): ParsedSourceMapItem["original_module_edges"] => {
+): OriginalModuleEdges => {
   const edges: ParsedSourceMapItem["original_module_edges"] = [];
   const seen = new Set<string>();
+  const incomplete: string[] = [];
   for (const source of sources) {
     if (source.artifact === null) continue;
-    for (const detector of originalImportDetectors) {
-      for (const match of source.artifact.text.matchAll(detector.pattern)) {
-        const specifier = match[1];
-        if (specifier === undefined) continue;
-        const key = `${source.source}\0${detector.kind}\0${specifier}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        edges.push({
-          from_source: source.source,
-          kind: detector.kind,
-          specifier,
-          resolved_source: resolveOriginalSource(specifier, source.source),
-        });
-      }
+    const parsed = parseJavaScriptSource(source.artifact.text);
+    if (parsed === null) {
+      incomplete.push(source.source);
+      continue;
     }
+    // A recovered program still yields the imports it did parse, but nodes
+    // after an unrecoverable point are missing, so the edges are a subset.
+    if (parsed.errors.length > 0) incomplete.push(source.source);
+    let unboundRequires: ReadonlySet<string> | undefined;
+    t.traverseFast(parsed, (node) => {
+      const dependency = originalDependency(node);
+      if (dependency === null) return;
+      const { kind, specifier } = dependency;
+      if (kind === "require" && t.isCallExpression(node)) {
+        unboundRequires ??= new Set(
+          analyzeParsedJavaScriptSemantics(parsed)
+            .references.filter(
+              ({ name, role, resolution }) =>
+                name === "require" &&
+                role === "read" &&
+                resolution === "unbound",
+            )
+            .map(
+              ({ location }) =>
+                `${String(location.start.line)}:${String(location.start.column)}`,
+            ),
+        );
+        const location = node.callee.loc?.start;
+        if (
+          location === undefined ||
+          !unboundRequires.has(
+            `${String(location.line)}:${String(location.column)}`,
+          )
+        )
+          return;
+      }
+      const key = `${source.source}\0${kind}\0${specifier}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      edges.push({
+        from_source: source.source,
+        kind,
+        specifier,
+        resolved_source: resolveOriginalSource(specifier, source.source),
+      });
+    });
   }
-  return edges;
+  return { edges, incomplete };
 };
 
 const validSourceMapEnvelope = (text: string): boolean => {
@@ -308,18 +361,39 @@ const sourceMediaType = (source: string | null): string =>
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const originalImportDetectors = [
-  {
-    kind: "static_import" as const,
-    pattern:
-      /\b(?:import|export)\s+(?:[^'"\n]*?\s+from\s+)?["']([^"'\n]+)["']/gu,
-  },
-  {
-    kind: "dynamic_import" as const,
-    pattern: /\bimport\s*\(\s*["']([^"'\n]+)["']\s*\)/gu,
-  },
-  {
-    kind: "require" as const,
-    pattern: /\brequire\s*\(\s*["']([^"'\n]+)["']\s*\)/gu,
-  },
-] as const;
+const originalDependency = (
+  node: t.Node,
+): {
+  readonly kind: ParsedSourceMapItem["original_module_edges"][number]["kind"];
+  readonly specifier: string;
+} | null => {
+  if (
+    t.isImportDeclaration(node) ||
+    t.isExportAllDeclaration(node) ||
+    t.isExportNamedDeclaration(node)
+  )
+    return node.source === null || node.source === undefined
+      ? null
+      : { kind: "static_import", specifier: node.source.value };
+  if (t.isImportExpression(node) && t.isStringLiteral(node.source))
+    return { kind: "dynamic_import", specifier: node.source.value };
+  if (
+    t.isCallExpression(node) &&
+    t.isIdentifier(node.callee, { name: "require" }) &&
+    t.isStringLiteral(node.arguments[0])
+  )
+    return { kind: "require", specifier: node.arguments[0].value };
+  // `import x = require("m")` is only legal at module top level and always
+  // refers to the host loader, so it needs no unbound-`require` check. The
+  // `moduleReference` is an entity name for a local alias instead, which
+  // declares no dependency.
+  if (
+    t.isTSImportEqualsDeclaration(node) &&
+    t.isTSExternalModuleReference(node.moduleReference)
+  )
+    return {
+      kind: "require",
+      specifier: node.moduleReference.expression.value,
+    };
+  return null;
+};

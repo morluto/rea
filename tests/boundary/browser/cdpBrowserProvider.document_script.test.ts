@@ -120,6 +120,91 @@ describeBrowser("CdpBrowserProvider: document script 1", () => {
   });
 });
 
+describeBrowser("CdpBrowserProvider: transient WebMCP frames", () => {
+  it("drops stale child tools and reports partial coverage when a blank commit remains", async () => {
+    const browser = await startFakeCdpBrowser({
+      webMcpTools: true,
+      webMcpChildTransientBlank: true,
+      extraCollections: true,
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().discoverWebMcpTools(
+      discoverWebMcpToolsInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+
+    if (!result.ok) throw result.error;
+    expect(result.value.tools.items.map(({ name }) => name)).not.toContain(
+      "child_tool",
+    );
+    expect(result.value.completeness.attach_limited_sections).toContain(
+      "webmcp_tools",
+    );
+    expect(
+      result.value.completeness.excluded.find(
+        ({ section }) => section === "webmcp_tools",
+      )?.count,
+    ).toBe(1);
+  });
+
+  it("accepts fresh child registrations after a stable frame commit", async () => {
+    const browser = await startFakeCdpBrowser({
+      webMcpTools: true,
+      webMcpChildRecoversAfterTransient: true,
+      webMcpChildTransientBlank: true,
+      extraCollections: true,
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().discoverWebMcpTools(
+      discoverWebMcpToolsInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+
+    if (!result.ok) throw result.error;
+    expect(result.value.tools.items).toContainEqual(
+      expect.objectContaining({ name: "child_tool" }),
+    );
+    expect(result.value.completeness.attach_limited_sections).not.toContain(
+      "webmcp_tools",
+    );
+  });
+
+  it("drops registrations from a child document when that frame commits a replacement", async () => {
+    const browser = await startFakeCdpBrowser({
+      webMcpTools: true,
+      webMcpChildNavigatesAllowed: true,
+      extraCollections: true,
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().discoverWebMcpTools(
+      discoverWebMcpToolsInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+
+    if (!result.ok) throw result.error;
+    expect(result.value.tools.items.map(({ name }) => name)).not.toContain(
+      "child_tool",
+    );
+    expect(
+      result.value.completeness.excluded.find(
+        ({ section }) => section === "webmcp_tools",
+      )?.count,
+    ).toBe(1);
+  });
+});
+
 describeBrowser("CdpBrowserProvider: document script 2", () => {
   it("discovers untrusted WebMCP declarations without registering or invoking them", async () => {
     const browser = await startFakeCdpBrowser({ webMcpTools: true });

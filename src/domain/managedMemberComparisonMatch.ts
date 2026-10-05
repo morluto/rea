@@ -29,6 +29,7 @@ type ConcreteMatchBasis = Exclude<MatchBasis, "none">;
 interface Keyed<Item> {
   readonly item: Item;
   readonly exactKey: string | null;
+  readonly signatureKey: string | null;
   readonly structuralKey: string | null;
 }
 
@@ -55,6 +56,15 @@ const keyMethod = (item: Method): Keyed<Method> => ({
           "method-exact",
           item.signature.raw_sha256,
           item.body.normalized_il_sha256,
+        ])
+      : null,
+  signatureKey:
+    item.signature.parse_status === "decoded"
+      ? stableKey([
+          "method-signature",
+          item.declaring_type,
+          item.name,
+          item.signature.raw_sha256,
         ])
       : null,
   structuralKey:
@@ -94,6 +104,7 @@ const keyField = (item: Field): Keyed<Field> => ({
     item.signature.parse_status === "decoded"
       ? stableKey(["field-exact", item.signature.raw_sha256])
       : null,
+  signatureKey: null,
   structuralKey: stableKey([
     "field-structural",
     item.signature.kind,
@@ -112,7 +123,16 @@ const matchMethods = (
     left,
     right,
     exactBasis: "exact-il-signature",
-    fallbackBases: ["structural-method-shape"],
+    fallbackBases: [
+      {
+        basis: "exact-signature",
+        key: ({ signatureKey }) => signatureKey,
+      },
+      {
+        basis: "structural-method-shape",
+        key: ({ structuralKey }) => structuralKey,
+      },
+    ],
   });
 
 const matchFields = (
@@ -133,7 +153,10 @@ interface MatchByKeysInput<Item> {
   readonly left: readonly Keyed<Item>[];
   readonly right: readonly Keyed<Item>[];
   readonly exactBasis: ConcreteMatchBasis;
-  readonly fallbackBases: readonly ConcreteMatchBasis[];
+  readonly fallbackBases: readonly {
+    readonly basis: ConcreteMatchBasis;
+    readonly key: (item: Keyed<Item>) => string | null;
+  }[];
 }
 
 const matchByKeys = <Item>({
@@ -156,10 +179,7 @@ const matchByKeys = <Item>({
     readonly key: (item: Keyed<Item>) => string | null;
   }[] = [
     { basis: exactBasis, key: ({ exactKey }) => exactKey },
-    ...fallbackBases.map((basis) => ({
-      basis,
-      key: ({ structuralKey }: Keyed<Item>) => structuralKey,
-    })),
+    ...fallbackBases,
   ];
   for (const round of rounds) {
     const leftGroups = groupBy(
@@ -185,6 +205,7 @@ const matchByKeys = <Item>({
           basis: round.basis,
           confidence:
             round.basis === "exact-il-signature" ||
+            round.basis === "exact-signature" ||
             round.basis === "field-signature"
               ? "exact"
               : "high",

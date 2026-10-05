@@ -90,7 +90,17 @@ describe("compiled Apple asset catalog projection", () => {
     );
     expect(() =>
       parseAppleAssetCatalogRecords({ Name: "not an array" }),
-    ).toThrow(/JSON array/u);
-    expect(() => parseAppleAssetCatalogRecords([null])).toThrow(/record 0/u);
+    ).toThrow(
+      expect.objectContaining({
+        _tag: "AnalysisOutputError",
+        reason: "assetutil output must be a JSON array",
+      }),
+    );
+    expect(() => parseAppleAssetCatalogRecords([null])).toThrow(
+      expect.objectContaining({
+        _tag: "AnalysisOutputError",
+        reason: "assetutil record 0 is not a JSON object",
+      }),
+    );
   });
 });

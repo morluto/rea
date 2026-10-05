@@ -123,7 +123,7 @@ const findHopper = async (host: DoctorHost): Promise<string | undefined> => {
       ? [
           DEFAULT_HOPPER,
           SYSTEM_LINUX_HOPPER,
-          linuxHopperLauncherPath(homedir()),
+          linuxHopperLauncherPath(host.homeDirectory ?? homedir()),
           ...(await host.manualHopperPaths()),
         ]
       : [host.configuredHopperPath];

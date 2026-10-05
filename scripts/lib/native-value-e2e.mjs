@@ -9,7 +9,7 @@ import { parseEvidence } from "../../dist/domain/evidence.js";
 import { analysisProfileSchema } from "../../dist/domain/analysisProfile.js";
 import { nativeValueTraceSchema } from "../../dist/domain/nativeValueTrace.js";
 
-const entrypoint = fileURLToPath(new URL("../rea.mjs", import.meta.url));
+const defaultEntrypoint = fileURLToPath(new URL("../rea.mjs", import.meta.url));
 const environment = () => ({
   PATH: process.env.PATH ?? "/usr/bin:/bin",
   REA_LOG_LEVEL: "silent",
@@ -67,7 +67,12 @@ const verifyGraph = (input, target, procedure, globalAddress) => {
 };
 
 /** Verify real Ghidra dependency composition through production CLI and stdio MCP. */
-export async function verifyNativeValueE2e(target, procedure, globalAddress) {
+export async function verifyNativeValueE2e(
+  target,
+  procedure,
+  globalAddress,
+  { entrypoint = defaultEntrypoint } = {},
+) {
   const { stdout } = await promisify(execFile)(
     process.execPath,
     [
@@ -142,10 +147,7 @@ export async function verifyNativeValueE2e(target, procedure, globalAddress) {
       { timeout: 180000 },
     );
     assert.notEqual(result.isError, true, JSON.stringify(result));
-    const mcpEvidence = parseEvidence({
-      ...result.structuredContent?.evidence,
-      normalized_result: result.structuredContent?.result,
-    });
+    const mcpEvidence = parseEvidence(result.structuredContent?.evidence);
     assert.equal(mcpEvidence.operation, "trace_native_values");
     assert.equal(mcpEvidence.provider.id, "rea-workflow");
     assert.deepEqual(mcpEvidence.analysis_profile, workflowProfile);
@@ -157,6 +159,66 @@ export async function verifyNativeValueE2e(target, procedure, globalAddress) {
     );
     assert.deepEqual(mcpEvidence.normalized_result, mcpGraph);
     assert.deepEqual(mcpGraph, cliGraph);
+    const analyzed = await client.callTool(
+      { name: "analyze_function", arguments: { procedure } },
+      { timeout: 180000 },
+    );
+    assert.notEqual(analyzed.isError, true, JSON.stringify(analyzed));
+    const functionEvidence = parseEvidence(
+      analyzed.structuredContent?.evidence,
+    );
+    assert.equal(functionEvidence.operation, "analyze_function");
+    assert.equal(functionEvidence.provider.id, "rea-workflow");
+    const functionProfile = analysisProfileSchema.parse(
+      functionEvidence.analysis_profile,
+    );
+    assert.deepEqual(
+      functionProfile.parameters.upstream_analysis_profile,
+      upstreamProfile,
+    );
+    assert.deepEqual(
+      functionEvidence.normalized_result,
+      analyzed.structuredContent?.result,
+    );
+    const comparison = await client.callTool(
+      {
+        name: "compare_functions",
+        arguments: {
+          left: analyzed.structuredContent.evidence,
+          right: analyzed.structuredContent.evidence,
+        },
+      },
+      { timeout: 180000 },
+    );
+    assert.notEqual(comparison.isError, true, JSON.stringify(comparison));
+    const comparisonEvidence = parseEvidence(
+      comparison.structuredContent?.evidence,
+    );
+    assert.equal(comparisonEvidence.normalized_result.status, "unchanged");
+    assert.deepEqual(
+      comparisonEvidence.normalized_result,
+      comparison.structuredContent?.result,
+    );
+    assert.ok(
+      comparisonEvidence.evidence_links.includes(functionEvidence.evidence_id),
+    );
+    const bundle = await client.callTool({
+      name: "get_evidence_bundle",
+      arguments: {},
+    });
+    assert.notEqual(bundle.isError, true, JSON.stringify(bundle));
+    for (const evidence of [
+      mcpEvidence,
+      functionEvidence,
+      comparisonEvidence,
+    ]) {
+      assert.deepEqual(
+        bundle.structuredContent?.result?.records.find(
+          (record) => record.evidence_id === evidence.evidence_id,
+        ),
+        evidence,
+      );
+    }
     const closed = await client.callTool({
       name: "close_binary",
       arguments: {},
@@ -175,6 +237,8 @@ export async function verifyNativeValueE2e(target, procedure, globalAddress) {
     mocked: false,
     cli: true,
     stdio_mcp: true,
+    inline_evidence: true,
+    direct_function_comparison: true,
     nodes: cliGraph.total_nodes,
     edges: cliGraph.total_edges,
     decompilations: cliGraph.decompilations,

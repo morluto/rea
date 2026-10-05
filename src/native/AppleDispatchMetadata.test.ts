@@ -117,3 +117,77 @@ describe("Apple dispatch binary metadata", () => {
     ).toThrow("Truncated");
   });
 });
+
+describe("universal Apple dispatch metadata", () => {
+  it.each([false, true])("decodes selected FAT slices (fat64=%s)", (fat64) => {
+    const thin = fixture();
+    const offset = 256;
+    const bytes = Buffer.alloc(offset + thin.length);
+    bytes.writeUInt32BE(fat64 ? 0xcafebabf : 0xcafebabe, 0);
+    bytes.writeUInt32BE(1, 4);
+    bytes.writeUInt32BE(0x0100000c, 8);
+    if (fat64) {
+      bytes.writeBigUInt64BE(BigInt(offset), 16);
+      bytes.writeBigUInt64BE(BigInt(thin.length), 24);
+    } else {
+      bytes.writeUInt32BE(offset, 16);
+      bytes.writeUInt32BE(thin.length, 20);
+    }
+    thin.copy(bytes, offset);
+    const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
+    expect(result.objc_classes[0]).toMatchObject({
+      name: "Fixture",
+      location: { address: "0x100000200", file_offset: offset + 512 },
+    });
+    expect(result.objc_dispatch_implementations[0]).toMatchObject({
+      implementation_address: "0x100000700",
+      location: { file_offset: offset + 0x488 },
+    });
+  });
+});
+
+describe("FAT64 dispatch slice validation", () => {
+  const wrapped = () => {
+    const thin = fixture();
+    const bytes = Buffer.alloc(256 + thin.length);
+    bytes.writeUInt32BE(0xcafebabf, 0);
+    bytes.writeUInt32BE(1, 4);
+    bytes.writeUInt32BE(0x0100000c, 8);
+    bytes.writeBigUInt64BE(256n, 16);
+    bytes.writeBigUInt64BE(BigInt(thin.length), 24);
+    thin.copy(bytes, 256);
+    return bytes;
+  };
+
+  it("rejects a truncated architecture table", () => {
+    expect(() =>
+      decodeAppleDispatchMetadata(wrapped().subarray(0, 32), 100, provenance),
+    ).toThrow("Malformed FAT architecture table");
+  });
+
+  it.each([16, 24])(
+    "checks the full 64-bit slice extent at field %i",
+    (field) => {
+      const bytes = wrapped();
+      bytes.writeBigUInt64BE(0x100000000n, field);
+      expect(() => decodeAppleDispatchMetadata(bytes, 100, provenance)).toThrow(
+        "FAT slice exceeds file",
+      );
+    },
+  );
+
+  it("rejects ambiguous matching architectures", () => {
+    const bytes = wrapped();
+    bytes.writeUInt32BE(2, 4);
+    bytes.copy(bytes, 40, 8, 40);
+    expect(() => decodeAppleDispatchMetadata(bytes, 100, provenance)).toThrow(
+      "Ambiguous FAT architecture slice",
+    );
+  });
+
+  it("rejects a missing selected architecture", () => {
+    expect(() =>
+      decodeAppleDispatchMetadata(wrapped(), 100, provenance, "x86_64"),
+    ).toThrow("Requested FAT architecture is absent");
+  });
+});

@@ -27,12 +27,15 @@ export const createElectronActiveEvidence = (
     confidence: "observed",
     authority: "controlled-replay",
     environment: {
-      id: `${result.application.electron_version}@${process.platform}`,
-      platform: process.platform,
-      architecture: process.arch,
+      id: `${result.application.electron_version}@unknown`,
+      platform: "unknown",
+      architecture: "unknown",
       isolation: "none",
     },
-    limitations: result.limitations,
+    limitations: [
+      ...result.limitations,
+      "Application host platform and architecture were not observed.",
+    ],
   });
 
 const scenarioProjection = (

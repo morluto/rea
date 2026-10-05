@@ -3,6 +3,7 @@ import { Cli, z } from "incur";
 import {
   captureProcessScenarioFile,
   compareProcessEvidenceFiles,
+  isProcessCliFailure,
 } from "./application/ProcessCli.js";
 import { logCliCommand } from "./cliLogging.js";
 import type { Logger } from "./logger.js";
@@ -18,8 +19,11 @@ export const registerProcessCommands = (
     description: "Capture one caller-selected process scenario",
     args: z.object({ scenario: z.string().describe("Scenario JSON path") }),
     run: ({ args }) =>
-      logCliCommand(logger, "capture-process", () =>
-        captureProcessScenarioFile(args.scenario, environment),
+      logCliCommand(
+        logger,
+        "capture-process",
+        () => captureProcessScenarioFile(args.scenario, environment),
+        isProcessCliFailure,
       ),
   });
   cli.command(CLI_COMMANDS.compareProcessCaptures, {
@@ -33,8 +37,12 @@ export const registerProcessCommands = (
         .describe("Optional partial-order or finite-trace specification path"),
     }),
     run: ({ args }) =>
-      logCliCommand(logger, "compare-process-captures", () =>
-        compareProcessEvidenceFiles(args.left, args.right, args.traceSpec),
+      logCliCommand(
+        logger,
+        "compare-process-captures",
+        () =>
+          compareProcessEvidenceFiles(args.left, args.right, args.traceSpec),
+        isProcessCliFailure,
       ),
   });
 };

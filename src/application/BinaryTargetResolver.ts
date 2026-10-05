@@ -87,9 +87,36 @@ export const parseBinaryTarget = async (
       await handle.close();
     }
   } catch (cause: unknown) {
+    if (!(cause instanceof Error)) throw cause;
+    const code = filesystemErrorCode(cause);
+    if (code === undefined) throw cause;
     return err(
-      new BinaryTargetError(candidate, "path is not readable", { cause }),
+      new BinaryTargetError(
+        candidate,
+        targetFailureReason(code, cause.message),
+        { cause },
+      ),
     );
+  }
+};
+
+const filesystemErrorCode = (cause: Error): string | undefined => {
+  const code: unknown = Reflect.get(cause, "code");
+  return typeof code === "string" ? code : undefined;
+};
+
+const targetFailureReason = (code: string, detail: string): string => {
+  switch (code) {
+    case "ENOENT":
+    case "ENOTDIR":
+      return `target does not exist or a path component is not a directory: ${detail}`;
+    case "EACCES":
+    case "EPERM":
+      return `permission denied while reading target: ${detail}`;
+    case "EISDIR":
+      return `target is a directory, not a readable file: ${detail}`;
+    default:
+      return `target could not be read (${code}): ${detail}`;
   }
 };
 

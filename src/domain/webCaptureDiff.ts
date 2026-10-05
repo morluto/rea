@@ -1,7 +1,4 @@
-import { createHash } from "node:crypto";
-
-import canonicalize from "canonicalize";
-
+import { canonicalDigest } from "./comparisonSemantics.js";
 import type { WebPageInspection } from "./browserObservation.js";
 import {
   webCaptureDiffSchema,
@@ -333,11 +330,7 @@ const metadataProjection = (inspection: WebPageInspection) => ({
 const singleton = (key: string, value: string): ReadonlyMap<string, string> =>
   new Map([[key, value]]);
 
-const digest = (value: unknown): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined) throw new TypeError("Expected canonical JSON");
-  return createHash("sha256").update(encoded).digest("hex");
-};
+const digest = (value: unknown): string => canonicalDigest(value);
 
 const accessibilityComparable = (
   inspection: WebPageInspection,

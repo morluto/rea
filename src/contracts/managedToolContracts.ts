@@ -6,21 +6,23 @@ import { toolContractMetadata } from "./toolEffects.js";
 import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 
 /** Exact caller boundary for execution-free PE/CLI triage and identity. */
-export const managedArtifactInputSchema = z.object({
+const managedTargetInputSchema = z.object({
   path: z
     .string()
     .min(1)
     .optional()
     .describe(
-      "Managed PE/CLI path to open before inspection; omit only when a managed target is already active",
+      "Explicit managed PE/CLI path; omit to reuse the previously selected managed target",
     ),
 });
 
+export const managedArtifactInputSchema = managedTargetInputSchema;
+
 /** Exact caller boundary for execution-free metadata/signature/IL inspection. */
-export const managedMemberInputSchema = z.object({});
+export const managedMemberInputSchema = managedTargetInputSchema;
 
 /** Exact caller boundary for execution-free managed/native boundary inspection. */
-export const managedNativeBoundaryInputSchema = z.object({});
+export const managedNativeBoundaryInputSchema = managedTargetInputSchema;
 
 const outputSchema = requireOutputSchema(
   managedOutputSchemas,
@@ -86,3 +88,7 @@ export const MANAGED_TOOL_CONTRACTS = [
 
 /** Names of execution-free managed static operations. */
 export type ManagedToolName = (typeof MANAGED_TOOL_CONTRACTS)[number]["name"];
+
+/** Parse whether an analysis operation belongs to the managed static tools. */
+export const isManagedToolName = (name: string): name is ManagedToolName =>
+  MANAGED_TOOL_CONTRACTS.some((contract) => contract.name === name);

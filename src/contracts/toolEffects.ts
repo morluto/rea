@@ -1,6 +1,7 @@
-/** Canonical side effects for one caller-visible tool. */
+/** Possible effects across a tool's supported inputs, including temporary work. */
 export interface ToolEffects {
   readonly mutatesTarget: boolean;
+  /** Includes additive Evidence recording, navigation state, and unknown updates. */
   readonly mutatesSession: boolean;
   readonly writesFilesystem: boolean;
   readonly launchesProcess: boolean;
@@ -117,8 +118,17 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   inspect_plist: nativeEvidence,
   list_architectures: nativeEvidence,
   demangle_swift: nativeEvidence,
-  inspect_artifact: evidence,
-  extract_artifact: effects({ mutatesSession: true, writesFilesystem: true }),
+  inspect_artifact: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    writesFilesystem: true,
+  }),
+  extract_artifact: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    launchesProcess: true,
+    idempotent: false,
+  }),
   decode_interface_builder: evidence,
   inspect_asset_catalog: nativeEvidence,
   inspect_keyed_archive: evidence,
@@ -134,9 +144,9 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   analyze_web_bundle: browserEvidence,
   observe_web_session: browserEvidence,
   discover_webmcp_tools: browserEvidence,
-  compare_web_captures: browserEvidence,
+  compare_web_captures: sessionEvidence,
   capture_web_screenshot: browserEvidence,
-  compare_web_screenshots: browserEvidence,
+  compare_web_screenshots: sessionEvidence,
   capture_browser_scenario: effects({
     mutatesTarget: true,
     mutatesSession: true,

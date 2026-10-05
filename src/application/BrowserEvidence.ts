@@ -82,12 +82,17 @@ export const createBrowserEvidence = (
       "browser" in result
         ? {
             id: `${result.browser.product}@${result.browser.revision}`,
-            platform: process.platform,
-            architecture: process.arch,
+            platform: "unknown",
+            architecture: "unknown",
             isolation: "none",
           }
         : null,
-    limitations: result.limitations,
+    limitations: [
+      ...result.limitations,
+      ...("browser" in result
+        ? ["Browser host platform and architecture were not observed."]
+        : []),
+    ],
   });
 
 const browserParameters = (

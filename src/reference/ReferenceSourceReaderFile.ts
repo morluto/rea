@@ -2,7 +2,11 @@ import { constants } from "node:fs";
 import { open, type FileHandle } from "node:fs/promises";
 import { dirname } from "node:path";
 
-import { entryFailure, safeSize } from "./ReferenceSourceReaderErrors.js";
+import {
+  entryFailure,
+  filesystemFailureDetail,
+  safeSize,
+} from "./ReferenceSourceReaderErrors.js";
 import {
   isAborted,
   sameFile,
@@ -37,6 +41,7 @@ type FinalizeFileReadRequest = {
   readonly parentBefore: { readonly ok: true; readonly stats: BigStats };
   readonly chunks: Buffer[];
   readonly total: number;
+  readonly signal?: AbortSignal;
 };
 
 const prepareFileRead = async (
@@ -131,6 +136,7 @@ const finalizeFileRead = async (
     root,
     rootIdentity,
     dirname(absolute),
+    request.signal,
   );
   if (!parentAfter.ok || !sameFile(parentBefore.stats, parentAfter.stats))
     return entryFailure(
@@ -167,6 +173,7 @@ export const readStableFile = async (
       root,
       rootIdentity,
       dirname(absolute),
+      signal,
     );
     if (!parentBefore.ok)
       return entryFailure(
@@ -195,15 +202,23 @@ export const readStableFile = async (
       parentBefore,
       chunks: contents.chunks,
       total: contents.total,
+      ...(signal === undefined ? {} : { signal }),
     });
-  } catch {
-    return entryFailure(
-      path,
-      "file",
-      isAborted(signal) ? "cancelled" : "io",
+  } catch (cause: unknown) {
+    if (isAborted(signal))
+      return entryFailure(
+        path,
+        "file",
+        "cancelled",
+        "File read cancelled",
+        safeSize(expected.size),
+      );
+    const message = filesystemFailureDetail(
+      cause,
       "File could not be read safely",
-      safeSize(expected.size),
     );
+    if (message === undefined) throw cause;
+    return entryFailure(path, "file", "io", message, safeSize(expected.size));
   } finally {
     await handle?.close().catch(() => undefined);
   }

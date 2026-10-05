@@ -38,7 +38,9 @@ with the suite and excluded from package builds; broader runtime and provider
 fixtures remain under `tests/fixtures/**`.
 
 `tests/process-global/**` is reserved for cases with a demonstrated dependency
-on process-global state. Those tests run without file parallelism. Reusable,
+on process-global state. Those tests use isolated forks so environment and
+exit-status changes cannot leak between files. Serialize a case only when it
+demonstrably shares an external resource that cannot be isolated. Reusable,
 test-scoped fixtures live under `tests/support/**`; immutable source artifacts
 remain under `tests/fixtures/**`.
 The process-global Vitest configuration contract rejects new direct temporary-root
@@ -164,26 +166,57 @@ not make native host acceptance unavailable.
 
 ## Developer commands
 
-`npm test` runs every deterministic project once. The narrower feedback loops
-are:
+Use source feedback while editing, explicit boundary checks for the changed
+behavior, and complete CI evidence before merging.
 
-| Command                   | Scope                                                                                                                  |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `npm run test:fast`       | Domain, service, adapter, composition, boundary, MCP boundary, and conformance projects                                |
-| `npm run test:local`      | Changed and related tests without the build step; lightweight local feedback loop                                      |
-| `npm run test:boundary`   | Boundary, MCP boundary, and process-global projects                                                                    |
-| `npm run test:mcp`        | MCP boundary project only                                                                                              |
-| `npm run test:acceptance` | Complete CLI and MCP acceptance workflows                                                                              |
-| `npm run test:changed`    | Changed tests in non-serial projects via Vitest's import graph                                                         |
-| `npm run test:watch`      | Changed domain, service, adapter, composition, boundary, MCP boundary, conformance, and evaluation tests in watch mode |
-| `npm run test:watch:all`  | Changed tests from every deterministic project in watch mode                                                           |
-| `npm run check:changed`   | Cached static checks followed by changed tests                                                                         |
-| `npm run check:pr`        | Static, generated-document, and complete deterministic PR gate                                                         |
+| Command                           | Scope                                                                                                                   |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `npm run test:local`              | Dirty source tests via the import graph, without build; explicit source paths run regardless of Git status              |
+| `npm run test:focused -- PATH...` | Exact existing test files; compiled boundaries build first, and unmatched paths fail                                    |
+| `npm run test:changed`            | Source tests affected since the merge base with `origin/main`, including committed and dirty changes                    |
+| `npm run test:fast`               | All domain, service, adapter, composition, conformance, and evaluation tests without build                              |
+| `npm run test:boundary`           | Boundary, MCP boundary, process boundary, and process-global projects                                                   |
+| `npm run test:mcp`                | MCP boundary project                                                                                                    |
+| `npm run test:acceptance`         | Complete compiled CLI and MCP acceptance workflows                                                                      |
+| `npm run test:watch`              | Dirty source tests in watch mode, without build                                                                         |
+| `npm run test:watch:all`          | Changed tests from every project; builds at startup, so rebuild after production edits before relying on compiled tests |
+| `npm run check:changed`           | Cached typecheck/lint and branch-related source feedback                                                                |
+| `npm run check:pr`                | Opt-in complete local deterministic gate and generated-file checks                                                      |
+| `npm run docs:check`              | Committed generated-document freshness, without API HTML rendering                                                      |
+| `npm run docs:api:cached`         | Explicit cached API HTML rendering                                                                                      |
 
-Changed-test selection is a fast feedback aid, not release evidence. It can
-miss behavior connected through runtime registration, generated data, shell
-entrypoints, or other relationships that are absent from the import graph.
-Use `npm run check:pr` before handing off a contribution.
+For example:
+
+```bash
+npm run test:local -- src/config.test.ts
+npm run test:focused -- tests/acceptance/applications/runtime.test.ts
+npm run test:changed -- --base origin/main
+npm run test:changed -- --dry-run
+```
+
+`test:focused` accepts exact repository-relative test file paths. Source-only
+paths do not build; boundary, acceptance, process-global, or unfamiliar `tests/`
+paths build conservatively. Tests use Vitest concurrency and isolated
+workspaces; commands do not hold a broad test lock. Build and documentation
+writers retain checkout-local locks for their shared output files. Explicit
+selections do not use `--changed` or permit zero-test success.
+The dry-run option reports the chosen merge base, scope and build prerequisite
+without executing tests or building. A missing Git base reports how to fetch
+it or select another revision.
+
+Changed selection can miss runtime registration, generated data, shell
+entrypoints, bridges, or other relationships absent from the import graph.
+An empty changed selection means no tests were selected, not verified
+correctness. Select relevant boundary files and real-provider lanes explicitly.
+Source projects also contain large capacity regressions; `test:fast` promises
+no compiled-runtime prerequisite, not a fixed time budget.
+
+Routine iterations and rebases need focused regressions and relevant checks.
+Before handing off a PR, run `npm run check` and generated-document checks when
+applicable; CI owns the full suite and coverage. Use the full local gate for
+broad changes or diagnosing CI, rather than after every edit. Package/install
+changes additionally need package verification; provider changes need actual
+provider evidence.
 
 Local full-suite Vitest runs use up to two workers and schedule projects one
 at a time. Process, acceptance and process-global projects serialize their
@@ -197,8 +230,8 @@ process-global, and other boundary projects retain per-file isolation.
 `npm test`, `npm run docs:check`, and `npm run docs:generate` share
 repository-local locks and fail fast when the same class of command is already
 running. The `npm test` build is inside that lock. `check:pr` runs its test task
-before starting documentation validation, so TypeDoc does not compete with the
-full suite for memory.
+before starting generated-document validation. TypeDoc rendering is a separate
+command and CI step.
 
 Vitest and Node persistent compile caches are deliberately not enabled by
 default. To evaluate repeated local runs, opt in for both cold and warm
@@ -232,8 +265,9 @@ for another.
 The PR acceptance target is a median `npm run check:pr` wall time below three
 minutes across three warm-build runs on the benchmark host. Keep Vitest caches
 cold unless separately identified. A PR that touches packaging or real-system
-behavior also requires `npm run verify:package` and the applicable
-`verify:*` lanes.
+behavior requires the applicable `verify:*` lanes; packaging and installation
+changes also require `npm run verify:package`. The full-gate benchmark measures
+that explicit lane, not the routine iteration requirement.
 
 ## Apple native metadata and UI
 

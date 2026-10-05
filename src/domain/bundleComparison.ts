@@ -115,7 +115,7 @@ export const compareBundles = (
     changes,
     limitations: changes.some(({ limitations }) => limitations.length > 0)
       ? [
-          "One-sided membership proves only bundle inclusion or omission, not behavioral absence.",
+          "EvidenceBundle has no inventory completeness marker; one-sided membership remains unknown.",
         ]
       : [],
   });
@@ -171,30 +171,30 @@ const compareRecords = (
   const added = [...rightIds].filter(
     (id) => !leftIds.has(id) && !pairedRight.has(id),
   );
-  for (const [classification, ids, side] of [
-    ["removed", removed, "left"],
-    ["added", added, "right"],
+  for (const [ids, side] of [
+    [removed, "left"],
+    [added, "right"],
   ] as const)
     for (const id of ids)
       changes.push({
         entity: "evidence",
         key: id,
-        classification,
-        conclusion_kind: "observed_change",
+        classification: "unknown",
+        conclusion_kind: "unresolved_branch",
         left_evidence_ids: side === "left" ? [id] : [],
         right_evidence_ids: side === "right" ? [id] : [],
         left_digest: side === "left" ? id.slice(3) : null,
         right_digest: side === "right" ? id.slice(3) : null,
         limitations: [
-          "One-sided membership does not establish behavioral absence.",
+          "EvidenceBundle has no inventory completeness marker; one-sided membership may reflect incomplete capture.",
         ],
       });
   return {
     changes,
     summary: {
       records_unchanged: common.length + pairs.length - changed,
-      records_added: added.length,
-      records_removed: removed.length,
+      records_added: 0,
+      records_removed: 0,
       records_changed: changed,
     },
   };
@@ -216,16 +216,7 @@ const compareUnknowns = (left: EvidenceBundle, right: EvidenceBundle) => {
     const leftHistory = leftHistories.get(id);
     const rightHistory = rightHistories.get(id);
     if (leftHistory === undefined || rightHistory === undefined) {
-      const added = leftHistory === undefined;
-      summary[added ? "unknowns_added" : "unknowns_removed"] += 1;
-      changes.push(
-        unknownChange(
-          id,
-          added ? "added" : "removed",
-          leftHistory,
-          rightHistory,
-        ),
-      );
+      changes.push(unknownChange(id, "unknown", leftHistory, rightHistory));
       continue;
     }
     const leftDigests = leftHistory.map(
@@ -275,7 +266,9 @@ const unknownChange = (
   right_digest: right?.at(-1)?.revision_digest ?? null,
   limitations:
     left === undefined || right === undefined
-      ? ["A missing unknown history does not establish resolution."]
+      ? [
+          "EvidenceBundle has no inventory completeness marker; one-sided history membership remains unknown.",
+        ]
       : [],
 });
 

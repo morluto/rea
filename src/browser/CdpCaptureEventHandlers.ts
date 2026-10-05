@@ -19,6 +19,7 @@ import {
   firstCallFrame,
   initiatorLocation,
   integerOrNull,
+  isMainFrameNavigation,
 } from "./CdpCaptureEventHelpers.js";
 import type { CdpCaptureEventsState } from "./CdpCaptureEventState.js";
 import type { CapturedScript } from "./CdpCaptureEventTypes.js";
@@ -365,7 +366,14 @@ export const handleFrameNavigated = (
   params: UnknownRecord,
 ): void => {
   const frame = recordValue(params.frame);
-  if (stringValue(frame?.id) !== state.mainFrameId) return;
+  if (state.mainFrameId === undefined) return;
+  if (
+    !isMainFrameNavigation(
+      { method: "Page.frameNavigated", params },
+      state.mainFrameId,
+    )
+  )
+    return;
   const rawUrl = stringValue(frame?.url);
   const loaderId = stringValue(frame?.loaderId);
   // `frameNavigated` re-fires for a document already reported (same URL and
