@@ -8,12 +8,18 @@ import {
 } from "./lib/development-tests.mjs";
 
 let child;
+let forceTimer;
 let shutdownSignal;
 const signalExitCodes = { SIGINT: 130, SIGTERM: 143 };
 for (const signal of Object.keys(signalExitCodes))
   process.on(signal, () => {
-    shutdownSignal ??= signal;
-    child?.kill(signal);
+    if (shutdownSignal !== undefined) return;
+    shutdownSignal = signal;
+    if (child !== undefined && child.exitCode === null) {
+      child.kill(signal);
+      forceTimer = setTimeout(() => child?.kill("SIGKILL"), 1_000);
+      forceTimer.unref?.();
+    }
   });
 
 try {
@@ -71,20 +77,19 @@ function run(executable, arguments_, capture = false) {
       code: signalExitCodes[shutdownSignal],
       output: "",
     });
+  child = spawn(executable, arguments_, {
+    stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit",
+  });
+  let output = "";
+  if (capture) {
+    child.stdout.on("data", (data) => (output += data.toString()));
+    child.stderr.on("data", (data) => (output += data.toString()));
+  }
   return new Promise((resolveResult, reject) => {
-    let output = "";
-    child = spawn(executable, arguments_, {
-      stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit",
-    });
-    if (capture) {
-      child.stdout.on("data", (data) => {
-        output += data.toString();
-      });
-      child.stderr.on("data", (data) => {
-        output += data.toString();
-      });
-    }
     child.once("error", reject);
-    child.once("close", (code) => resolveResult({ code: code ?? 1, output }));
+    child.once("close", (code) => {
+      clearTimeout(forceTimer);
+      resolveResult({ code: code ?? 1, output });
+    });
   });
 }
