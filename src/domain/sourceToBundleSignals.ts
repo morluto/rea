@@ -268,11 +268,16 @@ const addPath = (
   if (value !== null) paths.push({ kind, value });
 };
 
+/** Matches a `scheme://...` URL prefix; bare filesystem paths keep `?`/`#`. */
+const SCHEME_URL = /^[a-z][a-z0-9+.-]*:\/\//iu;
+/** Matches a `scheme://...` URL prefix with any run of slashes, for stripping. */
+const SCHEME_URL_PREFIX = /^[a-z][a-z0-9+.-]*:\/\/+/iu;
+
 const normalizeCurrentPath = (raw: string): string | null => {
-  const withoutQuery = /^[a-z][a-z0-9+.-]*:\/\//iu.test(raw)
+  const withoutQuery = SCHEME_URL.test(raw)
     ? (raw.split(/[?#]/u, 1)[0] ?? "")
     : raw;
-  const withoutScheme = withoutQuery.replace(/^[a-z][a-z0-9+.-]*:\/\/+/iu, "");
+  const withoutScheme = withoutQuery.replace(SCHEME_URL_PREFIX, "");
   const parts = withoutScheme
     .replaceAll("\\", "/")
     .split("/")
