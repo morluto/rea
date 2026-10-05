@@ -182,6 +182,7 @@ export const edges = (
   const fieldAccesses: ManagedFieldAccess[] = [];
   for (const method of methods) {
     for (const anchor of method.body.anchors) {
+      if (anchor.opcode === "ldtoken") continue;
       if (anchor.operand_kind === "method" && anchor.operand !== null) {
         const named =
           methodCore.get(anchor.operand)?.name ??
