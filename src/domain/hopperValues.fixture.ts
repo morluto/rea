@@ -114,6 +114,20 @@ export const ghidraNativeApiBoundary = () => ({
           ],
         },
       ],
+      default_targets: [
+        {
+          target_address: "0x401030",
+          confidence: "high" as const,
+          evidence: [
+            {
+              kind: "jump-table" as const,
+              source: "ghidra-clang-case-token",
+              detail:
+                "Typed default label belongs to the block at 0x401030 with unique indirect dispatch predecessor 0x401010.",
+            },
+          ],
+        },
+      ],
       limitations: [],
     },
   ],

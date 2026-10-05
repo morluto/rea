@@ -40,6 +40,6 @@ export const FUNCTION_WORKFLOW_TOOL_CONTRACTS = [
   ),
   functionWorkflow(
     "inspect_native_api",
-    "Analyze a native API boundary in one function identified by symbol or provider-returned address. Returns confidence, evidence, jump-table dispatch/data/target mappings, unsupported branches, and residual unknowns.",
+    "Analyze a native API boundary in one function identified by symbol or provider-returned address. Returns confidence, evidence, jump-table dispatch/data/case mappings, separately evidenced default targets, unsupported branches, and residual unknowns. Null case values mean unresolved cases, never a known default.",
   ),
 ] as const satisfies readonly ToolContract[];

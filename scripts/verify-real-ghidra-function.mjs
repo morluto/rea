@@ -613,3 +613,37 @@ export async function verifyNativeValueTrace(client, procedures, target) {
   const global = requireProcedure(names, "rea_ghidra_inventory_global");
   return verifyNativeValueE2e(target, entry.address, global.address);
 }
+
+/** Match the source default's -1 assignment in supported native compiler encodings. */
+export async function verifyDenseDefaultReturn(client, targetAddress) {
+  const instruction = await functionCall(client, "inspect_native_instruction", {
+    address: targetAddress,
+  });
+  if (
+    instruction.status !== "decoded" ||
+    !isDefaultMinusOneAssignment(instruction)
+  )
+    throw new Error(
+      `Dense default target lacks the source -1 assignment (x86 register/stack MOV or AArch64 W-register MOVN): ${JSON.stringify(instruction)}`,
+    );
+  return {
+    target_address: targetAddress,
+    instruction_bytes: instruction.bytes,
+  };
+}
+
+function isDefaultMinusOneAssignment(instruction) {
+  if (instruction.architecture.startsWith("x86:"))
+    return (
+      instruction.bytes === "b8ffffffff" ||
+      /^c745[0-9a-f]{2}ffffffff$/u.test(instruction.bytes)
+    );
+  if (
+    instruction.architecture.startsWith("AARCH64:") &&
+    instruction.bytes.length === 8
+  ) {
+    const word = Buffer.from(instruction.bytes, "hex").readUInt32LE();
+    return (word & 0xffffffe0) === 0x12800000;
+  }
+  return false;
+}

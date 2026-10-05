@@ -193,6 +193,113 @@ describe("Ghidra function-analysis result values", () => {
 });
 
 describe("Ghidra jump-table mapping contract", () => {
+  it("preserves evidenced defaults separately from cases and unresolved targets", () => {
+    const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+    const boundary = dossier.native_api;
+    if (boundary?.available !== true)
+      throw new TypeError("Ghidra native API fixture is unavailable");
+    const table = boundary.jump_tables[0];
+    const mapping = table?.mappings[0];
+    if (table === undefined || mapping === undefined)
+      throw new TypeError("Ghidra jump-table fixture is unavailable");
+    const defaults = [
+      {
+        target_address: mapping.target_address,
+        confidence: "high",
+        evidence: [
+          {
+            kind: "jump-table",
+            source: "ghidra-clang-case-token",
+            detail: "Default label reaches this recovered destination.",
+          },
+        ],
+      },
+    ];
+    const parsed = parseGhidraFunctionResult("analyze_function", {
+      ...dossier,
+      native_api: {
+        ...boundary,
+        jump_tables: [
+          {
+            ...table,
+            default_targets: defaults,
+            mappings: [
+              mapping,
+              { ...mapping, case_value: null, target_address: "0x401030" },
+            ],
+          },
+        ],
+      },
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw parsed.error;
+    const output = functionDossierSchema.parse(parsed.value).native_api;
+    if (output?.available !== true)
+      throw new TypeError("Ghidra native API fixture is unavailable");
+    expect(output.jump_tables[0]).toMatchObject({
+      default_targets: defaults,
+      mappings: [
+        { case_value: 0, target_address: "0x401020" },
+        { case_value: null, target_address: "0x401030" },
+      ],
+    });
+  });
+
+  it("normalizes legacy missing defaults without promoting unknown cases", () => {
+    const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+    const boundary = dossier.native_api;
+    if (boundary?.available !== true)
+      throw new TypeError("Ghidra native API fixture is unavailable");
+    const table = boundary.jump_tables[0];
+    const mapping = table?.mappings[0];
+    if (table === undefined || mapping === undefined)
+      throw new TypeError("Ghidra jump-table fixture is unavailable");
+    const { default_targets: _legacyDefaults, ...legacy } = table;
+    const parsed = parseGhidraFunctionResult("analyze_function", {
+      ...dossier,
+      native_api: {
+        ...boundary,
+        jump_tables: [
+          { ...legacy, mappings: [{ ...mapping, case_value: null }] },
+        ],
+      },
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw parsed.error;
+    expect(functionDossierSchema.parse(parsed.value).native_api).toMatchObject({
+      jump_tables: [{ default_targets: [], mappings: [{ case_value: null }] }],
+    });
+  });
+
+  it("rejects non-canonical default destinations and defaults without evidence", () => {
+    const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+    const boundary = dossier.native_api;
+    if (boundary?.available !== true)
+      throw new TypeError("Ghidra native API fixture is unavailable");
+    const table = boundary.jump_tables[0];
+    const mapping = table?.mappings[0];
+    if (table === undefined || mapping === undefined)
+      throw new TypeError("Ghidra jump-table fixture is unavailable");
+    for (const destination of [
+      {
+        target_address: "0X401020",
+        confidence: "high",
+        evidence: mapping.evidence,
+      },
+      { target_address: "0x401020", confidence: "high", evidence: [] },
+    ]) {
+      expect(
+        parseGhidraFunctionResult("analyze_function", {
+          ...dossier,
+          native_api: {
+            ...boundary,
+            jump_tables: [{ ...table, default_targets: [destination] }],
+          },
+        }),
+      ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
+    }
+  });
+
   it("keeps jump-table sources separate from case-to-target mappings", () => {
     const parsed = parseGhidraFunctionResult(
       "analyze_function",

@@ -5,6 +5,71 @@ import { ghidraFunctionDossier } from "../domain/hopperValues.fixture.js";
 import { nativeApiBoundarySchema } from "../domain/nativeApiBoundary.js";
 import { projectNativeApiInspection } from "./NativeApiInspection.js";
 
+describe("native API switch uncertainty", () => {
+  it("reports an unevidenced default path independently of known numeric cases", () => {
+    const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+    const boundary = dossier.native_api;
+    if (boundary?.available !== true)
+      throw new TypeError("Ghidra native API fixture is unavailable");
+    const table = boundary.jump_tables[0];
+    if (table === undefined)
+      throw new TypeError("Ghidra jump-table fixture is unavailable");
+    const incomplete = functionDossierSchema.parse({
+      ...dossier,
+      native_api: {
+        ...boundary,
+        jump_tables: [{ ...table, default_targets: [] }],
+      },
+    });
+    expect(projectNativeApiInspection(incomplete).residual_unknowns).toContain(
+      "Which default or out-of-range path, if any, belongs to the dispatch at 0x401010?",
+    );
+  });
+
+  it("does not report evidenced defaults as unknown cases and retains genuinely unresolved mappings", () => {
+    const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+    const boundary = dossier.native_api;
+    if (boundary?.available !== true)
+      throw new TypeError("Ghidra native API fixture is unavailable");
+    const table = boundary.jump_tables[0];
+    const mapping = table?.mappings[0];
+    if (table === undefined || mapping === undefined)
+      throw new TypeError("Ghidra jump-table fixture is unavailable");
+    const defaultTarget = {
+      target_address: mapping.target_address,
+      confidence: "high",
+      evidence: mapping.evidence,
+    };
+    const complete = functionDossierSchema.parse({
+      ...dossier,
+      native_api: {
+        ...boundary,
+        jump_tables: [{ ...table, default_targets: [defaultTarget] }],
+      },
+    });
+    expect(projectNativeApiInspection(complete).residual_unknowns).toEqual([]);
+    const unresolved = functionDossierSchema.parse({
+      ...complete,
+      native_api: {
+        ...boundary,
+        jump_tables: [
+          {
+            ...table,
+            default_targets: [defaultTarget],
+            mappings: [
+              mapping,
+              { ...mapping, case_value: null, target_address: "0x401030" },
+            ],
+          },
+        ],
+      },
+    });
+    expect(projectNativeApiInspection(unresolved).residual_unknowns).toContain(
+      "Which source-level case values correspond to every target dispatched at 0x401010?",
+    );
+  });
+});
+
 describe("native API inspection", () => {
   it("preserves structured type and jump-table boundary evidence", () => {
     const dossier = functionDossierSchema.parse(ghidraFunctionDossier());

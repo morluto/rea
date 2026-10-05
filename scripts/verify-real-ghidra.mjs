@@ -33,8 +33,10 @@ import {
   verifyInventoryOperations,
 } from "./verify-real-ghidra-inventory.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+import { hasTypedSwitchEvidence } from "./verify-real-ghidra-switch-assertions.mjs";
 
 import {
+  verifyDenseDefaultReturn,
   verifyNativeTypeLayout,
   verifyRelativeSwitch,
   verifyNativeValueTrace,
@@ -308,8 +310,7 @@ function nativeFixtureTarget(platform, architecture) {
 async function verifyNativeApiCli(
   targetPath,
   procedures,
-  requireDenseJumpTable,
-  denseSwitchSymbol = "rea_ghidra_inventory_dense_switch",
+  { requireDenseJumpTable, denseSwitchSymbol, client },
 ) {
   const denseSwitch = procedures.find(({ value }) =>
     value.endsWith(denseSwitchSymbol),
@@ -349,11 +350,25 @@ async function verifyNativeApiCli(
       (mapping) =>
         mapping.case_value === caseValue &&
         mapping.confidence === "high" &&
-        mapping.evidence.some(
-          ({ detail }) =>
-            detail.includes(`case value ${caseValue} with target`) ||
-            detail.startsWith(`Case value ${caseValue} indexes byte `),
-        ),
+        (hasTypedSwitchEvidence(
+          mapping.evidence,
+          `Typed case value ${caseValue}`,
+          mapping.target_address,
+          denseTable.dispatch_address,
+        ) ||
+          mapping.evidence.some(
+            ({ kind, source, detail }) =>
+              kind === "jump-table" &&
+              typeof detail === "string" &&
+              detail.trim().length > 0 &&
+              ((source === "ghidra-high-function" &&
+                detail.includes(
+                  `case value ${caseValue} with target ${mapping.target_address}`,
+                )) ||
+                (source === "ghidra-instruction-and-memory" &&
+                  detail.startsWith(`Case value ${caseValue} indexes byte `) &&
+                  detail.includes(`reaching ${mapping.target_address}.`))),
+          )),
     ),
   );
   if (
@@ -368,7 +383,20 @@ async function verifyNativeApiCli(
   if (
     requireDenseJumpTable &&
     (denseTable === undefined ||
-      denseCases.size !== denseTable.mappings.length ||
+      denseCases.size !== expectedCases.length ||
+      denseTable.mappings.length !== expectedCases.length ||
+      denseTable.default_targets.length !== 1 ||
+      denseTable.default_targets[0].confidence !== "high" ||
+      !hasTypedSwitchEvidence(
+        denseTable.default_targets[0].evidence,
+        "Typed default label",
+        denseTable.default_targets[0].target_address,
+        denseTable.dispatch_address,
+      ) ||
+      denseTable.mappings.some(
+        ({ target_address }) =>
+          target_address === denseTable.default_targets[0].target_address,
+      ) ||
       expectedCases.some((caseValue) => !denseCases.has(caseValue)) ||
       !mappingsAreExact ||
       evidence.normalized_result?.residual_unknowns?.length !== 0)
@@ -376,10 +404,17 @@ async function verifyNativeApiCli(
     throw new Error(
       `The shipped inspect-native-api CLI did not preserve complete dense jump-table output: ${stdout}`,
     );
+  const defaultOracle = requireDenseJumpTable
+    ? await verifyDenseDefaultReturn(
+        client,
+        denseTable.default_targets[0].target_address,
+      )
+    : null;
   return {
     operation: evidence.operation,
     provider: evidence.provider,
     mappings_returned: denseTable?.mappings.length ?? null,
+    default_oracle: defaultOracle,
     residual_unknowns: evidence.normalized_result.residual_unknowns.length,
   };
 }
@@ -456,16 +491,16 @@ async function verifyTarget(targetPath, variant, expectedTarget = null) {
       variant === "cross-arm64-elf" || variant === "aarch64-jump-table";
     const nativeApiCli =
       variant === "debug" || crossArm64Elf
-        ? await verifyNativeApiCli(
-            parsedTarget.value.path,
-            procedures,
-            crossArm64Elf ||
+        ? await verifyNativeApiCli(parsedTarget.value.path, procedures, {
+            requireDenseJumpTable:
+              crossArm64Elf ||
               (expectedNativeTarget.format === "elf" &&
                 expectedNativeTarget.architecture === "x86_64"),
-            crossArm64Elf
+            denseSwitchSymbol: crossArm64Elf
               ? "rea_cross_dense_switch"
               : "rea_ghidra_inventory_dense_switch",
-          )
+            client,
+          })
         : null;
     const probes = variant.startsWith("relative-")
       ? await verifyRelativeSwitch(

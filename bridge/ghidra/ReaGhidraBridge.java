@@ -48,6 +48,8 @@ import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileOptions;
 import ghidra.app.decompiler.DecompileResults;
 import ghidra.app.decompiler.DecompiledFunction;
+import ghidra.app.decompiler.ClangCaseToken;
+import ghidra.app.decompiler.ClangNode;
 import ghidra.framework.Application;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSpace;
@@ -84,6 +86,8 @@ import ghidra.program.model.pcode.HighSymbol;
 import ghidra.program.model.pcode.JumpTable;
 import ghidra.program.model.pcode.PcodeOp;
 import ghidra.program.model.pcode.PcodeOpAST;
+import ghidra.program.model.pcode.PcodeBlock;
+import ghidra.program.model.pcode.PcodeBlockBasic;
 import ghidra.program.model.pcode.Varnode;
 import ghidra.program.model.pcode.VarnodeAST;
 
@@ -374,6 +378,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         decompiler.setOptions(options);
         decompiler.toggleCCode(true);
         decompiler.toggleSyntaxTree(true);
+        decompiler.toggleJumpLoads(true);
         if (!decompiler.openProgram(currentProgram)) {
             throw new IllegalStateException("Ghidra decompiler could not open the imported Program");
         }
@@ -1354,8 +1359,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
 
         JumpTable[] recoveredJumpTables = highFunction.getJumpTables();
+        List<ClangNode> caseTokens = new ArrayList<>();
+        if (decompilation.getCCodeMarkup() != null) {
+            decompilation.getCCodeMarkup().flatten(caseTokens);
+        }
         for (int index = 0; index < recoveredJumpTables.length; index += 1) {
-            jumpTables.add(inferredJumpTable(recoveredJumpTables[index]));
+            jumpTables.add(inferredJumpTable(recoveredJumpTables[index], caseTokens));
         }
         return result;
     }
@@ -1451,7 +1460,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return result;
     }
 
-    private JsonObject inferredJumpTable(JumpTable jumpTable) throws Exception {
+    private JsonObject inferredJumpTable(
+        JumpTable jumpTable,
+        List<ClangNode> caseTokens
+    ) throws Exception {
         JsonObject result = new JsonObject();
         result.addProperty(
             "dispatch_address",
@@ -1550,13 +1562,33 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         result.add("data_sources", dataSources);
         Address[] targets = jumpTable.getCases();
-        Integer[] labels = jumpTable.getLabelValues();
-        boolean labelsAligned = labels != null && labels.length == targets.length;
+        TypedJumpTableCases typedCases = typedJumpTableCases(jumpTable, caseTokens);
         JsonArray mappings = new JsonArray();
+        JsonArray defaultTargets = new JsonArray();
+        for (Address target : typedCases.defaults) {
+            defaultTargets.add(typedJumpTableTarget(target, jumpTable, "Typed default label"));
+        }
+        Set<Address> coveredTargets = new HashSet<>(typedCases.cases.values());
+        coveredTargets.addAll(typedCases.defaults);
         if (recoveredAArch64 != null) {
             for (int index = 0; index < recoveredAArch64.mappings.size(); index += 1) {
                 monitor.checkCancelled();
                 RecoveredAArch64Mapping recovered = recoveredAArch64.mappings.get(index);
+                if (
+                    typedCases.unknownTargets.contains(recovered.targetAddress) ||
+                    typedCases.ambiguousValues.contains((long) recovered.caseValue)
+                ) continue;
+                Address typedTarget = typedCases.cases.get((long) recovered.caseValue);
+                if (typedTarget != null && !typedTarget.equals(recovered.targetAddress)) {
+                    typedCases.cases.remove((long) recovered.caseValue);
+                    typedCases.ambiguousValues.add((long) recovered.caseValue);
+                    typedCases.unknownTargets.add(typedTarget);
+                    typedCases.unknownTargets.add(recovered.targetAddress);
+                    typedCases.limitations.add(
+                        "Typed case evidence and the verified relative table disagree on a destination; both destinations remain unknown for that case."
+                    );
+                    continue;
+                }
                 JsonObject mapping = new JsonObject();
                 mapping.addProperty("case_value", recovered.caseValue);
                 String targetAddress = canonicalAddress(recovered.targetAddress);
@@ -1574,57 +1606,60 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     )
                 );
                 mapping.add("evidence", evidence);
-                mappings.add(mapping);
+                if (!typedCases.cases.containsKey((long) recovered.caseValue)) {
+                    mappings.add(mapping);
+                }
+                coveredTargets.add(recovered.targetAddress);
             }
         }
-        else {
+        for (Map.Entry<Long, Address> entry : typedCases.cases.entrySet()) {
+            JsonObject mapping = typedJumpTableTarget(
+                entry.getValue(),
+                jumpTable,
+                "Typed case value " + entry.getKey()
+            );
+            mapping.addProperty("case_value", entry.getKey());
+            mappings.add(mapping);
+        }
+        Set<Address> emittedUnknownTargets = new HashSet<>();
         for (int index = 0; index < targets.length; index += 1) {
             monitor.checkCancelled();
+            boolean unresolvedToken = typedCases.unknownTargets.contains(targets[index]);
+            if (coveredTargets.contains(targets[index]) && !unresolvedToken) continue;
+            if (!emittedUnknownTargets.add(targets[index])) continue;
             JsonObject mapping = new JsonObject();
-            if (!labelsAligned || labels[index] == null) {
-                mapping.add("case_value", JsonNull.INSTANCE);
-            }
-            else {
-                mapping.addProperty("case_value", labels[index]);
-            }
+            mapping.add("case_value", JsonNull.INSTANCE);
             String targetAddress = canonicalAddress(targets[index]);
             mapping.addProperty("target_address", targetAddress);
             // Ghidra's recovered case-to-target relation does not identify
             // which backing load table produced an individual case. Keep the
             // table inventory and recovered mappings separate instead of
             // attaching every table address to every target.
-            mapping.addProperty(
-                "confidence",
-                labelsAligned && labels[index] != null
-                    ? "high"
-                    : "medium"
-            );
+            mapping.addProperty("confidence", "medium");
             JsonArray evidence = new JsonArray();
             evidence.add(
                 inferenceEvidence(
                     "jump-table",
                     "ghidra-high-function",
-                    labelsAligned && labels[index] != null
-                        ? "Ghidra paired case value " +
-                          labels[index] +
-                          " with target " +
+                    "Ghidra recovered target " +
                           targetAddress +
                           " at dispatch " +
                           canonicalAddress(jumpTable.getSwitchAddress()) +
-                          "."
-                        : "Ghidra recovered target " +
-                          targetAddress +
-                          " at dispatch " +
-                          canonicalAddress(jumpTable.getSwitchAddress()) +
-                          ", but no aligned case value was available."
+                          ", but no unambiguous, exactly representable case label or default relationship was available."
                 )
             );
             mapping.add("evidence", evidence);
             mappings.add(mapping);
         }
-        }
         result.add("mappings", mappings);
+        result.add("default_targets", defaultTargets);
         JsonArray limitations = new JsonArray();
+        for (String limitation : typedCases.limitations) limitations.add(limitation);
+        if (defaultTargets.isEmpty()) {
+            limitations.add(
+                "Ghidra exposed no typed default label with an unambiguous relationship to a recovered destination of this dispatch; default or out-of-range handling remains unknown."
+            );
+        }
         if (loadTables.length == 0 && referencedDataAddresses.isEmpty()) {
             limitations.add(
                 "Ghidra recovered targets but exposed no backing load-table or dispatch-block data address."
@@ -1639,9 +1674,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 "Load-table metadata was absent; table-level candidate ownership is inferred from typed data references in the dispatch block and its immediate control-flow predecessors, but candidates are not assigned to individual mappings."
             );
         }
-        if (recoveredAArch64 == null && !labelsAligned) {
+        if (!emittedUnknownTargets.isEmpty()) {
             limitations.add(
-                "Case-label and target counts differ or labels are unavailable; all case values are left unknown because index alignment cannot be established."
+                "Some recovered destinations lack an unambiguous, exactly representable case/default relationship; their case values remain unknown. Unequal label and destination arrays are never paired by index."
             );
         }
         if (recoveredAArch64 == null && loadTables.length == 0 && currentProgram.getLanguageID().getIdAsString().startsWith("AARCH64:")) {
@@ -1653,6 +1688,124 @@ public final class ReaGhidraBridge extends HeadlessScript {
             );
         }
         result.add("limitations", limitations);
+        return result;
+    }
+
+    private static final class TypedJumpTableCases {
+        private final Map<Long, Address> cases = new TreeMap<>();
+        private final Set<Address> defaults = new java.util.TreeSet<>();
+        private final Set<Address> unknownTargets = new HashSet<>();
+        private final Set<Long> ambiguousValues = new HashSet<>();
+        private final Set<String> limitations = new java.util.LinkedHashSet<>();
+    }
+
+    private TypedJumpTableCases typedJumpTableCases(
+        JumpTable jumpTable,
+        List<ClangNode> tokens
+    ) throws Exception {
+        TypedJumpTableCases result = new TypedJumpTableCases();
+        Set<Address> targets = new HashSet<>();
+        for (Address target : jumpTable.getCases()) targets.add(target);
+        for (ClangNode node : tokens) {
+            monitor.checkCancelled();
+            if (!(node instanceof ClangCaseToken token)) continue;
+            PcodeOp operation = token.getPcodeOp();
+            if (operation == null || operation.getParent() == null) continue;
+            PcodeBlockBasic block = operation.getParent();
+            Address target = block.getStart();
+            if (!targets.contains(target)) continue;
+            PcodeOp dispatch = null;
+            boolean ambiguousDispatch = false;
+            boolean includesDispatch = false;
+            for (int index = 0; index < block.getInSize(); index += 1) {
+                PcodeBlock predecessor = block.getIn(index);
+                if (!(predecessor instanceof PcodeBlockBasic basic)) continue;
+                PcodeOp last = basic.getLastOp();
+                if (last == null || last.getOpcode() != PcodeOp.BRANCHIND) continue;
+                if (last.getSeqnum().getTarget().equals(jumpTable.getSwitchAddress())) {
+                    includesDispatch = true;
+                }
+                if (dispatch != null && dispatch != last) ambiguousDispatch = true;
+                dispatch = last;
+            }
+            if (!includesDispatch) continue;
+            if (ambiguousDispatch) {
+                result.unknownTargets.add(target);
+                result.limitations.add(
+                    "A typed case/default block has multiple indirect dispatch predecessors; REA cannot attribute its label to one switch."
+                );
+                continue;
+            }
+            // Default is a typed label role, not an OFF sentinel: Ghidra can
+            // encode a default token with an ordinary in-range case value.
+            if ("default".equals(token.getText())) {
+                result.defaults.add(target);
+                continue;
+            }
+            Long value = exactTypedCaseValue(token);
+            if (value == null) {
+                result.unknownTargets.add(target);
+                result.limitations.add(
+                    "Typed case label " + token.getText() +
+                    " has encoded unsigned magnitude " + Long.toUnsignedString(token.getValue()) +
+                    " at recovered target " + canonicalAddress(target) +
+                    " for dispatch " + canonicalAddress(jumpTable.getSwitchAddress()) +
+                    "; the label is nonliteral, inconsistent with its encoded magnitude, or outside the exact JSON integer range, so its numeric case value remains unknown."
+                );
+                continue;
+            }
+            if (result.ambiguousValues.contains(value)) {
+                result.unknownTargets.add(target);
+                continue;
+            }
+            Address previous = result.cases.putIfAbsent(value, target);
+            if (previous != null && !previous.equals(target)) {
+                result.cases.remove(value);
+                result.ambiguousValues.add(value);
+                result.unknownTargets.add(previous);
+                result.unknownTargets.add(target);
+                result.limitations.add(
+                    "Typed tokens assign one case value to different recovered destinations; that case remains unknown."
+                );
+            }
+        }
+        return result;
+    }
+
+    private static Long exactTypedCaseValue(ClangCaseToken token) {
+        String text = token.getText();
+        if (text == null || !text.matches("-?(?:0[xX][0-9a-fA-F]+|[0-9]+)")) return null;
+        boolean negative = text.startsWith("-");
+        String literal = negative ? text.substring(1) : text;
+        BigInteger magnitude = literal.startsWith("0x") || literal.startsWith("0X")
+            ? new BigInteger(literal.substring(2), 16)
+            : new BigInteger(literal, 10);
+        // Negative numeric tokens carry an unsigned magnitude in OFF, so
+        // getValue()/getScalar() alone would incorrectly emit positive cases.
+        if (!magnitude.equals(new BigInteger(Long.toUnsignedString(token.getValue())))) return null;
+        BigInteger value = negative ? magnitude.negate() : magnitude;
+        if (value.abs().compareTo(BigInteger.valueOf(9007199254740991L)) > 0) return null;
+        return value.longValueExact();
+    }
+
+    private static JsonObject typedJumpTableTarget(
+        Address target,
+        JumpTable table,
+        String label
+    ) {
+        JsonObject result = new JsonObject();
+        String address = canonicalAddress(target);
+        result.addProperty("target_address", address);
+        result.addProperty("confidence", "high");
+        JsonArray evidence = new JsonArray();
+        evidence.add(inferenceEvidence(
+            "jump-table",
+            "ghidra-clang-case-token",
+            label + " belongs to the p-code block starting at recovered target " +
+            address + "; its unique indirect dispatch predecessor is " +
+            canonicalAddress(table.getSwitchAddress()) + "."
+        ));
+        result.add("evidence", evidence);
         return result;
     }
 

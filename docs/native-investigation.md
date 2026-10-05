@@ -96,6 +96,21 @@ The provider dossier itself retains up to 3,000 p-code operations, 64 inputs per
 operation and 12,000 def-use edges, with explicit omitted counts. A `STORE`
 may describe stack memory and does not itself prove persistent state.
 
+Jump-table evidence keeps numeric `mappings`, explicit `default_targets`, and
+backing `data_sources` separate. A null case value denotes an unresolved
+case, never a known default. Ghidra pairs typed case/default tokens with the
+recovered block entry and its unique indirect dispatch predecessor; it does
+not zip unequal label and destination arrays. Shared case bodies retain each
+label. Negative numeric tokens are checked against their encoded magnitude;
+nonliteral, ambiguous, or nonexact JSON integer labels remain unknown.
+Unknown-label diagnostics retain the token text, encoded unsigned magnitude,
+target and dispatch so callers can inspect the original observations.
+Decompiler load-table metadata supplies observed entry sizes and counts
+without assigning every backing table to each mapping. These observations
+describe the decompiler's recovered switch, not guaranteed original source.
+Legacy records without `default_targets` normalize to an empty array and
+retain their existing unresolved mappings.
+
 AArch64 jump-table recovery additionally verifies byte and halfword relative
 forms from unsigned bounds, register definitions, table loads, branch bases,
 scaled ADD/BR instructions and the recovered target set. It reads exactly the

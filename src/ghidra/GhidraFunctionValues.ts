@@ -197,6 +197,7 @@ const ghidraNativeApiBoundary = nativeApiBoundarySchema.superRefine(
       table.dispatch_address,
       ...table.data_sources.map(({ address }) => address),
       ...table.mappings.map(({ target_address }) => target_address),
+      ...table.default_targets.map(({ target_address }) => target_address),
     ]);
     if (
       addresses.some(

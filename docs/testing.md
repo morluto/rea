@@ -98,6 +98,7 @@ that a host or target is covered when it was skipped.
 | Ghidra lane                                | Supported runner/target                                                            | Additional local tools                                              |
 | ------------------------------------------ | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
 | `npm run verify:ghidra`                    | Linux x64 ELF or macOS x64/arm64 Mach-O                                            | Host C compiler, Ghidra 12.1.4, and full JDK 21                     |
+| `npm run verify:ghidra:switch`             | Linux x64 ELF; GCC/Clang optimized and stripped switch fixtures                    | GCC, Clang, GNU nm/objdump/strip, Ghidra 12.1.4, and full JDK 21    |
 | `npm run verify:ghidra:aarch64-jump-table` | Any supported Ghidra host; AArch64 ELF; byte/halfword tables; host ARM64 Mach-O    | Clang with AArch64 target support, Ghidra 12.1.4, and full JDK 21   |
 | `npm run verify:ghidra:cross-format`       | Any supported Ghidra host; also analyzes AArch64 ELF, x86-64 PE, and x86-64 Mach-O | `clang`, LLD, and `lld-link` in addition to host-lane prerequisites |
 | `npm run verify:ghidra:windows`            | Controlled Windows x64 with native x86-64 PE                                       | Ghidra 12.1.4, full JDK 21, and the Windows P0 fixture toolchain    |
@@ -106,6 +107,25 @@ The host-native Ghidra lane also verifies native value tracing through the
 production CLI and a separate stdio MCP process. It compares complete dependency
 graphs, validates Evidence and upstream/workflow profiles, checks capability
 discovery, and closes the MCP session. No provider or transport is mocked.
+
+The Linux switch lane checks dense, sparse-with-holes, shared-body, nonzero,
+negative, and nonexact JSON integer labels plus a comparison-only control.
+Independent source labels, ELF file bytes, table slots, and bounds branches
+define expected case/default destinations. Production CLI and MCP must agree;
+debug labels must retain their signed values. For stripped negative fixtures,
+the independently checked 32-bit dispatch permits equivalent unsigned labels
+only alongside the reported low-confidence `undefined4` parameter; original
+source signedness remains unknown and the ABI residual must remain visible.
+unsafe labels remain unresolved and every recovered destination is retained.
+The compiler oracle also injects malformed records to check that its assertions
+reject missing/default-confused labels, wrong destinations, and numeric guesses.
+It also invokes the actual bridge methods on detached Ghidra model objects to
+check ambiguous dispatches, signed literals, precision bounds, shared targets,
+and conflicting labels. This reflection fixture depends on the pinned Ghidra
+model and does not claim a compiler produced those synthetic graph shapes.
+Pass `--entrypoint /path/to/installed/rea-agents/scripts/rea.mjs` directly to
+`scripts/verify-real-ghidra-switch.mjs` to verify an installed package through
+the same compiler oracles and CLI/MCP checks.
 
 The cross-format Ghidra lane also analyzes an optimized AArch64 ELF switch
 fixture. It checks the recovered case values against the source cases and

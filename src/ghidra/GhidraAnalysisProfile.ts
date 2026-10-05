@@ -40,6 +40,8 @@ export const resolveGhidraAnalysisProfile = (
         ].sort(),
         import_mode: "ephemeral-read-only",
         function_body_evidence: "complete-inclusive-ranges-v1",
+        jump_table_evidence: "typed-case-default-blocks-v1",
+        decompiler_jump_loads: true,
         loader: dosMz ? "MzLoader" : "auto-from-header",
         language_id: dosMz ? "x86:LE:16:Real Mode" : "auto-from-header",
         compiler_spec_id: dosMz ? "default" : "auto-default",

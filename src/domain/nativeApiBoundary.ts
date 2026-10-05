@@ -71,11 +71,18 @@ const jumpTableMappingSchema = z
   })
   .strict();
 
+const jumpTableDefaultTargetSchema = z.strictObject({
+  target_address: z.string().min(1),
+  confidence: inferenceConfidenceSchema,
+  evidence: z.array(inferenceEvidenceSchema).min(1),
+});
+
 const inferredJumpTableSchema = z
   .object({
     dispatch_address: z.string().min(1),
     data_sources: z.array(jumpTableDataSourceSchema),
     mappings: z.array(jumpTableMappingSchema),
+    default_targets: z.array(jumpTableDefaultTargetSchema).default([]),
     limitations: z.array(z.string()),
   })
   .strict();

@@ -18,7 +18,14 @@ describe("Ghidra MCP native API evidence", () => {
       expect(inspection.normalized_result).toMatchObject({
         boundary: {
           available: true,
-          jump_tables: [{ mappings: [{ target_address: "0x401020" }] }],
+          jump_tables: [
+            {
+              mappings: [{ case_value: 0, target_address: "0x401020" }],
+              default_targets: [
+                { target_address: "0x401030", confidence: "high" },
+              ],
+            },
+          ],
         },
         residual_unknowns: [],
       });

@@ -1,3 +1,5 @@
+import { hasTypedSwitchEvidence } from "./verify-real-ghidra-switch-assertions.mjs";
+
 import { access } from "node:fs/promises";
 
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
@@ -107,6 +109,14 @@ export function assertDenseSwitchDossier(dossier, address) {
   );
   if (
     denseTable === undefined ||
+    denseTable.default_targets.length !== 1 ||
+    denseTable.default_targets[0].confidence !== "high" ||
+    !hasTypedSwitchEvidence(
+      denseTable.default_targets[0].evidence,
+      "Typed default label",
+      denseTable.default_targets[0].target_address,
+      denseTable.dispatch_address,
+    ) ||
     denseTable.mappings.some(
       ({ target_address: target, evidence }) =>
         !/^0x[0-9a-f]+$/u.test(target) ||
@@ -146,9 +156,8 @@ function assertNativeApiBoundary(observed, requireJumpTable) {
         ) &&
         mappings.length > 0 &&
         mappings.every(
-          ({ target_address: target, data_addresses: addresses, evidence }) =>
+          ({ target_address: target, evidence }) =>
             /^0x[0-9a-f]+$/u.test(target) &&
-            addresses.every((address) => /^0x[0-9a-f]+$/u.test(address)) &&
             evidence.some(({ kind }) => kind === "jump-table"),
         ),
     )

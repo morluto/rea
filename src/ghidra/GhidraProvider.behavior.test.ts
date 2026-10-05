@@ -39,6 +39,31 @@ const provider = (
   return new GhidraProvider(config.value, silentLogger, host, clientFactory);
 };
 
+describe("Ghidra jump-table profile", () => {
+  it("separates typed case/default evidence and jump-load metadata from legacy cache profiles", async () => {
+    const resolved = await provider().resolveAnalysisProfile(
+      executableTarget("elf", "x86_64"),
+    );
+    if (!resolved.ok || resolved.value.profile === null)
+      throw new Error("expected a committed Ghidra profile");
+    const profile = resolved.value.profile;
+    const legacy = createAnalysisProfile(
+      profile.provider,
+      Object.fromEntries(
+        Object.entries(profile.parameters).filter(
+          ([key]) =>
+            key !== "jump_table_evidence" && key !== "decompiler_jump_loads",
+        ),
+      ),
+    );
+    expect(profile.digest).not.toBe(legacy.digest);
+    expect(profile.parameters.jump_table_evidence).toBe(
+      "typed-case-default-blocks-v1",
+    );
+    expect(profile.parameters.decompiler_jump_loads).toBe(true);
+  });
+});
+
 describe("Ghidra provider", () => {
   it("separates complete body evidence from legacy length-only cache profiles", async () => {
     const resolved = await provider().resolveAnalysisProfile(

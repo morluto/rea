@@ -72,6 +72,10 @@ const availableResidualUnknowns = (
 ): readonly string[] => {
   const unknowns: string[] = [];
   for (const table of boundary.jump_tables) {
+    if (table.default_targets.length === 0)
+      unknowns.push(
+        `Which default or out-of-range path, if any, belongs to the dispatch at ${table.dispatch_address}?`,
+      );
     if (table.mappings.length === 0)
       unknowns.push(
         `Which case values and targets belong to the dispatch at ${table.dispatch_address}?`,
