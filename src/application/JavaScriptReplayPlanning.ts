@@ -2,6 +2,10 @@ import canonicalize from "canonicalize";
 import { createHash } from "node:crypto";
 
 import type { JsonValue } from "../domain/jsonValue.js";
+import {
+  createSeededRandomUint,
+  NON_DEGENERATE_XORSHIFT32_SEED,
+} from "../replay/seededRandom.js";
 import type {
   ControlledReplayInput,
   ReplayExecutionResult,
@@ -252,13 +256,9 @@ const replayCases = (
     arguments: item.arguments,
   }));
   if (input.generator === undefined) return uniqueCases(explicit);
-  let state = input.generator.seed || 0x9e37_79b9;
-  const next = (): number => {
-    state ^= state << 13;
-    state ^= state >>> 17;
-    state ^= state << 5;
-    return state >>> 0;
-  };
+  const next = createSeededRandomUint(
+    input.generator.seed || NON_DEGENERATE_XORSHIFT32_SEED,
+  );
   const corpus = boundaryCorpus(input.generator.preset);
   const generated: {
     readonly case_id: string;
