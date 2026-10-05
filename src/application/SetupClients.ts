@@ -1,10 +1,10 @@
 import type {
   ClientConfigurationResult,
-  SetupClient,
   SetupHost,
   SetupProviderEnvironment,
   SetupProgressEvent,
-} from "./Setup.js";
+} from "./SetupTypes.js";
+import type { SetupClient } from "./SupportedClients.js";
 
 const failedConfigurationMessage = (
   reason: "path" | "backup" | "write" | "readback",

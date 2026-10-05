@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { resolve } from "node:path";
 
 import { FakeSetupHost, options } from "./Setup.fixture.js";
-import { runSetup, setupRegistrationCommand } from "./Setup.js";
+import { runSetup } from "./Setup.js";
+import { setupRegistrationCommand } from "./SetupHost.js";
 
 describe("setup workflow", () => {
   it("omits an aligned managed skill from an otherwise empty plan", async () => {

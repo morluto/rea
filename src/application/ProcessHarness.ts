@@ -25,7 +25,7 @@ import { snapshotRoots } from "./FilesystemSnapshot.js";
 import { TerminalRenderer } from "./TerminalRenderer.js";
 import type { ProcessTimer } from "./ProcessTimer.js";
 import { normalizeProcessText } from "./ProcessNormalization.js";
-import { selectCapturedProcessGroupIds } from "../process/ProcessOwnership.js";
+import { selectCapturedProcessGroupIds } from "../process/ProcessOwnershipProcessTree.js";
 import {
   awaitTerminalExit,
   buildCaptureResult,

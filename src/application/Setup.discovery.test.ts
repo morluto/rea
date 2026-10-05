@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { detectClients } from "./Setup.js";
+import { detectClients } from "./SetupHost.js";
 
 describe("setup client discovery", () => {
   let temporaryHome: string | undefined;

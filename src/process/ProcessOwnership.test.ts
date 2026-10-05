@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   cleanupOwnedProcessGroup,
-  parseProcessEnvironment,
-  selectCapturedProcessGroupIds,
   type ProcessOwnershipHost,
 } from "./ProcessOwnership.js";
+import { parseProcessEnvironment } from "./ProcessOwnershipObservation.js";
+import { selectCapturedProcessGroupIds } from "./ProcessOwnershipProcessTree.js";
 import { matchesOwnedProcessCommand } from "./ProcessCommandIdentity.js";
 const ownership = {
   runId: "run-token",

@@ -10,11 +10,11 @@ import {
 import { macHopperInstallDisclosure } from "./MacHopper.js";
 import type {
   SetupAction,
-  SetupClient,
   SetupClientState,
   SetupHost,
   SetupProviderEnvironment,
-} from "./Setup.js";
+} from "./SetupTypes.js";
+import type { SetupClient } from "./SupportedClients.js";
 import type { DoctorScope } from "./Doctor.js";
 
 /** Read-only setup facts shared by client selection and preflight. */

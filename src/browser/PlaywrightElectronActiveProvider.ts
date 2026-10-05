@@ -24,13 +24,13 @@ import { err, ok, type Result } from "../domain/result.js";
 import {
   cleanupOwnedProcessGroup,
   cleanupWindowsProcessTree,
-  observeOwnedProcessLineage,
-  selectCapturedProcessGroupIds,
   verifyNoTokenOwnedProcesses,
   type OwnedProcessGroup,
   type ProcessCleanupResult,
   type ProcessLineageObservation,
 } from "../process/ProcessOwnership.js";
+import { observeOwnedProcessLineage } from "../process/ProcessOwnershipObservation.js";
+import { selectCapturedProcessGroupIds } from "../process/ProcessOwnershipProcessTree.js";
 import {
   runElectronActions,
   readApplicationState,

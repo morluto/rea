@@ -26,10 +26,8 @@ import { PRODUCT_IDENTITY } from "../identity.js";
 import type { SnapshotResult } from "./FilesystemSnapshot.js";
 import { snapshotRoots } from "./FilesystemSnapshot.js";
 import { classifyFilesystemEffects } from "./ProcessFilesystemEffects.js";
-import {
-  cleanupOwnedProcessGroup,
-  observeOwnedProcessGroup,
-} from "../process/ProcessOwnership.js";
+import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
+import { observeOwnedProcessGroup } from "../process/ProcessOwnershipObservation.js";
 import { ProcessCaptureError } from "./ProcessCaptureError.js";
 import { assertNotCancelled } from "./ProcessScenarioRuntimeValidation.js";
 import {

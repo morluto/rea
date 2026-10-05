@@ -6,7 +6,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   canonicalSkillNeedsInstall,
   installCanonicalSkill,
-} from "../../../src/application/Setup.js";
+} from "../../../src/application/SetupSkill.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 
 describe("canonical skill transaction", () => {

@@ -7,10 +7,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { PendingOperations } from "../../../src/process/PendingOperations.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { ProviderStartupDeadline } from "../../../src/process/ProviderDeadline.js";
-import {
-  cleanupOwnedProcessGroup,
-  observeOwnedProcessLineage,
-} from "../../../src/process/ProcessOwnership.js";
+import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
+import { observeOwnedProcessLineage } from "../../../src/process/ProcessOwnershipObservation.js";
 import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,

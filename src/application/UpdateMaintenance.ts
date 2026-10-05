@@ -7,7 +7,7 @@ import { isOwnedClientRegistrationCommand } from "./ClientRegistrationIdentity.j
 import { readClientRegistrationStatuses } from "./ClientRegistrationStatus.js";
 import { parseClientConfiguration } from "./ClientConfigurationDocument.js";
 import { supportedClients } from "./SupportedClients.js";
-import type { SetupAction } from "./Setup.js";
+import type { SetupAction } from "./SetupTypes.js";
 import type { Result } from "../domain/result.js";
 
 /** Existing REA integrations selected for maintenance, without discovering new targets. */

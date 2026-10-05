@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { resolveClientConfigTransactionPath } from "../../../src/application/ClientConfigPath.js";
-import { configureJsonClient } from "../../../src/application/Setup.js";
+import { configureJsonClient } from "../../../src/application/SetupClientConfiguration.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 
 const pinnedPackage = PRODUCT_IDENTITY.registrationPackageSpecifier;

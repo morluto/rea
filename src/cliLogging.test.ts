@@ -8,11 +8,8 @@ import {
 
 import { isCliOperationFailure, logCliCommand } from "./cliLogging.js";
 import { silentLogger } from "./logger.js";
-import {
-  isSetupFailure,
-  runSetup,
-  type SetupResult,
-} from "./application/Setup.js";
+import { runSetup } from "./application/Setup.js";
+import { isSetupFailure, type SetupResult } from "./application/SetupTypes.js";
 import {
   FakeSetupHost,
   options as setupOptions,

@@ -6,7 +6,8 @@ import {
   ArtifactOperationError,
   projectAnalysisError,
 } from "../../src/domain/errors.js";
-import { isSetupFailure, runSetup } from "../../src/application/Setup.js";
+import { runSetup } from "../../src/application/Setup.js";
+import { isSetupFailure } from "../../src/application/SetupTypes.js";
 import {
   FakeSetupHost,
   options as setupOptions,

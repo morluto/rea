@@ -5,12 +5,12 @@ import {
   runDoctor,
   type DoctorScope,
 } from "../application/Doctor.js";
+import { runSetup } from "../application/Setup.js";
+import { systemSetupHost } from "../application/SetupHost.js";
 import {
-  runSetup,
   isSetupFailure,
-  systemSetupHost,
   type SetupOptions,
-} from "../application/Setup.js";
+} from "../application/SetupTypes.js";
 import { isUninstallFailure, runUninstall } from "../application/Uninstall.js";
 import { isUpdateFailure, runUpdate } from "../application/Update.js";
 import { systemUpdateHost } from "../application/UpdateRuntime.js";

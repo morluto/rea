@@ -14,10 +14,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
 
-import {
-  configureTomlClient,
-  detectClients,
-} from "../../../src/application/Setup.js";
+import { configureTomlClient } from "../../../src/application/SetupClientConfiguration.js";
+import { detectClients } from "../../../src/application/SetupHost.js";
 import {
   runUninstall,
   systemUninstallHost,

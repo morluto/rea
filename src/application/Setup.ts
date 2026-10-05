@@ -1,235 +1,27 @@
-import { access } from "node:fs/promises";
-import { homedir } from "node:os";
-import { resolve } from "node:path";
-
-import { PRODUCT_IDENTITY } from "../identity.js";
-import { supportsNodeVersion } from "../domain/runtimeVersion.js";
-import {
-  runDoctor,
-  systemDoctorHost,
-  type DoctorHost,
-  type DoctorReport,
-  type DoctorScope,
-} from "./Doctor.js";
-import {
-  installLinuxHopper,
-  readLinuxDistribution,
-  type LinuxDistribution,
-} from "./LinuxHopper.js";
-import { installMacHopper } from "./MacHopper.js";
+import type {
+  ClientConfigurationResult,
+  SetupAction,
+  SetupClientState,
+  SetupConfirmation,
+  SetupConfirmationDecision,
+  SetupDoctorSummary,
+  SetupHost,
+  SetupOptions,
+  SetupProgressEvent,
+  SetupProviderEnvironment,
+  SetupResult,
+} from "./SetupTypes.js";
+import type { SetupClient } from "./SupportedClients.js";
+import type { DoctorReport, DoctorScope } from "./Doctor.js";
 import { configureDetectedClients } from "./SetupClients.js";
-import { supportedClients, type SetupClient } from "./SupportedClients.js";
-export type { SetupClient } from "./SupportedClients.js";
-import {
-  canonicalSkillNeedsInstall,
-  installCanonicalSkill,
-} from "./SetupSkill.js";
 import { discoverSetupState, planSetupActions } from "./SetupPlan.js";
 import {
-  clientConfigurationAligned,
-  configureClientConfiguration,
-  configureJsonClient,
-  configureTomlClient,
-  inspectClientConfiguration,
-} from "./SetupClientConfiguration.js";
-export { configureJsonClient, configureTomlClient };
-import {
-  setupInstallFailure,
-  type SetupFailureCode,
-  type SetupHopperInstallResult,
-} from "./SetupInstallFailure.js";
-import { providerRegistrationEnvironment } from "./SetupRegistrationEnvironment.js";
-export type { SetupHopperInstallResult } from "./SetupInstallFailure.js";
-
-/** Exact non-secret provider variables propagated into managed registrations. */
-export type SetupProviderEnvironment = Readonly<Record<string, string>>;
-
-export { canonicalSkillNeedsInstall, installCanonicalSkill };
-
-/** Resolve the executable and arguments used in a managed MCP registration. */
-export const setupRegistrationCommand = (
-  platform: NodeJS.Platform,
-  useNpmRunner: boolean = process.env.npm_command === "exec",
-): readonly string[] =>
-  useNpmRunner
-    ? PRODUCT_IDENTITY.mcpCommand.split(" ")
-    : platform === "win32"
-      ? [
-          process.execPath,
-          resolve(process.argv[1] ?? PRODUCT_IDENTITY.cliBinary),
-          "mcp",
-        ]
-      : [resolve(process.argv[1] ?? PRODUCT_IDENTITY.cliBinary), "mcp"];
-
-/** Result of one backup/write/readback transaction. */
-export type ClientConfigurationResult =
-  | {
-      readonly status: "unchanged" | "configured" | "skipped";
-      readonly backupPath?: string;
-    }
-  | {
-      readonly status: "failed";
-      readonly reason: "path" | "backup" | "write" | "readback";
-    };
-
-/** Read-only state used to block unsafe setup plans before any mutation. */
-export type ClientConfigurationInspection =
-  | { readonly status: "already_current" }
-  | {
-      readonly status: "create" | "update";
-      readonly backupPath?: string;
-    }
-  | {
-      readonly status: "invalid";
-      readonly remediation: string;
-    };
-/** Effects required by the idempotent, non-blocking setup workflow. */
-export interface SetupHost {
-  readonly platform: NodeJS.Platform;
-  readonly nodeVersion: string;
-  macosVersion(): Promise<string | undefined>;
-  linuxDistribution(): Promise<LinuxDistribution | undefined>;
-  hopperPath(): Promise<string | undefined>;
-  installHopper(replaceExisting: boolean): Promise<SetupHopperInstallResult>;
-  providerEnvironment?(): Promise<SetupProviderEnvironment>;
-  detectedClients(): Promise<readonly SetupClient[]>;
-  supportedClients?(): Promise<readonly SetupClient[]>;
-  configureClient(
-    client: SetupClient,
-    providerEnvironment: SetupProviderEnvironment,
-    command: readonly string[],
-  ): Promise<ClientConfigurationResult>;
-  clientNeedsConfigure(
-    client: SetupClient,
-    providerEnvironment: SetupProviderEnvironment,
-    command: readonly string[],
-  ): Promise<boolean>;
-  inspectClientConfiguration?(
-    client: SetupClient,
-    providerEnvironment: SetupProviderEnvironment,
-    command: readonly string[],
-  ): Promise<ClientConfigurationInspection>;
-  skillNeedsInstall(): Promise<boolean>;
-  installSkill(): Promise<"installed" | "unchanged" | "failed">;
-  doctor(scope?: DoctorScope): Promise<Awaited<ReturnType<typeof runDoctor>>>;
-}
-/** Structured setup outcome carrying remediation instead of prompting. */
-export interface SetupResult {
-  readonly status:
-    | "planned"
-    | "cancelled"
-    | "needs_confirmation"
-    | "ready"
-    | "needs_human";
-  readonly plannedActions: readonly SetupAction[];
-  readonly appliedActions: readonly string[];
-  readonly clients: Readonly<Record<string, ClientConfigurationResult>>;
-  readonly doctor: SetupDoctorSummary;
-  /** Supported-client discovery state captured before setup mutations. */
-  readonly clientStates: readonly SetupClientState[];
-  readonly remediation?: string;
-  readonly code?: SetupFailureCode;
-}
-
-/** Whether the requested setup actions still need approval or human repair. */
-export const isSetupFailure = (result: SetupResult): boolean => {
-  const status = result.status;
-  switch (status) {
-    case "planned":
-    case "cancelled":
-    case "ready":
-      return false;
-    case "needs_confirmation":
-    case "needs_human":
-      return true;
-    default: {
-      const exhaustive: never = status;
-      throw new TypeError(
-        `Unhandled setup result status: ${String(exhaustive)}`,
-      );
-    }
-  }
-};
-
-/** Relevant health and identity evidence for the selected setup scope. */
-export interface SetupDoctorSummary {
-  readonly healthy: boolean;
-  readonly environment_healthy: boolean;
-  readonly scope: DoctorReport["scope"];
-  readonly hopperPath?: string;
-  readonly availableProviders: readonly string[];
-  readonly providerInspections?: DoctorReport["providerInspections"];
-  readonly identity?: Pick<
-    NonNullable<DoctorReport["identity"]>,
-    "skill" | "registrations"
-  >;
-}
-
-/** Read-only state for one supported client location. */
-export interface SetupClientState {
-  readonly client: SetupClient;
-  readonly detected: boolean;
-  readonly configured: boolean;
-  readonly status: "configured" | "missing" | "needs_configuration" | "invalid";
-}
-
-/** One concrete setup mutation disclosed before approval. */
-export interface SetupAction {
-  readonly id: string;
-  readonly kind: "install_hopper" | "configure_client" | "install_skill";
-  readonly label: string;
-  readonly target: string;
-  readonly detail: string;
-  readonly external: boolean;
-  readonly operation: "create" | "update" | "install";
-  readonly backupPath?: string;
-  readonly networkOrigins?: readonly string[];
-  readonly commands?: readonly string[];
-  readonly integrity?: string;
-}
-
-/** Explicit authorization supplied by an interactive or unattended CLI adapter. */
-export interface SetupOptions {
-  readonly approved: boolean;
-  readonly installHopper: boolean;
-  readonly structured: boolean;
-  readonly proposeHopper?: boolean;
-  readonly clientIds?: readonly string[];
-  readonly installSkill?: boolean;
-  readonly readinessScope?: DoctorScope;
-  readonly dryRun?: boolean;
-  readonly allDetectedClients?: boolean;
-  readonly onProgress?: (event: SetupProgressEvent) => void;
-}
-
-/** One settled or active setup operation projected to the interactive adapter. */
-export interface SetupProgressEvent {
-  readonly actionId: string;
-  readonly label: string;
-  readonly state: "started" | "completed" | "warning" | "failed";
-  readonly detail?: string;
-}
-
-/** Interactive selection and final consent returned by the CLI adapter. */
-export interface SetupConfirmationDecision {
-  readonly approved: boolean;
-  readonly selectedActionIds: readonly string[];
-  readonly cancelled?: boolean;
-}
-
-/** Read-only context shown while selecting clients or reviewing exact actions. */
-export interface SetupConfirmationContext {
-  readonly stage: "select" | "confirm";
-  readonly clientStates: readonly SetupClientState[];
-  readonly selectedClientIds: readonly string[];
-  readonly clientSelectionAllowed: boolean;
-}
-
-/** Adapter-owned selection and confirmation for the setup workflow. */
-export type SetupConfirmation = (
-  actions: readonly SetupAction[],
-  context?: SetupConfirmationContext,
-) => Promise<boolean | SetupConfirmationDecision>;
+  filterClientsNeedingConfigure,
+  hostRemediation,
+  initialProviderEnvironment,
+  setupRegistrationCommand,
+  systemSetupHost,
+} from "./SetupHost.js";
 
 /** Discover, approve, and apply setup actions idempotently. */
 export const runSetup = async (
@@ -581,28 +373,6 @@ const setupFailure = async (
 const emitProgress = (options: SetupOptions, event: SetupProgressEvent): void =>
   options.onProgress?.(event);
 
-const filterClientsNeedingConfigure = async (
-  host: SetupHost,
-  detectedClients: readonly SetupClient[],
-  providerEnvironment: SetupProviderEnvironment,
-  command: readonly string[],
-): Promise<readonly SetupClient[]> => {
-  const needs = await Promise.all(
-    detectedClients.map((client) =>
-      host.clientNeedsConfigure(client, providerEnvironment, command),
-    ),
-  );
-  return detectedClients.filter((_, index) => needs[index]);
-};
-
-const initialProviderEnvironment = async (
-  host: SetupHost,
-  hopperPath: string | undefined,
-): Promise<SetupProviderEnvironment> => ({
-  ...(await host.providerEnvironment?.()),
-  ...(hopperPath === undefined ? {} : { HOPPER_LAUNCHER_PATH: hopperPath }),
-});
-
 const finalSetupRemediation = (
   platform: NodeJS.Platform,
   installedHopper: boolean,
@@ -679,93 +449,3 @@ const summarizeDoctor = (report: DoctorReport): SetupDoctorSummary => ({
         },
       }),
 });
-
-const hostRemediation = async (
-  host: SetupHost,
-  installHopper: boolean,
-): Promise<string | undefined> => {
-  if (!supportsNodeVersion(host.nodeVersion))
-    return "Install Node.js 22.19+ or 24.11+ and rerun setup.";
-  if (!installHopper) return undefined;
-  if (host.platform !== "darwin" && host.platform !== "linux")
-    return "REA supports Hopper on macOS and selected 64-bit Linux distributions.";
-  if (host.platform === "darwin") {
-    const version = await host.macosVersion();
-    return version === undefined || major(version) < 12
-      ? "Upgrade to macOS 12 or newer."
-      : undefined;
-  }
-  if ((await host.linuxDistribution())?.supported === true) return undefined;
-  return "Automated Hopper setup supports Ubuntu 24.04+, Fedora 41+, and 64-bit Arch Linux; configure an existing supported provider instead.";
-};
-
-/** Production setup effects for Hopper, agent configuration, and the canonical skill directory. */
-export const systemSetupHost = (
-  doctorHost: DoctorHost = systemDoctorHost(),
-): SetupHost => {
-  const platform = doctorHost.platform;
-  return {
-    platform,
-    nodeVersion: process.versions.node,
-    macosVersion: () => doctorHost.macosVersion(),
-    linuxDistribution: readLinuxDistribution,
-    hopperPath: async () => (await runDoctor(undefined, doctorHost)).hopperPath,
-    providerEnvironment: async () => {
-      const diagnosis = await runDoctor(undefined, doctorHost);
-      return {
-        ...providerRegistrationEnvironment(diagnosis.providerInspections ?? []),
-        ...(diagnosis.hopperPath === undefined
-          ? {}
-          : { HOPPER_LAUNCHER_PATH: diagnosis.hopperPath }),
-      };
-    },
-    installHopper: async (replaceExisting) => {
-      const result =
-        platform === "linux"
-          ? await installLinuxHopper()
-          : await installMacHopper({ replaceExisting });
-      if (result.status === "installed") return result;
-      return setupInstallFailure(result.reason);
-    },
-    detectedClients: () => detectClients(homedir()),
-    supportedClients: () => Promise.resolve(supportedClients(homedir())),
-    configureClient: (client, providerEnvironment, command) =>
-      client.format === "unsupported"
-        ? Promise.resolve({ status: "skipped" })
-        : configureClientConfiguration(client, providerEnvironment, command),
-    clientNeedsConfigure: (client, providerEnvironment, command) =>
-      clientConfigurationAligned(client, providerEnvironment, command).then(
-        (aligned) => !aligned,
-      ),
-    inspectClientConfiguration: inspectClientConfiguration,
-    skillNeedsInstall: () => canonicalSkillNeedsInstall(homedir()),
-    installSkill: () => installCanonicalSkill(homedir()),
-    doctor: (scope) => runDoctor(undefined, doctorHost, scope),
-  };
-};
-
-/** Detect supported agents from their config files or stable installation markers. */
-export const detectClients = async (
-  home: string,
-): Promise<readonly SetupClient[]> => {
-  const detected: SetupClient[] = [];
-  for (const candidate of supportedClients(home)) {
-    const [hasConfig, hasMarker] = await Promise.all([
-      exists(candidate.configPath),
-      candidate.markerPath === undefined ? false : exists(candidate.markerPath),
-    ]);
-    if (hasConfig || hasMarker) detected.push(candidate);
-  }
-  return detected;
-};
-
-const major = (version: string): number =>
-  Number.parseInt(version.split(".")[0] ?? "0", 10);
-const exists = async (path: string): Promise<boolean> => {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-};

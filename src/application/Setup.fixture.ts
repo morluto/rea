@@ -1,12 +1,12 @@
 import {
   type ClientConfigurationInspection,
   type ClientConfigurationResult,
-  type SetupClient,
   type SetupHost,
   type SetupOptions,
-  type SetupHopperInstallResult,
   type SetupProviderEnvironment,
-} from "./Setup.js";
+} from "./SetupTypes.js";
+import type { SetupClient } from "./SupportedClients.js";
+import type { SetupHopperInstallResult } from "./SetupInstallFailure.js";
 import type { DoctorCheck, DoctorReport, DoctorScope } from "./Doctor.js";
 import type { LinuxDistribution } from "./LinuxHopper.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../identity.js";

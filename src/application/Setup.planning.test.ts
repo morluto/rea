@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { runSetup, type SetupProgressEvent } from "./Setup.js";
+import { runSetup } from "./Setup.js";
+import type { SetupProgressEvent } from "./SetupTypes.js";
 import { FakeSetupHost, options } from "./Setup.fixture.js";
 
 describe("setup workflow", () => {

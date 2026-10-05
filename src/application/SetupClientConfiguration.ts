@@ -17,7 +17,7 @@ import type {
   ClientConfigurationInspection,
   ClientConfigurationResult,
   SetupProviderEnvironment,
-} from "./Setup.js";
+} from "./SetupTypes.js";
 import type { SetupClient } from "./SupportedClients.js";
 
 const defaultCommand = (): readonly string[] => [

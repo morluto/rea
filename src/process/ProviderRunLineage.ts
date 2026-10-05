@@ -1,5 +1,5 @@
 import type { ProcessLineageObservation } from "./ProcessOwnership.js";
-import { observeOwnedProcessLineage } from "./ProcessOwnership.js";
+import { observeOwnedProcessLineage } from "./ProcessOwnershipObservation.js";
 import type { ProviderProcessLaunch } from "./ProviderProcess.js";
 
 /** Retain the latest truthful process-lineage observation for one client. */

@@ -2,12 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import {
   cleanupOwnedProcessGroup,
   cleanupWindowsProcessTree,
-  createSystemProcessOwnershipHost,
-  observeOwnedProcessGroup,
-  observeOwnedProcessLineage,
   type ProcessOwnershipHost,
   type WindowsProcessTreeHost,
 } from "./ProcessOwnership.js";
+import {
+  createSystemProcessOwnershipHost,
+  observeOwnedProcessGroup,
+  observeOwnedProcessLineage,
+} from "./ProcessOwnershipObservation.js";
 import { host, ownership } from "./ProcessOwnership.fixture.js";
 
 describe("owned process-group cleanup validation: ownership and lineage", () => {
