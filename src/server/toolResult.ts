@@ -6,7 +6,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
 
 /**
- * Translate an application result into MCP text content.
+ * Serialize an application result as MCP text and structured content.
  * Error tags and safe messages remain visible while underlying causes, process
  * output, and other potentially sensitive details stay private.
  */
@@ -36,7 +36,7 @@ const successResult = (
   contract: ToolContract,
 ): CallToolResult => {
   const candidate =
-    compactEvidence(value) ??
+    projectEvidence(value) ??
     (contract.kind === "session" ? { result: value } : value);
   return {
     content: [
@@ -49,7 +49,7 @@ const successResult = (
   };
 };
 
-const compactEvidence = (value: JsonValue): JsonValue | undefined => {
+const projectEvidence = (value: JsonValue): JsonValue | undefined => {
   if (
     typeof value !== "object" ||
     value === null ||
@@ -59,17 +59,13 @@ const compactEvidence = (value: JsonValue): JsonValue | undefined => {
     !("normalized_result" in value)
   )
     return undefined;
-  const evidence = value as Record<string, JsonValue>;
-  const normalizedResult = evidence.normalized_result;
-  const evidenceId = evidence.evidence_id;
+  const normalizedResult = value.normalized_result;
+  const evidenceId = value.evidence_id;
   if (normalizedResult === undefined || typeof evidenceId !== "string")
     return undefined;
-  const inlineEvidence = Object.fromEntries(
-    Object.entries(evidence).filter(([key]) => key !== "normalized_result"),
-  );
   return {
     result: normalizedResult,
     evidence_id: evidenceId,
-    evidence: inlineEvidence,
+    evidence: value,
   };
 };

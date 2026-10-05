@@ -38,9 +38,11 @@ export async function verifyPackageDiscovery({ cli, environment }) {
   );
   const doctor = json(doctorExecution.stdout);
   const supportedSetupHost =
-    doctor.checks?.find(({ name }) => name === "host")?.ok === true;
+    doctor.checks?.find(({ name }) => name === "node")?.ok === true;
   const hopperSetupSupported =
-    supportedSetupHost && process.platform !== "win32";
+    supportedSetupHost &&
+    doctor.checks?.find(({ name }) => name === "host")?.ok === true &&
+    process.platform !== "win32";
   const hopperReady = doctor.checks?.find(({ name }) => name === "hopper")?.ok;
   const expectedDoctorHealth = doctor.checks?.every(({ ok }) => ok) === true;
   const missingHelp = REQUIRED_HELP_COMMANDS.filter(
