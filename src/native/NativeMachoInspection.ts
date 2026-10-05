@@ -114,6 +114,15 @@ const normalizeMacho = (
         ]
       : []),
     ...additionalLimitations,
+    ...(load.entrypoints.length === 0 &&
+    load.commands.some(
+      (command) =>
+        command.kind === "LC_UNIXTHREAD" || command.kind === "LC_THREAD",
+    )
+      ? [
+          "Thread-state entrypoints (LC_UNIXTHREAD/LC_THREAD) are retained as raw load commands; file offsets are not derived.",
+        ]
+      : []),
     ...(imageBase === null &&
     /^\s*offset\s+symbol\s*$/mu.test(byTool("dyld_info", 1).stdout)
       ? [

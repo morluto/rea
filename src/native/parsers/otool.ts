@@ -125,13 +125,22 @@ const collectBuild = (
   fields: Readonly<Record<string, string | number | null>>,
   state: ParsedLoadCommands,
 ): void => {
-  if (kind !== "LC_BUILD_VERSION") return;
-  state.builds.push({
-    platform: stringField(fields, "platform"),
-    minimum_os: stringField(fields, "minos"),
-    sdk: stringField(fields, "sdk"),
-    tools: parseBuildTools(block),
-  });
+  if (kind === "LC_BUILD_VERSION") {
+    state.builds.push({
+      platform: stringField(fields, "platform"),
+      minimum_os: stringField(fields, "minos"),
+      sdk: stringField(fields, "sdk"),
+      tools: parseBuildTools(block),
+    });
+    return;
+  }
+  if (kind.startsWith("LC_VERSION_MIN_"))
+    state.builds.push({
+      platform: kind.slice("LC_VERSION_MIN_".length) || null,
+      minimum_os: stringField(fields, "version"),
+      sdk: stringField(fields, "sdk"),
+      tools: [],
+    });
 };
 
 const collectDependency = (
@@ -142,7 +151,8 @@ const collectDependency = (
   if (
     !kind.startsWith("LC_LOAD_") &&
     kind !== "LC_ID_DYLIB" &&
-    kind !== "LC_REEXPORT_DYLIB"
+    kind !== "LC_REEXPORT_DYLIB" &&
+    kind !== "LC_LAZY_LOAD_DYLIB"
   )
     return;
   state.dependencies.push({
