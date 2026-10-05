@@ -259,10 +259,13 @@ exception/local commitments, and an explicit algorithm version require a new
 normalized-CIL schema.
 
 Metadata tokens are reported because they are precise coordinates inside one
-module. Cross-version identity never consists of a token alone. A structural
-match cites both build commitments, both local tokens, the v1 tuple inputs, and
-all competing candidates. V1 cannot cite a
-separate matching-algorithm version because none is exposed.
+module. Cross-version identity never consists of a token alone. Matching tries
+exact CIL/signature identity, then an exact declared-type/name/signature tuple,
+then structural shape; a name by itself never selects a pair. Partial or
+malformed bodies leave body facets unknown after a signature tuple pairs the
+methods. Matches cite both build commitments, both local tokens, and all
+competing candidates. V1 cannot cite a separate matching-algorithm version
+because none is exposed.
 
 ### 5. Separate five evidence layers
 

@@ -28,13 +28,30 @@ interface ComparisonItemContext {
   readonly rightComplete: boolean;
 }
 
-const changedMethodDimensions = (
+const methodDimensions = (
   left: Method,
   right: Method,
-): MethodItem["dimensions"] => {
+): {
+  readonly dimensions: MethodItem["dimensions"];
+  readonly bodyUnknown: boolean;
+} => {
   const dimensions: MethodItem["dimensions"] = [];
   if (left.signature.raw_sha256 !== right.signature.raw_sha256)
     dimensions.push("signature");
+  const leftBodyComplete =
+    left.body.status === "present" && left.body.truncated_instructions === 0;
+  const rightBodyComplete =
+    right.body.status === "present" && right.body.truncated_instructions === 0;
+  const bothAbsent =
+    left.body.status === "absent" && right.body.status === "absent";
+  if (
+    (left.body.status === "absent" && rightBodyComplete) ||
+    (right.body.status === "absent" && leftBodyComplete)
+  )
+    dimensions.push("availability");
+  if (bothAbsent) return { dimensions, bodyUnknown: false };
+  if (!leftBodyComplete || !rightBodyComplete)
+    return { dimensions, bodyUnknown: true };
   if (left.body.normalized_il_sha256 !== right.body.normalized_il_sha256)
     dimensions.push("cil");
   if (
@@ -51,8 +68,7 @@ const changedMethodDimensions = (
     canonicalize(right.body.exception_regions)
   )
     dimensions.push("exception-shape");
-  if (left.body.status !== right.body.status) dimensions.push("availability");
-  return dimensions;
+  return { dimensions, bodyUnknown: false };
 };
 
 const callShape = (anchors: Method["body"]["anchors"]): string =>
@@ -174,14 +190,25 @@ export const buildMethodItems = (
 ): MethodItem[] => {
   const items: MethodItem[] = [];
   for (const pair of matches.pairs) {
-    const dimensions = changedMethodDimensions(pair.left.item, pair.right.item);
+    const { dimensions: observedDimensions, bodyUnknown } = methodDimensions(
+      pair.left.item,
+      pair.right.item,
+    );
+    const dimensions = bodyUnknown
+      ? [...observedDimensions, "body-coverage" as const]
+      : observedDimensions;
+    const observedChange = observedDimensions.length > 0;
     items.push({
       item_id: `mmc_method_${sha256({
         left: pair.left.item.token,
         right: pair.right.item.token,
         basis: pair.basis,
       })}`,
-      status: dimensions.length === 0 ? "unchanged" : "changed",
+      status: observedChange
+        ? "changed"
+        : bodyUnknown
+          ? "unknown"
+          : "unchanged",
       left: methodIdentity(pair.left.item),
       right: methodIdentity(pair.right.item),
       match: {
@@ -193,7 +220,11 @@ export const buildMethodItems = (
       },
       dimensions,
       evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
-      limitations: [],
+      limitations: bodyUnknown
+        ? [
+            "Method body facets are unknown because at least one side has unavailable or partial body data.",
+          ]
+        : [],
     });
   }
   for (const ambiguous of matches.ambiguous) {
