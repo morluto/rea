@@ -13,6 +13,7 @@ import type {
   WorkerRequest,
   WorkerSide,
 } from "./JavaScriptReplayWorkerTypes.js";
+import { createSeededRandom } from "./seededRandom.js";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -272,13 +273,7 @@ const loadEntry = async (
 };
 
 const deterministicContext = (request: WorkerRequest, caseIndex: number) => {
-  let state = (request.determinism.randomSeed + caseIndex) >>> 0;
-  const random = (): number => {
-    state ^= state << 13;
-    state ^= state >>> 17;
-    state ^= state << 5;
-    return (state >>> 0) / 0x1_0000_0000;
-  };
+  const random = createSeededRandom(request.determinism.randomSeed + caseIndex);
   const epoch = Date.parse(request.determinism.clockIso);
   class ReplayDate extends Date {
     constructor(...arguments_: unknown[]) {
@@ -293,13 +288,25 @@ const deterministicContext = (request: WorkerRequest, caseIndex: number) => {
       return epoch;
     }
   }
-  const replayMath: Math = Object.create(Math);
-  Object.defineProperty(replayMath, "random", { value: random });
+  // Observable identity must match the real builtin, or a bundle that feature-
+  // detects (`Date.name`, `Date.length`, `Object.getPrototypeOf(Math)`) takes a
+  // different branch in replay than in production.
+  Object.defineProperties(ReplayDate, {
+    name: { value: "Date", configurable: true },
+    length: { value: Date.length, configurable: true },
+  });
+  const replayDate = new Proxy(ReplayDate, {
+    apply: () => new ReplayDate().toString(),
+  });
+  // Intercept only `random`; everything else, including the prototype chain and
+  // property descriptors, is forwarded to the real Math.
+  const replayMath = new Proxy(Math, {
+    get: (target, property, receiver) =>
+      property === "random" ? random : Reflect.get(target, property, receiver),
+  });
   return createContext(
     {
-      Date: new Proxy(ReplayDate, {
-        apply: () => new ReplayDate().toString(),
-      }),
+      Date: replayDate,
       Math: replayMath,
     },
     {

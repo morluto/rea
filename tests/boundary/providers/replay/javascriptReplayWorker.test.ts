@@ -544,6 +544,60 @@ it("keeps an own __proto__ property instead of mutating the output", async () =>
   });
 });
 
+describe("replay determinism and builtin identity", () => {
+  const evaluate = async (
+    expression: string,
+    randomSeed: number,
+  ): Promise<unknown> => {
+    const workerRequest = await request("parser.mjs", "esm", "default", []);
+    workerRequest.determinism.randomSeed = randomSeed;
+    workerRequest.left.modules[0] = {
+      alias: "entry",
+      format: "esm",
+      dependencies: {},
+      source: `export default function () { return ${expression}; }`,
+    };
+    const result = await runWorker(workerRequest);
+    expect(result.code).toBe(0);
+    return JSON.parse(result.stdout).left[0];
+  };
+
+  it("varies Math.random across draws when seeded with zero", async () => {
+    const outcome = (await evaluate(
+      "[Math.random(), Math.random(), Math.random()]",
+      0,
+    )) as { outcome: string; value?: number[] };
+    expect(outcome.outcome).toBe("return");
+    expect(new Set(outcome.value).size).toBe(3);
+  });
+
+  it("produces an identical stream for the same seed", async () => {
+    const first = await evaluate("[Math.random(), Math.random()]", 5);
+    const second = await evaluate("[Math.random(), Math.random()]", 5);
+    expect(first).toEqual(second);
+  });
+
+  it("presents Date with real builtin identity", async () => {
+    expect(await evaluate("[Date.name, Date.length]", 3)).toMatchObject({
+      outcome: "return",
+      value: ["Date", 7],
+    });
+  });
+
+  it("presents Math with real descriptors and unaffected members", async () => {
+    // Object identity is realm-specific inside the vm, so the meaningful checks
+    // are the descriptor and the untouched members.
+    const outcome = (await evaluate(
+      "[Object.getOwnPropertyDescriptor(Math, 'random').configurable, Object.getOwnPropertyDescriptor(Math, 'random').writable, Math.max(1, 2), Math.floor(1.7), Math.PI > 3]",
+      3,
+    )) as { outcome: string; value?: unknown[] };
+    expect(outcome).toMatchObject({
+      outcome: "return",
+      value: [true, true, 2, 1, true],
+    });
+  });
+});
+
 describe("replay array projection", () => {
   it.each([
     ["Array(3)", [null, null, null]],
