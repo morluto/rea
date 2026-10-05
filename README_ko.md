@@ -145,7 +145,7 @@ Linux의 기본 Hopper 실행 파일은 `/opt/hopper/bin/Hopper`입니다. 다�
 
 ### 업데이트와 제거
 
-- `rea upgrade`는 현재 REA 설치를 업데이트합니다.
+- `rea update`는 현재 REA 설치를 업데이트합니다.
 - `rea uninstall`은 REA가 관리하는 에이전트 등록과 워크플로 파일을 제거합니다. Hopper는 유지합니다.
 - `rea uninstall --purge-data`는 REA 캐시와 상태도 삭제합니다. 해당 데이터를 지우려는 경우에만 사용하세요.
 

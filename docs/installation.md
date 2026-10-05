@@ -147,11 +147,14 @@ rea setup --yes --all-detected --install-hopper --json
 
 Setup pins package-runner MCP registrations to the exact installed REA version,
 installs the matching skill and on-demand references in the same plan, and adds
-`startup_timeout_sec = 30` for Codex. Interactive `rea upgrade` installs the new
-executable and then opens the updated `rea setup --all-detected` plan for
-separate approval. Structured or non-TTY upgrades defer that integration sync.
-Use the same setup command to migrate floating, unversioned, or stale
-registrations, then restart changed clients.
+`startup_timeout_sec = 30` for Codex. `rea update` installs the exact resolved
+release into the npm prefix that owns the running package, then checks the new
+executable's version before reporting success. It does not reopen onboarding.
+Release lookup and installation both use npm's configured registry.
+Its maintenance plan selects only existing REA registrations and an already
+installed REA skill. Run the returned scoped setup command to review and approve
+those changes, then restart affected agents. The plan is returned in terminal,
+non-TTY, and JSON modes without applying configuration changes.
 
 ## Hopper
 
@@ -298,7 +301,7 @@ and complete runtime cleanup.
 
 ## Diagnose, update, and remove
 
-`rea doctor --json` is strictly read-only. `rea upgrade` updates only the npm installation that owns the running CLI. `rea uninstall` removes only REA-owned agent registrations and skill files; `--purge-data` additionally removes REA cache and state paths.
+`rea doctor --json` is strictly read-only. `rea update` updates only the npm installation that owns the running CLI. Source checkouts and package-runner copies must be updated through the mechanism that owns them; a fresh package-runner invocation can use `npx rea-agents@latest`. `rea uninstall` removes only REA-owned agent registrations and skill files; `--purge-data` additionally removes REA cache and state paths.
 
 ## MCP Registry
 

@@ -349,6 +349,8 @@ jobs:
           src/process/ProcessOwnership.part2.test.ts
           src/process/ProcessOwnership.part3.test.ts
           src/process/ProcessOwnership.validation.test.ts
+          src/application/Update.test.ts
+          tests/process-global/updateMaintenance.test.ts
           tests/conformance/providers/ghidra/realGhidraWindowsWorkflow.test.ts
       - run: npm run verify:package:windows
       - uses: actions/upload-artifact@v4

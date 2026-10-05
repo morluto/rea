@@ -144,7 +144,7 @@ Linux の既定ランチャーは `/opt/hopper/bin/Hopper` です。別の場所
 
 ### 更新とアンインストール
 
-- `rea upgrade` は現在の REA インストールを更新します。
+- `rea update` は現在の REA インストールを更新します。
 - `rea uninstall` は REA が管理するエージェント登録とワークフローファイルを削除します。Hopper は残ります。
 - `rea uninstall --purge-data` は REA のキャッシュと状態も削除します。それらを削除したい場合にだけ使ってください。
 

@@ -11,7 +11,8 @@ import {
   type SetupOptions,
 } from "../application/Setup.js";
 import { runUninstall } from "../application/Uninstall.js";
-import { runUpgrade, systemUpgradeHost } from "../application/Upgrade.js";
+import { runUpdate } from "../application/Update.js";
+import { systemUpdateHost } from "../application/UpdateRuntime.js";
 import {
   confirmInteractiveSetup,
   renderInteractiveSetupResult,
@@ -33,7 +34,7 @@ const supportedClientSchema = z
     "Unsupported agent integration",
   );
 
-/** Register setup, doctor, uninstall, and upgrade CLI commands. */
+/** Register setup, doctor, uninstall, and update CLI commands. */
 export const registerSetupCommands = (
   cli: CliInstance,
   logger: Logger,
@@ -132,13 +133,14 @@ const registerMaintenanceCommands = (
     run: ({ options }) =>
       logCliCommand(logger, "uninstall", () => runUninstall(options.purgeData)),
   });
-  cli.command(CLI_COMMANDS.upgrade, {
-    description: "Upgrade a global npm installation to the latest REA release",
+  cli.command(CLI_COMMANDS.update, {
+    description:
+      "Update this REA installation and verify the installed release",
     run: ({ formatExplicit }) =>
-      logCliCommand(logger, "upgrade", () =>
-        runUpgrade(
+      logCliCommand(logger, "update", () =>
+        runUpdate(
           PRODUCT_IDENTITY.packageVersion,
-          systemUpgradeHost(),
+          systemUpdateHost(),
           formatExplicit ? "structured" : "human",
         ),
       ),

@@ -179,6 +179,7 @@
     "@xterm/headless": "6.0.0",
     "@zip.js/zip.js": "2.8.26",
     "canonicalize": "3.0.0",
+    "cross-spawn": "7.0.6",
     "diff": "9.0.0",
     "graphology": "0.26.0",
     "graphology-shortest-path": "2.1.0",
@@ -197,6 +198,7 @@
   },
   "devDependencies": {
     "@fast-check/vitest": "0.4.1",
+    "@types/cross-spawn": "6.0.6",
     "@types/node": "24.10.1",
     "@types/semver": "7.7.1",
     "@types/write-file-atomic": "4.0.3",

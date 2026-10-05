@@ -138,7 +138,7 @@ npm install --global rea-agents
 rea setup
 ```
 
-Update either installation with `rea upgrade`.
+Update either installation with `rea update`.
 
 ### Requirements
 
@@ -431,11 +431,11 @@ Setup offers supported agent integrations for selection. Existing REA registrati
 <!-- x-release-please-end -->
 
 Persistent registrations should use one exact package version. `rea setup`
-maintains that pin, upgrades the bundled skill at the same time, and gives Codex
-a 30-second startup allowance for a cold package-runner start. An interactive
-`rea upgrade` opens the updated setup plan after installing the new executable;
-structured or non-interactive upgrades tell you to run that sync explicitly.
-Restart clients whose MCP registration changed.
+maintains that pin, updates the bundled skill at the same time, and gives Codex
+a 30-second startup allowance for a cold package-runner start. `rea update`
+installs an exact release and verifies the new executable. It returns an
+unapplied maintenance plan for existing REA integrations, with a scoped setup
+command to review and approve their changes. Restart affected agents afterward.
 
 MCP clients that support prompts can also discover six ordered investigation
 workflows through `prompts/list`. Their optional identifier arguments use the
@@ -491,7 +491,7 @@ Or install the `rea` command globally:
 ```bash
 npm install --global rea-agents
 rea --help
-rea upgrade
+rea update
 rea mcp
 ```
 

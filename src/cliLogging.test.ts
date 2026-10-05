@@ -35,7 +35,7 @@ describe("CLI operation status classification", () => {
     ["ready setup", { status: "ready" }],
     ["complete uninstall", { status: "complete" }],
     ["current version", { status: "current" }],
-    ["completed upgrade", { status: "upgraded" }],
+    ["completed update", { status: "updated" }],
     ["healthy diagnostics", { healthy: true, checks: [] }],
     ["bounded evidence", { evidence: [{ truncated: true }] }],
   ])("keeps %s successful", (_label, value) => {

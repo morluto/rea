@@ -1,10 +1,11 @@
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { promisify } from "node:util";
+import { pathToFileURL } from "node:url";
 
 import { lt, rcompare } from "semver";
 
@@ -44,7 +45,7 @@ transport.stderr?.on("data", (chunk) => {
 });
 
 let publishedToolCount = 0;
-let upgrade;
+let update;
 
 try {
   await client.connect(transport);
@@ -71,7 +72,7 @@ try {
   });
   if (status.isError === true)
     throw new Error("Published target-free MCP session check failed");
-  upgrade = await verifyPublishedUpgrade({ version, canaryRoot });
+  update = await verifyPublishedUpdate({ version, canaryRoot });
 } catch (cause) {
   throw new Error(`Published package verification failed: ${stderr}`, {
     cause,
@@ -86,17 +87,17 @@ try {
 }
 
 process.stdout.write(
-  `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), package: "rea-agents", version, mcpTools: publishedToolCount, canonicalMcpTools: CATALOG_IDENTITY.counts.mcp_tools, upgrade })}\n`,
+  `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), package: "rea-agents", version, mcpTools: publishedToolCount, canonicalMcpTools: CATALOG_IDENTITY.counts.mcp_tools, update })}\n`,
 );
 
-async function verifyPublishedUpgrade({ version: targetVersion, canaryRoot }) {
+async function verifyPublishedUpdate({ version: targetVersion, canaryRoot }) {
   const previousVersion = await findPreviousPublishedVersion(targetVersion);
-  const prefix = join(canaryRoot, "upgrade-prefix");
-  const home = join(canaryRoot, "upgrade-home");
+  const prefix = join(canaryRoot, "update-prefix");
+  const home = join(canaryRoot, "update-home");
   const environment = {
     ...process.env,
     HOME: home,
-    npm_config_cache: join(canaryRoot, "upgrade-cache"),
+    npm_config_cache: join(canaryRoot, "update-cache"),
     npm_config_prefix: prefix,
     PATH: `${join(prefix, "bin")}${delimiter}${process.env.PATH ?? ""}`,
   };
@@ -114,33 +115,63 @@ async function verifyPublishedUpgrade({ version: targetVersion, canaryRoot }) {
     { cwd: canaryRoot, env: environment, maxBuffer: 16 * 1024 * 1024 },
   );
 
-  const { stdout } = await execFileAsync(
-    "npx",
-    ["rea-agents", "upgrade", "--json"],
-    { cwd: canaryRoot, env: environment, maxBuffer: 16 * 1024 * 1024 },
-  );
-  const result = JSON.parse(stdout);
-  if (
-    result.status !== "upgraded" ||
-    result.previousVersion !== previousVersion ||
-    result.latestVersion !== targetVersion
-  )
-    throw new Error(
-      `npx rea-agents upgrade did not upgrade ${previousVersion} to ${targetVersion}: ${stdout}`,
-    );
-
   const npmRoot = (
     await execFileAsync("npm", ["root", "--global"], {
       cwd: canaryRoot,
       env: environment,
     })
   ).stdout.trim();
+  // Older releases may predate the update command. Exercise the new published
+  // updater's production workflow against that real previous installation.
+  const updaterPrefix = join(canaryRoot, "updater");
+  await execFileAsync(
+    "npm",
+    [
+      "install",
+      "--ignore-scripts",
+      "--no-save",
+      "--no-package-lock",
+      "--prefix",
+      updaterPrefix,
+      `rea-agents@${targetVersion}`,
+    ],
+    { cwd: canaryRoot, env: environment, maxBuffer: 16 * 1024 * 1024 },
+  );
+  const updaterRoot = join(updaterPrefix, "node_modules", "rea-agents");
+  const harness = join(canaryRoot, "update.mjs");
+  await writeFile(
+    harness,
+    `
+import { runUpdate } from ${JSON.stringify(pathToFileURL(join(updaterRoot, "dist/application/Update.js")).href)};
+import { systemUpdateHost } from ${JSON.stringify(pathToFileURL(join(updaterRoot, "dist/application/UpdateRuntime.js")).href)};
+const result = await runUpdate(${JSON.stringify(previousVersion)}, systemUpdateHost(${JSON.stringify(join(npmRoot, "rea-agents"))}, ${JSON.stringify(home)}), "structured");
+process.stdout.write(JSON.stringify(result));
+if (result.status === "failed") process.exitCode = 1;
+`,
+  );
+  const { stdout } = await execFileAsync(process.execPath, [harness], {
+    cwd: canaryRoot,
+    env: environment,
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  const result = JSON.parse(stdout);
+  if (
+    result.status !== "updated" ||
+    result.previousVersion !== previousVersion ||
+    result.latestVersion !== targetVersion ||
+    result.installedVersion !== targetVersion ||
+    result.command.at(-1) !== `rea-agents@${targetVersion}`
+  )
+    throw new Error(
+      `Published REA updater did not update ${previousVersion} to ${targetVersion}: ${stdout}`,
+    );
+
   const installed = JSON.parse(
     await readFile(join(npmRoot, "rea-agents", "package.json"), "utf8"),
   );
   if (installed.version !== targetVersion)
     throw new Error(
-      `npx rea-agents upgrade installed ${installed.version}, expected ${targetVersion}`,
+      `REA update installed ${installed.version}, expected ${targetVersion}`,
     );
 
   const help = (
@@ -149,8 +180,10 @@ async function verifyPublishedUpgrade({ version: targetVersion, canaryRoot }) {
       env: environment,
     })
   ).stdout;
-  if (!help.includes("setup"))
-    throw new Error("the upgraded rea-agents executable did not start");
+  if (!/^\s{2}update\s/mu.test(help) || /^\s{2}upgrade\s/mu.test(help))
+    throw new Error(
+      "the updated executable did not expose only the update command",
+    );
 
   return {
     status: result.status,

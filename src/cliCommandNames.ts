@@ -6,7 +6,7 @@ export const CLI_COMMANDS = Object.freeze({
   setup: "setup",
   doctor: "doctor",
   uninstall: "uninstall",
-  upgrade: "upgrade",
+  update: "update",
   xrefs: "xrefs",
   trace: "trace",
   traceNativeUiAction: "trace-native-ui-action",

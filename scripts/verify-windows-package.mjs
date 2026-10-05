@@ -19,6 +19,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 import { verifyCompleteToolCatalog } from "./lib/verify-package-core.mjs";
+import { verifyPackageUpdate } from "./verify-package-update.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 
 const exec = promisify(execFile);
@@ -193,6 +194,22 @@ try {
     )
       throw new Error(`Packaged uninstall did not remove ${id}`);
 
+  if (process.platform !== "win32")
+    await npm(
+      ["install", "--global", "--ignore-scripts", "--prefix", prefix, tarball],
+      workspace,
+    );
+  const update = await verifyPackageUpdate({
+    prefix,
+    packageRoot:
+      process.platform === "win32"
+        ? join(prefix, "node_modules", "rea-agents")
+        : join(prefix, "lib", "node_modules", "rea-agents"),
+    tarball,
+    workspace,
+    environment,
+  });
+
   process.stdout.write(
     `${JSON.stringify({
       verifier_run: await completeVerifierRun(verifierRun),
@@ -204,6 +221,7 @@ try {
       agent_setup: ["opencode", "vscode", "copilot_cli"],
       setup_idempotent: true,
       uninstall: true,
+      update,
     })}\n`,
   );
 } finally {

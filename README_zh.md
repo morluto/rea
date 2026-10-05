@@ -144,7 +144,7 @@ Linux 上的默认 Hopper 启动器为 `/opt/hopper/bin/Hopper`。其他路径�
 
 ### 更新与卸载
 
-- `rea upgrade` 更新当前 REA 安装。
+- `rea update` 更新当前 REA 安装。
 - `rea uninstall` 移除 REA 管理的智能体配置项和工作流文件，保留 Hopper。
 - `rea uninstall --purge-data` 还会删除 REA 的缓存和状态。仅在需要移除这些数据时使用。
 

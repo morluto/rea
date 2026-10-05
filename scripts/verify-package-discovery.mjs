@@ -2,7 +2,7 @@ import { json, run, runWithStatus } from "./lib/verify-package-core.mjs";
 
 const REQUIRED_HELP_COMMANDS = [
   "setup",
-  "upgrade",
+  "update",
   "inspect-artifact",
   "extract-artifact",
   "import-reference-source",
