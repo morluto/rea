@@ -1,3 +1,4 @@
+import { analysisErrorProjectionSchema } from "./contracts/errorSchemas.js";
 import type { Logger } from "./logger.js";
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -7,6 +8,7 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 export const isCliOperationFailure = (value: unknown): boolean => {
   if (!isRecord(value)) return false;
   if (typeof value.error === "string") return true;
+  if (analysisErrorProjectionSchema.safeParse(value).success) return true;
   if (value.healthy === false) return true;
   return (
     value.status === "failed" ||

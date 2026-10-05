@@ -8,6 +8,7 @@ import type {
 } from "./javascriptSemanticIr.js";
 import {
   resolveSemanticBindingState,
+  semanticResolutionBlocked,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
@@ -356,7 +357,7 @@ const provenanceForExpression = (
   node: t.Node,
   context: EvaluationContext,
 ): JavaScriptBindingProvenance => {
-  const required = requireOrigin(node);
+  const required = requireOrigin(node, context.state);
   if (required !== undefined) return semanticOriginsProvenance([required]);
   if (t.isIdentifier(node)) {
     const binding = resolveSemanticBindingState(context.state, node, node.name);
@@ -410,10 +411,13 @@ const provenanceForExpression = (
   return semanticLocalProvenance();
 };
 
-const requireOrigin = (node: t.Node): JavaScriptModuleOrigin | undefined => {
+const requireOrigin = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): JavaScriptModuleOrigin | undefined => {
   if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
     if (!t.isNode(node.object)) return undefined;
-    const nested = requireOrigin(node.object);
+    const nested = requireOrigin(node.object, state);
     const member = memberKey(node);
     return nested === undefined || typeof member !== "string"
       ? undefined
@@ -422,6 +426,11 @@ const requireOrigin = (node: t.Node): JavaScriptModuleOrigin | undefined => {
   if (
     !t.isCallExpression(node) ||
     !t.isIdentifier(node.callee, { name: "require" })
+  )
+    return undefined;
+  if (
+    resolveSemanticBindingState(state, node.callee, "require") !== undefined ||
+    semanticResolutionBlocked(state, node.callee, "require")
   )
     return undefined;
   const specifier = stringValue(node.arguments[0]);

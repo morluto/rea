@@ -120,6 +120,87 @@ describe("JavaScript export return-shape comparison", () => {
   });
 });
 
+describe("JavaScript export return-shape container presence", () => {
+  it.each(["{}", "[]", "{ nested: 1 }"])(
+    "does not report a retained %s container property as removed",
+    async (container) => {
+      const graphs = await analyzeSources({
+        left: 'export default () => ({ type: "item", options: false });',
+        right: `export default () => ({ type: "item", options: ${container} });`,
+      });
+      const result = compare(...graphs);
+      const change = result.changes.find(({ path }) => path === "/options");
+      expect(change).toMatchObject({
+        status: "unknown",
+        left: { availability: "literal", value: false },
+        right: { availability: "unknown" },
+      });
+      expect(() =>
+        javaScriptExportShapeComparisonResultSchema.parse(result),
+      ).not.toThrow();
+    },
+  );
+
+  it.each(["{}", "[]", "{ nested: 1 }"])(
+    "does not report a retained %s container becoming a primitive as added",
+    async (container) => {
+      const graphs = await analyzeSources({
+        left: `export default () => ({ type: "item", options: ${container} });`,
+        right: 'export default () => ({ type: "item", options: false });',
+      });
+      const result = compare(...graphs);
+      expect(
+        result.changes.find(({ path }) => path === "/options"),
+      ).toMatchObject({
+        status: "unknown",
+        left: { availability: "unknown" },
+        right: { availability: "literal", value: false },
+      });
+    },
+  );
+
+  it.each([
+    { left: "", right: ", options: false", status: "added" },
+    { left: ", options: false", right: "", status: "removed" },
+  ])("preserves genuine primitive $status", async ({ left, right, status }) => {
+    const graphs = await analyzeSources({
+      left: `export default () => ({ type: "item"${left} });`,
+      right: `export default () => ({ type: "item"${right} });`,
+    });
+    expect(compare(...graphs).changes).toEqual([
+      expect.objectContaining({ path: "/options", status }),
+    ]);
+  });
+
+  it("keeps a container transition unknown under incomplete spread coverage", async () => {
+    const graphs = await analyzeSources({
+      left: 'export default () => ({ type: "item", options: false });',
+      right:
+        'export default () => ({ type: "item", options: { ...dynamic } });',
+    });
+    const result = compare(...graphs);
+    expect(
+      result.changes.find(({ path }) => path === "/options"),
+    ).toMatchObject({
+      status: "unknown",
+      right: { availability: "unknown" },
+    });
+    expect(result.coverage.status).toBe("partial");
+  });
+
+  it("preserves identical container leaves and real primitive changes", async () => {
+    const graphs = await analyzeSources({
+      left: 'export default () => ({ type: "item", options: {}, enabled: false });',
+      right:
+        'export default () => ({ type: "item", options: {}, enabled: true });',
+    });
+    const result = compare(...graphs);
+    expect(result.changes).toEqual([
+      expect.objectContaining({ path: "/enabled", status: "changed" }),
+    ]);
+  });
+});
+
 describe("JavaScript export return-shape selection", () => {
   it("returns complete candidate, variant, and change inventories", async () => {
     const candidates = await analyzeSources({

@@ -13,7 +13,7 @@ import {
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
-import { propertyName, range } from "./javascriptStaticAnalysisHelpers.js";
+import { range } from "./javascriptStaticAnalysisHelpers.js";
 
 /** Recover bounded static property reads, writes, spreads, and destructuring. */
 export const collectJavaScriptSemanticObjects = (
@@ -79,6 +79,22 @@ const collectMember = (
   const write =
     (t.isAssignmentExpression(parent) && parent.left === node) ||
     (t.isUpdateExpression(parent) && parent.argument === node);
+  const readsBeforeWrite =
+    (t.isAssignmentExpression(parent) && parent.operator !== "=" && write) ||
+    (t.isUpdateExpression(parent) && write);
+  if (readsBeforeWrite)
+    addObjectOperation(
+      {
+        node,
+        kind: "read",
+        ownerCallableId,
+        objectBindingId: expressionBindingId(node.object, state),
+        targetBindingId: null,
+        propertyName: name,
+      },
+      state,
+      output,
+    );
   addObjectOperation(
     {
       node,
@@ -103,7 +119,7 @@ const collectDestructuring = (
   const objectBindingId = expressionBindingId(node.init, state);
   for (const property of node.id.properties) {
     if (!t.isObjectProperty(property)) continue;
-    const name = propertyName(property.key);
+    const name = semanticStaticPropertyName(property.key, property.computed);
     if (name.length === 0) continue;
     const target = bindingIdentifier(property.value);
     addObjectOperation(

@@ -98,6 +98,41 @@ describe("JavaScript semantic analysis: structure 1", () => {
     ).toEqual(shadowReference);
   });
 
+  it.each([
+    `function run(require) { const bus = require("electron").ipcMain; return bus; }`,
+    `function run() { const { ipcMain: bus } = require("electron"); function require() {} return bus; }`,
+    `{ const bus = require("electron").ipcMain; const require = localLoader; }`,
+    `import require from "./loader.js"; const bus = require("electron").ipcMain;`,
+  ])(
+    "does not assign CommonJS origins to lexically shadowed require",
+    (source) => {
+      const ir = analyzeJavaScriptSemantics(source);
+      const bus = onlyBinding(ir, "bus");
+      expect(bus.provenance.origins).toEqual([]);
+      expect(ir.moduleLinks.filter(({ kind }) => kind === "require")).toEqual(
+        [],
+      );
+    },
+  );
+
+  it("preserves unshadowed require origins through aliases and assignments", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      const { ipcMain: bus } = require("electron");
+      const forwarded = bus;
+      let assigned;
+      assigned = require("electron").ipcMain;
+      { const require = localLoader; require("./local.js"); }
+    `);
+    for (const name of ["bus", "forwarded", "assigned"])
+      expect(origin(topLevelBinding(ir, name))).toEqual({
+        specifier: "electron",
+        importedPath: ["ipcMain"],
+      });
+    expect(
+      ir.moduleLinks.filter(({ kind }) => kind === "require"),
+    ).toHaveLength(1);
+  });
+
   it("propagates literal, template, object, conditional, and destructured values", () => {
     const ir = analyzeJavaScriptSemantics(`
       const prefix = "rea";
@@ -188,6 +223,50 @@ describe("JavaScript semantic analysis: loop lexical names", () => {
         .filter(({ name, role }) => name === "value" && role === "read")
         .every(({ bindingId }) => bindingId === binding.bindingId),
     ).toBe(true);
+  });
+});
+
+describe("JavaScript semantic analysis: class expression lexical names", () => {
+  it("resolves named class expressions inside the class without changing the outer binding", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      const Service = "outside";
+      const Wrapper = class Service {
+        create() { return new Service(); }
+      };
+      consume(Service);
+    `);
+    expect(bindingsNamed(ir, "Service")).toHaveLength(2);
+    expect(topLevelBinding(ir, "Service").value).toEqual({
+      status: "literal",
+      value: "outside",
+    });
+    const references = ir.references.filter(
+      ({ name, role }) => name === "Service" && role === "read",
+    );
+    expect(references).toHaveLength(2);
+    expect(references[0]?.bindingId).not.toBe(references[1]?.bindingId);
+    expect(references[0]?.resolution).toBe("resolved");
+    const classScope = ir.scopes.find(({ kind }) => kind === "class");
+    expect(
+      bindingsNamed(ir, "Service").some(
+        ({ scopeId }) => scopeId === classScope?.scopeId,
+      ),
+    ).toBe(true);
+  });
+
+  it("does not expose a named class expression outside its class", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      const Wrapper = class Internal { create() { return new Internal(); } };
+      consume(Internal);
+    `);
+    const references = ir.references.filter(
+      ({ name, role }) => name === "Internal" && role === "read",
+    );
+    expect(references.map(({ resolution }) => resolution)).toEqual([
+      "resolved",
+      "unbound",
+    ]);
+    expect(topLevelBinding(ir, "Wrapper").provenance.status).toBe("local");
   });
 });
 

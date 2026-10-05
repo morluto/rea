@@ -136,6 +136,86 @@ describe("historical source to bundle comparison", () => {
   });
 });
 
+describe("source to bundle path syntax", () => {
+  it.each(["src/modified#part.ts", "src/modified?part.ts"])(
+    "preserves literal filesystem punctuation in %s",
+    (path) => {
+      const node = moduleNode("punctuated", { path });
+      const graph = createJavaScriptApplicationGraph({
+        schema: "JavaScriptApplicationGraph",
+        root_node_ids: [node.node_id],
+        nodes: [node],
+        edges: [],
+        coverage: {
+          status: "complete",
+          truncated: false,
+          omitted_count: 0,
+          limits: [],
+        },
+        limitations: [],
+      });
+      const result = compareSourceToBundle({
+        reference: historicalGraph("complete", [path]),
+        application: {
+          evidenceId: EVIDENCE_ID,
+          rootArtifactSha256: HASH.artifact,
+          graph,
+        },
+      });
+      expect(item(result, path)).toMatchObject({
+        status: "unknown",
+        current_node_ids: [node.node_id],
+        candidates: [
+          expect.objectContaining({
+            signals: expect.arrayContaining([
+              expect.objectContaining({ kind: "current-path-exact" }),
+            ]),
+          }),
+        ],
+      });
+    },
+  );
+
+  it.each([
+    "https://example.test/src/modified.ts?revision=2#section",
+    "webpack://fixture/./src/modified.ts?revision=2#section",
+  ])("still strips URL query and fragment from %s", (path) => {
+    const node = moduleNode("url", { path });
+    const graph = createJavaScriptApplicationGraph({
+      schema: "JavaScriptApplicationGraph",
+      root_node_ids: [node.node_id],
+      nodes: [node],
+      edges: [],
+      coverage: {
+        status: "complete",
+        truncated: false,
+        omitted_count: 0,
+        limits: [],
+      },
+      limitations: [],
+    });
+    const result = compareSourceToBundle({
+      reference: historicalGraph("complete", ["src/modified.ts"]),
+      application: {
+        evidenceId: EVIDENCE_ID,
+        rootArtifactSha256: HASH.artifact,
+        graph,
+      },
+    });
+    expect(item(result, "src/modified.ts")).toMatchObject({
+      status: "unknown",
+      current_node_ids: [node.node_id],
+      candidates: [
+        expect.objectContaining({
+          signals: expect.arrayContaining([
+            expect.objectContaining({ kind: "current-path-suffix" }),
+          ]),
+        }),
+      ],
+    });
+  });
+});
+
 describe("source to bundle complete metadata", () => {
   it("accepts long source metadata and all reported limitations", () => {
     const result = compareSourceToBundle({

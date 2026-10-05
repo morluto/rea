@@ -80,7 +80,9 @@ const compareDimension = (
   complete: boolean,
   reason: string,
 ): Dimension => {
-  const all = compareIdentities(before, after);
+  const all = compareIdentities(before, after).filter(
+    ({ change }) => complete || change === "modified",
+  );
   if (all.length > 0)
     return {
       status: "changed",
