@@ -11,20 +11,8 @@ const COVERAGE_ENABLED = process.argv.some((argument) =>
 const COVERAGE_SHARD = process.argv.some((argument) =>
   argument.startsWith("--shard="),
 );
-// Local runs share the host with TypeScript, docs, and package checks under
-// Turbo. Running the suite on a single worker made a full local run cost ~140s
-// of wall time at ~100% CPU on a 10-core machine, which was the single largest
-// dev-cycle cost in the repository. Two workers matches the budget CI already
-// proves green, so local and CI now execute the same concurrency.
-//
-// Do not raise this without first removing the wall-clock-sensitive PTY
-// scenarios in tests/boundary/process, which fail under host contention
-// because they schedule actions by `at_ms` instead of observed output.
+// Keep local and CI concurrency bounded by the runner rather than command locks.
 const MAX_TEST_WORKERS = Math.min(2, availableParallelism());
-
-// Cross-project scheduling is a local-host concern only. CI shards projects
-// across separate runners and already proves this concurrency green.
-const LOCAL_ONLY = process.env.CI !== "true";
 
 const TEST_PROJECTS = [
   {
@@ -71,16 +59,14 @@ const TEST_PROJECTS = [
     maxWorkers: MAX_TEST_WORKERS,
   },
   {
-    // Real PTY capture scenarios contend for host process and terminal
-    // resources, and several still schedule actions by wall-clock `at_ms`
-    // rather than observed output. Running them concurrently with the rest of
-    // the boundary suite makes them drop input and lose resize echoes. They
-    // serialise until those scenarios trigger on observed terminal text.
+    // Process-tree observations share host sampling resources; keep this small
+    // lane serial while the independent projects run together.
     name: "process-boundary",
     include: ["tests/boundary/process/**/*.test.ts"],
     pool: "forks" as const,
     maxWorkers: MAX_TEST_WORKERS,
     fileParallelism: false,
+    sequence: { groupOrder: 1 },
   },
   {
     name: "mcp-boundary",
@@ -96,14 +82,12 @@ const TEST_PROJECTS = [
     include: ["tests/acceptance/**/*.test.ts"],
     pool: "forks" as const,
     maxWorkers: MAX_TEST_WORKERS,
-    fileParallelism: false,
   },
   {
     name: "process-global",
     include: ["tests/process-global/**/*.test.ts"],
     pool: "forks" as const,
     maxWorkers: MAX_TEST_WORKERS,
-    fileParallelism: false,
   },
   {
     name: "conformance",
@@ -117,17 +101,7 @@ const TEST_PROJECTS = [
     pool: "threads" as const,
     maxWorkers: MAX_TEST_WORKERS,
   },
-  // Acceptance, process-boundary, and process-global declare
-  // `fileParallelism: false` above because they own host-level process, stdio,
-  // and terminal state. That flag only serialises files inside one project, so
-  // each project also needs its own `sequence.groupOrder` locally: without it
-  // Vitest runs projects concurrently and a project that mutates host process
-  // or terminal state overlaps with projects that observe it.
-].map((project, groupOrder) => ({
-  ...project,
-  maxWorkers: MAX_TEST_WORKERS,
-  ...(LOCAL_ONLY ? { sequence: { groupOrder } } : {}),
-}));
+];
 
 const ZERO_COVERAGE_THRESHOLDS = {
   statements: 0,

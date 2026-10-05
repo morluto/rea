@@ -32,9 +32,11 @@ IDs when using them.
 Use `extract_artifact` when materialized files are needed. It takes no arguments
 and materializes all regular files into a fresh temporary directory chosen by
 REA. Symlinks and encrypted entries are inventory facts, not extractable files.
-The operation still requires the filesystem-write permission grant; callers do
-not choose the destination.
+The result reports the materialized directory; callers do not choose the
+destination. No separate permission grant is needed.
 
-Native DMG traversal is macOS-only, read-only, and requires both operator policy
-and `native_mount_approved: true`; without both, retain the root-hash-only result.
-Approval for inventory never grants extraction authority.
+Native DMG traversal automatically uses a read-only mount on supported macOS
+hosts, with an owned temporary mount directory and cleanup. It needs no approval
+flag. Unsupported hosts or mount failures remain explicit limitations; do not
+claim child inventory when only root identity is available. Extraction is a
+separate filesystem-writing operation.
