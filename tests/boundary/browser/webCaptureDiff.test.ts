@@ -125,6 +125,45 @@ describe("web capture diff", () => {
     expect(result.dimensions.dom_structure.reason).toContain("incomplete");
   });
 
+  it("ignores transient request IDs and capture-approval state", async () => {
+    const browser = await startFakeCdpBrowser();
+    browsers.push(browser);
+    const captured = await new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+    if (!captured.ok) throw captured.error;
+    const after = structuredClone(captured.value);
+    const request = after.network.requests[0];
+    if (request !== undefined) request.request_id = "different-cdp-request-id";
+    const response = after.metadata.responses[0];
+    if (response !== undefined)
+      response.request_id = "different-cdp-request-id";
+    const script = after.scripts.items[0];
+    if (script !== undefined && !script.source.included)
+      script.source.reason = "different approval explanation";
+    markSectionsComplete(captured.value, ["scripts", "metadata"]);
+    markSectionsComplete(after, ["scripts", "metadata"]);
+
+    const result = compareWebCaptures(
+      compareWebCapturesInputSchema.parse({
+        before: { inspection: captured.value },
+        after: { inspection: after },
+      }),
+    );
+
+    expect(result.dimensions.scripts.status).toBe("unchanged");
+    expect(result.dimensions.metadata.status).toBe("unchanged");
+    expect(result.dimensions.network.status).toBe("unknown");
+    expect(result.dimensions.network.total_changes).toBe(0);
+  });
+});
+
+describe("web capture diff incomplete inventories", () => {
   it.each(["truncated_sections", "unavailable_sections"] as const)(
     "does not infer script additions or removals from %s",
     async (section) => {
@@ -180,43 +219,6 @@ describe("web capture diff", () => {
       ]);
     },
   );
-
-  it("ignores transient request IDs and capture-approval state", async () => {
-    const browser = await startFakeCdpBrowser();
-    browsers.push(browser);
-    const captured = await new CdpBrowserProvider().inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-    if (!captured.ok) throw captured.error;
-    const after = structuredClone(captured.value);
-    const request = after.network.requests[0];
-    if (request !== undefined) request.request_id = "different-cdp-request-id";
-    const response = after.metadata.responses[0];
-    if (response !== undefined)
-      response.request_id = "different-cdp-request-id";
-    const script = after.scripts.items[0];
-    if (script !== undefined && !script.source.included)
-      script.source.reason = "different approval explanation";
-    markSectionsComplete(captured.value, ["scripts", "metadata"]);
-    markSectionsComplete(after, ["scripts", "metadata"]);
-
-    const result = compareWebCaptures(
-      compareWebCapturesInputSchema.parse({
-        before: { inspection: captured.value },
-        after: { inspection: after },
-      }),
-    );
-
-    expect(result.dimensions.scripts.status).toBe("unchanged");
-    expect(result.dimensions.metadata.status).toBe("unchanged");
-    expect(result.dimensions.network.status).toBe("unknown");
-    expect(result.dimensions.network.total_changes).toBe(0);
-  });
 });
 
 describe("web capture diff semantics and fingerprints", () => {
