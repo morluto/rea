@@ -53,7 +53,10 @@ export class ArtifactProvider implements AnalysisProvider {
               operation !== "inspect_keyed_archive",
             mayShowUi: false,
             mayAccessNetwork: false,
-            mayWriteFilesystem: operation === "extract_artifact",
+            mayWriteFilesystem:
+              operation === "extract_artifact" ||
+              operation === "inspect_artifact" ||
+              operation === "inventory_artifact",
             changesPermissions: false,
             requiresRoot: false,
           }),

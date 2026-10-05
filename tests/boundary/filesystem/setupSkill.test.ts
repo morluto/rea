@@ -17,9 +17,15 @@ describe("canonical skill transaction", () => {
       ".agents/skills/reverse-engineer-anything/SKILL.md",
     );
     const sibling = join(home, ".agents/skills/unrelated/SKILL.md");
+    const nativeGuide = join(
+      dirname(destination),
+      "references/native-and-artifacts.md",
+    );
     await mkdir(dirname(destination), { recursive: true });
+    await mkdir(dirname(nativeGuide), { recursive: true });
     await mkdir(dirname(sibling), { recursive: true });
     await writeFile(destination, "stale managed skill\n");
+    await writeFile(nativeGuide, "stale filesystem-write permission grant\n");
     await writeFile(sibling, "unrelated skill\n");
 
     expect(await canonicalSkillNeedsInstall(home)).toBe(true);
@@ -28,7 +34,34 @@ describe("canonical skill transaction", () => {
       "stale managed skill\n",
     );
     const installedSkill = await readFile(destination, "utf8");
-    expect(installedSkill).toContain('version: "23"');
+    expect(installedSkill).toContain('version: "24"');
+    expect(installedSkill).toContain("call available analysis tools");
+    expect(installedSkill).toContain("obtain approval before setup writes");
+    expect(await readFile(`${nativeGuide}.rea.backup`, "utf8")).toBe(
+      "stale filesystem-write permission grant\n",
+    );
+    for (const reference of [
+      "native-and-artifacts.md",
+      "runtime-observation.md",
+      "evidence-workflows.md",
+    ]) {
+      const installed = await readFile(
+        join(dirname(destination), "references", reference),
+        "utf8",
+      );
+      expect(installed).toBe(
+        await readFile(
+          new URL(
+            `../../../skills/reverse-engineer-anything/references/${reference}`,
+            import.meta.url,
+          ),
+          "utf8",
+        ),
+      );
+      expect(installed).not.toMatch(
+        /filesystem-write permission grant|native_mount_approved|only with explicit approval|Obtain the per-call/u,
+      );
+    }
     expect(installedSkill).toContain(
       "use normal repository tools and do not run REA",
     );

@@ -9,6 +9,7 @@ import {
 } from "../../scripts/lib/verifier-run.mjs";
 
 const execFileAsync = promisify(execFile);
+const CHILD_SHUTDOWN_GRACE_MS = 1_000;
 
 describe.sequential("verifier run identity", () => {
   it("allocates, propagates, and reuses one process-local identity", async () => {
@@ -102,6 +103,26 @@ describe.sequential("verifier run identity", () => {
       }
     },
   );
+
+  it.runIf(process.platform !== "win32")(
+    "bounds cleanup when a verifier child ignores SIGTERM",
+    async () => {
+      const child = spawn(
+        process.execPath,
+        [
+          "-e",
+          "process.on('SIGTERM', () => {}); process.stdout.write('ready'); setInterval(() => {}, 1000)",
+        ],
+        { stdio: ["ignore", "pipe", "ignore"] },
+      );
+      try {
+        await childReady(child);
+      } finally {
+        await stopChild(child);
+      }
+      expect(child.signalCode).toBe("SIGKILL");
+    },
+  );
 });
 
 const spawnReadyChild = (env: NodeJS.ProcessEnv): ChildProcess =>
@@ -123,12 +144,36 @@ const childReady = async (child: ChildProcess): Promise<void> => {
 
 const stopChild = async (child: ChildProcess): Promise<void> => {
   if (child.exitCode !== null || child.signalCode !== null) return;
-  const exited = new Promise<void>((resolve) =>
-    child.once("exit", () => resolve()),
-  );
   child.kill("SIGTERM");
-  await exited;
+  if (await waitForExit(child, CHILD_SHUTDOWN_GRACE_MS)) return;
+  child.kill("SIGKILL");
+  if (!(await waitForExit(child, CHILD_SHUTDOWN_GRACE_MS))) {
+    throw new Error(
+      `verifier child ${String(child.pid)} did not exit after SIGKILL`,
+    );
+  }
 };
+
+const waitForExit = (
+  child: ChildProcess,
+  timeoutMs: number,
+): Promise<boolean> =>
+  new Promise((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resolve(true);
+      return;
+    }
+    const timer = setTimeout(() => {
+      child.removeListener("exit", onExit);
+      resolve(false);
+    }, timeoutMs);
+    timer.unref();
+    const onExit = (): void => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    child.once("exit", onExit);
+  });
 
 const restoreRunId = (runId: string | undefined): void => {
   if (runId === undefined) delete process.env.REA_PROCESS_RUN_ID;
