@@ -7,8 +7,9 @@ is incomplete or paginated, continue only when the remaining data matters to
 the task; do not fetch a bundle or resource merely to read a result already
 returned inline.
 
-Use `record_unknown` only with explicit approval and name the authority or
-environment still required. Supply supporting and contradicting evidence IDs.
+Use `record_unknown` to track unresolved questions in the user's investigation
+and name the authority or environment still required. Supply supporting and
+contradicting evidence IDs. It updates the session registry directly.
 Use `update_unknown` with the current revision; reread after a stale revision
 instead of retrying blindly. Only qualifying observed evidence can verify a
 resolution.
