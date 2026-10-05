@@ -448,7 +448,8 @@ const packageExport = (
     return { status: "invalid" };
   const flattened = exportTargets(root, packageExportConditions(moduleKind));
   if (flattened.kind === "invalid") return { status: "invalid" };
-  const first = flattened.values[0];
+  const first =
+    flattened.kind === "unmatched" ? undefined : flattened.values[0];
   return first === undefined
     ? { status: "unmatched", declared: Object.keys(root) }
     : { status: "value", value: first };
@@ -456,38 +457,45 @@ const packageExport = (
 
 type ExportTargets =
   | { readonly kind: "targets"; readonly values: readonly string[] }
+  | { readonly kind: "unmatched" }
   | { readonly kind: "invalid" };
 
 /**
- * Flatten one exports target into the ordered strings Node would consider.
- * A condition object stops at its first active key, so a null or unmatched
- * nested target ends the search rather than falling through to a later key. An
- * array instead skips the entries it cannot resolve and concatenates the rest.
+ * Resolve a target in Node's declared order. Explicit null blocks an active
+ * condition, whereas an unmatched nested object permits the next condition.
+ * An array skips unmatched and invalid entries, stops at its first string, and
+ * preserves the final invalid-versus-null refusal if no string is selected.
  */
 const exportTargets = (
   value: unknown,
   conditions: ReadonlySet<string>,
 ): ExportTargets => {
   if (typeof value === "string")
-    return value.length > 0
+    return value.startsWith("./")
       ? { kind: "targets", values: [value] }
       : { kind: "invalid" };
   if (value === null) return { kind: "targets", values: [] };
   if (Array.isArray(value)) {
-    const values: string[] = [];
+    let invalid = false;
     for (const entry of value) {
       const nested = exportTargets(entry, conditions);
-      if (nested.kind === "invalid") return nested;
-      values.push(...nested.values);
+      if (nested.kind === "invalid") {
+        invalid = true;
+        continue;
+      }
+      if (nested.kind === "unmatched") continue;
+      invalid = false;
+      if (nested.values.length > 0) return nested;
     }
-    return { kind: "targets", values };
+    return invalid ? { kind: "invalid" } : { kind: "targets", values: [] };
   }
   if (typeof value !== "object") return { kind: "invalid" };
   for (const [condition, target] of Object.entries(value)) {
     if (!conditions.has(condition)) continue;
-    return exportTargets(target, conditions);
+    const nested = exportTargets(target, conditions);
+    if (nested.kind !== "unmatched") return nested;
   }
-  return { kind: "targets", values: [] };
+  return { kind: "unmatched" };
 };
 
 /**

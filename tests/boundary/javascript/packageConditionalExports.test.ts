@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import {
   resolveArtifactPathByContext,
   type ArtifactPathResolution,
@@ -18,29 +19,34 @@ const TARGETS = [
   "array.cjs",
   "nested.cjs",
 ];
-const SCRIPT =
-  'import { createRequire } from "node:module"; console.log((await import("example")).default ?? createRequire(import.meta.url)("example"))';
-/** Resolve the bare `example` specifier through the Node resolver that owns it. */
-const nodeTarget = async (
-  cwd: string,
-  moduleKind: "import" | "require",
-): Promise<string | null> => {
-  try {
-    const { stdout } = await execute(
-      process.execPath,
-      [
-        "--input-type=module",
-        "-e",
-        moduleKind === "import"
-          ? 'console.log((await import("example")).default)'
-          : 'import { createRequire } from "node:module"; console.log(createRequire(import.meta.url)("example"))',
-      ],
-      { cwd },
-    );
-    return stdout.trim();
-  } catch {
-    return null;
-  }
+const nodeExportOutcomeSchema = z.strictObject({
+  target: z.string().nullable(),
+  error_code: z.string().nullable(),
+});
+
+/** Resolve through the real Node resolver, retaining its refusal reason. */
+const nodeTarget = async (cwd: string, moduleKind: "import" | "require") => {
+  const expression =
+    moduleKind === "import"
+      ? '(await import("example")).default'
+      : 'createRequire(import.meta.url)("example")';
+  const { stdout } = await execute(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+      import { createRequire } from "node:module";
+      try {
+        console.log(JSON.stringify({target: ${expression}, error_code: null}));
+      } catch (error) {
+        console.log(JSON.stringify({target: null, error_code: error.code}));
+      }
+    `,
+    ],
+    { cwd },
+  );
+  return nodeExportOutcomeSchema.parse(JSON.parse(stdout));
 };
 /**
  * Install one real package on disk and mirror it into an artifact inventory,
@@ -52,6 +58,7 @@ const compareWithNode = async (
   present: readonly string[] = TARGETS,
 ): Promise<{
   readonly node: string | null;
+  readonly node_error: string | null;
   readonly outcome: ArtifactPathResolution;
 }> => {
   const root = await createTestTempDirectory("rea-exports-");
@@ -83,8 +90,10 @@ const compareWithNode = async (
       },
     ]),
   );
+  const node = await nodeTarget(root, moduleKind);
   return {
-    node: await nodeTarget(root, moduleKind),
+    node: node.target,
+    node_error: node.error_code,
     outcome: resolveArtifactPathByContext({
       declaredPath: "example",
       sourcePath: "main.js",
@@ -171,6 +180,13 @@ describe("nested and array package export targets", () => {
       "nested.cjs",
     ],
     [{ import: { default: "./default.cjs" } }, "default.cjs"],
+    [
+      { import: { browser: "./specific.cjs" }, default: "./default.cjs" },
+      "default.cjs",
+    ],
+    [{ import: [42, "./array.cjs"] }, "array.cjs"],
+    [{ import: ["./specific.cjs", 42] }, "specific.cjs"],
+    [{ import: ["../outside.cjs", "./array.cjs"] }, "array.cjs"],
     [{ import: { node: { default: "./default.cjs" } } }, "default.cjs"],
     [{ import: [{ node: "./nested.cjs" }, "./array.cjs"] }, "nested.cjs"],
     [{ import: [{ browser: "./x.cjs" }, "./array.cjs"] }, "array.cjs"],
@@ -225,4 +241,30 @@ describe("unmatched package export conditions", () => {
     expect(outcome.resolution_status).toBe("unavailable");
     expect(outcome.limitations[0]).toContain("not valid package JSON");
   });
+});
+
+describe("package exports fallback refusal reasons", () => {
+  it.each([
+    [{ import: [42, 7] }, "ERR_INVALID_PACKAGE_TARGET", "unavailable"],
+    [{ import: [null, null] }, "ERR_PACKAGE_PATH_NOT_EXPORTED", "external"],
+    [{ import: [42, null] }, "ERR_PACKAGE_PATH_NOT_EXPORTED", "external"],
+    [{ import: [null, 42] }, "ERR_INVALID_PACKAGE_TARGET", "unavailable"],
+    [
+      { import: { node: null }, default: "./default.cjs" },
+      "ERR_PACKAGE_PATH_NOT_EXPORTED",
+      "external",
+    ],
+  ] as const)(
+    "matches Node refusal for %j",
+    async (exportsMap, code, status) => {
+      const { node, node_error, outcome } = await compareWithNode(
+        exportsMap,
+        "import",
+      );
+      expect(node).toBeNull();
+      expect(node_error).toBe(code);
+      expect(outcome.resolved_path).toBeNull();
+      expect(outcome.resolution_status).toBe(status);
+    },
+  );
 });
