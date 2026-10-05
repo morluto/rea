@@ -229,7 +229,7 @@ describe("disposable JavaScript replay worker", () => {
 });
 
 describe("replay ESM graph linking", () => {
-  const module = (
+  const esmModule = (
     alias: string,
     source: string,
     dependencies: Record<string, string> = {},
@@ -239,12 +239,12 @@ describe("replay ESM graph linking", () => {
       name: "two-module cycle",
       value: 8,
       modules: [
-        module(
+        esmModule(
           "entry",
           "import { value } from './dep'; export default function(){ return value(); } export function base(){ return 7; }",
           { "./dep": "dep" },
         ),
-        module(
+        esmModule(
           "dep",
           "import { base } from './entry'; export function value(){ return base()+1; }",
           { "./entry": "entry" },
@@ -255,17 +255,17 @@ describe("replay ESM graph linking", () => {
       name: "three-module cycle",
       value: 8,
       modules: [
-        module(
+        esmModule(
           "entry",
           "import { value } from './dep'; export default function(){ return value(); } export function base(){ return 7; }",
           { "./dep": "dep" },
         ),
-        module(
+        esmModule(
           "dep",
           "import { value as next } from './third'; export function value(){ return next(); }",
           { "./third": "third" },
         ),
-        module(
+        esmModule(
           "third",
           "import { base } from './entry'; export function value(){ return base()+1; }",
           { "./entry": "entry" },
@@ -276,30 +276,38 @@ describe("replay ESM graph linking", () => {
       name: "acyclic evaluation order",
       value: 8,
       modules: [
-        module(
+        esmModule(
           "entry",
           "import { value } from './dep'; const answer=value+1; export default function(){ return answer; }",
           { "./dep": "dep" },
         ),
-        module("dep", "export const value=7;"),
+        esmModule("dep", "export const value=7;"),
       ],
     },
     {
       name: "diamond single initialization",
       value: [1, 1],
       modules: [
-        module(
+        esmModule(
           "entry",
           "import { a } from './a'; import { b } from './b'; export default function(){ return [a,b]; }",
           { "./a": "a", "./b": "b" },
         ),
-        module("a", "import { value } from './shared'; export const a=value;", {
-          "./shared": "shared",
-        }),
-        module("b", "import { value } from './shared'; export const b=value;", {
-          "./shared": "shared",
-        }),
-        module(
+        esmModule(
+          "a",
+          "import { value } from './shared'; export const a=value;",
+          {
+            "./shared": "shared",
+          },
+        ),
+        esmModule(
+          "b",
+          "import { value } from './shared'; export const b=value;",
+          {
+            "./shared": "shared",
+          },
+        ),
+        esmModule(
           "shared",
           "globalThis.initializations=(globalThis.initializations??0)+1; export const value=globalThis.initializations;",
         ),
@@ -309,7 +317,7 @@ describe("replay ESM graph linking", () => {
       name: "mixed CommonJS factory",
       value: 8,
       modules: [
-        module(
+        esmModule(
           "entry",
           "import value from './dep'; export default function(){ return value.answer; }",
           { "./dep": "dep" },
@@ -335,7 +343,7 @@ describe("replay ESM graph linking", () => {
   it("still denies undeclared static imports", async () => {
     const workerRequest = await request("parser.mjs", "esm", "default", []);
     workerRequest.left.modules = [
-      module(
+      esmModule(
         "entry",
         "import './undeclared'; export default function(){ return 1; }",
       ),

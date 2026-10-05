@@ -255,8 +255,8 @@ const loadEntry = async (
       ? (exported.default ?? exported)
       : exported[side.entryExport];
   }
-  const module = loadEsm(side.entryAlias);
-  await module.link((specifier, referencingModule) => {
+  const entryModule = loadEsm(side.entryAlias);
+  await entryModule.link((specifier, referencingModule) => {
     const descriptor = requiredModule(
       modules,
       referencingModule.identifier.slice("rea:".length),
@@ -266,8 +266,8 @@ const loadEntry = async (
       throw new ReplayDeniedError(`Undeclared import: ${specifier}`);
     return loadEsm(dependency);
   });
-  await module.evaluate();
-  const namespace = module.namespace;
+  await entryModule.evaluate();
+  const namespace = entryModule.namespace;
   return Reflect.get(namespace, side.entryExport);
 };
 
