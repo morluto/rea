@@ -11,7 +11,9 @@ import {
 it("collects the actual Mach header alongside the native load commands", async () => {
   const runner = new NativeFixtureRunner({
     otool: await nativeFixture("native-macho-header/otool-load.txt"),
-    "otool:-h": await nativeFixture("native-macho-header/otool-header-load.txt"),
+    "otool:-h": await nativeFixture(
+      "native-macho-header/otool-header-load.txt",
+    ),
   });
   const client = new NativeMacOSProvider(runner, "darwin").createClient(
     nativeMachoTarget("/owned/fixture"),
@@ -35,5 +37,7 @@ it("does not reinterpret segment and section flags as Mach header flags", async 
     await nativeFixture("native-macho-header/otool-header-load.txt"),
   );
   expect(load.flags).toEqual(["0x00200085"]);
-  expect(load.commands.some((command) => command.fields.flags === 0)).toBe(true);
+  expect(load.commands.some((command) => command.fields.flags === 0)).toBe(
+    true,
+  );
 });
