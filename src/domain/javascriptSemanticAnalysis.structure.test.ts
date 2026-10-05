@@ -98,6 +98,41 @@ describe("JavaScript semantic analysis: structure 1", () => {
     ).toEqual(shadowReference);
   });
 
+  it.each([
+    `function run(require) { const bus = require("electron").ipcMain; return bus; }`,
+    `function run() { const { ipcMain: bus } = require("electron"); function require() {} return bus; }`,
+    `{ const bus = require("electron").ipcMain; const require = localLoader; }`,
+    `import require from "./loader.js"; const bus = require("electron").ipcMain;`,
+  ])(
+    "does not assign CommonJS origins to lexically shadowed require",
+    (source) => {
+      const ir = analyzeJavaScriptSemantics(source);
+      const bus = onlyBinding(ir, "bus");
+      expect(bus.provenance.origins).toEqual([]);
+      expect(ir.moduleLinks.filter(({ kind }) => kind === "require")).toEqual(
+        [],
+      );
+    },
+  );
+
+  it("preserves unshadowed require origins through aliases and assignments", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      const { ipcMain: bus } = require("electron");
+      const forwarded = bus;
+      let assigned;
+      assigned = require("electron").ipcMain;
+      { const require = localLoader; require("./local.js"); }
+    `);
+    for (const name of ["bus", "forwarded", "assigned"])
+      expect(origin(topLevelBinding(ir, name))).toEqual({
+        specifier: "electron",
+        importedPath: ["ipcMain"],
+      });
+    expect(
+      ir.moduleLinks.filter(({ kind }) => kind === "require"),
+    ).toHaveLength(1);
+  });
+
   it("propagates literal, template, object, conditional, and destructured values", () => {
     const ir = analyzeJavaScriptSemantics(`
       const prefix = "rea";
