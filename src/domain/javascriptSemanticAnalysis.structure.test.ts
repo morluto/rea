@@ -98,6 +98,40 @@ describe("JavaScript semantic analysis: structure 1", () => {
     ).toEqual(shadowReference);
   });
 
+  it("propagates literal, template, object, conditional, and destructured values", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      const prefix = "rea";
+      const suffix = "open";
+      const channel = \`${"${prefix}"}:${"${suffix}"}\`;
+      const options = {
+        channel,
+        mode: enabled ? "read" : "write",
+      };
+      const selected = options.channel;
+      const { mode } = options;
+      const [first] = ["zero", "one"];
+    `);
+
+    expect(topLevelBinding(ir, "channel").value).toEqual({
+      status: "literal",
+      value: "rea:open",
+    });
+    expect(topLevelBinding(ir, "selected").value).toEqual({
+      status: "literal",
+      value: "rea:open",
+    });
+    expect(topLevelBinding(ir, "mode").value).toEqual({
+      status: "union",
+      values: ["read", "write"],
+    });
+    expect(topLevelBinding(ir, "first").value).toEqual({
+      status: "literal",
+      value: "zero",
+    });
+  });
+});
+
+describe("JavaScript semantic analysis: loop lexical names", () => {
   it.each([
     `for (let value = "inside"; ready; step()) { consume(value); }`,
     `for (const value of entries) { consume(value); }`,
@@ -154,38 +188,6 @@ describe("JavaScript semantic analysis: structure 1", () => {
         .filter(({ name, role }) => name === "value" && role === "read")
         .every(({ bindingId }) => bindingId === binding.bindingId),
     ).toBe(true);
-  });
-
-  it("propagates literal, template, object, conditional, and destructured values", () => {
-    const ir = analyzeJavaScriptSemantics(`
-      const prefix = "rea";
-      const suffix = "open";
-      const channel = \`${"${prefix}"}:${"${suffix}"}\`;
-      const options = {
-        channel,
-        mode: enabled ? "read" : "write",
-      };
-      const selected = options.channel;
-      const { mode } = options;
-      const [first] = ["zero", "one"];
-    `);
-
-    expect(topLevelBinding(ir, "channel").value).toEqual({
-      status: "literal",
-      value: "rea:open",
-    });
-    expect(topLevelBinding(ir, "selected").value).toEqual({
-      status: "literal",
-      value: "rea:open",
-    });
-    expect(topLevelBinding(ir, "mode").value).toEqual({
-      status: "union",
-      values: ["read", "write"],
-    });
-    expect(topLevelBinding(ir, "first").value).toEqual({
-      status: "literal",
-      value: "zero",
-    });
   });
 });
 
