@@ -1,12 +1,20 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:http";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { chromium } from "playwright-core";
+import { Client } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 import { PlaywrightBrowserScenarioProvider } from "../../dist/browser/PlaywrightBrowserScenarioProvider.js";
 import { PlaywrightScenarioEvents } from "../../dist/browser/PlaywrightScenarioEvents.js";
 import { BrowserScenarioSecrets } from "../../dist/browser/BrowserScenarioSecrets.js";
 import { browserScenarioSchema } from "../../dist/domain/browserScenario.js";
+import { compareBrowserScenarios } from "../../dist/domain/browserScenarioDiff.js";
+import { browserScenarioCaptureSchema } from "../../dist/domain/browserScenarioCapture.js";
+import { parseEvidence } from "../../dist/domain/evidence.js";
 
 const document = (path) => {
   if (path.startsWith("/nested"))
@@ -67,7 +75,15 @@ const assertNetwork = (result, origin) => {
         `${kind} ${path} must be captured exactly once`,
       );
   assert.equal(result.completeness.equality_eligible, true);
+  assert.equal(compareWithSelf(result).overall_status, "unchanged");
 };
+
+const compareWithSelf = (capture) =>
+  compareBrowserScenarios({
+    before_scenario: capture,
+    after_scenario: capture,
+    normalization: { rules: [] },
+  });
 
 const verifySharedContext = async (executable, origin) => {
   const browser = await chromium.launch({
@@ -101,6 +117,61 @@ const verifySharedContext = async (executable, origin) => {
     assert.ok(!JSON.stringify(retained).includes("unrelated-tab"));
   } finally {
     await browser.close();
+  }
+};
+
+const verifyTransports = async (executable, origin) => {
+  const scenario = scenarioFor(executable, origin, ["network"]);
+  const entrypoint = fileURLToPath(new URL("../rea.mjs", import.meta.url));
+  const env = {
+    PATH: process.env.PATH ?? "/usr/bin:/bin",
+    REA_LOG_LEVEL: "silent",
+    HOPPER_LAUNCHER_PATH: "/rea-unconfigured-deep-provider/hopper",
+  };
+  const { stdout } = await promisify(execFile)(
+    process.execPath,
+    [
+      entrypoint,
+      "capture-browser-scenario",
+      JSON.stringify(scenario),
+      "--json",
+    ],
+    { env, timeout: 60_000, maxBuffer: 16 * 1024 * 1024 },
+  );
+  assertNetwork(
+    browserScenarioCaptureSchema.parse(
+      parseEvidence(JSON.parse(stdout)).normalized_result,
+    ),
+    origin,
+  );
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [entrypoint, "mcp"],
+    env,
+    stderr: "pipe",
+  });
+  const client = new Client({ name: "popup-real-e2e", version: "1" });
+  try {
+    await client.connect(transport);
+    const captured = await client.callTool(
+      { name: "capture_browser_scenario", arguments: scenario },
+      { timeout: 60_000 },
+    );
+    assert.notEqual(captured.isError, true, JSON.stringify(captured));
+    const evidence = parseEvidence({
+      ...captured.structuredContent?.evidence,
+      normalized_result: captured.structuredContent?.result,
+    });
+    assertNetwork(
+      browserScenarioCaptureSchema.parse(evidence.normalized_result),
+      origin,
+    );
+  } finally {
+    try {
+      await client.close();
+    } finally {
+      await transport.close();
+    }
   }
 };
 
@@ -144,6 +215,7 @@ export async function verifyPopupEventCoverage(executable) {
       const result = await capture(scenarioFor(executable, origin, [family]));
       assert.equal(result.completeness.equality_eligible, false);
       assert.ok(result.completeness.missing_sections.includes("events"));
+      assert.equal(compareWithSelf(result).overall_status, "unknown");
       assert.ok(
         result.limitations.some((limitation) =>
           limitation.includes(`Popup ${family}`),
@@ -151,6 +223,7 @@ export async function verifyPopupEventCoverage(executable) {
       );
     }
     await verifySharedContext(executable, origin);
+    await verifyTransports(executable, origin);
     return {
       mocked: false,
       initial_network: true,
@@ -158,7 +231,10 @@ export async function verifyPopupEventCoverage(executable) {
       nested_popups: true,
       unselected_lifecycle_absent: true,
       popup_event_gaps_explicit: true,
+      incomplete_comparison_unknown: true,
       shared_context_isolation: true,
+      cli: true,
+      stdio_mcp: true,
     };
   } finally {
     server.closeAllConnections();
