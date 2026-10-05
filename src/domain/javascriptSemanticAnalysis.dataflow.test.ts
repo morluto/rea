@@ -36,6 +36,32 @@ describe("JavaScript semantic analysis: dataflow 1", () => {
     );
   });
 
+  it.each(["+= 1", "++", "--", "||= 1", "&&= 1", "??= 1"])(
+    "retains the property read in a read-modify-write operation: %s",
+    (operator) => {
+      const ir = analyzeJavaScriptSemantics(`
+        const source = { count: 1 };
+        source.count ${operator};
+      `);
+      expect(ir.objectOperations.map(({ kind }) => kind)).toEqual([
+        "read",
+        "write",
+      ]);
+    },
+  );
+
+  it("keeps plain member assignment write-only and member access read-only", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      const source = { count: 1 };
+      source.count = 2;
+      const value = source.count;
+    `);
+    expect(ir.objectOperations.map(({ kind }) => kind)).toEqual([
+      "write",
+      "read",
+    ]);
+  });
+
   it("does not project positional argument flow after a spread", () => {
     const ir = analyzeJavaScriptSemantics(`
       function target(first, second, third) { return third; }

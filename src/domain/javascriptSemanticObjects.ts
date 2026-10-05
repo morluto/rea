@@ -79,6 +79,22 @@ const collectMember = (
   const write =
     (t.isAssignmentExpression(parent) && parent.left === node) ||
     (t.isUpdateExpression(parent) && parent.argument === node);
+  const readsBeforeWrite =
+    (t.isAssignmentExpression(parent) && parent.operator !== "=" && write) ||
+    (t.isUpdateExpression(parent) && write);
+  if (readsBeforeWrite)
+    addObjectOperation(
+      {
+        node,
+        kind: "read",
+        ownerCallableId,
+        objectBindingId: expressionBindingId(node.object, state),
+        targetBindingId: null,
+        propertyName: name,
+      },
+      state,
+      output,
+    );
   addObjectOperation(
     {
       node,
