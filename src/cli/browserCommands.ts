@@ -1,27 +1,27 @@
 import { Cli, z } from "incur";
 
-import { browserContext, browserCliError } from "./cliBrowserContext.js";
+import { browserContext, browserCliError } from "../cliBrowserContext.js";
 import {
   analyzeWebBundle,
   inspectWebPage,
   listBrowserTargets,
   observeWebSession,
-} from "./application/BrowserObservationService.js";
-import { logCliCommand } from "./cliLogging.js";
+} from "../application/BrowserObservationService.js";
+import { logCliCommand } from "../cliLogging.js";
 import {
   inspectWebPageInputSchema,
   listBrowserTargetsInputSchema,
-} from "./domain/browserObservation.js";
-import { analyzeWebBundleInputSchema } from "./domain/webBundleAnalysis.js";
-import { observeWebSessionInputSchema } from "./domain/browserSession.js";
-import { AnalysisInputError } from "./domain/errors.js";
-import type { Logger } from "./logger.js";
-import { CLI_COMMANDS } from "./cliCommandNames.js";
+} from "../domain/browserObservation.js";
+import { analyzeWebBundleInputSchema } from "../domain/webBundleAnalysis.js";
+import { observeWebSessionInputSchema } from "../domain/browserSession.js";
+import { AnalysisInputError } from "../domain/errors.js";
+import type { Logger } from "../logger.js";
+import { CLI_COMMANDS } from "../cliCommandNames.js";
 import {
   browserPageInspectionOptions,
   browserScopeOptions,
   observationDuration,
-} from "./cliObservationOptions.js";
+} from "../cliObservationOptions.js";
 
 /** Register CLI equivalents of the passive browser MCP tools. */
 export const registerBrowserCommands = (

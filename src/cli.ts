@@ -9,13 +9,13 @@ import { registerUtilityCommands } from "./cli/utilityCommands.js";
 import { registerArtifactCommands } from "./cli/artifactCommands.js";
 import { registerManagedCommands } from "./cli/managedCommands.js";
 import { registerEvidenceCommands } from "./cliEvidenceCommands.js";
-import { registerProcessCommands } from "./cliProcessCommands.js";
-import { registerBrowserCommands } from "./cliBrowserCommands.js";
-import { registerAdvancedBrowserCommands } from "./cliBrowserAdvancedCommands.js";
+import { registerProcessCommands } from "./cli/processCommands.js";
+import { registerBrowserCommands } from "./cli/browserCommands.js";
+import { registerAdvancedBrowserCommands } from "./cli/browserAdvancedCommands.js";
 import { registerBrowserScenarioCommands } from "./cliBrowserScenarioCommands.js";
-import { registerElectronCommands } from "./cliElectronCommands.js";
+import { registerElectronCommands } from "./cli/electronCommands.js";
 import { registerJavaScriptRuntimeObservationCommands } from "./cliJavaScriptRuntimeCommands.js";
-import { registerApplicationCommands } from "./cliApplicationCommands.js";
+import { registerApplicationCommands } from "./cli/applicationCommands.js";
 import type { CliInstance } from "./cli/types.js";
 
 /**

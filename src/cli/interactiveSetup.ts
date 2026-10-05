@@ -14,8 +14,8 @@ import type {
   SetupClientState,
   SetupProgressEvent,
   SetupResult,
-} from "./application/SetupTypes.js";
-import { SUPPORTED_CLIENT_DEFINITIONS } from "./application/SupportedClients.js";
+} from "../application/SetupTypes.js";
+import { SUPPORTED_CLIENT_DEFINITIONS } from "../application/SupportedClients.js";
 
 const clientDisplayNames: ReadonlyMap<string, string> = new Map(
   SUPPORTED_CLIENT_DEFINITIONS.map(({ name, displayName }) => [

@@ -5,12 +5,12 @@ import {
   runDoctor,
   type DoctorScope,
 } from "../application/Doctor.js";
-import { runSetup } from "../application/Setup.js";
-import { systemSetupHost } from "../application/SetupHost.js";
 import {
   isSetupFailure,
   type SetupOptions,
 } from "../application/SetupTypes.js";
+import { runSetup } from "../application/Setup.js";
+import { systemSetupHost } from "../application/SetupHost.js";
 import { isUninstallFailure, runUninstall } from "../application/Uninstall.js";
 import { isUpdateFailure, runUpdate } from "../application/Update.js";
 import { systemUpdateHost } from "../application/UpdateRuntime.js";
@@ -18,7 +18,7 @@ import {
   confirmInteractiveSetup,
   renderInteractiveSetupResult,
   renderSetupProgress,
-} from "../cliSetup.js";
+} from "./interactiveSetup.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { logCliCommand } from "../cliLogging.js";
 import { createSystemDoctorHost } from "../doctorRuntime.js";

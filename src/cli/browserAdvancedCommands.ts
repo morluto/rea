@@ -1,26 +1,26 @@
 import { Cli, z } from "incur";
 
-import { browserContext, browserCliError } from "./cliBrowserContext.js";
-import { browserScopeOptions } from "./cliObservationOptions.js";
+import { browserContext, browserCliError } from "../cliBrowserContext.js";
+import { browserScopeOptions } from "../cliObservationOptions.js";
 import {
   captureWebScreenshot,
   compareWebCaptureEvidence,
   compareWebScreenshotEvidence,
   discoverWebMcpTools,
-} from "./application/BrowserObservationService.js";
-import { CdpBrowserProvider } from "./browser/CdpBrowserProvider.js";
-import { logCliCommand } from "./cliLogging.js";
-import { AnalysisInputError } from "./domain/errors.js";
-import { browserCaptureComparisonInputSchema } from "./domain/browserCaptureComparison.js";
-import { discoverWebMcpToolsInputSchema } from "./domain/webMcpDiscovery.js";
+} from "../application/BrowserObservationService.js";
+import { CdpBrowserProvider } from "../browser/CdpBrowserProvider.js";
+import { logCliCommand } from "../cliLogging.js";
+import { AnalysisInputError } from "../domain/errors.js";
+import { browserCaptureComparisonInputSchema } from "../domain/browserCaptureComparison.js";
+import { discoverWebMcpToolsInputSchema } from "../domain/webMcpDiscovery.js";
 import {
   captureWebScreenshotInputSchema,
   compareWebScreenshotsInputSchema,
-} from "./domain/webScreenshot.js";
-import type { JsonValue } from "./domain/jsonValue.js";
-import { safeParseJson } from "./domain/safeJson.js";
-import type { Logger } from "./logger.js";
-import { CLI_COMMANDS } from "./cliCommandNames.js";
+} from "../domain/webScreenshot.js";
+import type { JsonValue } from "../domain/jsonValue.js";
+import { safeParseJson } from "../domain/safeJson.js";
+import type { Logger } from "../logger.js";
+import { CLI_COMMANDS } from "../cliCommandNames.js";
 
 /** Register WebMCP, capture-diff, and screenshot CLI equivalents. */
 export const registerAdvancedBrowserCommands = (

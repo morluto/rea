@@ -5,30 +5,30 @@ import {
   compareJavaScriptExportShapesEvidenceValidated,
   compareSourceToBundleEvidenceValidated,
   traceApplicationFeatureEvidenceValidated,
-} from "./application/JavaScriptApplicationWorkflowService.js";
-import { traceJavaScriptSemanticsEvidenceValidated } from "./application/JavaScriptSemanticTraceService.js";
+} from "../application/JavaScriptApplicationWorkflowService.js";
+import { traceJavaScriptSemanticsEvidenceValidated } from "../application/JavaScriptSemanticTraceService.js";
 import {
   evaluateReconstructionCoverage,
   reconstructionCoverageEvaluationInputSchema,
-} from "./application/ReconstructionCoverageService.js";
-import { buildReconstructionObligationLedgerEvidenceValidated } from "./application/ReconstructionObligationLedgerService.js";
-import { CLI_COMMANDS } from "./cliCommandNames.js";
-import { parseCliJsonInput } from "./cliJsonInput.js";
-import { logCliCommand } from "./cliLogging.js";
+} from "../application/ReconstructionCoverageService.js";
+import { buildReconstructionObligationLedgerEvidenceValidated } from "../application/ReconstructionObligationLedgerService.js";
+import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { parseCliJsonInput } from "../cliJsonInput.js";
+import { logCliCommand } from "../cliLogging.js";
 import {
   AnalysisInputError,
   projectAnalysisError,
   type AnalysisError,
-} from "./domain/errors.js";
-import { jsonValueSchema, type JsonValue } from "./domain/jsonValue.js";
-import type { Logger } from "./logger.js";
-import { traceApplicationFeatureInputSchema } from "./domain/javascriptFeatureTraceSchemas.js";
-import { traceJavaScriptSemanticsInputSchema } from "./domain/javascriptSemanticTraceSchemas.js";
-import { compareApplicationVersionsInputSchema } from "./domain/javascriptApplicationVersionComparisonSchemas.js";
-import { compareSourceToBundleInputSchema } from "./domain/sourceToBundleComparisonSchemas.js";
-import { compareJavaScriptExportShapesInputSchema } from "./domain/javascriptExportShapeComparisonSchemas.js";
-import { projectInputIssues } from "./domain/inputIssueProjection.js";
-import { reconstructionObligationLedgerInputSchema } from "./domain/reconstructionObligationLedgerSchemas.js";
+} from "../domain/errors.js";
+import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import type { Logger } from "../logger.js";
+import { traceApplicationFeatureInputSchema } from "../domain/javascriptFeatureTraceSchemas.js";
+import { traceJavaScriptSemanticsInputSchema } from "../domain/javascriptSemanticTraceSchemas.js";
+import { compareApplicationVersionsInputSchema } from "../domain/javascriptApplicationVersionComparisonSchemas.js";
+import { compareSourceToBundleInputSchema } from "../domain/sourceToBundleComparisonSchemas.js";
+import { compareJavaScriptExportShapesInputSchema } from "../domain/javascriptExportShapeComparisonSchemas.js";
+import { projectInputIssues } from "../domain/inputIssueProjection.js";
+import { reconstructionObligationLedgerInputSchema } from "../domain/reconstructionObligationLedgerSchemas.js";
 
 type CliInstance = ReturnType<typeof Cli.create>;
 

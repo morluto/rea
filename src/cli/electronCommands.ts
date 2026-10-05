@@ -3,27 +3,27 @@ import { Cli, z } from "incur";
 import {
   inspectElectronPage,
   listElectronTargets,
-} from "./application/ElectronObservationService.js";
-import { captureElectronScenario } from "./application/ElectronActiveObservationService.js";
-import { reconcileJavaScriptRuntimeEvidence } from "./application/JavaScriptRuntimeReconciliationService.js";
-import { CdpElectronProvider } from "./browser/CdpElectronProvider.js";
-import { PlaywrightElectronActiveProvider } from "./browser/PlaywrightElectronActiveProvider.js";
-import { logCliCommand } from "./cliLogging.js";
+} from "../application/ElectronObservationService.js";
+import { captureElectronScenario } from "../application/ElectronActiveObservationService.js";
+import { reconcileJavaScriptRuntimeEvidence } from "../application/JavaScriptRuntimeReconciliationService.js";
+import { CdpElectronProvider } from "../browser/CdpElectronProvider.js";
+import { PlaywrightElectronActiveProvider } from "../browser/PlaywrightElectronActiveProvider.js";
+import { logCliCommand } from "../cliLogging.js";
 import {
   inspectElectronPageInputSchema,
   listElectronTargetsInputSchema,
-} from "./domain/electronObservation.js";
-import { electronActiveObservationInputSchema } from "./domain/electronActiveObservation.js";
-import { AnalysisInputError, projectAnalysisError } from "./domain/errors.js";
-import type { JsonValue } from "./domain/jsonValue.js";
-import type { Logger } from "./logger.js";
-import { CLI_COMMANDS } from "./cliCommandNames.js";
-import { parseCliJsonInput } from "./cliJsonInput.js";
+} from "../domain/electronObservation.js";
+import { electronActiveObservationInputSchema } from "../domain/electronActiveObservation.js";
+import { AnalysisInputError, projectAnalysisError } from "../domain/errors.js";
+import type { JsonValue } from "../domain/jsonValue.js";
+import type { Logger } from "../logger.js";
+import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { parseCliJsonInput } from "../cliJsonInput.js";
 import {
   electronPageInspectionOptions,
   javascriptApplicationOptions,
-} from "./cliObservationOptions.js";
-import { runCliJavaScriptApplicationAnalysis } from "./cli/javascriptApplicationAnalysis.js";
+} from "../cliObservationOptions.js";
+import { runCliJavaScriptApplicationAnalysis } from "./javascriptApplicationAnalysis.js";
 
 /** Register CLI equivalents of the Electron MCP tools. */
 export const registerElectronCommands = (

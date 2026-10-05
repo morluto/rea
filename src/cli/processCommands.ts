@@ -4,10 +4,10 @@ import {
   captureProcessScenarioFile,
   compareProcessEvidenceFiles,
   isProcessCliFailure,
-} from "./application/ProcessCli.js";
-import { logCliCommand } from "./cliLogging.js";
-import type { Logger } from "./logger.js";
-import { CLI_COMMANDS } from "./cliCommandNames.js";
+} from "../application/ProcessCli.js";
+import { logCliCommand } from "../cliLogging.js";
+import type { Logger } from "../logger.js";
+import { CLI_COMMANDS } from "../cliCommandNames.js";
 
 /** Register direct process capture and comparison commands. */
 export const registerProcessCommands = (

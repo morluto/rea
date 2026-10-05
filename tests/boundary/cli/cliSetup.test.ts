@@ -227,7 +227,7 @@ describe("interactive setup completion", () => {
           "--input-type=module",
           "--eval",
           [
-            'import { renderInteractiveSetupResult } from "./dist/cliSetup.js";',
+            'import { renderInteractiveSetupResult } from "./dist/cli/interactiveSetup.js";',
             "renderInteractiveSetupResult({",
             '  status: "ready",',
             "  plannedActions: [],",
@@ -287,7 +287,7 @@ const runJourney = async (
 ): Promise<JourneyResult> => {
   const isolatedHome = await createTestTempDirectory("rea-cli-setup-test-");
   const script = [
-    'import { confirmInteractiveSetup } from "./dist/cliSetup.js";',
+    'import { confirmInteractiveSetup } from "./dist/cli/interactiveSetup.js";',
     `const actions = ${JSON.stringify(journeyActions)};`,
     `const context = ${JSON.stringify({ stage: "select", clientStates, selectedClientIds: initialClientIds, clientSelectionAllowed: true })};`,
     `let decision = await confirmInteractiveSetup(actions, ${JSON.stringify(accessible)}, context);`,
