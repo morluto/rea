@@ -111,6 +111,17 @@ async function runInlineWorkflowScenarios(harness: TestHarness): Promise<void> {
     },
   });
   expect(tracedInline.isError).not.toBe(true);
+  expect(tracedInline.structuredContent).toMatchObject({
+    result: {
+      seed: { kind: "module", value: "renderer.js", match: "exact" },
+      summary: { matched_seeds: 1, traced_nodes: 1, unknown_facts: 0 },
+      coverage: {
+        status: "complete-within-source",
+        source_graph_status: "complete",
+        total_seed_matches: 1,
+      },
+    },
+  });
 
   const comparedInline = await harness.client.callTool({
     name: "compare_application_versions",
@@ -147,6 +158,24 @@ async function runInlineWorkflowScenarios(harness: TestHarness): Promise<void> {
     },
   });
   expect(sourceComparedById.isError).not.toBe(true);
+  expect(sourceComparedById.structuredContent).toMatchObject({
+    result: {
+      reference: {
+        root_sha256: SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE.reference.root_sha256,
+        inventory_state: "complete",
+      },
+      scoring: { algorithm: "rea-source-to-bundle-signals" },
+      summary: { unchanged: 0, modified: 0, removed: 1, unknown: 0 },
+      items: [
+        {
+          source_path: "src/main.ts",
+          status: "removed",
+          current_node_ids: [],
+          candidates: [],
+        },
+      ],
+    },
+  });
 }
 
 async function assertRejectedEvidenceReferences(
