@@ -100,7 +100,7 @@ Describe the behavior change and verification performed in the pull request. Nev
 
 ## Maintainer release checklist
 
-Run `npm run check:pr`, `npm run docs:api:cached`, the isolated package verifier, package dry run, and two-target real-Hopper verifier described above. Build a local tarball and exercise the executable through the package boundary:
+Run `npm run check:pr`, the isolated package verifier, package dry run, and two-target real-Hopper verifier described above. Build a local tarball and exercise the executable through the package boundary:
 
 ```bash
 npm pack
