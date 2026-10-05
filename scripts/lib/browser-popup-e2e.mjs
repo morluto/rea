@@ -113,6 +113,11 @@ const verifySharedContext = async (executable, origin) => {
     await page.getByRole("button", { name: "Open popup", exact: true }).click();
     await page.locator("body[data-ready=true]").waitFor({ timeout: 10_000 });
     const retained = events.result().items;
+    assert.ok(
+      events
+        .limitations()
+        .some((value) => value.includes("Shared-context network")),
+    );
     assert.ok(retained.some((event) => event.url?.url === origin + "/"));
     assert.ok(!JSON.stringify(retained).includes("unrelated-tab"));
   } finally {
