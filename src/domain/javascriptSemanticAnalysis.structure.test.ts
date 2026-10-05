@@ -98,6 +98,64 @@ describe("JavaScript semantic analysis: structure 1", () => {
     ).toEqual(shadowReference);
   });
 
+  it.each([
+    `for (let value = "inside"; ready; step()) { consume(value); }`,
+    `for (const value of entries) { consume(value); }`,
+    `for (const value in entries) { consume(value); }`,
+  ])("does not leak lexical loop bindings into the enclosing scope", (loop) => {
+    const ir = analyzeJavaScriptSemantics(`
+      const value = "outside";
+      ${loop}
+      consume(value);
+    `);
+    expect(topLevelBinding(ir, "value").value).toEqual({
+      status: "literal",
+      value: "outside",
+    });
+    expect(bindingsNamed(ir, "value")).toHaveLength(2);
+    const reads = ir.references.filter(
+      ({ name, role }) => name === "value" && role === "read",
+    );
+    expect(reads).toHaveLength(2);
+    expect(reads[0]?.bindingId).not.toBe(reads[1]?.bindingId);
+    expect(reads[1]?.bindingId).toBe(topLevelBinding(ir, "value").bindingId);
+  });
+
+  it("resolves closures inside a loop against the loop binding", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      const value = "outside";
+      for (const value of entries) { callbacks.push(() => value); }
+      consume(value);
+    `);
+    const reads = ir.references.filter(
+      ({ name, role }) => name === "value" && role === "read",
+    );
+    expect(reads).toHaveLength(2);
+    expect(reads[0]?.bindingId).not.toBe(
+      topLevelBinding(ir, "value").bindingId,
+    );
+    expect(reads[1]?.bindingId).toBe(topLevelBinding(ir, "value").bindingId);
+    expect(ir.closureCaptures).toContainEqual(
+      expect.objectContaining({
+        bindingId: reads[0]?.bindingId,
+      }),
+    );
+  });
+
+  it("keeps var loop declarations in the enclosing function", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      function run() { for (var value of entries) { consume(value); } return value; }
+    `);
+    const binding = onlyBinding(ir, "value");
+    const callable = ir.callables.find(({ name }) => name === "run");
+    expect(binding.scopeId).toBe(callable?.bodyScopeId);
+    expect(
+      ir.references
+        .filter(({ name, role }) => name === "value" && role === "read")
+        .every(({ bindingId }) => bindingId === binding.bindingId),
+    ).toBe(true);
+  });
+
   it("propagates literal, template, object, conditional, and destructured values", () => {
     const ir = analyzeJavaScriptSemantics(`
       const prefix = "rea";

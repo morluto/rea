@@ -255,6 +255,12 @@ const scopeKind = (
   if (t.isClass(node)) return "class";
   if (t.isCatchClause(node)) return "catch";
   if (
+    t.isForStatement(node) ||
+    t.isForOfStatement(node) ||
+    t.isForInStatement(node)
+  )
+    return "block";
+  if (
     t.isBlockStatement(node) &&
     !(parent !== null && t.isFunction(parent) && parent.body === node)
   )
