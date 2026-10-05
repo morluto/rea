@@ -250,10 +250,8 @@ const permissions = (raw: string | null) => {
 };
 
 const numeric = (value: string): number | null => {
-  const token = value.split(/\s+/u)[0];
-  if (token === undefined || !/^(?:0x[a-fA-F0-9]+|\d+)$/u.test(token))
-    return null;
-  const parsed = Number.parseInt(token, token.startsWith("0x") ? 16 : 10);
+  if (!/^(?:0x[a-fA-F0-9]+|\d+)$/u.test(value)) return null;
+  const parsed = Number.parseInt(value, value.startsWith("0x") ? 16 : 10);
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
 };
 
