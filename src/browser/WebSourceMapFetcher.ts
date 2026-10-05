@@ -87,12 +87,14 @@ const fetchOne = async (
         "A source-map redirect left the approved exact origins.",
       );
     const { response, fetchedUrl } = fetched;
-    if (!response.ok)
+    if (!response.ok) {
+      await response.body?.cancel();
       return emptySourceMapItem(
         request,
         "fetch_failed",
         `Source-map server returned HTTP ${String(response.status)}.`,
       );
+    }
     return normalizeSourceMap(request, await response.text(), fetchedUrl);
   } catch (cause: unknown) {
     if (signal?.aborted === true) throw cause;
@@ -130,6 +132,7 @@ const fetchFollowingApprovedRedirects = async (
       return { response, fetchedUrl: current };
     const location = response.headers.get("location");
     if (location === null) return { response, fetchedUrl: current };
+    await response.body?.cancel();
     current = new URL(location, current).href;
   }
 };
