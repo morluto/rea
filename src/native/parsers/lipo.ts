@@ -65,7 +65,16 @@ const integer = (value: string | undefined): number | null => {
 
 const alignment = (value: string | undefined): number | null => {
   if (value === undefined) return null;
-  const exponent = /2\^(\d+)/u.exec(value)?.[1];
-  if (exponent !== undefined) return 2 ** Number.parseInt(exponent, 10);
+  const exponent = /^2\^(\d+)(?: \((\d+)\))?$/u.exec(value);
+  const powerText = exponent?.[1];
+  if (powerText !== undefined) {
+    const power = Number.parseInt(powerText, 10);
+    if (power > 52) return null;
+    const alignment = 2 ** power;
+    const reported = exponent?.[2];
+    return reported === undefined || integer(reported) === alignment
+      ? alignment
+      : null;
+  }
   return integer(value);
 };

@@ -1,6 +1,4 @@
-import { createHash } from "node:crypto";
-
-import canonicalize from "canonicalize";
+import { absenceClaimable, canonicalDigest } from "./comparisonSemantics.js";
 
 import type { JavaScriptApplicationGraph } from "./javascriptApplicationGraph.js";
 import type { HistoricalSourceGraph } from "./referenceSourceGraph.js";
@@ -102,8 +100,7 @@ const projectComparison = (
     index,
     absenceComplete:
       input.reference.inventory_state === "complete" &&
-      input.application.graph.coverage.status === "complete" &&
-      !input.application.graph.coverage.truncated,
+      absenceClaimable(input.application.graph.coverage),
     factors: {
       input,
     },
@@ -367,12 +364,8 @@ const compareCandidates = (
   right.score - left.score ||
   compareText(left.current_node_id, right.current_node_id);
 
-const digestCanonical = (value: unknown): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined)
-    throw new TypeError("Source-to-bundle comparison could not canonicalize");
-  return createHash("sha256").update(encoded).digest("hex");
-};
+const digestCanonical = (value: unknown): string =>
+  canonicalDigest(value, "Source-to-bundle comparison");
 
 const uniqueSorted = (values: readonly string[]): string[] =>
   [...new Set(values)].sort(compareText);

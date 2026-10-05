@@ -1,7 +1,8 @@
-import { createHash } from "node:crypto";
-
-import canonicalize from "canonicalize";
-
+import {
+  absenceClaimable,
+  canonicalDigest,
+  canonicalJson,
+} from "./comparisonSemantics.js";
 import type { Evidence } from "./evidence.js";
 import {
   compareCodePoints,
@@ -165,7 +166,7 @@ const leftOnlyItem = (
       dimensions: ["availability"],
       limitations: [AMBIGUOUS_MATCH_LIMITATION],
     });
-  const absenceObserved = context.rightGraph.coverage.status === "complete";
+  const absenceObserved = absenceClaimable(context.rightGraph.coverage);
   return itemWithId({
     ...common,
     status: absenceObserved ? "removed" : "unknown",
@@ -205,7 +206,7 @@ const rightOnlyItem = (
       dimensions: ["availability"],
       limitations: [AMBIGUOUS_MATCH_LIMITATION],
     });
-  const absenceObserved = context.leftGraph.coverage.status === "complete";
+  const absenceObserved = absenceClaimable(context.leftGraph.coverage);
   return itemWithId({
     ...common,
     status: absenceObserved ? "added" : "unknown",
@@ -289,9 +290,14 @@ const changedDimensions = (
     leftContent !== rightContent
   )
     dimensions.push("content");
-  if (canonical(locations(pair.left)) !== canonical(locations(pair.right)))
+  if (
+    canonicalJson(locations(pair.left)) !== canonicalJson(locations(pair.right))
+  )
     dimensions.push("location");
-  if (canonical(properties(pair.left)) !== canonical(properties(pair.right)))
+  if (
+    canonicalJson(properties(pair.left)) !==
+    canonicalJson(properties(pair.right))
+  )
     dimensions.push("properties");
   if (
     relationshipSignature(pair.left, "left", context) !==
@@ -320,14 +326,14 @@ const locations = (node: ApplicationNode) =>
       evidence.location.available ? evidence.location.value : evidence.location,
     )
     .sort((left, right) =>
-      compareCodePoints(canonical(left), canonical(right)),
+      compareCodePoints(canonicalJson(left), canonicalJson(right)),
     );
 
 const properties = (node: ApplicationNode) =>
   node.observations
     .map(({ label, properties: values }) => ({ label, properties: values }))
     .sort((left, right) =>
-      compareCodePoints(canonical(left), canonical(right)),
+      compareCodePoints(canonicalJson(left), canonicalJson(right)),
     );
 
 const relationshipSignature = (
@@ -361,7 +367,7 @@ const relationshipSignature = (
       ];
     return [];
   });
-  return canonical(signatures.sort(compareCodePoints));
+  return canonicalJson(signatures.sort(compareCodePoints));
 };
 
 interface EdgeSignatureContext {
@@ -450,15 +456,8 @@ const stringProperty = (node: ApplicationNode, key: string): string | null => {
 };
 
 const graphsComplete = (context: ItemContext): boolean =>
-  context.leftGraph.coverage.status === "complete" &&
-  context.rightGraph.coverage.status === "complete";
-
-const canonical = (value: unknown): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined)
-    throw new TypeError("Application version item could not canonicalize data");
-  return encoded;
-};
+  absenceClaimable(context.leftGraph.coverage) &&
+  absenceClaimable(context.rightGraph.coverage);
 
 const digestCanonical = (value: unknown): string =>
-  createHash("sha256").update(canonical(value)).digest("hex");
+  canonicalDigest(value, "Application version item");

@@ -5,6 +5,7 @@ import type {
 } from "../domain/webScreenshot.js";
 import { createWebScreenshotArtifact } from "../domain/webScreenshot.js";
 import { BrowserObservationError } from "../domain/errors.js";
+import { isMainFrameNavigation } from "./CdpCaptureEventHelpers.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import type { CdpConnection, CdpEvent } from "./CdpConnection.js";
 import {
@@ -126,16 +127,11 @@ const observeScreenshotNavigation = (
   origins: ReadonlySet<string>,
   state: { changed: boolean; leftScope: boolean },
 ): void => {
+  if (!isMainFrameNavigation(event, mainFrameId)) return;
   const params = recordValue(event.params);
   if (params === undefined) return;
   const frame =
     event.method === "Page.frameNavigated" ? recordValue(params.frame) : params;
-  if (
-    (event.method !== "Page.frameNavigated" &&
-      event.method !== "Page.navigatedWithinDocument") ||
-    (stringValue(frame?.id) ?? stringValue(frame?.frameId)) !== mainFrameId
-  )
-    return;
   state.changed = true;
   if (allowedSanitizedUrl(frame?.url, origins) === undefined)
     state.leftScope = true;

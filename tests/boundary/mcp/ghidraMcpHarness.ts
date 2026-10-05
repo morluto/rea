@@ -20,7 +20,7 @@ import {
   ghidraFunctionDossier,
   ghidraFunctionIdentity,
   ghidraReferenceEdge,
-} from "../../../src/domain/hopperValues.fixture.js";
+} from "../../../src/domain/ghidraValues.fixture.js";
 
 const INSTALL = "/opt/ghidra_12.1.4_PUBLIC";
 

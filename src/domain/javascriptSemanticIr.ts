@@ -44,7 +44,13 @@ export type JavaScriptBindingProvenance =
 export interface JavaScriptSemanticScope {
   readonly scopeId: string;
   readonly parentScopeId: string | null;
-  readonly kind: "program" | "function" | "block" | "class" | "catch";
+  readonly kind:
+    | "program"
+    | "function"
+    | "block"
+    | "static-block"
+    | "class"
+    | "catch";
   readonly location: JavaScriptSourceRange;
   readonly bindingsComplete: boolean;
   readonly bindingIds: readonly string[];
@@ -251,6 +257,7 @@ export interface JavaScriptSemanticTimerOperation {
   readonly location: JavaScriptSourceRange;
   readonly ownerCallableId: string | null;
   readonly handleBindingId: string | null;
+  readonly projectedResultBindings: readonly JavaScriptSemanticProjectedResultBinding[];
   readonly linkedTimerId: string | null;
   readonly delayMilliseconds: number | null;
   readonly resolution: "complete" | "partial" | "unresolved";
@@ -263,6 +270,7 @@ export interface JavaScriptSemanticChildProcessSpawn {
   readonly location: JavaScriptSourceRange;
   readonly ownerCallableId: string | null;
   readonly resultBindingId: string | null;
+  readonly projectedResultBindings: readonly JavaScriptSemanticProjectedResultBinding[];
   readonly command: string | null;
   readonly argvCount: number | null;
   readonly environmentSupplied: boolean;
@@ -313,6 +321,7 @@ export interface JavaScriptSemanticRequestOperation {
   readonly location: JavaScriptSourceRange;
   readonly ownerCallableId: string | null;
   readonly resultBindingId: string | null;
+  readonly projectedResultBindings: readonly JavaScriptSemanticProjectedResultBinding[];
   readonly linkedRequestIds: readonly string[];
   readonly endpoint: string | null;
   readonly fields: readonly {
@@ -320,6 +329,13 @@ export interface JavaScriptSemanticRequestOperation {
     readonly sourceBindingId: string | null;
   }[];
   readonly resolution: "complete" | "partial" | "unresolved";
+}
+
+/** A destructured result binding with its known projection path. */
+export interface JavaScriptSemanticProjectedResultBinding {
+  readonly bindingId: string;
+  readonly projectionPath: readonly (string | number | null)[];
+  readonly resolution: "complete" | "partial";
 }
 
 /** One parse, coercion, or validation boundary candidate. */
@@ -369,7 +385,12 @@ export interface JavaScriptSemanticObjectOperation {
 
 /** One syntax location where exact local semantic continuation is unavailable. */
 export interface JavaScriptSemanticFrontier {
-  readonly kind: "dynamic-call" | "dynamic-property";
+  /**
+   * `dynamic-call`/`dynamic-property` mark a callee or key the analyzer could
+   * not resolve. `dynamic-scope` marks `with`/`eval`, where the binding
+   * environment itself is not statically knowable.
+   */
+  readonly kind: "dynamic-call" | "dynamic-property" | "dynamic-scope";
   readonly callableId: string | null;
   readonly location: JavaScriptSourceRange;
   readonly reason: string;

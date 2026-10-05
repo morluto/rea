@@ -6,7 +6,8 @@ import { ok } from "../../../src/domain/result.js";
 import { err } from "../../../src/domain/result.js";
 import { HopperProcessError } from "../../../src/domain/errors.js";
 import { toCallToolResult } from "../../../src/server/toolResult.js";
-import { createEvidence } from "../../../src/domain/evidence.js";
+import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
+import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { evidenceResultOf } from "../../../src/contracts/toolOutputSchemas.js";
 
 const contract: ToolContract = {
@@ -102,6 +103,7 @@ describe("tool result projection", () => {
       result: { value: "observed" },
       evidence_id: evidence.evidence_id,
       evidence: {
+        normalized_result: { value: "observed" },
         provider: { id: "fixture", name: "Fixture", version: "1" },
         operation: "fixture",
         predicate_type: "rea.analysis",
@@ -119,5 +121,40 @@ describe("tool result projection", () => {
       type: "text",
       text: expect.stringContaining('"value":"observed"'),
     });
+    const parsed = evidenceContract.outputSchema.parse(
+      result.structuredContent,
+    );
+    expect(parseEvidence(parsed.evidence)).toEqual(evidence);
   });
+
+  it.each<JsonValue>([null, false, 0, "", [], { nested: [false, null, 7] }])(
+    "preserves a complete reusable Evidence record for JSON result %j",
+    (value) => {
+      const evidence = createEvidence(
+        undefined,
+        { id: "fixture", name: "Fixture", version: "1" },
+        { operation: "fixture", parameters: {}, result: value },
+      );
+      const evidenceContract = {
+        ...contract,
+        outputSchema: evidenceResultOf(z.json()),
+      };
+      const result = toCallToolResult(ok(evidence), evidenceContract);
+      const parsed = evidenceContract.outputSchema.parse(
+        result.structuredContent,
+      );
+      expect(parsed.result).toEqual(value);
+      expect(parseEvidence(parsed.evidence)).toEqual(evidence);
+      expect(result.content).toEqual([
+        { type: "text", text: JSON.stringify(parsed) },
+      ]);
+      const { normalized_result: _missingResult, ...incomplete } = evidence;
+      expect(
+        evidenceContract.outputSchema.safeParse({
+          ...parsed,
+          evidence: incomplete,
+        }).success,
+      ).toBe(false);
+    },
+  );
 });

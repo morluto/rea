@@ -180,6 +180,18 @@ const projectRequestConstruction = (
     relation: "constructs-request",
     resolution: operation.resolution === "complete" ? "resolved" : "candidate",
   });
+  for (const projected of operation.projectedResultBindings)
+    addSemanticGraphRelation(context.state, {
+      source: request,
+      target: context.bindingNodes.get(projected.bindingId),
+      relation: "destructures",
+      resolution:
+        projected.resolution === "complete" ? "resolved" : "candidate",
+      properties: {
+        projection_path: [...projected.projectionPath],
+        projection_resolution: projected.resolution,
+      },
+    });
   for (const field of operation.fields)
     addSemanticGraphRelation(context.state, {
       source:

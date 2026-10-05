@@ -12,7 +12,7 @@ import {
   calleeName,
   endpointArgument as endpointArgumentHelper,
   prefixedArgument,
-  propertyName,
+  semanticStaticPropertyName,
   range,
   rangeForOffsets,
   sourceSlice,
@@ -176,7 +176,7 @@ export const inspectRouteProperty = (
   node: t.ObjectProperty,
   context: FindingContext,
 ): void => {
-  const key = propertyName(node.key);
+  const key = semanticStaticPropertyName(node.key, node.computed);
   if ((key === "path" || key === "route") && t.isStringLiteral(node.value))
     addEndpoint(context, {
       node,
@@ -190,7 +190,7 @@ export const inspectRoleProperty = (
   node: t.ObjectProperty,
   context: FindingContext,
 ): void => {
-  if (propertyName(node.key) !== "preload") return;
+  if (semanticStaticPropertyName(node.key, node.computed) !== "preload") return;
   const path = staticPath(node.value);
   if (path === undefined) return;
   addLocatedFinding(context, {

@@ -7,6 +7,7 @@ import {
   type Socket,
 } from "node:net";
 import { join, resolve } from "node:path";
+import { HopperStartError } from "../domain/errors.js";
 
 interface HopperTargetLeaseOwner {
   readonly runId: string;
@@ -74,18 +75,33 @@ export const acquireHopperTargetLease = async (input: {
     await rm(socketPath, { force: true });
   }
 
-  throw new Error("Could not acquire the Hopper target lease");
+  throw new HopperStartError({
+    userMessage:
+      "REA could not reserve this Hopper target. Close competing REA sessions and retry.",
+  });
 };
 
 const ensureLeaseDirectory = async (directory: string): Promise<void> => {
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  const directoryStat = await lstat(directory);
+  let directoryStat: Awaited<ReturnType<typeof lstat>>;
+  try {
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    directoryStat = await lstat(directory);
+  } catch (cause: unknown) {
+    throw new HopperStartError({
+      cause,
+      userMessage:
+        "REA could not create or inspect its private Hopper lease directory.",
+    });
+  }
   if (
     directoryStat.isSymbolicLink() ||
     directoryStat.isDirectory() === false ||
     (process.getuid !== undefined && directoryStat.uid !== process.getuid())
   )
-    throw new Error("Hopper target lease directory is not private");
+    throw new HopperStartError({
+      userMessage:
+        "REA's Hopper lease directory is not a private directory owned by this user.",
+    });
   if ((directoryStat.mode & 0o077) !== 0) await chmod(directory, 0o700);
 };
 

@@ -86,11 +86,13 @@ export class MachOSliceArtifactReader implements ArtifactReader {
         new ArtifactReaderFailure("cancelled", "Mach-O slice read cancelled"),
       );
     const [offsetText, sizeText] = entry.adapterKey.split(":");
-    const offset = Number(offsetText);
-    const size = Number(sizeText);
+    const offset = parseSliceKeyInteger(offsetText);
+    const size = parseSliceKeyInteger(sizeText);
     if (
       !Number.isSafeInteger(offset) ||
       !Number.isSafeInteger(size) ||
+      offset === null ||
+      size === null ||
       offset < 0 ||
       size <= 0
     )
@@ -154,3 +156,9 @@ export class MachOSliceArtifactReader implements ArtifactReader {
     return Promise.resolve();
   }
 }
+
+const parseSliceKeyInteger = (value: string | undefined): number | null => {
+  if (value === undefined || !/^\d+$/u.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+};

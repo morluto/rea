@@ -73,7 +73,6 @@ const dependencySchema = z.object({
 const loadCommandSchema = z.object({
   index: z.number().int().min(0),
   kind: z.string(),
-  file_offset: z.number().int().min(0).nullable(),
   fields: z.record(z.string(), z.union([z.string(), z.number(), z.null()])),
 });
 const buildMetadataSchema = z.object({
