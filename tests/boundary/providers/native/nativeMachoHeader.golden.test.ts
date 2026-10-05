@@ -52,3 +52,37 @@ it("keeps multi-word field names such as time stamp intact", async () => {
   expect(load.commands.some((command) => "time" in command.fields)).toBe(false);
   expect(stamped[0]?.fields["time stamp"]).toMatch(/^2 Thu Jan/);
 });
+
+it("decodes Mach header fields by their column names", () => {
+  const reordered = parseOtoolLoadCommands(
+    [
+      "Mach header",
+      " flags filetype magic cputype",
+      " NOUNDEFS 2 0xfeedfacf 16777228",
+      "Load command 0",
+      " cmd LC_UUID",
+      " uuid 01234567-89ab-cdef-0123-456789abcdef",
+    ].join("\n"),
+  );
+  expect(reordered.fileType).toBe("2");
+  expect(reordered.flags).toEqual(["NOUNDEFS"]);
+  const reorderedMultiwordFlags = parseOtoolLoadCommands(
+    [
+      "Mach header",
+      " filetype magic flags ncmds sizeofcmds",
+      " 2 0xfeedfacf NOUNDEFS DYLDLINK 4 512",
+    ].join("\n"),
+  );
+  expect(reorderedMultiwordFlags.fileType).toBe("2");
+  expect(reorderedMultiwordFlags.flags).toEqual(["DYLDLINK", "NOUNDEFS"]);
+  const missing = parseOtoolLoadCommands(
+    "Mach header\n magic cputype flags\n 0xfeedfacf 1 NOUNDEFS\n",
+  );
+  expect(missing.fileType).toBeNull();
+  expect(missing.flags).toEqual(["NOUNDEFS"]);
+  const incomplete = parseOtoolLoadCommands(
+    "Mach header\n filetype magic flags ncmds sizeofcmds\n 2 0xfeedfacf NOUNDEFS\n",
+  );
+  expect(incomplete.fileType).toBeNull();
+  expect(incomplete.flags).toEqual([]);
+});

@@ -23,7 +23,6 @@ interface ParsedLoadCommands {
   readonly commands: Array<{
     index: number;
     kind: string;
-    file_offset: number | null;
     fields: Record<string, string | number | null>;
   }>;
   readonly segments: ParsedSegment[];
@@ -57,12 +56,12 @@ const normalizeLineEndings = (output: string): string =>
 /** Parse stable fields from `otool -l`, preserving unknown command fields. */
 export const parseOtoolLoadCommands = (raw: string) => {
   const output = normalizeLineEndings(raw);
-  const headerTokens = parseHeaderTokens(output);
-  const state = createLoadCommandState(headerTokens);
+  const header = parseHeader(output);
+  const state = createLoadCommandState(header?.flags);
   for (const block of output.split(/(?=Load command \d+)/u))
     parseLoadCommand(block, state);
   return {
-    fileType: headerTokens?.[4] ?? null,
+    fileType: header?.fileType ?? null,
     flags: [...state.flags].sort(),
     uuid: state.uuid,
     commands: state.commands,
@@ -73,15 +72,41 @@ export const parseOtoolLoadCommands = (raw: string) => {
   };
 };
 
-const parseHeaderTokens = (output: string): string[] | undefined =>
-  output
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .find((line) => /^0x[a-fA-F0-9]+\s/u.test(line))
-    ?.split(/\s+/u);
+const parseHeader = (
+  output: string,
+): { fileType: string | null; flags: string[] } | undefined => {
+  const lines = output.split(/\r?\n/u).map((line) => line.trim());
+  const columnsLine = lines.findIndex((line) => /(?:^|\s)magic\s/u.test(line));
+  if (columnsLine < 0) return undefined;
+  const columns = lines[columnsLine]?.split(/\s+/u);
+  const dataLine = lines.slice(columnsLine + 1).find((line) => line.length > 0);
+  const values = dataLine?.split(/\s+/u);
+  if (columns === undefined || values === undefined) return undefined;
+  const fileTypeIndex = columns.indexOf("filetype");
+  const flagsIndex = columns.indexOf("flags");
+  const complete = values.length >= columns.length;
+  const fileTypeValueIndex =
+    flagsIndex >= 0 && fileTypeIndex > flagsIndex
+      ? values.length - (columns.length - fileTypeIndex)
+      : fileTypeIndex;
+  const flagsEnd =
+    flagsIndex >= 0 ? values.length - (columns.length - flagsIndex - 1) : 0;
+  return {
+    fileType:
+      complete && fileTypeValueIndex >= 0 && fileTypeValueIndex < values.length
+        ? (values[fileTypeValueIndex] ?? null)
+        : null,
+    flags:
+      !complete || flagsIndex < 0 || flagsIndex >= flagsEnd
+        ? []
+        : values
+            .slice(flagsIndex, flagsEnd)
+            .filter((value) => value.length > 0),
+  };
+};
 
 const createLoadCommandState = (
-  headerTokens: readonly string[] | undefined,
+  headerFlags: readonly string[] | undefined,
 ): ParsedLoadCommands => ({
   commands: [],
   segments: [],
@@ -89,7 +114,7 @@ const createLoadCommandState = (
   entrypoints: [],
   builds: [],
   uuid: null,
-  flags: new Set(headerTokens?.slice(7) ?? []),
+  flags: new Set(headerFlags ?? []),
 });
 
 const parseLoadCommand = (block: string, state: ParsedLoadCommands): void => {
@@ -101,7 +126,6 @@ const parseLoadCommand = (block: string, state: ParsedLoadCommands): void => {
   state.commands.push({
     index: Number.parseInt(indexText, 10),
     kind,
-    file_offset: null,
     fields,
   });
   collectUuid(kind, fields, state);

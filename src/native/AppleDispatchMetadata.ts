@@ -7,6 +7,10 @@ import {
   type ObjcSwiftMetadata,
 } from "../domain/objcSwiftMetadata.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
+import {
+  AnalysisCancelledError,
+  EvidenceIntegrityError,
+} from "../domain/errors.js";
 import { decodeSwiftClassVtables } from "./AppleSwiftVtables.js";
 import { createObjcProtocolReader } from "./AppleObjcProtocols.js";
 
@@ -624,11 +628,12 @@ export const inspectAppleDispatchMetadata = async (
       throw new RangeError(
         "Apple metadata target must be a regular file no larger than 64 MiB",
       );
-    if (signal?.aborted) throw new Error("cancelled");
+    if (signal?.aborted)
+      throw new AnalysisCancelledError("inspect_native_dispatch_metadata");
     const bytes = await handle.readFile({ signal });
     const digest = createHash("sha256").update(bytes).digest("hex");
     if (digest !== target.sha256)
-      throw new Error(
+      throw new EvidenceIntegrityError(
         "Apple metadata target digest changed after session binding",
       );
     return nativeDispatchMetadataResultSchema.parse({

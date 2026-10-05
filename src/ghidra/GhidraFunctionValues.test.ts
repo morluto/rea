@@ -14,7 +14,7 @@ import {
   ghidraFunctionIdentity,
   ghidraNativeApiBoundary,
   ghidraReferenceEdge,
-} from "../domain/hopperValues.fixture.js";
+} from "../domain/ghidraValues.fixture.js";
 
 describe("Ghidra function-analysis boundary values", () => {
   it("defaults inputs and rejects undeclared or implicit addresses", () => {

@@ -1,3 +1,5 @@
+// Fake-backed composition coverage; real provider verification lives in
+// `npm run verify:hopper` and `npm run verify:ghidra`.
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 

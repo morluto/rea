@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { jsonValueSchema } from "./jsonValue.js";
+import { AnalysisOutputError } from "./errors.js";
 
 /** Caller-controlled page bounds for compiled Apple asset metadata. */
 export const appleAssetCatalogInputSchema = z.strictObject({
@@ -64,11 +65,18 @@ export const parseAppleAssetCatalogRecords = (
   Record<string, ReturnType<typeof jsonValueSchema.parse>>
 >[] => {
   if (!Array.isArray(value))
-    throw new Error("assetutil output must be a JSON array");
+    throw new AnalysisOutputError(
+      "inspect_asset_catalog",
+      "assetutil output must be a JSON array",
+    );
   return value.map((record, index) => {
     const parsed = z.record(z.string(), jsonValueSchema).safeParse(record);
     if (!parsed.success)
-      throw new Error(`assetutil record ${index} is not a JSON object`);
+      throw new AnalysisOutputError(
+        "inspect_asset_catalog",
+        `assetutil record ${index} is not a JSON object`,
+        { cause: parsed.error },
+      );
     return parsed.data;
   });
 };
