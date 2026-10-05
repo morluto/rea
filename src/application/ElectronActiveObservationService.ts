@@ -6,8 +6,8 @@ import type { ElectronActiveObservationPort } from "./ElectronActiveObservationP
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
-  type AnalysisError,
-} from "../domain/errors.js";
+} from "../domain/analysisErrorCore.js";
+import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { ElectronActiveObservationInput } from "../domain/electronActiveObservation.js";
 import { err, type Result } from "../domain/result.js";

@@ -5,11 +5,9 @@ import type { EvidenceBundle } from "../domain/evidenceBundle.js";
 import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
-import type {
-  AnalysisError,
-  EvidenceIntegrityError,
-  UnknownRegistryError,
-} from "../domain/errors.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import type { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
+import type { UnknownRegistryError } from "../domain/unknownRegistryError.js";
 import type { Result } from "../domain/result.js";
 import type {
   RecordUnknownInput,

@@ -6,10 +6,8 @@ import {
   validateResidualUnknownAddition,
   type EvidenceBundle,
 } from "../domain/evidenceBundle.js";
-import {
-  EvidenceIntegrityError,
-  UnknownRegistryError,
-} from "../domain/errors.js";
+import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
+import { UnknownRegistryError } from "../domain/unknownRegistryError.js";
 import { parseEvidence, type Evidence } from "../domain/evidence.js";
 import {
   createResidualUnknown,

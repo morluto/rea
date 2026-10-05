@@ -3,7 +3,7 @@ import {
   type AnalysisProfileCommitment,
 } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
-import { AnalysisCancelledError } from "../domain/errors.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisProviderCandidate } from "./AnalysisProvider.js";
@@ -41,7 +41,8 @@ export const evaluateAnalysisProviderCandidate = async (
     if (resolution === ABORTED)
       return err(new AnalysisCancelledError("open_binary"));
     resolved = resolution;
-  } catch {
+  } catch (cause: unknown) {
+    void cause;
     return ok(
       rejectedProfile(candidate, status, "Provider profile resolution threw"),
     );
@@ -82,7 +83,8 @@ export const evaluateAnalysisProviderCandidate = async (
         ),
       );
     return ok({ candidate, status, profile, compatibility });
-  } catch {
+  } catch (cause: unknown) {
+    void cause;
     return ok(
       rejectedProfile(
         candidate,

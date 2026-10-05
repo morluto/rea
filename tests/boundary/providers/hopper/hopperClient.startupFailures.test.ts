@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { projectAnalysisError } from "../../../../src/domain/errors.js";
+import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import type { HopperStartupDiagnostic } from "../../../../src/domain/hopperStartupFailure.js";
 import { ok } from "../../../../src/domain/result.js";
 import type {

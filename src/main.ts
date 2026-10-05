@@ -8,7 +8,7 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { parseConfig } from "./config.js";
 import { createBinarySession } from "./application/runtime.js";
 import { createLogger } from "./logger.js";
-import { projectAnalysisError } from "./domain/errors.js";
+import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import type { RuntimeDependencies } from "./main/types.js";
 import { SERVER_START_FAILED } from "./main/messages.js";
 import { createRuntimeState } from "./main/state.js";

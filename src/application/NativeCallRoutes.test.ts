@@ -4,7 +4,7 @@ import { createAnalysisExecution } from "./AnalysisProvider.js";
 import { ghidraReferenceEdge } from "../domain/ghidraValues.fixture.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok } from "../domain/result.js";
-import { AnalysisCancelledError } from "../domain/errors.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 
 const provider = { id: "fixture", name: "Fixture", version: "1" };
 describe("typed native call routes", () => {

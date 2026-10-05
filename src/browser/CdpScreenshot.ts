@@ -4,7 +4,7 @@ import type {
   WebScreenshot,
 } from "../domain/webScreenshot.js";
 import { createWebScreenshotArtifact } from "../domain/webScreenshot.js";
-import { BrowserObservationError } from "../domain/errors.js";
+import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { isMainFrameNavigation } from "./CdpCaptureEventHelpers.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import type { CdpConnection, CdpEvent } from "./CdpConnection.js";

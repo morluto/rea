@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
 import { toolContract } from "../contracts/toolContracts.js";
-import { EvidenceIntegrityError } from "../domain/errors.js";
+import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import {
   createEvidence,
   parseEvidence,

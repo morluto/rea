@@ -105,7 +105,7 @@ jobs:
         if: ${{ !cancelled() }}
         with:
           name: vitest-report-${{ strategy.job-index }}
-          path: .vitest-reports/*
+          path: .vitest/blob/*
           include-hidden-files: true
           if-no-files-found: error
           overwrite: true
@@ -157,7 +157,7 @@ jobs:
       - uses: actions/download-artifact@v4
         if: needs.changes.outputs.code == 'true' && success()
         with:
-          path: .vitest-reports
+          path: .vitest/blob
           pattern: vitest-report-*
           merge-multiple: true
       - name: Merge coverage, JUnit, and timing reports

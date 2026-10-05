@@ -10,7 +10,7 @@ import {
 } from "playwright-core";
 
 import type { BrowserScenario } from "../domain/browserScenario.js";
-import { BrowserObservationError } from "../domain/errors.js";
+import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { withPlaywrightExecutionBoundary } from "./PlaywrightExecutionBoundary.js";
 
 const OPERATION = "capture_browser_scenario" as const;

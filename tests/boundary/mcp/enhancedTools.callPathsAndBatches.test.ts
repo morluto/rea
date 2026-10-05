@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
 import { EnhancedTools } from "../../../src/application/EnhancedTools.js";
-import { AnalysisOutputError } from "../../../src/domain/errors.js";
+import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
 import { err } from "../../../src/domain/result.js";
 
 import { closeEnhancedToolResources, connect } from "./enhancedToolsHarness.js";

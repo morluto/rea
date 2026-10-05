@@ -15,7 +15,8 @@ import { inspectNativeDispatch } from "./NativeDispatchMetadataInspection.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { readNativeCallRoutes } from "./NativeCallRoutes.js";
 import { err, ok } from "../domain/result.js";
-import { AnalysisOutputError, projectAnalysisError } from "../domain/errors.js";
+import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 
 type Input = z.output<typeof enhancedInputSchemas.trace_native_ui_action>;
 /** Build a UI-to-code trace from the active app and selected native provider. */

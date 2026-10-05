@@ -6,10 +6,8 @@ import type { BinarySession } from "../../../src/application/BinarySession.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import type { RecordUnknownInput } from "../../../src/domain/residualUnknown.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
-import {
-  HopperStartError,
-  ProviderAdapterError,
-} from "../../../src/domain/errors.js";
+import { HopperStartError } from "../../../src/domain/hopperErrors.js";
+import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";

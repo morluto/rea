@@ -1,6 +1,6 @@
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
-import type { AnalysisError } from "../domain/errors.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   inspectMachoSchema,
   type NativeCommandInvocation,

@@ -52,8 +52,8 @@ require the matching real-provider `verify:*` lane.
 Formatting uses Oxfmt and the committed `.oxfmtrc.json`; generated sources use
 the same configuration. Pre-commit formats and lints staged files; pre-push runs
 `check:fast`.
-`docs:check` checks committed generated metadata.
-`docs:generate` regenerates those files.
+`docs:check` checks committed generated metadata. `docs:generate` regenerates
+those files, and the docs CI lane checks them.
 Real-provider execution remains uncached; deterministic builds use Turbo.
 
 Local `npm test` runs every deterministic Vitest project without coverage or

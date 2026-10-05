@@ -348,7 +348,9 @@ const decodeFixedString = (blob: Buffer): string | null => {
     return new TextDecoder("utf-8", { fatal: true }).decode(
       blob.subarray(start, start + length.length),
     );
-  } catch {
+  } catch (cause: unknown) {
+    // Invalid UTF-8 blobs decode as null.
+    void cause;
     return null;
   }
 };

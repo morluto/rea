@@ -14,7 +14,7 @@ import {
   browserScenarioCaptureSchema,
   type BrowserScenarioCapture,
 } from "../../../src/domain/browserScenarioCapture.js";
-import type { AnalysisError } from "../../../src/domain/errors.js";
+import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { ok, type Result } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";

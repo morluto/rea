@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { ConfigurationError } from "../domain/errors.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 export const parseStringArray = (

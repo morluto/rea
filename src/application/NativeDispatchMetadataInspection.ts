@@ -3,7 +3,7 @@ import {
   nativeDispatchMetadataResultSchema,
   inspectNativeDispatchMetadata,
 } from "../domain/objcSwiftMetadata.js";
-import { AnalysisOutputError } from "../domain/errors.js";
+import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok } from "../domain/result.js";
 import type { AnalysisOperationPort } from "./AnalysisProvider.js";

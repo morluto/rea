@@ -19,11 +19,9 @@ import {
   type BrowserScenarioStepOutcome,
   type BrowserStepArtifacts,
 } from "../domain/browserScenarioCapture.js";
-import {
-  AnalysisError,
-  BrowserObservationError,
-  ProviderAdapterError,
-} from "../domain/errors.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { BrowserObservationError } from "../domain/browserObservationError.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type {
   BrowserScenarioSessionFactory,

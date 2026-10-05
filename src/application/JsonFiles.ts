@@ -3,7 +3,7 @@ import { basename, dirname, resolve } from "node:path";
 
 import writeFileAtomic from "write-file-atomic";
 
-import { EvidenceFileError } from "../domain/errors.js";
+import { EvidenceFileError } from "../domain/evidenceErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 /** Read JSON data from a regular file at the caller-supplied path. */

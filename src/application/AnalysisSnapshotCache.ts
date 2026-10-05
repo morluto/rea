@@ -2,11 +2,9 @@ import type { BinaryTarget } from "../domain/binaryTarget.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { EvidenceBundle } from "../domain/evidenceBundle.js";
-import {
-  EvidenceIntegrityError,
-  NoBinaryOpenError,
-  type AnalysisError,
-} from "../domain/errors.js";
+import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
+import { NoBinaryOpenError } from "../domain/configurationErrors.js";
+import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   analysisQueryId,

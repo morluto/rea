@@ -1,9 +1,7 @@
 import type { BinarySessionPort } from "../../application/BinarySession.js";
 import type { Evidence } from "../../domain/evidence.js";
-import {
-  EvidenceIntegrityError,
-  type AnalysisError,
-} from "../../domain/errors.js";
+import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
+import { type AnalysisError } from "../../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { recordDerivedEvidence } from "../recordDerivedEvidence.js";
 import type { WorkflowUnknownInput } from "./types.js";

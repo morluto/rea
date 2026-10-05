@@ -1,19 +1,20 @@
 import { describe, expect, it } from "vitest";
-
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
-  ArtifactOperationError,
-  BinaryTargetError,
-  BrowserObservationError,
+} from "./analysisErrorCore.js";
+import { ArtifactOperationError } from "./artifactOperationError.js";
+import { BinaryTargetError } from "./configurationErrors.js";
+import { BrowserObservationError } from "./browserObservationError.js";
+import {
   HopperProcessError,
   HopperRemoteError,
   HopperStartError,
   HopperTimeoutError,
-  ProviderAdapterError,
-  UnknownRegistryError,
-  projectAnalysisError,
-} from "./errors.js";
+} from "./hopperErrors.js";
+import { ProviderAdapterError } from "./providerAdapterError.js";
+import { UnknownRegistryError } from "./unknownRegistryError.js";
+import { projectAnalysisError } from "./analysisErrorProjection.js";
 
 describe("analysis error projection: provider failures", () => {
   it("projects the primary browser failure alongside incomplete cleanup", () => {

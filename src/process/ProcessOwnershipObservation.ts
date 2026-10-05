@@ -221,7 +221,9 @@ const processIsGone = async (
     return !liveProcesses(await host.listProcesses()).some(
       (process) => process.pid === pid,
     );
-  } catch {
+  } catch (cause: unknown) {
+    // best-effort cleanup: optional liveness probing; failure means not gone.
+    void cause;
     return false;
   }
 };

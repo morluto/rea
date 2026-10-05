@@ -4,10 +4,8 @@ import type {
   JavaScriptRuntimeTargetList,
   JavaScriptRuntimeTargetLocation,
 } from "../domain/javascriptRuntimeObservation.js";
-import {
-  BrowserObservationError,
-  type BrowserObservationOperation,
-} from "../domain/errors.js";
+import { BrowserObservationError } from "../domain/browserObservationError.js";
+import { type BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { parseCdpEndpointValue, readCdpJson } from "./CdpEndpoint.js";
 
 const versionSchema = z

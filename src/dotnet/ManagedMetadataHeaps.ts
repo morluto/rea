@@ -134,7 +134,8 @@ export const readMetadataString = (
     return new TextDecoder("utf-8", { fatal: true }).decode(
       bytes.subarray(start, end),
     );
-  } catch {
+  } catch (cause: unknown) {
+    void cause;
     throw managedFailure(
       "invalid-string",
       "metadata.#Strings",

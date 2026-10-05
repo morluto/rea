@@ -1,5 +1,6 @@
 import type { AnalysisOperation } from "./AnalysisProvider.js";
-import { projectAnalysisError, type AnalysisError } from "../domain/errors.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import { parseRelatedAddresses } from "../domain/hopperValues.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ok, type Result } from "../domain/result.js";

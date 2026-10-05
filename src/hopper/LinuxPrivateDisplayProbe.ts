@@ -112,7 +112,9 @@ export const runLinuxPrivateDisplayProbe: LinuxPrivateDisplayProbeRunner =
         runId: randomUUID(),
         expectedCommand: null,
       });
-    } catch {
+    } catch (cause: unknown) {
+      // best-effort cleanup: probe spawn failure is reported as launch-failed.
+      void cause;
       return emptyProcessResult("launch-failed");
     }
     const launch: ProviderProcessLaunch = {
@@ -198,7 +200,9 @@ const evaluatedProbe = async (
       timeoutMs,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
-  } catch {
+  } catch (cause: unknown) {
+    // Runner failure is reported with the synthetic probe_failed diagnostic.
+    void cause;
     return {
       ok: false,
       diagnostic: syntheticDiagnostic(strategy, "probe_failed"),

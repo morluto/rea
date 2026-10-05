@@ -98,7 +98,9 @@ const sourceMapForScript = (
   let rawUrl: string;
   try {
     rawUrl = new URL(declaredUrl, scriptUrl).href;
-  } catch {
+  } catch (cause: unknown) {
+    // Unparseable URLs are recorded as unsupported, not as failures.
+    void cause;
     state.completeness.exclude("source_maps", "unsupported_url");
     return { sanitized: null, raw: null };
   }
@@ -344,7 +346,9 @@ export const handleWebSocketCreated = (
   let parsed: URL;
   try {
     parsed = new URL(rawUrl);
-  } catch {
+  } catch (cause: unknown) {
+    // Unparseable URLs are recorded as unsupported, not as failures.
+    void cause;
     state.completeness.exclude("websocket_connections", "unsupported_url");
     return;
   }

@@ -226,7 +226,9 @@ const exists = async (path: string | undefined): Promise<boolean> => {
   try {
     await access(path);
     return true;
-  } catch {
+  } catch (cause: unknown) {
+    // best-effort cleanup: optional registration probing; absence means unregistered.
+    void cause;
     return false;
   }
 };

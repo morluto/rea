@@ -72,7 +72,9 @@ export const scheduleScenarioInteractions = (
               ),
             );
           } else terminal.kill(event.signal);
-        } catch {
+        } catch (cause: unknown) {
+          // Terminal dispatch failures are recorded as failed outcomes.
+          void cause;
           outcome = "failed";
         }
       }

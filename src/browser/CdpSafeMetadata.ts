@@ -130,7 +130,9 @@ const cspSource = (
     return allowedOrigins.has(parsed.origin)
       ? { kind: "approved_origin", value: parsed.origin }
       : { kind: "external_origin", value: null };
-  } catch {
+  } catch (cause: unknown) {
+    // Non-URL tokens are classified as other.
+    void cause;
     return { kind: "other", value: null };
   }
 };
@@ -210,7 +212,9 @@ const safeDestination = (
     if (!allowedOrigins.has(parsed.origin))
       return { url: sanitized, scope: "outside_policy" };
     return { url: sanitized, scope: "approved" };
-  } catch {
+  } catch (cause: unknown) {
+    // Unparseable link values keep their raw text for the analyst.
+    void cause;
     return { url: value, scope: "unsupported" };
   }
 };
@@ -231,7 +235,9 @@ const wellKnownHint = (url: string): AgentHint[] => {
     return wellKnownAgentPaths.has(path)
       ? [agentHint("well_known_resource", path, sanitizeBrowserUrl(url).url)]
       : [];
-  } catch {
+  } catch (cause: unknown) {
+    // Non-URL input yields no well-known hint.
+    void cause;
     return [];
   }
 };

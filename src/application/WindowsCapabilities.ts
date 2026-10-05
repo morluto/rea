@@ -126,9 +126,10 @@ const probeSymlinkCreation = async (): Promise<WindowsCapabilityOutcome> => {
   } finally {
     try {
       await rm(root, { recursive: true, force: true });
-    } catch {
+    } catch (cause: unknown) {
       // Cleanup failure must not replace the machine-readable probe outcome.
       // The probe root lives beneath the OS temporary directory and is unique.
+      void cause;
     }
   }
 };

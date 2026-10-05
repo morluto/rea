@@ -53,7 +53,9 @@ export const resolveSpecifier = (
     if (resolved.protocol !== "http:" && resolved.protocol !== "https:")
       return null;
     return sanitizeBrowserUrl(resolved.href).url;
-  } catch {
+  } catch (cause: unknown) {
+    // Unresolvable specifiers are represented by the null return.
+    void cause;
     return null;
   }
 };

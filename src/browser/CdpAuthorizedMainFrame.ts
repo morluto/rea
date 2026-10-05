@@ -1,5 +1,5 @@
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
-import { BrowserObservationError } from "../domain/errors.js";
+import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { CdpConnection } from "./CdpConnection.js";
 import { mainFrameUrl } from "./CdpCaptureDocuments.js";
 import {

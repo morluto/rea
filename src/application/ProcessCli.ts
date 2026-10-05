@@ -1,10 +1,8 @@
 import { readFile } from "node:fs/promises";
 
-import {
-  AnalysisError,
-  AnalysisInputError,
-  projectAnalysisError,
-} from "../domain/errors.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { createEvidence, parseEvidence } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
@@ -114,7 +112,7 @@ const parseCaptureEvidence = (input: unknown) => {
   let evidence;
   try {
     evidence = parseEvidence(input);
-  } catch {
+  } catch (cause: unknown) {
     throw invalidCaptureEvidence();
   }
   if (
@@ -134,7 +132,7 @@ const parseCaptureEvidence = (input: unknown) => {
       capture: parseProcessCapture(evidence.normalized_result),
       locations: evidence.locations,
     };
-  } catch {
+  } catch (cause: unknown) {
     throw invalidCaptureEvidence();
   }
 };
@@ -159,7 +157,8 @@ const readJson = async (path: string): Promise<unknown> => {
   let bytes;
   try {
     bytes = await readFile(path);
-  } catch {
+  } catch (cause: unknown) {
+    void cause;
     throw new ProcessCliFailure(
       "invalid_input",
       "Process input file could not be read. Check that the path exists and is readable.",
@@ -168,7 +167,8 @@ const readJson = async (path: string): Promise<unknown> => {
   try {
     const parsed: unknown = JSON.parse(bytes.toString("utf8"));
     return parsed;
-  } catch {
+  } catch (cause: unknown) {
+    void cause;
     throw new ProcessCliFailure(
       "invalid_input",
       "Process input file is not valid JSON. Repair the file, then try again.",

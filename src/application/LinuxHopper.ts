@@ -165,7 +165,9 @@ export const readLinuxDistribution = async (): Promise<
 > => {
   try {
     return parseLinuxDistribution(await readFile("/etc/os-release", "utf8"));
-  } catch {
+  } catch (cause: unknown) {
+    // best-effort cleanup: optional host probing; unknown distribution means unsupported.
+    void cause;
     return undefined;
   }
 };
@@ -244,7 +246,9 @@ const systemLinuxHopperInstallHost = (): LinuxHopperInstallHost => ({
       return (await linuxHopperBinarySupported(path))
         ? "ready"
         : "unsupported_hopper_build";
-    } catch {
+    } catch (cause: unknown) {
+      // best-effort cleanup: optional launcher probing; unreadable means missing.
+      void cause;
       return "missing";
     }
   },
@@ -259,7 +263,9 @@ export const linuxHopperBinarySupported = async (
     const hash = createHash("sha256");
     for await (const chunk of createReadStream(path)) hash.update(chunk);
     return hash.digest("hex") === SUPPORTED_HOPPER_SHA256;
-  } catch {
+  } catch (cause: unknown) {
+    // best-effort cleanup: optional build probing; unreadable means unsupported.
+    void cause;
     return false;
   }
 };
@@ -280,7 +286,9 @@ const installSystemPackage = async (
     ))
       await execFileAsync(command.executable, command.args);
     return true;
-  } catch {
+  } catch (cause: unknown) {
+    // Package-manager failure is reported by the false return.
+    void cause;
     return false;
   }
 };

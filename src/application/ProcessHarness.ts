@@ -11,10 +11,8 @@ import type {
 } from "../domain/processCapture.js";
 import { parseProcessCapture } from "../domain/processCapture.js";
 import { err, ok, type Result } from "../domain/result.js";
-import {
-  AnalysisCapabilityUnavailableError,
-  type AnalysisError,
-} from "../domain/errors.js";
+import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
+import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   ProcessCaptureError,
   processCaptureCancelled,

@@ -1,5 +1,5 @@
 import { CdpBrowserProvider } from "./browser/CdpBrowserProvider.js";
-import { projectAnalysisError } from "./domain/errors.js";
+import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 
 /** Build the passive browser provider; scope is supplied on each request. */

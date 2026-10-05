@@ -24,9 +24,9 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
-  ProviderAdapterError,
-  AnalysisError,
-} from "../domain/errors.js";
+} from "../domain/analysisErrorCore.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import {
   demangleSwiftSchema,

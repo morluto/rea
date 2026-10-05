@@ -1,7 +1,8 @@
 import type { CallToolResult } from "@modelcontextprotocol/server";
 
 import type { ToolContract } from "../contracts/toolContracts.js";
-import { projectAnalysisError, type AnalysisError } from "../domain/errors.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
 

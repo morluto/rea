@@ -1,8 +1,6 @@
-import {
-  AnalysisCancelledError,
-  BrowserObservationError,
-  type BrowserObservationOperation,
-} from "../domain/errors.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { BrowserObservationError } from "../domain/browserObservationError.js";
+import { type BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import { createWebTextArtifact } from "../domain/webContentArtifact.js";
 
@@ -40,7 +38,9 @@ export const isHttpUrl = (value: string | undefined): boolean => {
   try {
     const protocol = new URL(value).protocol;
     return protocol === "http:" || protocol === "https:";
-  } catch {
+  } catch (cause: unknown) {
+    // Non-URL input is not an HTTP URL.
+    void cause;
     return false;
   }
 };

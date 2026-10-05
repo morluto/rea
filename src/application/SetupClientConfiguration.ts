@@ -77,7 +77,9 @@ const configureClientDocument = async (
       original ?? (format === "toml" ? "" : "{}"),
       format,
     );
-  } catch {
+  } catch (cause: unknown) {
+    // Malformed existing configuration fails the readback gate.
+    void cause;
     return { status: "failed", reason: "readback" };
   }
   const { document, servers, serversKey } = parsed;
@@ -120,7 +122,9 @@ const configureClientDocument = async (
         mode: 0o600,
       },
     );
-  } catch {
+  } catch (cause: unknown) {
+    // Write failure is reported by the status reason.
+    void cause;
     return { status: "failed", reason: "write" };
   }
   try {
@@ -137,7 +141,9 @@ const configureClientDocument = async (
       await restoreConfig(transactionPath, original);
       return { status: "failed", reason: "readback" };
     }
-  } catch {
+  } catch (cause: unknown) {
+    // Readback failure restores the transaction before reporting.
+    void cause;
     await restoreConfig(transactionPath, original);
     return { status: "failed", reason: "readback" };
   }
@@ -166,7 +172,9 @@ export const clientConfigurationAligned = async (
       servers[PRODUCT_IDENTITY.mcpServerKey],
       desired,
     );
-  } catch {
+  } catch (cause: unknown) {
+    // Unreadable configuration is treated as not aligned so setup repairs it.
+    void cause;
     return false;
   }
 };
@@ -213,7 +221,9 @@ export const inspectClientConfiguration = async (
       )
     )
       return { status: "already_current" };
-  } catch {
+  } catch (cause: unknown) {
+    // Malformed configuration is reported with the invalid remediation.
+    void cause;
     return {
       status: "invalid",
       remediation:
@@ -247,8 +257,9 @@ const restoreConfig = async (
   try {
     if (original === undefined) await rm(path, { force: true });
     else await writeFile(path, original, { encoding: "utf8", mode: 0o600 });
-  } catch {
+  } catch (cause: unknown) {
     // The backup remains available for the remediation reported by setup.
+    void cause;
   }
 };
 

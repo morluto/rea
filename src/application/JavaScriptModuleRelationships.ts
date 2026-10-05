@@ -401,7 +401,9 @@ const jsonStatus = (
   try {
     JSON.parse(file.text.value);
     return "included";
-  } catch {
+  } catch (cause: unknown) {
+    // Invalid JSON is classified without further detail.
+    void cause;
     return "invalid";
   }
 };

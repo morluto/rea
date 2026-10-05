@@ -4,7 +4,7 @@ import { setImmediate } from "node:timers/promises";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
-} from "../domain/errors.js";
+} from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { mcpProgressReporter, type McpProgressContext } from "./mcpProgress.js";
 

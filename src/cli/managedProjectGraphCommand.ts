@@ -4,7 +4,7 @@ import { projectManagedApplicationGraphEvidence } from "../application/ManagedAp
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
 import { logCliCommand } from "../cliLogging.js";
-import { projectAnalysisError } from "../domain/errors.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { Logger } from "../logger.js";
 import type { CliInstance } from "./types.js";
 

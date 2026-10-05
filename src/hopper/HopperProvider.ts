@@ -16,7 +16,7 @@ import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { AppConfig } from "../config.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import type { Logger } from "../logger.js";
-import { AnalysisCapabilityUnavailableError } from "../domain/errors.js";
+import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import { err } from "../domain/result.js";
 import { GENERATED_MCP_TOOL_CATALOG } from "../generatedMcpToolCatalog.js";
 import { HopperApplicationLauncher } from "./BridgeLauncher.js";
@@ -124,7 +124,9 @@ export class HopperProvider implements AnalysisProviderCandidate {
         reason: null,
         diagnostics,
       };
-    } catch {
+    } catch (cause: unknown) {
+      // best-effort cleanup: optional launcher probing; failure means unavailable.
+      void cause;
       return {
         status: "unavailable",
         code: "executable_missing",

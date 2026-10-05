@@ -1,10 +1,12 @@
 import { z } from "zod";
 
 import type { JsonValue } from "./jsonValue.js";
-import { AnalysisOutputError, HopperProtocolError } from "./errors.js";
+
 import { err, ok, type Result } from "./result.js";
 import { nativeApiBoundarySchema } from "./nativeApiBoundary.js";
 import { nativeValueFlowSchema } from "./nativeValueFlow.js";
+import { AnalysisOutputError } from "./analysisErrorCore.js";
+import { HopperProtocolError } from "./hopperErrors.js";
 
 export interface AddressedName {
   readonly address: string;

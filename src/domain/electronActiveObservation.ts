@@ -20,7 +20,9 @@ const deepLinkUrlSchema = z
   .refine((value) => {
     try {
       return new URL(value).protocol.length > 0;
-    } catch {
+    } catch (cause: unknown) {
+      // Invalid input fails the refinement.
+      void cause;
       return false;
     }
   }, "deep-link url must be an absolute URL");

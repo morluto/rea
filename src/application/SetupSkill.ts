@@ -59,7 +59,9 @@ export const canonicalSkillNeedsInstall = async (
     return (await canonicalSkillFiles(home)).some(
       ({ content, original }) => original !== content,
     );
-  } catch {
+  } catch (cause: unknown) {
+    // Unreadable skill state fails open to install so setup can repair it.
+    void cause;
     return true;
   }
 };
@@ -97,11 +99,14 @@ export const installCanonicalSkill = async (
       if ((await readFile(destination, "utf8")) !== content)
         throw new Error(`skill readback mismatch: ${destination}`);
     return "installed";
-  } catch {
+  } catch (cause: unknown) {
+    // Install failure preserves the original error outcome; report cause inline.
+    void cause;
     try {
       await restoreSkillFiles(changed);
-    } catch {
+    } catch (restoreCause: unknown) {
       // Per-file backups remain beside changed files for operator recovery.
+      void restoreCause;
     }
     return "failed";
   }

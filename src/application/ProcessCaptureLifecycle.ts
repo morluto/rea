@@ -362,7 +362,8 @@ export const releaseProcessResources = async (options: {
   let failure: string | undefined;
   try {
     await options.renderer?.dispose();
-  } catch {
+  } catch (cause: unknown) {
+    void cause;
     failure ??= "terminal renderer cleanup failed";
   }
   if (options.terminal !== undefined && host.platform !== "win32") {
@@ -377,7 +378,8 @@ export const releaseProcessResources = async (options: {
   }
   try {
     await host.removeTemporaryRoot(options.temporaryRoot);
-  } catch {
+  } catch (cause: unknown) {
+    void cause;
     failure ??= "temporary process root cleanup failed";
   }
   return failure;

@@ -8,9 +8,9 @@ import {
 import {
   AnalysisInputError,
   AnalysisProtocolError,
-  ArtifactOperationError,
-  type AnalysisError,
-} from "../domain/errors.js";
+} from "../domain/analysisErrorCore.js";
+import { ArtifactOperationError } from "../domain/artifactOperationError.js";
+import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../domain/result.js";

@@ -353,7 +353,9 @@ export const systemDoctorHost = (
             )
           ).stdout.trim();
           return `${prefix}/Hopper Disassembler.app/Contents/MacOS/hopper`;
-        } catch {
+        } catch (cause: unknown) {
+          // best-effort cleanup: optional Homebrew probing; absence means uninstalled.
+          void cause;
           return undefined;
         }
       });
@@ -373,7 +375,9 @@ export const systemDoctorHost = (
             })
           ).stdout,
         );
-      } catch {
+      } catch (cause: unknown) {
+        // best-effort cleanup: optional version probing; failure means unavailable.
+        void cause;
         return undefined;
       }
     },
@@ -385,7 +389,9 @@ export const systemDoctorHost = (
           (await hostExecFileOutput(command, arguments_, commandEnvironment))
             .stdout,
         );
-      } catch {
+      } catch (cause: unknown) {
+        // best-effort cleanup: optional path probing; failure means none found.
+        void cause;
         return [];
       }
     },
@@ -404,7 +410,9 @@ const readMacosVersion = async (
 ): Promise<string | undefined> => {
   try {
     return (await run("sw_vers", ["-productVersion"], options)).stdout.trim();
-  } catch {
+  } catch (cause: unknown) {
+    // best-effort cleanup: optional OS version probing; failure means unknown.
+    void cause;
     return undefined;
   }
 };
@@ -420,7 +428,9 @@ const executableAvailable = async (
     if (platform !== "linux") return true;
     const linked = await run("ldd", [path], options);
     return linuxSharedLibrariesAvailable(`${linked.stdout}\n${linked.stderr}`);
-  } catch {
+  } catch (cause: unknown) {
+    // best-effort cleanup: optional executable probing; failure means unavailable.
+    void cause;
     return false;
   }
 };
@@ -444,8 +454,9 @@ const manualHopperPaths = async (
         if (entry.isDirectory() && /^Hopper.*\.app$/i.test(entry.name))
           paths.push(join(root, entry.name, "Contents/MacOS/hopper"));
       }
-    } catch {
+    } catch (cause: unknown) {
       // A missing or unreadable optional application directory is not fatal.
+      void cause;
     }
   }
   return paths;
@@ -471,7 +482,9 @@ const installedSkillIdentity = async (
         /^\s{2}catalog_digest:\s*"([a-f0-9]{64})"\s*$/mu.exec(content)?.[1] ??
         null,
     };
-  } catch {
+  } catch (cause: unknown) {
+    // best-effort cleanup: optional skill probing; failure means unknown.
+    void cause;
     return undefined;
   }
 };

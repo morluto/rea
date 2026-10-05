@@ -20,10 +20,8 @@ import type { BinarySession } from "../../../src/application/BinarySession.js";
 import { composeBinarySession } from "../../../src/application/BinarySessionComposition.js";
 import { SessionProviderRouter } from "../../../src/application/SessionProviderRouter.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
-import {
-  AnalysisCancelledError,
-  ProviderAdapterError,
-} from "../../../src/domain/errors.js";
+import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
+import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { err, ok } from "../../../src/domain/result.js";
 
 type DeclaredOperation = Exclude<AnalysisOperation, "health">;

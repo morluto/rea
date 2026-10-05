@@ -7,7 +7,7 @@ import {
   parseEvidence,
   type Evidence,
 } from "../domain/evidence.js";
-import { EvidenceIntegrityError } from "../domain/errors.js";
+import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import { err } from "../domain/result.js";
 import { compareFunctions } from "../domain/functionComparison.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";

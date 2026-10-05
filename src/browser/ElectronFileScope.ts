@@ -10,7 +10,9 @@ export const authorizedElectronFile = async (
   let url: URL;
   try {
     url = new URL(value);
-  } catch {
+  } catch (cause: unknown) {
+    // Non-URL input cannot authorize a local file.
+    void cause;
     return undefined;
   }
   if (
@@ -23,7 +25,9 @@ export const authorizedElectronFile = async (
   let path: string;
   try {
     path = fileURLToPath(url);
-  } catch {
+  } catch (cause: unknown) {
+    // Unconvertible file URLs cannot authorize a local file.
+    void cause;
     return undefined;
   }
   if (!isAbsolute(path) || path.includes("\0")) return undefined;
@@ -31,7 +35,9 @@ export const authorizedElectronFile = async (
   try {
     if (!(await stat(path)).isFile()) return undefined;
     canonical = await realpath(path);
-  } catch {
+  } catch (cause: unknown) {
+    // Missing or unreadable files cannot authorize a local file.
+    void cause;
     return undefined;
   }
   return canonical;

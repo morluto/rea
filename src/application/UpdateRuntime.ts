@@ -85,7 +85,9 @@ export const detectNpmInstallation = async (
   let canonicalPackageRoot: string;
   try {
     canonicalPackageRoot = await host.canonicalPath(packageRoot);
-  } catch {
+  } catch (cause: unknown) {
+    // best-effort cleanup: optional install-location probing; unknown means not npm-managed.
+    void cause;
     return undefined;
   }
   try {
@@ -99,8 +101,9 @@ export const detectNpmInstallation = async (
         ? undefined
         : { prefix, packageRoot: canonicalPackageRoot };
     }
-  } catch {
+  } catch (cause: unknown) {
     // The curl installer uses a Unix prefix that may differ from npm's current default.
+    void cause;
   }
   const nodeModules = dirname(canonicalPackageRoot);
   const library = dirname(nodeModules);

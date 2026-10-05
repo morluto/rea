@@ -3,8 +3,8 @@ import { z } from "zod";
 import {
   AnalysisInputError,
   AnalysisProtocolError,
-  type AnalysisError,
-} from "../domain/errors.js";
+} from "../domain/analysisErrorCore.js";
+import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   createEvidence,
   type Evidence,

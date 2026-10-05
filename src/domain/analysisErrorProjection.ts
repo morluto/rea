@@ -1,31 +1,34 @@
 import type { JsonValue } from "./jsonValue.js";
-import {
-  AnalysisCancelledError,
-  AnalysisCapabilityUnavailableError,
-  AnalysisInputError,
-  AnalysisTimeoutError,
-  ArtifactOperationError,
-  BinaryTargetError,
-  BrowserObservationError,
-  EvidenceFileError,
-  EvidenceReferenceError,
-  HopperCancelledError,
-  HopperProcessError,
-  HopperRemoteError,
-  HopperTimeoutError,
-  ProviderAdapterError,
-  ProviderSelectionError,
-  UnknownRegistryError,
-  type AnalysisError,
-  type AnalysisErrorProjection,
-  type AnalysisErrorTag,
-} from "./errors.js";
+
 import {
   analysisErrorCategory,
   analysisErrorRemediationAction,
   analysisErrorUserMessage,
   assertKnownAnalysisErrorTag,
 } from "./analysisErrorPresentation.js";
+import {
+  AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
+  AnalysisInputError,
+  AnalysisTimeoutError,
+} from "./analysisErrorCore.js";
+import { ArtifactOperationError } from "./artifactOperationError.js";
+import { BinaryTargetError } from "./configurationErrors.js";
+import { BrowserObservationError } from "./browserObservationError.js";
+import { EvidenceFileError, EvidenceReferenceError } from "./evidenceErrors.js";
+import {
+  HopperCancelledError,
+  HopperProcessError,
+  HopperRemoteError,
+  HopperTimeoutError,
+} from "./hopperErrors.js";
+import { ProviderAdapterError } from "./providerAdapterError.js";
+import { ProviderSelectionError } from "./providerSelectionError.js";
+import { UnknownRegistryError } from "./unknownRegistryError.js";
+import {
+  type AnalysisError,
+  type AnalysisErrorTag,
+} from "./analysisErrorBase.js";
 
 /** Project expected failures into exhaustive, secret-safe caller fields. */
 export const projectAnalysisError = (
@@ -342,3 +345,40 @@ const RETRYABLE_CODES: ReadonlySet<AnalysisErrorProjection["code"]> = new Set([
   "revision_conflict",
   "provider_unavailable",
 ]);
+
+export interface AnalysisErrorProjection extends Readonly<
+  Record<string, JsonValue>
+> {
+  readonly code:
+    | "invalid_request"
+    | "unreadable_output"
+    | "capability_unavailable"
+    | "provider_unavailable"
+    | "provider_timeout"
+    | "cancelled"
+    | "artifact_integrity_mismatch"
+    | "artifact_operation_failed"
+    | "evidence_integrity_mismatch"
+    | "truncated"
+    | "process_capture_failed"
+    | "cleanup_incomplete"
+    | "revision_conflict"
+    | "configuration_invalid"
+    | "target_unavailable"
+    | "execution_failure";
+  readonly category:
+    | "invalid_input"
+    | "unsupported_provider"
+    | "integrity_mismatch"
+    | "truncated"
+    | "cancelled"
+    | "timeout"
+    | "unavailable"
+    | "execution_failure";
+  readonly message: string;
+  readonly retryable: boolean;
+  readonly remediation: Readonly<{
+    action: string;
+  }>;
+  readonly details?: Readonly<Record<string, JsonValue>>;
+}

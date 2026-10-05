@@ -7,7 +7,7 @@ import {
   HopperCancelledError,
   HopperProcessError,
   HopperStartError,
-} from "../domain/errors.js";
+} from "../domain/hopperErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import { execFileOutput } from "../process/ExecFileOutput.js";
@@ -449,7 +449,9 @@ const processIsRunning = async (executablePath: string): Promise<boolean> => {
     return processes.stdout
       .split("\n")
       .some((command) => command.trim() === executablePath);
-  } catch {
+  } catch (cause: unknown) {
+    // best-effort cleanup: optional process probing; failure means not running.
+    void cause;
     return false;
   }
 };

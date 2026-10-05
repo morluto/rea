@@ -1,5 +1,5 @@
-import { ProviderAdapterError } from "./errors.js";
 import type { JsonValue } from "./jsonValue.js";
+import { ProviderAdapterError } from "./providerAdapterError.js";
 
 /** Provider resources could not be proven closed after bounded cleanup. */
 export class ProviderCleanupError extends ProviderAdapterError {

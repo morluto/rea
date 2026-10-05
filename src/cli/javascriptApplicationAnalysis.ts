@@ -1,5 +1,5 @@
 import { analyzeJavaScriptApplication } from "../application/JavaScriptApplicationService.js";
-import { projectAnalysisError } from "../domain/errors.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 
 /** Execute the shared one-shot CLI boundary for static JavaScript analysis. */

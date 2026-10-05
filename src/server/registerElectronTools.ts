@@ -13,7 +13,7 @@ import { reconcileJavaScriptRuntimeEvidenceValidated } from "../application/Java
 import type { ProgressReporter } from "../application/ProgressReporter.js";
 import { ELECTRON_TOOL_CONTRACTS } from "../contracts/electronToolContracts.js";
 import type { ToolContract } from "../contracts/toolContracts.js";
-import type { AnalysisError } from "../domain/errors.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { Result } from "../domain/result.js";
 import { inspectElectronPageInputSchema } from "../domain/electronObservation.js";

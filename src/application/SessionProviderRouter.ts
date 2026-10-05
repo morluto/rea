@@ -7,10 +7,10 @@ import type { BinaryTarget } from "../domain/binaryTarget.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
-  ProviderAdapterError,
-  ProviderSelectionError,
-  type AnalysisError,
-} from "../domain/errors.js";
+} from "../domain/analysisErrorCore.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { ProviderSelectionError } from "../domain/providerSelectionError.js";
+import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type {

@@ -23,9 +23,9 @@ import type { BinaryTarget } from "../domain/binaryTarget.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
-  EvidenceIntegrityError,
-  ProviderAdapterError,
-} from "../domain/errors.js";
+} from "../domain/analysisErrorCore.js";
+import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type {

@@ -60,7 +60,8 @@ const captureScreenshot = async (page: Page) => {
         data_base64: bytes.toString("base64"),
       },
     };
-  } catch {
+  } catch (cause: unknown) {
+    void cause;
     return missing("screenshot capture failed");
   }
 };
@@ -72,7 +73,8 @@ const captureDom = async (input: {
   const { page, secrets } = input;
   try {
     return textArtifact(secrets.redact(await page.content()));
-  } catch {
+  } catch (cause: unknown) {
+    void cause;
     return missing("DOM capture failed");
   }
 };
@@ -85,7 +87,8 @@ const captureAccessibility = async (input: {
   try {
     const text = await page.locator("html").ariaSnapshot();
     return textArtifact(secrets.redact(text));
-  } catch {
+  } catch (cause: unknown) {
+    void cause;
     return missing("accessibility capture failed");
   }
 };
@@ -126,7 +129,8 @@ const captureHistory = async (page: Page, secrets: BrowserScenarioSecrets) => {
       })),
     };
     return { state: "captured" as const, value };
-  } catch {
+  } catch (cause: unknown) {
+    void cause;
     return missing("history capture failed");
   }
 };
@@ -169,7 +173,8 @@ const captureStorage = async (input: {
       })),
     };
     return { state: "captured" as const, value };
-  } catch {
+  } catch (cause: unknown) {
+    void cause;
     return missing("storage capture failed");
   }
 };

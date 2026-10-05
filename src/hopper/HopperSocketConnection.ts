@@ -1,6 +1,9 @@
 import { createConnection, type Socket } from "node:net";
 
-import { HopperCancelledError, HopperStartError } from "../domain/errors.js";
+import {
+  HopperCancelledError,
+  HopperStartError,
+} from "../domain/hopperErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 /** Open one abort-aware Hopper Unix-socket connection attempt. */

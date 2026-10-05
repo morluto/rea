@@ -358,7 +358,9 @@ const inspectInitializedPtyRoot = async (
   let observedRunId: string | undefined;
   try {
     observedRunId = await readProcessRunId(rootPid);
-  } catch {
+  } catch (cause: unknown) {
+    // Unreadable run identity means the root cannot be attributed.
+    void cause;
     return undefined;
   }
   const after = await readRootIdentity(rootPid, signal);

@@ -1,8 +1,10 @@
 import type { Socket } from "node:net";
 
 import type { ProgressReporter } from "../application/ProgressReporter.js";
-import type { AnalysisError, HopperError } from "../domain/errors.js";
-import { HopperProcessError } from "../domain/errors.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import type { HopperError } from "../domain/hopperErrors.js";
+import { HopperProcessError } from "../domain/hopperErrors.js";
+
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -164,8 +166,9 @@ const stopProcess = async (
   );
   try {
     input.onDiagnostic?.(diagnostic);
-  } catch {
+  } catch (cause: unknown) {
     // Diagnostic consumers cannot change the already-observed cleanup result.
+    void cause;
   }
   input.logger.info(diagnostic, "Owned Hopper launcher shutdown completed");
   if (stopped.status !== "incomplete") {

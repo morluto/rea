@@ -2,10 +2,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { logCliCommand } from "../../src/cliLogging.js";
 import { silentLogger } from "../../src/logger.js";
-import {
-  ArtifactOperationError,
-  projectAnalysisError,
-} from "../../src/domain/errors.js";
+import { ArtifactOperationError } from "../../src/domain/artifactOperationError.js";
+import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { runSetup } from "../../src/application/Setup.js";
 import { isSetupFailure } from "../../src/application/SetupTypes.js";
 import {

@@ -5,7 +5,7 @@ import type {
   ListJavaScriptRuntimeTargetsInput,
   ObserveJavaScriptRuntimeInput,
 } from "../domain/javascriptRuntimeObservation.js";
-import type { AnalysisError } from "../domain/errors.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Result } from "../domain/result.js";
 
 /** Provider-neutral boundary for passive Node/Electron Inspector observation. */

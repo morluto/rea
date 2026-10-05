@@ -4,11 +4,9 @@ import type { BinaryTarget } from "../domain/binaryTarget.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import type { EvidenceBundle } from "../domain/evidenceBundle.js";
 import { evidenceBundleForTarget } from "../domain/evidenceBundle.js";
-import {
-  EvidenceIntegrityError,
-  type AnalysisError,
-  type UnknownRegistryError,
-} from "../domain/errors.js";
+import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
+import { type AnalysisError } from "../domain/analysisErrorBase.js";
+import { type UnknownRegistryError } from "../domain/unknownRegistryError.js";
 import type {
   RecordUnknownInput,
   ResidualUnknown,
@@ -188,10 +186,14 @@ export abstract class BinarySessionRecords {
       try {
         const notification = listener();
         if (notification !== undefined)
-          void notification.catch(() => undefined);
-      } catch {
+          void notification.catch((cause: unknown) => {
+            // best-effort cleanup: async observer notifications must not reject unhandled.
+            void cause;
+          });
+      } catch (cause: unknown) {
         // External resource observers are best-effort; one callback must not
         // make a committed evidence mutation appear to fail.
+        void cause;
       }
     }
   }

@@ -44,7 +44,9 @@ const normalizeRuntimeUrlPrefix = (value: string): string | null => {
   let url: URL;
   try {
     url = new URL(value);
-  } catch {
+  } catch (cause: unknown) {
+    // Invalid input is represented by the null return.
+    void cause;
     return null;
   }
   if (

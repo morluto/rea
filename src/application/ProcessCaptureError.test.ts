@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { projectAnalysisError } from "../domain/errors.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   ProcessCaptureError,
   processCaptureCancelled,

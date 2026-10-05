@@ -1,5 +1,5 @@
 import type { BinarySessionPort } from "../application/BinarySession.js";
-import { EvidenceIntegrityError } from "../domain/errors.js";
+import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import type { Evidence } from "../domain/evidence.js";
 import { ok, type Result } from "../domain/result.js";
 

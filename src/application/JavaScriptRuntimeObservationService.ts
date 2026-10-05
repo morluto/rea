@@ -2,10 +2,8 @@ import type { ExecutionOptions } from "./AnalysisProvider.js";
 import type { JavaScriptRuntimeObservationPort } from "./JavaScriptRuntimeObservationPort.js";
 import { createJavaScriptRuntimeObservationEvidence } from "./JavaScriptRuntimeObservationEvidence.js";
 import type { Evidence } from "../domain/evidence.js";
-import {
-  AnalysisCapabilityUnavailableError,
-  type AnalysisError,
-} from "../domain/errors.js";
+import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
+import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import type {
   ListJavaScriptRuntimeTargetsInput,
   ObserveJavaScriptRuntimeInput,

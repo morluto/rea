@@ -3,8 +3,8 @@ import { z } from "zod";
 import {
   AnalysisInputError,
   AnalysisProtocolError,
-  type AnalysisError,
-} from "../domain/errors.js";
+} from "../domain/analysisErrorCore.js";
+import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { queryJavaScriptSemanticGraph } from "../domain/javascriptSemanticQuery.js";

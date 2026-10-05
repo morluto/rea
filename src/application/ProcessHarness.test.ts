@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { processScenarioSchema } from "../domain/processScenario.js";
-import { AnalysisCapabilityUnavailableError } from "../domain/errors.js";
+import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import { captureProcessScenario } from "./ProcessHarness.js";
 import { settleProcessCaptureJournal } from "./ProcessCaptureLifecycle.js";
 import { processCaptureSchema } from "../domain/processCapture.js";

@@ -1,7 +1,5 @@
-import {
-  BrowserObservationError,
-  type BrowserObservationOperation,
-} from "../domain/errors.js";
+import { BrowserObservationError } from "../domain/browserObservationError.js";
+import { type BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { CdpConnection } from "./CdpConnection.js";
 import {
   cdpTargetWebSocket,

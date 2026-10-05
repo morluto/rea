@@ -861,7 +861,9 @@ const jsonSafeRecord = (value: Record<string, unknown>) =>
         if (serialized === undefined) return [];
         const parsed = jsonValueSchema.safeParse(JSON.parse(serialized));
         return parsed.success ? [[key, parsed.data]] : [];
-      } catch {
+      } catch (cause: unknown) {
+        // Unserializable entries are omitted from the record.
+        void cause;
         return [];
       }
     }),

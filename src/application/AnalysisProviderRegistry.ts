@@ -5,12 +5,12 @@ import {
 } from "../contracts/providerSelection.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import {
-  AnalysisCancelledError,
   ProviderSelectionError,
   type ProviderSelectionFailureReason,
   type ProviderSelectionRejection,
-} from "../domain/errors.js";
+} from "../domain/providerSelectionError.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type {

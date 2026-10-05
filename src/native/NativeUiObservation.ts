@@ -11,9 +11,9 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
-  ProviderAdapterError,
-  type AnalysisError,
-} from "../domain/errors.js";
+} from "../domain/analysisErrorCore.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { createNativeUiHelperRuntime } from "./NativeUiHelperRuntime.js";
 
@@ -190,7 +190,9 @@ const observeWithHelper = async (
           signal.addEventListener("abort", abort, { once: true });
           if (signal.aborted) abort();
         });
-      } catch {
+      } catch (cause: unknown) {
+        // Cancellation is recorded as a cancelled outcome.
+        void cause;
         results.push({
           index,
           kind: step.kind,

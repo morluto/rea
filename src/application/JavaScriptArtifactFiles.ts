@@ -232,7 +232,9 @@ const readText = async (
       included: true,
       value: new TextDecoder("utf-8", { fatal: true }).decode(bytes),
     };
-  } catch {
+  } catch (cause: unknown) {
+    // Non-UTF8 bytes are counted; the fixed reason preserves the schema.
+    void cause;
     context.invalidUtf8 += 1;
     return { included: false, reason: "invalid-utf8" };
   }

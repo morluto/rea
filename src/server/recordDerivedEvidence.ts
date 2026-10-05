@@ -1,5 +1,5 @@
 import type { BinarySessionPort } from "../application/BinarySession.js";
-import type { AnalysisError } from "../domain/errors.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { RecordUnknownInput } from "../domain/residualUnknown.js";
 import { ok, type Result } from "../domain/result.js";

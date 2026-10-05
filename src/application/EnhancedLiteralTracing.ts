@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { AnalysisOperation } from "./AnalysisProvider.js";
-import { AnalysisOutputError, type AnalysisError } from "../domain/errors.js";
+import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
+import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type {

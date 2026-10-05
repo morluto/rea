@@ -7,10 +7,8 @@ import {
   type ObjcSwiftMetadata,
 } from "../domain/objcSwiftMetadata.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
-import {
-  AnalysisCancelledError,
-  EvidenceIntegrityError,
-} from "../domain/errors.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import { decodeSwiftClassVtables } from "./AppleSwiftVtables.js";
 import { createObjcProtocolReader } from "./AppleObjcProtocols.js";
 
@@ -164,8 +162,9 @@ export const decodeAppleDispatchMetadata = (
         let fileOffset: number | null = null;
         try {
           fileOffset = offset(target);
-        } catch {
-          /* serialized target remains unresolved */
+        } catch (cause: unknown) {
+          // best-effort cleanup: serialized target remains unresolved.
+          void cause;
         }
         if (admit())
           result.relative_pointers.push({
@@ -206,8 +205,9 @@ export const decodeAppleDispatchMetadata = (
             "Method implementation is not in an executable segment",
           );
         implementationLocation = location(implementation);
-      } catch {
-        /* external/chained pointers remain unresolved */
+      } catch (cause: unknown) {
+        // best-effort cleanup: external/chained pointers remain unresolved.
+        void cause;
       }
       result.objc_dispatch_implementations.push({
         class_name: className,
@@ -271,7 +271,9 @@ export const decodeAppleDispatchMetadata = (
         superclassName = string(
           pointer((pointer(superclass + 32n) & ~7n) + 24n),
         );
-      } catch {
+      } catch (cause: unknown) {
+        // Superclass resolution failure is recorded; the cause adds no identity.
+        void cause;
         failures.push(
           `Superclass pointer ${hex(superclass)} of ${name} requires unsupported binding/fixup resolution`,
         );
@@ -296,7 +298,9 @@ export const decodeAppleDispatchMetadata = (
         let value: number | null = null;
         try {
           value = u32(encodedOffset);
-        } catch {
+        } catch (cause: unknown) {
+          // Unresolved offsets are recorded; the cause adds no identity.
+          void cause;
           failures.push(`Unresolved ivar offset pointer ${hex(encodedOffset)}`);
         }
         result.objc_ivars.push({

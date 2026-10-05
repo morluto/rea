@@ -35,7 +35,10 @@ export const createGhidraTargetSnapshot = async (
       );
     return { path: snapshotPath, sha256: observedSha256 };
   } catch (cause: unknown) {
-    await rm(snapshotPath, { force: true }).catch(() => undefined);
+    await rm(snapshotPath, { force: true }).catch((cause: unknown) => {
+      // best-effort cleanup: snapshot removal must not mask the copy failure.
+      void cause;
+    });
     throw cause;
   }
 };

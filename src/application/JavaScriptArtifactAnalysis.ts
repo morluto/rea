@@ -157,7 +157,8 @@ const parsePackage = (
   let value: unknown;
   try {
     value = JSON.parse(file.text.value);
-  } catch {
+  } catch (cause: unknown) {
+    void cause;
     return invalidPackage(file, "package.json is not valid JSON.");
   }
   if (!isRecord(value))
@@ -232,7 +233,8 @@ const parseSourceMap = (
   let value: unknown;
   try {
     value = JSON.parse(file.text.value);
-  } catch {
+  } catch (cause: unknown) {
+    void cause;
     return invalidSourceMap(file, "Source map is not valid JSON.");
   }
   const maps = flattenSourceMaps(value);

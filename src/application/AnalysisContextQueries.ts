@@ -6,8 +6,8 @@ import type {
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
-  type AnalysisError,
-} from "../domain/errors.js";
+} from "../domain/analysisErrorCore.js";
+import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { parseDocuments } from "../domain/hopperValues.js";
 import { err, ok, type Result } from "../domain/result.js";

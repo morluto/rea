@@ -3,7 +3,10 @@ import {
   serializeAnalysisSnapshot,
   type AnalysisSnapshot,
 } from "../domain/analysisSnapshot.js";
-import { EvidenceFileError, EvidenceIntegrityError } from "../domain/errors.js";
+import {
+  EvidenceFileError,
+  EvidenceIntegrityError,
+} from "../domain/evidenceErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readJsonFile, writeTextFile } from "./JsonFiles.js";
 
