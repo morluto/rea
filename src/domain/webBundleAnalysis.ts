@@ -70,6 +70,12 @@ const sourceMapSchema = z.union([
   z.object({
     ...sourceMapContextShape,
     ...parsedSourceMapShape,
+    status: z.literal("partial"),
+    limitation: z.string(),
+  }),
+  z.object({
+    ...sourceMapContextShape,
+    ...parsedSourceMapShape,
     status: z.enum(["fetch_failed", "invalid", "policy_filtered"]),
     artifact: z.null(),
     original_sources: emptyArraySchema,
@@ -104,15 +110,18 @@ export const webSourceMapsSchema = z
         message: "Source-map coverage counts are inconsistent",
       });
     const statuses = sourceMaps.items.map(({ status }) => status);
-    const included = statuses.filter((status) => status === "included").length;
+    const retained = statuses.filter(
+      (status) => status === "included" || status === "partial",
+    ).length;
     const allowedStatuses =
       sourceMaps.items.length === 0
         ? ["not_requested", "unavailable"]
-        : included === sourceMaps.items.length
-          ? ["included"]
-          : included > 0
-            ? ["partial"]
-            : ["unavailable"];
+        : retained === 0
+          ? ["unavailable"]
+          : retained === sourceMaps.items.length &&
+              !statuses.includes("partial")
+            ? ["included"]
+            : ["partial"];
     if (!allowedStatuses.includes(sourceMaps.status))
       context.addIssue({
         code: "custom",

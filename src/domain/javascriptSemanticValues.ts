@@ -17,6 +17,7 @@ import {
   propertyName,
   stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
+import { semanticStaticPropertyName } from "./javascriptAstValues.js";
 import {
   semanticAmbiguousProvenance,
   semanticLocalProvenance,
@@ -454,10 +455,8 @@ const mergeValues = (
 const memberKey = (
   node: t.MemberExpression | t.OptionalMemberExpression,
 ): string | number | undefined => {
-  if (!node.computed) return propertyName(node.property) || undefined;
-  if (t.isStringLiteral(node.property) || t.isNumericLiteral(node.property))
-    return node.property.value;
-  return undefined;
+  const name = semanticStaticPropertyName(node.property, node.computed);
+  return name === "" ? undefined : name;
 };
 
 const nestedContext = (

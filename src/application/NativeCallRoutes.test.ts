@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readNativeCallRoutes } from "./NativeCallRoutes.js";
 import { createAnalysisExecution } from "./AnalysisProvider.js";
-import { ghidraReferenceEdge } from "../domain/hopperValues.fixture.js";
+import { ghidraReferenceEdge } from "../domain/ghidraValues.fixture.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok } from "../domain/result.js";
 import { AnalysisCancelledError } from "../domain/errors.js";

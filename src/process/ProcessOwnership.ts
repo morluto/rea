@@ -65,6 +65,7 @@ export type ProcessLineageObservation =
 
 /** Narrow operating-system seam used to inspect processes and signal groups. */
 export interface ProcessOwnershipHost {
+  readonly platform?: NodeJS.Platform;
   listProcesses(): Promise<readonly ProcessTableEntry[]>;
   environment(pid: number): Promise<Readonly<Record<string, string>>>;
   signalGroup(processGroupId: number, signal: NodeJS.Signals): void;
@@ -79,6 +80,7 @@ export interface WindowsProcessTreeHost {
 interface ProcessOwnershipValidationFailure {
   readonly pid: number;
   readonly reason: "environment-unreadable" | "run-token-mismatch";
+  readonly diagnostic?: string;
 }
 
 /** Cleanup outcome with per-member diagnostics when ownership is uncertain. */
@@ -90,6 +92,7 @@ export type ProcessCleanupResult =
       readonly failures?: readonly {
         readonly pid: number;
         readonly reason: "environment-unreadable" | "run-token-mismatch";
+        readonly diagnostic?: string;
       }[];
     };
 
@@ -157,13 +160,19 @@ export const parseProcessEnvironment = (
       }),
   );
 
-const systemHost: ProcessOwnershipHost = {
+/** Create the operating-system process inspector for an explicit host context. */
+export const createSystemProcessOwnershipHost = (
+  platform: NodeJS.Platform = process.platform,
+  hostEnvironment: NodeJS.ProcessEnv = process.env,
+): ProcessOwnershipHost => ({
+  platform,
   async listProcesses() {
-    if (process.platform === "win32") return [];
-    const { stdout } = await execFileOutput("ps", [
-      "-axo",
-      "pid=,ppid=,pgid=,stat=,command=",
-    ]);
+    if (platform === "win32") return [];
+    const { stdout } = await execFileOutput(
+      "ps",
+      ["-axo", "pid=,ppid=,pgid=,stat=,command="],
+      { env: hostEnvironment },
+    );
     return stdout
       .split("\n")
       .map((line) => /\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.*)/u.exec(line))
@@ -177,25 +186,28 @@ const systemHost: ProcessOwnershipHost = {
       }));
   },
   async environment(pid) {
-    if (process.platform === "linux") {
+    if (platform === "linux")
       return parseProcessEnvironment(
         await readFile(`/proc/${pid}/environ`, "utf8"),
       );
-    }
-    const { stdout } = await execFileOutput("ps", ["eww", "-p", String(pid)]);
-    const environment: Record<string, string> = {};
+    const { stdout } = await execFileOutput("ps", ["eww", "-p", String(pid)], {
+      env: hostEnvironment,
+    });
+    const observedEnvironment: Record<string, string> = {};
     for (const match of stdout.matchAll(
       /(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=([^\s]*)/gu,
     )) {
       const name = match[1];
-      if (name !== undefined) environment[name] = match[2] ?? "";
+      if (name !== undefined) observedEnvironment[name] = match[2] ?? "";
     }
-    return environment;
+    return observedEnvironment;
   },
   signalGroup(processGroupId, signal) {
     process.kill(-processGroupId, signal);
   },
-};
+});
+
+const systemHost = createSystemProcessOwnershipHost();
 
 const systemWindowsProcessTreeHost: WindowsProcessTreeHost = {
   async terminateTree(rootPid) {
@@ -230,10 +242,17 @@ export const cleanupOwnedProcessGroup = async (
   ownership: OwnedProcessGroup,
   host: ProcessOwnershipHost = systemHost,
 ): Promise<ProcessCleanupResult> => {
-  const processes = await readLiveProcessTable(host);
-  if (processes === undefined)
-    return { cleaned: false, reason: "process table could not be inspected" };
-  const plan = await createOwnedCleanupPlan(ownership, processes, host);
+  const processTable = await readLiveProcessTable(host);
+  if (!processTable.available)
+    return {
+      cleaned: false,
+      reason: `process table could not be inspected: ${processTable.reason}`,
+    };
+  const plan = await createOwnedCleanupPlan(
+    ownership,
+    processTable.processes,
+    host,
+  );
   if ("cleaned" in plan) return plan;
   let signaled = false;
   for (const processGroupId of plan.signalOrder) {
@@ -251,7 +270,10 @@ export const cleanupOwnedProcessGroup = async (
       const code =
         cause instanceof Error && "code" in cause ? cause.code : undefined;
       if (code !== "ESRCH")
-        return { cleaned: false, reason: "owned process group signal failed" };
+        return {
+          cleaned: false,
+          reason: `owned process group signal failed: ${errorMessage(cause)}`,
+        };
     }
   }
   return { cleaned: true, signaled };
@@ -262,10 +284,17 @@ export const verifyNoTokenOwnedProcesses = async (
   runId: string,
   host: ProcessOwnershipHost = systemHost,
 ): Promise<ProcessCleanupResult> => {
-  const processes = await readLiveProcessTable(host);
-  if (processes === undefined)
-    return { cleaned: false, reason: "process table could not be inspected" };
-  const scan = await scanTokenOwnedProcesses(processes, runId, host);
+  const processTable = await readLiveProcessTable(host);
+  if (!processTable.available)
+    return {
+      cleaned: false,
+      reason: `process table could not be inspected: ${processTable.reason}`,
+    };
+  const scan = await scanTokenOwnedProcesses(
+    processTable.processes,
+    runId,
+    host,
+  );
   if (scan.failures.length > 0) return cleanupValidationFailure(scan.failures);
   return scan.owned.length === 0
     ? { cleaned: true, signaled: false }
@@ -274,11 +303,20 @@ export const verifyNoTokenOwnedProcesses = async (
 
 const readLiveProcessTable = async (
   host: ProcessOwnershipHost,
-): Promise<readonly ProcessTableEntry[] | undefined> => {
+): Promise<
+  | {
+      readonly available: true;
+      readonly processes: readonly ProcessTableEntry[];
+    }
+  | { readonly available: false; readonly reason: string }
+> => {
   try {
-    return liveProcesses(await host.listProcesses());
-  } catch {
-    return undefined;
+    return {
+      available: true,
+      processes: liveProcesses(await host.listProcesses()),
+    };
+  } catch (cause: unknown) {
+    return { available: false, reason: errorMessage(cause) };
   }
 };
 
@@ -368,10 +406,10 @@ const revalidateOwnedProcessGroup = async (
       ({ processGroupId: observedGroupId }) =>
         observedGroupId === processGroupId,
     );
-  } catch {
+  } catch (cause: unknown) {
     return {
       cleaned: false,
-      reason: "process ownership could not be revalidated",
+      reason: `process ownership could not be revalidated: ${errorMessage(cause)}`,
     };
   }
   const failures = await processOwnershipFailures(
@@ -422,12 +460,23 @@ const processOwnershipFailures = async (
     try {
       if ((await host.environment(member.pid)).REA_PROCESS_RUN_ID !== runId)
         failures.push({ pid: member.pid, reason: "run-token-mismatch" });
-    } catch {
+    } catch (cause: unknown) {
       try {
         const live = liveProcesses(await host.listProcesses());
         if (!live.some(({ pid }) => pid === member.pid)) continue;
-      } catch {}
-      failures.push({ pid: member.pid, reason: "environment-unreadable" });
+      } catch (recheckCause: unknown) {
+        failures.push({
+          pid: member.pid,
+          reason: "environment-unreadable",
+          diagnostic: `${errorMessage(cause)}; process liveness recheck failed: ${errorMessage(recheckCause)}`,
+        });
+        continue;
+      }
+      failures.push({
+        pid: member.pid,
+        reason: "environment-unreadable",
+        diagnostic: errorMessage(cause),
+      });
     }
   }
   return failures;
@@ -449,16 +498,30 @@ const scanTokenOwnedProcesses = async (
     try {
       if ((await host.environment(process.pid)).REA_PROCESS_RUN_ID === runId)
         owned.push(process);
-    } catch {
+    } catch (cause: unknown) {
       try {
         const live = liveProcesses(await host.listProcesses());
         if (!live.some(({ pid }) => pid === process.pid)) continue;
-      } catch {}
-      failures.push({ pid: process.pid, reason: "environment-unreadable" });
+      } catch (recheckCause: unknown) {
+        failures.push({
+          pid: process.pid,
+          reason: "environment-unreadable",
+          diagnostic: `${errorMessage(cause)}; process liveness recheck failed: ${errorMessage(recheckCause)}`,
+        });
+        continue;
+      }
+      failures.push({
+        pid: process.pid,
+        reason: "environment-unreadable",
+        diagnostic: errorMessage(cause),
+      });
     }
   }
   return { owned, failures };
 };
+
+const errorMessage = (cause: unknown): string =>
+  cause instanceof Error ? cause.message : String(cause);
 
 /** Observe one group without signaling it, failing closed on identity doubt. */
 export const observeOwnedProcessGroup = async (

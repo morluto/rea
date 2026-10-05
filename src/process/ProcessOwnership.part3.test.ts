@@ -67,4 +67,71 @@ describe("owned process-group cleanup discovery", () => {
       },
     });
   });
+  it("omits a descendant that exits while lineage is validated", async () => {
+    const launcher = {
+      pid: 100,
+      parentPid: 1,
+      processGroupId: 100,
+      state: "S",
+      command: "root",
+    };
+    const child = {
+      pid: 101,
+      parentPid: 100,
+      processGroupId: 101,
+      state: "S",
+      command: "child",
+    };
+    const processes = [launcher, child];
+    const listProcesses = vi
+      .fn<ProcessOwnershipHost["listProcesses"]>()
+      .mockResolvedValueOnce(processes)
+      .mockResolvedValueOnce([launcher]);
+    const host: ProcessOwnershipHost = {
+      listProcesses,
+      environment: (pid) =>
+        pid === 101
+          ? Promise.reject(new Error("process exited during environment read"))
+          : Promise.resolve({ REA_PROCESS_RUN_ID: "run-token" }),
+      signalGroup: vi.fn(),
+    };
+
+    await expect(observeOwnedProcessLineage(ownership, host)).resolves.toEqual({
+      status: "verified",
+      observedAt: expect.any(String),
+      lineage: {
+        runId: "run-token",
+        launcherPid: 100,
+        launcherParentPid: 1,
+        processGroupId: 100,
+        descendants: [],
+      },
+    });
+  });
+
+  it("does not publish lineage when the launcher exits during validation", async () => {
+    const launcher = {
+      pid: 100,
+      parentPid: 1,
+      processGroupId: 100,
+      state: "S",
+      command: "root",
+    };
+    const listProcesses = vi
+      .fn<ProcessOwnershipHost["listProcesses"]>()
+      .mockResolvedValueOnce([launcher])
+      .mockResolvedValueOnce([]);
+    const host: ProcessOwnershipHost = {
+      listProcesses,
+      environment: () => Promise.reject(new Error("launcher exited")),
+      signalGroup: vi.fn(),
+    };
+
+    await expect(
+      observeOwnedProcessLineage(ownership, host),
+    ).resolves.toMatchObject({
+      status: "unavailable",
+      reason: "owned launcher exited during lineage validation",
+    });
+  });
 });

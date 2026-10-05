@@ -141,15 +141,34 @@ const collectDefinitions = (
   const stack: JavaScriptSemanticScopeState[] = [
     currentSemanticScope(state.scopes),
   ];
-  const openedScopes = new WeakSet<t.Node>();
+  const openedScopes = new WeakMap<t.Node, number>();
   traverseJavaScriptAst(program, {
     enter: (node, parent) => {
-      const parentScope = currentSemanticScope(stack);
+      let parentScope = currentSemanticScope(stack);
+      if (
+        parent !== null &&
+        t.isWithStatement(parent) &&
+        parent.body === node
+      ) {
+        const dynamicScope: JavaScriptSemanticScopeState = {
+          scopeId: `${semanticScopeId("block", parent)}:with`,
+          parentScopeId: parentScope.scopeId,
+          kind: "block",
+          location: range(parent),
+          bindingsComplete: false,
+          bindings: new Map(),
+        };
+        state.scopes.push(dynamicScope);
+        state.scopesById.set(dynamicScope.scopeId, dynamicScope);
+        stack.push(dynamicScope);
+        openedScopes.set(node, 1);
+        parentScope = dynamicScope;
+      }
       bindOuterDeclaration(node, parentScope, state);
       const nested = nestedScope(node, parent, parentScope, state);
       if (nested !== undefined) {
         stack.push(nested);
-        openedScopes.add(node);
+        openedScopes.set(node, (openedScopes.get(node) ?? 0) + 1);
       }
       const scope = currentSemanticScope(stack);
       state.scopeByNode.set(node, scope);
@@ -163,7 +182,8 @@ const collectDefinitions = (
       bindInnerDeclaration(node, parent, scope, state);
     },
     exit: (node) => {
-      if (openedScopes.has(node)) stack.pop();
+      for (let count = openedScopes.get(node) ?? 0; count > 0; count--)
+        stack.pop();
     },
   });
 };
@@ -243,13 +263,23 @@ const nestedScope = (
   parentScope: JavaScriptSemanticScopeState,
   state: JavaScriptSemanticAnalysisState,
 ): JavaScriptSemanticScopeState | undefined => {
+  const switchOwner =
+    t.isSwitchCase(node) && parent !== null && t.isSwitchStatement(parent)
+      ? parent
+      : undefined;
+  if (switchOwner !== undefined) {
+    const existing = state.scopesById.get(
+      semanticScopeId("block", switchOwner),
+    );
+    if (existing !== undefined) return existing;
+  }
   const kind = scopeKind(node, parent);
   if (kind === undefined) return undefined;
   const scope: JavaScriptSemanticScopeState = {
-    scopeId: semanticScopeId(kind, node),
+    scopeId: semanticScopeId(kind, switchOwner ?? node),
     parentScopeId: parentScope.scopeId,
     kind,
-    location: range(node),
+    location: range(switchOwner ?? node),
     bindingsComplete: true,
     bindings: new Map(),
   };
@@ -271,6 +301,12 @@ const scopeKind = (
     t.isForInStatement(node)
   )
     return "block";
+  // A switch body is one lexical scope shared by all its cases, so `let` in
+  // two cases must resolve to one binding rather than collide or leak.
+  if (t.isSwitchCase(node)) return "block";
+  // Each `static {}` block is its own lexical scope; otherwise a `let` in two
+  // static blocks would collide in the enclosing class scope.
+  if (t.isStaticBlock(node)) return "static-block";
   if (
     t.isBlockStatement(node) &&
     !(parent !== null && t.isFunction(parent) && parent.body === node)

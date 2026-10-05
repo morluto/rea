@@ -54,7 +54,7 @@ describe("bundle comparison", () => {
     expect(result.left_bundle_sha256).toBe(result.right_bundle_sha256);
   });
 
-  it("classifies explicit pairs and returns every membership change inline", () => {
+  it("classifies explicit pairs and leaves one-sided membership unresolved", () => {
     const oldRecord = evidence("old");
     const newRecord = evidence("new");
     const removed = evidence("removed");
@@ -71,19 +71,24 @@ describe("bundle comparison", () => {
     const repeated = compareBundles(left, right, pairs);
     expect(first).toEqual(repeated);
     expect(first).toMatchObject({
-      status: "changed",
+      status: "unknown",
       summary: {
-        records_added: 1,
-        records_removed: 1,
+        records_added: 0,
+        records_removed: 0,
         records_changed: 1,
+        unresolved: 2,
       },
       changes: expect.arrayContaining([
         expect.objectContaining({ classification: "changed" }),
+        expect.objectContaining({
+          classification: "unknown",
+          conclusion_kind: "unresolved_branch",
+        }),
       ]),
     });
     expect(first.changes).toHaveLength(3);
     expect(first.limitations).toContain(
-      "One-sided membership proves only bundle inclusion or omission, not behavioral absence.",
+      "EvidenceBundle has no inventory completeness marker; one-sided membership remains unknown.",
     );
   });
 
@@ -176,12 +181,12 @@ describe("bundle comparison history", () => {
       [initial, advanced],
     );
     expect(compareBundles(initialBundle, advancedBundle)).toMatchObject({
-      status: "changed",
-      summary: { unknowns_advanced: 1, unresolved: 0 },
+      status: "unknown",
+      summary: { unknowns_advanced: 1, unresolved: 1 },
       changes: [
         expect.objectContaining({
           entity: "evidence",
-          classification: "added",
+          classification: "unknown",
         }),
         expect.objectContaining({
           entity: "residual_unknown",
@@ -193,14 +198,18 @@ describe("bundle comparison history", () => {
     const missing = compareBundles(initialBundle, absent);
     expect(missing).toMatchObject({
       status: "unknown",
-      summary: { unknowns_removed: 1, unresolved: 1 },
+      summary: {
+        unknowns_added: 0,
+        unknowns_removed: 0,
+        unresolved: 2,
+      },
     });
     expect(missing.changes).toContainEqual(
       expect.objectContaining({
-        classification: "removed",
+        classification: "unknown",
         conclusion_kind: "unresolved_branch",
         limitations: [
-          "A missing unknown history does not establish resolution.",
+          "EvidenceBundle has no inventory completeness marker; one-sided history membership remains unknown.",
         ],
       }),
     );

@@ -1,3 +1,5 @@
+// Fake-backed provider coverage; real Ghidra verification lives in
+// `npm run verify:ghidra` and its focused variants.
 import { describe, expect, it } from "vitest";
 
 import { parseConfig } from "../config.js";

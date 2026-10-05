@@ -10,7 +10,7 @@ REA development requires Node.js 24.18.x and npm 11.16.x. Real-Hopper verificati
 
 ```bash
 npm ci
-npm test
+npm run check:fast
 ```
 
 `npm ci` installs the exact dependencies and prepares the Husky hooks without
@@ -22,36 +22,43 @@ worktrees. After a package, lockfile, or managed-skill version change, run
 
 Keep dependencies flowing inward through the existing domain, contracts, provider, application, server, and adapter layers. Parse unknown values at process and protocol boundaries, model expected failures with `Result`, and preserve the canonical tool inventory defined by `TOOL_CONTRACTS` unless a deliberate contract change updates every verifier, generated catalog artifact, and snapshot. Prefer capability- and session-scoped tool advertisement over schema truncation.
 
-Before submitting a pull request, run:
+## Development feedback and PR verification
+
+For an ordinary edit, run the relevant regression and cached static checks:
 
 ```bash
-npm run check:pr
-npm run verify:package
-npm pack --dry-run
+npm run test:focused -- src/config.test.ts
+npm run check:fast
 ```
 
-`npm run check:fast` runs cached typecheck and lint for rapid local feedback.
-`npm run check` adds formatting, dead-code, and package-metadata freshness
-checks; use `npm run check:test` when the complete test suite is relevant.
-Pre-commit formats then lints staged source files, and pre-push runs
-`check:fast`. `check:pr` additionally renders API documentation and checks all
-committed generated metadata. Real
-provider and replay execution remains uncached, but their deterministic build
-prerequisite uses Turbo. CI uploads the rendered TypeDoc site as an `api-docs`
-artifact; the generated HTML is not committed.
+`test:local` selects dirty source tests without building; explicit source test
+paths run even on a clean tree. `check:changed` adds source tests affected since
+the branch merge base with `origin/main`. Use `npm run test:changed -- --base
+REVISION` to choose another base. Changed-test selection follows the import
+graph and is feedback, not complete correctness evidence. Inspect relevant
+boundary and provider behavior explicitly; see [docs/testing.md](docs/testing.md).
 
-Local `npm test` runs every deterministic Vitest project without coverage,
-retries, or verbose output. Focused boundary, acceptance, changed-test, and
-watch commands are documented in [docs/testing.md](docs/testing.md), together
-with the path-based behavioral-depth rules. Changed-test selection follows the
-import graph and is feedback, not the release gate. CI splits the complete suite
-across four native Vitest shards, then merges coverage, JUnit, and JSON timing
-reports. Coverage thresholds remain in `vitest.config.ts`.
+Before handing off a PR, run the relevant tests, `npm run check`, and
+`npm run docs:check` when contracts or generated metadata change. Record which
+checks ran. CI owns complete deterministic tests and aggregate coverage. Use
+`npm run check:pr` for a deliberate full local gate on broad changes or when
+investigating CI failures; it is not required after each edit, rebase, or push.
+Packaging, setup, installation, or distribution changes also require
+`npm run verify:package` and `npm pack --dry-run`. Provider behavior changes
+require the matching real-provider `verify:*` lane.
 
-CI installs dependencies once for all static checks, cancels superseded PR
-runs, and skips package, Windows, and full test lanes for documentation-only
-pull requests. TypeDoc renders only in pull-request CI; it does not run in local
-commit or pre-push hooks, or in post-merge `main` CI.
+`check:fast` runs cached typecheck and lint, reporting diagnostics on failure.
+`check` adds formatting, dead-code, and package-metadata freshness checks.
+Pre-commit formats and lints staged files; pre-push runs `check:fast`.
+`docs:check` checks committed generated metadata without rendering API HTML.
+`docs:generate` regenerates those files; render API HTML separately with
+`npm run docs:api:cached`. PR CI renders and uploads the `api-docs` artifact.
+Real-provider execution remains uncached; deterministic builds use Turbo.
+
+Local `npm test` runs every deterministic Vitest project without coverage or
+retries. CI runs four coverage shards and merges JUnit and timing reports.
+CI cancels superseded PR runs and skips package, Windows, and full test lanes
+for documentation-only PRs. Coverage thresholds remain in `vitest.config.ts`.
 
 Tests that need a temporary directory must use
 `createTestTempDirectory` from `tests/fixtures/temporaryDirectory.ts`. The
@@ -92,7 +99,7 @@ Describe the behavior change and verification performed in the pull request. Nev
 
 ## Maintainer release checklist
 
-Run the full checks, isolated package verifier, package dry run, and two-target real-Hopper verifier described above. Build a local tarball and exercise the executable through the package boundary:
+Run `npm run check:pr`, `npm run docs:api:cached`, the isolated package verifier, package dry run, and two-target real-Hopper verifier described above. Build a local tarball and exercise the executable through the package boundary:
 
 ```bash
 npm pack

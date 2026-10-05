@@ -172,6 +172,49 @@ describe("function comparison normalized identity", () => {
   });
 });
 
+describe("function comparison CFG address normalization", () => {
+  it("matches CFG successors by numeric address", () => {
+    const make = (base: "0x1000" | "0x2000") =>
+      functionDossierSchema.parse({
+        ...dossier("return 0;", base),
+        basic_blocks: [
+          {
+            start: base,
+            end: base === "0x1000" ? "0x1004" : "0x2004",
+            successors: [base === "0x1000" ? "0X01004" : "0x2004"],
+          },
+          {
+            start: base === "0x1000" ? "0x1004" : "0x2004",
+            end: base === "0x1000" ? "0x1008" : "0x2008",
+            successors: [],
+          },
+        ],
+      });
+    expect(
+      compareFunctions(
+        observe("b", make("0x1000")),
+        observe("c", make("0x2000")),
+      ).dimensions.find(({ dimension }) => dimension === "cfg"),
+    ).toMatchObject({ status: "unchanged" });
+  });
+
+  it("keeps duplicate numeric block starts unknown", () => {
+    const duplicate = functionDossierSchema.parse({
+      ...dossier("return 0;", "0x1000"),
+      basic_blocks: [
+        { start: "0x1000", end: "0x1004", successors: [] },
+        { start: "0X01000", end: "0x1008", successors: [] },
+      ],
+    });
+    expect(
+      compareFunctions(
+        observe("d", duplicate),
+        observe("e", duplicate),
+      ).dimensions.find(({ dimension }) => dimension === "cfg"),
+    ).toMatchObject({ status: "unknown" });
+  });
+});
+
 describe("function comparison", () => {
   it("preserves text changes alongside complete inline dossier facets", () => {
     const result = compareFunctions(

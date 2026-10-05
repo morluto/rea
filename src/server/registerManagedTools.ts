@@ -4,9 +4,12 @@ import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
 import type { BinarySessionPort } from "../application/BinarySession.js";
 import { MANAGED_TOOL_CONTRACTS } from "../contracts/managedToolContracts.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
-import type { Logger } from "../logger.js";
+import { AnalysisInputError } from "../domain/errors.js";
 import { err } from "../domain/result.js";
+import type { Logger } from "../logger.js";
 import { registerEvidenceTools } from "./registerEvidenceTools.js";
+import { runManagedProviderExecution } from "../application/DirectAnalysis.js";
+import { isManagedToolName } from "../contracts/managedToolContracts.js";
 
 /** Register execution-free managed PE/CLI inspection. */
 export const registerManagedTools = (
@@ -19,28 +22,44 @@ export const registerManagedTools = (
     readonly session: BinarySessionPort | undefined;
   },
 ): void => {
-  const targetAwareAnalysis: AnalysisOperationPort = {
+  let selectedManagedPath: string | undefined;
+  const managedAnalysis: AnalysisOperationPort = {
     execute: async (operation, parameters, executionOptions) => {
+      if (!isManagedToolName(operation))
+        return analysis.execute(operation, parameters, executionOptions);
+      const requestedPath = parameters.path;
+      const activeTarget = options.activeTarget?.();
       const path =
-        operation === "inspect_managed_artifact" &&
-        typeof parameters.path === "string"
-          ? parameters.path
-          : undefined;
-      if (path !== undefined && options.session !== undefined) {
-        const opened = await options.session.open(
-          path,
-          executionOptions?.signal === undefined
-            ? undefined
-            : { signal: executionOptions.signal },
+        typeof requestedPath === "string"
+          ? requestedPath
+          : (selectedManagedPath ??
+            (activeTarget?.format === "pe" && activeTarget.managed
+              ? activeTarget.path
+              : undefined));
+      if (path === undefined)
+        return err(
+          new AnalysisInputError(operation, undefined, [
+            {
+              path: ["path"],
+              reason: "missing_argument",
+              message:
+                "Provide a managed PE/CLI path or first select one with inspect_managed_artifact.",
+            },
+          ]),
         );
-        if (!opened.ok) return err(opened.error);
-      }
-      return analysis.execute(operation, parameters, executionOptions);
+      const execution = await runManagedProviderExecution(
+        path,
+        operation,
+        executionOptions?.signal,
+      );
+      if (execution.ok && typeof requestedPath === "string")
+        selectedManagedPath = requestedPath;
+      return execution;
     },
   };
   registerEvidenceTools(
     server,
-    targetAwareAnalysis,
+    managedAnalysis,
     MANAGED_TOOL_CONTRACTS,
     options,
   );
