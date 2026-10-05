@@ -276,8 +276,13 @@ const deterministicContext = (request: WorkerRequest, caseIndex: number) => {
   };
   const epoch = Date.parse(request.determinism.clockIso);
   class ReplayDate extends Date {
-    constructor(...arguments_: [] | [string | number]) {
-      super(arguments_.length === 0 ? epoch : arguments_[0]);
+    constructor(...arguments_: unknown[]) {
+      super(epoch);
+      if (arguments_.length > 0) {
+        const date: unknown = Reflect.construct(Date, arguments_, new.target);
+        if (!types.isDate(date)) throw new TypeError("Invalid Date instance");
+        return date;
+      }
     }
     static override now(): number {
       return epoch;
@@ -286,7 +291,12 @@ const deterministicContext = (request: WorkerRequest, caseIndex: number) => {
   const replayMath: Math = Object.create(Math);
   Object.defineProperty(replayMath, "random", { value: random });
   return createContext(
-    { Date: ReplayDate, Math: replayMath },
+    {
+      Date: new Proxy(ReplayDate, {
+        apply: () => new ReplayDate().toString(),
+      }),
+      Math: replayMath,
+    },
     {
       name: "rea-controlled-replay",
       codeGeneration: { strings: false, wasm: false },
