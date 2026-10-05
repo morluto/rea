@@ -56,6 +56,10 @@ export class PlaywrightScenarioEvents {
     this.enabled = options.enabled;
     this.secrets = options.secrets;
     this.pages.add(options.page);
+    if (options.ownsContext === true && this.enabled.size > 0)
+      (options.context ?? options.page.context()).on("page", (page) =>
+        this.popup(page),
+      );
     if (this.enabled.has("network")) {
       const context = options.context ?? options.page.context();
       const inScope = (request: Request): boolean => {
@@ -93,6 +97,7 @@ export class PlaywrightScenarioEvents {
     return this.sequence;
   }
 
+  /** Report selected popup event families with unrecoverable pre-discovery gaps. */
   limitations(): readonly string[] {
     return [...this.incompleteFamilies].map(
       (family) =>
@@ -267,6 +272,7 @@ export class PlaywrightScenarioEvents {
   }
 
   private popup(page: Page): void {
+    if (this.pages.has(page)) return;
     this.pages.add(page);
     for (const family of [
       "frames",

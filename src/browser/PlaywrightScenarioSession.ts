@@ -214,6 +214,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
     return this.eventCapture.result();
   }
 
+  /** Preserve event coverage gaps for the aggregate capture's completeness. */
   eventLimitations(): readonly string[] {
     return this.eventCapture.limitations();
   }
