@@ -35,7 +35,9 @@ export const authorizeRuntimeLocation = async (
   let url: URL;
   try {
     url = new URL(value);
-  } catch {
+  } catch (cause: unknown) {
+    // Non-URL input is outside the authorized runtime scope.
+    void cause;
     return { allowed: false, reason: "unsupported_location" };
   }
   if (!["http:", "https:"].includes(url.protocol))

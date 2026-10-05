@@ -36,7 +36,8 @@ const resolveRoot = async (
       );
     const canonicalRoot = await realpath(resolve(requestedRoot));
     return ok(canonicalRoot);
-  } catch {
+  } catch (cause: unknown) {
+    void cause;
     return err(
       failure("invalid-root", "Reference source root could not be resolved"),
     );
@@ -50,8 +51,9 @@ const buildIgnored = async (
   const ignored = ignore();
   try {
     ignored.add(await readFile(join(root, ".gitignore"), "utf8"));
-  } catch {
+  } catch (cause: unknown) {
     // Missing or unreadable ignore file does not authorize broader access.
+    void cause;
   }
   ignored.add([...DEFAULT_REFERENCE_SOURCE_IGNORE_PATTERNS]);
   for (const path of excludePaths) {

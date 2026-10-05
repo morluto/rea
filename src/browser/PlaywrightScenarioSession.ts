@@ -152,7 +152,10 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
         .then((lateOpened) =>
           closePlaywrightScenarioBrowser(lateOpened, options.signal),
         )
-        .catch(() => undefined);
+        .catch((cause: unknown) => {
+          // best-effort cleanup: late-open cleanup must not mask the boundary failure.
+          void cause;
+        });
       throw cause;
     }
     try {

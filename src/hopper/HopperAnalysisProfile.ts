@@ -125,7 +125,9 @@ const sha256File = async (
     return signalIsAborted(signal)
       ? err(new AnalysisCancelledError("open_binary"))
       : ok(hash.digest("hex"));
-  } catch {
+  } catch (cause: unknown) {
+    // best-effort cleanup: unreadable targets mean no digest; abort still cancels.
+    void cause;
     return signalIsAborted(signal)
       ? err(new AnalysisCancelledError("open_binary"))
       : ok(undefined);

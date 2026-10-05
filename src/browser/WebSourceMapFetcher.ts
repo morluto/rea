@@ -199,7 +199,8 @@ const normalizeSourceMap = (
           status: "partial",
           limitation: `Module edges are incomplete: ${modules.incomplete.length} of ${originalSources.filter(({ artifact }) => artifact !== null).length} original sources could not be parsed in full (${modules.incomplete.join(", ")}).`,
         };
-  } catch {
+  } catch (cause: unknown) {
+    void cause;
     return emptySourceMapItem(
       request,
       "invalid",
@@ -311,7 +312,9 @@ const approvedUrl = (
       parsed.password === "" &&
       allowedOrigins.includes(parsed.origin)
     );
-  } catch {
+  } catch (cause: unknown) {
+    // Non-URL input is not an approved source-map URL.
+    void cause;
     return false;
   }
 };
@@ -338,7 +341,9 @@ const emptySourceMapItem = (
 const sanitizeSource = (value: string): string => {
   try {
     return sanitizeBrowserUrl(new URL(value).href).url;
-  } catch {
+  } catch (cause: unknown) {
+    // Non-URL sources are preserved verbatim.
+    void cause;
     return value;
   }
 };
@@ -349,7 +354,9 @@ const resolveOriginalSource = (
 ): string | null => {
   try {
     return sanitizeSource(new URL(specifier, base).href);
-  } catch {
+  } catch (cause: unknown) {
+    // Unresolvable source specifiers are represented by null.
+    void cause;
     return null;
   }
 };

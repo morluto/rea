@@ -449,7 +449,9 @@ const processIsRunning = async (executablePath: string): Promise<boolean> => {
     return processes.stdout
       .split("\n")
       .some((command) => command.trim() === executablePath);
-  } catch {
+  } catch (cause: unknown) {
+    // best-effort cleanup: optional process probing; failure means not running.
+    void cause;
     return false;
   }
 };

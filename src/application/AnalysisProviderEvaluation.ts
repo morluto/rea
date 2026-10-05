@@ -41,7 +41,8 @@ export const evaluateAnalysisProviderCandidate = async (
     if (resolution === ABORTED)
       return err(new AnalysisCancelledError("open_binary"));
     resolved = resolution;
-  } catch {
+  } catch (cause: unknown) {
+    void cause;
     return ok(
       rejectedProfile(candidate, status, "Provider profile resolution threw"),
     );
@@ -82,7 +83,8 @@ export const evaluateAnalysisProviderCandidate = async (
         ),
       );
     return ok({ candidate, status, profile, compatibility });
-  } catch {
+  } catch (cause: unknown) {
+    void cause;
     return ok(
       rejectedProfile(
         candidate,

@@ -18,7 +18,9 @@ const browserScenarioBaseUrlSchema = z
     let url: URL;
     try {
       url = new URL(value);
-    } catch {
+    } catch (cause: unknown) {
+      // Invalid input is reported through the zod issue.
+      void cause;
       context.addIssue({ code: "custom", message: "Invalid browser URL" });
       return z.NEVER;
     }

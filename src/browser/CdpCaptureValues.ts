@@ -38,7 +38,9 @@ export const isHttpUrl = (value: string | undefined): boolean => {
   try {
     const protocol = new URL(value).protocol;
     return protocol === "http:" || protocol === "https:";
-  } catch {
+  } catch (cause: unknown) {
+    // Non-URL input is not an HTTP URL.
+    void cause;
     return false;
   }
 };

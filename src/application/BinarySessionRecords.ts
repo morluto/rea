@@ -186,10 +186,14 @@ export abstract class BinarySessionRecords {
       try {
         const notification = listener();
         if (notification !== undefined)
-          void notification.catch(() => undefined);
-      } catch {
+          void notification.catch((cause: unknown) => {
+            // best-effort cleanup: async observer notifications must not reject unhandled.
+            void cause;
+          });
+      } catch (cause: unknown) {
         // External resource observers are best-effort; one callback must not
         // make a committed evidence mutation appear to fail.
+        void cause;
       }
     }
   }

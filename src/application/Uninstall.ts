@@ -150,7 +150,8 @@ const removeClient = async (
       servers,
       serversKey: key,
     } = parseClientConfiguration(original, client.format));
-  } catch {
+  } catch (cause: unknown) {
+    void cause;
     return item(
       client.name,
       "failed",
@@ -172,7 +173,8 @@ const removeClient = async (
   const backupPath = `${client.configPath}.rea.backup`;
   try {
     await fileSystem.copy(transactionPath, backupPath);
-  } catch {
+  } catch (cause: unknown) {
+    void cause;
     return item(
       client.name,
       "failed",
@@ -200,10 +202,13 @@ const removeClient = async (
       "removed",
       `Removed registration from ${client.configPath}.`,
     );
-  } catch {
+  } catch (cause: unknown) {
+    // Update failure attempts a restore before reporting; cause is preserved below.
+    void cause;
     try {
       await fileSystem.writeText(transactionPath, original);
-    } catch {
+    } catch (restoreCause: unknown) {
+      void restoreCause;
       return item(
         client.name,
         "failed",

@@ -120,7 +120,9 @@ export const installMacHopper = async (
       return { status: "failed", reason: "launcher_missing" };
     await host.openApplication(destination);
     return { status: "installed", launcherPath };
-  } catch {
+  } catch (cause: unknown) {
+    // Install-stage failures share the download reason; the stage is cleaned below.
+    void cause;
     return { status: "failed", reason: "download" };
   } finally {
     if (temporary !== undefined) {
@@ -175,7 +177,9 @@ const systemMacHopperInstallHost = (): MacHopperInstallHost => ({
         ])
       ).stdout.trim();
       return identifier === BUNDLE_IDENTIFIER;
-    } catch {
+    } catch (cause: unknown) {
+      // best-effort cleanup: optional bundle probing; unreadable means invalid.
+      void cause;
       return false;
     }
   },
@@ -183,7 +187,9 @@ const systemMacHopperInstallHost = (): MacHopperInstallHost => ({
     try {
       await access(path);
       return true;
-    } catch {
+    } catch (cause: unknown) {
+      // best-effort cleanup: optional existence probing; absence means missing.
+      void cause;
       return false;
     }
   },
@@ -199,13 +205,16 @@ const systemMacHopperInstallHost = (): MacHopperInstallHost => ({
       await rename(stage, destination);
       if (replaceExisting) await rm(previous, { recursive: true, force: true });
       return true;
-    } catch {
+    } catch (cause: unknown) {
+      // Install failure rolls back below; the false return reports it.
+      void cause;
       await rm(stage, { recursive: true, force: true });
       if (replaceExisting) {
         try {
           await rename(previous, destination);
-        } catch {
+        } catch (rollbackCause: unknown) {
           // The original destination was not moved, or rollback is impossible.
+          void rollbackCause;
         }
       }
       return false;
@@ -215,7 +224,9 @@ const systemMacHopperInstallHost = (): MacHopperInstallHost => ({
     try {
       await access(path);
       return true;
-    } catch {
+    } catch (cause: unknown) {
+      // best-effort cleanup: optional launcher probing; absence means not ready.
+      void cause;
       return false;
     }
   },
@@ -253,7 +264,9 @@ const commandSucceeds = async (
   try {
     await execFileAsync(command, args);
     return true;
-  } catch {
+  } catch (cause: unknown) {
+    // best-effort cleanup: optional command probing; failure means unavailable.
+    void cause;
     return false;
   }
 };

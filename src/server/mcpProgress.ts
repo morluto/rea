@@ -27,8 +27,9 @@ export const mcpProgressReporter = (
             message: `${update.phase}: ${update.message}`,
           },
         });
-      } catch {
+      } catch (cause: unknown) {
         // Progress is observational; transport failure cannot change tool truth.
+        void cause;
       }
     },
     { minimumIntervalMs: 100 },

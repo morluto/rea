@@ -274,10 +274,14 @@ export class HopperRequestQueue {
   #reportUpdate(entry: QueuedRequest, update: ProgressUpdate): void {
     try {
       void Promise.resolve(entry.progress?.report(update)).catch(
-        () => undefined,
+        (cause: unknown) => {
+          // best-effort cleanup: progress rejection bookkeeping only.
+          void cause;
+        },
       );
-    } catch {
+    } catch (cause: unknown) {
       // Progress observation cannot change the request outcome.
+      void cause;
     }
   }
 }

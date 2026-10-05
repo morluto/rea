@@ -430,7 +430,9 @@ const packageEntry = (
     if (entry === undefined) return { status: "missing" };
     const legacy = packagePathValue(entry);
     return legacy.status === "value" ? { ...legacy, source: "legacy" } : legacy;
-  } catch {
+  } catch (cause: unknown) {
+    // Reflect-based manifest reads fail closed as invalid.
+    void cause;
     return { status: "invalid" };
   }
 };
@@ -545,7 +547,9 @@ const fileUrlPath = (value: string): string | undefined => {
     const url = new URL(value);
     if (url.protocol !== "file:" || url.hostname !== "") return undefined;
     return decodeURIComponent(url.pathname).replace(/^\/+/, "");
-  } catch {
+  } catch (cause: unknown) {
+    // Unparseable file URLs have no path to resolve.
+    void cause;
     return undefined;
   }
 };

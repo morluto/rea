@@ -30,7 +30,9 @@ export const inferJsonShape = (text: string): JsonShape | null => {
   let root: unknown;
   try {
     root = JSON.parse(text);
-  } catch {
+  } catch (cause: unknown) {
+    // Invalid JSON is represented by the null return.
+    void cause;
     return null;
   }
   const properties = new Map<

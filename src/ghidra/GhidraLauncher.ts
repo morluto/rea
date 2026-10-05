@@ -163,7 +163,12 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
       });
     } catch (cause: unknown) {
       if (started !== undefined)
-        await cleanupStartedProcess(started, platform).catch(() => undefined);
+        await cleanupStartedProcess(started, platform).catch(
+          (cause: unknown) => {
+            // best-effort cleanup: started-process cleanup must not mask the launch failure.
+            void cause;
+          },
+        );
       return isAborted(options.signal)
         ? err(new AnalysisCancelledError("open_binary"))
         : err(

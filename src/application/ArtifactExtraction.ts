@@ -171,7 +171,11 @@ const materializeSelection = async ({
     await output.commit();
     return result;
   } catch (cause: unknown) {
-    if (!readerClosed) await reader.close().catch(() => undefined);
+    if (!readerClosed)
+      await reader.close().catch((cause: unknown) => {
+        // best-effort cleanup: reader close must not mask the extraction failure.
+        void cause;
+      });
     await output.rollback();
     throw cause;
   }

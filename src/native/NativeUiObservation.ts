@@ -190,7 +190,9 @@ const observeWithHelper = async (
           signal.addEventListener("abort", abort, { once: true });
           if (signal.aborted) abort();
         });
-      } catch {
+      } catch (cause: unknown) {
+        // Cancellation is recorded as a cancelled outcome.
+        void cause;
         results.push({
           index,
           kind: step.kind,

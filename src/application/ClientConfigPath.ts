@@ -44,7 +44,9 @@ export const resolveClientConfigTransactionPath = async (
     return targetStats.isFile?.() === true && targetStats.uid === currentUid
       ? canonicalPath
       : undefined;
-  } catch {
+  } catch (cause: unknown) {
+    // best-effort cleanup: unreadable or vanishing config paths mean no registration.
+    void cause;
     return undefined;
   }
 };

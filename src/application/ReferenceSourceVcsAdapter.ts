@@ -34,7 +34,9 @@ export const readReferenceSourceVcs = async (
     const head = await resolveRef({ fs, dir: root, ref: "HEAD" });
     if (isAborted(signal)) return { kind: "unknown", head: null, dirty: null };
     return { kind: "git", head, dirty: null };
-  } catch {
+  } catch (cause: unknown) {
+    // Unresolvable refs mean VCS state is unknown, not absent.
+    void cause;
     return { kind: "unknown", head: null, dirty: null };
   }
 };

@@ -18,7 +18,9 @@ export const parseJavaScriptSource = (
       // recovered syntax, which loses every fact derived from that source.
       plugins: ["decorators-legacy", "jsx", "typescript"],
     });
-  } catch {
+  } catch (cause: unknown) {
+    // Unparseable source is represented by the null return.
+    void cause;
     return null;
   }
 };

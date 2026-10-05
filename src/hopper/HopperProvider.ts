@@ -124,7 +124,9 @@ export class HopperProvider implements AnalysisProviderCandidate {
         reason: null,
         diagnostics,
       };
-    } catch {
+    } catch (cause: unknown) {
+      // best-effort cleanup: optional launcher probing; failure means unavailable.
+      void cause;
       return {
         status: "unavailable",
         code: "executable_missing",

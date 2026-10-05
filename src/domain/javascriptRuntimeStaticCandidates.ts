@@ -240,7 +240,9 @@ const pathBelowUrlPrefix = (prefix: string, value: string): string | null => {
   try {
     base = new URL(prefix);
     candidate = new URL(value);
-  } catch {
+  } catch (cause: unknown) {
+    // Invalid input is represented by the null return.
+    void cause;
     return null;
   }
   if (
@@ -252,7 +254,9 @@ const pathBelowUrlPrefix = (prefix: string, value: string): string | null => {
     return normalizeArtifactPath(
       decodeURIComponent(candidate.pathname.slice(base.pathname.length)),
     );
-  } catch {
+  } catch (cause: unknown) {
+    // Undecodable path segments are represented by the null return.
+    void cause;
     return null;
   }
 };

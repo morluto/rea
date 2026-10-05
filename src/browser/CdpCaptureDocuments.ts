@@ -433,7 +433,9 @@ const domDestination = (
       url: allowedSanitizedUrl(parsed.href, allowedOrigins)?.url ?? null,
       scope: "approved",
     };
-  } catch {
+  } catch (cause: unknown) {
+    // Unparseable URLs are out of scope, not failures.
+    void cause;
     return { url: null, scope: "unsupported" };
   }
 };

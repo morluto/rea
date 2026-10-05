@@ -468,7 +468,9 @@ const systemGhidraInstallationHost = (): GhidraInstallationHost => ({
   readText(path) {
     try {
       return readFileSync(path, "utf8");
-    } catch {
+    } catch (cause: unknown) {
+      // best-effort cleanup: optional install probing; unreadable means unknown.
+      void cause;
       return undefined;
     }
   },
@@ -476,7 +478,9 @@ const systemGhidraInstallationHost = (): GhidraInstallationHost => ({
     try {
       accessSync(path, constants.X_OK);
       return true;
-    } catch {
+    } catch (cause: unknown) {
+      // best-effort cleanup: optional executable probing; failure means missing.
+      void cause;
       return false;
     }
   },
@@ -523,7 +527,9 @@ const executablePath = (path: string): boolean => {
   try {
     accessSync(path, constants.X_OK);
     return true;
-  } catch {
+  } catch (cause: unknown) {
+    // best-effort cleanup: optional executable probing; failure means missing.
+    void cause;
     return false;
   }
 };

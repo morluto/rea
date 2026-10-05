@@ -397,7 +397,9 @@ export class HopperClient {
         );
       try {
         await access(socketPath);
-      } catch {
+      } catch (cause: unknown) {
+        // best-effort cleanup: socket polling; absence means keep waiting.
+        void cause;
         if ((await deadline.wait(50)) === "aborted")
           return err(startupInterruption(deadline));
         continue;
@@ -476,7 +478,9 @@ export class HopperClient {
         category: message.event.error.type,
         message: message.event.error.message,
       });
-    } catch {
+    } catch (cause: unknown) {
+      // best-effort cleanup: diagnostic consumers must not break the client.
+      void cause;
       this.#logger.warn(
         { requestId: message.id },
         "Hopper bridge diagnostic consumer rejected an event",

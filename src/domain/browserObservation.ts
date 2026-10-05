@@ -11,7 +11,9 @@ const parseExactOrigin = (value: string): string | undefined => {
   let url: URL;
   try {
     url = new URL(value);
-  } catch {
+  } catch (cause: unknown) {
+    // Invalid input is represented by the undefined return.
+    void cause;
     return undefined;
   }
   if (
@@ -55,7 +57,9 @@ export const browserEndpointSchema = z
     let url: URL;
     try {
       url = new URL(value);
-    } catch {
+    } catch (cause: unknown) {
+      // Invalid input is reported through the zod issue.
+      void cause;
       context.addIssue({ code: "custom", message: "Invalid CDP endpoint URL" });
       return z.NEVER;
     }
@@ -160,7 +164,9 @@ export const sanitizeBrowserUrl = (value: string): SanitizedBrowserUrl => {
   let parsed: URL;
   try {
     parsed = new URL(value);
-  } catch {
+  } catch (cause: unknown) {
+    // Unparseable input is preserved verbatim in the sanitized result.
+    void cause;
     return {
       url: value,
       origin: null,
@@ -203,7 +209,9 @@ const removeUrlUserInfo = (value: string, parsed: URL): string => {
     return candidateUrl.username === "" && candidateUrl.password === ""
       ? candidate
       : credentialFreeHref(parsed);
-  } catch {
+  } catch (cause: unknown) {
+    // Fallback to the already-sanitized href when the candidate is invalid.
+    void cause;
     return credentialFreeHref(parsed);
   }
 };

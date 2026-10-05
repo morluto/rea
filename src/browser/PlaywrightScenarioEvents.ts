@@ -68,9 +68,10 @@ export class PlaywrightScenarioEvents {
         if (this.ownsContext) return true;
         try {
           return this.pages.has(request.frame().page());
-        } catch {
+        } catch (cause: unknown) {
           // Initial popup navigations can lack a frame. Never guess ownership
           // from a URL in a shared context; connect captures are attach-limited.
+          void cause;
           return false;
         }
       };
@@ -314,6 +315,9 @@ export class PlaywrightScenarioEvents {
       suggested_filename: this.secrets.redact(download.suggestedFilename()),
       url: this.safeUrl(download.url()),
     });
-    void download.cancel().catch(() => undefined);
+    void download.cancel().catch((cause: unknown) => {
+      // best-effort cleanup: download cancellation must not reject unhandled.
+      void cause;
+    });
   }
 }

@@ -50,7 +50,9 @@ export const analyzeScript = (
       errorRecovery: true,
       plugins: ["jsx", "typescript"],
     });
-  } catch {
+  } catch (cause: unknown) {
+    // Unparseable scripts are counted; the failure needs no extra detail.
+    void cause;
     accumulator.parseFailures += 1;
     return;
   }

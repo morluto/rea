@@ -18,7 +18,8 @@ export const analyzeJavaScriptJsonModule = (
   let value: unknown;
   try {
     value = JSON.parse(file.text.value);
-  } catch {
+  } catch (cause: unknown) {
+    void cause;
     return {
       path: file.path,
       sha256: file.sha256,

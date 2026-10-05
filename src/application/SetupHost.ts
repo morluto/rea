@@ -143,7 +143,9 @@ const exists = async (path: string): Promise<boolean> => {
   try {
     await access(path);
     return true;
-  } catch {
+  } catch (cause: unknown) {
+    // best-effort cleanup: optional host probing; absence means unavailable.
+    void cause;
     return false;
   }
 };

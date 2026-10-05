@@ -116,7 +116,9 @@ const sanitizeTargetTitle = (value: string, targetUrl: string): string => {
   let url: URL;
   try {
     url = new URL(value);
-  } catch {
+  } catch (cause: unknown) {
+    // Non-URL titles fall back to alias redaction.
+    void cause;
     return sanitizeTargetUrlAlias(value, targetUrl);
   }
   return url.protocol === "http:" || url.protocol === "https:"
@@ -128,7 +130,9 @@ const sanitizeTargetUrlAlias = (value: string, targetUrl: string): string => {
   let parsed: URL;
   try {
     parsed = new URL(targetUrl);
-  } catch {
+  } catch (cause: unknown) {
+    // Without a parseable target URL there is nothing to redact.
+    void cause;
     return value;
   }
   const markers = [parsed.origin, `//${parsed.host}`, parsed.host];
@@ -150,7 +154,9 @@ const sanitizeSameOriginTitleUrl = (candidate: string, target: URL): string => {
       : candidate.startsWith(target.host)
         ? new URL(`${target.protocol}//${candidate}`)
         : new URL(candidate, target.origin);
-  } catch {
+  } catch (cause: unknown) {
+    // Unparseable candidates are preserved verbatim.
+    void cause;
     return candidate;
   }
   return parsed.origin === target.origin &&
@@ -273,7 +279,9 @@ const targetWebSocket = (
     return webSocket.scope === "page" && webSocket.targetId === target.id
       ? { webSocket }
       : {};
-  } catch {
+  } catch (cause: unknown) {
+    // Endpoint validation failures mean no validated transport exists.
+    void cause;
     return {};
   }
 };

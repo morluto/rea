@@ -141,7 +141,9 @@ const readDevtoolsPort = async (path: string): Promise<number | null> => {
     return Number.isSafeInteger(port) && port > 0 && port <= 65_535
       ? port
       : null;
-  } catch {
+  } catch (cause: unknown) {
+    // Missing or unreadable port files mean the port is unknown.
+    void cause;
     return null;
   }
 };

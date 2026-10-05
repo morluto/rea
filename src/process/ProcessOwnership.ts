@@ -116,7 +116,10 @@ export const cleanupWindowsProcessTree = async (
   try {
     const result = await host.terminateTree(rootPid);
     return { cleaned: true, signaled: result === "terminated" };
-  } catch {
+  } catch (cause: unknown) {
+    // The reason string is a pinned validation contract; keep it stable and
+    // do not interpolate the cause into caller-visible diagnostics here.
+    void cause;
     return {
       cleaned: false,
       reason:

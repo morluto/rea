@@ -166,8 +166,9 @@ const stopProcess = async (
   );
   try {
     input.onDiagnostic?.(diagnostic);
-  } catch {
+  } catch (cause: unknown) {
     // Diagnostic consumers cannot change the already-observed cleanup result.
+    void cause;
   }
   input.logger.info(diagnostic, "Owned Hopper launcher shutdown completed");
   if (stopped.status !== "incomplete") {

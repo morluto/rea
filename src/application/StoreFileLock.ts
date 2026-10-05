@@ -50,7 +50,10 @@ export const createStoreFileLock = async (
     }
     return {
       release: async () => {
-        await removeOwner(path, owner).catch(() => undefined);
+        await removeOwner(path, owner).catch((cause: unknown) => {
+          // best-effort cleanup: lock release must not reject unhandled.
+          void cause;
+        });
       },
     };
   } finally {
@@ -85,7 +88,9 @@ export const removeStaleStoreFileLock = async (
       return false;
     await removeOwner(path, owner);
     return true;
-  } catch {
+  } catch (cause: unknown) {
+    // best-effort cleanup: stale lock probing; failure means the lock stands.
+    void cause;
     return false;
   }
 };
