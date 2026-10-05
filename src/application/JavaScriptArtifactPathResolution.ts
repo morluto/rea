@@ -206,18 +206,26 @@ const htmlCandidate = (
   input: ResolveArtifactPathInput,
 ): string | ArtifactPathResolution => {
   const declared = stripQueryAndFragment(input.declaredPath);
-  if (hasScheme(declared))
+  if (hasScheme(declared) || declared.startsWith("//"))
     return unresolvedOutcome(input, "external", [
       "External HTML references are not mapped to local artifact assets.",
     ]);
-  if (declared.startsWith("/")) return declared.slice(1);
-  const base = input.htmlBaseHref;
-  if (base === undefined || base === null || base === "")
-    return posix.join(posix.dirname(input.sourcePath), declared);
-  if (hasScheme(base))
+  const rawBase = input.htmlBaseHref;
+  const base =
+    rawBase === undefined || rawBase === null
+      ? rawBase
+      : stripQueryAndFragment(rawBase);
+  if (
+    base !== undefined &&
+    base !== null &&
+    (hasScheme(base) || base.startsWith("//"))
+  )
     return unresolvedOutcome(input, "external", [
       "The document base href is external, so its script reference is not a local artifact path.",
     ]);
+  if (declared.startsWith("/")) return declared.slice(1);
+  if (base === undefined || base === null || base === "")
+    return posix.join(posix.dirname(input.sourcePath), declared);
   const basePath = base.startsWith("/")
     ? base.slice(1)
     : posix.join(posix.dirname(input.sourcePath), base);
