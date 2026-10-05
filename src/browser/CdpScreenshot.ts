@@ -56,7 +56,15 @@ export const captureCdpScreenshot = async (
   const mainFrame = captureFrames(before, origins, 1).items[0];
   if (authorized === undefined || mainFrame === undefined)
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
-  const navigation = { changed: false, leftScope: false };
+  const initialFrame = recordValue(
+    recordValue(recordValue(before)?.frameTree)?.frame,
+  );
+  const navigation = {
+    changed: false,
+    leftScope: false,
+    url: beforeUrl,
+    loaderId: stringValue(initialFrame?.loaderId),
+  };
   const removeListener = context.connection.onEvent((event) => {
     if (event.sessionId !== context.sessionId) return;
     observeScreenshotNavigation(event, mainFrame.frame_id, origins, navigation);
@@ -125,13 +133,27 @@ const observeScreenshotNavigation = (
   event: CdpEvent,
   mainFrameId: string,
   origins: ReadonlySet<string>,
-  state: { changed: boolean; leftScope: boolean },
+  state: {
+    changed: boolean;
+    leftScope: boolean;
+    readonly url: string | undefined;
+    readonly loaderId: string | undefined;
+  },
 ): void => {
   if (!isMainFrameNavigation(event, mainFrameId)) return;
   const params = recordValue(event.params);
   if (params === undefined) return;
   const frame =
     event.method === "Page.frameNavigated" ? recordValue(params.frame) : params;
+  if (
+    event.method === "Page.frameNavigated" &&
+    state.loaderId !== undefined &&
+    state.loaderId !== "" &&
+    stringValue(frame?.loaderId) === state.loaderId &&
+    stringValue(frame?.url) === state.url
+  )
+    return;
+
   state.changed = true;
   if (allowedSanitizedUrl(frame?.url, origins) === undefined)
     state.leftScope = true;

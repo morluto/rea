@@ -13,7 +13,7 @@ export const emitEvents = (
   emitRuntimeEvents(socket, command, port, options);
   emitWebMcpEvents(socket, command, port, options);
   emitSessionTimeline(socket, command, port, options);
-  emitCaptureNavigation(socket, command, options);
+  emitCaptureNavigation(socket, command, port, options);
 };
 
 const emitWebMcpEvents = (
@@ -462,8 +462,20 @@ const emitRuntimeEvents = (
 const emitCaptureNavigation = (
   socket: WebSocket,
   command: FakeCdpCommand,
+  port: number,
   options: FakeOptions,
 ): void => {
+  if (
+    command.method === "Page.captureScreenshot" &&
+    options.screenshotDocumentLoader !== undefined
+  )
+    event(socket, "Page.frameNavigated", command.sessionId, {
+      frame: {
+        id: "frame-main",
+        url: `http://127.0.0.1:${String(port)}/app?token=frame-secret`,
+        loaderId: options.screenshotDocumentLoader,
+      },
+    });
   const navigationUrl =
     command.method === "DOMSnapshot.captureSnapshot"
       ? options.navigateDuringCaptureUrl
