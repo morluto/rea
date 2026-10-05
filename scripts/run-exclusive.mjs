@@ -12,6 +12,7 @@ const signalExitCodes = { SIGINT: 130, SIGTERM: 143 };
 
 let lockHeld = false;
 let child;
+let forceTimer;
 let shutdownSignal;
 
 process.on("SIGINT", () => handleSignal("SIGINT"));
@@ -96,14 +97,21 @@ function runCommand() {
       stdio: "inherit",
     });
     child.once("error", reject);
-    child.once("close", (code) => resolveResult({ code }));
+    child.once("close", (code) => {
+      clearTimeout(forceTimer);
+      resolveResult({ code });
+    });
   });
 }
 
 function handleSignal(signal) {
   if (shutdownSignal !== undefined) return;
   shutdownSignal = signal;
-  if (child !== undefined && child.exitCode === null) child.kill(signal);
+  if (child !== undefined && child.exitCode === null) {
+    child.kill(signal);
+    forceTimer = setTimeout(() => child?.kill("SIGKILL"), 1_000);
+    forceTimer.unref?.();
+  }
 }
 
 async function readOwner() {
