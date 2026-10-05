@@ -45,7 +45,9 @@ export const createNativeUiHelperRuntime = () => {
     );
     const parsed = safeParseJson(output.stdout);
     if (!parsed.ok)
-      throw new Error(`Native helper returned invalid JSON: ${parsed.error}`);
+      throw new Error(`Native helper returned invalid JSON: ${parsed.error}`, {
+        cause: parsed.cause,
+      });
     return parsed.value;
   };
   return {

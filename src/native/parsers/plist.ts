@@ -27,7 +27,7 @@ export const parsePlistJson = (
   if (!parsed.ok)
     return err(
       new AnalysisOutputError("inspect_plist", parsed.error, {
-        cause: new Error(parsed.error),
+        cause: parsed.cause,
       }),
     );
   const value: unknown = parsed.value;

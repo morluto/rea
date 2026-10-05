@@ -1,7 +1,7 @@
-/** Bounded JSON parsing without throws for boundary inputs. */
+/** JSON parsing without throws at an input boundary. */
 export type SafeJsonParseResult =
   | { readonly ok: true; readonly value: unknown }
-  | { readonly ok: false; readonly error: string };
+  | { readonly ok: false; readonly error: string; readonly cause: unknown };
 
 /** Parse JSON text, returning the failure reason instead of throwing. */
 export const safeParseJson = (value: string): SafeJsonParseResult => {
@@ -11,6 +11,7 @@ export const safeParseJson = (value: string): SafeJsonParseResult => {
     return {
       ok: false,
       error: cause instanceof Error ? cause.message : String(cause),
+      cause,
     };
   }
 };

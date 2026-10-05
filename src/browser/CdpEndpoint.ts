@@ -311,7 +311,7 @@ export const readCdpJson = async (
               new BrowserObservationError(
                 operation,
                 "invalid_endpoint_response",
-                { cause: new Error(parsed.error) },
+                { cause: parsed.cause },
               ),
             );
             return;

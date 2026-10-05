@@ -87,7 +87,7 @@ export const parseBridgeMessageLine = (
   if (!decodedResult.ok)
     return err(
       new HopperProtocolError("Hopper returned malformed JSON", {
-        cause: new Error(decodedResult.error),
+        cause: decodedResult.cause,
       }),
     );
   const decoded: unknown = decodedResult.value;
