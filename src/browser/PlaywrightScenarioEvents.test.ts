@@ -5,7 +5,7 @@ import { browserScenarioSchema } from "../domain/browserScenario.js";
 import { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
 import { PlaywrightScenarioEvents } from "./PlaywrightScenarioEvents.js";
 
-describe("popup event selection", () => {
+describe("PlaywrightScenarioEvents", () => {
   it("observes requested popup page errors independently of popup lifecycle events", () => {
     const listeners = new Map<string, (value: unknown) => void>();
     const popupListeners = new Map<string, (value: unknown) => void>();
@@ -41,9 +41,7 @@ describe("popup event selection", () => {
       { kind: "page-error", message: "popup application failure" },
     ]);
   });
-});
 
-describe("PlaywrightScenarioEvents", () => {
   it("bounds oversized page errors before validating captured events", () => {
     const listeners = new Map<string, (value: Error) => void>();
     const page = {

@@ -116,6 +116,9 @@ export class PlaywrightScenarioEvents {
     }
     if (this.enabled.has("workers"))
       page.on("worker", (worker) => this.worker(worker));
+    // Every selectable event can also be emitted by a child popup page, and a
+    // popup is only reachable through this one subscription, so any selection at
+    // all must observe popups. Lifecycle events stay gated on `popups` below.
     if (this.enabled.size > 0) page.on("popup", (popup) => this.popup(popup));
     if (this.enabled.has("downloads"))
       page.on("download", (download) => this.download(download));
