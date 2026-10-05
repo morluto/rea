@@ -38,7 +38,9 @@ with the suite and excluded from package builds; broader runtime and provider
 fixtures remain under `tests/fixtures/**`.
 
 `tests/process-global/**` is reserved for cases with a demonstrated dependency
-on process-global state. Those tests run without file parallelism. Reusable,
+on process-global state. Those tests use isolated forks so environment and
+exit-status changes cannot leak between files. Serialize a case only when it
+demonstrably shares an external resource that cannot be isolated. Reusable,
 test-scoped fixtures live under `tests/support/**`; immutable source artifacts
 remain under `tests/fixtures/**`.
 The process-global Vitest configuration contract rejects new direct temporary-root
@@ -194,8 +196,10 @@ npm run test:changed -- --dry-run
 
 `test:focused` accepts exact repository-relative test file paths. Source-only
 paths do not build; boundary, acceptance, process-global, or unfamiliar `tests/`
-paths build conservatively. The build and test run share the repository test
-lock. Explicit selections do not use `--changed` or permit zero-test success.
+paths build conservatively. Tests use Vitest concurrency and isolated
+workspaces; commands do not hold a broad test lock. Build and documentation
+writers retain checkout-local locks for their shared output files. Explicit
+selections do not use `--changed` or permit zero-test success.
 The dry-run option reports the chosen merge base, scope and build prerequisite
 without executing tests or building. A missing Git base reports how to fetch
 it or select another revision.
