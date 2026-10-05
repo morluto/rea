@@ -98,7 +98,6 @@ const parseLoadCommand = (block: string, state: ParsedLoadCommands): void => {
   collectBuild(kind, block, fields, state);
   collectDependency(kind, fields, state);
   collectSegment(kind, block, fields, state);
-  collectFlags(fields, state.flags);
 };
 
 const collectUuid = (
@@ -157,16 +156,6 @@ const collectSegment = (
 ): void => {
   if (kind === "LC_SEGMENT" || kind === "LC_SEGMENT_64")
     state.segments.push(parseSegment(block, fields));
-};
-
-const collectFlags = (
-  fields: Readonly<Record<string, string | number | null>>,
-  flags: Set<string>,
-): void => {
-  const rawFlags = stringField(fields, "flags");
-  if (rawFlags === null) return;
-  for (const flag of rawFlags.split(/\s+/u))
-    if (flag.length > 0) flags.add(flag);
 };
 
 const parseFields = (block: string): Record<string, string | number | null> => {
