@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { TextDecoder } from "node:util";
 import { parse, parseBinary } from "plist";
 import { z } from "zod";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -22,11 +23,31 @@ export const decodeKeyedArchiveBytes = (
   const binary = bytes.subarray(0, 8).toString("ascii") === "bplist00";
   const parsed: unknown = binary
     ? parseBinary(bytes)
-    : parse(bytes.toString("utf8"));
+    : parse(decodeXmlPlistText(bytes));
   return {
     archive_format: binary ? ("binary-plist" as const) : ("xml-plist" as const),
     ...projectKeyedArchive(normalizePlist(parsed), selection),
   };
+};
+
+const decodeXmlPlistText = (bytes: Buffer): string => {
+  const encoding =
+    bytes[0] === 0xff && bytes[1] === 0xfe
+      ? "utf-16le"
+      : bytes[0] === 0xfe && bytes[1] === 0xff
+        ? "utf-16be"
+        : "utf-8";
+  const text = new TextDecoder(encoding, { fatal: true }).decode(bytes);
+  const declared = /^<\?xml\s[^?]*\bencoding\s*=\s*["']([^"']+)["']/u
+    .exec(text)?.[1]
+    ?.toLowerCase();
+  if (
+    declared !== undefined &&
+    ((encoding !== "utf-8" && declared !== encoding && declared !== "utf-16") ||
+      (encoding === "utf-8" && declared.startsWith("utf-16")))
+  )
+    throw new TypeError("XML encoding declaration disagrees with its bytes");
+  return text;
 };
 
 const normalizePlist = (value: unknown, depth = 0): JsonValue => {

@@ -1,3 +1,5 @@
+import { createServer } from "node:http";
+
 import { describe, expect, it } from "vitest";
 
 import { fetchWebSourceMaps } from "../../../src/browser/WebSourceMapFetcher.js";
@@ -25,6 +27,78 @@ const expectInvalidIncludedSourceMaps = (result: WebSourceMaps): void => {
   });
   expectInvalidSourceMaps({ ...result, status: "unavailable" });
 };
+
+describe("source-map redirect URL resolution", () => {
+  it.each(["/maps/current", "/assets/v2/app.js.map"])(
+    "resolves relative sources against the delivered map at %s",
+    async (initialPath) => {
+      const calls: string[] = [];
+      const server = createServer((incoming, response) => {
+        calls.push(incoming.url ?? "");
+        if (incoming.url === "/maps/current") {
+          response.writeHead(302, { location: "/assets/v2/app.js.map" }).end();
+          return;
+        }
+        response.setHeader("content-type", "application/json");
+        response.end(
+          JSON.stringify({
+            version: 3,
+            names: [],
+            sources: ["../src/main.ts"],
+            sourcesContent: ["import './dependency.ts';"],
+            mappings: "AAAA",
+          }),
+        );
+      });
+      try {
+        await new Promise<void>((resolve, reject) => {
+          server.once("error", reject);
+          server.listen(0, "127.0.0.1", resolve);
+        });
+        const address = server.address();
+        if (address === null || typeof address === "string")
+          throw new TypeError("Expected a TCP listener address");
+        const localOrigin = `http://127.0.0.1:${String(address.port)}`;
+        const declaredUrl = `${localOrigin}${initialPath}`;
+        const result = await fetchWebSourceMaps(
+          [{ ...request, fetchUrl: declaredUrl, declaredUrl }],
+          input({ allowed_origins: [localOrigin] }),
+        );
+        expect(calls).toEqual(
+          initialPath === "/maps/current"
+            ? [initialPath, "/assets/v2/app.js.map"]
+            : [initialPath],
+        );
+        expect(result).toMatchObject({
+          status: "included",
+          items: [
+            {
+              declared_url: declaredUrl,
+              original_sources: [
+                { source: `${localOrigin}/assets/src/main.ts` },
+              ],
+              mappings: [{ source: `${localOrigin}/assets/src/main.ts` }],
+              original_module_edges: [
+                {
+                  from_source: `${localOrigin}/assets/src/main.ts`,
+                  resolved_source: `${localOrigin}/assets/src/dependency.ts`,
+                },
+              ],
+            },
+          ],
+        });
+      } finally {
+        server.closeAllConnections();
+        if (server.listening)
+          await new Promise<void>((resolve, reject) => {
+            server.close((error) =>
+              error === undefined ? resolve() : reject(error),
+            );
+          });
+      }
+    },
+  );
+});
 
 describe("web source-map fetching and validation", () => {
   it("fetches without credentials and derives mappings and original modules", async () => {

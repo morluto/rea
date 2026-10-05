@@ -35,7 +35,7 @@ interface NativeMachoInspectionContext {
 const REQUIRED_COMMANDS = [
   ["file", ["-b"]],
   ["lipo", ["-detailed_info"]],
-  ["otool", ["-l"]],
+  ["otool", ["-h", "-l"]],
   ["nm", ["-gjU"]],
   ["dyld_info", ["-imports"]],
   ["dyld_info", ["-exports"]],

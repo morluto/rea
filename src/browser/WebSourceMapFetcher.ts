@@ -64,25 +64,26 @@ const fetchOne = async (
       "Declared source-map URL is outside the approved exact origins.",
     );
   try {
-    const response = await fetchFollowingApprovedRedirects(
+    const fetched = await fetchFollowingApprovedRedirects(
       request.fetchUrl,
       input.allowed_origins,
       signal,
       host,
     );
-    if (response === undefined)
+    if (fetched === undefined)
       return emptySourceMapItem(
         request,
         "policy_filtered",
         "A source-map redirect left the approved exact origins.",
       );
+    const { response, fetchedUrl } = fetched;
     if (!response.ok)
       return emptySourceMapItem(
         request,
         "fetch_failed",
         `Source-map server returned HTTP ${String(response.status)}.`,
       );
-    return normalizeSourceMap(request, await response.text());
+    return normalizeSourceMap(request, await response.text(), fetchedUrl);
   } catch (cause: unknown) {
     if (signal?.aborted === true) throw cause;
     return emptySourceMapItem(
@@ -98,7 +99,7 @@ const fetchFollowingApprovedRedirects = async (
   allowedOrigins: readonly string[],
   signal: AbortSignal | undefined,
   host: SourceMapFetchHost,
-): Promise<Response | undefined> => {
+): Promise<{ response: Response; fetchedUrl: string } | undefined> => {
   let current = initialUrl;
   const visited = new Set<string>();
   for (;;) {
@@ -115,9 +116,10 @@ const fetchFollowingApprovedRedirects = async (
       referrerPolicy: "no-referrer",
       ...(signal === undefined ? {} : { signal }),
     });
-    if (response.status < 300 || response.status >= 400) return response;
+    if (response.status < 300 || response.status >= 400)
+      return { response, fetchedUrl: current };
     const location = response.headers.get("location");
-    if (location === null) return response;
+    if (location === null) return { response, fetchedUrl: current };
     current = new URL(location, current).href;
   }
 };
@@ -125,6 +127,7 @@ const fetchFollowingApprovedRedirects = async (
 const normalizeSourceMap = (
   request: WebSourceMapRequest,
   text: string,
+  fetchedUrl: string,
 ): SourceMapItem => {
   if (!validSourceMapEnvelope(text))
     return emptySourceMapItem(
@@ -133,7 +136,7 @@ const normalizeSourceMap = (
       "Source-map JSON is not a version 3 map.",
     );
   try {
-    const map = new AnyMap(text, request.fetchUrl);
+    const map = new AnyMap(text, fetchedUrl);
     const resolvedBySource = new Map<string, string>();
     const originalSources = map.sources.map((source, index) => {
       const content = map.sourcesContent?.[index];

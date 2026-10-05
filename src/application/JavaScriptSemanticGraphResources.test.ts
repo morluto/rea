@@ -170,6 +170,24 @@ it("projects built-in resource acquisition and release", () => {
   ).toMatchObject({ status: "partial" });
 });
 
+it("does not project a literal property slot for dynamic destructuring", () => {
+  const graph = graphFor(`
+    const source = { token: "TOKEN" };
+    const key = getKey();
+    const { [key]: value } = source;
+  `);
+
+  expect(
+    graph.relations.filter(({ relation }) => relation === "destructures"),
+  ).toEqual([]);
+  expect(
+    graph.nodes.find(
+      ({ kind, properties }) =>
+        kind === "property-slot" && properties.name === "key",
+    ),
+  ).toBeUndefined();
+});
+
 it("projects literal seeds and static object flow", () => {
   const graph = graphFor(`
       const source = { token: "TOKEN", count: 1 };
