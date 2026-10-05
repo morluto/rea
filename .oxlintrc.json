@@ -120,5 +120,16 @@
     "node": true,
     "es2023": true
   },
-  "ignorePatterns": ["dist", "node_modules", "docs/api", ".codex", ".devin"]
+  "ignorePatterns": [
+    "dist",
+    "build",
+    "node_modules",
+    "docs/api",
+    "coverage",
+    ".turbo",
+    ".cache",
+    ".codex",
+    ".devin",
+    ".factory"
+  ]
 }

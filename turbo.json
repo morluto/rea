@@ -46,7 +46,6 @@
       "inputs": [
         ".nvmrc",
         ".oxlintrc.json",
-        "eslint.config.js",
         "package.json",
         "package-lock.json",
         "scripts/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
@@ -104,11 +103,30 @@
     },
     "test:run": {
       "dependsOn": ["build"],
-      "cache": false
+      "inputs": [
+        ".nvmrc",
+        "package.json",
+        "package-lock.json",
+        "src/**/*.ts",
+        "tests/**/*.ts",
+        "vitest.config.ts"
+      ]
     },
     "docs:check:built": {
       "dependsOn": ["build"],
-      "cache": false
+      "inputs": [
+        ".nvmrc",
+        "package.json",
+        "package-lock.json",
+        "scripts/generate-*.mjs",
+        "scripts/check-doc-facts.mjs",
+        "scripts/lib/*.mjs",
+        "src/generated*.ts",
+        "src/contracts/**/*.ts",
+        "docs/**",
+        "skills/**/SKILL.md",
+        "README.md"
+      ]
     }
   }
 }
