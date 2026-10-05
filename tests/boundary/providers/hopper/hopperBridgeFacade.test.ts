@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { OFFICIAL_TOOL_CONTRACTS } from "../../../../src/contracts/toolContracts.js";
+import { OFFICIAL_TOOL_CONTRACTS } from "../../../../src/contracts/officialToolContracts.js";
 
 const execute = promisify(execFile);
 const bridgePath = new URL(

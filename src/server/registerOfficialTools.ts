@@ -8,7 +8,7 @@ import type {
 import type { BinarySessionPort } from "../application/BinarySession.js";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
 import type { ToolContract } from "../contracts/toolContracts.js";
-import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/toolContracts.js";
+import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import type { AnalysisError } from "../domain/errors.js";
 import { createEvidence } from "../domain/evidence.js";

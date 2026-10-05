@@ -6,12 +6,12 @@ export const toolFamilyCatalog = (sources) => {
     {
       id: "direct",
       surface: "official-proxy",
-      contracts: sources.toolContracts.OFFICIAL_TOOL_CONTRACTS,
+      contracts: sources.officialContracts.OFFICIAL_TOOL_CONTRACTS,
     },
     {
       id: "enhanced",
       surface: "enhanced",
-      contracts: sources.toolContracts.ENHANCED_TOOL_CONTRACTS,
+      contracts: sources.enhancedContracts.ENHANCED_TOOL_CONTRACTS,
     },
     {
       id: "native",
@@ -59,7 +59,7 @@ export const toolFamilyCatalog = (sources) => {
     {
       id: "session",
       surface: "session",
-      contracts: sources.toolContracts.SESSION_TOOL_CONTRACTS,
+      contracts: sources.sessionContracts.SESSION_TOOL_CONTRACTS,
     },
   ].map(({ id, surface, contracts }) => ({
     id,

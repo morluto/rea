@@ -3,11 +3,9 @@ import { z } from "zod";
 import { createCli } from "../cli.js";
 import { createCliInventory } from "../../scripts/lib/product-catalog.mjs";
 
-import {
-  ENHANCED_TOOL_CONTRACTS,
-  OFFICIAL_TOOL_CONTRACTS,
-  SESSION_TOOL_CONTRACTS,
-} from "./toolContracts.js";
+import { ENHANCED_TOOL_CONTRACTS } from "./enhancedToolContracts.js";
+import { OFFICIAL_TOOL_CONTRACTS } from "./officialToolContracts.js";
+import { SESSION_TOOL_CONTRACTS } from "./sessionToolContracts.js";
 import { NATIVE_TOOL_CONTRACTS } from "./nativeToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "./artifactToolContracts.js";
 import { MANAGED_TOOL_CONTRACTS } from "./managedToolContracts.js";

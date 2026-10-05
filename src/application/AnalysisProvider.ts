@@ -1,5 +1,5 @@
 import type { BinaryTarget } from "../domain/binaryTarget.js";
-import type { OfficialToolName } from "../contracts/toolContracts.js";
+import type { OfficialToolName } from "../contracts/officialToolContracts.js";
 import type { EnhancedToolName } from "../contracts/enhancedInputs.js";
 import type { NativeToolName } from "../contracts/nativeToolContracts.js";
 import type { ArtifactAnalysisOperation } from "../contracts/artifactToolContracts.js";

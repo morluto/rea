@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  ENHANCED_TOOL_CONTRACTS,
-  OFFICIAL_TOOL_CONTRACTS,
-  SESSION_TOOL_CONTRACTS,
-  TOOL_CONTRACTS,
-} from "./toolContracts.js";
+import { ENHANCED_TOOL_CONTRACTS } from "./enhancedToolContracts.js";
+import { OFFICIAL_TOOL_CONTRACTS } from "./officialToolContracts.js";
+import { SESSION_TOOL_CONTRACTS } from "./sessionToolContracts.js";
+import { TOOL_CONTRACTS } from "./toolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "./artifactToolContracts.js";
 import { MANAGED_TOOL_CONTRACTS } from "./managedToolContracts.js";
 import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "./managedWorkflowToolContracts.js";

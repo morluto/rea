@@ -4,11 +4,9 @@ import { PROCEDURES, inventory, jsonResult } from "./enhancedToolsHarness.js";
 
 import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
 import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "../../../src/contracts/managedWorkflowToolContracts.js";
-import {
-  ENHANCED_TOOL_CONTRACTS,
-  SESSION_TOOL_CONTRACTS,
-  TOOL_CONTRACTS,
-} from "../../../src/contracts/toolContracts.js";
+import { ENHANCED_TOOL_CONTRACTS } from "../../../src/contracts/enhancedToolContracts.js";
+import { SESSION_TOOL_CONTRACTS } from "../../../src/contracts/sessionToolContracts.js";
+import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import {} from "../../../src/domain/jsonValue.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
