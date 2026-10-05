@@ -5,6 +5,44 @@ import { browserScenarioSchema } from "../domain/browserScenario.js";
 import { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
 import { PlaywrightScenarioEvents } from "./PlaywrightScenarioEvents.js";
 
+describe("popup event selection", () => {
+  it("observes requested popup page errors independently of popup lifecycle events", () => {
+    const listeners = new Map<string, (value: unknown) => void>();
+    const popupListeners = new Map<string, (value: unknown) => void>();
+    const page = {
+      on: (name: string, listener: (value: unknown) => void) => {
+        listeners.set(name, listener);
+      },
+    } as unknown as Page;
+    const popup = {
+      url: () => "https://app.example.test/popup",
+      on: (name: string, listener: (value: unknown) => void) => {
+        popupListeners.set(name, listener);
+      },
+    } as unknown as Page;
+    const scenario = browserScenarioSchema.parse({
+      browser: { mode: "launch", executable_path: "/opt/chromium" },
+      start_url: { url: "https://app.example.test/" },
+      actions: [
+        { step_id: "wait", action: "wait_for_timeout", duration_ms: 1 },
+      ],
+      capture: { events: ["page-errors"] },
+    });
+    const secrets = BrowserScenarioSecrets.resolve(scenario, {});
+    if (secrets === undefined) throw new Error("Expected resolved secrets");
+    const events = new PlaywrightScenarioEvents({
+      page,
+      enabled: new Set(["page-errors"]),
+      secrets,
+    });
+    listeners.get("popup")?.(popup);
+    popupListeners.get("pageerror")?.(new Error("popup application failure"));
+    expect(events.result().items).toMatchObject([
+      { kind: "page-error", message: "popup application failure" },
+    ]);
+  });
+});
+
 describe("PlaywrightScenarioEvents", () => {
   it("bounds oversized page errors before validating captured events", () => {
     const listeners = new Map<string, (value: Error) => void>();

@@ -116,8 +116,7 @@ export class PlaywrightScenarioEvents {
     }
     if (this.enabled.has("workers"))
       page.on("worker", (worker) => this.worker(worker));
-    if (this.enabled.has("popups"))
-      page.on("popup", (popup) => this.popup(popup));
+    if (this.enabled.size > 0) page.on("popup", (popup) => this.popup(popup));
     if (this.enabled.has("downloads"))
       page.on("download", (download) => this.download(download));
   }
@@ -243,14 +242,16 @@ export class PlaywrightScenarioEvents {
       url: page.url() === "" ? null : this.safeUrl(page.url()),
       name: null,
     };
-    this.push({ kind: "popup-opened", ...opened });
-    page.on("close", () =>
-      this.push({
-        kind: "popup-closed",
-        url: page.url() === "" ? null : this.safeUrl(page.url()),
-        name: null,
-      }),
-    );
+    if (this.enabled.has("popups")) {
+      this.push({ kind: "popup-opened", ...opened });
+      page.on("close", () =>
+        this.push({
+          kind: "popup-closed",
+          url: page.url() === "" ? null : this.safeUrl(page.url()),
+          name: null,
+        }),
+      );
+    }
     this.observePage(page);
   }
 
