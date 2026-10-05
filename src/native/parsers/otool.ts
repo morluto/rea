@@ -44,8 +44,19 @@ interface ParsedLoadCommands {
   readonly flags: Set<string>;
 }
 
+/**
+ * otool emits LF, but a capture replayed from another host or toolchain can
+ * carry CRLF. The section/command boundaries below match a bare `\n`, so a
+ * stray `\r` would swallow the terminator and silently empty `sections` while
+ * leaking section fields into the command. Normalizing once at the boundary
+ * keeps every parser below working on one line ending.
+ */
+const normalizeLineEndings = (output: string): string =>
+  output.replaceAll("\r\n", "\n");
+
 /** Parse stable fields from `otool -l`, preserving unknown command fields. */
-export const parseOtoolLoadCommands = (output: string) => {
+export const parseOtoolLoadCommands = (raw: string) => {
+  const output = normalizeLineEndings(raw);
   const headerTokens = parseHeaderTokens(output);
   const state = createLoadCommandState(headerTokens);
   for (const block of output.split(/(?=Load command \d+)/u))
