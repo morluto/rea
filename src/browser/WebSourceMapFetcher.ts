@@ -25,7 +25,10 @@ interface SourceMapFetchHost {
 
 type SourceMaps = WebSourceMaps;
 type SourceMapItem = WebSourceMapItem;
-type ParsedSourceMapItem = Extract<SourceMapItem, { status: "included" }>;
+type ParsedSourceMapItem = Extract<
+  SourceMapItem,
+  { status: "included" | "partial" }
+>;
 
 /** Fetch and validate approved source maps without browser credentials. */
 export const fetchWebSourceMaps = async (
@@ -39,14 +42,17 @@ export const fetchWebSourceMaps = async (
     if (signal?.aborted === true) throw signal.reason;
     items.push(await fetchOne(request, input, signal, host));
   }
-  const included = items.filter(({ status }) => status === "included").length;
+  const retained = items.filter(
+    ({ status }) => status === "included" || status === "partial",
+  ).length;
   return webSourceMapsSchema.parse({
     status:
       items.length === 0
         ? "unavailable"
-        : included === items.length
+        : retained === items.length &&
+            !items.some(({ status }) => status === "partial")
           ? "included"
-          : included > 0
+          : retained > 0
             ? "partial"
             : "unavailable",
     requested: requests.length,
@@ -179,10 +185,16 @@ const normalizeSourceMap = (
       ...sourceMapContext(request),
       artifact: createWebTextArtifact(text, "application/source-map+json"),
       original_sources: originalSources,
-      original_module_edges: modules,
+      original_module_edges: modules.edges,
       mappings,
     };
-    return { ...parsed, status: "included", limitation: null };
+    return modules.incomplete.length === 0
+      ? { ...parsed, status: "included", limitation: null }
+      : {
+          ...parsed,
+          status: "partial",
+          limitation: `Module edges are incomplete: ${modules.incomplete.length} of ${originalSources.filter(({ artifact }) => artifact !== null).length} original sources could not be parsed in full (${modules.incomplete.join(", ")}).`,
+        };
   } catch {
     return emptySourceMapItem(
       request,
@@ -192,15 +204,28 @@ const normalizeSourceMap = (
   }
 };
 
+interface OriginalModuleEdges {
+  readonly edges: ParsedSourceMapItem["original_module_edges"];
+  /** Original sources whose dependency edges may be incomplete. */
+  readonly incomplete: readonly string[];
+}
+
 const originalModuleEdges = (
   sources: ParsedSourceMapItem["original_sources"],
-): ParsedSourceMapItem["original_module_edges"] => {
+): OriginalModuleEdges => {
   const edges: ParsedSourceMapItem["original_module_edges"] = [];
   const seen = new Set<string>();
+  const incomplete: string[] = [];
   for (const source of sources) {
     if (source.artifact === null) continue;
     const parsed = parseJavaScriptSource(source.artifact.text);
-    if (parsed === null || parsed.errors.length > 0) continue;
+    if (parsed === null) {
+      incomplete.push(source.source);
+      continue;
+    }
+    // A recovered program still yields the imports it did parse, but nodes
+    // after an unrecoverable point are missing, so the edges are a subset.
+    if (parsed.errors.length > 0) incomplete.push(source.source);
     let unboundRequires: ReadonlySet<string> | undefined;
     t.traverseFast(parsed, (node) => {
       const dependency = originalDependency(node);
@@ -240,7 +265,7 @@ const originalModuleEdges = (
       });
     });
   }
-  return edges;
+  return { edges, incomplete };
 };
 
 const validSourceMapEnvelope = (text: string): boolean => {
@@ -358,5 +383,17 @@ const originalDependency = (
     t.isStringLiteral(node.arguments[0])
   )
     return { kind: "require", specifier: node.arguments[0].value };
+  // `import x = require("m")` is only legal at module top level and always
+  // refers to the host loader, so it needs no unbound-`require` check. The
+  // `moduleReference` is an entity name for a local alias instead, which
+  // declares no dependency.
+  if (
+    t.isTSImportEqualsDeclaration(node) &&
+    t.isTSExternalModuleReference(node.moduleReference)
+  )
+    return {
+      kind: "require",
+      specifier: node.moduleReference.expression.value,
+    };
   return null;
 };

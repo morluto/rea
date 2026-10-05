@@ -319,16 +319,20 @@ describe("source-map original syntax boundaries", () => {
   it.each([
     [
       `import "./it's-real.js"; const quoted = \`import './template-comment.js'\`;`,
+      "included",
       ["./it's-real.js"],
     ],
     [
       'function fake(require) { require("./not-a-module.js"); } require("./real.cjs");',
+      "included",
       ["./real.cjs"],
     ],
-    ['import "./recovered.js"; const = ;', []],
-  ])(
+    // An unrecoverable source cannot invent edges, and the caller is told its
+    // edge list is incomplete rather than being told it has no imports.
+    ['import "./recovered.js"; const = ;', "partial", []],
+  ] as const)(
     "retains literal syntax without inventing module calls",
-    async (text, expected) => {
+    async (text, status, expected) => {
       const result = await fetchWebSourceMaps([request], input(), undefined, {
         fetch: () =>
           Promise.resolve(
@@ -343,14 +347,87 @@ describe("source-map original syntax boundaries", () => {
             ),
           ),
       });
-      expect(result.items[0]?.status).toBe("included");
+      const item = result.items[0];
+      expect(item?.status).toBe(status);
+      if (status === "partial")
+        expect(item?.limitation).toContain("could not be parsed in full");
+      else expect(item?.limitation).toBeNull();
       expect(
-        result.items[0]?.original_module_edges.map(
-          ({ specifier }) => specifier,
-        ),
+        item?.original_module_edges.map(({ specifier }) => specifier),
       ).toEqual(expected);
     },
   );
+});
+
+describe("source-map dependency coverage of hard-to-parse sources", () => {
+  const fetchWithSources = (sources: readonly string[]) =>
+    fetchWebSourceMaps([request], input(), undefined, {
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              version: 3,
+              names: [],
+              sources: sources.map((_, index) => `source-${String(index)}.ts`),
+              sourcesContent: [...sources],
+              mappings: "AAAA",
+            }),
+          ),
+        ),
+    });
+
+  it.each([
+    [
+      "decorated classes and parameters",
+      '@Component({ selector: "app" })\nexport class A { @Inject() b: C; constructor(@Optional() private s: S) {} }\nimport "./a.js";',
+      ["./a.js"],
+    ],
+    [
+      "legacy class decorators",
+      'class A { @dec method() {} }\nimport "./a.js";',
+      ["./a.js"],
+    ],
+    [
+      "TypeScript import equals",
+      'import lib = require("./lib.js");',
+      ["./lib.js"],
+    ],
+    [
+      "a local import alias",
+      'import lib = localAlias;\nimport "./a.js";',
+      ["./a.js"],
+    ],
+  ])("recovers dependencies from %s", async (_label, text, expected) => {
+    const result = await fetchWithSources([text]);
+    expect(result.items[0]?.status).toBe("included");
+    expect(
+      result.items[0]?.original_module_edges.map(({ specifier }) => specifier),
+    ).toEqual(expected);
+  });
+
+  it("keeps recovered edges from a partly recovered source and reports them as partial", async () => {
+    const result = await fetchWithSources([
+      'with (scope) { require("./c.js"); }\nimport "./a.js";',
+    ]);
+    expect(result.status).toBe("partial");
+    expect(result.items[0]?.status).toBe("partial");
+    expect(result.items[0]?.limitation).toContain(
+      "could not be parsed in full",
+    );
+    expect(
+      result.items[0]?.original_module_edges.map(({ specifier }) => specifier),
+    ).toEqual(["./c.js", "./a.js"]);
+  });
+
+  it("distinguishes an unparsable source from a source with no imports", async () => {
+    const broken = await fetchWithSources(['import "./a.js"; const s = "oops']);
+    expect(broken.items[0]?.status).toBe("partial");
+    expect(broken.items[0]?.original_module_edges).toEqual([]);
+    const clean = await fetchWithSources(["export const value = 1;"]);
+    expect(clean.status).toBe("included");
+    expect(clean.items[0]?.status).toBe("included");
+    expect(clean.items[0]?.original_module_edges).toEqual([]);
+  });
 });
 
 describe("web source-map collection", () => {
