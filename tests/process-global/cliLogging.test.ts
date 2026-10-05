@@ -2,6 +2,15 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { logCliCommand } from "../../src/cliLogging.js";
 import { silentLogger } from "../../src/logger.js";
+import {
+  ArtifactOperationError,
+  projectAnalysisError,
+} from "../../src/domain/errors.js";
+import { isSetupFailure, runSetup } from "../../src/application/Setup.js";
+import {
+  FakeSetupHost,
+  options as setupOptions,
+} from "../../src/application/Setup.fixture.js";
 
 const originalExitCode = process.exitCode;
 
@@ -21,9 +30,20 @@ describe("CLI operation status", () => {
   });
 
   it("keeps unapproved setup applications unsuccessful", async () => {
+    const host = new FakeSetupHost();
+    host.availableClients = [{ name: "cursor", configPath: "/cursor.json" }];
+    const result = await runSetup(
+      { ...setupOptions(false), clientIds: ["cursor"] },
+      host,
+    );
+    expect(result.status).toBe("needs_confirmation");
+    expect(isSetupFailure(result)).toBe(true);
     process.exitCode = undefined;
-    await logCliCommand(silentLogger, "setup", () =>
-      Promise.resolve({ status: "needs_confirmation" }),
+    await logCliCommand(
+      silentLogger,
+      "setup",
+      () => Promise.resolve(result),
+      isSetupFailure,
     );
     expect(process.exitCode).toBe(1);
   });
@@ -31,9 +51,14 @@ describe("CLI operation status", () => {
   it("sets a nonzero process status without replacing structured output", async () => {
     const output = {
       error: "Analysis failed",
-      category: "integrity_mismatch",
-      message: "Artifact integrity check failed.",
-      details: { logical_path: "main.js" },
+      ...projectAnalysisError(
+        new ArtifactOperationError("inspect_artifact", "integrity", {
+          logicalPath: "main.js",
+          declaredSha256: "a".repeat(64),
+          calculatedSha256: "b".repeat(64),
+          unpacked: false,
+        }),
+      ),
     };
 
     await expect(

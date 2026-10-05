@@ -91,7 +91,7 @@ const registerCompareManagedMembers = (
 ): void => {
   cli.command(CLI_COMMANDS.compareManagedMembers, {
     description:
-      "Compare two managed PE/CLI member inventories without name-based matching",
+      "Compare managed PE/CLI member inventories by exact declared type, name, and signature; names alone never form a match",
     args: compareManagedMemberArgs,
     run: ({ args }) =>
       logCliCommand(logger, "compare-managed-members", async () => {

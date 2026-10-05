@@ -131,6 +131,26 @@ export interface SetupResult {
   readonly code?: SetupFailureCode;
 }
 
+/** Whether the requested setup actions still need approval or human repair. */
+export const isSetupFailure = (result: SetupResult): boolean => {
+  const status = result.status;
+  switch (status) {
+    case "planned":
+    case "cancelled":
+    case "ready":
+      return false;
+    case "needs_confirmation":
+    case "needs_human":
+      return true;
+    default: {
+      const exhaustive: never = status;
+      throw new TypeError(
+        `Unhandled setup result status: ${String(exhaustive)}`,
+      );
+    }
+  }
+};
+
 /** Relevant health and identity evidence for the selected setup scope. */
 export interface SetupDoctorSummary {
   readonly healthy: boolean;
@@ -683,8 +703,9 @@ const hostRemediation = async (
 export const systemSetupHost = (
   doctorHost: DoctorHost = systemDoctorHost(),
 ): SetupHost => {
+  const platform = doctorHost.platform;
   return {
-    platform: process.platform,
+    platform,
     nodeVersion: process.versions.node,
     macosVersion: () => doctorHost.macosVersion(),
     linuxDistribution: readLinuxDistribution,
@@ -700,7 +721,7 @@ export const systemSetupHost = (
     },
     installHopper: async (replaceExisting) => {
       const result =
-        process.platform === "linux"
+        platform === "linux"
           ? await installLinuxHopper()
           : await installMacHopper({ replaceExisting });
       if (result.status === "installed") return result;
