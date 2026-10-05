@@ -140,7 +140,12 @@ const collectDependency = (
   fields: Readonly<Record<string, string | number | null>>,
   state: ParsedLoadCommands,
 ): void => {
-  if (!kind.startsWith("LC_LOAD_") && kind !== "LC_ID_DYLIB") return;
+  if (
+    !kind.startsWith("LC_LOAD_") &&
+    kind !== "LC_ID_DYLIB" &&
+    kind !== "LC_REEXPORT_DYLIB"
+  )
+    return;
   state.dependencies.push({
     path: stripOffsetSuffix(stringField(fields, "name")),
     kind,
