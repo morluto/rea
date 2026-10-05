@@ -28,21 +28,22 @@ and [browser tracker](https://github.com/morluto/rea/issues/39) track remaining
 capabilities and proof. Their scope follows direct tools and agent-composed
 experiments; custom replay languages and grant systems are not completion gates.
 
-Current boundary work includes
-[inline Evidence composition](https://github.com/morluto/rea/issues/551),
-[CLI/MCP managed-tool and seed parity](https://github.com/morluto/rea/issues/553),
-[partial-evidence comparison](https://github.com/morluto/rea/issues/558), and
-[native PTY failure diagnostics](https://github.com/morluto/rea/issues/568).
-Removing replay does not resolve these defects. Real-provider and platform
-claims still require their corresponding verification lanes.
+[Inline Evidence composition](https://github.com/morluto/rea/pull/585) now returns
+the complete record accepted by comparison tools. Managed inspection uses an
+explicit PE/CLI target independently of the native provider selection. Comparisons
+preserve unknowns when observation is incomplete, and PTY diagnostics retain the
+actual loader or startup failure. Browser cleanup reports incomplete teardown
+alongside the primary failure; transient documents invalidate only the affected
+frame's WebMCP registrations. Real-provider and platform claims still require
+their corresponding verification lanes.
 
 ## Shipped behavior
 
 REA setup lets you select agent integration and optional Hopper installation.
 It installs the bundled workflow, configures detected agents, and can save
-verified paths for an existing Ghidra installation. It detects Claude Code,
-Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, and Devin. The first six
-can be configured; Devin is reported but left unchanged.
+verified paths for an existing Ghidra installation. It configures Claude Code,
+Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, Devin, OpenCode, Antigravity,
+GitHub Copilot CLI, and VS Code using each client's configuration format.
 
 Ghidra analysis supports Linux x64 and macOS x64/arm64 with Ghidra 12.1.4 and a
 64-bit full JDK 21. macOS also requires the matching native decompiler. The

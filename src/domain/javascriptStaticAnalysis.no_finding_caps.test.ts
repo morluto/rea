@@ -3,6 +3,15 @@ import { describe, expect, it } from "vitest";
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 describe("JavaScript static analysis findings", () => {
+  it("does not infer a webpack push from a dynamic computed key", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      const push = "push";
+      const arr = {};
+      arr[push]([[1], { 1: function () {} }]);
+    `);
+    expect(analysis.bundler_registrations).toEqual([]);
+  });
+
   it("retains every static reference and Electron property in large literals", () => {
     const names = Array.from({ length: 10_001 }, (_, index) => `key${index}`);
     const source = [

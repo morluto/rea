@@ -57,9 +57,26 @@ const registrationSchema = z
 export const readClientRegistrationStatuses = async (
   home: string,
   currentCommandPath: string = resolve(process.argv[1] ?? "unknown"),
+  options: {
+    readonly platform?: NodeJS.Platform;
+    readonly environment?: NodeJS.ProcessEnv;
+  } = {},
 ): Promise<readonly ClientRegistrationStatus[]> => {
   const statuses: ClientRegistrationStatus[] = [];
-  for (const client of supportedClients(home)) {
+  for (const client of supportedClients(
+    home,
+    options.platform,
+    options.environment === undefined
+      ? undefined
+      : {
+          APPDATA: options.environment.APPDATA,
+          CLAUDE_CONFIG_DIR: options.environment.CLAUDE_CONFIG_DIR,
+          CODEX_HOME: options.environment.CODEX_HOME,
+          COPILOT_HOME: options.environment.COPILOT_HOME,
+          OPENCODE_CONFIG: options.environment.OPENCODE_CONFIG,
+          XDG_CONFIG_HOME: options.environment.XDG_CONFIG_HOME,
+        },
+  )) {
     if (
       client.format === "unsupported" ||
       (!(await exists(client.markerPath)) && !(await exists(client.configPath)))

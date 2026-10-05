@@ -63,6 +63,9 @@ export interface FakeOptions {
   readonly webMcpFrameCount?: number;
   readonly webMcpSchemaPropertyCount?: number;
   readonly webMcpChildLeavesScope?: boolean;
+  readonly webMcpChildTransientBlank?: boolean;
+  readonly webMcpChildRecoversAfterTransient?: boolean;
+  readonly webMcpChildNavigatesAllowed?: boolean;
   readonly electronFileUrl?: string;
   readonly duplicateElectronInventory?: boolean;
   readonly electronInventoryCount?: number;

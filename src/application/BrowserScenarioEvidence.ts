@@ -51,12 +51,15 @@ export const createBrowserScenarioEvidence = (
     authority: "controlled-replay",
     environment: {
       id: `${capture.browser.product}@${capture.browser.version}`,
-      platform: process.platform,
-      architecture: process.arch,
+      platform: "unknown",
+      architecture: "unknown",
       isolation:
         capture.browser.process_ownership === "provider-owned"
           ? "process"
           : "none",
     },
-    limitations: capture.limitations,
+    limitations: [
+      ...capture.limitations,
+      "Browser host platform and architecture were not observed.",
+    ],
   });

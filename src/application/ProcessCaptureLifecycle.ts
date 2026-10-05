@@ -202,6 +202,13 @@ export const createRunManifest = async (
   scenario: ProcessScenario,
   startedAt: Date,
   completedAt: Date,
+  host: {
+    readonly platform: NodeJS.Platform;
+    readonly architecture: NodeJS.Architecture;
+  } = {
+    platform: process.platform,
+    architecture: process.arch,
+  },
 ): Promise<UnverifiedProcessCapture["manifest"]> => {
   const executableSha256 = await hashFile(scenario.executable);
   const scenarioCommitment = processScenarioCommitment(
@@ -212,8 +219,8 @@ export const createRunManifest = async (
   return {
     rea_version: PRODUCT_IDENTITY.packageVersion,
     provider_version: PROCESS_PROVIDER.version,
-    platform: process.platform,
-    architecture: process.arch,
+    platform: host.platform,
+    architecture: host.architecture,
     pty_backend: "node-pty",
     started_at: startedAt.toISOString(),
     completed_at: completedAt.toISOString(),
@@ -231,8 +238,9 @@ export const observeSettlement = async (
   processGroupIds: readonly number[],
   settleMs: number,
   recordEvent: RecordProcessCaptureEvent = () => undefined,
+  platform: NodeJS.Platform = process.platform,
 ): Promise<ObservedProcessSettlement> => {
-  if (process.platform === "win32") {
+  if (platform === "win32") {
     recordEvent("lifecycle", 1);
     return { state: "unverifiable", elapsed_ms: 0 };
   }

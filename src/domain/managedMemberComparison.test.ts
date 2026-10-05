@@ -29,7 +29,7 @@ describe("managed member comparison", () => {
       { evidenceId: right.evidenceId, result: right.result },
     );
 
-    expect(result.algorithm.name_matching).toBe("not-used");
+    expect(result.algorithm.name_matching).toBe("exact-signature-fallback");
     expect(result.left.mvid).toBe("00112233-4455-6677-8899-aabbccddeeff");
     expect(result.right.mvid).toBe("33221100-5544-7766-8899-aabbccddeefe");
     expect(result.matching.exact_il_signature).toBe(1);
@@ -47,7 +47,7 @@ describe("managed member comparison", () => {
       }),
     ]);
     expect(result.limitations).toContain(
-      "Names are reported as observations but are not used as a matching basis.",
+      "Methods pair by exact CIL/signature, then declared type, name, and signature, then structural shape; names alone are never a matching basis.",
     );
     expect(
       managedMemberComparisonResultSchema.safeParse({
@@ -57,7 +57,7 @@ describe("managed member comparison", () => {
     ).toBe(true);
   });
 
-  it("uses structural method shape when build-local token operands drift", () => {
+  it("compares changed CIL after pairing by exact signature", () => {
     const leftBytes = buildManagedPeFixture();
     const rightBytes = buildManagedPeFixture({
       ilBody: Buffer.from([
@@ -73,10 +73,10 @@ describe("managed member comparison", () => {
     );
 
     expect(result.matching.exact_il_signature).toBe(0);
-    expect(result.matching.structural_method_shape).toBe(1);
+    expect(result.matching.exact_signature).toBe(1);
     expect(result.methods[0]).toMatchObject({
       status: "changed",
-      match: { status: "matched", basis: "structural-method-shape" },
+      match: { status: "matched", basis: "exact-signature" },
       dimensions: ["cil"],
     });
   });

@@ -257,6 +257,7 @@ export interface JavaScriptSemanticTimerOperation {
   readonly location: JavaScriptSourceRange;
   readonly ownerCallableId: string | null;
   readonly handleBindingId: string | null;
+  readonly projectedResultBindings: readonly JavaScriptSemanticProjectedResultBinding[];
   readonly linkedTimerId: string | null;
   readonly delayMilliseconds: number | null;
   readonly resolution: "complete" | "partial" | "unresolved";
@@ -269,6 +270,7 @@ export interface JavaScriptSemanticChildProcessSpawn {
   readonly location: JavaScriptSourceRange;
   readonly ownerCallableId: string | null;
   readonly resultBindingId: string | null;
+  readonly projectedResultBindings: readonly JavaScriptSemanticProjectedResultBinding[];
   readonly command: string | null;
   readonly argvCount: number | null;
   readonly environmentSupplied: boolean;
@@ -319,6 +321,7 @@ export interface JavaScriptSemanticRequestOperation {
   readonly location: JavaScriptSourceRange;
   readonly ownerCallableId: string | null;
   readonly resultBindingId: string | null;
+  readonly projectedResultBindings: readonly JavaScriptSemanticProjectedResultBinding[];
   readonly linkedRequestIds: readonly string[];
   readonly endpoint: string | null;
   readonly fields: readonly {
@@ -326,6 +329,13 @@ export interface JavaScriptSemanticRequestOperation {
     readonly sourceBindingId: string | null;
   }[];
   readonly resolution: "complete" | "partial" | "unresolved";
+}
+
+/** A destructured result binding with its known projection path. */
+export interface JavaScriptSemanticProjectedResultBinding {
+  readonly bindingId: string;
+  readonly projectionPath: readonly (string | number | null)[];
+  readonly resolution: "complete" | "partial";
 }
 
 /** One parse, coercion, or validation boundary candidate. */

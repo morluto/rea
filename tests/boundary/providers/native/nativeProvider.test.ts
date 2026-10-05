@@ -13,6 +13,7 @@ import {
 } from "../../../../src/native/CommandRunner.js";
 import { err, ok } from "../../../../src/domain/result.js";
 import { parseLipoArchitectures } from "../../../../src/native/parsers/lipo.js";
+import { parseCodeSignature } from "../../../../src/native/parsers/codesign.js";
 
 import {
   NativeFixtureRunner as FixtureRunner,
@@ -238,6 +239,41 @@ describe("native macOS provider inspection", () => {
   });
 });
 
+describe("native dispatch metadata error results", () => {
+  it("preserves tagged cancellation and integrity failures", async () => {
+    directory = await createTestTempDirectory("rea-dispatch-errors-");
+    const targetPath = join(directory, "fixture.macho");
+    await writeFile(targetPath, "bound target bytes");
+    const client = new NativeMacOSProvider(
+      new FixtureRunner(),
+      "darwin",
+    ).createClient(machoTarget(targetPath));
+    const controller = new AbortController();
+    const cancelled = client.execute(
+      "inspect_native_dispatch_metadata",
+      {},
+      { signal: controller.signal },
+    );
+    controller.abort();
+    const cancellationResult = await cancelled;
+    expect(!cancellationResult.ok && cancellationResult.error._tag).toBe(
+      "AnalysisCancelledError",
+    );
+
+    const mismatchedClient = new NativeMacOSProvider(
+      new FixtureRunner(),
+      "darwin",
+    ).createClient({ ...machoTarget(targetPath), sha256: "f".repeat(64) });
+    const integrityResult = await mismatchedClient.execute(
+      "inspect_native_dispatch_metadata",
+      {},
+    );
+    expect(!integrityResult.ok && integrityResult.error._tag).toBe(
+      "EvidenceIntegrityError",
+    );
+  });
+});
+
 describe("native macOS provider failures and parsing", () => {
   it("classifies unavailable, malformed, command failure, and cancellation", async () => {
     const unavailable = new NativeMacOSProvider(
@@ -318,6 +354,41 @@ describe("native macOS provider failures and parsing", () => {
     expect(parseLipoArchitectures(output)).toMatchObject([
       { name: "arm64", file_offset: null, size: null, alignment: 16384 },
     ]);
+  });
+
+  it("requires the full alignment field to use a recognized spelling", () => {
+    const output = [
+      "architecture arm64",
+      "    offset 0",
+      "    size 16",
+      "    align 2^14 (16384)",
+    ].join("\n");
+    expect(
+      parseLipoArchitectures(output.replace("(16384)", "(8192)"))[0]?.alignment,
+    ).toBeNull();
+    expect(
+      parseLipoArchitectures(output.replace("2^14 (16384)", "2^14"))[0]
+        ?.alignment,
+    ).toBe(16384);
+  });
+
+  it("reads hardened runtime only from CodeDirectory flags", () => {
+    expect(
+      parseCodeSignature("Diagnostic: runtime policy unavailable", false)
+        .hardened_runtime,
+    ).toBeNull();
+    expect(
+      parseCodeSignature(
+        "CodeDirectory v=20500 flags=0x10000(runtime) hashes=10+7",
+        false,
+      ).hardened_runtime,
+    ).toBe(true);
+    expect(
+      parseCodeSignature(
+        "CodeDirectory v=20500 flags=0x2(adhoc,hard) runtime=1",
+        false,
+      ).hardened_runtime,
+    ).toBe(false);
   });
 });
 

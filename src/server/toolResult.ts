@@ -7,8 +7,8 @@ import type { Result } from "../domain/result.js";
 
 /**
  * Serialize an application result as MCP text and structured content.
- * Error tags and safe messages remain visible while underlying causes, process
- * output, and other potentially sensitive details stay private.
+ * Shared error projection preserves actionable local diagnostics while omitting
+ * raw causes and captured process output.
  */
 export const toCallToolResult = (
   result: Result<JsonValue, AnalysisError>,

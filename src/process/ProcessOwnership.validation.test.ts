@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   cleanupOwnedProcessGroup,
   cleanupWindowsProcessTree,
+  createSystemProcessOwnershipHost,
   observeOwnedProcessGroup,
   observeOwnedProcessLineage,
   type ProcessOwnershipHost,
@@ -10,6 +11,14 @@ import {
 import { host, ownership } from "./ProcessOwnership.fixture.js";
 
 describe("owned process-group cleanup validation: ownership and lineage", () => {
+  it("builds a host seam from the injected platform and environment", async () => {
+    const host = createSystemProcessOwnershipHost("win32", {
+      PATH: "/injected/path",
+    });
+    expect(host.platform).toBe("win32");
+    await expect(host.listProcesses()).resolves.toEqual([]);
+  });
+
   it("fails closed when a descendant in another process group lacks the token", async () => {
     const adapter: ProcessOwnershipHost = {
       listProcesses: () =>
@@ -103,7 +112,11 @@ describe("owned process-group cleanup validation: ownership and lineage", () => 
       cleaned: false,
       reason: "process tree contains an unowned or PID-reused process",
       failures: [
-        { pid: 100, reason: "environment-unreadable" },
+        expect.objectContaining({
+          pid: 100,
+          reason: "environment-unreadable",
+          diagnostic: "transient procfs read",
+        }),
         { pid: 101, reason: "run-token-mismatch" },
       ],
     });

@@ -11,11 +11,91 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { AnalysisProviderRegistry } from "../../../src/application/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../src/application/BinarySessionComposition.js";
 import type { BinarySession } from "../../../src/application/BinarySession.js";
+import type { BinaryTarget } from "../../../src/domain/binaryTarget.js";
 import { SessionProviderRouter } from "../../../src/application/SessionProviderRouter.js";
 import { MANAGED_NATIVE_VERIFICATION_EXAMPLE } from "../../../src/contracts/managedWorkflowExamples.js";
 import { ManagedStaticProvider } from "../../../src/dotnet/ManagedStaticProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { buildManagedPeFixture } from "../../../src/dotnet/ManagedPe.fixture.js";
+
+it("runs every managed static inspection independently of an active native target", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-managed-independent-mcp-",
+  );
+  const path = join(directory, "fixture.dll");
+  await writeFile(path, buildManagedPeFixture());
+  const session = composeBinarySession(
+    SessionProviderRouter.selectable(new AnalysisProviderRegistry([]), [
+      new ManagedStaticProvider(),
+    ]),
+  );
+  const server = createServer(
+    session,
+    sessionWithUnrelatedNativeTarget(session),
+    {
+      availabilityPolicy: () => ({
+        processCaptureEnabled: false,
+        investigationInputRoots: 0,
+        browserObservationEnabled: false,
+        electronObservationEnabled: false,
+      }),
+    },
+  );
+  const client = new Client({
+    name: "managed-independent-mcp",
+    version: "1.0.0",
+  });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const artifact = structured(
+      await client.callTool({
+        name: "inspect_managed_artifact",
+        arguments: { path },
+      }),
+    );
+    expect(artifact).toMatchObject({
+      evidence: {
+        operation: "inspect_managed_artifact",
+        provider: { id: "rea-dotnet-static" },
+        subject: { local_path: path, format: "pe" },
+      },
+    });
+    const invalidSelection = await client.callTool({
+      name: "inspect_managed_artifact",
+      arguments: { path: join(directory, "missing.dll") },
+    });
+    expect(invalidSelection.isError).toBe(true);
+    const members = structured(
+      await client.callTool({ name: "inspect_managed_members", arguments: {} }),
+    );
+    expect(members).toMatchObject({
+      evidence: {
+        operation: "inspect_managed_members",
+        provider: { id: "rea-dotnet-static" },
+        subject: { local_path: path, format: "pe" },
+      },
+    });
+    const boundaries = structured(
+      await client.callTool({
+        name: "inspect_managed_native_boundaries",
+        arguments: { path },
+      }),
+    );
+    expect(boundaries).toMatchObject({
+      evidence: {
+        operation: "inspect_managed_native_boundaries",
+        provider: { id: "rea-dotnet-static" },
+        subject: { local_path: path, format: "pe" },
+      },
+    });
+  } finally {
+    await Promise.all([client.close(), server.close()]);
+    await session.close();
+  }
+}, 30_000);
 
 it("opens a managed PE and executes the managed static provider through MCP", async () => {
   const directory = await createTestTempDirectory("rea-managed-mcp-");
@@ -28,14 +108,18 @@ it("opens a managed PE and executes the managed static provider through MCP", as
       new ManagedStaticProvider(),
     ]),
   );
-  const server = createServer(session, session, {
-    availabilityPolicy: () => ({
-      processCaptureEnabled: false,
-      investigationInputRoots: 0,
-      browserObservationEnabled: false,
-      electronObservationEnabled: false,
-    }),
-  });
+  const server = createServer(
+    session,
+    sessionWithUnrelatedNativeTarget(session),
+    {
+      availabilityPolicy: () => ({
+        processCaptureEnabled: false,
+        investigationInputRoots: 0,
+        browserObservationEnabled: false,
+        electronObservationEnabled: false,
+      }),
+    },
+  );
   const client = new Client({ name: "managed-mcp-test", version: "1.0.0" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -124,11 +208,16 @@ const inspectManagedStaticWorkflow = async (
       references: [expect.objectContaining({ name: "System.Runtime" })],
     },
   });
+  expect(inlineEvidence(inspected)).toMatchObject({
+    operation: "inspect_managed_artifact",
+    provider: { id: "rea-dotnet-static" },
+    subject: { local_path: path, format: "pe" },
+  });
   const members = inlineEvidence(
     structured(
       await client.callTool({
         name: "inspect_managed_members",
-        arguments: {},
+        arguments: { path },
       }),
     ),
   );
@@ -150,7 +239,7 @@ const inspectManagedStaticWorkflow = async (
   const boundaries = structured(
     await client.callTool({
       name: "inspect_managed_native_boundaries",
-      arguments: {},
+      arguments: { path },
     }),
   );
   expect(boundaries).toMatchObject({
@@ -161,6 +250,28 @@ const inspectManagedStaticWorkflow = async (
     },
   });
   return members;
+};
+
+const sessionWithUnrelatedNativeTarget = (
+  session: BinarySession,
+): BinarySession => {
+  const nativeTarget: BinaryTarget = {
+    kind: "executable",
+    format: "pe",
+    path: "C:\\Windows\\System32\\notepad.exe",
+    sha256: "a".repeat(64),
+    architecture: "x86_64",
+    availableArchitectures: ["x86_64"],
+    executableRole: "application",
+    managed: false,
+  };
+  return new Proxy(session, {
+    get(target, property, receiver) {
+      if (property === "activeTarget") return () => nativeTarget;
+      const value: unknown = Reflect.get(target, property, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
 };
 
 const methodFrom = (members: Record<string, unknown>) =>
@@ -210,8 +321,8 @@ const verifyManagedComparisonAndReconstruction = async (
     provider: { id: "rea-dotnet-workflows" },
     confidence: "inferred",
     normalized_result: {
-      algorithm: { name_matching: "not-used" },
-      matching: { exact_il_signature: 1 },
+      algorithm: { name_matching: "exact-signature-fallback" },
+      matching: { exact_il_signature: 1, exact_signature: 0 },
     },
   });
   const method = methodFrom(members);
