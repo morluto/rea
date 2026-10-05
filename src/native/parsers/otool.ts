@@ -177,7 +177,11 @@ const parseFields = (block: string): Record<string, string | number | null> => {
   const fields: Record<string, string | number | null> = {};
   for (const rawLine of block.split(/\r?\n/u).slice(1)) {
     const line = rawLine.trim();
-    const match = /^(\S+(?:\s+(?:version|stamp))?)\s+(.+)$/u.exec(line);
+    // Keys are `token` or a compound `token version`. `time stamp` is the one
+    // other real key, and it must be matched as a whole: treating `stamp` as a
+    // generic suffix would swallow an install name such as
+    // `name stamp plugin.dylib`, hiding the dependency path behind `unknown`.
+    const match = /^((?:time stamp)|\S+(?:\s+version)?)\s+(.+)$/u.exec(line);
     if (match?.[1] === undefined || match[2] === undefined) continue;
     const value = match[2].trim();
     fields[match[1]] = numeric(value) ?? value;

@@ -27,6 +27,31 @@ it("retains lazily loaded library dependencies", () => {
   });
 });
 
+it("preserves dependency install names that begin with the word stamp", () => {
+  const load = parseOtoolLoadCommands(
+    [
+      "Load command 2",
+      "          cmd LC_LOAD_DYLIB",
+      "          name stamp plugin.dylib (offset 24)",
+      "   time stamp 2 Thu Jan  1 00:00:02 1970",
+      "      current version 1.0.0",
+      "compatibility version 1.0.0",
+      "",
+    ].join("\n"),
+  );
+  expect(load.dependencies).toContainEqual({
+    path: "stamp plugin.dylib",
+    kind: "LC_LOAD_DYLIB",
+    current_version: "1.0.0",
+    compatibility_version: "1.0.0",
+  });
+  expect(
+    load.commands.find((command) => command.kind === "LC_LOAD_DYLIB")?.fields[
+      "time stamp"
+    ],
+  ).toMatch(/^2 Thu Jan/);
+});
+
 it("normalizes legacy version-minimum commands into build metadata", () => {
   const load = parseOtoolLoadCommands(
     [
@@ -77,7 +102,14 @@ it("limits thread-state entrypoints instead of reporting none silently", async (
   expect(result.ok).toBe(true);
   if (!result.ok) return;
   expect(result.value.result).toMatchObject({
-    entrypoints: { items: [] },
+    entrypoints: {
+      items: [],
+      total: null,
+      exhaustive: false,
+      limitations: [
+        "Thread-state entrypoints (LC_UNIXTHREAD/LC_THREAD) are retained as raw load commands; file offsets are not derived.",
+      ],
+    },
   });
   expect(result.value.limitations).toContain(
     "Thread-state entrypoints (LC_UNIXTHREAD/LC_THREAD) are retained as raw load commands; file offsets are not derived.",

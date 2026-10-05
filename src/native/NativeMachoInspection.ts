@@ -106,6 +106,16 @@ const normalizeMacho = (
     /UUID:\s*([A-Fa-f0-9-]+)/u.exec(byTool("dwarfdump").stdout)?.[1] ??
     load.uuid;
   const provenance = captures.map(toInvocation);
+  // A thread-state command carries the entrypoint in architecture-specific
+  // register state, so an absent decoded offset means unknown, not absent.
+  const threadEntrypoint =
+    load.entrypoints.length === 0 &&
+    load.commands.some(
+      (command) =>
+        command.kind === "LC_UNIXTHREAD" || command.kind === "LC_THREAD",
+    );
+  const threadEntrypointLimitation =
+    "Thread-state entrypoints (LC_UNIXTHREAD/LC_THREAD) are retained as raw load commands; file offsets are not derived.";
   const limitations = [
     "Imports and exports combine dyld_info and nm; stripped or toolchain-hidden symbols may be absent.",
     ...(captures.some(({ tool }) => tool === "vtool")
@@ -114,15 +124,7 @@ const normalizeMacho = (
         ]
       : []),
     ...additionalLimitations,
-    ...(load.entrypoints.length === 0 &&
-    load.commands.some(
-      (command) =>
-        command.kind === "LC_UNIXTHREAD" || command.kind === "LC_THREAD",
-    )
-      ? [
-          "Thread-state entrypoints (LC_UNIXTHREAD/LC_THREAD) are retained as raw load commands; file offsets are not derived.",
-        ]
-      : []),
+    ...(threadEntrypoint ? [threadEntrypointLimitation] : []),
     ...(imageBase === null &&
     /^\s*offset\s+symbol\s*$/mu.test(byTool("dyld_info", 1).stdout)
       ? [
@@ -137,7 +139,11 @@ const normalizeMacho = (
     file_type: load.fileType,
     flags: load.flags,
     uuid: uuid ?? null,
-    entrypoints: covered(load.entrypoints, true),
+    entrypoints: covered(
+      load.entrypoints,
+      !threadEntrypoint,
+      threadEntrypoint ? [threadEntrypointLimitation] : [],
+    ),
     architectures: covered(architectures, true),
     build_metadata: covered(load.builds, true),
     load_commands: covered(load.commands, true),
