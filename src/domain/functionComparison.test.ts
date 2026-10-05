@@ -102,8 +102,8 @@ const observe = (
     },
   );
 
-describe("function comparison normalized identity", () => {
-  it("matches CFG successors by numeric address and rejects numeric aliases", () => {
+describe("function comparison CFG address normalization", () => {
+  it("matches CFG successors by numeric address", () => {
     const make = (base: "0x1000" | "0x2000") =>
       functionDossierSchema.parse({
         ...dossier("return 0;", base),
@@ -126,8 +126,11 @@ describe("function comparison normalized identity", () => {
         observe("c", make("0x2000")),
       ).dimensions.find(({ dimension }) => dimension === "cfg"),
     ).toMatchObject({ status: "unchanged" });
+  });
+
+  it("keeps duplicate numeric block starts unknown", () => {
     const duplicate = functionDossierSchema.parse({
-      ...make("0x1000"),
+      ...dossier("return 0;", "0x1000"),
       basic_blocks: [
         { start: "0x1000", end: "0x1004", successors: [] },
         { start: "0X01000", end: "0x1008", successors: [] },

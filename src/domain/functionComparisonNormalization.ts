@@ -40,31 +40,36 @@ export const functionMatch = (
 export const normalizeCfg = (
   blocks: FunctionSnapshot["collections"]["basic_blocks"]["items"],
 ): readonly unknown[] | null => {
-  const parsed = blocks.map((block) => ({
-    block,
-    start: parseAddress(block.start),
-    end: parseAddress(block.end),
-  }));
-  if (parsed.some(({ start, end }) => start === null || end === null))
-    return null;
+  const parsed: {
+    block: (typeof blocks)[number];
+    start: bigint;
+    end: bigint;
+  }[] = [];
+  for (const block of blocks) {
+    const start = parseAddress(block.start);
+    const end = parseAddress(block.end);
+    if (start === null || end === null || end <= start) return null;
+    parsed.push({ block, start, end });
+  }
   const ordered = parsed.sort((left, right) =>
-    (left.start ?? 0n) < (right.start ?? 0n) ? -1 : 1,
+    left.start < right.start ? -1 : left.start > right.start ? 1 : 0,
   );
   if (new Set(ordered.map(({ start }) => start)).size !== ordered.length)
-    return null;
-  if (ordered.some(({ start, end }) => (end ?? 0n) <= (start ?? 0n)))
     return null;
   const indices = new Map(ordered.map(({ start }, index) => [start, index]));
   const graph = [];
   for (const { block, start, end } of ordered) {
-    const successors = block.successors.map((address) => {
+    const successors: number[] = [];
+    for (const address of block.successors) {
       const parsedAddress = parseAddress(address);
-      return parsedAddress === null ? undefined : indices.get(parsedAddress);
-    });
-    if (successors.some((index) => index === undefined)) return null;
+      if (parsedAddress === null) return null;
+      const index = indices.get(parsedAddress);
+      if (index === undefined) return null;
+      successors.push(index);
+    }
     graph.push({
-      size: String((end ?? 0n) - (start ?? 0n)),
-      successors: successors.sort((left, right) => (left ?? 0) - (right ?? 0)),
+      size: String(end - start),
+      successors: successors.sort((left, right) => left - right),
     });
   }
   return graph;
