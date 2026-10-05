@@ -28,7 +28,7 @@ const expectInvalidIncludedSourceMaps = (result: WebSourceMaps): void => {
   expectInvalidSourceMaps({ ...result, status: "unavailable" });
 };
 
-describe("web source-map fetching and validation", () => {
+describe("source-map redirect URL resolution", () => {
   it.each(["/maps/current", "/assets/v2/app.js.map"])(
     "resolves relative sources against the delivered map at %s",
     async (initialPath) => {
@@ -98,7 +98,9 @@ describe("web source-map fetching and validation", () => {
       }
     },
   );
+});
 
+describe("web source-map fetching and validation", () => {
   it("fetches without credentials and derives mappings and original modules", async () => {
     const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
     const map = JSON.stringify({
