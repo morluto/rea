@@ -519,7 +519,19 @@ export interface AnalysisErrorProjection
 }
 
 /** One legal recovery path for a denied permission request. */
-export type PermissionRemediation = "configure" | "elicit" | "restart";
+/**
+ * Legal recovery path for a denied permission.
+ *
+ * `grant` is deliberately distinct from `configure`: a request can be denied
+ * because no grant was ever issued even though the administrator ceiling
+ * already covers it. Telling that caller to widen the ceiling sends them to
+ * edit configuration that is already correct.
+ */
+export type PermissionRemediation =
+  | "configure"
+  | "elicit"
+  | "restart"
+  | "grant";
 
 /** Exact denied authority and its legal recovery path. */
 export interface PermissionRequiredContext {

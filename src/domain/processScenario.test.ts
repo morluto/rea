@@ -235,3 +235,64 @@ describe("process scenario large interaction inputs", () => {
     );
   });
 });
+
+describe("process scenario path portability", () => {
+  const base = { arguments: [], environment: {}, filesystem_roots: [] };
+
+  it.each([
+    ["posix", "/usr/bin/node", "/tmp"],
+    ["windows drive with backslashes", "C:\\tools\\node.exe", "C:\\work"],
+    ["windows drive with forward slashes", "c:/tools/node.exe", "c:/work"],
+    ["unc share", "\\\\server\\share\\node.exe", "\\\\server\\share"],
+  ])(
+    "accepts a %s path on any host",
+    (_label, executable, working_directory) => {
+      const parsed = processScenarioSchema.safeParse({
+        ...base,
+        executable,
+        working_directory,
+      });
+      expect(parsed.success).toBe(true);
+    },
+  );
+
+  it("accepts Windows filesystem roots", () => {
+    const parsed = processScenarioSchema.safeParse({
+      ...base,
+      executable: "C:\\tools\\node.exe",
+      working_directory: "C:\\work",
+      filesystem_roots: ["C:\\data", "D:\\more"],
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it.each([
+    ["relative", "tools/node.exe"],
+    ["dot relative", "./node.exe"],
+    ["parent relative", "../node.exe"],
+    ["bare filename", "node.exe"],
+    ["empty", ""],
+  ])("still rejects a %s path", (_label, executable) => {
+    const parsed = processScenarioSchema.safeParse({
+      ...base,
+      executable,
+      working_directory: "/tmp",
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("names the constraint so a rejected path is actionable", () => {
+    const parsed = processScenarioSchema.safeParse({
+      ...base,
+      executable: "tools/node.exe",
+      working_directory: "/tmp",
+    });
+    expect(parsed.success).toBe(false);
+    if (parsed.success) return;
+    const messages = parsed.error.issues
+      .map(({ message }) => message)
+      .join("\n");
+    expect(messages).toContain("must be absolute");
+    expect(messages).toContain("C:\\tools\\node.exe");
+  });
+});

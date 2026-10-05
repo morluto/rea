@@ -109,19 +109,43 @@ export const processComparisonContract = (
 });
 
 /**
+ * True when `value` is an absolute path for *any* supported host.
+ *
+ * `node:path`'s `isAbsolute` answers for the machine running it: on Linux
+ * `C:\tools` is not absolute. A boundary schema must not vary with the host
+ * that evaluates it — a scenario captured on Windows has to stay valid when it
+ * is replayed, compared, or validated by a test on Linux. So this accepts the
+ * POSIX form, a Windows drive path, and a UNC share, on every host.
+ */
+export const isAbsoluteScenarioPath = (value: string): boolean =>
+  value.startsWith("/") ||
+  /^[A-Za-z]:[\\/]/u.test(value) ||
+  value.startsWith("\\\\");
+
+/**
+ * An absolute path for the host that will run the scenario. The message names
+ * the constraint so a rejected path is actionable, instead of leaving the
+ * caller to infer it from a generic "invalid request".
+ */
+const absoluteScenarioPath = z.string().refine(isAbsoluteScenarioPath, {
+  message:
+    "Path must be absolute: a POSIX path such as /usr/bin/node, a Windows path such as C:\\tools\\node.exe, or a UNC path such as \\\\server\\share",
+});
+
+/**
  * Boundary schema for one bounded process experiment.
  * Defaults are part of the evidence contract and must remain deterministic.
  */
 export const processScenarioSchema = z
   .object({
-    executable: z.string().startsWith("/"),
+    executable: absoluteScenarioPath,
     arguments: z.array(z.string()).default([]),
-    working_directory: z.string().startsWith("/"),
+    working_directory: absoluteScenarioPath,
     environment: z.record(environmentName, z.string()).default({}),
     inherit_environment: z.array(environmentName).default([]),
     secret_aliases: z.array(environmentName).default([]),
     network_access: z.literal("host").default("host"),
-    filesystem_roots: z.array(z.string().startsWith("/")).default([]),
+    filesystem_roots: z.array(absoluteScenarioPath).default([]),
     terminal: z
       .object({
         columns: z.number().int().min(1).max(65_535).default(80),

@@ -49,6 +49,8 @@ export const analysisErrorRemediationAction = (
         return "Approve the exact missing scope, then retry the operation.";
       case "restart":
         return "Add the exact missing scope to the administrator configuration, then restart the registered MCP server or client.";
+      case "grant":
+        return "The administrator ceiling already covers this scope; issue a grant for it (a project grant, or the documented auto-grant setting for an unattended environment), then retry.";
     }
   }
   return analysisErrorUserMessage(error);

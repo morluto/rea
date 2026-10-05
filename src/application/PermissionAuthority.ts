@@ -282,9 +282,17 @@ export class PermissionAuthority {
     const outsideAdministratorCeiling =
       denied.reason === "outside_administrator_ceiling";
     const requestedRemediation = options.remediation ?? "configure";
-    const remediation =
-      outsideAdministratorCeiling && requestedRemediation !== "restart"
-        ? this.outsideCeilingRemediation
+    // Only a genuine ceiling violation can be fixed by widening configuration.
+    // When the scope is inside the ceiling but no grant was ever issued, the
+    // `missing` payload describes what a *grant* must cover, so pointing the
+    // caller at the ceiling sends them to edit configuration that already
+    // permits the operation. An explicitly requested remediation is honoured.
+    const remediation = outsideAdministratorCeiling
+      ? requestedRemediation === "restart"
+        ? requestedRemediation
+        : this.outsideCeilingRemediation
+      : requestedRemediation === "configure"
+        ? "grant"
         : requestedRemediation;
     return err(
       new PermissionRequiredError({
