@@ -12,6 +12,8 @@
         "scripts/lib/generated-file.mjs",
         "skills/reverse-engineer-anything/SKILL.md",
         "src/**/*.ts",
+        "!src/**/*.test.ts",
+        "!src/**/*.fixture.ts",
         "tsconfig.json",
         "tsconfig.build.json"
       ],
@@ -90,8 +92,12 @@
         "package.json",
         "package-lock.json",
         "src/**/*.ts",
+        "!src/**/*.test.ts",
+        "!src/**/*.fixture.ts",
         "tsconfig.json",
-        "typedoc.json"
+        "typedoc.json",
+        ".nvmrc",
+        "tsconfig.build.json"
       ],
       "outputs": ["build/api-docs/**"],
       "outputLogs": "new-only"
@@ -101,7 +107,7 @@
       "cache": false
     },
     "docs:check:built": {
-      "dependsOn": ["build", "docs:api"],
+      "dependsOn": ["build"],
       "cache": false
     }
   }
