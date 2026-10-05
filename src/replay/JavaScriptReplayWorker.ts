@@ -226,7 +226,7 @@ const loadEntry = async (
         function () {
           this.setExport("default", exports);
           for (const name of Object.keys(exports))
-            this.setExport(name, exports[name]);
+            if (name !== "default") this.setExport(name, exports[name]);
         },
         { context, identifier: `rea:${alias}` },
       );

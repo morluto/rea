@@ -1,8 +1,12 @@
-import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { execFile, spawn } from "node:child_process";
+import { readFile, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 
 import { describe, expect, it } from "vitest";
+
+import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 const fixture = async (name: string): Promise<string> =>
   readFile(resolve("tests/fixtures/replay", name), "utf8");
@@ -222,6 +226,105 @@ describe("disposable JavaScript replay worker", () => {
           },
         },
       ],
+    });
+  });
+});
+
+describe("ESM imports of CommonJS replay factories", () => {
+  it.each([false, true])(
+    "matches native Node default import when __esModule is %s",
+    async (marked) => {
+      const directory = await createTestTempDirectory("rea-replay-interop-");
+      const source = `module.exports={default:'named-default',answer:42,__esModule:${String(marked)}};`;
+      const path = join(directory, "dependency.cjs");
+      await writeFile(path, source, "utf8");
+      const { stdout } = await promisify(execFile)(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          "const {default:value}=await import(process.argv[1]); console.log(JSON.stringify({kind:typeof value,property:value.default,answer:value.answer}));",
+          pathToFileURL(path).href,
+        ],
+        { timeout: 5000 },
+      );
+      const expected: unknown = JSON.parse(stdout);
+      expect(expected).toEqual({
+        kind: "object",
+        property: "named-default",
+        answer: 42,
+      });
+      const workerRequest = await request("parser.mjs", "esm", "default", []);
+      workerRequest.left.modules = [
+        {
+          alias: "entry",
+          format: "esm",
+          dependencies: { "./dependency": "dependency" },
+          source:
+            "import value from './dependency'; export default function(){ return {kind:typeof value,property:value.default,answer:value.answer}; }",
+        },
+        {
+          alias: "dependency",
+          format: "commonjs-factory",
+          dependencies: {},
+          source: `function(module){ ${source} }`,
+        },
+      ];
+      const result = await runWorker(workerRequest);
+      expect(result.code).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        left: [{ outcome: "return", value: expected }],
+      });
+    },
+  );
+
+  it.each([false, true])(
+    "preserves Rspack require.n behavior when __esModule is %s",
+    async (marked) => {
+      const workerRequest = await request(
+        "clipboard.factory.txt",
+        "commonjs-factory",
+        "default",
+        [],
+      );
+      workerRequest.left.modules = [
+        {
+          alias: "entry",
+          format: "commonjs-factory",
+          dependencies: { "./dependency": "dependency" },
+          source:
+            "function(module,exports,require){ const normalized=require.n(require('./dependency'))(); module.exports.default=()=>typeof normalized; }",
+        },
+        {
+          alias: "dependency",
+          format: "commonjs-factory",
+          dependencies: {},
+          source: `function(module){ module.exports={default:'named-default',answer:42,__esModule:${String(marked)}}; }`,
+        },
+      ];
+      const result = await runWorker(workerRequest);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        left: [{ outcome: "return", value: marked ? "string" : "object" }],
+      });
+    },
+  );
+
+  it("preserves direct factory default-export selection", async () => {
+    const workerRequest = await request(
+      "clipboard.factory.txt",
+      "commonjs-factory",
+      "default",
+      [],
+    );
+    workerRequest.left.modules[0] = {
+      alias: "entry",
+      format: "commonjs-factory",
+      dependencies: {},
+      source: "function(module){ module.exports={default:()=>42}; }",
+    };
+    const result = await runWorker(workerRequest);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      left: [{ outcome: "return", value: 42 }],
     });
   });
 });
