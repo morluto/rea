@@ -4,7 +4,7 @@ import { withPlaywrightExecutionBoundary } from "./PlaywrightExecutionBoundary.j
 import {
   AnalysisCancelledError,
   AnalysisTimeoutError,
-} from "../domain/errors.js";
+} from "../domain/analysisErrorCore.js";
 
 describe("withPlaywrightExecutionBoundary", () => {
   afterEach(() => vi.useRealTimers());

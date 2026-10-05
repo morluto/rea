@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { AnalysisOutputError } from "../../domain/errors.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { safeParseJson } from "../../domain/safeJson.js";
 

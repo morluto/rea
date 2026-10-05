@@ -4,7 +4,7 @@ import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
 import type { BinarySessionPort } from "../application/BinarySession.js";
 import { MANAGED_TOOL_CONTRACTS } from "../contracts/managedToolContracts.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
-import { AnalysisInputError } from "../domain/errors.js";
+import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { err } from "../domain/result.js";
 import type { Logger } from "../logger.js";
 import { registerEvidenceTools } from "./registerEvidenceTools.js";

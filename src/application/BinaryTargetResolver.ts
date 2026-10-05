@@ -13,7 +13,7 @@ import { extname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { isPathWithinRoot } from "../domain/localPath.js";
-import { BinaryTargetError } from "../domain/errors.js";
+import { BinaryTargetError } from "../domain/configurationErrors.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { mzWindowsHeaderOffset } from "../domain/dosMz.js";

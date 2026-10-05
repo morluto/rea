@@ -8,7 +8,7 @@ import {
 } from "../application/JavaScriptRuntimeObservationService.js";
 import { JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS } from "../contracts/javascriptRuntimeObservationToolContracts.js";
 import type { ToolContract } from "../contracts/toolContracts.js";
-import type { AnalysisError } from "../domain/errors.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { Result } from "../domain/result.js";
 import { observeJavaScriptRuntimeInputSchema } from "../domain/javascriptRuntimeObservation.js";

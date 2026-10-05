@@ -13,7 +13,7 @@ import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { err } from "../../../src/domain/result.js";
-import { AnalysisCapabilityUnavailableError } from "../../../src/domain/errors.js";
+import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 
 const targetObservation = (value: unknown) =>
   resultOk(

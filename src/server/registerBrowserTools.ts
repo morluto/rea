@@ -15,7 +15,7 @@ import {
 import type { ProgressReporter } from "../application/ProgressReporter.js";
 import { BROWSER_TOOL_CONTRACTS } from "../contracts/browserToolContracts.js";
 import type { ToolContract } from "../contracts/toolContracts.js";
-import type { AnalysisError } from "../domain/errors.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
 import { analyzeWebBundleInputSchema } from "../domain/webBundleAnalysis.js";
 import { inspectWebPageInputSchema } from "../domain/browserObservation.js";

@@ -4,11 +4,9 @@ import type { BinaryTarget } from "../domain/binaryTarget.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import type { EvidenceBundle } from "../domain/evidenceBundle.js";
 import { evidenceBundleForTarget } from "../domain/evidenceBundle.js";
-import {
-  EvidenceIntegrityError,
-  type AnalysisError,
-  type UnknownRegistryError,
-} from "../domain/errors.js";
+import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
+import { type AnalysisError } from "../domain/analysisErrorBase.js";
+import { type UnknownRegistryError } from "../domain/unknownRegistryError.js";
 import type {
   RecordUnknownInput,
   ResidualUnknown,

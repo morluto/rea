@@ -1,4 +1,4 @@
-import { AnalysisCapabilityUnavailableError } from "../domain/errors.js";
+import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import { err, ok } from "../domain/result.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";

@@ -13,7 +13,7 @@ import {
 } from "../../../src/application/JavaScriptApplicationWorkflowService.js";
 import { reconcileJavaScriptRuntimeEvidence } from "../../../src/application/JavaScriptRuntimeReconciliationService.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
-import { AnalysisInputError } from "../../../src/domain/errors.js";
+import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
 import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascriptApplicationAnalysis.js";
 import {

@@ -1,6 +1,6 @@
 import type { Evidence } from "../../domain/evidence.js";
 import { parseEvidence } from "../../domain/evidence.js";
-import { EvidenceIntegrityError } from "../../domain/errors.js";
+import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import type { Result } from "../../domain/result.js";
 import { err, ok } from "../../domain/result.js";
 

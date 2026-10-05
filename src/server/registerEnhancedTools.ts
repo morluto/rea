@@ -17,7 +17,7 @@ import {
 import { toolContract, type ToolContract } from "../contracts/toolContracts.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
-import { UnknownRegistryError } from "../domain/errors.js";
+import { UnknownRegistryError } from "../domain/unknownRegistryError.js";
 import { createEvidence } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "../logger.js";

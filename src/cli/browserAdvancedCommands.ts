@@ -10,7 +10,7 @@ import {
 } from "../application/BrowserObservationService.js";
 import { CdpBrowserProvider } from "../browser/CdpBrowserProvider.js";
 import { logCliCommand } from "../cliLogging.js";
-import { AnalysisInputError } from "../domain/errors.js";
+import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { browserCaptureComparisonInputSchema } from "../domain/browserCaptureComparison.js";
 import { discoverWebMcpToolsInputSchema } from "../domain/webMcpDiscovery.js";
 import {

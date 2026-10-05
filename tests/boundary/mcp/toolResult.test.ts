@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { ToolContract } from "../../../src/contracts/toolContracts.js";
 import { ok } from "../../../src/domain/result.js";
 import { err } from "../../../src/domain/result.js";
-import { HopperProcessError } from "../../../src/domain/errors.js";
+import { HopperProcessError } from "../../../src/domain/hopperErrors.js";
 import { toCallToolResult } from "../../../src/server/toolResult.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";

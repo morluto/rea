@@ -10,11 +10,9 @@ import type {
   BinaryArchitecture,
   BinaryTarget,
 } from "../domain/binaryTarget.js";
-import {
-  AnalysisCancelledError,
-  ProviderAdapterError,
-  type AnalysisError,
-} from "../domain/errors.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 interface HopperProfileOptions {

@@ -20,11 +20,9 @@ import {
   type ArtifactAnalysisOperation,
 } from "../contracts/artifactToolContracts.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
-import {
-  AnalysisCapabilityUnavailableError,
-  ArtifactOperationError,
-  type AnalysisError,
-} from "../domain/errors.js";
+import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
+import { ArtifactOperationError } from "../domain/artifactOperationError.js";
+import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { interfaceBuilderLimitsSchema } from "../domain/interfaceBuilderGraph.js";
 import { err, ok } from "../domain/result.js";

@@ -1,10 +1,8 @@
 import { readFile } from "node:fs/promises";
 
-import {
-  AnalysisError,
-  AnalysisInputError,
-  projectAnalysisError,
-} from "../domain/errors.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { createEvidence, parseEvidence } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";

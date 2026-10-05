@@ -6,7 +6,8 @@ import { PlaywrightBrowserScenarioProvider } from "./browser/PlaywrightBrowserSc
 import { CLI_COMMANDS } from "./cliCommandNames.js";
 import { parseCliJsonInput } from "./cliJsonInput.js";
 import { logCliCommand } from "./cliLogging.js";
-import { AnalysisInputError, projectAnalysisError } from "./domain/errors.js";
+import { AnalysisInputError } from "./domain/analysisErrorCore.js";
+import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import { browserScenarioSchema } from "./domain/browserScenario.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 import type { Logger } from "./logger.js";

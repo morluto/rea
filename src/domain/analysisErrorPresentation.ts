@@ -1,22 +1,25 @@
+import { AnalysisInputError } from "./analysisErrorCore.js";
+import { ArtifactOperationError } from "./artifactOperationError.js";
 import {
-  AnalysisInputError,
-  ArtifactOperationError,
   BinaryTargetError,
-  BrowserObservationError,
   ConfigurationError,
-  EvidenceFileError,
-  EvidenceIntegrityError,
+  NoBinaryOpenError,
+} from "./configurationErrors.js";
+import { BrowserObservationError } from "./browserObservationError.js";
+import { EvidenceFileError, EvidenceIntegrityError } from "./evidenceErrors.js";
+import {
   HopperRemoteError,
   HopperProcessError,
   HopperStartError,
   HopperTimeoutError,
-  NoBinaryOpenError,
-  ProviderSelectionError,
-  UnknownRegistryError,
+} from "./hopperErrors.js";
+import { ProviderSelectionError } from "./providerSelectionError.js";
+import { UnknownRegistryError } from "./unknownRegistryError.js";
+import {
   type AnalysisError,
-  type AnalysisErrorProjection,
   type AnalysisErrorTag,
-} from "./errors.js";
+} from "./analysisErrorBase.js";
+import { type AnalysisErrorProjection } from "./analysisErrorProjection.js";
 
 export const analysisErrorRemediationAction = (
   error: AnalysisError,

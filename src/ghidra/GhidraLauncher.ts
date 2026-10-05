@@ -3,7 +3,7 @@ import { basename, dirname, join, win32 } from "node:path";
 
 import writeFileAtomic from "write-file-atomic";
 
-import { AnalysisCancelledError } from "../domain/errors.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   cleanupOwnedProcessGroup,

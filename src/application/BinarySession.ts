@@ -5,10 +5,8 @@ import {
   analysisProfilesEqual,
   type AnalysisProfileCommitment,
 } from "../domain/analysisProfile.js";
-import {
-  AnalysisCancelledError,
-  type AnalysisError,
-} from "../domain/errors.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { createEvidence } from "../domain/evidence.js";

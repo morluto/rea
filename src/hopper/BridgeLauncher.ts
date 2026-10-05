@@ -7,7 +7,7 @@ import {
   HopperCancelledError,
   HopperProcessError,
   HopperStartError,
-} from "../domain/errors.js";
+} from "../domain/hopperErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import { execFileOutput } from "../process/ExecFileOutput.js";

@@ -11,7 +11,8 @@ import { createProcessCaptureEvidence } from "../application/ProcessEvidence.js"
 import { captureProcessScenario } from "../application/ProcessHarness.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
-import { UnknownRegistryError, type AnalysisError } from "../domain/errors.js";
+import { UnknownRegistryError } from "../domain/unknownRegistryError.js";
+import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { ProcessCapture } from "../domain/processCapture.js";
 import { ok, type Result } from "../domain/result.js";

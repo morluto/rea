@@ -8,7 +8,11 @@ import {
   type AnalysisExecution,
   type AnalysisOperation,
 } from "./AnalysisProvider.js";
-import type { AnalysisError } from "../domain/errors.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
+} from "../domain/analysisErrorCore.js";
 import { EnhancedTools } from "./EnhancedTools.js";
 import {
   nativeInvestigationGraphSchema,
@@ -16,10 +20,6 @@ import {
 } from "../domain/nativeInvestigationGraph.js";
 import { err, ok } from "../domain/result.js";
 import type { Result } from "../domain/result.js";
-import {
-  AnalysisCancelledError,
-  AnalysisCapabilityUnavailableError,
-} from "../domain/errors.js";
 
 const target = "a".repeat(64);
 const provider = { id: "fixture", name: "Fixture", version: "1" };

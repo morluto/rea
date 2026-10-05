@@ -3,7 +3,8 @@ import { join } from "node:path";
 
 import { createAnalysisProfile } from "../../src/domain/analysisProfile.js";
 import type { BinaryTarget } from "../../src/domain/binaryTarget.js";
-import type { AnalysisError } from "../../src/domain/errors.js";
+import type { AnalysisError } from "../../src/domain/analysisErrorBase.js";
+import { HopperStartError } from "../../src/domain/hopperErrors.js";
 import type { Result } from "../../src/domain/result.js";
 import type {
   AnalysisClient,
@@ -15,7 +16,7 @@ import type {
 } from "../../src/application/AnalysisProvider.js";
 import { BinarySession } from "../../src/application/BinarySession.js";
 import { SessionProviderRouter } from "../../src/application/SessionProviderRouter.js";
-import { HopperStartError } from "../../src/domain/errors.js";
+
 import { err, ok as resultOk } from "../../src/domain/result.js";
 import { observed } from "./analysisExecution.js";
 import { createTestTempDirectory } from "./temporaryDirectory.js";

@@ -2,7 +2,7 @@ import type { ElectronApplication, Page } from "playwright-core";
 import { z } from "zod";
 
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
-import { BrowserObservationError } from "../domain/errors.js";
+import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type {
   ElectronActiveObservationInput,
   ElectronActiveObservationResult,

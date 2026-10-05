@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { jsonValueSchema } from "./jsonValue.js";
-import { AnalysisOutputError } from "./errors.js";
+import { AnalysisOutputError } from "./analysisErrorCore.js";
 
 /** Caller-controlled page bounds for compiled Apple asset metadata. */
 export const appleAssetCatalogInputSchema = z.strictObject({

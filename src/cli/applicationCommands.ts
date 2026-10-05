@@ -15,11 +15,9 @@ import { buildReconstructionObligationLedgerEvidenceValidated } from "../applica
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
 import { logCliCommand } from "../cliLogging.js";
-import {
-  AnalysisInputError,
-  projectAnalysisError,
-  type AnalysisError,
-} from "../domain/errors.js";
+import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "../logger.js";
 import { traceApplicationFeatureInputSchema } from "../domain/javascriptFeatureTraceSchemas.js";

@@ -1,4 +1,4 @@
-import { BrowserObservationError } from "../domain/errors.js";
+import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { CdpConnection } from "./CdpConnection.js";
 
 /** Execute an optional CDP method while preserving transport and cancellation failures. */

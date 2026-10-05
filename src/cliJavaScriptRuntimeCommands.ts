@@ -12,7 +12,8 @@ import {
   listJavaScriptRuntimeTargetsInputSchema,
   observeJavaScriptRuntimeInputSchema,
 } from "./domain/javascriptRuntimeObservation.js";
-import { AnalysisInputError, projectAnalysisError } from "./domain/errors.js";
+import { AnalysisInputError } from "./domain/analysisErrorCore.js";
+import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 import type { Logger } from "./logger.js";
 

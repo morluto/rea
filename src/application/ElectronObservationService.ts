@@ -5,10 +5,8 @@ import type {
   InspectElectronPageInput,
   ListElectronTargetsInput,
 } from "../domain/electronObservation.js";
-import {
-  AnalysisCapabilityUnavailableError,
-  type AnalysisError,
-} from "../domain/errors.js";
+import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
+import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { createElectronEvidence } from "./ElectronEvidence.js";
 

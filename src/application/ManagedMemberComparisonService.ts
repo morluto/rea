@@ -12,9 +12,9 @@ import {
 import {
   AnalysisInputError,
   AnalysisProtocolError,
-  EvidenceIntegrityError,
-  type AnalysisError,
-} from "../domain/errors.js";
+} from "../domain/analysisErrorCore.js";
+import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
+import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { parseBinaryTarget } from "./BinaryTargetResolver.js";

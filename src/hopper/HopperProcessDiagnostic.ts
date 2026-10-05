@@ -1,7 +1,7 @@
 import {
   hopperStartupFailure,
   type HopperStartupFailureDiagnostic,
-} from "../domain/errors.js";
+} from "../domain/hopperStartupFailure.js";
 import type { ProviderProcessDiagnostic } from "../process/ProviderProcess.js";
 import { parseLinuxPrivateDisplayDiagnostic } from "./LinuxPrivateDisplayDiagnostic.js";
 

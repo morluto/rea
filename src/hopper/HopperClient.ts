@@ -4,19 +4,21 @@ import type { Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import {
-  AnalysisCapabilityUnavailableError,
   HopperCancelledError,
-  type AnalysisError,
   type HopperError,
   HopperProcessError,
   HopperProtocolError,
   HopperRemoteError,
   HopperStartError,
-  hopperStartupFailure,
   HopperTimeoutError,
+} from "../domain/hopperErrors.js";
+import { type AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  hopperStartupFailure,
   type HopperStartupFailureDiagnostic,
-} from "../domain/errors.js";
+} from "../domain/hopperStartupFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { ProgressReporter } from "../application/ProgressReporter.js";

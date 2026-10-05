@@ -8,7 +8,7 @@ import { createEvidence } from "../domain/evidence.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
-} from "../domain/errors.js";
+} from "../domain/analysisErrorCore.js";
 import { err, ok } from "../domain/result.js";
 import type { AnalysisOperationPort } from "./AnalysisProvider.js";
 import type { EnhancedResult } from "./EnhancedToolTypes.js";

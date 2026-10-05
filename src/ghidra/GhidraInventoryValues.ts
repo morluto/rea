@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-import { AnalysisInputError, AnalysisOutputError } from "../domain/errors.js";
+import {
+  AnalysisInputError,
+  AnalysisOutputError,
+} from "../domain/analysisErrorCore.js";
 import {
   functionBodySchema,
   functionBodyEntryAgrees,

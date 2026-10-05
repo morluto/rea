@@ -9,7 +9,7 @@ import type {
   AnalysisProvider,
   CapabilityDescriptor,
 } from "../../../src/application/AnalysisProvider.js";
-import { AnalysisCapabilityUnavailableError } from "../../../src/domain/errors.js";
+import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { err } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";

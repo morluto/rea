@@ -1,4 +1,4 @@
-import type { AnalysisError } from "../domain/errors.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
 import {
   appleApplicationProjectionInputSchema,

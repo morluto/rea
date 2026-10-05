@@ -5,7 +5,10 @@ import {
   nativeCallTargetsSchema,
 } from "../domain/nativeInstruction.js";
 
-import { AnalysisInputError, AnalysisOutputError } from "../domain/errors.js";
+import {
+  AnalysisInputError,
+  AnalysisOutputError,
+} from "../domain/analysisErrorCore.js";
 import {
   functionBodyEntryAgrees,
   functionInstructionWindowSchema,

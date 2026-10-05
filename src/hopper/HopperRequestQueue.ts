@@ -9,7 +9,7 @@ import {
   HopperProcessError,
   HopperProtocolError,
   HopperRemoteError,
-} from "../domain/errors.js";
+} from "../domain/hopperErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, type Result } from "../domain/result.js";
 

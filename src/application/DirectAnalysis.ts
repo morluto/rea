@@ -11,11 +11,9 @@ import {
   isManagedToolName,
   type ManagedToolName,
 } from "../contracts/managedToolContracts.js";
-import {
-  EvidenceIntegrityError,
-  projectAnalysisError,
-  type AnalysisError,
-} from "../domain/errors.js";
+import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import { access } from "node:fs/promises";
 import {
   readAnalysisSnapshot,

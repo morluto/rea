@@ -1,4 +1,4 @@
-import { ConfigurationError } from "../domain/errors.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import { ok, type Result } from "../domain/result.js";
 import { parseEnvironment } from "./environment.js";
 import { parseStringArray, parseLoaderArgs } from "./parsers.js";

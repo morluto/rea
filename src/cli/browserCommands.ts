@@ -14,7 +14,7 @@ import {
 } from "../domain/browserObservation.js";
 import { analyzeWebBundleInputSchema } from "../domain/webBundleAnalysis.js";
 import { observeWebSessionInputSchema } from "../domain/browserSession.js";
-import { AnalysisInputError } from "../domain/errors.js";
+import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import type { Logger } from "../logger.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import {

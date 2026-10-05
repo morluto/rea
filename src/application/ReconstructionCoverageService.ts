@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import { AnalysisInputError, type AnalysisError } from "../domain/errors.js";
+import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   evaluateReconstructionClosure,
   reconstructionCoverageDataSchema,

@@ -15,11 +15,9 @@ import {
 } from "./AnalysisProvider.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
-import {
-  ProviderAdapterError,
-  ProviderSelectionError,
-  projectAnalysisError,
-} from "../domain/errors.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { ProviderSelectionError } from "../domain/providerSelectionError.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { err, ok } from "../domain/result.js";
 
 const DATABASE_TARGET: BinaryTarget = {

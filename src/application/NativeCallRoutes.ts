@@ -5,7 +5,7 @@ import {
   referenceKindSchema,
 } from "../domain/hopperValues.js";
 import { err, ok } from "../domain/result.js";
-import { AnalysisOutputError } from "../domain/errors.js";
+import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 
 const referencesSchema = z.object({
   reference_kinds_available: z.boolean().optional(),

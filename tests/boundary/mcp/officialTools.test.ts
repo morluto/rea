@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../../../src/contracts/officialToolContracts.js";
-import { HopperRemoteError } from "../../../src/domain/errors.js";
+import { HopperRemoteError } from "../../../src/domain/hopperErrors.js";
 import { err } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";

@@ -20,10 +20,10 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
-  type AnalysisError,
   AnalysisTimeoutError,
-  ProviderAdapterError,
-} from "../domain/errors.js";
+} from "../domain/analysisErrorCore.js";
+import { type AnalysisError } from "../domain/analysisErrorBase.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { Logger } from "../logger.js";
 import { GhidraClient } from "./GhidraClient.js";

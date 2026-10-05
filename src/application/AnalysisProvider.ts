@@ -4,7 +4,7 @@ import type { EnhancedToolName } from "../contracts/enhancedInputs.js";
 import type { NativeToolName } from "../contracts/nativeToolContracts.js";
 import type { ArtifactAnalysisOperation } from "../contracts/artifactToolContracts.js";
 import type { ManagedToolName } from "../contracts/managedToolContracts.js";
-import type { AnalysisError } from "../domain/errors.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";

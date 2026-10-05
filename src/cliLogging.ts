@@ -2,11 +2,11 @@ import {
   analysisCliErrorEnvelopeSchema,
   analysisErrorProjectionSchema,
 } from "./contracts/errorSchemas.js";
+import { AnalysisError } from "./domain/analysisErrorBase.js";
 import {
-  AnalysisError,
   projectAnalysisError,
   type AnalysisErrorProjection,
-} from "./domain/errors.js";
+} from "./domain/analysisErrorProjection.js";
 import type { Logger } from "./logger.js";
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>

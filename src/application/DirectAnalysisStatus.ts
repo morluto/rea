@@ -1,5 +1,5 @@
 import { parseConfig } from "../config.js";
-import { projectAnalysisError } from "../domain/errors.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import { createServerIdentity } from "../serverIdentity.js";
 import { silentLogger, type Logger } from "../logger.js";

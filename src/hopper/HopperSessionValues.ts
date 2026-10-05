@@ -1,4 +1,4 @@
-import { HopperProtocolError } from "../domain/errors.js";
+import { HopperProtocolError } from "../domain/hopperErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 

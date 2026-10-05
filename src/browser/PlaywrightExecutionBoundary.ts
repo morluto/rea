@@ -1,7 +1,7 @@
 import {
   AnalysisCancelledError,
   AnalysisTimeoutError,
-} from "../domain/errors.js";
+} from "../domain/analysisErrorCore.js";
 
 const OPERATION = "capture_browser_scenario" as const;
 

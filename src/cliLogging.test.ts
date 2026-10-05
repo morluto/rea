@@ -1,10 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  ArtifactOperationError,
-  ConfigurationError,
-  projectAnalysisError,
-} from "./domain/errors.js";
+import { ArtifactOperationError } from "./domain/artifactOperationError.js";
+import { ConfigurationError } from "./domain/configurationErrors.js";
+import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 
 import { isCliOperationFailure, logCliCommand } from "./cliLogging.js";
 import { silentLogger } from "./logger.js";

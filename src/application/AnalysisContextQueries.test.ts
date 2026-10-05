@@ -13,7 +13,7 @@ import {
   AnalysisCancelledError,
   AnalysisOutputError,
   AnalysisProtocolError,
-} from "../domain/errors.js";
+} from "../domain/analysisErrorCore.js";
 import { err, ok } from "../domain/result.js";
 
 const provider = { id: "fixture", name: "Fixture", version: "1" };

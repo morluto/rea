@@ -7,10 +7,8 @@ import {
   type ObjcSwiftMetadata,
 } from "../domain/objcSwiftMetadata.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
-import {
-  AnalysisCancelledError,
-  EvidenceIntegrityError,
-} from "../domain/errors.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import { decodeSwiftClassVtables } from "./AppleSwiftVtables.js";
 import { createObjcProtocolReader } from "./AppleObjcProtocols.js";
 

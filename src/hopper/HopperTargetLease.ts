@@ -7,7 +7,7 @@ import {
   type Socket,
 } from "node:net";
 import { join, resolve } from "node:path";
-import { HopperStartError } from "../domain/errors.js";
+import { HopperStartError } from "../domain/hopperErrors.js";
 import { safeParseJson } from "../domain/safeJson.js";
 
 interface HopperTargetLeaseOwner {

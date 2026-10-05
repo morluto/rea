@@ -2,14 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import { ProcessCaptureError } from "../../../src/application/ProcessCaptureError.js";
 import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
-import {
-  ArtifactOperationError,
-  EvidenceFileError,
-  HopperRemoteError,
-  UnknownRegistryError,
-  projectAnalysisError,
-  type AnalysisError,
-} from "../../../src/domain/errors.js";
+import { ArtifactOperationError } from "../../../src/domain/artifactOperationError.js";
+import { EvidenceFileError } from "../../../src/domain/evidenceErrors.js";
+import { HopperRemoteError } from "../../../src/domain/hopperErrors.js";
+import { UnknownRegistryError } from "../../../src/domain/unknownRegistryError.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { type AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 
 describe("analysis error projection contract", () => {
   it("accepts every closed error-reason variant without exposing diagnostics", () => {

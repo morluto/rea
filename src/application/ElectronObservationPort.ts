@@ -1,5 +1,5 @@
 import type { ExecutionOptions, ProviderIdentity } from "./AnalysisProvider.js";
-import type { AnalysisError } from "../domain/errors.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type {
   ElectronPageInspection,
   ElectronTargetList,

@@ -1,6 +1,5 @@
 import type { z } from "zod";
-
-import type { AnalysisInputIssue } from "./errors.js";
+import type { AnalysisInputIssue } from "./analysisErrorCore.js";
 
 /** Project Zod failures to secret-safe caller correction metadata. */
 export const projectInputIssues = (

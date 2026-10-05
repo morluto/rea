@@ -5,7 +5,7 @@ import { verifyManagedNativeBoundariesEvidence } from "../application/ManagedNat
 import { importManagedReconstructionEvidence } from "../application/ManagedReconstructionService.js";
 import { runProviderAnalysis } from "../application/DirectAnalysis.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
-import { projectAnalysisError } from "../domain/errors.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "../logger.js";

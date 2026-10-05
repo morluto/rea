@@ -3,7 +3,7 @@ import {
   type AnalysisProfileCommitment,
 } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
-import { AnalysisCancelledError } from "../domain/errors.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisProviderCandidate } from "./AnalysisProvider.js";

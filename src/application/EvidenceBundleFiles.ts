@@ -3,7 +3,10 @@ import {
   serializeEvidenceBundle,
   type EvidenceBundle,
 } from "../domain/evidenceBundle.js";
-import { EvidenceFileError, EvidenceIntegrityError } from "../domain/errors.js";
+import {
+  EvidenceFileError,
+  EvidenceIntegrityError,
+} from "../domain/evidenceErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { parseProcessCapture } from "../domain/processCapture.js";
 import { readJsonFile, writeTextFile } from "./JsonFiles.js";

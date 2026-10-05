@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { isAbsolute } from "node:path";
 
-import { ConfigurationError } from "../domain/errors.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { analysisProviderSelectorSchema } from "../contracts/providerSelection.js";
 

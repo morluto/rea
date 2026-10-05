@@ -9,7 +9,7 @@ import { inferJsonShape } from "../domain/jsonShape.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import type { CdpConnection, CdpEvent } from "./CdpConnection.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
-import { BrowserObservationError } from "../domain/errors.js";
+import { BrowserObservationError } from "../domain/browserObservationError.js";
 import {
   allowedSanitizedUrl,
   delayWithCancellation,

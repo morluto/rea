@@ -4,7 +4,7 @@ import type {
   BrowserScenario,
   BrowserScenarioAction,
 } from "../domain/browserScenario.js";
-import { BrowserObservationError } from "../domain/errors.js";
+import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type {
   BrowserScenarioSessionFactory,
   BrowserScenarioSessionPort,

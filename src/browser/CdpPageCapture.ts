@@ -3,10 +3,8 @@ import type {
   WebPageInspection,
 } from "../domain/browserObservation.js";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
-import {
-  BrowserObservationError,
-  type BrowserObservationOperation,
-} from "../domain/errors.js";
+import { BrowserObservationError } from "../domain/browserObservationError.js";
+import { type BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { stableWebResources } from "../domain/webInventory.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import { CdpConnection } from "./CdpConnection.js";
