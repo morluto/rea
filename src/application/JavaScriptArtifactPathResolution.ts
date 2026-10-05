@@ -284,6 +284,14 @@ const resolveCandidate = (
         `Directory package metadata ${packagePath} is not valid package JSON.`,
       ],
     };
+  if (main.status === "unmatched")
+    return {
+      resolvedPath: null,
+      status: "external",
+      limitations: [
+        `Directory package metadata ${packagePath} declares no exports target for the active conditions; it declares ${main.declared.join(", ")}.`,
+      ],
+    };
   if (packageChain.has(packagePath)) {
     return {
       resolvedPath: null,
@@ -366,7 +374,8 @@ const packageEntry = (
       readonly source: "legacy" | "exports";
     }
   | { readonly status: "missing" }
-  | { readonly status: "invalid" } => {
+  | { readonly status: "invalid" }
+  | { readonly status: "unmatched"; readonly declared: readonly string[] } => {
   try {
     const value: unknown = JSON.parse(text);
     if (typeof value !== "object" || value === null)
@@ -394,9 +403,7 @@ const packageEntry = (
 const packageExport = (
   value: unknown,
   moduleKind: ResolveArtifactPathInput["moduleKind"],
-):
-  | { readonly status: "value"; readonly value: string }
-  | { readonly status: "invalid" } => {
+): PackageExportOutcome => {
   if (typeof value === "string") return packagePathValue(value);
   if (typeof value !== "object" || value === null || Array.isArray(value))
     return { status: "invalid" };
@@ -404,11 +411,70 @@ const packageExport = (
   if (typeof root === "string") return packagePathValue(root);
   if (typeof root !== "object" || root === null || Array.isArray(root))
     return { status: "invalid" };
-  for (const [condition, target] of Object.entries(root))
-    if (condition === "default" || condition === moduleKind)
-      return packagePathValue(target);
-  return { status: "invalid" };
+  const flattened = exportTargets(root, packageExportConditions(moduleKind));
+  if (flattened.kind === "invalid") return { status: "invalid" };
+  const first = flattened.values[0];
+  return first === undefined
+    ? { status: "unmatched", declared: Object.keys(root) }
+    : { status: "value", value: first };
 };
+
+type ExportTargets =
+  | { readonly kind: "targets"; readonly values: readonly string[] }
+  | { readonly kind: "invalid" };
+
+/**
+ * Flatten one exports target into the ordered strings Node would consider.
+ * A condition object stops at its first active key, so a null or unmatched
+ * nested target ends the search rather than falling through to a later key. An
+ * array instead skips the entries it cannot resolve and concatenates the rest.
+ */
+const exportTargets = (
+  value: unknown,
+  conditions: ReadonlySet<string>,
+): ExportTargets => {
+  if (typeof value === "string")
+    return value.length > 0
+      ? { kind: "targets", values: [value] }
+      : { kind: "invalid" };
+  if (value === null) return { kind: "targets", values: [] };
+  if (Array.isArray(value)) {
+    const values: string[] = [];
+    for (const entry of value) {
+      const nested = exportTargets(entry, conditions);
+      if (nested.kind === "invalid") return nested;
+      values.push(...nested.values);
+    }
+    return { kind: "targets", values };
+  }
+  if (typeof value !== "object") return { kind: "invalid" };
+  for (const [condition, target] of Object.entries(value)) {
+    if (!conditions.has(condition)) continue;
+    return exportTargets(target, conditions);
+  }
+  return { kind: "targets", values: [] };
+};
+
+/**
+ * Node selects an exports target by walking the declared keys in order and
+ * taking the first whose condition is active for the calling resolver.
+ * "default" is always active, and "node" plus "node-addons" are active for the
+ * built-in resolver that owns installed-package imports and requires.
+ */
+const packageExportConditions = (
+  moduleKind: ResolveArtifactPathInput["moduleKind"],
+): ReadonlySet<string> =>
+  new Set([
+    "node",
+    "node-addons",
+    ...(moduleKind === undefined ? [] : [moduleKind]),
+    "default",
+  ]);
+
+type PackageExportOutcome =
+  | { readonly status: "value"; readonly value: string }
+  | { readonly status: "invalid" }
+  | { readonly status: "unmatched"; readonly declared: readonly string[] };
 
 const packagePathValue = (
   value: unknown,
