@@ -9,8 +9,9 @@ import {
 } from "../../../fixtures/nativeCommands.js";
 
 it("collects the actual Mach header alongside the native load commands", async () => {
+  // The provider always invokes `otool -h -l`, which the runner resolves
+  // via the "otool:-h" key; no bare `otool` override is needed.
   const runner = new NativeFixtureRunner({
-    otool: await nativeFixture("native-macho-header/otool-load.txt"),
     "otool:-h": await nativeFixture(
       "native-macho-header/otool-header-load.txt",
     ),
