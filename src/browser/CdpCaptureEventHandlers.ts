@@ -367,8 +367,15 @@ export const handleFrameNavigated = (
 ): void => {
   const frame = recordValue(params.frame);
   if (stringValue(frame?.id) !== state.mainFrameId) return;
-  state.navigationDuringCapture = true;
   const rawUrl = stringValue(frame?.url);
+  const loaderId = stringValue(frame?.loaderId);
+  // `frameNavigated` re-fires for a document already reported (same URL and
+  // loader). Treating that as a navigation aborted a valid capture with
+  // `target_changed`, which is a false claim that the target moved.
+  const document = `${String(loaderId ?? "")}\0${String(rawUrl ?? "")}`;
+  if (state.committedDocument === document) return;
+  state.committedDocument = document;
+  state.navigationDuringCapture = true;
   if (
     isHttpUrl(rawUrl) &&
     allowedSanitizedUrl(rawUrl, state.allowedOrigins) === undefined

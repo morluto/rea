@@ -33,6 +33,7 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
   originViolation = false;
   navigationDuringCapture = false;
   mainFrameId: string | undefined = undefined;
+  committedDocument: string | undefined = undefined;
 
   readonly input: InspectWebPageInput;
   readonly allowedOrigins: ReadonlySet<string>;
@@ -46,6 +47,7 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
     this.mainFrameId = frameId;
     this.originViolation = false;
     this.navigationDuringCapture = false;
+    this.committedDocument = undefined;
     this.scripts.clear();
     this.executionContextFrames.clear();
     this.network.clear();
@@ -65,7 +67,14 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
 
   beginFinalCapture(frameId: string): void {
     this.mainFrameId = frameId;
-    this.navigationDuringCapture = false;
+    // Deliberately does not clear `navigationDuringCapture`. A main-frame
+    // navigation observed during the observation window means the page never
+    // settled, and clearing the flag here reported the capture as clean while
+    // carrying pre-navigation scripts, network and console into the inventory
+    // of the new document. The caller now reports `target_changed` instead.
+    // `committedDocument` is dropped so the new document's frame events are
+    // compared against itself rather than the document we just left.
+    this.committedDocument = undefined;
   }
 
   ingest(event: CdpEvent): void {

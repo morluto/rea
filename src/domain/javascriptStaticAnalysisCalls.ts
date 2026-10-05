@@ -273,11 +273,14 @@ export const addSourceMapDirectives = (
   source: string,
   accumulator: AnalysisAccumulator,
 ): void => {
+  // Minifiers emit either `//# sourceMappingURL=` or the block form
+  // `/*# sourceMappingURL=app.js.map */`. Matching only the line form silently
+  // dropped the block form, so a real footer produced no mapping at all.
   for (const match of source.matchAll(
-    /\/\/[#@]\s*sourceMappingURL\s*=\s*([^\s]+)/gu,
+    /(?:\/\/|\/\*)[#@]\s*sourceMappingURL\s*=\s*([^\s*]+)/gu,
   )) {
     const declared = match[1];
-    if (declared === undefined) continue;
+    if (declared === undefined || declared.length === 0) continue;
     const start = match.index;
     const location = rangeForOffsets(source, start, start + match[0].length);
     addFindingOnce(accumulator, `source-map\0${declared}`, () =>

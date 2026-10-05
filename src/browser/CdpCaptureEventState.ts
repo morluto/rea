@@ -20,4 +20,10 @@ export interface CdpCaptureEventsState {
   originViolation: boolean;
   navigationDuringCapture: boolean;
   mainFrameId: string | undefined;
+  /**
+   * Identity of the document last observed in the main frame. `frameNavigated`
+   * re-fires for the same document, so this is what distinguishes a real
+   * document change from a duplicate event.
+   */
+  committedDocument: string | undefined;
 }
