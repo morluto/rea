@@ -12,6 +12,7 @@ import type {
 } from "../domain/webBundleAnalysis.js";
 import { webSourceMapsSchema } from "../domain/webBundleAnalysis.js";
 import { createWebTextArtifact } from "../domain/webContentArtifact.js";
+import { safeParseJson } from "../domain/safeJson.js";
 
 export interface WebSourceMapRequest {
   readonly scriptKey: string;
@@ -272,12 +273,9 @@ const originalModuleEdges = (
 };
 
 const validSourceMapEnvelope = (text: string): boolean => {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return false;
-  }
+  const parsedResult = safeParseJson(text);
+  if (!parsedResult.ok) return false;
+  const parsed: unknown = parsedResult.value;
   if (!isRecord(parsed) || parsed.version !== 3) return false;
   if (typeof parsed.mappings === "string") return validSourceMapLeaf(parsed);
   if (!Array.isArray(parsed.sections)) return false;

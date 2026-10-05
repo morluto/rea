@@ -178,6 +178,8 @@ export const closePlaywrightScenarioBrowser = async (
         await rm(profilePath, { recursive: true, force: true, maxRetries: 3 });
     }
   })();
+  // best-effort cleanup: the bounded execution boundary below observes the
+  // same cleanup promise; this early attachment only prevents unhandled rejection.
   void cleanup.catch(() => undefined);
   // The shared execution boundary rejects cancellation/timeouts instead of
   // returning a successful capture whose browser or profile may still exist.

@@ -175,7 +175,11 @@ export class HopperClient {
         release();
         if (!result.ok) reset();
       },
-      () => {
+      (cause: unknown) => {
+        this.#logger.debug(
+          { error: cause instanceof Error ? cause.message : String(cause) },
+          "Hopper startup promise rejected during bookkeeping",
+        );
         release();
         reset();
       },
@@ -323,6 +327,8 @@ export class HopperClient {
     options: HopperClientCloseOptions,
   ): Promise<Result<null, AnalysisError>> {
     try {
+      // best-effort cleanup: a rejected startup must not mask close/cleanup;
+      // #cleanup reports the authoritative close result.
       await starting?.catch(() => undefined);
       return await this.#cleanup(options);
     } finally {

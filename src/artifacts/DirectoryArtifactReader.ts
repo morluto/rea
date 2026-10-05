@@ -31,6 +31,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
       try {
         for await (const child of handle) children.push(child.name);
       } finally {
+        // best-effort cleanup: directory-handle close must not mask traversal.
         await handle.close().catch(() => undefined);
       }
       await assertContainedDirectory(root, directory);
@@ -101,6 +102,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
       }
       return handle.createReadStream({ autoClose: true });
     } catch (cause: unknown) {
+      // best-effort cleanup: file-handle close must not mask the open failure.
       await handle.close().catch(() => undefined);
       throw cause;
     }

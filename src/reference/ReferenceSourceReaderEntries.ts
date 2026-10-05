@@ -289,7 +289,11 @@ const applyExclusion = (
 ): { readonly ok: true; readonly value: boolean } | { readonly ok: false } => {
   try {
     return { ok: true, value: shouldExclude?.(path) === true };
-  } catch {
+  } catch (cause: unknown) {
+    // Exclusion predicates are caller-supplied; a throwing predicate fails
+    // closed and the caller-visible `{ ok: false }` preserves the rejection
+    // without propagating an arbitrary predicate cause.
+    void cause;
     return { ok: false };
   }
 };

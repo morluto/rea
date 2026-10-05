@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 
 import { AnalysisInputError, projectAnalysisError } from "./domain/errors.js";
 import type { JsonValue } from "./domain/jsonValue.js";
+import { safeParseJson } from "./domain/safeJson.js";
 
 /** Parse inline JSON or one local JSON file for a CLI workflow. */
 export const parseCliJsonInput = async (
@@ -16,27 +17,33 @@ export const parseCliJsonInput = async (
   if (["{", "["].includes(value.trimStart()[0] ?? ""))
     return { ok: false, error: inputError(operation) };
   try {
-    const parsed = parseJson(await readFile(value));
-    return parsed === undefined
-      ? jsonFileError(value, operation, "invalid-json")
-      : { ok: true, value: parsed };
-  } catch {
-    return jsonFileError(value, operation, "read-failed");
+    const decoded = safeParseJson(await readFile(value, "utf8"));
+    return decoded.ok
+      ? { ok: true, value: decoded.value }
+      : jsonFileError(value, operation, "invalid-json");
+  } catch (cause: unknown) {
+    return jsonFileError(value, operation, "read-failed", cause);
   }
 };
 
 const parseJson = (value: string | Uint8Array): unknown => {
-  try {
-    return JSON.parse(
-      typeof value === "string"
-        ? value
-        : new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-            value,
-          ),
-    );
-  } catch {
-    return undefined;
+  let text: string;
+  if (typeof value === "string") {
+    text = value;
+  } else {
+    try {
+      text = new TextDecoder("utf-8", {
+        fatal: true,
+        ignoreBOM: true,
+      }).decode(value);
+    } catch (cause: unknown) {
+      // Decoding failure means the bytes are not valid UTF-8 JSON input.
+      void cause;
+      return undefined;
+    }
   }
+  const parsed = safeParseJson(text);
+  return parsed.ok ? parsed.value : undefined;
 };
 
 const inputError = (operation: string): JsonValue => ({
@@ -52,6 +59,7 @@ const jsonFileError = (
   path: string | undefined,
   operation: string,
   reason: "invalid-json" | "read-failed",
+  cause?: unknown,
 ) => ({
   ok: false as const,
   error: {
@@ -59,7 +67,7 @@ const jsonFileError = (
     ...projectAnalysisError(
       new AnalysisInputError(
         operation,
-        undefined,
+        cause === undefined ? undefined : { cause },
         reason === "invalid-json"
           ? [{ path: [], reason: "invalid_format", expected: "JSON" }]
           : [],

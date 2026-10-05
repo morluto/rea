@@ -43,8 +43,11 @@ export const startMcpTransport = async (
   let optionalProviders: OptionalProviders = {};
   try {
     optionalProviders = await serverContext.loadOptionalProviders();
-  } catch {
+  } catch (cause: unknown) {
     serverLogger.warn(
+      {
+        error: cause instanceof Error ? cause.message : String(cause),
+      },
       "Optional MCP providers could not load; affected tools remain unavailable",
     );
   }
@@ -63,9 +66,14 @@ export const startMcpTransport = async (
         },
       },
     );
-  } catch {
+  } catch (cause: unknown) {
     await session.close();
-    serverLogger.error(MCP_CONNECTION_START_FAILED);
+    serverLogger.error(
+      {
+        error: cause instanceof Error ? cause.message : String(cause),
+      },
+      MCP_CONNECTION_START_FAILED,
+    );
     dependencies.writeStderr(`${MCP_CONNECTION_START_FAILED}\n`);
     return { ok: false };
   }

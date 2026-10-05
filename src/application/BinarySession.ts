@@ -422,11 +422,15 @@ export class BinarySession
     for (const listener of this.#availabilityListeners) {
       try {
         const notification = listener();
-        if (notification !== undefined)
+        if (notification !== undefined) {
+          // best-effort cleanup: async observer notifications must not reject
+          // unhandled; state transitions and other listeners continue.
           void notification.catch(() => undefined);
-      } catch {
+        }
+      } catch (cause: unknown) {
         // External observers are best-effort notifications. Contain only the
         // callback failure so state transitions and other listeners continue.
+        void cause;
       }
     }
   }

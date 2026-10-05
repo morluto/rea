@@ -1,3 +1,5 @@
+import { safeParseJson } from "./domain/safeJson.js";
+
 const SAFE_VALIDATION_MESSAGE =
   "REA could not read the command arguments. Run `rea --help`, correct the arguments, then try again.";
 const UNSUPPORTED_OUTPUT_COMBINATION_MESSAGE =
@@ -94,20 +96,18 @@ export const renderCliOutputArgumentError = (
 export const sanitizeCliOutput = (output: string): string => {
   const trimmed = output.trimStart();
   if (trimmed.startsWith("{")) {
-    try {
-      const parsed: unknown = JSON.parse(trimmed);
-      if (!isRecord(parsed)) return output;
-      const error = validationError(parsed);
-      if (error !== undefined) {
-        const safeError = {
-          code: "VALIDATION_ERROR",
-          message: SAFE_VALIDATION_MESSAGE,
-        };
-        if (error === parsed) return `${JSON.stringify(safeError)}\n`;
-        return `${JSON.stringify({ ...parsed, error: safeError })}\n`;
-      }
-    } catch {
-      return output;
+    const decoded = safeParseJson(trimmed);
+    if (!decoded.ok) return output;
+    const parsed: unknown = decoded.value;
+    if (!isRecord(parsed)) return output;
+    const error = validationError(parsed);
+    if (error !== undefined) {
+      const safeError = {
+        code: "VALIDATION_ERROR",
+        message: SAFE_VALIDATION_MESSAGE,
+      };
+      if (error === parsed) return `${JSON.stringify(safeError)}\n`;
+      return `${JSON.stringify({ ...parsed, error: safeError })}\n`;
     }
     return output;
   }

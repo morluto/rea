@@ -95,6 +95,7 @@ export class ZipArtifactReader implements ArtifactReader {
   }
 
   async close(): Promise<void> {
+    // best-effort cleanup: zip-reader close must not mask prior extraction state.
     await this.#reader.close().catch(() => undefined);
     await this.#source.closeHandle();
   }

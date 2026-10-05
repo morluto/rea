@@ -220,6 +220,7 @@ export const readStableFile = async (
     if (message === undefined) throw cause;
     return entryFailure(path, "file", "io", message, safeSize(expected.size));
   } finally {
+    // best-effort cleanup: file-handle close must not mask the read result.
     await handle?.close().catch(() => undefined);
   }
 };

@@ -8,6 +8,7 @@ import {
 } from "node:net";
 import { join, resolve } from "node:path";
 import { HopperStartError } from "../domain/errors.js";
+import { safeParseJson } from "../domain/safeJson.js";
 
 interface HopperTargetLeaseOwner {
   readonly runId: string;
@@ -144,22 +145,23 @@ const readOwner = (
       response += chunk.toString("utf8");
       const newline = response.indexOf("\n");
       if (newline < 0) return;
-      try {
-        const value: unknown = JSON.parse(response.slice(0, newline));
-        if (
-          typeof value === "object" &&
-          value !== null &&
-          typeof Reflect.get(value, "runId") === "string" &&
-          typeof Reflect.get(value, "processId") === "number"
-        )
-          finish({
-            runId: Reflect.get(value, "runId") as string,
-            processId: Reflect.get(value, "processId") as number,
-          });
-        else finish(undefined);
-      } catch {
+      const parsed = safeParseJson(response.slice(0, newline));
+      if (!parsed.ok) {
         finish(undefined);
+        return;
       }
+      const value: unknown = parsed.value;
+      if (
+        typeof value === "object" &&
+        value !== null &&
+        typeof Reflect.get(value, "runId") === "string" &&
+        typeof Reflect.get(value, "processId") === "number"
+      )
+        finish({
+          runId: Reflect.get(value, "runId") as string,
+          processId: Reflect.get(value, "processId") as number,
+        });
+      else finish(undefined);
     });
     socket.on("error", () => finish(undefined));
     socket.on("end", () => finish(undefined));

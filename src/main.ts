@@ -120,7 +120,10 @@ export const runEntrypoint = async (
 ): Promise<void> => {
   try {
     setExitCode(await start());
-  } catch {
+  } catch (cause: unknown) {
+    // Intentionally redact the startup cause from caller-visible output;
+    // unexpected failures must not leak internal details.
+    void cause;
     writeStderr(`${SERVER_START_FAILED}\n`);
     setExitCode(1);
   }

@@ -415,6 +415,7 @@ class NativeMacOSClient implements AnalysisClient {
     );
     if (!capture.ok) return capture;
     const parsed = parsePlistJson(capture.value.stdout);
+    if (!parsed.ok) return parsed;
     const provenance = [classified.value, capture.value].map((item) =>
       invocation(item, plist.value, "$PLIST"),
     );
@@ -424,7 +425,7 @@ class NativeMacOSClient implements AnalysisClient {
         : /XML|text/iu.test(classified.value.stdout)
           ? "xml"
           : "unknown",
-      ...parsed,
+      ...parsed.value,
       source_path: plist.value,
       provenance,
       limitations: [],

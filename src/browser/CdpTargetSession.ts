@@ -60,8 +60,9 @@ export const closeCdpTargetSession = async (
     }
     try {
       await connection.send(`${domain}.disable`, {}, sessionId, signal);
-    } catch {
-      // Cleanup continues to the detach or direct-socket close boundary.
+    } catch (cause: unknown) {
+      // best-effort cleanup: domain disable continues to detach/close boundary.
+      void cause;
     }
   }
   if (signal?.aborted === true) {
@@ -76,8 +77,9 @@ export const closeCdpTargetSession = async (
         undefined,
         signal,
       );
-    } catch {
-      // Closing REA's socket is the final non-destructive cleanup boundary.
+    } catch (cause: unknown) {
+      // best-effort cleanup: closing REA's socket is the final cleanup boundary.
+      void cause;
     }
   await connection.close();
 };

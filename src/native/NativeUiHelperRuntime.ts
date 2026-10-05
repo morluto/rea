@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileOutput } from "../process/ExecFileOutput.js";
+import { safeParseJson } from "../domain/safeJson.js";
 import type { NativeUiHelper } from "./NativeUiObservation.js";
 
 /** Lazily compile one owned helper per observation/scenario and remove its compiler cache. */
@@ -42,7 +43,10 @@ export const createNativeUiHelperRuntime = () => {
         ...(signal === undefined ? {} : { signal }),
       },
     );
-    return JSON.parse(output.stdout) as unknown;
+    const parsed = safeParseJson(output.stdout);
+    if (!parsed.ok)
+      throw new Error(`Native helper returned invalid JSON: ${parsed.error}`);
+    return parsed.value;
   };
   return {
     invoke,

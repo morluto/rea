@@ -153,10 +153,19 @@ export class GhidraClient {
           this.#startupController = undefined;
       }
     };
-    void started.then((result) => {
-      signal?.removeEventListener("abort", onAbort);
-      if (!result.ok) reset();
-    }, reset);
+    void started.then(
+      (result) => {
+        signal?.removeEventListener("abort", onAbort);
+        if (!result.ok) reset();
+      },
+      (cause: unknown) => {
+        this.#logger.debug(
+          { error: cause instanceof Error ? cause.message : String(cause) },
+          "Ghidra startup promise rejected during bookkeeping",
+        );
+        reset();
+      },
+    );
     return started;
   }
 
@@ -388,6 +397,7 @@ export class GhidraClient {
     forceStop: boolean,
   ): Promise<void> {
     try {
+      // best-effort cleanup: a rejected startup must not mask close/cleanup.
       await starting?.catch(() => undefined);
       await this.#cleanup(forceStop);
     } finally {

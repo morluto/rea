@@ -18,6 +18,7 @@ import {
   compareWebScreenshotsInputSchema,
 } from "./domain/webScreenshot.js";
 import type { JsonValue } from "./domain/jsonValue.js";
+import { safeParseJson } from "./domain/safeJson.js";
 import type { Logger } from "./logger.js";
 import { CLI_COMMANDS } from "./cliCommandNames.js";
 
@@ -181,11 +182,8 @@ const registerScreenshotDiff = (
 };
 
 const parseJson = (value: string): unknown => {
-  try {
-    return JSON.parse(value);
-  } catch {
-    return undefined;
-  }
+  const parsed = safeParseJson(value);
+  return parsed.ok ? parsed.value : undefined;
 };
 
 const inputError = (operation: string): JsonValue =>

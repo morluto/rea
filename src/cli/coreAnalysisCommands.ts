@@ -351,7 +351,10 @@ const isJavaScriptApplicationPath = async (path: string): Promise<boolean> => {
   if (lower.endsWith(".app")) return false;
   try {
     return (await stat(path)).isDirectory();
-  } catch {
+  } catch (cause: unknown) {
+    // A missing or unreadable path is not a JavaScript application directory;
+    // the caller falls through to direct binary analysis instead.
+    void cause;
     return false;
   }
 };

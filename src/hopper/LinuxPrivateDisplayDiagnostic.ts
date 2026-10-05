@@ -4,6 +4,7 @@ import {
   isHopperStartupFailureCode,
   type HopperStartupDiagnostic,
 } from "../domain/hopperStartupFailure.js";
+import { safeParseJson } from "../domain/safeJson.js";
 
 export const LINUX_PRIVATE_DISPLAY_DIAGNOSTIC_PREFIX = "REA_X11_DIAGNOSTIC=";
 
@@ -70,13 +71,11 @@ export const parseLinuxPrivateDisplayDiagnostic = (
   if (records.length !== 1) return { ok: false, reason: "diagnostic_multiple" };
   const record = records[0];
   if (record === undefined) return { ok: false, reason: "diagnostic_missing" };
-  try {
-    const parsed = diagnosticSchema.safeParse(
-      JSON.parse(record.slice(LINUX_PRIVATE_DISPLAY_DIAGNOSTIC_PREFIX.length)),
-    );
-    if (!parsed.success) return { ok: false, reason: "diagnostic_malformed" };
-    return { ok: true, value: parsed.data };
-  } catch {
-    return { ok: false, reason: "diagnostic_malformed" };
-  }
+  const decoded = safeParseJson(
+    record.slice(LINUX_PRIVATE_DISPLAY_DIAGNOSTIC_PREFIX.length),
+  );
+  if (!decoded.ok) return { ok: false, reason: "diagnostic_malformed" };
+  const parsed = diagnosticSchema.safeParse(decoded.value);
+  if (!parsed.success) return { ok: false, reason: "diagnostic_malformed" };
+  return { ok: true, value: parsed.data };
 };

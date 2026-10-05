@@ -9,6 +9,7 @@ import {
   type BrowserObservationOperation,
 } from "../domain/errors.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
+import { safeParseJson } from "../domain/safeJson.js";
 
 const endpointVersionSchema = z.object({
   Browser: z.string().min(1),
@@ -304,17 +305,18 @@ export const readCdpJson = async (
         const chunks: Buffer[] = [];
         response.on("data", (chunk: Buffer) => chunks.push(chunk));
         response.on("end", () => {
-          try {
-            resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-          } catch (cause: unknown) {
+          const parsed = safeParseJson(Buffer.concat(chunks).toString("utf8"));
+          if (!parsed.ok) {
             reject(
               new BrowserObservationError(
                 operation,
                 "invalid_endpoint_response",
-                { cause },
+                { cause: new Error(parsed.error) },
               ),
             );
+            return;
           }
+          resolve(parsed.value);
         });
         response.on("error", (cause: unknown) =>
           reject(endpointFailure(cause, operation, signal)),

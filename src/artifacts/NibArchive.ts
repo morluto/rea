@@ -372,8 +372,10 @@ const decodeUtf8 = (
     return new TextDecoder("utf-8", { fatal: true }).decode(
       bytes.subarray(start, end),
     );
-  } catch {
-    throw new TypeError(`NIBArchive ${label} is not valid UTF-8`);
+  } catch (cause: unknown) {
+    throw new TypeError(`NIBArchive ${label} is not valid UTF-8`, {
+      cause,
+    });
   }
 };
 

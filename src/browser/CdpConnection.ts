@@ -6,6 +6,7 @@ import {
   BrowserObservationError,
   type BrowserObservationOperation,
 } from "../domain/errors.js";
+import { safeParseJson } from "../domain/safeJson.js";
 
 export interface CdpEvent {
   readonly method: string;
@@ -140,13 +141,12 @@ export class CdpConnection {
   }
 
   #receive(data: RawData): void {
-    let message: unknown;
-    try {
-      message = JSON.parse(rawText(data));
-    } catch {
+    const parsed = safeParseJson(rawText(data));
+    if (!parsed.ok) {
       this.#failPending("protocol_error");
       return;
     }
+    const message: unknown = parsed.value;
     if (!isRecord(message)) {
       this.#failPending("protocol_error");
       return;

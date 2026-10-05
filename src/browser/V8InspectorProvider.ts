@@ -201,6 +201,8 @@ export const closeInspectorConnection = async (
   signal?: AbortSignal,
 ): Promise<void> => {
   const closing = connection.close();
+  // best-effort cleanup: the race below observes the close; this only prevents
+  // unhandled rejection when the caller abandons the close via cancellation.
   void closing.catch(() => undefined);
   // CdpConnection.close has its own one second transport bound. Do not make a
   // cancelled caller wait for that fallback.

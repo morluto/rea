@@ -3,6 +3,7 @@ import { z } from "zod";
 import { HopperProtocolError, HopperRemoteError } from "../domain/errors.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { safeParseJson } from "../domain/safeJson.js";
 
 const remoteErrorSchema = z
   .object({
@@ -82,14 +83,14 @@ export type HopperBridgeMessage = z.infer<typeof messageSchema>;
 export const parseBridgeMessageLine = (
   line: string,
 ): Result<HopperBridgeMessage, HopperProtocolError> => {
-  let decoded: unknown;
-  try {
-    decoded = JSON.parse(line);
-  } catch (cause: unknown) {
+  const decodedResult = safeParseJson(line);
+  if (!decodedResult.ok)
     return err(
-      new HopperProtocolError("Hopper returned malformed JSON", { cause }),
+      new HopperProtocolError("Hopper returned malformed JSON", {
+        cause: new Error(decodedResult.error),
+      }),
     );
-  }
+  const decoded: unknown = decodedResult.value;
 
   const parsed = messageSchema.safeParse(decoded);
   return parsed.success

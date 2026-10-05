@@ -153,6 +153,7 @@ export class SafeOutputTree {
         );
       return { relativePath: path, sha256, bytesWritten: bytes };
     } catch (cause: unknown) {
+      // best-effort cleanup: file-handle close must not mask the write failure.
       await handle.close().catch(() => undefined);
       throw cause;
     }

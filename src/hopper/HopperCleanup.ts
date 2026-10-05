@@ -264,6 +264,7 @@ const report = async (
   completed: number,
   message: string,
 ): Promise<void> => {
+  // best-effort cleanup: progress reporting must not fail session cleanup.
   await progress
     ?.report({
       phase: "hopper_cleanup",
