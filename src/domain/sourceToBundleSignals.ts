@@ -269,7 +269,9 @@ const addPath = (
 };
 
 const normalizeCurrentPath = (raw: string): string | null => {
-  const withoutQuery = raw.split(/[?#]/u, 1)[0] ?? "";
+  const withoutQuery = /^[a-z][a-z0-9+.-]*:\/\//iu.test(raw)
+    ? (raw.split(/[?#]/u, 1)[0] ?? "")
+    : raw;
   const withoutScheme = withoutQuery.replace(/^[a-z][a-z0-9+.-]*:\/\/+/iu, "");
   const parts = withoutScheme
     .replaceAll("\\", "/")
