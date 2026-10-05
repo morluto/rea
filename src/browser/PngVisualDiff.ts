@@ -81,6 +81,7 @@ const decodePng = (artifact: WebScreenshotArtifact): DecodedPng => {
   let header: ReturnType<typeof parseHeader> | undefined;
   const compressed: Buffer[] = [];
   let sawEnd = false;
+  let transparentColor: readonly number[] | undefined;
   while (offset < bytes.length) {
     if (offset + 12 > bytes.length) throw new TypeError("Truncated PNG chunk");
     const length = bytes.readUInt32BE(offset);
@@ -90,7 +91,15 @@ const decodePng = (artifact: WebScreenshotArtifact): DecodedPng => {
     if (dataEnd + 4 > bytes.length) throw new TypeError("Truncated PNG data");
     const data = bytes.subarray(dataStart, dataEnd);
     if (type === "IHDR") header = parseHeader(data);
-    else if (type === "IDAT") compressed.push(data);
+    else if (type === "tRNS") {
+      if (header?.channels !== 3 || data.length !== 6)
+        throw new TypeError("Unsupported PNG transparency");
+      transparentColor = [
+        data.readUInt16BE(0),
+        data.readUInt16BE(2),
+        data.readUInt16BE(4),
+      ];
+    } else if (type === "IDAT") compressed.push(data);
     else if (type === "IEND") {
       sawEnd = true;
       break;
@@ -108,7 +117,13 @@ const decodePng = (artifact: WebScreenshotArtifact): DecodedPng => {
   return {
     width: header.width,
     height: header.height,
-    rgba: unfilter(raw, header.width, header.height, header.channels),
+    rgba: unfilter(
+      raw,
+      header.width,
+      header.height,
+      header.channels,
+      transparentColor,
+    ),
   };
 };
 
@@ -137,6 +152,7 @@ const unfilter = (
   width: number,
   height: number,
   channels: number,
+  transparentColor: readonly number[] | undefined,
 ): Buffer => {
   const rowBytes = width * channels;
   const decoded = Buffer.alloc(rowBytes * height);
@@ -177,7 +193,13 @@ const unfilter = (
     rgba[target] = decoded[source] ?? 0;
     rgba[target + 1] = decoded[source + 1] ?? 0;
     rgba[target + 2] = decoded[source + 2] ?? 0;
-    rgba[target + 3] = 255;
+    rgba[target + 3] =
+      transparentColor !== undefined &&
+      transparentColor.every(
+        (value, channel) => decoded[source + channel] === value,
+      )
+        ? 0
+        : 255;
   }
   return rgba;
 };

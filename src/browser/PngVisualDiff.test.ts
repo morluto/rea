@@ -49,6 +49,37 @@ describe("PNG visual diff", () => {
     ).toMatchObject({ status: "dimension_mismatch", compared_pixels: 0 });
   });
 
+  it("preserves RGB transparent-color samples when comparing RGBA pixels", () => {
+    const header = Buffer.alloc(13);
+    header.writeUInt32BE(2, 0);
+    header.writeUInt32BE(1, 4);
+    header[8] = 8;
+    header[9] = 2;
+    const transparent = Buffer.alloc(6);
+    transparent.writeUInt16BE(10, 0);
+    transparent.writeUInt16BE(20, 2);
+    transparent.writeUInt16BE(30, 4);
+    const rgb = createWebScreenshotArtifact(
+      Buffer.concat([
+        Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+        chunk("IHDR", header),
+        chunk("tRNS", transparent),
+        chunk("IDAT", deflateSync(Buffer.from([0, 10, 20, 30, 10, 20, 31]))),
+        chunk("IEND", Buffer.alloc(0)),
+      ]),
+    );
+    const rgba = artifact(2, 1, [10, 20, 30, 0, 10, 20, 31, 255]);
+    expect(
+      comparePngScreenshots(
+        compareWebScreenshotsInputSchema.parse({ before: rgb, after: rgba }),
+      ),
+    ).toMatchObject({
+      status: "identical",
+      changed_pixels: 0,
+      maximum_channel_delta: 0,
+    });
+  });
+
   it("rejects malformed PNG dimensions after validating image data", () => {
     const image = artifact(32_000_001, 1, [0, 0, 0, 255]);
     expect(() =>
