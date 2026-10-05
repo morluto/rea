@@ -167,7 +167,7 @@ const parseFields = (block: string): Record<string, string | number | null> => {
   const fields: Record<string, string | number | null> = {};
   for (const rawLine of block.split(/\r?\n/u).slice(1)) {
     const line = rawLine.trim();
-    const match = /^(\S+(?:\s+version)?)\s+(.+)$/u.exec(line);
+    const match = /^(\S+(?:\s+(?:version|stamp))?)\s+(.+)$/u.exec(line);
     if (match?.[1] === undefined || match[2] === undefined) continue;
     const value = match[2].trim();
     fields[match[1]] = numeric(value) ?? value;

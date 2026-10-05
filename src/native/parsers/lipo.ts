@@ -58,7 +58,7 @@ export const parseLipoArchitectures = (output: string): LipoArchitecture[] => {
 };
 
 const integer = (value: string | undefined): number | null => {
-  if (value === undefined) return null;
+  if (value === undefined || !/^\d+$/u.test(value)) return null;
   const parsed = Number.parseInt(value, 10);
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
 };

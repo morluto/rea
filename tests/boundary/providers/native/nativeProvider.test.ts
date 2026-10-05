@@ -305,6 +305,20 @@ describe("native macOS provider failures and parsing", () => {
       ],
     );
   });
+
+  it("rejects trailing text in lipo numeric fields instead of truncating", () => {
+    const output = [
+      "architecture arm64",
+      "    cputype CPU_TYPE_ARM64",
+      "    cpusubtype CPU_SUBTYPE_ARM64_ALL",
+      "    offset 16384 trailing-junk",
+      "    size 0x10",
+      "    align 2^14 (16384)",
+    ].join("\n");
+    expect(parseLipoArchitectures(output)).toMatchObject([
+      { name: "arm64", file_offset: null, size: null, alignment: 16384 },
+    ]);
+  });
 });
 
 class FailingRunner implements NativeCommandRunner {

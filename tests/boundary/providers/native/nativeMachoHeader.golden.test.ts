@@ -42,3 +42,13 @@ it("does not reinterpret segment and section flags as Mach header flags", async 
     true,
   );
 });
+
+it("keeps multi-word field names such as time stamp intact", async () => {
+  const load = parseOtoolLoadCommands(await nativeFixture("otool-load.txt"));
+  const stamped = load.commands.filter(
+    (command) => "time stamp" in command.fields,
+  );
+  expect(stamped.length).toBeGreaterThan(0);
+  expect(load.commands.some((command) => "time" in command.fields)).toBe(false);
+  expect(stamped[0]?.fields["time stamp"]).toMatch(/^2 Thu Jan/);
+});
