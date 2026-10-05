@@ -62,7 +62,6 @@ export const developmentTestPlan = (request, baseCommit) => {
     needsBuild: request.paths.some((path) => !sourceTest(path)),
     vitestArguments: [
       "run",
-      "--maxWorkers=1",
       ...projects.flatMap((project) => ["--project", project]),
       ...(explicit
         ? request.paths
