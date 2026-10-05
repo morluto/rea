@@ -434,6 +434,17 @@ const projectComplexValue = (
       );
     }
   }
+  if (Array.isArray(candidate) && Array.isArray(output)) {
+    for (let index = 0; index < candidate.length; index += 1) {
+      if (Object.hasOwn(descriptors, String(index))) continue;
+      output[index] = projectValueRecursive(
+        null,
+        depth + 1,
+        ancestors,
+        context,
+      );
+    }
+  }
   return output;
 };
 
