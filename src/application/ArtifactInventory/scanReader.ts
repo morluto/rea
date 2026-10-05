@@ -1,3 +1,5 @@
+import { isAbsolute } from "node:path";
+
 import {
   ArtifactPathRegistry,
   normalizeArtifactPath,
@@ -234,7 +236,7 @@ const digestArtifactEntry = async (
 const isExpandableAsar = (entry: ArtifactEntry, logicalPath: string): boolean =>
   entry.kind === "file" &&
   logicalPath.toLowerCase().endsWith(".asar") &&
-  entry.adapterKey.startsWith("/");
+  isAbsolute(entry.adapterKey);
 
 const isUnavailableUnpackedEntry = (
   cause: unknown,

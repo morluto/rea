@@ -1,5 +1,5 @@
 import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { buffer } from "node:stream/consumers";
 
 import { createPackage, listPackage, uncache } from "@electron/asar";
@@ -144,7 +144,7 @@ describe("ASAR inventory freshness", () => {
     const fixture = await archiveFixture();
     try {
       expect(listPackage(fixture.archive, { isPack: false })).toEqual([
-        "/old.js",
+        `${sep}old.js`,
       ]);
       await fixture.replace();
       const inventory = await inventoryArtifact(fixture.archive);
@@ -208,7 +208,7 @@ describe("ASAR inventory freshness", () => {
 
       await fixture.replace();
       expect(listPackage(fixture.archive, { isPack: false })).toEqual([
-        "/new.js",
+        `${sep}new.js`,
       ]);
     } finally {
       await entries.return?.();
