@@ -255,6 +255,8 @@ const ELEMENT_TYPE_SUFFIXES = new Map<number, string>([
   [0x10, "&"],
 ]);
 
+class UnsupportedSignatureError extends Error {}
+
 const readTypeSignature = (
   blob: Buffer,
   offset: number,
@@ -287,7 +289,9 @@ const readTypeSignature = (
     const variable = readCompressed(blob, offset + 1);
     return { value: `var:${String(variable.value)}`, next: variable.next };
   }
-  throw new RangeError(`unsupported element type 0x${kind.toString(16)}`);
+  throw new UnsupportedSignatureError(
+    `unsupported element type 0x${kind.toString(16)}`,
+  );
 };
 
 const callingConvention = (value: number): string => {
@@ -365,7 +369,10 @@ export const signature = (blob: Buffer): ManagedSignature => {
     return {
       ...raw,
       kind: "unknown",
-      parse_status: cause instanceof RangeError ? "unsupported" : "malformed",
+      parse_status:
+        cause instanceof UnsupportedSignatureError
+          ? "unsupported"
+          : "malformed",
       calling_convention: null,
       generic_parameter_count: null,
       parameter_count: null,
