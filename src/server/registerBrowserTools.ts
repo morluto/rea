@@ -37,7 +37,7 @@ interface BrowserToolContext {
   readonly progress: ProgressReporter;
 }
 
-/** Register browser tools even when policy/provider availability denies execution. */
+/** Register browser tools with execution-time provider diagnostics. */
 // oxlint-disable-next-line max-lines-per-function -- direct SDK calls retain each schema-handler type correlation.
 export const registerBrowserTools = (
   server: McpServer,
