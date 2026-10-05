@@ -98,6 +98,48 @@ describe("JavaScript semantic analysis: structure 1", () => {
     ).toEqual(shadowReference);
   });
 
+  it("resolves named class expressions inside the class without changing the outer binding", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      const Service = "outside";
+      const Wrapper = class Service {
+        create() { return new Service(); }
+      };
+      consume(Service);
+    `);
+    expect(bindingsNamed(ir, "Service")).toHaveLength(2);
+    expect(topLevelBinding(ir, "Service").value).toEqual({
+      status: "literal",
+      value: "outside",
+    });
+    const references = ir.references.filter(
+      ({ name, role }) => name === "Service" && role === "read",
+    );
+    expect(references).toHaveLength(2);
+    expect(references[0]?.bindingId).not.toBe(references[1]?.bindingId);
+    expect(references[0]?.resolution).toBe("resolved");
+    const classScope = ir.scopes.find(({ kind }) => kind === "class");
+    expect(
+      bindingsNamed(ir, "Service").some(
+        ({ scopeId }) => scopeId === classScope?.scopeId,
+      ),
+    ).toBe(true);
+  });
+
+  it("does not expose a named class expression outside its class", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      const Wrapper = class Internal { create() { return new Internal(); } };
+      consume(Internal);
+    `);
+    const references = ir.references.filter(
+      ({ name, role }) => name === "Internal" && role === "read",
+    );
+    expect(references.map(({ resolution }) => resolution)).toEqual([
+      "resolved",
+      "unbound",
+    ]);
+    expect(topLevelBinding(ir, "Wrapper").provenance.status).toBe("local");
+  });
+
   it("propagates literal, template, object, conditional, and destructured values", () => {
     const ir = analyzeJavaScriptSemantics(`
       const prefix = "rea";

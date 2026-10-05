@@ -212,6 +212,16 @@ const bindInnerDeclaration = (
           ? parent.kind !== "const"
           : true,
     });
+  else if (t.isClassExpression(node) && t.isIdentifier(node.id))
+    addBinding({
+      state,
+      scope,
+      name: node.id.name,
+      kind: "class",
+      mutable: false,
+      definitionNode: node.id,
+      initializer: node,
+    });
   else if (t.isFunction(node)) bindFunctionLocals(node, scope, state);
   else if (t.isCatchClause(node) && node.param != null)
     bindPattern({
