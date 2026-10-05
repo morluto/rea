@@ -497,6 +497,53 @@ describe("deterministic replay Date compatibility", () => {
   });
 });
 
+it("rejects results the JSON projection cannot represent faithfully", async () => {
+  const workerRequest = await request("parser.mjs", "esm", "default", []);
+  workerRequest.left.modules[0] = {
+    alias: "entry",
+    format: "esm",
+    dependencies: {},
+    source: "export default function () { return { a: 1, [Symbol('s')]: 2 }; }",
+  };
+  const result = await runWorker(workerRequest);
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    left: [
+      {
+        outcome: "serialization_error",
+        exception: {
+          message: "Symbol-keyed replay results are unavailable",
+        },
+      },
+    ],
+  });
+});
+
+it("keeps an own __proto__ property instead of mutating the output", async () => {
+  const workerRequest = await request("parser.mjs", "esm", "default", []);
+  workerRequest.left.modules[0] = {
+    alias: "entry",
+    format: "esm",
+    dependencies: {},
+    source: `export default function () {
+      const value = {};
+      Object.defineProperty(value, "__proto__", {
+        value: { injected: true },
+        enumerable: true,
+      });
+      return value;
+    }`,
+  };
+  const result = await runWorker(workerRequest);
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    left: [
+      {
+        outcome: "return",
+        value: { __proto__: { injected: true } },
+      },
+    ],
+  });
+});
+
 describe("replay array projection", () => {
   it.each([
     ["Array(3)", [null, null, null]],

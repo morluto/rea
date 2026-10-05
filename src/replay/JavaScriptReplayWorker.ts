@@ -424,6 +424,11 @@ const projectComplexValue = (
   context: ProjectionContext,
 ): unknown[] | Record<string, unknown> => {
   const descriptors = Object.getOwnPropertyDescriptors(candidate);
+  // A symbol-keyed property cannot be represented in JSON, and dropping it
+  // quietly would make the digest differ from a program that never had it.
+  // Report it as unsupported instead, alongside accessors and prototypes.
+  if (Object.getOwnPropertySymbols(candidate).length > 0)
+    throw new TypeError("Symbol-keyed replay results are unavailable");
   const output: unknown[] | Record<string, unknown> = Array.isArray(candidate)
     ? []
     : {};
@@ -441,12 +446,24 @@ const projectComplexValue = (
         context,
       );
     } else {
-      output[key] = projectValueRecursive(
+      const value = projectValueRecursive(
         descriptor.value,
         depth + 1,
         ancestors,
         context,
       );
+      // Plain assignment to `__proto__` mutates the output's prototype instead
+      // of adding an own property, so the key would vanish from the digest.
+      if (key === "__proto__") {
+        Object.defineProperty(output, key, {
+          value,
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      } else {
+        output[key] = value;
+      }
     }
   }
   if (Array.isArray(candidate) && Array.isArray(output)) {
