@@ -11,7 +11,7 @@
   metadata, signatures, method bodies, raw CIL hashes, limited
   decoded-instruction-tuple v1 hashes, exception regions, call edges, and
   field-access anchors are shipped through `inspect_managed_members`; `rea
-inspect-managed-members` provides CLI parity. Static member comparison and build-local
+  inspect-managed-members` provides CLI parity. Static member comparison and build-local
   token remapping are shipped through `compare_managed_members` /
   `rea compare-managed-members`. Declaration-only managed/native boundary
   inventory for ModuleRef, ImplMap/PInvoke, ReadyToRun indicators, and non-IL

@@ -47,12 +47,10 @@ export async function verifySwitchEvidenceControls({
   workspace,
   runId,
 }) {
-  const { spawnOwnedProviderProcess, ProviderProcessSupervisor } = await import(
-    "../dist/process/ProviderProcess.js"
-  );
-  const { cleanupOwnedProcessGroup } = await import(
-    "../dist/process/ProcessOwnership.js"
-  );
+  const { spawnOwnedProviderProcess, ProviderProcessSupervisor } =
+    await import("../dist/process/ProviderProcess.js");
+  const { cleanupOwnedProcessGroup } =
+    await import("../dist/process/ProcessOwnership.js");
   const bridge = await realpath(
     join(dirname(entrypoint), "../bridge/ghidra/ReaGhidraBridge.java"),
   );

@@ -102,24 +102,22 @@ export const projectAppleAssetCatalogPage = (input: {
   }[];
 }) => {
   const all = input.catalogs.flatMap((catalog) =>
-    catalog.records.map(
-      (metadata, index): AppleAssetCatalogRecord => ({
-        catalog_path: catalog.path,
-        catalog_sha256: catalog.sha256,
-        index,
-        kind:
-          typeof metadata.RenditionName === "string" ||
-          typeof metadata.Name === "string"
-            ? "rendition"
-            : "catalog",
-        asset_name: typeof metadata.Name === "string" ? metadata.Name : null,
-        rendition_name:
-          typeof metadata.RenditionName === "string"
-            ? metadata.RenditionName
-            : null,
-        metadata,
-      }),
-    ),
+    catalog.records.map((metadata, index): AppleAssetCatalogRecord => ({
+      catalog_path: catalog.path,
+      catalog_sha256: catalog.sha256,
+      index,
+      kind:
+        typeof metadata.RenditionName === "string" ||
+        typeof metadata.Name === "string"
+          ? "rendition"
+          : "catalog",
+      asset_name: typeof metadata.Name === "string" ? metadata.Name : null,
+      rendition_name:
+        typeof metadata.RenditionName === "string"
+          ? metadata.RenditionName
+          : null,
+      metadata,
+    })),
   );
   const records = all.slice(input.offset, input.offset + input.limit);
   const next = input.offset + records.length;

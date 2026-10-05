@@ -478,8 +478,9 @@ export class BinaryTargetError extends AnalysisError {
   }
 }
 
-export interface AnalysisErrorProjection
-  extends Readonly<Record<string, JsonValue>> {
+export interface AnalysisErrorProjection extends Readonly<
+  Record<string, JsonValue>
+> {
   readonly code:
     | "invalid_request"
     | "unreadable_output"

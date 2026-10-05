@@ -309,9 +309,7 @@ const runScenario = async (
 };
 
 /** Controlled Playwright/CDP scenario driver with exact process ownership. */
-export class PlaywrightBrowserScenarioProvider
-  implements BrowserScenarioCapturePort
-{
+export class PlaywrightBrowserScenarioProvider implements BrowserScenarioCapturePort {
   constructor(
     private readonly factory: BrowserScenarioSessionFactory = lazyPlaywrightFactory,
   ) {}

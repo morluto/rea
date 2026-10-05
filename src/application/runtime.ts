@@ -45,21 +45,18 @@ export const createBinarySession = (
     new AnalysisProviderRegistry([hopper, ghidra], config.analysisProvider),
     [
       lazyProvider("rea-artifact-graph", async () => {
-        const { ArtifactProvider } = await import(
-          "../artifacts/ArtifactProvider.js"
-        );
+        const { ArtifactProvider } =
+          await import("../artifacts/ArtifactProvider.js");
         return new ArtifactProvider();
       }),
       lazyProvider("native-macos", async () => {
-        const { NativeMacOSProvider } = await import(
-          "../native/NativeMacOSProvider.js"
-        );
+        const { NativeMacOSProvider } =
+          await import("../native/NativeMacOSProvider.js");
         return new NativeMacOSProvider();
       }),
       lazyProvider("rea-dotnet-static", async () => {
-        const { ManagedStaticProvider } = await import(
-          "../dotnet/ManagedStaticProvider.js"
-        );
+        const { ManagedStaticProvider } =
+          await import("../dotnet/ManagedStaticProvider.js");
         return new ManagedStaticProvider();
       }),
     ],

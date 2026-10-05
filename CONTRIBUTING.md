@@ -49,7 +49,9 @@ require the matching real-provider `verify:*` lane.
 
 `check:fast` runs cached typecheck and lint, reporting diagnostics on failure.
 `check` adds formatting, dead-code, and package-metadata freshness checks.
-Pre-commit formats and lints staged files; pre-push runs `check:fast`.
+Formatting uses Oxfmt and the committed `.oxfmtrc.json`; generated sources use
+the same configuration. Pre-commit formats and lints staged files; pre-push runs
+`check:fast`.
 `docs:check` checks committed generated metadata without rendering API HTML.
 `docs:generate` regenerates those files; render API HTML separately with
 `npm run docs:api:cached`. PR CI renders and uploads the `api-docs` artifact.

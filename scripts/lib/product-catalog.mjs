@@ -1,4 +1,4 @@
-import { format } from "prettier";
+import { formatGeneratedFile } from "./format-generated-file.mjs";
 
 import { assertSameNames, digest, loadSources } from "./catalog-core.mjs";
 import {
@@ -67,4 +67,7 @@ export const createProductCatalog = async (root) => {
 
 /** Stable checked-in representation of the product catalog. */
 export const serializeProductCatalog = (catalog) =>
-  format(JSON.stringify(catalog, null, 2), { parser: "json" });
+  formatGeneratedFile(
+    "docs/product-catalog.json",
+    JSON.stringify(catalog, null, 2),
+  );

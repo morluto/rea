@@ -245,23 +245,21 @@ const setupPlan = (input: {
     : []),
   ...input.clients
     .filter(({ client }) => client.format !== "unsupported")
-    .map(
-      ({ client, operation, backupPath }): SetupAction => ({
-        id: `configure_client:${client.name}`,
-        kind: "configure_client",
-        label: client.displayName ?? client.name,
-        target: client.configPath,
-        detail: clientConfigurationDetail(
-          client.displayName ?? client.name,
-          input.command,
-          input.providerEnvironment,
-          input.installHopper,
-        ),
-        external: false,
-        operation,
-        ...(backupPath === undefined ? {} : { backupPath }),
-      }),
-    ),
+    .map(({ client, operation, backupPath }): SetupAction => ({
+      id: `configure_client:${client.name}`,
+      kind: "configure_client",
+      label: client.displayName ?? client.name,
+      target: client.configPath,
+      detail: clientConfigurationDetail(
+        client.displayName ?? client.name,
+        input.command,
+        input.providerEnvironment,
+        input.installHopper,
+      ),
+      external: false,
+      operation,
+      ...(backupPath === undefined ? {} : { backupPath }),
+    })),
   ...(input.installSkill
     ? [
         {

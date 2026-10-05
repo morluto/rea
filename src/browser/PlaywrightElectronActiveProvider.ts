@@ -146,9 +146,7 @@ const createCoverage = (hookSnapshot: ElectronHookSnapshot) => {
 };
 
 /** Launch an owned Electron application through the official Playwright API. */
-export class PlaywrightElectronActiveProvider
-  implements ElectronActiveObservationPort
-{
+export class PlaywrightElectronActiveProvider implements ElectronActiveObservationPort {
   identity(): ProviderIdentity {
     return PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY;
   }

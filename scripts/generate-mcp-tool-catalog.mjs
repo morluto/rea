@@ -1,6 +1,6 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { format } from "prettier";
+import { formatGeneratedFile } from "./lib/format-generated-file.mjs";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { McpServer } from "@modelcontextprotocol/server";
@@ -110,7 +110,8 @@ const canonicalizeJson = (value) => {
 const payloadJson = JSON.stringify(
   canonicalizeJson({ catalog, auxiliaryProviders }),
 );
-const source = await format(
+const source = await formatGeneratedFile(
+  "src/generatedMcpToolCatalog.ts",
   `import type { ToolAnnotations } from "@modelcontextprotocol/server";
 import type {
   CapabilityDescriptor,
@@ -194,7 +195,6 @@ function isRecord(
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 `,
-  { parser: "typescript" },
 );
 
 await ensureGeneratedFile({

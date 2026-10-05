@@ -1,8 +1,0 @@
-dist
-docs/api
-node_modules
-CHANGELOG.md
-package-lock.json
-
-# Local reference sources and analysis artifacts
-/_reference/

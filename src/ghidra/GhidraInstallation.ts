@@ -55,8 +55,7 @@ interface GhidraInstallationObservation {
 }
 
 /** Bounded observation of a supported BYO Ghidra installation and JDK. */
-export interface AvailableGhidraInstallation
-  extends GhidraInstallationObservation {
+export interface AvailableGhidraInstallation extends GhidraInstallationObservation {
   readonly status: "available";
   readonly installDir: string;
   readonly analyzeHeadlessPath: string;
@@ -67,8 +66,7 @@ export interface AvailableGhidraInstallation
 }
 
 /** Bounded observation explaining why a BYO Ghidra installation is unusable. */
-export interface UnavailableGhidraInstallation
-  extends GhidraInstallationObservation {
+export interface UnavailableGhidraInstallation extends GhidraInstallationObservation {
   readonly status: "unavailable";
   readonly installDir: string | null;
   readonly analyzeHeadlessPath: string | null;

@@ -47,8 +47,8 @@ type OneSidedNode =
     };
 
 type ComparisonItemSemantic<
-  Item extends
-    ApplicationVersionComparisonItem = ApplicationVersionComparisonItem,
+  Item extends ApplicationVersionComparisonItem =
+    ApplicationVersionComparisonItem,
 > = Item extends ApplicationVersionComparisonItem
   ? Omit<Item, "item_id">
   : never;

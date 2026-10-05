@@ -305,13 +305,11 @@ export const readApplicationState = async (
 }> => {
   const pages = application.windows();
   const pageSnapshotsPromise: Promise<ElectronPageSnapshot[]> = Promise.all(
-    pages.map(
-      async (page: Page, index): Promise<ElectronPageSnapshot> => ({
-        index,
-        url: page.url(),
-        title: await page.title(),
-      }),
-    ),
+    pages.map(async (page: Page, index): Promise<ElectronPageSnapshot> => ({
+      index,
+      url: page.url(),
+      title: await page.title(),
+    })),
   );
   const windowMetadataPromise: Promise<ElectronWindowMetadata[]> = application
     .evaluate(({ BrowserWindow }) =>
