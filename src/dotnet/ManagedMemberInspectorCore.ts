@@ -1,3 +1,7 @@
+import {
+  managedFailure,
+  ManagedReaderFailure,
+} from "./ManagedReaderFailure.js";
 import type { ManagedMemberInspection } from "../domain/managedArtifact.js";
 import {
   type ManagedMetadataLayout,
@@ -208,7 +212,13 @@ const readCompressed = (
   offset: number,
 ): { readonly value: number; readonly next: number } => {
   const first = bytes[offset];
-  if (first === undefined) throw new RangeError("truncated compressed integer");
+  if (first === undefined)
+    throw managedFailure(
+      "invalid-blob",
+      "signature",
+      "truncated compressed integer",
+      offset,
+    );
   if ((first & 0x80) === 0) return { value: first, next: offset + 1 };
   const second = bytes[offset + 1];
   if ((first & 0xc0) === 0x80 && second !== undefined)
@@ -227,7 +237,12 @@ const readCompressed = (
         (first & 0x1f) * 0x01_00_00_00 + b1 * 0x01_00_00 + b2 * 0x0100 + b3,
       next: offset + 4,
     };
-  throw new RangeError("reserved compressed integer");
+  throw managedFailure(
+    "invalid-blob",
+    "signature",
+    "reserved compressed integer",
+    offset,
+  );
 };
 
 const ELEMENT_TYPES = new Map<number, string>([
@@ -255,14 +270,18 @@ const ELEMENT_TYPE_SUFFIXES = new Map<number, string>([
   [0x10, "&"],
 ]);
 
-class UnsupportedSignatureError extends Error {}
-
 const readTypeSignature = (
   blob: Buffer,
   offset: number,
 ): { readonly value: string; readonly next: number } => {
   const kind = blob[offset];
-  if (kind === undefined) throw new RangeError("truncated type signature");
+  if (kind === undefined)
+    throw managedFailure(
+      "invalid-blob",
+      "signature",
+      "truncated type signature",
+      offset,
+    );
   const named = ELEMENT_TYPES.get(kind);
   if (named !== undefined) return { value: named, next: offset + 1 };
   const suffix = ELEMENT_TYPE_SUFFIXES.get(kind);
@@ -289,8 +308,11 @@ const readTypeSignature = (
     const variable = readCompressed(blob, offset + 1);
     return { value: `var:${String(variable.value)}`, next: variable.next };
   }
-  throw new UnsupportedSignatureError(
+  throw managedFailure(
+    "unsupported-signature",
+    "signature",
     `unsupported element type 0x${kind.toString(16)}`,
+    offset,
   );
 };
 
@@ -318,7 +340,8 @@ export const signature = (blob: Buffer): ManagedSignature => {
     raw_sha256: sha256Bytes(blob),
   };
   try {
-    if (blob.length === 0) throw new RangeError("empty signature");
+    if (blob.length === 0)
+      throw managedFailure("invalid-blob", "signature", "empty signature", 0);
     const first = blob[0] ?? 0;
     if ((first & 0x0f) === 6) {
       const fieldType = readTypeSignature(blob, 1);
@@ -366,11 +389,17 @@ export const signature = (blob: Buffer): ManagedSignature => {
       issue: offset === blob.length ? null : "Trailing signature data",
     };
   } catch (cause: unknown) {
+    if (!(cause instanceof ManagedReaderFailure)) throw cause;
+    if (
+      cause.issue.code !== "invalid-blob" &&
+      cause.issue.code !== "unsupported-signature"
+    )
+      throw cause;
     return {
       ...raw,
       kind: "unknown",
       parse_status:
-        cause instanceof UnsupportedSignatureError
+        cause.issue.code === "unsupported-signature"
           ? "unsupported"
           : "malformed",
       calling_convention: null,
@@ -379,7 +408,7 @@ export const signature = (blob: Buffer): ManagedSignature => {
       return_type: null,
       parameter_types: [],
       field_type: null,
-      issue: cause instanceof Error ? cause.message : "Signature parse failed",
+      issue: cause.issue.detail,
     };
   }
 };
