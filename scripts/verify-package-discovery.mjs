@@ -27,6 +27,17 @@ const REQUIRED_LLM_TOPICS = [
   "analyze-javascript-application",
 ];
 
+/** Derive agent and Hopper setup support from the corresponding doctor checks. */
+export function packageSetupSupport(checks, platform) {
+  const supportedSetupHost =
+    checks?.find(({ name }) => name === "node")?.ok === true;
+  const hopperSetupSupported =
+    supportedSetupHost &&
+    checks?.find(({ name }) => name === "host")?.ok === true &&
+    platform !== "win32";
+  return { supportedSetupHost, hopperSetupSupported };
+}
+
 /** Validate --help, --llms, and doctor output and determine host setup support. */
 export async function verifyPackageDiscovery({ cli, environment }) {
   const help = await run(cli, ["--help"], environment);
@@ -37,12 +48,10 @@ export async function verifyPackageDiscovery({ cli, environment }) {
     environment,
   );
   const doctor = json(doctorExecution.stdout);
-  const supportedSetupHost =
-    doctor.checks?.find(({ name }) => name === "node")?.ok === true;
-  const hopperSetupSupported =
-    supportedSetupHost &&
-    doctor.checks?.find(({ name }) => name === "host")?.ok === true &&
-    process.platform !== "win32";
+  const { supportedSetupHost, hopperSetupSupported } = packageSetupSupport(
+    doctor.checks,
+    process.platform,
+  );
   const hopperReady = doctor.checks?.find(({ name }) => name === "hopper")?.ok;
   const expectedDoctorHealth = doctor.checks?.every(({ ok }) => ok) === true;
   const missingHelp = REQUIRED_HELP_COMMANDS.filter(
