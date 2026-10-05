@@ -61,8 +61,9 @@
     "mcp-registry:check": "node scripts/verify-mcp-registry-metadata.mjs",
     "mcp-catalog:generate": "npm run build:cached && node scripts/generate-mcp-tool-catalog.mjs",
     "mcp-catalog:check": "node scripts/generate-mcp-tool-catalog.mjs --check",
-    "prebuild": "npm run deps:check && npm run metadata:check && node scripts/clean-build-output.mjs",
-    "build": "tsc -p tsconfig.build.json",
+    "prebuild": "npm run deps:check && npm run metadata:check",
+    "build": "node scripts/run-exclusive.mjs build npm run build:unlocked",
+    "build:unlocked": "node scripts/clean-build-output.mjs && tsc -p tsconfig.build.json",
     "precheck": "npm run deps:check",
     "check": "turbo run typecheck lint format:check knip metadata:check",
     "precheck:fast": "npm run deps:check",
@@ -85,10 +86,10 @@
     "jscpd": "jscpd src/ tests/",
     "scan:todos": "node scripts/scan-todos.mjs",
     "start": "node scripts/rea.mjs mcp",
-    "test": "node scripts/run-exclusive.mjs test npm run test:with-build",
+    "test": "npm run test:with-build",
     "test:with-build": "npm run build:cached && vitest run",
-    "test:run": "node scripts/run-exclusive.mjs test vitest run",
-    "test:local": "node scripts/run-exclusive.mjs test node scripts/run-development-tests.mjs local",
+    "test:run": "vitest run",
+    "test:local": "node scripts/run-development-tests.mjs local",
     "test:fast": "vitest run --project domain --project services --project adapters --project composition --project conformance --project evaluation",
     "pretest:boundary": "npm run build:cached",
     "test:boundary": "vitest run --project boundary --project process-boundary --project mcp-boundary --project process-global",
@@ -96,7 +97,7 @@
     "test:mcp": "vitest run --project mcp-boundary",
     "pretest:acceptance": "npm run build:cached",
     "test:acceptance": "vitest run --project acceptance",
-    "test:changed": "node scripts/run-exclusive.mjs test node scripts/run-development-tests.mjs changed",
+    "test:changed": "node scripts/run-development-tests.mjs changed",
     "pretest:integration": "npm run build:cached",
     "test:integration": "vitest run --project boundary --project process-boundary --project mcp-boundary --project process-global --project acceptance",
     "pretest:coverage": "npm run build:cached",
@@ -155,7 +156,7 @@
     "prepare": "node scripts/prepare.mjs",
     "verify:asset-catalog": "npm run build:cached && node scripts/verify-asset-catalog.mjs",
     "verify:native-ui:permissions": "npm run build:cached && node scripts/verify-native-ui.mjs --allow-permission-denial",
-    "test:focused": "node scripts/run-exclusive.mjs test node scripts/run-development-tests.mjs focused"
+    "test:focused": "node scripts/run-development-tests.mjs focused"
   },
   "lint-staged": {
     "*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}": [

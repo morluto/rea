@@ -224,8 +224,16 @@ describe("enhanced MCP tools", () => {
         jsonResult(await client.callTool({ name, arguments: arguments_ })),
       ),
     );
-    expect(results[0]).toMatchObject({ count: 1 });
-    expect(results[1]).toMatchObject({ count: 1 });
+    expect(results[0]).toMatchObject({
+      count: 1,
+      classes: [{ address: "0x10", name: "_OBJC_CLASS_$_Fixture" }],
+    });
+    expect(results[1]).toMatchObject({
+      count: 1,
+      protocols: [
+        { address: "0x12", name: "_OBJC_PROTOCOL_$_FixtureDelegate" },
+      ],
+    });
     expect(results[2]).toEqual({
       items: [
         { address: "0x1", status: "ok", pseudocode: "pseudo:0x1" },
