@@ -50,16 +50,17 @@ export const normalizeCfg = (
   const ordered = parsed.sort((left, right) =>
     (left.start ?? 0n) < (right.start ?? 0n) ? -1 : 1,
   );
-  if (new Set(ordered.map(({ block }) => block.start)).size !== ordered.length)
+  if (new Set(ordered.map(({ start }) => start)).size !== ordered.length)
     return null;
   if (ordered.some(({ start, end }) => (end ?? 0n) <= (start ?? 0n)))
     return null;
-  const indices = new Map(
-    ordered.map(({ block }, index) => [block.start, index]),
-  );
+  const indices = new Map(ordered.map(({ start }, index) => [start, index]));
   const graph = [];
   for (const { block, start, end } of ordered) {
-    const successors = block.successors.map((address) => indices.get(address));
+    const successors = block.successors.map((address) => {
+      const parsedAddress = parseAddress(address);
+      return parsedAddress === null ? undefined : indices.get(parsedAddress);
+    });
     if (successors.some((index) => index === undefined)) return null;
     graph.push({
       size: String((end ?? 0n) - (start ?? 0n)),
