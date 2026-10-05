@@ -255,22 +255,31 @@ export const projectSemanticClosureCaptures = (
     });
 };
 
-/** Retain bounded unresolved dynamic-call and dynamic-property frontiers. */
+/** Retain bounded unresolved dynamic-call, dynamic-property and dynamic-scope frontiers. */
 export const projectSemanticFrontiers = (
   context: SemanticFlowProjectionContext,
 ): void => {
   for (const frontier of context.ir.frontiers) {
+    // `with`/`eval` change which bindings exist at all, so the honest family is
+    // object flow: we cannot say which value any name resolves to.
+    const family =
+      frontier.kind === "dynamic-call"
+        ? "call-flow"
+        : frontier.kind === "dynamic-property"
+          ? "object-flow"
+          : "object-flow";
+    const relationKinds =
+      frontier.kind === "dynamic-call"
+        ? (["calls"] as const)
+        : (["reads-property", "writes-property"] as const);
     const unknown = createJavaScriptSemanticGraphUnknown({
       node_id:
         frontier.callableId === null
           ? context.moduleNode.node_id
           : (context.callableNodes.get(frontier.callableId)?.node_id ??
             context.moduleNode.node_id),
-      family: frontier.kind === "dynamic-call" ? "call-flow" : "object-flow",
-      relation_kinds:
-        frontier.kind === "dynamic-call"
-          ? ["calls"]
-          : ["reads-property", "writes-property"],
+      family,
+      relation_kinds: [...relationKinds],
       reason: frontier.kind,
       detail: frontier.reason,
       candidate_node_ids: [],

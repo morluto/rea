@@ -271,6 +271,12 @@ const scopeKind = (
     t.isForInStatement(node)
   )
     return "block";
+  // A switch body is one lexical scope shared by all its cases, so `let` in
+  // two cases must resolve to one binding rather than collide or leak.
+  if (t.isSwitchStatement(node)) return "block";
+  // Each `static {}` block is its own lexical scope; otherwise a `let` in two
+  // static blocks would collide in the enclosing class scope.
+  if (t.isStaticBlock(node)) return "block";
   if (
     t.isBlockStatement(node) &&
     !(parent !== null && t.isFunction(parent) && parent.body === node)

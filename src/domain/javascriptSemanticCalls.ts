@@ -91,6 +91,7 @@ export const collectJavaScriptSemanticCalls = (
       const owner = enclosingFunction(callableStack);
       collectCapture(node, parent, owner, context);
       collectDynamicProperty(node, owner, state, output);
+      collectDynamicScope(node, owner, state, output);
       if (
         t.isCallExpression(node) ||
         t.isOptionalCallExpression(node) ||
@@ -363,6 +364,38 @@ const collectDynamicProperty = (
       state,
       output,
     );
+};
+
+/**
+ * `with (o) { … }` and `eval("…")` decide at runtime which bindings exist, so
+ * every name inside them is unresolvable statically. Recording the frontier
+ * is what keeps the analyzer from presenting an empty or partial resolution as
+ * an observed fact — silence here would read as "nothing to resolve".
+ */
+const collectDynamicScope = (
+  node: t.Node,
+  owner: JavaScriptSemanticCallable | undefined,
+  state: JavaScriptSemanticAnalysisState,
+  output: MutableCallAnalysis,
+): void => {
+  const reason = t.isWithStatement(node)
+    ? "`with` introduces a runtime binding environment; names inside are not statically resolvable."
+    : t.isCallExpression(node) &&
+        t.isIdentifier(node.callee) &&
+        node.callee.name === "eval"
+      ? "`eval` can declare bindings at runtime; names inside the evaluated source are not statically resolvable."
+      : null;
+  if (reason === null) return;
+  addFrontier(
+    {
+      kind: "dynamic-scope",
+      callableId: owner?.callableId ?? null,
+      location: range(node),
+      reason,
+    },
+    state,
+    output,
+  );
 };
 
 const addFrontier = (
