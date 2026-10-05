@@ -274,7 +274,8 @@ const verifyManagedComparison = async ({
   if (
     managedComparison.operation !== "compare_managed_members" ||
     managedComparison.provider?.id !== "rea-dotnet-workflows" ||
-    managedComparison.normalized_result?.algorithm?.name_matching !== "not-used"
+    managedComparison.normalized_result?.algorithm?.name_matching !==
+      "exact-signature-fallback"
   )
     throw new Error("packaged managed comparison CLI failed");
 };

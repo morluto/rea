@@ -27,6 +27,19 @@ export interface ProcessCliErrorOutput {
   readonly message: string;
 }
 
+/** Identify the process workflow's typed diagnostic result for CLI exit status. */
+export const isProcessCliFailure = (
+  value: unknown,
+): value is ProcessCliErrorOutput =>
+  typeof value === "object" &&
+  value !== null &&
+  "error" in value &&
+  value.error === "Process command failed" &&
+  "category" in value &&
+  typeof value.category === "string" &&
+  "message" in value &&
+  typeof value.message === "string";
+
 /** Capture one JSON scenario through the shared process harness and Evidence contract. */
 export const captureProcessScenarioFile = async (
   path: string,

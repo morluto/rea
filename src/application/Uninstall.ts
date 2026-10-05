@@ -54,6 +54,23 @@ export interface UninstallResult {
   readonly items: readonly UninstallItem[];
 }
 
+/** Whether any requested REA-owned uninstall action failed. */
+export const isUninstallFailure = (result: UninstallResult): boolean => {
+  const status = result.status;
+  switch (status) {
+    case "complete":
+      return false;
+    case "failed":
+      return true;
+    default: {
+      const exhaustive: never = status;
+      throw new TypeError(
+        `Unhandled uninstall result status: ${String(exhaustive)}`,
+      );
+    }
+  }
+};
+
 /** Filesystem boundary used by the contained uninstall workflow. */
 export interface UninstallHost {
   clients(): Promise<readonly SetupClient[]>;

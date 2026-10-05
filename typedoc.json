@@ -15,8 +15,14 @@
   ],
   "entryPointStrategy": "expand",
   "out": "build/api-docs",
-  "tsconfig": "tsconfig.json",
-  "exclude": ["**/*.test.ts", "tests/**", "dist/**", "node_modules/**"],
+  "tsconfig": "tsconfig.build.json",
+  "exclude": [
+    "**/*.test.ts",
+    "**/*.fixture.ts",
+    "tests/**",
+    "dist/**",
+    "node_modules/**"
+  ],
   "excludeExternals": true,
   "excludePrivate": true,
   "excludeProtected": false,

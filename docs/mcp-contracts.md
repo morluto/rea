@@ -55,8 +55,13 @@ shutdown rules still apply; REA never kills a process it cannot prove it owns.
 
 ## Tool results
 
-Evidence-producing tools return their result and Evidence context inline. Read
-that result directly. Use `get_evidence_bundle` when the task needs broader
+Evidence-producing tools return `{ result, evidence_id, evidence }` in both
+text and structured content. `evidence` is the complete canonical Evidence
+record, including `normalized_result`, which equals `result`. The same record
+is retained in the session bundle. Read `result` directly, or pass `evidence`
+to a compatible comparison tool: `analyze_function` Evidence can be passed
+directly to `compare_functions`, and `inspect_artifact` Evidence to
+`compare_artifacts`. Use `get_evidence_bundle` when the task needs broader
 retained session history or an explicit bundle for transfer.
 
 ## Aggregate native context
@@ -80,6 +85,20 @@ process and Electron scenarios carry the executable, arguments, actions, and
 cleanup behavior; artifact tools carry the input path and requested operation.
 REA runs the declared request directly and does not infer a broader target or
 action from it.
+
+REA does not require permission grants or per-call approval flags. Setup still
+prints its plan and requires confirmation before changing configuration or
+installing Hopper. MCP clients control their own confirmation UI.
+
+Tool annotations describe effects and are hints, not authorization controls
+([MCP ToolAnnotations](https://modelcontextprotocol.io/specification/2025-06-18/schema#toolannotations)).
+`readOnlyHint` includes session state: an analysis call that records additive
+Evidence is marked non-read-only even when it leaves the target unchanged.
+`destructiveHint` describes possible data loss, not ordinary Evidence recording.
+Effect metadata covers possible behavior across supported inputs: DMG inventory
+can launch `hdiutil` and create an owned temporary mount directory; extraction
+creates a fresh output directory on every call. Comparing supplied web captures
+or PNG artifacts uses local data without contacting the browser.
 
 Host requirements remain in force. macOS may deny Accessibility,
 Screen Recording, or native mounting; provider tools require their selected

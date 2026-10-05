@@ -4,7 +4,7 @@ import {
   createAnalysisExecution,
   type AnalysisOperationPort,
 } from "./AnalysisProvider.js";
-import { ghidraFunctionDossier } from "../domain/hopperValues.fixture.js";
+import { ghidraFunctionDossier } from "../domain/ghidraValues.fixture.js";
 import { functionDossierSchema } from "../domain/hopperValues.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { AnalysisCancelledError } from "../domain/errors.js";

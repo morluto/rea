@@ -33,7 +33,13 @@ describe("doctor", () => {
         undefined,
         host({ macosVersion: () => Promise.resolve(version) }),
       );
-      expect(result.checks.find(({ name }) => name === "host")?.ok).toBe(false);
+      expect(result.checks).toContainEqual(
+        expect.objectContaining({
+          name: "host",
+          ok: false,
+          classification: "unsupported_host",
+        }),
+      );
     },
   );
 
@@ -450,7 +456,14 @@ describe("doctor Linux and Hopper discovery", () => {
           Promise.resolve(path === "/Applications/Notes.app"),
       }),
     );
-    expect(result.checks.find(({ name }) => name === "target")?.ok).toBe(true);
+    expect(result.checks).toContainEqual(
+      expect.objectContaining({
+        name: "target",
+        ok: true,
+        classification: "healthy",
+        detail: "/Applications/Notes.app",
+      }),
+    );
   });
 
   it("rejects a readable Hopper launcher without execute permission", async () => {
@@ -464,6 +477,12 @@ describe("doctor Linux and Hopper discovery", () => {
       }),
     );
     expect(result.hopperPath).toBeUndefined();
-    expect(result.checks.find(({ name }) => name === "hopper")?.ok).toBe(false);
+    expect(result.checks).toContainEqual(
+      expect.objectContaining({
+        name: "hopper",
+        ok: false,
+        classification: "config_drift",
+      }),
+    );
   });
 });

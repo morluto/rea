@@ -1,13 +1,16 @@
 import { parseConfig } from "../config.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { EnhancedTools } from "./EnhancedTools.js";
-import { createBinarySession } from "./runtime.js";
+import { createBinarySession, createManagedBinarySession } from "./runtime.js";
 import { silentLogger, type Logger } from "../logger.js";
 import { createEvidence } from "../domain/evidence.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { NativeToolName } from "../contracts/nativeToolContracts.js";
 import type { ArtifactAnalysisOperation } from "../contracts/artifactToolContracts.js";
-import type { ManagedToolName } from "../contracts/managedToolContracts.js";
+import {
+  isManagedToolName,
+  type ManagedToolName,
+} from "../contracts/managedToolContracts.js";
 import {
   EvidenceIntegrityError,
   projectAnalysisError,
@@ -27,6 +30,7 @@ import {
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
+import type { AnalysisExecution } from "./AnalysisProvider.js";
 import {
   REA_WORKFLOW_PROVIDER,
   workflowAnalysisProfile,
@@ -93,13 +97,50 @@ export const runProviderAnalysis = async (
     signal?: AbortSignal,
   ]
 ): Promise<JsonValue> =>
-  withProcessCancellation(signal, (operationSignal) =>
-    runAnalysis(path, tool, arguments_, {
-      logger,
-      snapshotPath: undefined,
-      signal: operationSignal,
-    }),
-  );
+  isManagedToolName(tool)
+    ? runManagedProviderAnalysis(path, tool, signal)
+    : withProcessCancellation(signal, (operationSignal) =>
+        runAnalysis(path, tool, arguments_, {
+          logger,
+          snapshotPath: undefined,
+          signal: operationSignal,
+        }),
+      );
+
+/** Execute managed metadata inspection in an isolated managed-only session. */
+export const runManagedProviderExecution = async (
+  path: string,
+  tool: ManagedToolName,
+  signal?: AbortSignal,
+): Promise<Result<AnalysisExecution, AnalysisError>> =>
+  withProcessCancellation(signal, async (operationSignal) => {
+    const session = createManagedBinarySession();
+    try {
+      const opened = await session.open(path, { signal: operationSignal });
+      if (!opened.ok) return opened;
+      return await session.execute(tool, {}, { signal: operationSignal });
+    } finally {
+      await session.close();
+    }
+  });
+
+const runManagedProviderAnalysis = async (
+  path: string,
+  tool: ManagedToolName,
+  signal?: AbortSignal,
+): Promise<JsonValue> => {
+  const execution = await runManagedProviderExecution(path, tool, signal);
+  if (!execution.ok) return cliError(execution.error);
+  const value = execution.value;
+  return createEvidence(value.subject ?? undefined, value.provider, {
+    operation: tool,
+    parameters: {},
+    result: value.result,
+    rawResult: value.rawResult,
+    limitations: value.limitations,
+    locations: value.locations,
+  });
+};
 
 const runAnalysis = async (
   path: string,

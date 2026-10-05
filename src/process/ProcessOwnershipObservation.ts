@@ -18,10 +18,10 @@ export const observeOwnedProcessGroupWithHost = async (
     members = (await host.listProcesses()).filter(
       ({ processGroupId }) => processGroupId === ownership.processGroupId,
     );
-  } catch {
+  } catch (cause: unknown) {
     return {
       state: "unverifiable",
-      reason: "process group could not be inspected",
+      reason: `process group could not be inspected: ${errorMessage(cause)}`,
     };
   }
   const liveMembers = liveProcesses(members);
@@ -36,11 +36,13 @@ export const observeOwnedProcessGroupWithHost = async (
           state: "unverifiable",
           reason: "process ownership did not match",
         };
-    } catch {
-      return {
-        state: "unverifiable",
-        reason: "process ownership could not be revalidated",
-      };
+    } catch (cause: unknown) {
+      if (!(await processIsGone(host, member.pid))) {
+        return {
+          state: "unverifiable",
+          reason: `process ownership could not be revalidated for PID ${member.pid}: ${errorMessage(cause)}`,
+        };
+      }
     }
   }
   return { state: "alive" };
@@ -54,10 +56,10 @@ export const observeOwnedProcessLineageWithHost = async (
   let processes: readonly ProcessTableEntry[];
   try {
     processes = liveProcesses(await host.listProcesses());
-  } catch {
+  } catch (cause: unknown) {
     return unavailableLineage(
       ownership,
-      "process table could not be inspected",
+      `process table could not be inspected: ${errorMessage(cause)}`,
     );
   }
   const launcher = processes.find(({ pid }) => pid === ownership.leaderPid);
@@ -67,6 +69,7 @@ export const observeOwnedProcessLineageWithHost = async (
   if (identityFailure !== null)
     return unavailableLineage(ownership, identityFailure);
   const descendants = descendantsOf(launcher.pid, processes);
+  const verifiedDescendants: ProcessTableEntry[] = [];
   for (const member of [launcher, ...descendants]) {
     try {
       if (
@@ -77,10 +80,19 @@ export const observeOwnedProcessLineageWithHost = async (
           ownership,
           "process lineage contains an unowned or PID-reused process",
         );
-    } catch {
+      if (member.pid !== launcher.pid) verifiedDescendants.push(member);
+    } catch (cause: unknown) {
+      if (await processIsGone(host, member.pid)) {
+        if (member.pid === launcher.pid)
+          return unavailableLineage(
+            ownership,
+            "owned launcher exited during lineage validation",
+          );
+        continue;
+      }
       return unavailableLineage(
         ownership,
-        "process ownership could not be revalidated",
+        `process ownership could not be revalidated for PID ${member.pid}: ${errorMessage(cause)}`,
       );
     }
   }
@@ -92,7 +104,7 @@ export const observeOwnedProcessLineageWithHost = async (
       launcherPid: launcher.pid,
       launcherParentPid: launcher.parentPid,
       processGroupId: launcher.processGroupId,
-      descendants: descendants
+      descendants: verifiedDescendants
         .sort((left, right) => left.pid - right.pid)
         .map(({ pid, parentPid, processGroupId }) => ({
           pid,
@@ -114,3 +126,19 @@ const unavailableLineage = (
   processGroupId: ownership.processGroupId,
   reason,
 });
+
+const processIsGone = async (
+  host: ProcessOwnershipHost,
+  pid: number,
+): Promise<boolean> => {
+  try {
+    return !liveProcesses(await host.listProcesses()).some(
+      (process) => process.pid === pid,
+    );
+  } catch {
+    return false;
+  }
+};
+
+const errorMessage = (cause: unknown): string =>
+  cause instanceof Error ? cause.message : String(cause);

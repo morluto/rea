@@ -3,26 +3,28 @@ import { spawn } from "node:child_process";
 const mode = process.argv[2];
 
 if (mode === "interactive") {
-  process.stdin.setRawMode?.(true);
   process.stdin.resume();
+  let inputObserved = false;
+  let resizeObserved = false;
+  const reportResize = () => {
+    const columns = String(process.stdout.columns);
+    const rows = String(process.stdout.rows);
+    process.stdout.write(`resize:${columns}x${rows}\n`);
+    resizeObserved = columns === "100" && rows === "40";
+    if (inputObserved && resizeObserved) process.exit(0);
+  };
   process.stdout.write("prompt> ");
-  process.on("SIGWINCH", () => {
-    process.stdout.write(
-      `resize:${String(process.stdout.columns)}x${String(process.stdout.rows)}\n`,
-    );
-  });
-  process.on("SIGINT", () => {
-    process.stdout.write("signal:SIGINT\n");
-    process.exit(0);
-  });
+  process.on("SIGWINCH", reportResize);
+  reportResize();
   process.stdin.on("data", (value) => {
-    process.stdout.write(`input:${value.toString()} unicode:雪\n`);
+    process.stdout.write(`input:${value.toString().trimEnd()} unicode:雪\n`);
+    inputObserved = value.toString().trimEnd() === "answer";
+    if (inputObserved && resizeObserved) process.exit(0);
   });
 } else if (mode === "silent-interactive") {
-  process.stdin.setRawMode?.(true);
   process.stdin.resume();
   process.stdin.on("data", (value) => {
-    process.stdout.write(`input:${value.toString()}\n`);
+    process.stdout.write(`input:${value.toString().trimEnd()}\n`);
     process.exit(0);
   });
 } else if (mode === "partial") {
@@ -32,16 +34,30 @@ if (mode === "interactive") {
     process.exit(0);
   }, 25);
 } else if (mode === "tree-child") {
-  spawn(process.execPath, [process.argv[1], "tree-grandchild"], {
-    stdio: "ignore",
+  const grandchild = spawn(
+    process.execPath,
+    [process.argv[1], "tree-grandchild"],
+    { stdio: ["ignore", "ignore", "ignore", "ipc"] },
+  );
+  grandchild.on("message", (message) => {
+    if (message !== "ready") return;
+    process.send?.("ready");
+    grandchild.disconnect();
   });
   setInterval(() => undefined, 1_000);
 } else if (mode === "tree-grandchild") {
+  process.send?.("ready");
   setInterval(() => undefined, 1_000);
 } else if (mode === "tree") {
-  spawn(process.execPath, [process.argv[1], "tree-child"], { stdio: "ignore" });
-  process.stdout.write("tree-ready\n");
-  setInterval(() => undefined, 1_000);
+  const child = spawn(process.execPath, [process.argv[1], "tree-child"], {
+    stdio: ["ignore", "ignore", "ignore", "ipc"],
+  });
+  child.on("message", (message) => {
+    if (message !== "ready") return;
+    process.stdout.write("tree-ready\n");
+    child.disconnect();
+    setTimeout(() => process.exit(0), 2_000);
+  });
 } else if (mode === "crash") {
   process.stderr.write("intentional-crash\n");
   process.exit(23);

@@ -249,8 +249,22 @@ const providerErrorDetails = (
         ? {}
         : { diagnostics: error.diagnostics }),
     };
-  if (error instanceof BrowserObservationError)
-    return { operation: error.operation, reason: error.reason };
+  if (error instanceof BrowserObservationError) {
+    const primaryReason = primaryBrowserFailureReason(error);
+    return {
+      operation: error.operation,
+      reason: error.reason,
+      ...(error.cleanupIncomplete
+        ? {
+            cleanup: "incomplete",
+            resources: [...error.cleanupResources],
+            ...(primaryReason === undefined
+              ? {}
+              : { primary_reason: primaryReason }),
+          }
+        : {}),
+    };
+  }
   if (error instanceof HopperRemoteError)
     return {
       stage: "analysis",
@@ -273,6 +287,21 @@ const providerErrorDetails = (
         : { diagnostics: { ...error.diagnostic } }),
     };
   return undefined;
+};
+
+const primaryBrowserFailureReason = (
+  error: BrowserObservationError,
+): string | undefined => {
+  if (!(error.cause instanceof AggregateError)) return undefined;
+  const primary = error.cause.errors[0];
+  if (primary instanceof BrowserObservationError) return primary.reason;
+  if (primary instanceof AnalysisCancelledError) return "cancelled";
+  if (primary instanceof AnalysisTimeoutError) return "timeout";
+  if (typeof primary === "object" && primary !== null && "_tag" in primary)
+    return typeof primary._tag === "string"
+      ? primary._tag
+      : "execution_failure";
+  return "execution_failure";
 };
 
 const lifecycleErrorDetails = (

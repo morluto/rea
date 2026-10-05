@@ -382,6 +382,64 @@ describe("JavaScript semantic analysis: structure 2", () => {
       "read", // const observed = total
     ]);
   });
+});
+
+describe("JavaScript semantic analysis: dynamic and case scopes", () => {
+  it("marks with and eval as unresolved dynamic scope instead of staying silent", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      function load(source) {
+        with (host) { consume(target); }
+        eval("var injected = 1;");
+      }
+    `);
+    const reasons = ir.frontiers
+      .filter(({ kind }) => kind === "dynamic-scope")
+      .map(({ reason }) => reason);
+    expect(reasons).toHaveLength(2);
+    expect(reasons.join("\n")).toContain("`with`");
+    expect(reasons.join("\n")).toContain("`eval`");
+  });
+
+  it("does not assign CommonJS exports to lexically shadowed module or exports", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      function shadowed(module, exports) {
+        module.exports.value = 1;
+        exports.other = 2;
+        exports[key] = 3;
+        module.exports[key] = 4;
+        unrelated[key] = 5;
+      }
+    `);
+    expect(
+      ir.moduleLinks.filter(({ kind }) => kind === "commonjs-export"),
+    ).toEqual([]);
+  });
+
+  it("shares one lexical scope across switch cases and isolates static blocks", () => {
+    const switchIr = analyzeJavaScriptSemantics(`
+      const kind = select();
+      switch (kind) {
+        case "a": let shared = 1; break;
+        case "b": shared = 2; break;
+      }
+    `);
+    // One declaration, one binding — and it belongs to a scope of its own, so
+    // it cannot leak past the switch statement.
+    const shared = switchIr.bindings.filter(({ name }) => name === "shared");
+    expect(shared).toHaveLength(1);
+    expect(shared[0]?.scopeId).not.toBe(
+      topLevelBinding(switchIr, "kind").scopeId,
+    );
+    const classIr = analyzeJavaScriptSemantics(`
+      class Holder {
+        static { let isolated = 1; }
+        static { let isolated = 2; }
+      }
+    `);
+    expect(
+      classIr.bindings.filter(({ name }) => name === "isolated"),
+    ).toHaveLength(2);
+  });
 
   it("keeps function, class, and method identities separate from bindings", () => {
     const ir = analyzeJavaScriptSemantics(`
