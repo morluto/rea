@@ -166,10 +166,10 @@ const compareRecords = (
     (id) => rightIds.has(id) && !pairedLeft.has(id) && !pairedRight.has(id),
   );
   const removed = [...leftIds].filter(
-    (id) => !rightIds.has(id) && !pairedLeft.has(id),
+    (id) => !pairedLeft.has(id) && (!rightIds.has(id) || pairedRight.has(id)),
   );
   const added = [...rightIds].filter(
-    (id) => !leftIds.has(id) && !pairedRight.has(id),
+    (id) => !pairedRight.has(id) && (!leftIds.has(id) || pairedLeft.has(id)),
   );
   for (const [ids, side] of [
     [removed, "left"],

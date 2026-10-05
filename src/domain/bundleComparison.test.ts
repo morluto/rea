@@ -24,6 +24,57 @@ const evidence = (label: string) =>
     authority: "analyst-inference",
   });
 
+describe("bundle comparison explicit cross-pairs", () => {
+  it("accounts for every unpaired occurrence after cross-pairing shared records", () => {
+    const first = evidence("first-cross-pair");
+    const second = evidence("second-cross-pair");
+    const unchanged = evidence("unchanged-cross-pair");
+    const bundle = createEvidenceBundle([first, second, unchanged]);
+    const result = compareBundles(bundle, bundle, [
+      {
+        left_evidence_id: first.evidence_id,
+        right_evidence_id: second.evidence_id,
+      },
+    ]);
+    expect(result.summary).toMatchObject({
+      records_unchanged: 1,
+      records_changed: 1,
+      records_added: 0,
+      records_removed: 0,
+      unresolved: 2,
+    });
+    expect(result.changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          classification: "unknown",
+          conclusion_kind: "unresolved_branch",
+          left_evidence_ids: [second.evidence_id],
+        }),
+        expect.objectContaining({
+          classification: "unknown",
+          conclusion_kind: "unresolved_branch",
+          right_evidence_ids: [first.evidence_id],
+        }),
+      ]),
+    );
+    expect(result.status).toBe("unknown");
+    expect(result.changes).toHaveLength(3);
+    const changedOrUnknown = result.changes.filter(
+      ({ entity }) => entity === "evidence",
+    );
+    expect(
+      result.summary.records_unchanged +
+        changedOrUnknown.flatMap(({ left_evidence_ids }) => left_evidence_ids)
+          .length,
+    ).toBe(bundle.records.length);
+    expect(
+      result.summary.records_unchanged +
+        changedOrUnknown.flatMap(({ right_evidence_ids }) => right_evidence_ids)
+          .length,
+    ).toBe(bundle.records.length);
+  });
+});
+
 describe("bundle comparison", () => {
   it("accepts long caller-selected bundle paths", () => {
     const path = `/${"deep/".repeat(1_000)}bundle.json`;
