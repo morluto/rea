@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.0.1](https://github.com/morluto/rea/compare/rea-agents-4.0.0...rea-agents-4.0.1) (2026-10-05)
+
+
+### Bug Fixes
+
+* **release:** allow npm propagation time ([2ef02ce](https://github.com/morluto/rea/commit/2ef02ced1603809f0fc6984612de31dce1801dd8))
+
 ## [4.0.0](https://github.com/morluto/rea/compare/rea-agents-3.2.1...rea-agents-4.0.0) (2026-10-05)
 
 

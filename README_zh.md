@@ -217,7 +217,7 @@ Setup 支持 Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI、Windsu
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@4.0.0", "mcp"]
+      "args": ["-y", "rea-agents@4.0.1", "mcp"]
     }
   }
 }
