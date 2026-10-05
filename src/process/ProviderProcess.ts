@@ -20,6 +20,10 @@ export interface OwnedProviderProcessSpawnOptions {
   readonly windowsVerbatimArguments?: boolean;
   readonly cwd?: string;
   readonly env?: NodeJS.ProcessEnv;
+  /** Host platform used to choose detached process-group behavior. */
+  readonly platform?: NodeJS.Platform;
+  /** Host environment used as the base for the child environment. */
+  readonly hostEnvironment?: NodeJS.ProcessEnv;
 }
 
 /** Spawned process paired with the identity proof required for group cleanup. */
@@ -106,14 +110,16 @@ export type ProviderProcessStopResult =
 export const spawnOwnedProviderProcess = async (
   options: OwnedProviderProcessSpawnOptions,
 ): Promise<SpawnedOwnedProviderProcess> => {
+  const platform = options.platform ?? process.platform;
+  const hostEnvironment = options.hostEnvironment ?? process.env;
   const child = spawn(options.command, [...options.arguments], {
     shell: false,
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
-    detached: process.platform !== "win32",
+    detached: platform !== "win32",
     windowsVerbatimArguments: options.windowsVerbatimArguments ?? false,
     env: {
-      ...process.env,
+      ...hostEnvironment,
       ...options.env,
       REA_PROCESS_RUN_ID: options.runId,
     },

@@ -79,6 +79,10 @@ describe("artifact Mach-O slices", () => {
       byteOffset: 8,
       declaredSize: 8,
     });
+    for (const adapterKey of ["0x8:8", "1e3:8", " 8 :8"])
+      await expect(
+        reader.open({ ...secondEntry, adapterKey }),
+      ).rejects.toMatchObject({ reason: "integrity" });
     const chunks: Buffer[] = [];
     const stream = await reader.open(secondEntry);
     for await (const chunk of stream) chunks.push(Buffer.from(chunk));

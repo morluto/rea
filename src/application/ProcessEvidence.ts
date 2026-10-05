@@ -38,9 +38,9 @@ export const createProcessCaptureEvidence = (
     confidence: "observed",
     authority: "controlled-replay",
     environment: {
-      id: `${process.platform}-${process.arch}`,
-      platform: process.platform,
-      architecture: process.arch,
+      id: `${capture.manifest.platform}-${capture.manifest.architecture}`,
+      platform: capture.manifest.platform,
+      architecture: capture.manifest.architecture,
       isolation: "process",
     },
     limitations: capture.limitations,

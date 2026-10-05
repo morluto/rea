@@ -16,6 +16,7 @@ import {
 } from "./javascriptSemanticProjection.js";
 import {
   resolveSemanticBindingState,
+  isUnshadowedGlobal,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
@@ -26,6 +27,7 @@ import {
 } from "./javascriptSemanticCallResolution.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
+import { assignedSemanticResultBindings } from "./javascriptSemanticDataEffectHelpers.js";
 
 /** Local call, flow, capture, and unsupported-frontier facts. */
 export interface JavaScriptSemanticCallAnalysis {
@@ -55,6 +57,7 @@ interface CallCollectionContext {
     string,
     readonly JavaScriptSemanticBindingState[]
   >;
+  readonly ancestors: t.Node[];
 }
 
 /** Recover direct-call and lexical-capture candidates from inert syntax. */
@@ -80,6 +83,7 @@ export const collectJavaScriptSemanticCalls = (
     output,
     bindingResolutionCache: new Map(),
     parameterBindingCache: new Map(),
+    ancestors: [],
   };
   const callableStack: JavaScriptSemanticCallable[] = [];
   traverseJavaScriptAst(program, {
@@ -91,14 +95,17 @@ export const collectJavaScriptSemanticCalls = (
       const owner = enclosingFunction(callableStack);
       collectCapture(node, parent, owner, context);
       collectDynamicProperty(node, owner, state, output);
+      collectDynamicScope(node, owner, state, output);
       if (
         t.isCallExpression(node) ||
         t.isOptionalCallExpression(node) ||
         t.isNewExpression(node)
       )
         collectCallSite(node, parent, owner, context);
+      context.ancestors.push(node);
     },
     exit: (node) => {
+      context.ancestors.pop();
       const callableId = semanticCallableIdForNode(node);
       if (
         callableId !== null &&
@@ -149,7 +156,7 @@ const collectCallSite = (
     arguments: argumentsValue,
   };
   output.callSites.push(site);
-  collectCallResultFlow(site, node, parent, context);
+  collectCallResultFlow(site, node, context);
   if (site.resolution !== "exact")
     addFrontier(
       {
@@ -169,39 +176,32 @@ const collectCallSite = (
 const collectCallResultFlow = (
   site: JavaScriptSemanticCallSite,
   node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
-  parent: t.Node | null,
   context: CallCollectionContext,
 ): void => {
-  const identifier =
-    t.isVariableDeclarator(parent) &&
-    parent.init === node &&
-    t.isIdentifier(parent.id)
-      ? parent.id
-      : t.isAssignmentExpression(parent) &&
-          parent.right === node &&
-          t.isIdentifier(parent.left)
-        ? parent.left
-        : null;
-  if (identifier === null) return;
-  const binding = resolveSemanticBindingState(
+  for (const assigned of assignedSemanticResultBindings(
+    node,
+    context.ancestors,
     context.state,
-    identifier,
-    identifier.name,
-  );
-  const identifierRange = range(identifier);
-  const definition = binding?.definitions.find(
-    ({ location }) =>
-      location.start.line === identifierRange.start.line &&
-      location.start.column === identifierRange.start.column &&
-      location.end.line === identifierRange.end.line &&
-      location.end.column === identifierRange.end.column,
-  );
-  if (binding === undefined || definition === undefined) return;
-  context.output.callResultFlows.push({
-    callSiteId: site.callSiteId,
-    bindingId: binding.bindingId,
-    definitionLocation: definition.location,
-  });
+  ).filter(({ projectionPath }) => projectionPath.length === 0)) {
+    const binding = [...context.state.bindingsById.values()].find(
+      ({ bindingId }) => bindingId === assigned.bindingId,
+    );
+    if (binding === undefined) continue;
+    const identifierRange = range(assigned.identifier);
+    const definition = binding.definitions.find(
+      ({ location }) =>
+        location.start.line === identifierRange.start.line &&
+        location.start.column === identifierRange.start.column &&
+        location.end.line === identifierRange.end.line &&
+        location.end.column === identifierRange.end.column,
+    );
+    if (definition === undefined) continue;
+    context.output.callResultFlows.push({
+      callSiteId: site.callSiteId,
+      bindingId: binding.bindingId,
+      definitionLocation: definition.location,
+    });
+  }
 };
 
 const retainedArguments = (
@@ -363,6 +363,36 @@ const collectDynamicProperty = (
       state,
       output,
     );
+};
+
+/**
+ * `with (o) { … }` and `eval("…")` decide at runtime which bindings exist, so
+ * every name inside them is unresolvable statically. Recording the frontier
+ * is what keeps the analyzer from presenting an empty or partial resolution as
+ * an observed fact — silence here would read as "nothing to resolve".
+ */
+const collectDynamicScope = (
+  node: t.Node,
+  owner: JavaScriptSemanticCallable | undefined,
+  state: JavaScriptSemanticAnalysisState,
+  output: MutableCallAnalysis,
+): void => {
+  const reason = t.isWithStatement(node)
+    ? "`with` introduces a runtime binding environment; names inside are not statically resolvable."
+    : t.isCallExpression(node) && isUnshadowedGlobal(node.callee, state, "eval")
+      ? "`eval` can declare bindings at runtime; names inside the evaluated source are not statically resolvable."
+      : null;
+  if (reason === null) return;
+  addFrontier(
+    {
+      kind: "dynamic-scope",
+      callableId: owner?.callableId ?? null,
+      location: range(node),
+      reason,
+    },
+    state,
+    output,
+  );
 };
 
 const addFrontier = (

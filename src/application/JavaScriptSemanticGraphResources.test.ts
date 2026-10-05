@@ -96,6 +96,67 @@ it("projects child-process creation, I/O, listeners, and signals", () => {
   ).toMatchObject({ status: "partial" });
 });
 
+it("keeps destructured request, spawn, and timer results as projections", () => {
+  const graph = graphFor(`
+      import { spawn } from "node:child_process";
+      async function run() {
+        const { data } = await fetch("https://example.test");
+        const [ child ] = spawn("worker", []);
+        child.on("exit", done);
+        const { handle } = setTimeout(done, 5);
+        clearTimeout(handle);
+        return data.json();
+      }
+    `);
+  const projections = graph.relations.filter(
+    ({ relation }) => relation === "destructures",
+  );
+  expect(
+    projections.map(({ properties }) => properties.projection_path),
+  ).toEqual(expect.arrayContaining([["data"], [0], ["handle"]]));
+  expect(
+    projections.every(
+      ({ properties }) => properties.projection_resolution === "complete",
+    ),
+  ).toBe(true);
+  expect(
+    graph.relations.find(
+      ({ relation, properties }) =>
+        relation === "consumed-by" && properties.method === "json",
+    ),
+  ).toMatchObject({ resolution: "candidate" });
+  expect(
+    graph.relations.find(({ relation }) => relation === "listens-exit"),
+  ).toMatchObject({ resolution: "candidate" });
+  expect(
+    graph.relations.find(({ relation }) => relation === "cancels-timer"),
+  ).toMatchObject({ resolution: "candidate" });
+  expect(
+    graph.relations.some(
+      ({ relation, resolution }) =>
+        ["consumed-by", "listens-exit", "cancels-timer"].includes(relation) &&
+        resolution === "resolved",
+    ),
+  ).toBe(false);
+});
+
+it("does not alias nested call arguments to an outer assigned result", () => {
+  const graph = graphFor(`
+      import { spawn } from "node:child_process";
+      function run() {
+        const child = wrap(spawn("worker", []));
+        child.on("exit", done);
+        const handle = String(setTimeout(done, 5));
+        clearTimeout(handle);
+      }
+    `);
+  expect(
+    graph.relations.some(({ relation }) =>
+      ["listens-exit", "cancels-timer", "destructures"].includes(relation),
+    ),
+  ).toBe(false);
+});
+
 it("projects config precedence, request fields, and boundaries", () => {
   const graph = graphFor(`
       import { readFileSync } from "node:fs";

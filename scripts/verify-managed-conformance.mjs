@@ -312,7 +312,10 @@ try {
   });
   assert.equal(comparison.ok, true);
   const comparisonResult = comparison.value.normalized_result;
-  assert.equal(comparisonResult.algorithm.name_matching, "not-used");
+  assert.equal(
+    comparisonResult.algorithm.name_matching,
+    "exact-signature-fallback",
+  );
   assert.equal(comparisonResult.matching.exact_il_signature, 1);
   assert.equal(
     comparisonResult.methods.some(
@@ -323,6 +326,30 @@ try {
     ),
     true,
   );
+
+  const unavailableBodyLeft = await fixture("partial-body-left.exe", {
+    methods: [{ name: "PartialBodyTarget", body: Buffer.from([0xff]) }],
+  });
+  const unavailableBodyRight = await fixture("partial-body-right.exe", {
+    methods: [{ name: "PartialBodyTarget", body: defaultIlBody }],
+  });
+  const partialBodyComparison = await compareManagedMemberPaths({
+    leftPath: unavailableBodyLeft.path,
+    rightPath: unavailableBodyRight.path,
+    memberLimits: {
+      maxFileBytes: 1024 * 1024,
+      ...memberLimits,
+    },
+    comparisonLimits,
+  });
+  assert.equal(partialBodyComparison.ok, true);
+  const partialBodyMethod =
+    partialBodyComparison.value.normalized_result.methods.find(
+      ({ left }) => left?.name === "PartialBodyTarget",
+    );
+  assert.equal(partialBodyMethod?.status, "unknown");
+  assert.equal(partialBodyMethod?.match.basis, "exact-signature");
+  assert.equal(partialBodyMethod?.dimensions.includes("body-coverage"), true);
 
   const nativeOnly = await fixtureBytes(
     "native-only.exe",

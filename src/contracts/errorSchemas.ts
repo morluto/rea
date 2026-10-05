@@ -60,6 +60,24 @@ export const analysisErrorProjectionSchema = z.discriminatedUnion("code", [
   generic("execution_failure"),
 ]);
 
+/** Legacy CLI envelope: a human label plus the canonical projected error fields. */
+export const analysisCliErrorEnvelopeSchema = z
+  .object({
+    error: z.string().min(1),
+  })
+  .passthrough()
+  .superRefine((value, context) => {
+    const { error: _label, ...projection } = value;
+    const parsed = analysisErrorProjectionSchema.safeParse(projection);
+    if (!parsed.success) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "CLI error envelope must contain a canonical analysis error projection",
+      });
+    }
+  });
+
 /** JSON Schema document used by generated API documentation and clients. */
 export const analysisErrorJsonSchema = z.toJSONSchema(
   analysisErrorProjectionSchema,

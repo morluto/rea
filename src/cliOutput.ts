@@ -19,8 +19,7 @@ type JsonRecord = Record<string, unknown>;
 const isRecord = (value: unknown): value is JsonRecord =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const validationError = (value: unknown): JsonRecord | undefined => {
-  if (!isRecord(value)) return undefined;
+const validationError = (value: JsonRecord): JsonRecord | undefined => {
   if (value.code === "VALIDATION_ERROR") return value;
   if (value.ok === false && isRecord(value.error))
     return value.error.code === "VALIDATION_ERROR" ? value.error : undefined;
@@ -97,6 +96,7 @@ export const sanitizeCliOutput = (output: string): string => {
   if (trimmed.startsWith("{")) {
     try {
       const parsed: unknown = JSON.parse(trimmed);
+      if (!isRecord(parsed)) return output;
       const error = validationError(parsed);
       if (error !== undefined) {
         const safeError = {
@@ -104,7 +104,6 @@ export const sanitizeCliOutput = (output: string): string => {
           message: SAFE_VALIDATION_MESSAGE,
         };
         if (error === parsed) return `${JSON.stringify(safeError)}\n`;
-        if (!isRecord(parsed)) return output;
         return `${JSON.stringify({ ...parsed, error: safeError })}\n`;
       }
     } catch {

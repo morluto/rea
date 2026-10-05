@@ -60,12 +60,12 @@ const waitForExit = (
 
 const stopChild = async (
   child: ChildProcessWithoutNullStreams,
-): Promise<void> => {
-  if (child.exitCode !== null || child.signalCode !== null) return;
+): Promise<boolean> => {
+  if (child.exitCode !== null || child.signalCode !== null) return true;
   child.kill("SIGTERM");
-  if (await waitForExit(child, SHUTDOWN_GRACE_MS)) return;
+  if (await waitForExit(child, SHUTDOWN_GRACE_MS)) return true;
   child.kill("SIGKILL");
-  await waitForExit(child, SHUTDOWN_GRACE_MS);
+  return waitForExit(child, SHUTDOWN_GRACE_MS);
 };
 
 /** Create a child-process registry for a fixture composition root. */
@@ -136,9 +136,28 @@ export const createTestProcessRegistry = (): TestProcesses => {
       return result;
     },
     shutdown: async () => {
-      await Promise.allSettled([...children].reverse().map(stopChild));
+      const results = await Promise.allSettled(
+        [...children].reverse().map(async (child) => {
+          if (!(await stopChild(child))) {
+            throw new Error(
+              `test child process ${String(child.pid)} did not exit after SIGKILL`,
+            );
+          }
+        }),
+      );
+      const failures = results.flatMap((result) =>
+        result.status === "rejected" ? [result.reason] : [],
+      );
       if (children.size > 0) {
-        throw new Error(`${children.size} test child process(es) leaked`);
+        failures.push(
+          new Error(`${children.size} test child process(es) leaked`),
+        );
+      }
+      if (failures.length > 0) {
+        throw new AggregateError(
+          failures,
+          "Test child process shutdown failed",
+        );
       }
     },
   };

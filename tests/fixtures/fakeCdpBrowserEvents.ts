@@ -90,7 +90,8 @@ const emitWebMcpEvents = (
               },
             ]
           : []),
-        ...(options.webMcpChildLeavesScope === true
+        ...(options.webMcpChildLeavesScope === true ||
+        options.webMcpChildTransientBlank === true
           ? [
               {
                 name: "child_tool",
@@ -119,6 +120,43 @@ const emitWebMcpEvents = (
         ],
       });
     }
+    if (options.webMcpChildTransientBlank === true)
+      event(socket, "Page.frameNavigated", command.sessionId, {
+        frame: {
+          id: "frame-child",
+          parentId: "frame-main",
+          loaderId: "loader-transient",
+          url: "about:blank",
+        },
+      });
+    if (options.webMcpChildRecoversAfterTransient === true) {
+      event(socket, "Page.frameNavigated", command.sessionId, {
+        frame: {
+          id: "frame-child",
+          parentId: "frame-main",
+          loaderId: "loader-child-recovered",
+          url: `http://127.0.0.1:${String(port)}/child-recovered`,
+        },
+      });
+      event(socket, "WebMCP.toolsAdded", command.sessionId, {
+        tools: [
+          {
+            name: "child_tool",
+            description: "Replayed from the current child document",
+            frameId: "frame-child",
+          },
+        ],
+      });
+    }
+    if (options.webMcpChildNavigatesAllowed === true)
+      event(socket, "Page.frameNavigated", command.sessionId, {
+        frame: {
+          id: "frame-child",
+          parentId: "frame-main",
+          loaderId: "loader-child-replacement",
+          url: `http://127.0.0.1:${String(port)}/child-replacement`,
+        },
+      });
   }
 };
 
