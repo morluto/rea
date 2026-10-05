@@ -286,6 +286,73 @@ describe("web source-map sourcesContent validation", () => {
   });
 });
 
+describe("source-map original dependency syntax", () => {
+  it("does not invent edges from comments or string contents", async () => {
+    const text = [
+      '// import "./comment.js";',
+      String.raw`const quoted = "require(\"./string.js\")";`,
+      'export { value } from "./real.js";',
+      'import("./dynamic.js");',
+      'require("./common.cjs");',
+    ].join("\n");
+    const result = await fetchWebSourceMaps([request], input(), undefined, {
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              version: 3,
+              names: [],
+              sources: ["main.ts"],
+              sourcesContent: [text],
+              mappings: "AAAA",
+            }),
+          ),
+        ),
+    });
+    expect(
+      result.items[0]?.original_module_edges.map(({ specifier }) => specifier),
+    ).toEqual(["./real.js", "./dynamic.js", "./common.cjs"]);
+  });
+});
+
+describe("source-map original syntax boundaries", () => {
+  it.each([
+    [
+      `import "./it's-real.js"; const quoted = \`import './template-comment.js'\`;`,
+      ["./it's-real.js"],
+    ],
+    [
+      'function fake(require) { require("./not-a-module.js"); } require("./real.cjs");',
+      ["./real.cjs"],
+    ],
+    ['import "./recovered.js"; const = ;', []],
+  ])(
+    "retains literal syntax without inventing module calls",
+    async (text, expected) => {
+      const result = await fetchWebSourceMaps([request], input(), undefined, {
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                version: 3,
+                names: [],
+                sources: ["main.ts"],
+                sourcesContent: [text],
+                mappings: "AAAA",
+              }),
+            ),
+          ),
+      });
+      expect(result.items[0]?.status).toBe("included");
+      expect(
+        result.items[0]?.original_module_edges.map(
+          ({ specifier }) => specifier,
+        ),
+      ).toEqual(expected);
+    },
+  );
+});
+
 describe("web source-map collection", () => {
   it("retains every mapping from a sectioned source map", async () => {
     const segmentCount = 10_001;

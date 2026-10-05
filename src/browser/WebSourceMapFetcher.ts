@@ -1,6 +1,9 @@
+import * as t from "@babel/types";
 import { AnyMap, eachMapping } from "@jridgewell/trace-mapping";
 
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
+import { analyzeParsedJavaScriptSemantics } from "../domain/javascriptSemanticAnalysis.js";
+import { parseJavaScriptSource } from "../domain/javascriptSourceParser.js";
 import { hasValidSourceMapContents } from "../domain/sourceMapContents.js";
 import type {
   AnalyzeWebBundleInput,
@@ -196,21 +199,46 @@ const originalModuleEdges = (
   const seen = new Set<string>();
   for (const source of sources) {
     if (source.artifact === null) continue;
-    for (const detector of originalImportDetectors) {
-      for (const match of source.artifact.text.matchAll(detector.pattern)) {
-        const specifier = match[1];
-        if (specifier === undefined) continue;
-        const key = `${source.source}\0${detector.kind}\0${specifier}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        edges.push({
-          from_source: source.source,
-          kind: detector.kind,
-          specifier,
-          resolved_source: resolveOriginalSource(specifier, source.source),
-        });
+    const parsed = parseJavaScriptSource(source.artifact.text);
+    if (parsed === null || parsed.errors.length > 0) continue;
+    let unboundRequires: ReadonlySet<string> | undefined;
+    t.traverseFast(parsed, (node) => {
+      const dependency = originalDependency(node);
+      if (dependency === null) return;
+      const { kind, specifier } = dependency;
+      if (kind === "require" && t.isCallExpression(node)) {
+        unboundRequires ??= new Set(
+          analyzeParsedJavaScriptSemantics(parsed)
+            .references.filter(
+              ({ name, role, resolution }) =>
+                name === "require" &&
+                role === "read" &&
+                resolution === "unbound",
+            )
+            .map(
+              ({ location }) =>
+                `${String(location.start.line)}:${String(location.start.column)}`,
+            ),
+        );
+        const location = node.callee.loc?.start;
+        if (
+          location === undefined ||
+          !unboundRequires.has(
+            `${String(location.line)}:${String(location.column)}`,
+          )
+        )
+          return;
       }
-    }
+      const key = `${source.source}\0${kind}\0${specifier}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      edges.push({
+        from_source: source.source,
+        kind,
+        specifier,
+        resolved_source: resolveOriginalSource(specifier, source.source),
+      });
+    });
   }
   return edges;
 };
@@ -308,18 +336,27 @@ const sourceMediaType = (source: string | null): string =>
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const originalImportDetectors = [
-  {
-    kind: "static_import" as const,
-    pattern:
-      /\b(?:import|export)\s+(?:[^'"\n]*?\s+from\s+)?["']([^"'\n]+)["']/gu,
-  },
-  {
-    kind: "dynamic_import" as const,
-    pattern: /\bimport\s*\(\s*["']([^"'\n]+)["']\s*\)/gu,
-  },
-  {
-    kind: "require" as const,
-    pattern: /\brequire\s*\(\s*["']([^"'\n]+)["']\s*\)/gu,
-  },
-] as const;
+const originalDependency = (
+  node: t.Node,
+): {
+  readonly kind: ParsedSourceMapItem["original_module_edges"][number]["kind"];
+  readonly specifier: string;
+} | null => {
+  if (
+    t.isImportDeclaration(node) ||
+    t.isExportAllDeclaration(node) ||
+    t.isExportNamedDeclaration(node)
+  )
+    return node.source === null || node.source === undefined
+      ? null
+      : { kind: "static_import", specifier: node.source.value };
+  if (t.isImportExpression(node) && t.isStringLiteral(node.source))
+    return { kind: "dynamic_import", specifier: node.source.value };
+  if (
+    t.isCallExpression(node) &&
+    t.isIdentifier(node.callee, { name: "require" }) &&
+    t.isStringLiteral(node.arguments[0])
+  )
+    return { kind: "require", specifier: node.arguments[0].value };
+  return null;
+};
