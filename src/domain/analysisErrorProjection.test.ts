@@ -5,6 +5,7 @@ import {
   AnalysisInputError,
   ArtifactOperationError,
   BinaryTargetError,
+  BrowserObservationError,
   HopperProcessError,
   HopperRemoteError,
   HopperStartError,
@@ -15,6 +16,35 @@ import {
 } from "./errors.js";
 
 describe("analysis error projection: provider failures", () => {
+  it("projects the primary browser failure alongside incomplete cleanup", () => {
+    const projected = projectAnalysisError(
+      new BrowserObservationError(
+        "observe_javascript_runtime",
+        "cleanup_failed",
+        {
+          cause: new AggregateError([
+            new BrowserObservationError(
+              "observe_javascript_runtime",
+              "target_changed",
+            ),
+            new Error("socket close failed"),
+          ]),
+        },
+      ),
+    );
+
+    expect(projected).toMatchObject({
+      code: "cleanup_incomplete",
+      details: {
+        operation: "observe_javascript_runtime",
+        reason: "cleanup_failed",
+        cleanup: "incomplete",
+        resources: ["browser_transport"],
+        primary_reason: "target_changed",
+      },
+    });
+  });
+
   it("reports a timed-out active Hopper request and actionable retry guidance", () => {
     const projected = projectAnalysisError(
       new HopperTimeoutError(30_000, "trace_feature", 42, "busy"),

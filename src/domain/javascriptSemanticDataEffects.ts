@@ -22,14 +22,12 @@ import {
   dataEffectPrimitive as primitiveValue,
   isSemanticProcessObject as isProcessObject,
   outerDataEffectBinding as outerAssignedBinding,
+  assignedSemanticResultBindings,
+  semanticProjectedBindingFacts,
   traverseDataEffects as traverseWithContext,
   type DataEffectTraversalContext as TraversalContext,
 } from "./javascriptSemanticDataEffectHelpers.js";
-import {
-  compareCodePoints,
-  propertyName,
-  range,
-} from "./javascriptStaticAnalysisHelpers.js";
+import { compareCodePoints, range } from "./javascriptStaticAnalysisHelpers.js";
 
 interface DataEffectAnalysis {
   readonly configurationOperations: readonly JavaScriptSemanticConfigurationOperation[];
@@ -207,6 +205,13 @@ const collectRequests = (
         location: range(node),
         ownerCallableId: context.callableStack.at(-1) ?? null,
         resultBindingId: outerAssignedBinding(node, context),
+        projectedResultBindings: semanticProjectedBindingFacts(
+          assignedSemanticResultBindings(
+            node,
+            context.ancestors,
+            context.state,
+          ).filter(({ projectionPath }) => projectionPath.length > 0),
+        ),
         linkedRequestIds: [],
         endpoint,
         fields: requestFields(node, method, context.state),
@@ -224,11 +229,19 @@ const collectResponseConsumers = (
 ): JavaScriptSemanticRequestOperation[] => {
   const requestsByBinding = new Map<string, RequestCandidate[]>();
   for (const request of requests) {
-    const bindingId = request.operation.resultBindingId;
-    if (bindingId === null) continue;
-    const existing = requestsByBinding.get(bindingId) ?? [];
-    existing.push(request);
-    requestsByBinding.set(bindingId, existing);
+    const bindingIds = [
+      ...(request.operation.resultBindingId === null
+        ? []
+        : [request.operation.resultBindingId]),
+      ...request.operation.projectedResultBindings.map(
+        ({ bindingId }) => bindingId,
+      ),
+    ];
+    for (const bindingId of bindingIds) {
+      const existing = requestsByBinding.get(bindingId) ?? [];
+      existing.push(request);
+      requestsByBinding.set(bindingId, existing);
+    }
   }
   const output: JavaScriptSemanticRequestOperation[] = [];
   traverseWithContext(program, context, (node) => {
@@ -255,12 +268,25 @@ const collectResponseConsumers = (
       location: range(node),
       ownerCallableId: context.callableStack.at(-1) ?? null,
       resultBindingId: outerAssignedBinding(node, context),
+      projectedResultBindings: semanticProjectedBindingFacts(
+        assignedSemanticResultBindings(
+          node,
+          context.ancestors,
+          context.state,
+        ).filter(({ projectionPath }) => projectionPath.length > 0),
+      ),
       linkedRequestIds: linked
         .map(({ operation }) => operation.requestId)
         .sort(compareCodePoints),
       endpoint: null,
       fields: [],
-      resolution: linked.length === 1 ? "complete" : "partial",
+      resolution:
+        linked.length === 1 &&
+        !linked[0]?.operation.projectedResultBindings.some(
+          ({ bindingId }) => bindingId === binding?.bindingId,
+        )
+          ? "complete"
+          : "partial",
     });
   });
   return output;

@@ -8,6 +8,8 @@ import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
 import { composeBinarySession } from "./BinarySessionComposition.js";
 import { nativeHostCapabilities } from "../native/NativeHostCapabilities.js";
 import { LazyAnalysisProvider } from "./LazyAnalysisProvider.js";
+import { ManagedStaticProvider } from "../dotnet/ManagedStaticProvider.js";
+import { SessionProviderRouter } from "./SessionProviderRouter.js";
 
 /**
  * Compose the target-switching runtime shared directly by CLI and MCP adapters.
@@ -63,3 +65,11 @@ export const createBinarySession = (
     ],
   );
 };
+
+/** Compose an execution-free managed session without native provider selection. */
+export const createManagedBinarySession = (): BinarySession =>
+  composeBinarySession(
+    SessionProviderRouter.selectable(new AnalysisProviderRegistry([]), [
+      new ManagedStaticProvider(),
+    ]),
+  );

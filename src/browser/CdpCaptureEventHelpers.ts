@@ -6,6 +6,24 @@ import {
   stringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
+import type { CdpEvent } from "./CdpConnection.js";
+
+/** Identify a top-level navigation event from its untrusted CDP envelope. */
+export const isMainFrameNavigation = (
+  event: CdpEvent,
+  mainFrameId: string,
+): boolean => {
+  const params = recordValue(event.params);
+  if (params === undefined) return false;
+  const frameId =
+    event.method === "Page.frameNavigated"
+      ? stringValue(recordValue(params.frame)?.id)
+      : event.method === "Page.frameRequestedNavigation" ||
+          event.method === "Page.navigatedWithinDocument"
+        ? stringValue(params.frameId)
+        : undefined;
+  return frameId === mainFrameId;
+};
 
 export const firstCallFrame = (
   value: UnknownRecord | undefined,

@@ -7,11 +7,12 @@ import {
 } from "../application/Doctor.js";
 import {
   runSetup,
+  isSetupFailure,
   systemSetupHost,
   type SetupOptions,
 } from "../application/Setup.js";
-import { runUninstall } from "../application/Uninstall.js";
-import { runUpdate } from "../application/Update.js";
+import { isUninstallFailure, runUninstall } from "../application/Uninstall.js";
+import { isUpdateFailure, runUpdate } from "../application/Update.js";
 import { systemUpdateHost } from "../application/UpdateRuntime.js";
 import {
   confirmInteractiveSetup,
@@ -82,8 +83,11 @@ const registerSetupCommand = (cli: CliInstance, logger: Logger): void => {
     }),
     alias: { yes: "y" },
     run: ({ options, formatExplicit }) =>
-      logCliCommand(logger, "setup", () =>
-        runSetupCommand({ options, formatExplicit }),
+      logCliCommand(
+        logger,
+        CLI_COMMANDS.setup,
+        () => runSetupCommand({ options, formatExplicit }),
+        isSetupFailure,
       ),
   });
 };
@@ -131,18 +135,27 @@ const registerMaintenanceCommands = (
     }),
     alias: { purgeData: "purge-data" },
     run: ({ options }) =>
-      logCliCommand(logger, "uninstall", () => runUninstall(options.purgeData)),
+      logCliCommand(
+        logger,
+        "uninstall",
+        () => runUninstall(options.purgeData),
+        isUninstallFailure,
+      ),
   });
   cli.command(CLI_COMMANDS.update, {
     description:
       "Update this REA installation and verify the installed release",
     run: ({ formatExplicit }) =>
-      logCliCommand(logger, "update", () =>
-        runUpdate(
-          PRODUCT_IDENTITY.packageVersion,
-          systemUpdateHost(),
-          formatExplicit ? "structured" : "human",
-        ),
+      logCliCommand(
+        logger,
+        CLI_COMMANDS.update,
+        () =>
+          runUpdate(
+            PRODUCT_IDENTITY.packageVersion,
+            systemUpdateHost(),
+            formatExplicit ? "structured" : "human",
+          ),
+        isUpdateFailure,
       ),
   });
 };

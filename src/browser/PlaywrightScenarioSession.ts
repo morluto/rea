@@ -104,15 +104,25 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
   readonly version: string;
   readonly initialUrl: string;
   private closed = false;
+  private readonly secrets: BrowserScenarioSecrets;
+  private readonly eventCapture: PlaywrightScenarioEvents;
+  private readonly signal: AbortSignal | undefined;
 
   private constructor(
     private readonly opened: OpenedScenarioBrowser,
-    mode: BrowserScenario["browser"]["mode"],
-    private readonly secrets: BrowserScenarioSecrets,
-    private readonly eventCapture: PlaywrightScenarioEvents,
+    options: {
+      readonly mode: BrowserScenario["browser"]["mode"];
+      readonly secrets: BrowserScenarioSecrets;
+      readonly eventCapture: PlaywrightScenarioEvents;
+      readonly signal?: AbortSignal;
+    },
   ) {
-    this.mode = mode;
-    this.processOwnership = mode === "launch" ? "provider-owned" : "external";
+    this.mode = options.mode;
+    this.processOwnership =
+      options.mode === "launch" ? "provider-owned" : "external";
+    this.secrets = options.secrets;
+    this.eventCapture = options.eventCapture;
+    this.signal = options.signal;
     this.version = opened.browser.version();
     this.initialUrl = opened.page.url();
   }
@@ -139,7 +149,9 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
       );
     } catch (cause: unknown) {
       void opening
-        .then((lateOpened) => closePlaywrightScenarioBrowser(lateOpened))
+        .then((lateOpened) =>
+          closePlaywrightScenarioBrowser(lateOpened, options.signal),
+        )
         .catch(() => undefined);
       throw cause;
     }
@@ -154,12 +166,12 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
         enabled: new Set(scenario.capture.events),
         secrets,
       });
-      const session = new PlaywrightScenarioSession(
-        opened,
-        scenario.browser.mode,
+      const session = new PlaywrightScenarioSession(opened, {
+        mode: scenario.browser.mode,
         secrets,
-        events,
-      );
+        eventCapture: events,
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      });
       await withPlaywrightExecutionBoundary(
         () =>
           opened.page.goto(secrets.url(scenario.start_url), {
@@ -171,7 +183,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
       );
       return session;
     } catch (cause: unknown) {
-      await closePlaywrightScenarioBrowser(opened);
+      await closePlaywrightScenarioBrowser(opened, options.signal);
       throw cause;
     }
   }
@@ -241,7 +253,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
         ? ("terminated-owned-process" as const)
         : ("disconnected-external" as const);
     this.closed = true;
-    await closePlaywrightScenarioBrowser(this.opened);
+    await closePlaywrightScenarioBrowser(this.opened, this.signal);
     return this.mode === "launch"
       ? ("terminated-owned-process" as const)
       : ("disconnected-external" as const);

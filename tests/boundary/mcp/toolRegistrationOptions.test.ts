@@ -75,6 +75,28 @@ describe("tool registration options", () => {
           annotations: tool.annotations,
         })),
       );
+      for (const [name, expected] of [
+        ["binary_session", { readOnlyHint: true, openWorldHint: false }],
+        ["read_bytes", { readOnlyHint: false, destructiveHint: false }],
+        ["set_comment", { readOnlyHint: false }],
+        ["unset_bookmark", { destructiveHint: true }],
+        [
+          "capture_process_scenario",
+          { readOnlyHint: false, openWorldHint: true },
+        ],
+        ["inspect_artifact", { readOnlyHint: false, openWorldHint: true }],
+        ["extract_artifact", { readOnlyHint: false, idempotentHint: false }],
+        ["compare_web_captures", { readOnlyHint: false, openWorldHint: false }],
+        [
+          "compare_web_screenshots",
+          { readOnlyHint: false, openWorldHint: false },
+        ],
+      ] as const) {
+        expect(
+          advertised.find((tool) => tool.name === name)?.annotations,
+          name,
+        ).toMatchObject(expected);
+      }
     } finally {
       await Promise.allSettled([client.close(), server.close()]);
     }

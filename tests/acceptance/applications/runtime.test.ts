@@ -7,6 +7,8 @@ import { z } from "zod";
 
 import { CATALOG_IDENTITY } from "../../../src/catalogIdentity.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
+import { evidenceResultOf } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
 
 const mainPath = fileURLToPath(
   new URL("../../../dist/main.js", import.meta.url),
@@ -56,7 +58,9 @@ const completeStderrRecords = (stderr: string): unknown[] =>
     .map((line): unknown => JSON.parse(line));
 
 describe("production stdio runtime", () => {
-  it("starts the built entrypoint, lists the catalog, calls one, and shuts down", async () => {
+  // The `test:acceptance` lane runs the real entrypoint on the current host;
+  // these cases state each supported host's result in the test name and body.
+  const callCurrentDocument = async () => {
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [mainPath],
@@ -75,31 +79,72 @@ describe("production stdio runtime", () => {
     });
     const client = new Client({ name: "runtime-smoke", version: "1.0.0" });
 
+    let result: Awaited<ReturnType<Client["callTool"]>>;
     try {
       await client.connect(transport);
       await expectAvailableToolInventory(client);
-      const result = await client.callTool({
+      result = await client.callTool({
         name: "current_document",
         arguments: {},
       });
-      expect(result.isError === true).toBe(process.platform === "linux");
     } finally {
       await client.close();
       await transport.close();
     }
-    const records = completeStderrRecords(stderr);
-    expect(records).toContainEqual(
-      expect.objectContaining({
-        application: "rea",
-        mode: "mcp",
-        layer: "server",
-        tool: "current_document",
-        status: process.platform === "linux" ? "error" : "ok",
-      }),
-    );
-    expect(stderr).not.toContain("HOPPER_LOADER_ARGS_JSON");
-    expect(stderr).not.toContain(fixturePath);
-  }, 15_000);
+    return { result, stderr, records: completeStderrRecords(stderr) };
+  };
+
+  it.runIf(process.platform === "linux")(
+    "reports the Linux current-document failure through MCP and structured logs",
+    async () => {
+      const { result, stderr, records } = await callCurrentDocument();
+      expect(result.isError).toBe(true);
+      expect(result.content).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: "text", text: expect.any(String) }),
+        ]),
+      );
+      expect(records).toContainEqual(
+        expect.objectContaining({
+          application: "rea",
+          mode: "mcp",
+          layer: "server",
+          tool: "current_document",
+          status: "error",
+        }),
+      );
+      expect(stderr).not.toContain("HOPPER_LOADER_ARGS_JSON");
+      expect(stderr).not.toContain(fixturePath);
+    },
+    15_000,
+  );
+
+  it.runIf(process.platform === "darwin")(
+    "returns the selected document on macOS through MCP and structured logs",
+    async () => {
+      const { result, stderr, records } = await callCurrentDocument();
+      expect(result.isError).not.toBe(true);
+      const observation = evidenceResultOf(z.literal("fixture")).parse(
+        result.structuredContent,
+      );
+      const evidence = parseEvidence(observation.evidence);
+      expect(evidence.operation).toBe("current_document");
+      expect(evidence.provider.id).toBe("hopper");
+      expect(evidence.normalized_result).toBe(observation.result);
+      expect(records).toContainEqual(
+        expect.objectContaining({
+          application: "rea",
+          mode: "mcp",
+          layer: "server",
+          tool: "current_document",
+          status: "ok",
+        }),
+      );
+      expect(stderr).not.toContain("HOPPER_LOADER_ARGS_JSON");
+      expect(stderr).not.toContain(fixturePath);
+    },
+    15_000,
+  );
 
   it("starts with a database-kind initial target without a fatal record", async () => {
     const transport = new StdioClientTransport({

@@ -84,7 +84,7 @@ try {
       cli,
       environment: environmentData.environment,
     });
-  await verifyPackageArtifactAndElectron({
+  const { artifactArchive } = await verifyPackageArtifactAndElectron({
     cli,
     workspace,
     environment: environmentData.environment,
@@ -131,6 +131,7 @@ try {
     cli,
     environment: environmentData.environment,
     evidenceRoot,
+    artifactArchive,
   });
   process.stdout.write(
     `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), cli: true, analysisCli: true, artifactCli: true, managedCli: true, managedReconstructionCli: true, managedNativeVerificationCli: true, managedApplicationGraphCli: true, evidenceCli: true, incurMcpCommand: PRODUCT_IDENTITY.mcpCommand, lifecycleScriptsRequired: false, doctor: "platform-appropriate", setup: supportedSetupHost ? "planned-then-idempotent" : "unsupported-host-rejected", setupPlanReadOnly: supportedSetupHost, existingHopperPreserved: supportedSetupHost, clients: supportedSetupHost ? 4 : 0, backupReadback: supportedSetupHost, failureRecovery: supportedSetupHost, configSymlinkLifecycle: supportedSetupHost, skill: supportedSetupHost, skillReferences: supportedSetupHost, mcpTools: TOOL_CONTRACTS.length, mcpPrompts: prompts.names.length, promptCompletion: true, promptCompletionLifecycle: true, evidenceMcp: true, targetFree: true, targetLifecycle: true, boundedRegexBridge: true, update, mcpStartup, mcpModuleLoading })}\n`,
