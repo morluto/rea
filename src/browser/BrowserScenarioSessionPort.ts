@@ -26,6 +26,8 @@ export interface BrowserScenarioSessionPort {
     readonly dropped: number;
     readonly items: readonly BrowserScenarioEvent[];
   };
+  /** Gaps in selected event families that prevent complete capture claims. */
+  eventLimitations?(): readonly string[];
   perform(action: BrowserScenarioAction, signal?: AbortSignal): Promise<void>;
   capture(
     requested: ReadonlySet<SnapshotKind>,

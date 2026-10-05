@@ -234,6 +234,7 @@ const globalCompleteness = (
     ({ completeness }) => completeness.truncated_sections,
   );
   if (session.mode === "connect") missing.push("events");
+  if ((session.eventLimitations?.().length ?? 0) > 0) missing.push("events");
   return classifyBrowserScenarioCompleteness(missing, truncated);
 };
 
@@ -299,6 +300,7 @@ const runScenario = async (
       "Event sequence records provider receipt order; simultaneous browser causality is not inferred.",
       "Response bodies are not retained.",
       "Storage values are hashed only after declared-secret redaction.",
+      ...(session.eventLimitations?.() ?? []),
       ...(session.mode === "connect"
         ? [
             "CDP attachment cannot recover pre-attach events or guarantee launch-time context options.",

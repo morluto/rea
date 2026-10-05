@@ -99,6 +99,7 @@ class FakeSession implements BrowserScenarioSessionPort {
   performCalls = 0;
   captureCalls = 0;
   onPerform: (() => void) | undefined;
+  eventGaps: readonly string[] = [];
   private step = 0;
 
   constructor(
@@ -136,6 +137,10 @@ class FakeSession implements BrowserScenarioSessionPort {
     readonly items: readonly BrowserScenarioEvent[];
   } {
     return { retained: 0, dropped: 0, items: [] };
+  }
+
+  eventLimitations(): readonly string[] {
+    return this.eventGaps;
   }
 
   async perform(_action: BrowserScenarioAction, signal?: AbortSignal) {
@@ -184,6 +189,24 @@ class FakeSession implements BrowserScenarioSessionPort {
 }
 
 describe("PlaywrightBrowserScenarioProvider", () => {
+  it("makes reported event gaps ineligible for equality even in launch mode", async () => {
+    const session = new FakeSession("launch");
+    session.eventGaps = ["Popup frames before discovery are unavailable"];
+    const provider = new PlaywrightBrowserScenarioProvider({
+      open: () => Promise.resolve(session),
+    });
+    const result = await provider.captureScenario(
+      scenario({ events: ["frames"] }),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw result.error;
+    expect(result.value.completeness).toMatchObject({
+      status: "incomplete",
+      equality_eligible: false,
+      missing_sections: ["events"],
+    });
+    expect(result.value.limitations).toContain(session.eventGaps[0]);
+  });
   it("returns an initial state and every step beyond the former action ceiling", async () => {
     const session = new FakeSession("launch");
     const provider = new PlaywrightBrowserScenarioProvider({

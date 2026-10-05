@@ -163,6 +163,8 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
       );
       const events = new PlaywrightScenarioEvents({
         page: opened.page,
+        context: opened.context,
+        ownsContext: scenario.browser.mode === "launch",
         enabled: new Set(scenario.capture.events),
         secrets,
       });
@@ -210,6 +212,10 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
 
   events() {
     return this.eventCapture.result();
+  }
+
+  eventLimitations(): readonly string[] {
+    return this.eventCapture.limitations();
   }
 
   async perform(

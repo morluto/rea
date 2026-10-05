@@ -60,6 +60,23 @@ inline without application-defined size ceilings. Other missing sections
 remain explicit and make the capture ineligible for equality claims.
 Attach-mode captures also declare the unavoidable pre-attach event gap.
 
+Selected event families are observed on the root page and discovered descendant
+popups, including nested popups. Popup lifecycle records are emitted only when
+`popups` is selected. Launch-mode network observation starts at the owned
+context before navigation, so popup document requests, redirects, and responses
+are included once. Connected contexts can contain unrelated tabs: only network
+events with a frame belonging to the root or a discovered popup are retained.
+Initial popup requests without a frame cannot be attributed in shared contexts
+and are omitted; attach coverage remains incomplete.
+
+Playwright reports new popup Pages after their first navigation has committed.
+It buffers early console messages and page errors, but the pinned API cannot
+recover every earlier frame, worker, WebSocket, or download event. If one of
+those families is selected and a popup is discovered, REA reports the family gap
+in `limitations`, marks `events` missing, and disables equality eligibility.
+Later events remain available; no initial navigation is synthesized from the
+popup's current URL.
+
 Each request names the exact launch executable or loopback CDP endpoint, target,
 actions, and capture behavior. Origin filters and environment-variable names
 are included when the scenario needs them.
