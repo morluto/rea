@@ -273,3 +273,20 @@ describe("JavaScript semantic analysis: dataflow 2", () => {
     ]);
   });
 });
+
+describe("primitive addition values", () => {
+  it.each([
+    ["true + 1", 2],
+    ["null + 2", 2],
+    ["false + true", 1],
+    ['"x" + false', "xfalse"],
+    ['null + "x"', "nullx"],
+    ["3 + 4", 7],
+  ])("recovers %s using primitive coercion", (expression, expected) => {
+    const ir = analyzeJavaScriptSemantics(`const answer = ${expression};`);
+    expect(topLevelBinding(ir, "answer").value).toEqual({
+      status: "literal",
+      value: expected,
+    });
+  });
+});

@@ -247,9 +247,9 @@ const evaluateAddition = (
     return { status: "unknown", reason: "Non-primitive addition." };
   const values = left.flatMap((leftValue) =>
     right.map((rightValue) =>
-      typeof leftValue === "number" && typeof rightValue === "number"
-        ? leftValue + rightValue
-        : `${String(leftValue)}${String(rightValue)}`,
+      typeof leftValue === "string" || typeof rightValue === "string"
+        ? `${String(leftValue)}${String(rightValue)}`
+        : Number(leftValue) + Number(rightValue),
     ),
   );
   return primitiveSet(values);
