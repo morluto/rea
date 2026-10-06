@@ -166,6 +166,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         sessionDefaultAddressSpace =
             currentProgram.getAddressFactory().getDefaultAddressSpace();
+        if (currentProgram.getExecutableFormat().equals("Raw Binary") &&
+            !currentProgram.getOptions(ghidra.program.model.listing.Program.PROGRAM_INFO)
+                .getBoolean("REA DOS COM prepared", false)) {
+            throw new IllegalStateException("REA DOS COM entry/context preparation failed");
+        }
         if (!Application.getApplicationVersion().equals(descriptor.providerVersion)) {
             throw new IllegalStateException("Ghidra provider version does not match the session");
         }
@@ -496,6 +501,24 @@ public final class ReaGhidraBridge extends HeadlessScript {
         JsonArray entryPoints = new JsonArray();
         for (Address entry : entries) entryPoints.add(canonicalAddress(entry));
         result.add("entry_points", entryPoints);
+        JsonArray contexts = new JsonArray();
+        for (Address entry : entries) {
+            JsonObject context = new JsonObject();
+            context.addProperty("address", canonicalAddress(entry));
+            JsonArray registers = new JsonArray();
+            for (String name : new String[] { "CS", "DS", "ES", "SS" }) {
+                Register register = currentProgram.getRegister(name);
+                if (register == null) continue;
+                JsonObject row = new JsonObject();
+                row.addProperty("name", name);
+                BigInteger value = currentProgram.getProgramContext().getValue(register, entry, false);
+                row.add("value_hex", value == null ? JsonNull.INSTANCE : GSON.toJsonTree("0x" + value.toString(16)));
+                registers.add(row);
+            }
+            context.add("registers", registers);
+            contexts.add(context);
+        }
+        result.add("entry_context", contexts);
         return result;
     }
 

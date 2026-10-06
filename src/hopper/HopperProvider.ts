@@ -157,11 +157,12 @@ export class HopperProvider implements AnalysisProviderCandidate {
         reason: null,
         diagnostics,
       };
-    if (target.format === "dos-mz")
+    if (target.format === "dos-mz" || target.format === "dos-com")
       return {
         status: "unsupported",
         code: "target_format_unsupported",
-        reason: "DOS MZ analysis requires the Ghidra 16-bit real-mode adapter.",
+        reason:
+          "DOS MZ/COM analysis requires the Ghidra 16-bit real-mode adapter.",
         diagnostics,
       };
     return {

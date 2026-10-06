@@ -49,6 +49,7 @@ export const targetFormatSchema = z.enum([
   "elf",
   "pe",
   "dos-mz",
+  "dos-com",
   "zip",
   "ipa",
   "apk",

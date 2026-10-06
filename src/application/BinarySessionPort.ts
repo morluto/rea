@@ -1,3 +1,4 @@
+import type { ExecutableFormatHint } from "../domain/dosCom.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Evidence } from "../domain/evidence.js";
@@ -29,6 +30,7 @@ export interface BinarySessionPort extends AnalysisOperationPort {
     options?: {
       readonly signal?: AbortSignal;
       readonly targetKind?: BinaryTarget["kind"];
+      readonly formatHint?: ExecutableFormatHint;
       readonly snapshot?: AnalysisSnapshot;
       readonly providerId?: AnalysisProviderSelector;
     },

@@ -2,10 +2,12 @@ import { createHash } from "node:crypto";
 import {
   nativeLoadImageSchema,
   type NativeLoadImage,
+  type NativeLoadImageCheck,
   type NativeLoadImageObservation,
 } from "../domain/nativeLoadImage.js";
 import { parseDosMzHeader, type DosMzHeader } from "../domain/dosMz.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { validateDosComLength } from "../domain/dosCom.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 const sha256 = (bytes: Buffer): string =>
@@ -58,7 +60,7 @@ export const attestGhidraDosLoadImage = (
         .toString("hex"),
     });
   }
-  const checks: Extract<NativeLoadImage, { format: "dos-mz" }>["checks"] = [];
+  const checks: NativeLoadImageCheck[] = [];
   const check = (
     name: string,
     expected: JsonValue,
@@ -120,7 +122,7 @@ export const attestGhidraDosLoadImage = (
     rows(observations.relocations),
   );
 
-  checkMappings(header, loadSegment, bytes, modified, observations, check);
+  checkMappings(header, loadSegment * 16, bytes, modified, observations, check);
   return ok(
     nativeLoadImageSchema.parse({
       status: checks.every((item) => item.matched) ? "verified" : "mismatch",
@@ -143,8 +145,8 @@ export const attestGhidraDosLoadImage = (
 };
 
 const checkMappings = (
-  header: DosMzHeader,
-  loadSegment: number,
+  header: Pick<DosMzHeader, "headerBytes" | "imageBytes">,
+  loadBase: number,
   bytes: Buffer,
   modified: Buffer,
   observations: NativeLoadImageObservation,
@@ -212,19 +214,13 @@ const checkMappings = (
         ? null
         : headerMapping
           ? `HEADER:${address(start)}`
-          : address(loadSegment * 16 + start - header.headerBytes);
+          : address(loadBase + start - header.headerBytes);
     const expectedEnd =
       start === null
         ? null
         : headerMapping
           ? `HEADER:${address(start + mapping.length - 1)}`
-          : address(
-              loadSegment * 16 +
-                start -
-                header.headerBytes +
-                mapping.length -
-                1,
-            );
+          : address(loadBase + start - header.headerBytes + mapping.length - 1);
     check(`${at}.start`, expectedStart, mapping.start, start, mapping.start);
     check(`${at}.end`, expectedEnd, mapping.end, start, mapping.end);
     check(
@@ -245,5 +241,87 @@ const checkMappings = (
     observations.mappings.filter(
       (mapping) => mapping.initialized && mapping.source_file_index === null,
     ),
+  );
+};
+
+/** Verify the explicit DOS COM interpretation against measured bytes and context. */
+export const attestGhidraDosComLoadImage = (
+  bytes: Buffer,
+  targetSha256: string,
+  observations: NativeLoadImageObservation,
+): Result<NativeLoadImage, string> => {
+  if (sha256(bytes) !== targetSha256)
+    return err("Ghidra COM snapshot digest does not match the admitted target");
+  const length = validateDosComLength(bytes.length);
+  if (!length.ok) return length;
+  const checks: NativeLoadImageCheck[] = [];
+  const check = (
+    name: string,
+    expected: JsonValue,
+    observed: JsonValue,
+    fileOffset: number | null = null,
+    location: string | null = null,
+  ): void => {
+    checks.push({
+      name,
+      matched: JSON.stringify(expected) === JSON.stringify(observed),
+      expected,
+      observed,
+      file_offset: fileOffset,
+      address: location,
+    });
+  };
+  const source = observations.source_files[0];
+  check("executable_format", "Raw Binary", observations.executable_format);
+  check("language_id", "x86:LE:16:Real Mode", observations.language_id);
+  check("compiler_spec_id", "default", observations.compiler_spec_id);
+  check("image_base", "0x0", observations.image_base);
+  check("default_address_space", "ram", observations.default_address_space);
+  check("source_file_count", 1, observations.source_files.length);
+  check("source_file_size", bytes.length, source?.size ?? null);
+  check("original_file_sha256", targetSha256, source?.original_sha256 ?? null);
+  check("modified_file_sha256", targetSha256, source?.modified_sha256 ?? null);
+  check("entry_points", ["0x10100"], [...observations.entry_points].sort());
+  check(
+    "entry_context",
+    [
+      {
+        address: "0x10100",
+        registers: ["CS", "DS", "ES", "SS"].map((name) => ({
+          name,
+          value_hex: "0x1000",
+        })),
+      },
+    ],
+    observations.entry_context,
+  );
+  check("relocation_records", [], observations.relocations);
+  checkMappings(
+    { headerBytes: 0, imageBytes: bytes.length },
+    0x10100,
+    bytes,
+    bytes,
+    observations,
+    check,
+  );
+  return ok(
+    nativeLoadImageSchema.parse({
+      status: checks.every((item) => item.matched) ? "verified" : "mismatch",
+      format: "dos-com",
+      target_sha256: targetSha256,
+      load_segment: 0x1000,
+      header_bytes: 0,
+      module_bytes: bytes.length,
+      overlay_bytes: 0,
+      entry: { relative_segment: 0, offset: 0x100, linear_address: "0x10100" },
+      observations,
+      checks,
+      limitations: [
+        "DOS COM is a headerless interpretation explicitly selected by the caller, not format identification from file bytes.",
+        "Verification covers complete original/modified source identity, mapped file bytes, entry and measured CS/DS/ES/SS entry context. Context 0x1000 is imposed for analysis; it is not an observed running process.",
+        "The PSP, initial stack contents/registers, DOS interrupts, PC-98 devices and runtime behavior are not modeled or verified. No original executable bytes are changed.",
+        "Mapping ends are inclusive; a mismatching digest identifies its source range, not the first differing byte.",
+      ],
+    }),
   );
 };

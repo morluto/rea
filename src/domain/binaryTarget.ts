@@ -7,7 +7,7 @@ export type { BinaryArchitecture, BinaryTarget } from "./binaryTargetTypes.js";
 /** Format and architecture facts recovered from an executable header. */
 export type ExecutableMetadata =
   | {
-      readonly format: "mach-o" | "elf" | "dos-mz";
+      readonly format: "mach-o" | "elf" | "dos-mz" | "dos-com";
       readonly architecture: BinaryArchitecture;
       readonly availableArchitectures: readonly BinaryArchitecture[];
     }

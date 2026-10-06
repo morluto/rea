@@ -63,6 +63,7 @@ export interface GhidraHeadlessLauncherOptions {
   readonly comSpec?: string;
   /** Select the admitted 16-bit real-mode MZ import instead of auto-detection. */
   readonly dosMz?: true;
+  readonly dosCom?: true;
 }
 
 /** Launch Ghidra without copying scripts into or modifying its installation. */
@@ -111,6 +112,9 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         descriptorPath: paths.descriptorPath,
         ghidraLogPath: paths.ghidraLogPath,
         scriptLogPath: paths.scriptLogPath,
+        ...(this.options.dosCom === undefined
+          ? {}
+          : { dosCom: this.options.dosCom }),
         ...(this.options.dosMz === undefined
           ? {}
           : { dosMz: this.options.dosMz }),
@@ -267,6 +271,7 @@ export interface GhidraHeadlessArgumentOptions {
   readonly ghidraLogPath: string;
   readonly scriptLogPath: string;
   readonly dosMz?: true;
+  readonly dosCom?: true;
 }
 
 /** Build the complete read-only headless invocation in deterministic order. */
@@ -286,7 +291,18 @@ export const ghidraHeadlessArguments = (
         "-cspec",
         "default",
       ]
-    : []),
+    : options.dosCom === true
+      ? [
+          "-loader",
+          "BinaryLoader",
+          "-loader-baseAddr",
+          "1000:0100",
+          "-processor",
+          "x86:LE:16:Real Mode",
+          "-cspec",
+          "default",
+        ]
+      : []),
   "-readOnly",
   "-deleteProject",
   "-log",
@@ -295,6 +311,9 @@ export const ghidraHeadlessArguments = (
   options.scriptLogPath,
   "-scriptPath",
   dirname(options.bridgeScriptPath),
+  ...(options.dosCom === true
+    ? ["-preScript", "ReaGhidraPrepareCom.java"]
+    : []),
   "-postScript",
   basename(options.bridgeScriptPath),
   options.descriptorPath,

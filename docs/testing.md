@@ -153,6 +153,13 @@ the stable observation comparison. Linux x64 is verified; macOS DOS remains
 unverified. This lane is separate from host-native and optional cross-format
 verification. See [DOS analysis](ghidra-dos.md).
 
+`npm run verify:ghidra:com` uses a generated headerless fixture with no compiler,
+DOS emulator or game data. It exercises explicit admission, BinaryLoader entry
+preparation, measured register context, whole-file byte readback, source offsets,
+unmapped PSP/partial reads, actual decompilation, CLI/MCP parity and owned cleanup.
+It has the same Ghidra/JDK prerequisites as the MZ lane. Neither lane claims DOS
+runtime or PC-98 device execution.
+
 ## Apple Interface Builder archives
 
 `npm run verify:interface-builder` compiles the source-owned AppKit XIB into a

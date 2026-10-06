@@ -55,3 +55,8 @@ hosts, with an owned temporary mount directory and cleanup. It needs no approval
 flag. Unsupported hosts or mount failures remain explicit limitations; do not
 claim child inventory when only root identity is available. Extraction is a
 separate filesystem-writing operation.
+
+For headerless DOS COM, explicitly open with `format: "dos-com"` (CLI
+`--target-format dos-com`). Inspect the load image before trusting function
+analysis: the entry is `0x10100`, file offset zero, with imposed real-mode segment
+context. PSP/stack/device state remains unmodeled. See [DOS guide](../../../docs/ghidra-dos.md).
