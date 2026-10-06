@@ -286,3 +286,27 @@ const graphFor = (source: string) => {
     analysis,
   });
 };
+
+it.each([
+  "const value = consume(Promise.resolve(1));",
+  "async function run() { await consume(Promise.resolve(1)); }",
+  "function run() { return consume(Promise.resolve(1)); }",
+  "const value = Promise.all([{ promise: Promise.resolve(1) }]);",
+])(
+  "does not claim direct Promise ownership through an enclosing expression: %s",
+  (source) => {
+    const graph = graphFor(source);
+    const promise = graph.nodes.find(
+      ({ kind, properties }) =>
+        kind === "promise" && properties.method === "resolve",
+    );
+    expect(promise?.properties.ownership).toBe("unknown");
+    expect(
+      graph.relations.filter(
+        ({ target_node_id, relation }) =>
+          target_node_id === promise?.node_id &&
+          ["owns", "awaits", "returns-task", "aggregates"].includes(relation),
+      ),
+    ).toEqual([]);
+  },
+);
