@@ -32,9 +32,17 @@ export const registerCoreAnalysisCommands = (
   });
   cli.command(CLI_COMMANDS.readBytes, {
     description: "Read exact provider memory bytes at one analysis address",
-    args: z.object({ path: z.string(), address: z.string() }),
+    args: z.object({
+      path: z.string().describe("Local executable path"),
+      address: z.string().describe("Exact provider memory address"),
+    }),
     options: z.object({
-      length: z.number().int().min(1).default(256),
+      length: z
+        .number()
+        .int()
+        .min(1)
+        .default(256)
+        .describe("Requested byte count"),
       provider: providerSelectionOption,
     }),
     run: ({ args, options }) =>
@@ -49,7 +57,10 @@ export const registerCoreAnalysisCommands = (
   });
   cli.command(CLI_COMMANDS.addressToFileOffset, {
     description: "Resolve an analysis address to its original file byte offset",
-    args: z.object({ path: z.string(), address: z.string() }),
+    args: z.object({
+      path: z.string().describe("Local executable path"),
+      address: z.string().describe("Exact provider memory address"),
+    }),
     options: z.object({ provider: providerSelectionOption }),
     run: ({ args, options }) =>
       logCliCommand(logger, CLI_COMMANDS.addressToFileOffset, () =>
