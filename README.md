@@ -51,49 +51,6 @@ REA connects your agent to tools for inspecting native binaries, JavaScript and 
 
 Setup registers REA with your agent and installs matching workflow instructions. Native analysis can use an existing Hopper or Ghidra installation; setup can optionally install Hopper with approval. Static JavaScript analysis needs neither engine.
 
-## Just ask your agent
-
-After [setup](#quick-start), restart your agent and ask:
-
-```text
-Understand how search works in the Notes app, show me the evidence, and build a
-similar feature for my project.
-```
-
-Replace Notes with the app you want to understand, or ask for an overview first.
-
-## The investigation model
-
-<table>
-<tr>
-<td width="33%" valign="top">
-<strong>Decompile</strong><br /><br />
-Open an app and recover readable code, strings, names, and other clues about how it works.
-</td>
-<td width="33%" valign="top">
-<strong>Understand</strong><br /><br />
-Follow the code from one part of the app to another until the agent can explain how a feature actually works.
-</td>
-<td width="33%" valign="top">
-<strong>Recreate</strong><br /><br />
-Turn what the agent learned into a feature for your own product, adapted to your stack, interface, and requirements.
-</td>
-</tr>
-</table>
-
-REA shows how it reached its conclusions. It does not claim to recover original source code or automatically clone an application.
-
-## Why REA
-
-|                          |                                                                                                       |
-| ------------------------ | ----------------------------------------------------------------------------------------------------- |
-| **Built for agents**     | Ask what an app does and let your agent inspect it instead of guessing.                               |
-| **CLI and MCP**          | Run the same reverse-engineering capabilities from your terminal or agent.                            |
-| **Guided setup**         | Configure your agent, connect an existing analysis tool, or install Hopper with your approval.        |
-| **From insight to code** | Understand a feature, then build your own version in the same coding session.                         |
-| **Local by design**      | Analysis runs on your supported local host. REA does not upload the app to a hosted analysis service. |
-| **Keeps context**        | Investigate several apps without starting over for every question.                                    |
-
 ## Quick start
 
 ### Run setup (recommended)
@@ -108,25 +65,21 @@ Choose which supported agents should use REA, then review the exact paths and ch
 
 Setup shows its changes before applying them and backs up existing configuration. See [Installation and setup](docs/installation.md) for requirements and setup options.
 
-### With an agent (recommended)
+### AI Coding Assistants (optional)
 
-After setup, restart your agent and [describe the app or feature](#just-ask-your-agent) you want to understand. Hopper can run in demo mode; if it shows a first-run prompt, choose the demo or enter an existing license.
-
-REA supports Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, Devin, OpenCode, Antigravity, GitHub Copilot CLI, Command Code, and VS Code. Existing REA registrations are selected by default during setup; other detected agents remain unselected until chosen. Other agents can use the [manual MCP configuration](#manual-mcp-configuration).
-
-### Install the skill separately
+Add the skill to your AI coding assistant for richer context:
 
 ```bash
 npx skills add morluto/rea --skill reverse-engineer-anything
 ```
 
-This installs agent instructions, not MCP registration or analysis engines.
-Follow the skill's [conditional connection guide](skills/reverse-engineer-anything/SKILL.md#connect-only-when-needed):
-prepare a scoped `npx rea-agents setup` plan if registration is missing, review
-and approve its actual changes, then restart/reconnect and verify the tools.
-Guided setup above installs a version-matched skill by default. The skills.sh
-route uses repository instructions, which can be ahead of the released server;
-see [released package and main](docs/installation.md#released-package-and-main).
+The skill provides REA's investigation workflow. Run setup above to connect REA to your agent and configure analysis tools. Setup already installs a version-matched skill by default; this command installs the repository version.
+
+### With an agent (recommended)
+
+After setup, restart your agent and [describe the app or feature](#just-ask-your-agent) you want to understand. Hopper can run in demo mode; if it shows a first-run prompt, choose the demo or enter an existing license.
+
+REA supports Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, Devin, OpenCode, Antigravity, GitHub Copilot CLI, Command Code, and VS Code. Existing REA registrations are selected by default during setup; other detected agents remain unselected until chosen. Other agents can use the [manual MCP configuration](#manual-mcp-configuration).
 
 ### First result from the terminal
 
@@ -172,7 +125,7 @@ provider guides describe their supported platforms.
 - Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+
 - npm; REA does not require or install a particular npm version
 
-Native binary analysis requires [Hopper](https://www.hopperapp.com/), [Ghidra](#ghidra-analysis-provider), or the experimental [Binary Ninja MCP backend](docs/binary-ninja.md). Hopper is separate software with its own license; its demo supports analysis with vendor-defined limits. REA can use Ghidra that you have already installed.
+Deep native binary analysis requires [Hopper](https://www.hopperapp.com/), [Ghidra](#ghidra-analysis-provider), [IDA Pro](#ida-pro-analysis-provider), or the experimental [Binary Ninja MCP backend](docs/binary-ninja.md). Hopper is separate software with its own license; its demo supports analysis with vendor-defined limits. Ghidra, IDA, and Binary Ninja are bring-your-own providers.
 
 Firmware region inspection and explicit extraction use caller-supplied Binwalk and Unblob on Linux. See [Firmware analysis](docs/firmware-analysis.md) for setup, provenance, resource limits and native handoff.
 
@@ -234,6 +187,8 @@ Opening a Ghidra target selects its provider; the first analysis query starts im
 REA analyzes a temporary copy of the target and removes the temporary project when the session closes. Results identify what Ghidra observed and what it could not resolve. Decompilation produces pseudocode rather than the original source.
 
 Ghidra also imports DOS MZ executables with an explicit 16-bit x86 real-mode profile. Function results include complete observed body ranges, distinguishing owned bytes from the enclosing span. See the [DOS analysis guide](docs/ghidra-dos.md) for addresses, packing, and verification boundaries.
+See [optional NativeAOT metadata recovery](docs/ghidra-nativeaot.md) for the pinned
+headless adapter, supported layout and existing native-tool workflow.
 
 Windows Ghidra P0 uses bundled native controls for its read-only native x86-64 PE boundary on local NTFS; see the [Windows Ghidra P0 guide](docs/windows-ghidra-p0.md). See [Ghidra installation](docs/installation.md#ghidra), [provider evaluation](docs/provider-evaluation.md), and [testing](docs/testing.md) for configuration details, coverage, and real-provider verification.
 
@@ -245,6 +200,19 @@ rea uninstall --purge-data # also removes only ~/.rea/cache and ~/.rea/state
 ```
 
 Uninstall preserves Hopper, Node.js, Evidence files, captures, unrelated skills, and other MCP servers. It refuses malformed client configuration and never follows purge-data symlinks.
+
+### IDA Pro analysis provider
+
+Already have [mrexodia/ida-pro-mcp](https://github.com/mrexodia/ida-pro-mcp) working? REA can reuse its MCP registration for read-only analysis of the current GUI target, or use its database supervisor to open and analyze a supplied binary headlessly.
+
+```bash
+export REA_IDA_MCP_CONFIG=/absolute/path/to/ida-mcp.json
+rea function /absolute/path/to/program main --provider ida --json
+```
+
+The registration selects `attached` (default, legacy 1.4 tools) or `headless` (modern database supervisor). Setup can preserve this file reference in your selected agent's REA registration. REA adapts existing analysis contracts and manages its own headless database; it leaves an attached GUI database open and never saves it. Results stay live because external IDA database changes are not immutable snapshots.
+
+See the [IDA provider guide](docs/ida-provider.md) for upstream installation links, exact configuration examples, Windows-native headless operation, lifecycle cleanup, and coverage. The initial real workflows cover a Windows GUI and Windows x64 headless IDA 9.3; other engine/platform combinations remain unverified. Use a package version that includes this adapter; repository main can lead the npm release.
 
 ### CLI or agent?
 
@@ -298,6 +266,49 @@ opening its matching target; MCP providers may still start before a cached call
 result is returned. Pass `snapshot_path` and, when required, `overwrite: true` to
 `close_binary` to save atomically before Hopper resources are released. If the
 save fails, REA deliberately leaves the session open.
+
+## Just ask your agent
+
+After [setup](#quick-start), restart your agent and ask:
+
+```text
+Understand how search works in the Notes app, show me the evidence, and build a
+similar feature for my project.
+```
+
+Replace Notes with the app you want to understand, or ask for an overview first.
+
+## The investigation model
+
+<table>
+<tr>
+<td width="33%" valign="top">
+<strong>Decompile</strong><br /><br />
+Open an app and recover readable code, strings, names, and other clues about how it works.
+</td>
+<td width="33%" valign="top">
+<strong>Understand</strong><br /><br />
+Follow the code from one part of the app to another until the agent can explain how a feature actually works.
+</td>
+<td width="33%" valign="top">
+<strong>Recreate</strong><br /><br />
+Turn what the agent learned into a feature for your own product, adapted to your stack, interface, and requirements.
+</td>
+</tr>
+</table>
+
+REA shows how it reached its conclusions. It does not claim to recover original source code or automatically clone an application.
+
+## Why REA
+
+|                          |                                                                                                       |
+| ------------------------ | ----------------------------------------------------------------------------------------------------- |
+| **Built for agents**     | Ask what an app does and let your agent inspect it instead of guessing.                               |
+| **CLI and MCP**          | Run the same reverse-engineering capabilities from your terminal or agent.                            |
+| **Guided setup**         | Configure your agent, connect an existing analysis tool, or install Hopper with your approval.        |
+| **From insight to code** | Understand a feature, then build your own version in the same coding session.                         |
+| **Local by design**      | Analysis runs on your supported local host. REA does not upload the app to a hosted analysis service. |
+| **Keeps context**        | Investigate several apps without starting over for every question.                                    |
 
 ## One prompt, a full investigation
 
@@ -357,7 +368,7 @@ REA supports native application, JavaScript, Electron, .NET, and browser investi
 
 Static Android APK inspection is verified on Linux with headless JADX; see [Android analysis](docs/android-analysis.md) for its separate prerequisites and coverage.
 
-- **Native binaries:** Open Mach-O, ELF, PE, and Mac `.app` targets through Hopper or Ghidra. Inspect functions, strings, assembly, decompilation, calls, and references. Hopper also accepts `.hop` databases and supports annotations.
+- **Native binaries:** Open Mach-O, ELF, PE, and Mac `.app` targets through a selected deep provider. Hopper and Ghidra cover broad inventory and function analysis; the IDA adapter supplies its documented read-only function/string operations. Hopper also accepts `.hop` databases and supports annotations.
 - **Packages and resources:** Inspect directories, ZIP, APK, IPA, ASAR, plists, compiled Interface Builder files, and Apple asset catalogs. Artifact requests name the input and requested extraction or traversal directly; macOS DMG traversal also requires the host's native mounting support.
 - **JavaScript and Electron:** Map modules, imports, source maps, routes, IPC channels, storage, and native add-ons without running the app. Compare builds and trace a feature across the recovered graph. Dynamic and ambiguous relationships remain unresolved. See [JavaScript application workflows](docs/javascript-application-workflows.md).
 - **Websites:** Inspect a selected page in an existing Chrome-family browser. Capture page structure, network metadata, script evidence, and screenshots requested by the call. Passive observation does not navigate or execute page JavaScript. See [browser observation](docs/browser-observation.md).
@@ -398,8 +409,12 @@ the launched browser. Connect mode accepts one exact loopback CDP target and
 disconnects without closing the external browser. The request supplies the
 selected executable or endpoint, actions, and any origin or environment
 selections needed by the scenario. Scenario JSON contains secret references and
-environment-variable names, never secret values. See the
-[browser scenario contract](docs/browser-scenario-contract.md).
+environment-variable names, never secret values. The default capture retains
+only the final URL; request `dom`, `accessibility`, or `screenshot` when an
+interaction changes the page without navigating. For asynchronous updates,
+wait for a page-specific result-ready condition before capture. See the
+[browser scenario contract](docs/browser-scenario-contract.md), including its
+interaction example.
 
 ### Node and Electron V8 Inspector observation
 
@@ -457,7 +472,7 @@ Setup offers supported agent integrations for selection. Existing REA registrati
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@4.0.1", "mcp"]
+      "args": ["-y", "rea-agents@4.1.0", "mcp"]
     }
   }
 }
@@ -487,8 +502,11 @@ flowchart LR
     Session --> Registry["Deep-provider registry<br/>deterministic selection"]
     Registry --> Hopper["Hopper provider"]
     Registry --> Ghidra["Ghidra provider<br/>inventory + function analysis + annotations"]
+    Registry --> Ida["IDA MCP provider<br/>attached GUI or owned headless database"]
     Hopper --> Runtime["Owned provider runtime<br/>deadline + bounded diagnostics + cleanup"]
     Ghidra --> Runtime
+    Ida --> IdaRuntime["Upstream MCP lifecycle<br/>live observations + owned database cleanup"]
+    IdaRuntime --> Target
     Session --> Native["Native macOS provider"]
     Session --> Artifact["Artifact graph provider"]
     REA --> Browser["Browser CDP provider"]
@@ -555,7 +573,7 @@ For MCP, pass the optional selector on `open_binary`:
 }
 ```
 
-Use `--provider`, or `provider_id` in MCP, to choose Hopper or Ghidra for a target. This choice overrides `REA_ANALYSIS_PROVIDER`.
+Use `--provider`, or `provider_id` in MCP, to choose Hopper, Ghidra, or IDA for a target. This choice overrides `REA_ANALYSIS_PROVIDER`.
 
 With `auto`, REA selects the only available tool that supports the target. If both are available, specify one before opening the target. The session keeps that choice until you explicitly switch or close it; a failure never silently switches tools. Artifact-only analysis can work without a native analysis tool.
 
@@ -633,7 +651,7 @@ verified or absent.
 
 ## Security model
 
-Analysis runs locally. REA communicates with Hopper and Ghidra through authenticated private local sockets. Your agent or model provider has its own data policy.
+Analysis runs locally. REA communicates with Hopper and Ghidra through authenticated private local sockets and with IDA through its configured local MCP registration. Your agent or model provider has its own data policy.
 
 Runtime requests act on the declared target and lifecycle. Analysis tools and launched targets run with your user permissions, and native UI capture still depends on macOS Accessibility and Screen Recording access. Static JavaScript analysis does not execute extracted modules; use direct browser, Electron, or process capture when runtime behavior is needed.
 

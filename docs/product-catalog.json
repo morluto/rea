@@ -1,13 +1,13 @@
 {
   "package": {
     "name": "rea-agents",
-    "version": "4.0.1",
+    "version": "4.1.0",
     "sdk": {
       "server": "2.3.1",
       "client": "2.3.1",
       "core": "2.3.1"
     },
-    "skill_version": "25"
+    "skill_version": "26"
   },
   "tools": {
     "total": 125,
@@ -330,6 +330,25 @@
       ]
     },
     {
+      "id": "ida",
+      "name": "IDA Pro MCP adapter",
+      "version": "1",
+      "capabilities": [
+        "analyze_function",
+        "list_procedures",
+        "list_strings",
+        "procedure_address",
+        "procedure_assembly",
+        "procedure_callees",
+        "procedure_callers",
+        "procedure_pseudo_code",
+        "read_function_instructions",
+        "search_procedures",
+        "search_strings",
+        "xrefs"
+      ]
+    },
+    {
       "id": "jadx",
       "name": "JADX headless",
       "version": "0.7.1",
@@ -635,10 +654,10 @@
       "mcp_prompts": 6
     },
     "digests": {
-      "tools_sha256": "45a8aea00dba2a8ad8563b4943cd177d07b14889bc9b823bc39b89b6ddb26d2c",
+      "tools_sha256": "eec3abb8fa5b25c6e5d6e361b7ebd157e3599f69b68defda85680dbfe061b3d3",
       "prompts_sha256": "ef2de8814390b340623c32001610aa2709d90bed51537b6e562ab3abf144ab4d",
-      "combined_sha256": "297aced29e7ce5e845c505d5f2e9e2dee42b7ed3e628f088f424fe8088c9e8dc",
-      "providers_sha256": "43070b7e0dbab2c55a7cd7f34b926fd05e19630f7ce5ce6845e1775e2d507325"
+      "combined_sha256": "ed9c36900e9223561d38ba30a44921f4ff101d5eca989920f9edc9dc91df470b",
+      "providers_sha256": "fcd5fb80a1f045368382139d9c1e614e4f9ada72888887e405236c69a93b864f"
     }
   }
 }

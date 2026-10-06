@@ -34,6 +34,11 @@ const environmentSchema = z.object({
     .max(2_147_483_647)
     .default(300_000),
   REA_ANALYSIS_PROVIDER: analysisProviderSelectorSchema.default("auto"),
+  REA_IDA_MCP_CONFIG: z
+    .string()
+    .min(1)
+    .refine(isAbsolute, "REA_IDA_MCP_CONFIG must be absolute")
+    .optional(),
   GHIDRA_INSTALL_DIR: z
     .string()
     .min(1)
@@ -43,6 +48,11 @@ const environmentSchema = z.object({
     .string()
     .min(1)
     .refine(isAbsolute, "JAVA_HOME must be absolute")
+    .optional(),
+  REA_GHIDRA_NATIVEAOT_JAR: z
+    .string()
+    .min(1)
+    .refine(isAbsolute, "REA_GHIDRA_NATIVEAOT_JAR must be absolute")
     .optional(),
   REA_ILSPY_CMD_PATH: z
     .string()

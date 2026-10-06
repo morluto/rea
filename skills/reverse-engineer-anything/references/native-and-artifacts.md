@@ -37,6 +37,30 @@ assembly. Keep managed/native boundaries and unavailable reconstruction facts
 explicit. A bring-your-own reconstruction oracle is separate from the canonical
 parser and must not become an implicit setup dependency.
 
+## .NET NativeAOT
+
+A NativeAOT PE/ELF contains native code. Absence of PE/CLI metadata does not mean
+analysis must stop at assembly. Use native function analysis for recovered
+pseudocode; it is not reconstructed original C#.
+
+With an explicitly configured NativeAOT Ghidra adapter, call
+`inspect_native_load_image` after opening the target. Its optional
+`observations.metadata_recovery` returns the format, positive header evidence,
+coverage, derived-memory identity and type addresses/category paths inline.
+Then inspect a reported type with `inspect_native_data_type`, follow its
+`metadata_recovery.related_type`, interfaces and virtual slot addresses, and use
+`analyze_function` plus string/xref searches for implementation evidence. Keep
+`not_applicable`, partial recovery and unsupported layouts explicit. Generated
+`Class_address` names and inferred System.Object/String identities are not
+original names; custom field layouts remain unknown.
+
+Recovery modifies an ephemeral analysis database and may replace loaded metadata
+bytes with derived content. Original executable files remain unchanged. Distinguish
+original file offsets from derived analysis memory. Windows x64 PE **targets**
+can be analyzed on a supported Linux host; Windows **host** P0 does not admit
+this database recovery. See the [NativeAOT guide](https://github.com/morluto/rea/blob/main/docs/ghidra-nativeaot.md)
+for the tested layout and optional bring-your-own adapter build.
+
 ## Packages and extraction
 
 Use `inspect_artifact` for application bundles, archives, ZIP/APK/IPA/MSIX/AppX,

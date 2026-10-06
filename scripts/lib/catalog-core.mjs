@@ -58,6 +58,7 @@ const SOURCE_PATHS = {
   hopperProvider: "dist/hopper/HopperProvider.js",
   ghidraProvider: "dist/ghidra/GhidraProvider.js",
   binaryNinjaProvider: "dist/binaryNinja/BinaryNinjaProvider.js",
+  idaProvider: "dist/ida/IdaProviderCapabilities.js",
   nativeProvider: "dist/native/NativeMacOSProvider.js",
   artifactProviders: "dist/application/InvestigationProviders.js",
   browserProvider: "dist/browser/CdpBrowserProvider.js",

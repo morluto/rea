@@ -97,7 +97,7 @@ describe("Ghidra MCP evidence parity", () => {
       );
       expect(analyzed).toMatchObject({
         operation: "analyze_function",
-        provider: { id: "rea-workflow", version: "1" },
+        provider: { id: "ghidra", version: "12.1.4" },
         normalized_result: {
           procedure: {
             address: "0x401000",
@@ -121,9 +121,12 @@ describe("Ghidra MCP evidence parity", () => {
             ),
           ]),
         },
-        limitations: [
-          "Derived by an REA workflow from one or more provider observations.",
-        ],
+        limitations: expect.arrayContaining([
+          expect.stringContaining("default auto-analysis complete"),
+          expect.stringContaining(
+            "original executable bytes are never written",
+          ),
+        ]),
       });
       const directAnalyzed = await new EnhancedTools(session).execute(
         "analyze_function",

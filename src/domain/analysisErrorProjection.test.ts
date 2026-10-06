@@ -199,7 +199,14 @@ describe("analysis error projection: caller contract", () => {
       "capability_unavailable",
       "target_unavailable",
     ]);
-    expect(projected[1]).toMatchObject({ category: "unsupported_provider" });
+    expect(projected[1]).toMatchObject({
+      category: "unsupported_provider",
+      details: {
+        provider_id: "fixture",
+        operation: "overview",
+        reason: "absent",
+      },
+    });
     expect(projected[2]).toMatchObject({
       details: { path: "/local/targets/app" },
     });

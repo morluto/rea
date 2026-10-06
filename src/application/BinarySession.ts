@@ -114,6 +114,16 @@ export class BinarySession
     );
   }
 
+  /** External live state cannot be replayed by a direct or composed CLI workflow. */
+  allowsSnapshotReplay(operation: AnalysisOperation): boolean {
+    const capabilities = this.#active?.route.capabilities;
+    const descriptor = capabilities?.get(operation);
+    if (descriptor !== undefined) return descriptor.cachePolicy !== "live";
+    return ![...(capabilities?.values() ?? [])].some(
+      ({ cachePolicy }) => cachePolicy === "live",
+    );
+  }
+
   /** Return the selected immutable profile, optionally scoped to an operation. */
   analysisProfile(
     operation?: AnalysisOperation,

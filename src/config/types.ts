@@ -11,8 +11,10 @@ export interface AppConfig {
     readonly timeoutMs: number;
   };
   readonly analysisProvider: AnalysisProviderSelector;
+  readonly idaMcpConfigPath?: string;
   readonly ghidraInstallDir: string | undefined;
   readonly ghidraJavaHome: string | undefined;
+  readonly ghidraNativeAotJar?: string;
   readonly ilspyCmdPath: string | undefined;
   readonly hopperLauncherPath: string;
   readonly hopperTargetPath: string | undefined;

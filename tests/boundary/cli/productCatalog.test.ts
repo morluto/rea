@@ -41,6 +41,7 @@ import {
   BINARY_NINJA_PROVIDER_TOOL_CONTRACTS,
 } from "../../../src/binaryNinja/BinaryNinjaProvider.js";
 import { NATIVE_MACOS_PROVIDER_IDENTITY } from "../../../src/native/NativeMacOSProvider.js";
+import { IDA_PROVIDER_IDENTITY } from "../../../src/ida/IdaProvider.js";
 import {
   assertDocumentationFacts,
   documentationFactIssues,
@@ -68,22 +69,24 @@ afterEach(async () => {
 });
 
 describe("canonical product catalog", () => {
-  it("admits the documented minimal browser scenario through the named contract", async () => {
+  it("admits every documented browser scenario through the named contract", async () => {
     const guide = await readFile(
       join(root, "docs/browser-scenario-contract.md"),
       "utf8",
     );
-    const example = /```json\n([\s\S]*?)\n```/u.exec(guide)?.[1];
-    if (example === undefined)
-      throw new Error("Missing browser scenario example");
+    const examples = [
+      ...guide.matchAll(/```json\r?\n([\s\S]*?)\r?\n```/gu),
+    ].map((match) => match[1] ?? "");
+    expect(examples.length).toBeGreaterThanOrEqual(2);
     const contract = TOOL_CONTRACTS.find(
       ({ name }) => name === "capture_browser_scenario",
     );
     if (contract === undefined)
       throw new Error("Missing browser scenario contract");
-    expect(contract.inputSchema.safeParse(JSON.parse(example)).success).toBe(
-      true,
-    );
+    for (const example of examples)
+      expect(contract.inputSchema.safeParse(JSON.parse(example)).success).toBe(
+        true,
+      );
   });
 
   it("matches every source-derived checked-in product fact", async () => {
@@ -104,6 +107,7 @@ describe("canonical product catalog", () => {
         UNBLOB_PROVIDER_IDENTITY,
         GHIDRA_PROVIDER_IDENTITY,
         BINARY_NINJA_PROVIDER_IDENTITY,
+        IDA_PROVIDER_IDENTITY,
         NATIVE_MACOS_PROVIDER_IDENTITY,
         ARTIFACT_GRAPH_PROVIDER,
         MANAGED_STATIC_PROVIDER,

@@ -25,6 +25,7 @@ import { mcpProgressReporter } from "./mcpProgress.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { toCallToolResult } from "./toolResult.js";
+import { executeFunctionAnalysisEvidence } from "../application/FunctionAnalysisEvidence.js";
 
 /** Optional session services used by enhanced tool registration. */
 export interface EnhancedToolRegistration {
@@ -208,6 +209,11 @@ const executeEnhancedTool = async (
   });
   const parsedInput = validatedCall.input;
   const parameters = jsonParameters(parsedInput);
+  if (name === "analyze_function")
+    return executeFunctionTool(analysis, registration, contract, {
+      context,
+      parameters,
+    });
   const services = new EnhancedTools({
     execute: (operation, operationParameters, executionOptions) =>
       analysis.execute(operation, operationParameters, {
@@ -256,6 +262,46 @@ const executeEnhancedTool = async (
     });
     if (!unknowns.ok) return toCallToolResult(unknowns, contract);
     return toCallToolResult({ ok: true, value: evidence }, contract);
+  }
+  return toCallToolResult(result, contract);
+};
+
+const executeFunctionTool = async (
+  analysis: AnalysisOperationPort,
+  registration: EnhancedToolRegistration,
+  contract: ToolContract,
+  request: {
+    readonly context: ServerContext;
+    readonly parameters: Readonly<Record<string, JsonValue>>;
+  },
+): Promise<CallToolResult> => {
+  const { context, parameters } = request;
+  const progress = mcpProgressReporter(context);
+  const result = await logToolExecution(
+    registration.logger,
+    "analyze_function",
+    () =>
+      executeFunctionAnalysisEvidence(
+        analysis,
+        parameters,
+        registration.activeTarget?.(),
+        {
+          signal: context.mcpReq.signal,
+          progress,
+        },
+      ),
+  );
+  await progress.report({
+    phase: "analyze_function",
+    completed: 1,
+    total: 1,
+    message: result.ok ? "completed" : "failed",
+    terminal: true,
+  });
+  if (result.ok) {
+    const recorded = registration.recordEvidence?.(result.value);
+    if (recorded !== undefined && !recorded.ok)
+      return toCallToolResult(recorded, contract);
   }
   return toCallToolResult(result, contract);
 };

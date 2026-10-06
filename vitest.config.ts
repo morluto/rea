@@ -37,7 +37,7 @@ const TEST_PROJECTS = [
     name: "adapters",
     include: [
       "src/*.test.ts",
-      "src/{artifacts,binaryNinja,browser,dotnet,firmware,ghidra,hopper,native,process,reference,server,windows}/**/*.test.ts",
+      "src/{artifacts,binaryNinja,browser,dotnet,firmware,ghidra,hopper,ida,native,process,reference,server,windows}/**/*.test.ts",
     ],
     pool: "forks" as const,
     maxWorkers: MAX_TEST_WORKERS,

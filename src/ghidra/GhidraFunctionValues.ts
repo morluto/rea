@@ -19,7 +19,11 @@ import {
   functionDossierSchema,
   type FunctionDossier,
 } from "../domain/hopperValues.js";
-import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
+import {
+  jsonObjectSchema,
+  jsonValueSchema,
+  type JsonValue,
+} from "../domain/jsonValue.js";
 import { nativeApiBoundarySchema } from "../domain/nativeApiBoundary.js";
 import { nativeValueFlowSchema } from "../domain/nativeValueFlow.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -386,7 +390,7 @@ export const parseGhidraFunctionResult = (
 ): Result<JsonValue, AnalysisOutputError> => {
   const parsed = resultSchemas[operation].safeParse(value);
   return parsed.success
-    ? ok(parsed.data)
+    ? ok(jsonValueSchema.parse(parsed.data))
     : err(
         new AnalysisOutputError(
           operation,

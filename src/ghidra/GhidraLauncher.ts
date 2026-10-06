@@ -19,6 +19,10 @@ import {
 } from "../process/ProviderProcess.js";
 import { ghidraJavaEnvironment } from "./GhidraInstallation.js";
 import type { GhidraTransportKind } from "./GhidraTransport.js";
+import {
+  snapshotGhidraExtensions,
+  type GhidraExtension,
+} from "./extensions/GhidraExtensions.js";
 
 /** Private paths and identity material for one headless Ghidra import. */
 export interface GhidraLaunchSession {
@@ -66,6 +70,7 @@ export interface GhidraHeadlessLauncherOptions {
   /** Select the admitted 16-bit real-mode MZ import instead of auto-detection. */
   readonly dosMz?: true;
   readonly dosCom?: true;
+  readonly analysisExtensions?: readonly GhidraExtension[];
 }
 
 /** Launch Ghidra without copying scripts into or modifying its installation. */
@@ -83,6 +88,10 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
     let started: SpawnedOwnedProviderProcess | undefined;
     try {
       await createGhidraRuntimeDirectories(paths, platform);
+      const extensions = await snapshotGhidraExtensions(
+        this.options.analysisExtensions ?? [],
+        session.runtimeRoot,
+      );
       await writeGhidraRuntimeFile(
         paths.descriptorPath,
         `${JSON.stringify({
@@ -93,6 +102,9 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           target_sha256: session.targetSha256,
           provider_version: session.providerVersion,
           profile_digest: session.profileDigest,
+          ...(extensions.length === 0
+            ? {}
+            : { analysis_extensions: extensions }),
         })}\n`,
         platform,
       );

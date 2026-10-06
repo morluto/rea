@@ -81,4 +81,18 @@ describe("safe artifact output tree", () => {
       residualPaths: [],
     });
   });
+
+  it("publishes without POSIX-only directory chmod or fsync on Windows", async () => {
+    const parent = await createTestTempDirectory("rea-safe-output-");
+    const output = join(parent, "published");
+    const tree = await SafeOutputTree.create(output, "win32");
+    const bytes = Buffer.from("windows output");
+    const digest = createHash("sha256").update(bytes).digest("hex");
+
+    await tree.write("nested/file.txt", Readable.from(bytes), digest);
+    await tree.commit();
+    expect(await readFile(join(output, "nested", "file.txt"), "utf8")).toBe(
+      "windows output",
+    );
+  });
 });

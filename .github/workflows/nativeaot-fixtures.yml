@@ -1,0 +1,44 @@
+name: Source-built NativeAOT fixtures
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "bridge/ghidra/extensions/nativeaot/**"
+      - "scripts/generate-nativeaot-fixtures.mjs"
+      - "tests/fixtures/nativeaot/**"
+      - ".github/workflows/nativeaot-fixtures.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  windows-fixture:
+    name: Build Windows x64 NativeAOT fixture
+    # .NET 8.0.22's bundled linker discovery supports VS 2019/2022.
+    runs-on: windows-2022
+    timeout-minutes: 15
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_PROCESSOR_COUNT: "1"
+      COMPlus_GCHeapHardLimit: "30000000"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.416"
+      - name: Build benign fixture and independent byte oracle
+        run: node scripts/generate-nativeaot-fixtures.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nativeaot-win-x64-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            _reference/nativeaot-integration/generated/win-x64/symbols/NativeAotFixture.exe
+            _reference/nativeaot-integration/generated/win-x64/NativeAotFixture.map
+            _reference/nativeaot-integration/generated/win-x64/symbols.txt
+            _reference/nativeaot-integration/generated/win-x64/oracle.json
+          if-no-files-found: error
+          retention-days: 7

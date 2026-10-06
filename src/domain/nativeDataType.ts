@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { nativeMetadataRecoverySchema } from "./nativeMetadataRecovery.js";
 
 /** Select a database type by exact category path or a defined typed data address. */
 export const nativeDataTypeInputSchema = z
@@ -54,4 +55,5 @@ export const nativeDataTypeSchema = z.strictObject({
   total_fields: z.number().int().nonnegative(),
   truncated: z.boolean(),
   limitations: z.array(z.string()),
+  metadata_recovery: nativeMetadataRecoverySchema.optional(),
 });

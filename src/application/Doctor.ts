@@ -36,6 +36,7 @@ export const DOCTOR_PROVIDER_IDS = [
   "hopper",
   "ghidra",
   "binary-ninja",
+  "ida",
 ] as const;
 /** One actionable environment diagnostic. */
 export interface DoctorCheck {

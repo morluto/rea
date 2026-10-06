@@ -1,7 +1,7 @@
 {
   "name": "rea-agents",
   "mcpName": "io.github.morluto/rea",
-  "version": "4.0.1",
+  "version": "4.1.0",
   "description": "Reverse engineer anything from your terminal or agent with one CLI and MCP server.",
   "license": "MIT",
   "repository": {
@@ -44,6 +44,7 @@
     "bridge/hopper_bridge.py",
     "bridge/native/ReaNativeUI.swift",
     "bridge/ghidra/ReaGhidraBridge.java",
+    "bridge/ghidra/ReaGhidraExtensions.java",
     "bridge/ghidra/ReaGhidraPrepareCom.java",
     "scripts/rea.mjs",
     "scripts/electron-active-hook.cjs",
@@ -124,6 +125,7 @@
     "verify:ghidra": "npm run build:cached && node scripts/verify-real-ghidra.mjs",
     "verify:binary-ninja": "npm run build:cached && node scripts/verify-real-binary-ninja.mjs",
     "inspect:binary-ninja": "npm run build:cached && node scripts/inspect-binary-ninja-mcp.mjs",
+    "verify:ida": "npm run build:cached && node scripts/verify-real-ida.mjs",
     "verify:ghidra:switch": "npm run build:cached && node scripts/verify-real-ghidra-switch.mjs",
     "verify:ghidra:dos": "npm run build:cached && node scripts/verify-real-ghidra-dos.mjs",
     "verify:ghidra:com": "npm run build:cached && node scripts/verify-real-ghidra-com.mjs",
@@ -170,7 +172,10 @@
     "verify:windows-native:artifact": "node scripts/verify-windows-native-artifact.mjs",
     "prepublishOnly": "npm run verify:windows-native:artifact",
     "verify:windows-native": "node scripts/verify-windows-native.mjs",
-    "verify:ghidra:windows:package": "node scripts/verify-packaged-ghidra-windows.mjs"
+    "verify:ghidra:windows:package": "node scripts/verify-packaged-ghidra-windows.mjs",
+    "build:ghidra:nativeaot": "node scripts/build-ghidra-nativeaot.mjs",
+    "build:fixtures:nativeaot": "node scripts/generate-nativeaot-fixtures.mjs",
+    "verify:ghidra:nativeaot": "npm run build:cached && node scripts/verify-real-ghidra-nativeaot.mjs"
   },
   "lint-staged": {
     "*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}": [
