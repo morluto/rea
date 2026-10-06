@@ -73,6 +73,25 @@ describe("JavaScript export return-shape comparison", () => {
     const [left, right] = await analyzeSources({
       left: `
         const dynamic = getDynamic();
+        export default () => ({ ...dynamic, type: "heading" });
+      `,
+      right: `
+        const dynamic = getDynamic();
+        export default () => ({ depth: 1, ...dynamic, type: "heading" });
+      `,
+    });
+    const result = compare(left, right);
+
+    expect(result.changes).toEqual([
+      expect.objectContaining({ status: "unknown", path: "/depth" }),
+    ]);
+    expect(result.coverage.status).toBe("partial");
+  });
+
+  it("does not pair discriminants that an unknown trailing spread can overwrite", async () => {
+    const [left, right] = await analyzeSources({
+      left: `
+        const dynamic = getDynamic();
         export default () => ({ type: "heading", ...dynamic });
       `,
       right: `
@@ -83,9 +102,29 @@ describe("JavaScript export return-shape comparison", () => {
     const result = compare(left, right);
 
     expect(result.changes).toEqual([
-      expect.objectContaining({ status: "unknown", path: "/depth" }),
+      expect.objectContaining({
+        status: "unknown",
+        path: "",
+        discriminant: null,
+      }),
+      expect.objectContaining({
+        status: "unknown",
+        path: "",
+        discriminant: null,
+      }),
     ]);
-    expect(result.coverage.status).toBe("partial");
+    expect(result.summary).toEqual({
+      added: 0,
+      removed: 0,
+      changed: 0,
+      unknown: 2,
+    });
+    expect(result.coverage).toMatchObject({
+      status: "partial",
+      paired_variants: 0,
+      unpaired_left_variants: 1,
+      unpaired_right_variants: 1,
+    });
   });
 
   it("does not pair ambiguous variants or invent behavior for no-return exports", async () => {
