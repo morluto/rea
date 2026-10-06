@@ -196,6 +196,8 @@ const parseRegistration = (
     registration.type !== "stdio"
   )
     throw new TypeError("Expected an stdio registration");
+  if (client.format === "commandcode" && registration.transport !== "stdio")
+    throw new TypeError("Expected an stdio registration");
   return registration;
 };
 
