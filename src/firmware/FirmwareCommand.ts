@@ -6,6 +6,7 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisCancelledError,
   AnalysisTimeoutError,
+  AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -17,7 +18,11 @@ import {
 } from "../process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import { FIRMWARE_LIMITS } from "./FirmwareRelease.js";
-import { hashFirmwareFile, inventoryFirmwareOutput } from "./FirmwareFiles.js";
+import {
+  hashFirmwareFile,
+  inventoryFirmwareOutput,
+  readFirmwareReport,
+} from "./FirmwareFiles.js";
 
 /** Injectable owned launcher for production protocol and lifecycle tests. */
 export type FirmwareLauncher = (
@@ -141,6 +146,15 @@ export const runFirmwareCommand = async (context: {
   if (stopped.status === "incomplete")
     throw new ProviderCleanupError(engine, [runId, context.cwd], {
       reason: stopped.reason,
+      leader_pid: spawned.ownership.leaderPid,
+      process_group_id: spawned.ownership.processGroupId,
+      exit_code: snapshot.exitCode ?? null,
+      signal: snapshot.signal ?? null,
+      stdout: snapshot.stdout.text,
+      stderr: snapshot.stderr.text,
+      stdout_bytes: snapshot.stdout.bytes,
+      stderr_bytes: snapshot.stderr.bytes,
+      previous_error: failure instanceof Error ? failure.message : null,
     });
   if (failure !== undefined) throw failure;
   if (
@@ -171,4 +185,45 @@ export const runFirmwareCommand = async (context: {
     args: [...context.args],
     resource_limiter: context.limiter,
   };
+};
+
+/** Preserve tool failure diagnostics when an accepted exit 1 has no usable report. */
+export const readFirmwareCommandReport = async (context: {
+  path: string;
+  engine: string;
+  operation: string;
+  execution: Awaited<ReturnType<typeof runFirmwareCommand>>;
+}): Promise<unknown> => {
+  try {
+    return await readFirmwareReport(context.path, context.operation);
+  } catch (cause: unknown) {
+    if (context.execution.exit_code === 1)
+      throw new ProviderAdapterError(context.engine, context.operation, {
+        cause,
+        diagnostics: {
+          reason:
+            "Tool exited 1 without a usable analysis report; inspect stderr for startup, sandbox or dependency failures",
+          report_failure:
+            cause instanceof Error ? cause.message : String(cause),
+          exit_code: 1,
+          signal: context.execution.signal,
+          stdout: context.execution.stdout.text,
+          stderr: context.execution.stderr.text,
+          stdout_bytes: context.execution.stdout.bytes,
+          stderr_bytes: context.execution.stderr.bytes,
+        },
+      });
+    const diagnostics = `stdout (${context.execution.stdout.bytes} bytes): ${context.execution.stdout.text}; stderr (${context.execution.stderr.bytes} bytes): ${context.execution.stderr.text}`;
+    if (cause instanceof AnalysisOutputError)
+      throw new AnalysisOutputError(
+        context.operation,
+        `${cause.reason}; ${diagnostics}`,
+        { cause },
+      );
+    throw new AnalysisOutputError(
+      context.operation,
+      `Tool did not produce the expected complete report: ${context.path}; ${diagnostics}`,
+      { cause },
+    );
+  }
 };

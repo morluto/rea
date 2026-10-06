@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  AnalysisOutputError,
 } from "./analysisErrorCore.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
 import { BinaryTargetError } from "./configurationErrors.js";
@@ -160,6 +161,23 @@ describe("analysis error projection: provider failures", () => {
 });
 
 describe("analysis error projection: caller contract", () => {
+  it("preserves the reported output constraint without exposing its internal cause", () => {
+    const projected = projectAnalysisError(
+      new AnalysisOutputError(
+        "extract_firmware",
+        "Report exceeded the declared byte budget",
+        { cause: new Error("private internal cause") },
+      ),
+    );
+    expect(projected).toMatchObject({
+      code: "unreadable_output",
+      details: {
+        operation: "extract_firmware",
+        reason: "Report exceeded the declared byte budget",
+      },
+    });
+    expect(JSON.stringify(projected)).not.toContain("private internal cause");
+  });
   it("maps representative failures without exposing causes", () => {
     const secretCause = new Error("secret-token");
     const projected = [

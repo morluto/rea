@@ -14,6 +14,11 @@ if (args.includes("--version")) {
   );
 } else if (mode === "stall") {
   setInterval(() => {}, 1000);
+} else if (mode === "startup") {
+  console.error("Landlock sandbox is not available on this fixture host");
+  process.exitCode = 1;
+} else if (mode === "missing-report") {
+  console.error("Producer forgot its report");
 } else {
   const input = args.at(-1);
   const bytes = await readFile(input);

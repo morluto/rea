@@ -7,6 +7,9 @@ import {
 import { firmwareResultSchemas } from "../../../src/domain/firmwareAnalysis.js";
 import { FirmwareAnalysisService } from "../../../src/application/FirmwareAnalysisService.js";
 import { FirmwareProvider } from "../../../src/firmware/FirmwareProvider.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { toCallToolResult } from "../../../src/server/toolResult.js";
 
 const it = test.skipIf(process.platform !== "linux");
 
@@ -190,6 +193,61 @@ it("preserves existing output and rejects invalid intervals before invoking extr
     error: { _tag: "AnalysisInputError" },
   });
   expect(fixture.launches).toHaveLength(previous);
+  await assertFirmwareCleanup(fixture.launches);
+});
+
+it("retains startup stderr when Unblob exits 1 without a report", async () => {
+  const fixture = await firmwareFixture("startup");
+  const result = await fixture.service.execute("extract_firmware", {
+    path: fixture.path,
+    output_directory: fixture.output,
+  });
+  if (result.ok) throw new Error("Expected startup failure");
+  const details = {
+    diagnostics: {
+      stderr: expect.stringContaining("Landlock sandbox is not available"),
+      exit_code: 1,
+    },
+  };
+  expect(projectAnalysisError(result.error)).toMatchObject({ details });
+  expect(
+    toCallToolResult(result, toolContract("extract_firmware"))
+      .structuredContent,
+  ).toMatchObject({ error: { details } });
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "ProviderAdapterError",
+      diagnostics: {
+        exit_code: 1,
+        stderr: expect.stringContaining("Landlock sandbox is not available"),
+        report_failure: expect.stringContaining("ENOENT"),
+      },
+    },
+  });
+  await expect(access(fixture.output)).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  await assertFirmwareCleanup(fixture.launches);
+});
+
+it("distinguishes a successful process with missing output from startup failure", async () => {
+  const fixture = await firmwareFixture("missing-report");
+  const result = await fixture.service.execute("extract_firmware", {
+    path: fixture.path,
+    output_directory: fixture.output,
+  });
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisOutputError",
+      reason: expect.stringContaining("expected complete report"),
+    },
+  });
+  if (result.ok) throw new Error("Expected missing-output failure");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    details: { reason: expect.stringContaining("Producer forgot its report") },
+  });
   await assertFirmwareCleanup(fixture.launches);
 });
 

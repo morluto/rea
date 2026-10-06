@@ -10,6 +10,7 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  AnalysisOutputError,
   AnalysisTimeoutError,
 } from "./analysisErrorCore.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
@@ -176,6 +177,8 @@ const errorDetails = (
 const requestErrorDetails = (
   error: AnalysisError,
 ): Readonly<Record<string, JsonValue>> | undefined => {
+  if (error instanceof AnalysisOutputError)
+    return { operation: error.operation, reason: error.reason };
   if (error instanceof AnalysisInputError && error.issues.length > 0)
     return {
       operation: error.operation,

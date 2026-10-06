@@ -31,13 +31,10 @@ import {
 import {
   resolveFirmwareCommand,
   runFirmwareCommand,
+  readFirmwareCommandReport,
   type FirmwareLauncher,
 } from "./FirmwareCommand.js";
-import {
-  inventoryFirmwareOutput,
-  snapshotFirmware,
-  readFirmwareReport,
-} from "./FirmwareFiles.js";
+import { inventoryFirmwareOutput, snapshotFirmware } from "./FirmwareFiles.js";
 import {
   normalizeBinwalkReport,
   normalizeUnblobReport,
@@ -179,7 +176,12 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
           reportPath,
           target.inputPath,
         ]);
-        const report = await readFirmwareReport(reportPath, request.operation);
+        const report = await readFirmwareCommandReport({
+          path: reportPath,
+          engine: engineName,
+          operation: request.operation,
+          execution: processRun,
+        });
         result = firmwareResultSchemas.inspect_firmware_regions.parse({
           engine,
           input_size: target.size,
@@ -223,7 +225,12 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
             entries: request.input.max_output_files,
           },
         );
-        const report = await readFirmwareReport(reportPath, request.operation);
+        const report = await readFirmwareCommandReport({
+          path: reportPath,
+          engine: engineName,
+          operation: request.operation,
+          execution: processRun,
+        });
         const normalized = normalizeUnblobReport(report, {
           inputPath: target.inputPath,
           outputRoot,
@@ -309,7 +316,11 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
             : new ProviderCleanupError(
                 engineName,
                 [...outcome.error.cleanupResources, root.path],
-                { reason: outcome.error.message },
+                outcome.error instanceof ProviderAdapterError
+                  ? (outcome.error.diagnostics ?? {
+                      reason: outcome.error.message,
+                    })
+                  : { reason: outcome.error.message },
                 { cause: outcome.error },
               );
       }
