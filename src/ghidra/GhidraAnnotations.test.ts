@@ -8,7 +8,7 @@ import {
 } from "./GhidraFunctionValues.js";
 import {
   CAPABILITIES,
-  WINDOWS_P0_CAPABILITIES,
+  windowsP0Capabilities,
 } from "./GhidraProviderCapabilities.js";
 import { HOPPER_PROVIDER_TOOL_CONTRACTS } from "../hopper/HopperProvider.js";
 
@@ -101,7 +101,7 @@ describe("Ghidra function annotations", () => {
       CAPABILITIES.find((c) => c.operation === "analyze_function"),
     ).toMatchObject({ effects: { mutatesArtifact: false } });
     expect(
-      WINDOWS_P0_CAPABILITIES.find(
+      windowsP0Capabilities().find(
         (c) => c.operation === "annotate_native_function",
       ),
     ).toMatchObject({ available: false });

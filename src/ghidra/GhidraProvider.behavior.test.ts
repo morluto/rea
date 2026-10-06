@@ -209,6 +209,19 @@ describe("Ghidra provider", () => {
 });
 
 describe("Ghidra platform support", () => {
+  it("keeps Windows annotation mutation unavailable independently of native controls", () => {
+    const ghidra = provider({ ...installationHost(), platform: "win32" });
+    expect(
+      ghidra
+        .capabilities()
+        .find(({ operation }) => operation === "annotate_native_function"),
+    ).toMatchObject({
+      available: false,
+      reason: "Windows Ghidra P0 does not admit database mutation.",
+      availabilityCode: "unsupported_host",
+    });
+  });
+
   it("keeps Windows P0 unavailable until native isolation authority exists", () => {
     const ghidra = provider({ ...installationHost(), platform: "win32" });
     const nativeApplication = peTarget("x86_64");
@@ -224,7 +237,9 @@ describe("Ghidra platform support", () => {
     expect(ghidra.inspectAvailability()).toMatchObject({
       status: "unavailable",
       code: "unsupported_host",
-      reason: expect.stringContaining("native authority is unavailable"),
+      reason: expect.stringContaining(
+        "Windows native controls are unavailable",
+      ),
       diagnostics: {
         windows_security: {
           job_object_process_ownership: expect.objectContaining({
@@ -249,8 +264,12 @@ describe("Ghidra platform support", () => {
           available: false,
           availabilityCode: "unsupported_host",
           limitations: expect.arrayContaining([
-            expect.stringContaining("bounded taskkill cleanup"),
-            expect.stringContaining("private DACL enforcement"),
+            expect.stringContaining(
+              "matching packaged Windows x64 native addon",
+            ),
+            expect.stringContaining(
+              "private DACLs, and Job Object ownership automatically",
+            ),
           ]),
         }),
       ]),
@@ -355,6 +374,7 @@ describe("Ghidra client projection", () => {
     expect(factoryOptions).toEqual([
       expect.objectContaining({
         runId: "11111111-1111-4111-8111-111111111111",
+        platform: "linux",
       }),
     ]);
     expect(toolCalls).toEqual([

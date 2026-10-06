@@ -26,6 +26,7 @@ export interface WindowsCapabilityDependencies {
   probePrivateAcl(): WindowsCapabilityOutcome;
   probeUnixDomainSocket(): WindowsCapabilityOutcome;
   probePty(): Promise<ProcessCaptureCapability>;
+  nativeCapabilities?(): WindowsNativeCapabilitySet;
 }
 
 /** Machine-readable facts for features that need Windows-specific security. */
@@ -63,7 +64,9 @@ export const probeWindowsCapabilities = async (
         ? { available: true, reason: null }
         : { available: false, reason: pty.reason },
     },
-    security: windowsNativeCapabilities(dependencies.platform),
+    security:
+      dependencies.nativeCapabilities?.() ??
+      windowsNativeCapabilities(dependencies.platform),
   };
 };
 
@@ -73,10 +76,9 @@ const systemDependencies = (): WindowsCapabilityDependencies => ({
   probeSymlinkCreation,
   probeNoFollowOpen: () =>
     systemNoFollowOpenCapability(process.platform, constants.O_NOFOLLOW),
-  probePrivateAcl: () => ({
-    available: false,
-    reason: "Windows ACL enforcement is not implemented by this REA build",
-  }),
+  probePrivateAcl: () =>
+    windowsNativeCapabilities(process.platform).private_runtime_dacl,
+  nativeCapabilities: () => windowsNativeCapabilities(process.platform),
   probeUnixDomainSocket: () =>
     process.platform === "win32"
       ? {
@@ -95,7 +97,8 @@ export const systemNoFollowOpenCapability = (
   if (platform === "win32")
     return {
       available: false,
-      reason: "Windows reparse-safe handle admission is not implemented",
+      reason:
+        "Node pathname O_NOFOLLOW is not Windows handle authority; native admission is reported separately in security.",
     };
   return typeof noFollow === "number"
     ? { available: true, reason: null }

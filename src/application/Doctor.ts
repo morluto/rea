@@ -63,7 +63,8 @@ export interface DoctorProviderInspection {
   readonly configured: boolean;
   readonly available: boolean;
   readonly providerVersion: string | null;
-  /** Exact non-secret variables safe to persist in an approved registration. */
+  /** Adapter-validated non-secret settings, independent of runtime readiness.
+   * Invalid installations publish no settings. */
   readonly registrationEnvironment: Readonly<Record<string, string>>;
   readonly checks: readonly DoctorProviderCheck[];
 }

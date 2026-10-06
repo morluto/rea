@@ -103,8 +103,15 @@ that a host or target is covered when it was skipped.
 | `npm run verify:ghidra:switch`             | Linux x64 ELF; GCC/Clang optimized and stripped switch fixtures                    | GCC, Clang, GNU nm/objdump/strip, Ghidra 12.1.4, and full JDK 21    |
 | `npm run verify:ghidra:aarch64-jump-table` | Any supported Ghidra host; AArch64 ELF; byte/halfword tables; host ARM64 Mach-O    | Clang with AArch64 target support, Ghidra 12.1.4, and full JDK 21   |
 | `npm run verify:ghidra:cross-format`       | Any supported Ghidra host; also analyzes AArch64 ELF, x86-64 PE, and x86-64 Mach-O | `clang`, LLD, and `lld-link` in addition to host-lane prerequisites |
-| `npm run verify:ghidra:windows`            | Controlled Windows x64 with native x86-64 PE                                       | Ghidra 12.1.4, full JDK 21, and the Windows P0 fixture toolchain    |
+| `npm run verify:ghidra:windows`            | Controlled Windows x64 with native x86-64 PE                                       | Ghidra 12.1.4, full JDK 21, and the matching native artifact        |
 
+Windows native conformance runs with `npm run verify:windows-native` and does
+not require Ghidra or Java. An optional independently compiled Windows fixture
+adds in-place reparse, breakaway, environment, and token observations.
+`npm run verify:ghidra:windows:package` additionally packs and installs REA into
+an isolated prefix and runs ordinary-user CLI/MCP operations against their
+canonical schemas. Run the controlled fixture generator before that lane, or
+supply an installed package root and an explicit fixture as arguments.
 The host-native Ghidra lane also verifies native value tracing through the
 production CLI and a separate stdio MCP process. It compares complete dependency
 graphs, validates Evidence and upstream/workflow profiles, checks capability

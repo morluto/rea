@@ -83,7 +83,7 @@ export const parseBinaryTarget = async (
       )
         return ok({
           path,
-          sourcePath: canonical,
+          sourcePath: process.platform === "win32" ? candidate : canonical,
           sha256: await sha256Handle(handle),
           kind: "database",
           format: "analysis-database",
@@ -92,7 +92,7 @@ export const parseBinaryTarget = async (
       if (artifactFormat !== undefined) {
         const identity = {
           path,
-          sourcePath: canonical,
+          sourcePath: process.platform === "win32" ? candidate : canonical,
           sha256: await sha256Handle(handle),
         };
         return isArchiveFormat(artifactFormat)
@@ -103,7 +103,7 @@ export const parseBinaryTarget = async (
       if (!detected.ok) return err(new BinaryTargetError(path, detected.error));
       return ok({
         path,
-        sourcePath: canonical,
+        sourcePath: process.platform === "win32" ? candidate : canonical,
         sha256: await sha256Handle(handle),
         kind: "executable",
         ...detected.value,

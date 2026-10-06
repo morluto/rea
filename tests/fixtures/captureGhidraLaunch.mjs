@@ -15,6 +15,8 @@ await writeFile(
     environment: {
       HOME: process.env.HOME,
       USERPROFILE: process.env.USERPROFILE,
+      APPDATA: process.env.APPDATA,
+      LOCALAPPDATA: process.env.LOCALAPPDATA,
       TMPDIR: process.env.TMPDIR,
       TEMP: process.env.TEMP,
       TMP: process.env.TMP,

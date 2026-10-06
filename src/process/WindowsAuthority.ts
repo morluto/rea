@@ -1,8 +1,6 @@
-/**
- * Provider-neutral security controls that require a verified Windows native
- * authority. Runtime probes and POSIX permissions do not satisfy these
- * controls.
- */
+import { systemWindowsNativeAuthority } from "../windows/WindowsNativeLoader.js";
+
+/** Windows controls are proven by the packaged native boundary, not POSIX flags. */
 export type WindowsNativeCapability =
   | {
       readonly available: true;
@@ -24,7 +22,7 @@ export interface WindowsNativeCapabilitySet {
 
 /** Stable explanation used whenever the native Windows authority is absent. */
 export const WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON =
-  "Verified Windows native authority is unavailable: Job Object process ownership, private runtime DACL enforcement, and reparse-safe path admission are not implemented; chmod(0700) is insufficient for Windows private DACL proof, and taskkill is not a Job Object security proof";
+  "Windows native controls are unavailable in this runtime; use the Windows x64 REA package with its matching bundled native artifact.";
 
 /**
  * Describe native Windows controls without inferring them from taskkill,
@@ -46,6 +44,22 @@ export const windowsNativeCapabilities = (
     };
   }
 
+  if (process.platform === "win32") {
+    const loaded = systemWindowsNativeAuthority();
+    const capability = loaded.available
+      ? ({ available: true, reason: null, proof: "native-authority" } as const)
+      : ({
+          available: false,
+          reason: loaded.reason,
+          proof: "not-proven",
+        } as const);
+    return {
+      job_object_process_ownership: capability,
+      private_runtime_dacl: capability,
+      reparse_safe_path_admission: capability,
+    };
+  }
+
   const notProven = {
     available: false,
     reason: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
@@ -63,3 +77,10 @@ export const hasWindowsNativeAuthority = (platform: NodeJS.Platform): boolean =>
   Object.values(windowsNativeCapabilities(platform)).every(
     ({ available }) => available,
   );
+
+/** Preserve the actual loader or operating-system constraint in provider errors. */
+export const windowsNativeAuthorityUnavailableReason = (
+  platform: NodeJS.Platform,
+): string =>
+  windowsNativeCapabilities(platform).job_object_process_ownership.reason ??
+  WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON;

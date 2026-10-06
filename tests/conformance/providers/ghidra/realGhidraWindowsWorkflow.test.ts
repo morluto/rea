@@ -35,7 +35,7 @@ describe("real Windows Ghidra workflow trust boundary", () => {
             expect.objectContaining({
               uses: "actions/upload-artifact@v4",
               with: expect.objectContaining({
-                path: "windows-ghidra-proof.log",
+                path: expect.stringContaining("windows-ghidra-proof.log"),
               }),
             }),
           ]),

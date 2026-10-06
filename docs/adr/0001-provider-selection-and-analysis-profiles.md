@@ -569,5 +569,7 @@ The first six implementation stages are shipped:
 
 Future stages may deepen format and indirect-flow coverage, but must continue
 to compare normalized semantics rather than provider-specific pseudocode or
-assembly text. Ghidra continues to omit GUI and mutation operations, so
-unsupported requests cannot route to an unverified implementation.
+assembly text. Linux and macOS now admit atomic function-name and entry-comment
+edits in the ephemeral database, with readback, rollback, and cache invalidation.
+Executable bytes remain unchanged. Windows P0 retains its read-only boundary;
+GUI and other unimplemented mutations remain unavailable.

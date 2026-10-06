@@ -12,6 +12,23 @@ const dependencies = (
 ): WindowsCapabilityDependencies => ({
   platform: "win32",
   architecture: "x64",
+  nativeCapabilities: () => ({
+    job_object_process_ownership: {
+      available: false,
+      reason: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+      proof: "not-proven",
+    },
+    private_runtime_dacl: {
+      available: false,
+      reason: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+      proof: "not-proven",
+    },
+    reparse_safe_path_admission: {
+      available: false,
+      reason: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+      proof: "not-proven",
+    },
+  }),
   probeSymlinkCreation: () =>
     Promise.resolve({ available: false, reason: "EPERM" }),
   probeNoFollowOpen: () => ({
@@ -39,7 +56,8 @@ describe("Windows host capability report", () => {
   it("never treats a numeric POSIX flag as Windows reparse authority", () => {
     expect(systemNoFollowOpenCapability("win32", 0x20_000)).toEqual({
       available: false,
-      reason: "Windows reparse-safe handle admission is not implemented",
+      reason:
+        "Node pathname O_NOFOLLOW is not Windows handle authority; native admission is reported separately in security.",
     });
     expect(systemNoFollowOpenCapability("linux", 0x20_000)).toEqual({
       available: true,

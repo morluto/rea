@@ -4,12 +4,19 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import {
+  createGhidraTestRuntime,
+  publishGhidraTestEndpoint,
+} from "../../../fixtures/ghidraRuntime.js";
+import type { PrivateRuntimeRoot } from "../../../../src/process/PrivateRuntimeRoot.js";
 
 import { observeGhidraEndpoint } from "../../../../src/ghidra/GhidraTransport.js";
 
 const roots: string[] = [];
+const runtimes: PrivateRuntimeRoot[] = [];
 
 afterEach(async () => {
+  await Promise.all(runtimes.splice(0).map((runtime) => runtime.close()));
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
@@ -33,9 +40,10 @@ describe("Ghidra local transport", () => {
   it("accepts only an exact IPv4 loopback endpoint record", async () => {
     const root = await createTestTempDirectory("rea-ghidra-transport-");
     roots.push(root);
-    const path = join(root, "bridge-endpoint.json");
-    await writeFile(
-      path,
+    const runtime = await createGhidraTestRuntime(root);
+    runtimes.push(runtime);
+    const path = await publishGhidraTestEndpoint(
+      runtime,
       `${JSON.stringify({ host: "127.0.0.1", port: 49152 })}\n`,
     );
 
@@ -59,8 +67,12 @@ describe("Ghidra local transport", () => {
     async (value) => {
       const root = await createTestTempDirectory("rea-ghidra-transport-");
       roots.push(root);
-      const path = join(root, "bridge-endpoint.json");
-      await writeFile(path, JSON.stringify(value));
+      const runtime = await createGhidraTestRuntime(root);
+      runtimes.push(runtime);
+      const path = await publishGhidraTestEndpoint(
+        runtime,
+        JSON.stringify(value),
+      );
 
       await expect(
         observeGhidraEndpoint({

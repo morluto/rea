@@ -49,6 +49,8 @@ try {
   const packagedPaths = new Set(packageResult.files.map(({ path }) => path));
   for (const required of [
     "bridge/ghidra/ReaGhidraBridge.java",
+    "native/windows/build/manifest.json",
+    "native/windows/build/rea-windows-x64.node",
     "dist/main.js",
     "dist/cli.js",
     "scripts/rea.mjs",

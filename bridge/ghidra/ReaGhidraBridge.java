@@ -161,7 +161,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         Path descriptorPath = Path.of(arguments[0]);
         SessionDescriptor descriptor = readDescriptor(descriptorPath);
-        Files.deleteIfExists(descriptorPath);
+        // Windows retains a native immutable bearer descriptor lease until
+        // runtime_close; POSIX removes it after this read. Normal cleanup removes
+        // the Windows file, while abrupt owner death can leave private residue.
+        // Its protected runtime DACL also protects the bearer token while the
+        // bridge is running. POSIX keeps its existing consume-and-delete flow.
+        if (!isWindowsHost()) {
+            Files.deleteIfExists(descriptorPath);
+        }
         if (currentProgram == null) {
             throw new IllegalStateException("REA bridge requires an imported program");
         }
@@ -236,18 +243,23 @@ public final class ReaGhidraBridge extends HeadlessScript {
             JsonObject endpoint = new JsonObject();
             endpoint.addProperty("host", "127.0.0.1");
             endpoint.addProperty("port", address.getPort());
+            // The Windows native reader refuses a file while a writer still
+            // owns it. Closing CREATE_NEW publishes the complete record without
+            // requesting rename rights on the retained private directory guard.
             Files.writeString(
-                pendingPath,
+                isWindowsHost() ? endpointPath : pendingPath,
                 GSON.toJson(endpoint) + "\n",
                 StandardCharsets.UTF_8,
                 StandardOpenOption.CREATE_NEW,
                 StandardOpenOption.WRITE
             );
-            try {
-                Files.move(pendingPath, endpointPath, StandardCopyOption.ATOMIC_MOVE);
-            }
-            catch (AtomicMoveNotSupportedException exception) {
-                Files.move(pendingPath, endpointPath);
+            if (!isWindowsHost()) {
+                try {
+                    Files.move(pendingPath, endpointPath, StandardCopyOption.ATOMIC_MOVE);
+                }
+                catch (AtomicMoveNotSupportedException exception) {
+                    Files.move(pendingPath, endpointPath);
+                }
             }
             acceptClient(server, descriptor);
         }
@@ -255,6 +267,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
             Files.deleteIfExists(pendingPath);
             Files.deleteIfExists(endpointPath);
         }
+    }
+
+    private static boolean isWindowsHost() {
+        return System.getProperty("os.name", "").startsWith("Windows");
     }
 
     private void acceptClient(

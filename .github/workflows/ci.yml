@@ -215,9 +215,30 @@ jobs:
       - name: Verify fixtures from a clean checkout
         run: npm run verify:fixtures
 
+  windows-native-build:
+    name: Build bundled Windows x64 native controls
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.package == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: Prepare cross compiler
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y g++-mingw-w64-x86-64
+      - run: npm run build:windows-native
+      - run: npm run verify:windows-native:artifact
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-native-controls
+          path: native/windows/build/
+          if-no-files-found: error
+
   package-e2e:
     name: Package/install integration (${{ matrix.os }})
-    needs: changes
+    needs: [changes, windows-native-build]
     if: github.event_name == 'push' || needs.changes.outputs.package == 'true'
     strategy:
       fail-fast: false
@@ -231,6 +252,11 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-native-controls
+          path: native/windows/build/
+      - run: npm run verify:windows-native:artifact
       - run: npm run verify:package
 
   apple-artifacts:
@@ -302,7 +328,7 @@ jobs:
 
   windows-curated:
     name: Windows capability and package lane
-    needs: changes
+    needs: [changes, windows-native-build]
     if: github.event_name == 'push' || needs.changes.outputs.package == 'true'
     runs-on: windows-latest
     timeout-minutes: 25
@@ -315,6 +341,11 @@ jobs:
       - run: npm ci
       - run: npm run build:cached
       - run: npm run typecheck
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-native-controls
+          path: native/windows/build/
+      - run: npm run verify:windows-native:artifact
       - name: Record named Windows host capabilities
         run: node scripts/windows-capabilities.mjs | Out-File -Encoding utf8NoBOM windows-capabilities.json
       - name: Validate Windows host capability report
@@ -327,18 +358,14 @@ jobs:
       # ignores unmatched paths, so a stale entry would otherwise report green
       # while skipping coverage.
       #
-      # Every path here must pass on windows-latest WITHOUT verified Windows
-      # native authority. src/ghidra/GhidraProvider.test.ts,
-      # src/ghidra/GhidraProvider.behavior.test.ts successors, and
-      # tests/boundary/process/providerProcess.test.ts are deliberately absent:
-      # they require Job Object process ownership and private-runtime DACL
-      # enforcement, which this runner does not provide by design. Those claims
-      # belong behind the same approval boundary as the real Ghidra Windows
-      # workflow, not in the default lane.
+      # The matching native artifact establishes real Job Object and private
+      # runtime boundaries for these fixtures. Ghidra and Java are not needed;
+      # real engine claims remain in the separate controlled-provider workflow.
       - name: Run curated Windows capability tests
         run: >-
           npx vitest run --coverage.enabled=false
           tests/boundary/filesystem/binaryTarget.test.ts
+          tests/boundary/filesystem/setupUnavailableProvider.test.ts
           tests/boundary/filesystem/asarInventoryFreshness.test.ts
           tests/composition/javascript-applications/javascriptArtifactReconstruction.test.ts
           tests/conformance/providers/ghidra/windowsCapabilities.test.ts
@@ -347,6 +374,9 @@ jobs:
           tests/boundary/providers/ghidra/ghidraTransport.test.ts
           tests/boundary/providers/ghidra/ghidraTargetSnapshot.test.ts
           tests/boundary/providers/ghidra/ghidraLauncher.test.ts
+          src/windows/WindowsNativeLoader.test.ts
+          src/windows/WindowsOwnedProcess.test.ts
+          src/ghidra/GhidraLauncherEnvironment.test.ts
           src/process/ProcessOwnership.test.ts
           src/process/ProcessOwnership.part2.test.ts
           src/process/ProcessOwnership.part3.test.ts
@@ -354,6 +384,7 @@ jobs:
           src/application/Update.test.ts
           tests/process-global/updateMaintenance.test.ts
           tests/conformance/providers/ghidra/realGhidraWindowsWorkflow.test.ts
+      - run: npm run verify:windows-native
       - run: npm run verify:package:windows
       - uses: actions/upload-artifact@v4
         if: always()

@@ -58,7 +58,7 @@ import { resolveGhidraAnalysisProfile } from "./GhidraAnalysisProfile.js";
 import type { GhidraSessionError } from "./GhidraSessionError.js";
 import {
   CAPABILITIES,
-  WINDOWS_P0_CAPABILITIES,
+  windowsP0Capabilities,
   GHIDRA_PROVIDER_IDENTITY,
   GHIDRA_PROVIDER_TOOL_CONTRACTS,
   healthLimitations,
@@ -66,7 +66,7 @@ import {
   limitationsFor,
 } from "./GhidraProviderCapabilities.js";
 import {
-  WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+  windowsNativeAuthorityUnavailableReason,
   hasWindowsNativeAuthority,
   windowsNativeCapabilities,
 } from "../process/WindowsAuthority.js";
@@ -99,7 +99,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
 
   capabilities(): readonly CapabilityDescriptor[] {
     return (this.installationHost?.platform ?? process.platform) === "win32"
-      ? WINDOWS_P0_CAPABILITIES
+      ? windowsP0Capabilities()
       : CAPABILITIES;
   }
 
@@ -114,7 +114,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       return {
         status: "unavailable",
         code: "unsupported_host",
-        reason: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+        reason: windowsNativeAuthorityUnavailableReason(installation.platform),
         diagnostics: {
           ...diagnostics,
           windows_security: jsonObjectSchema.parse(
@@ -213,6 +213,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
             ]
           : [];
     const client = this.clientFactory({
+      platform: installation.platform,
       launcher: new GhidraHeadlessLauncher({
         analyzeHeadlessPath: prerequisites.value.analyzeHeadlessPath,
         ...(this.config.ghidraJavaHome === undefined
@@ -225,7 +226,10 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         ...(target.format === "dos-com" ? { dosCom: true } : {}),
         platform: installation.platform,
       }),
-      targetPath: target.path,
+      targetPath:
+        installation.platform === "win32"
+          ? (target.sourcePath ?? target.path)
+          : target.path,
       targetSha256: target.sha256,
       transport:
         installation.platform === "win32"
@@ -450,7 +454,7 @@ const ghidraClientPrerequisites = (
       new AnalysisCapabilityUnavailableError(
         "ghidra",
         "health",
-        WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+        windowsNativeAuthorityUnavailableReason(installation.platform),
       ),
     );
   if (profile === undefined || profile.provider.id !== "ghidra")

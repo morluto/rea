@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { access } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -22,16 +22,26 @@ import {
 } from "../dist/ghidra/GhidraInstallation.js";
 import { GhidraHeadlessLauncher } from "../dist/ghidra/GhidraLauncher.js";
 import { GHIDRA_PROVIDER_IDENTITY } from "../dist/ghidra/GhidraProvider.js";
-import { GHIDRA_SESSION_CAPABILITIES as SESSION_CAPABILITIES } from "../dist/ghidra/GhidraSessionValues.js";
+import { windowsP0Capabilities } from "../dist/ghidra/GhidraProviderCapabilities.js";
+import { GHIDRA_SESSION_CAPABILITIES } from "../dist/ghidra/GhidraSessionValues.js";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 
 const verifierRun = createVerifierRun();
+const SESSION_CAPABILITIES = GHIDRA_SESSION_CAPABILITIES.filter(
+  (name) => name !== "annotate_native_function",
+);
 
 if (process.platform !== "win32" || process.arch !== "x64")
   throw new Error(
     "The real Windows Ghidra verifier requires a Windows x64 host",
   );
+if (
+  windowsP0Capabilities().some(
+    ({ available, effects }) => available && effects.mutatesArtifact,
+  )
+)
+  throw new Error("Windows Ghidra must not advertise database mutation");
 const installDir = process.env.GHIDRA_INSTALL_DIR;
 if (installDir === undefined || !isAbsolute(installDir))
   throw new Error(
@@ -74,6 +84,7 @@ if (!profile.ok || profile.value.profile === null)
   throw new Error("Windows Ghidra profile could not be committed");
 
 const client = new GhidraClient({
+  platform: installation.platform,
   launcher: new GhidraHeadlessLauncher({
     analyzeHeadlessPath: installation.analyzeHeadlessPath,
     ...(process.env.JAVA_HOME === undefined
@@ -113,18 +124,40 @@ try {
   if (
     !Array.isArray(documents) ||
     documents.length !== 1 ||
-    !pageHasItems(procedures) ||
+    !Array.isArray(procedures) ||
+    procedures.length === 0 ||
     !Array.isArray(segments) ||
     segments.length === 0 ||
-    !isPage(names) ||
-    !isPage(strings)
+    !Array.isArray(names) ||
+    !Array.isArray(strings)
   )
     throw new Error("Windows Ghidra inventory proof was incomplete");
-  const procedure = procedures.items.find(
+  const procedure = procedures.find(
     (item) => item.procedure?.external === false,
   );
   if (procedure === undefined)
     throw new Error("Windows Ghidra fixture exposed no local procedure");
+
+  await inventory("inspect_native_load_image", {});
+  const memory = await inventory("read_bytes", {
+    address: procedure.address,
+    length: 16,
+  });
+  const mapping = await inventory("address_to_file_offset", {
+    address: procedure.address,
+  });
+  const sourceBytes = await readFile(targetPath);
+  if (
+    memory.complete !== true ||
+    memory.returned_bytes !== 16 ||
+    memory.bytes_hex !==
+      sourceBytes
+        .subarray(mapping.file_offset, mapping.file_offset + 16)
+        .toString("hex")
+  )
+    throw new Error(
+      "Windows loaded bytes disagree with the observed source-file mapping",
+    );
 
   await inventory("address_name", { address: procedure.address });
   const resolvedAddress = await inventory("procedure_address", {
@@ -149,13 +182,22 @@ try {
   ])
     await functionOperation(operation, { procedure: procedure.value });
   await functionOperation("xrefs", { address: procedure.address });
+  await functionOperation("inspect_native_data_type", { type: "/undefined8" });
+  await functionOperation("inspect_native_instruction", {
+    address: procedure.address,
+  });
+  await functionOperation("resolve_native_call_targets", {
+    address: procedure.address,
+  });
   await functionOperation("analyze_function", {
     procedure: procedure.value,
   });
 
   const expected = [
     ...GHIDRA_INVENTORY_OPERATIONS,
-    ...GHIDRA_FUNCTION_OPERATIONS,
+    ...GHIDRA_FUNCTION_OPERATIONS.filter(
+      (name) => name !== "annotate_native_function",
+    ),
   ];
   if (
     observed.size !== expected.length ||
@@ -178,11 +220,16 @@ try {
     transport: "authenticated-loopback-tcp",
     operations: [...observed].sort((left, right) => left.localeCompare(right)),
     cleanup: "complete",
+    native_controls: {
+      job_object: true,
+      protected_dacl: true,
+      handle_admission: true,
+    },
     limitations: [
       "approved-non-sensitive-fixtures-only",
-      "no-job-object-ownership",
-      "no-private-dacl-proof",
-      "no-reparse-point-authority",
+      "windows-x64-local-ntfs-only",
+      "native-x86-64-pe-applications-only",
+      "no-gui-or-mutation-authority",
     ],
   };
 } finally {
@@ -226,7 +273,9 @@ function assertSession(session, targetSha256, profileDigest) {
     session.read_only !== true ||
     session.analysis_complete !== true ||
     session.analysis_timed_out !== false ||
-    session.capabilities.join(",") !== SESSION_CAPABILITIES.join(",")
+    session.capabilities.length !== SESSION_CAPABILITIES.length ||
+    new Set(session.capabilities).size !== SESSION_CAPABILITIES.length ||
+    SESSION_CAPABILITIES.some((name) => !session.capabilities.includes(name))
   )
     throw new Error(
       `Windows Ghidra session commitment drifted: ${JSON.stringify(session)}`,
@@ -240,7 +289,9 @@ function assertRuntimeCoordinates(runtime, targetSha256) {
     typeof runtime.runtime_root !== "string" ||
     typeof runtime.endpoint_path !== "string" ||
     typeof runtime.project_root !== "string" ||
-    typeof runtime.process_id !== "number"
+    typeof runtime.process_id !== "number" ||
+    typeof runtime.target_admission !== "object" ||
+    runtime.target_admission === null
   )
     throw new Error(
       `Windows Ghidra runtime coordinates are incomplete: ${JSON.stringify(runtime)}`,
@@ -261,14 +312,6 @@ async function assertCleanup(runtime) {
       `Windows Ghidra cleanup left process ${String(runtime.process_id)}`,
     );
 }
-
-const isPage = (value) =>
-  typeof value === "object" &&
-  value !== null &&
-  !Array.isArray(value) &&
-  Array.isArray(value.items);
-
-const pageHasItems = (value) => isPage(value) && value.items.length > 0;
 
 async function exists(path) {
   try {

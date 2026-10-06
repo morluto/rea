@@ -14,6 +14,7 @@ import {
   spawnOwnedProviderProcess,
   type ProviderProcessDiagnostic,
 } from "../../../src/process/ProviderProcess.js";
+import { WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON } from "../../../src/process/WindowsAuthority.js";
 import {
   spawnProviderProcessFixture,
   stopProviderProcessFixture,
@@ -69,7 +70,7 @@ describe("provider process runtime and wait primitives", () => {
       PrivateRuntimeRoot.create({ platform: "win32" }),
     ).rejects.toMatchObject({
       code: "private-runtime-root-authority-unavailable",
-      message: expect.stringContaining("chmod(0700)"),
+      message: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
     });
   });
 

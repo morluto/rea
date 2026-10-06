@@ -487,7 +487,7 @@ const systemGhidraInstallationHost = (): GhidraInstallationHost => ({
   probeJava(command, environment) {
     const observed = spawnSync(
       command,
-      ["-XshowSettings:properties", "-version"],
+      ["-XX:-UsePerfData", "-XshowSettings:properties", "-version"],
       {
         encoding: "utf8",
         env: environment,

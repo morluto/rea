@@ -3,6 +3,8 @@ import { basename, dirname, join, win32 } from "node:path";
 
 import writeFileAtomic from "write-file-atomic";
 
+import { windowsPrivateRuntime } from "../windows/WindowsPrivateRuntime.js";
+
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -80,17 +82,8 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
     const platform = this.options.platform ?? process.platform;
     let started: SpawnedOwnedProviderProcess | undefined;
     try {
-      await Promise.all(
-        [
-          paths.projectRoot,
-          paths.homeRoot,
-          paths.tempRoot,
-          paths.cacheRoot,
-          paths.configRoot,
-          paths.dataRoot,
-        ].map((path) => mkdir(path, { recursive: true, mode: 0o700 })),
-      );
-      await writeFileAtomic(
+      await createGhidraRuntimeDirectories(paths, platform);
+      await writeGhidraRuntimeFile(
         paths.descriptorPath,
         `${JSON.stringify({
           transport: session.transport,
@@ -101,7 +94,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           provider_version: session.providerVersion,
           profile_digest: session.profileDigest,
         })}\n`,
-        { encoding: "utf8", mode: 0o600 },
+        platform,
       );
       if (isAborted(options.signal))
         return err(new AnalysisCancelledError("open_binary"));
@@ -138,7 +131,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         platform,
         env: ghidraLaunchEnvironment(paths, this.options.javaHome, platform),
       });
-      await writeFileAtomic(
+      await writeGhidraRuntimeFile(
         paths.ownershipPath,
         `${JSON.stringify({
           run_id: session.runId,
@@ -146,13 +139,11 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           process_group_id: started.ownership.processGroupId,
           parent_pid: process.pid,
           ownership_kind:
-            platform === "win32"
-              ? "windows-process-tree-p0"
-              : "posix-process-group",
+            platform === "win32" ? "windows-job-object" : "posix-process-group",
           launcher: this.options.analyzeHeadlessPath,
           created_at: new Date().toISOString(),
         })}\n`,
-        { encoding: "utf8", mode: 0o600 },
+        platform,
       );
       if (isAborted(options.signal)) {
         await cleanupStartedProcess(started, platform);
@@ -258,9 +249,11 @@ const cleanupStartedProcess = (
   started: SpawnedOwnedProviderProcess,
   platform: NodeJS.Platform,
 ): Promise<ProcessCleanupResult> =>
-  platform === "win32"
-    ? cleanupWindowsProcessTree(started.ownership.leaderPid)
-    : cleanupOwnedProcessGroup(started.ownership);
+  started.cleanup !== undefined
+    ? started.cleanup()
+    : platform === "win32"
+      ? cleanupWindowsProcessTree(started.ownership.leaderPid)
+      : cleanupOwnedProcessGroup(started.ownership);
 
 /** Paths encoded into one bounded analyzeHeadless invocation. */
 export interface GhidraHeadlessArgumentOptions {
@@ -332,22 +325,62 @@ const ghidraRuntimePaths = (runtimeRoot: string) => ({
   scriptLogPath: join(runtimeRoot, "script.log"),
 });
 
+const createGhidraRuntimeDirectories = async (
+  paths: ReturnType<typeof ghidraRuntimePaths>,
+  platform: NodeJS.Platform,
+): Promise<void> => {
+  if (platform === "win32") {
+    const runtime = windowsPrivateRuntime(dirname(paths.projectRoot));
+    for (const path of [
+      paths.projectRoot,
+      paths.homeRoot,
+      paths.tempRoot,
+      paths.cacheRoot,
+      paths.configRoot,
+      paths.dataRoot,
+    ])
+      runtime.mkdir(basename(path));
+    return;
+  }
+  await Promise.all(
+    [
+      paths.projectRoot,
+      paths.homeRoot,
+      paths.tempRoot,
+      paths.cacheRoot,
+      paths.configRoot,
+      paths.dataRoot,
+    ].map((path) => mkdir(path, { recursive: true, mode: 0o700 })),
+  );
+};
+
+const writeGhidraRuntimeFile = async (
+  path: string,
+  content: string,
+  platform: NodeJS.Platform,
+): Promise<void> => {
+  if (platform === "win32") {
+    windowsPrivateRuntime(dirname(path)).writeFile(basename(path), content);
+    return;
+  }
+  await writeFileAtomic(path, content, { encoding: "utf8", mode: 0o600 });
+};
+
 const ghidraLaunchEnvironment = (
   paths: ReturnType<typeof ghidraRuntimePaths>,
   javaHome: string | undefined,
   platform: NodeJS.Platform,
 ): NodeJS.ProcessEnv => {
-  // analyzeHeadless.bat wraps GHIDRA_HEADLESS_JAVA_OPTIONS in its own quotes
-  // when it builds VMARG_LIST. Nested quotes break cmd.exe tokenization before
-  // Ghidra starts, so keep this option list unquoted on every platform.
-  const javaOptions = `-Duser.home=${paths.homeRoot} -Djava.io.tmpdir=${paths.tempRoot}`;
   return {
     ...ghidraJavaEnvironment(javaHome, process.env, platform),
+    ...ghidraHeadlessJavaOptions(paths.homeRoot, paths.tempRoot, platform),
     HOME: paths.homeRoot,
     TMPDIR: paths.tempRoot,
     ...(platform === "win32"
       ? {
           USERPROFILE: paths.homeRoot,
+          APPDATA: paths.configRoot,
+          LOCALAPPDATA: paths.cacheRoot,
           TEMP: paths.tempRoot,
           TMP: paths.tempRoot,
         }
@@ -355,8 +388,33 @@ const ghidraLaunchEnvironment = (
     XDG_CACHE_HOME: paths.cacheRoot,
     XDG_CONFIG_HOME: paths.configRoot,
     XDG_DATA_HOME: paths.dataRoot,
-    GHIDRA_HEADLESS_JAVA_OPTIONS: javaOptions,
   };
+};
+
+/** Encode provider-owned JVM paths for the parser that actually consumes them. */
+export const ghidraHeadlessJavaOptions = (
+  homeRoot: string,
+  tempRoot: string,
+  platform: NodeJS.Platform,
+): Pick<
+  NodeJS.ProcessEnv,
+  "JDK_JAVA_OPTIONS" | "GHIDRA_HEADLESS_JAVA_OPTIONS"
+> => {
+  const options = [`-Duser.home=${homeRoot}`, `-Djava.io.tmpdir=${tempRoot}`];
+  // analyzeHeadless.bat quotes VMARG_LIST, then launch.bat expands it again.
+  // Inner quotes fail in cmd.exe; unquoted paths with spaces split at the JVM.
+  // JDK_JAVA_OPTIONS is parsed by Java itself, outside that batch expansion.
+  return platform === "win32"
+    ? {
+        JDK_JAVA_OPTIONS: [...options, "-XX:-UsePerfData"]
+          .map(quoteWindowsBatchToken)
+          .join(" "),
+        GHIDRA_HEADLESS_JAVA_OPTIONS: "",
+      }
+    : {
+        JDK_JAVA_OPTIONS: "",
+        GHIDRA_HEADLESS_JAVA_OPTIONS: options.join(" "),
+      };
 };
 
 const isAborted = (signal?: AbortSignal): boolean => signal?.aborted === true;

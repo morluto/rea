@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import { createGhidraTestRuntime } from "../../../fixtures/ghidraRuntime.js";
+import type { PrivateRuntimeRoot } from "../../../../src/process/PrivateRuntimeRoot.js";
 
 import {
   ghidraHeadlessArguments,
@@ -21,6 +23,7 @@ const fixturePath = fileURLToPath(
   ),
 );
 const roots: string[] = [];
+const runtimes: PrivateRuntimeRoot[] = [];
 
 const expectIsolatedEnvironment = (
   environment: Record<string, string>,
@@ -32,6 +35,8 @@ const expectIsolatedEnvironment = (
     ...(process.platform === "win32"
       ? {
           USERPROFILE: join(runtimeRoot, "home"),
+          APPDATA: join(runtimeRoot, "config"),
+          LOCALAPPDATA: join(runtimeRoot, "cache"),
           TEMP: join(runtimeRoot, "tmp"),
           TMP: join(runtimeRoot, "tmp"),
         }
@@ -42,7 +47,10 @@ const expectIsolatedEnvironment = (
     XDG_DATA_HOME: join(runtimeRoot, "data"),
     GHIDRA_JAVA_OPTIONS: "",
     JAVA_TOOL_OPTIONS: "",
-    JDK_JAVA_OPTIONS: "",
+    JDK_JAVA_OPTIONS:
+      process.platform === "win32"
+        ? `"-Duser.home=${join(runtimeRoot, "home")}" "-Djava.io.tmpdir=${join(runtimeRoot, "tmp")}" "-XX:-UsePerfData"`
+        : "",
     _JAVA_OPTIONS: "",
     JAVA_HOME: javaHome,
     REA_PROCESS_RUN_ID: "d6fcbb66-e829-4ff6-a535-0035aec63139",
@@ -59,6 +67,7 @@ beforeAll(async () => {
 });
 afterEach(async () => {
   vi.unstubAllEnvs();
+  await Promise.all(runtimes.splice(0).map((runtime) => runtime.close()));
   await Promise.all(
     roots.splice(0).map((path) => rm(path, { recursive: true, force: true })),
   );
@@ -191,8 +200,11 @@ describe("Ghidra headless launcher", () => {
     vi.stubEnv("JAVA_TOOL_OPTIONS", "-Duser.home=/unapproved/home");
     vi.stubEnv("JDK_JAVA_OPTIONS", "-XX:MaxRAMPercentage=99");
     vi.stubEnv("_JAVA_OPTIONS", "-Xmx99G");
-    const runtimeRoot = await createTestTempDirectory("rea-launcher-test-");
-    roots.push(runtimeRoot);
+    const parent = await createTestTempDirectory("rea-launcher-test-");
+    roots.push(parent);
+    const runtime = await createGhidraTestRuntime(parent);
+    runtimes.push(runtime);
+    const runtimeRoot = runtime.path;
     const token = "secret-token-that-must-not-leak";
     const javaHome =
       process.platform === "win32" ? "C:\\Java\\jdk-21" : "/opt/jdk-21";
@@ -226,16 +238,11 @@ describe("Ghidra headless launcher", () => {
       descriptor_has_token: true,
     });
     expectIsolatedEnvironment(capture.environment, runtimeRoot, javaHome);
-    expect(capture.environment.GHIDRA_HEADLESS_JAVA_OPTIONS).toContain(
-      `-Duser.home=${join(runtimeRoot, "home")}`,
-    );
     expect(capture.environment.GHIDRA_HEADLESS_JAVA_OPTIONS).toBe(
-      `-Duser.home=${join(runtimeRoot, "home")} -Djava.io.tmpdir=${join(runtimeRoot, "tmp")}`,
+      process.platform === "win32"
+        ? ""
+        : `-Duser.home=${join(runtimeRoot, "home")} -Djava.io.tmpdir=${join(runtimeRoot, "tmp")}`,
     );
-    if (process.platform === "win32")
-      expect(capture.environment.GHIDRA_HEADLESS_JAVA_OPTIONS).not.toContain(
-        '"',
-      );
     if (process.platform !== "win32")
       expect(
         (await stat(join(runtimeRoot, "ownership.json"))).mode & 0o777,

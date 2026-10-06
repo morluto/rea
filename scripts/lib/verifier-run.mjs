@@ -39,7 +39,7 @@ const observeVerifierLineage = async (run, observedAt) => {
       run,
       observedAt,
       null,
-      "Windows verifier lineage ownership is unavailable without Job Objects",
+      "The verifier has no retained native Job Object lease for lineage observation; provider jobs are verified by their native owners",
     );
   try {
     const { members, observerPid } = await processSnapshot();

@@ -1,12 +1,11 @@
 import type { DoctorProviderInspection } from "./Doctor.js";
 
-/** Select exact non-secret settings published by available providers. */
+/** Preserve adapter-published settings independently of runtime readiness. */
 export const providerRegistrationEnvironment = (
   inspections: readonly DoctorProviderInspection[],
 ): Readonly<Record<string, string>> =>
   Object.fromEntries(
     inspections
-      .filter(({ available }) => available)
       .flatMap(({ registrationEnvironment }) =>
         Object.entries(registrationEnvironment),
       )
