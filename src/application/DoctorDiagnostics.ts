@@ -217,10 +217,12 @@ const optionalTargetCheck = async (
 ): Promise<DoctorCheck | undefined> =>
   target === undefined
     ? undefined
-    : check("target", await host.validTarget(target), target, {
-        remediation: "Supply a readable local app or program path.",
-        classification: "config_drift",
-      });
+    : host.inspectTarget !== undefined
+      ? host.inspectTarget(target)
+      : check("target", await host.validTarget(target), target, {
+          remediation: "Supply a readable local app or program path.",
+          classification: "config_drift",
+        });
 
 const check = (
   name: string,

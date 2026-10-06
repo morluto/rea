@@ -70,6 +70,9 @@ describe("guided prompts over MCP", () => {
     if (content?.type !== "text") throw new Error("missing prompt text");
     expect(content.text).toContain('"feature":"license validation"');
     expect(content.text).toContain("`trace_feature`");
+    expect(content.text).toContain(
+      "input_path=target_path directly; no open_binary call is needed",
+    );
   });
 
   it("renders every workflow without executing analysis or accepting extra context", async () => {

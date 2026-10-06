@@ -334,7 +334,14 @@ const lifecycleErrorDetails = (
     error.userCategory === "cancelled"
   )
     return { operation: "process_capture", cleanup: "complete" };
-  if (error instanceof BinaryTargetError) return { path: error.path };
+  if (error instanceof BinaryTargetError)
+    return {
+      path: error.path,
+      reason: error.reason,
+      ...(error.constraint === undefined
+        ? {}
+        : { constraint: error.constraint }),
+    };
   return undefined;
 };
 

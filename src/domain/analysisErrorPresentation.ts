@@ -36,6 +36,11 @@ export const analysisErrorRemediationAction = (
       : `Use the active REA session ${error.ownerRunId} or close it before opening this target again.`;
   if (error instanceof HopperRemoteError)
     return "Review the Hopper diagnostic details; correct the request or retry if the failure was transient.";
+  if (
+    error instanceof BinaryTargetError &&
+    error.constraint === "directory_requires_file"
+  )
+    return "For a JavaScript/Electron application directory, call analyze_javascript_application with input_path or run `rea analyze <directory>`. For binary analysis, select its executable file.";
   if (error instanceof AnalysisInputError)
     return "Correct the listed arguments and retry.";
   if (error instanceof UnknownRegistryError && error.reason === "not-found")
@@ -129,7 +134,9 @@ export const analysisErrorUserMessage = (error: AnalysisError): string => {
     return "REA configuration is invalid. Run `rea doctor` and fix the reported setting.";
   if (error instanceof NoBinaryOpenError) return error.message;
   if (error instanceof BinaryTargetError)
-    return "REA could not open that app or binary. Check that the path exists, is readable, and points to a supported file.";
+    return error.constraint === "directory_requires_file"
+      ? "open_binary accepts files and macOS app bundles. This target is a directory; JavaScript/Electron application directories can be analyzed directly with analyze_javascript_application or `rea analyze <directory>`."
+      : `${error.message}. Check that the path exists, is readable, and points to a supported file.`;
   if (error._tag === "ProcessCaptureError")
     return (
       error.userMessage ??

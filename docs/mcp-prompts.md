@@ -25,6 +25,13 @@ Tool results include their Evidence inline. Prompts do not require a bundle or
 resource fetch to read a result; an Evidence ID is only a reference when a
 prompt argument or tool explicitly accepts one.
 
+For a JavaScript/Electron application directory, `investigate_feature` points
+directly to `analyze_javascript_application` with `input_path`; it does not
+require `open_binary`. The CLI equivalent is `rea analyze <directory>`.
+`open_binary` and the doctor target check admit files and macOS app bundles.
+A directory outside that opening route is reported with an available analysis
+action; this does not establish support for every directory format.
+
 For target paths in `compare_application_versions`, the prompt suggests
 opening each target before calling `inspect_artifact`; inspection operates on
 the active target and returns the graph and findings together inline.

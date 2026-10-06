@@ -118,7 +118,7 @@ export const PROMPT_CONTRACTS = [
       {
         tools: ["open_binary", "analyze_javascript_application"],
         instruction:
-          "For a JavaScript/Electron artifact, reconstruct its application graph without execution when useful; open target_path only when the required target is not active.",
+          "For a JavaScript/Electron application directory, call analyze_javascript_application with input_path=target_path directly; no open_binary call is needed. For a file or macOS app bundle, open target_path only when the required target is not active.",
       },
       {
         tools: ["list_documents", "set_current_document"],

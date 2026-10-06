@@ -3,6 +3,7 @@ import { access, readFile, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 
+import { analysisErrorRemediationAction } from "../domain/analysisErrorPresentation.js";
 import { parseBinaryTarget } from "./BinaryTargetResolver.js";
 import { execFileOutput } from "../process/ExecFileOutput.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -40,6 +41,7 @@ export interface DoctorCheck {
     | "healthy"
     | "missing_dependency"
     | "unsupported_host"
+    | "unsupported_target"
     | "missing_analysis_engine"
     | "config_drift";
   readonly detail?: string;
@@ -79,6 +81,8 @@ export interface DoctorHost {
   macosVersion(): Promise<string | undefined>;
   linuxDistribution(): Promise<LinuxDistribution | undefined>;
   validTarget(path: string): Promise<boolean>;
+  /** Route-specific target admission details, when supplied by the host. */
+  inspectTarget?(path: string): Promise<DoctorCheck>;
   executable(path: string): Promise<boolean>;
   supportedLinuxHopper(path: string): Promise<boolean>;
   linuxDemoRuntimeCheck(): Promise<DoctorCheck>;
@@ -332,6 +336,33 @@ export const systemDoctorHost = (
     linuxDistribution: readLinuxDistribution,
     async validTarget(path) {
       return (await parseBinaryTarget(path, process.cwd(), architecture)).ok;
+    },
+    async inspectTarget(path) {
+      const result = await parseBinaryTarget(path, process.cwd(), architecture);
+      if (result.ok)
+        return {
+          name: "target",
+          ok: true,
+          classification: "healthy",
+          detail: path,
+        };
+      const error = result.error;
+      return {
+        name: "target",
+        ok: false,
+        classification:
+          error.constraint === "directory_requires_file"
+            ? "unsupported_target"
+            : "config_drift",
+        detail: path,
+        details: {
+          reason: error.reason,
+          ...(error.constraint === undefined
+            ? {}
+            : { constraint: error.constraint }),
+        },
+        remediation: analysisErrorRemediationAction(error),
+      };
     },
     executable: (path) =>
       executableAvailable(
