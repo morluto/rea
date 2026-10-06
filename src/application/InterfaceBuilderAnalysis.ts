@@ -12,6 +12,11 @@ import {
   interfaceBuilderLimitsSchema,
   type InterfaceBuilderDocumentInput,
 } from "../domain/interfaceBuilderGraph.js";
+import {
+  mergeNibHierarchies,
+  projectNibViewHierarchy,
+  type NibHierarchyNode,
+} from "./NibViewHierarchy.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 
 const MAX_DOCUMENT_BYTES = 64 * 1024 * 1024;
@@ -27,6 +32,7 @@ export const analyzeInterfaceBuilderBundle = async (input: {
   const reader = new DirectoryArtifactReader(input.bundlePath);
   const documents: InterfaceBuilderDocumentInput[] = [];
   const invalid: string[] = [];
+  const incompleteHierarchies = new Map<string, number>();
   let omitted = 0;
   let attempted = 0;
   try {
@@ -40,10 +46,13 @@ export const analyzeInterfaceBuilderBundle = async (input: {
       attempted += 1;
       try {
         const bytes = await readEntry(reader, entry, input.signal);
-        const raw =
+        const nib =
           bytes.subarray(0, 10).toString("ascii") === "NIBArchive"
             ? projectNibArchive(decodeNibArchive(bytes))
-            : decodePlist(bytes);
+            : null;
+        const raw = nib === null ? decodePlist(bytes) : nib.raw;
+        if (nib !== null && nib.omitted > 0)
+          incompleteHierarchies.set(entry.path, nib.omitted);
         const documentHash = createHash("sha256").update(bytes).digest("hex");
         documents.push({
           relativePath: entry.path,
@@ -69,26 +78,71 @@ export const analyzeInterfaceBuilderBundle = async (input: {
     documents,
     limits,
   });
+  return finalizeHierarchyCoverage(result, {
+    incompleteHierarchies,
+    invalid,
+    attempted,
+    omitted,
+  });
+};
+
+const finalizeHierarchyCoverage = (
+  result: ReturnType<typeof buildInterfaceBuilderAnalysis>,
+  counts: {
+    incompleteHierarchies: ReadonlyMap<string, number>;
+    invalid: readonly string[];
+    attempted: number;
+    omitted: number;
+  },
+) => {
+  const { incompleteHierarchies, invalid } = counts;
   return {
     ...result,
+    documents: result.documents.map((document) => ({
+      ...document,
+      hierarchy_complete:
+        document.hierarchy_complete &&
+        !incompleteHierarchies.has(document.relative_path),
+    })),
     graph: {
       ...result.graph,
       coverage: [
-        ...result.graph.coverage,
+        ...result.graph.coverage.map((facet) => {
+          const omitted = incompleteHierarchies.get(
+            facet.facet.replace(/^hierarchy:/u, ""),
+          );
+          return facet.facet.startsWith("hierarchy:") && omitted !== undefined
+            ? {
+                ...facet,
+                status: "partial" as const,
+                reason: "serialized_view_hierarchy_incomplete",
+                omitted: facet.omitted + omitted,
+              }
+            : facet;
+        }),
         {
           facet: "archive_decode",
           status:
             invalid.length > 0 ? ("partial" as const) : ("complete" as const),
           reason: invalid.length > 0 ? "one_or_more_archives_invalid" : null,
-          examined: attempted,
-          omitted,
+          examined: counts.attempted,
+          omitted: counts.omitted,
         },
       ],
-      truncated: result.graph.truncated || omitted > 0 || invalid.length > 0,
+      truncated:
+        result.graph.truncated ||
+        counts.omitted > 0 ||
+        invalid.length > 0 ||
+        incompleteHierarchies.size > 0,
     },
     limitations: [
       ...result.limitations,
       "Compiled Interface Builder archives are private serialized object graphs. The decoder reports only recognized keyed-archive objects and connections; unrecognized object classes and fields remain unknown.",
+      ...(incompleteHierarchies.size === 0
+        ? []
+        : [
+            "Some serialized hierarchy links could not be projected within the bounded hierarchy; their parentage remains unknown.",
+          ]),
       ...(invalid.length === 0
         ? []
         : [
@@ -99,7 +153,7 @@ export const analyzeInterfaceBuilderBundle = async (input: {
 };
 
 /** Project decoded NIB records into the same bounded graph input as ibtool. */
-const projectNibArchive = (archive: NibArchiveDocument): JsonValue => {
+const projectNibArchive = (archive: NibArchiveDocument) => {
   const byId = new Map(archive.objects.map((object) => [object.id, object]));
   const dereference = (value: JsonValue | undefined): JsonValue | undefined => {
     if (typeof value !== "object" || value === null || Array.isArray(value))
@@ -181,7 +235,7 @@ const projectNibArchive = (archive: NibArchiveDocument): JsonValue => {
       }),
   );
   const connections: Record<string, JsonValue[]> = {};
-  const hierarchy: JsonValue[] = [];
+  const hierarchy: NibHierarchyNode[] = [];
   const reference = (value: JsonValue | undefined): number | null => {
     if (typeof value !== "object" || value === null || Array.isArray(value))
       return null;
@@ -214,23 +268,33 @@ const projectNibArchive = (archive: NibArchiveDocument): JsonValue => {
       });
     }
   }
+  let hierarchyOmitted = 0;
   const hierarchyFor = (
     objectId: number,
     seen: Set<number>,
     depth: number,
-  ): JsonValue | null => {
-    if (depth > 32 || seen.has(objectId)) return null;
+  ): NibHierarchyNode | null => {
+    if (depth > 32 || seen.has(objectId)) {
+      hierarchyOmitted += 1;
+      return null;
+    }
     const object = byId.get(objectId);
-    if (object === undefined) return null;
+    if (object === undefined) {
+      hierarchyOmitted += 1;
+      return null;
+    }
     const nextSeen = new Set(seen).add(objectId);
-    const children: JsonValue[] = [];
+    const children: NibHierarchyNode[] = [];
     for (const [key, value] of Object.entries(object.values)) {
       if (!/(?:subviews|contentview|childviewcontrollers|view)$/iu.test(key))
         continue;
       const direct = reference(value);
       if (direct === null) continue;
       const target = byId.get(direct);
-      if (target === undefined) continue;
+      if (target === undefined) {
+        hierarchyOmitted += 1;
+        continue;
+      }
       if (/array|set/iu.test(target.class_name)) {
         for (const candidate of Object.values(target.values)) {
           const child = reference(candidate);
@@ -254,14 +318,22 @@ const projectNibArchive = (archive: NibArchiveDocument): JsonValue => {
     const root = hierarchyFor(hierarchyRoot, new Set(), 0);
     if (root !== null) hierarchy.push(root);
   }
-  return jsonValueSchema.parse({
-    "com.apple.ibtool.document.objects": objects,
-    "com.apple.ibtool.document.connections": connections,
-    "com.apple.ibtool.document.hierarchy": hierarchy,
-    "com.apple.ibtool.document.classes": Object.fromEntries(
-      archive.classes.map((name) => [name.replace(/\0+$/u, ""), {}]),
-    ),
-  });
+  const viewHierarchy = projectNibViewHierarchy(
+    archive.objects,
+    new Set(Object.keys(objects).map(Number)),
+  );
+  const merged = mergeNibHierarchies(hierarchy, viewHierarchy.hierarchy ?? []);
+  return {
+    omitted: viewHierarchy.omitted + hierarchyOmitted + merged.omitted,
+    raw: jsonValueSchema.parse({
+      "com.apple.ibtool.document.objects": objects,
+      "com.apple.ibtool.document.connections": connections,
+      "com.apple.ibtool.document.hierarchy": merged.hierarchy,
+      "com.apple.ibtool.document.classes": Object.fromEntries(
+        archive.classes.map((name) => [name.replace(/\0+$/u, ""), {}]),
+      ),
+    }),
+  };
 };
 
 const isInterfaceBuilderArchive = (path: string): boolean => {
