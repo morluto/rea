@@ -323,3 +323,49 @@ it("keeps bare module locations unresolved without inventing URL-relative paths"
     )?.resolved_url,
   ).toBe(`${origin}/assets/worker.js`);
 });
+
+it("retains each literal importScripts argument in source order", () => {
+  const result = analyzeCapturedWebBundle(
+    inspection(
+      'importScripts("first.js", dynamicValue, "second.js", "first.js");',
+    ),
+  );
+  expect(
+    result.observations.chunks.edges
+      .filter(({ kind }) => kind === "worker_import")
+      .map(({ specifier }) => specifier),
+  ).toEqual(["first.js", "second.js"]);
+});
+
+describe("web metadata key semantics", () => {
+  it("keeps computed metadata keys and overwrite order conservative", () => {
+    const result = analyzeCapturedWebBundle(
+      inspection(`
+      const path = "description";
+      const routes = [{ [path]: "/not-a-route" }, { ["path"]: "/real" }];
+      document.modelContext.registerTool({
+        name: "old", name: "new",
+        inputSchema: { properties: { [name]: {}, literal: {} } }
+      });
+      document.modelContext.registerTool({ name: "old", ...dynamic });
+      document.modelContext.registerTool({ name: "old", [name]: "dynamic" });
+      document.modelContext.registerTool({ name: "old", get name() {} });
+      document.modelContext.registerTool({ ...dynamic, ["name"]: "restored" });
+      document.modelContext.registerTool({ name: "valid", [""]: 0 });
+    `),
+    );
+
+    expect(result.observations.routes.map(({ value }) => value)).toEqual([
+      "/real",
+    ]);
+    expect(result.observations.webmcp_declarations).toEqual([
+      expect.objectContaining({
+        name: "new",
+        schema_property_names: ["literal"],
+      }),
+      expect.objectContaining({ name: null }),
+      expect.objectContaining({ name: "restored" }),
+      expect.objectContaining({ name: "valid" }),
+    ]);
+  });
+});

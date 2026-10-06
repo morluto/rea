@@ -12,10 +12,7 @@ import {
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import {
-  propertyName,
-  stringValue,
-} from "./javascriptStaticAnalysisHelpers.js";
+import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
 import { compareCodePoints } from "./canonicalOrdering.js";
 import { semanticStaticPropertyName } from "./javascriptAstValues.js";
 import {
@@ -153,32 +150,57 @@ const evaluateObject = (
   node: t.ObjectExpression,
   context: EvaluationContext,
 ): JavaScriptSemanticValue => {
-  const properties: JavaScriptSemanticProperty[] = [];
+  const propertiesByName = new Map<string, JavaScriptSemanticProperty>();
   let unknownProperties = false;
   let omittedProperties: number | null = 0;
+  const invalidateEarlierProperties = (): void => {
+    for (const [name] of propertiesByName)
+      propertiesByName.set(name, {
+        name,
+        value: {
+          status: "unknown",
+          reason: "A later property may overwrite this value.",
+        },
+      });
+  };
   for (const property of node.properties) {
     if (t.isSpreadElement(property)) {
       unknownProperties = true;
       omittedProperties = null;
+      invalidateEarlierProperties();
       continue;
     }
-    if (property.computed) {
+    const name = semanticStaticPropertyName(property.key, property.computed);
+    if (name === "" && !t.isStringLiteral(property.key, { value: "" })) {
+      unknownProperties = true;
+      if (omittedProperties !== null) omittedProperties += 1;
+      invalidateEarlierProperties();
+      continue;
+    }
+    // This spelling changes the prototype instead of defining an own slot.
+    if (
+      t.isObjectProperty(property) &&
+      !property.computed &&
+      !property.shorthand &&
+      name === "__proto__"
+    ) {
       unknownProperties = true;
       if (omittedProperties !== null) omittedProperties += 1;
       continue;
     }
-    const name = propertyName(property.key);
-    if (name === "" || !t.isObjectProperty(property)) {
-      unknownProperties = true;
-      if (omittedProperties !== null) omittedProperties += 1;
-      continue;
-    }
-    properties.push({
+    propertiesByName.set(name, {
       name,
-      value: evaluateExpression(property.value, nestedContext(context)),
+      value: t.isObjectProperty(property)
+        ? evaluateExpression(property.value, nestedContext(context))
+        : {
+            status: "unknown",
+            reason: "Object method or accessor value is not a primitive.",
+          },
     });
   }
-  properties.sort((left, right) => compareCodePoints(left.name, right.name));
+  const properties = [...propertiesByName.values()].sort((left, right) =>
+    compareCodePoints(left.name, right.name),
+  );
   return unknownProperties
     ? {
         status: "object",
@@ -205,11 +227,16 @@ const evaluateArray = (
     if (t.isSpreadElement(element)) {
       unknownItems = true;
       omittedItems = null;
-      continue;
+      // Subsequent elements have no fixed index after an unknown-length spread.
+      break;
     }
     if (element === null) {
       unknownItems = true;
       if (omittedItems !== null) omittedItems += 1;
+      items.push({
+        status: "unknown",
+        reason: "Array hole has no primitive value.",
+      });
       continue;
     }
     items.push(evaluateExpression(element, nestedContext(context)));
@@ -292,8 +319,18 @@ const projectValue = (
           reason: `Object property ${key} was not observed.`,
         };
       current = property.value;
-    } else if (current.status === "array" && typeof key === "number") {
-      const item = current.items[key];
+    } else if (current.status === "array") {
+      const index = typeof key === "number" ? key : Number(key);
+      if (
+        !Number.isSafeInteger(index) ||
+        index < 0 ||
+        String(index) !== String(key)
+      )
+        return {
+          status: "unknown",
+          reason: `Array property ${String(key)} is not a canonical index.`,
+        };
+      const item = current.items[index];
       if (item === undefined)
         return {
           status: "unknown",

@@ -11,6 +11,13 @@ import { semanticPrimitiveKey } from "./javascriptSemanticProvenance.js";
 export const semanticPrimitiveSet = (
   values: readonly JavaScriptSemanticPrimitive[],
 ): JavaScriptSemanticValue => {
+  if (
+    values.some((value) => typeof value === "number" && !Number.isFinite(value))
+  )
+    return {
+      status: "unknown",
+      reason: "Nonfinite numbers are outside the JSON primitive lattice.",
+    };
   const unique = [
     ...new Map(
       values.map((value) => [semanticPrimitiveKey(value), value]),
@@ -40,7 +47,8 @@ export const semanticPrimitiveValue = (
 ):
   | { readonly found: true; readonly value: JavaScriptSemanticPrimitive }
   | { readonly found: false } => {
-  if (t.isStringLiteral(node) || t.isNumericLiteral(node))
+  if (t.isStringLiteral(node)) return { found: true, value: node.value };
+  if (t.isNumericLiteral(node) && Number.isFinite(node.value))
     return { found: true, value: node.value };
   if (t.isBooleanLiteral(node)) return { found: true, value: node.value };
   if (t.isNullLiteral(node)) return { found: true, value: null };

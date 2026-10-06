@@ -165,3 +165,39 @@ it("preserves leading U+FEFF as metadata name content", () => {
     "\uFEFFFixture.\uFEFFProgram.\uFEFFMain",
   );
 });
+
+it.each([
+  { implFlags: 1, flags: 0, label: "native" },
+  { implFlags: 3, flags: 0, label: "runtime" },
+  { implFlags: 4, flags: 0, label: "unmanaged" },
+  { implFlags: 0, flags: 0x2000, label: "pinvoke" },
+])(
+  "does not interpret $label implementations as CIL",
+  ({ implFlags, flags }) => {
+    const bytes = buildManagedPeFixture();
+    const original = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    const row = original.methods[0]?.row_offset;
+    expect(row).toBeDefined();
+    if (row === undefined) return;
+    bytes.writeUInt16LE(implFlags, row + 4);
+    bytes.writeUInt16LE(bytes.readUInt16LE(row + 6) | flags, row + 6);
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    expect(result.methods[0]?.body).toMatchObject({
+      status: "partial",
+      header_format: "unknown",
+      rva: original.methods[0]?.rva,
+      il_sha256: null,
+      normalized_il_sha256: null,
+      anchors: [],
+    });
+    expect(result.methods[0]?.body.issue).toMatch(/CIL/u);
+    expect(result.call_edges).toEqual([]);
+    expect(result.field_accesses).toEqual([]);
+  },
+);

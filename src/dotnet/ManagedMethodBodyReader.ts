@@ -60,12 +60,26 @@ const readMethodBodyHeader = (
   };
 };
 
+/** Decode admitted managed CIL, retaining unavailable implementation metadata as partial. */
 export const methodBody = (
   bytes: Buffer,
   pe: ManagedPeLayout,
   rva: number,
+  implementation: { readonly implFlags: number; readonly flags: number } = {
+    implFlags: 0,
+    flags: 0,
+  },
 ): ManagedMethodBody => {
   if (rva === 0) return emptyMethodBody(rva, "absent", null);
+  if (
+    (implementation.implFlags & 7) !== 0 ||
+    (implementation.flags & 0x2000) !== 0
+  )
+    return emptyMethodBody(
+      rva,
+      "partial",
+      "CIL decoding is unavailable for native, runtime, unmanaged, or P/Invoke implementations",
+    );
   try {
     const offset = pe.rvaToOffset(rva, 1, "method.body");
     const header = readMethodBodyHeader(bytes, offset);
@@ -148,7 +162,7 @@ export const methodBody = (
 
 const emptyMethodBody = (
   rva: number,
-  status: "absent" | "malformed",
+  status: "absent" | "malformed" | "partial",
   issue: string | null,
 ): ManagedMethodBody => ({
   status,

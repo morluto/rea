@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
+import { parseOtoolLoadCommands } from "../../../../src/native/parsers/otool.js";
 import { parseDyldSymbols } from "../../../../src/native/parsers/dyldInfo.js";
 import {
   NativeFixtureRunner as FixtureRunner,
@@ -165,4 +166,37 @@ it("retains symbol names containing spaces in dyld inventory rows", () => {
       source: null,
     },
   ]);
+});
+
+it("preserves numeric-looking segment and section identifiers from otool", () => {
+  const parsed = parseOtoolLoadCommands(`Load command 1
+      cmd LC_SEGMENT_64
+  cmdsize 152
+  segname 0001
+   vmaddr 0x0000000000004000
+   vmsize 0x0000000000004000
+  fileoff 16384
+ filesize 16384
+  maxprot 0x00000003
+ initprot 0x00000003
+   nsects 1
+    flags 0x4
+Section
+  sectname 0002
+   segname 0001
+      addr 0x0000000000004000
+      size 0x0000000000000008
+    offset 16384
+     align 2^0 (1)
+    reloff 0
+    nreloc 0
+     flags 0x00000000
+ reserved1 0
+ reserved2 0
+`);
+  expect(parsed.segments[0]).toMatchObject({
+    name: "0001",
+    file_offset: 16384,
+    sections: [{ segment: "0001", name: "0002", size: 8 }],
+  });
 });

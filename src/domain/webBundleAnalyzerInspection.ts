@@ -4,6 +4,7 @@ import * as t from "@babel/types";
 import { sanitizeEndpointCandidate } from "./browserObservation.js";
 import type { WebPageInspection } from "./browserObservation.js";
 import type { WebBundleAnalysis } from "./webBundleAnalysis.js";
+import { semanticStaticPropertyName } from "./javascriptAstValues.js";
 import {
   calleeName,
   endpointArgument,
@@ -11,7 +12,6 @@ import {
   locationFields,
   objectString,
   objectValue,
-  propertyName,
   resolveSpecifier,
   isUrlLikeModuleSpecifier,
   stringArgument,
@@ -118,17 +118,12 @@ const inspectCall = (
       node,
       accumulator,
     });
-  if (
-    (name === "importScripts" || name.endsWith(".importScripts")) &&
-    first !== undefined
-  )
-    addEdge({
-      script,
-      specifier: first,
-      kind: "worker_import",
-      node,
-      accumulator,
-    });
+  if (name === "importScripts" || name.endsWith(".importScripts"))
+    for (const argument of node.arguments) {
+      const specifier = stringArgument(argument);
+      if (specifier === undefined) continue;
+      addEdge({ script, specifier, kind: "worker_import", node, accumulator });
+    }
   if (
     routeCallNames.some(
       (candidate) => name === candidate || name.endsWith(`.${candidate}`),
@@ -172,7 +167,7 @@ const inspectRouteProperty = (
   node: t.ObjectProperty,
   accumulator: AnalysisAccumulator,
 ): void => {
-  const key = propertyName(node.key);
+  const key = semanticStaticPropertyName(node.key, node.computed);
   if ((key === "path" || key === "route") && t.isStringLiteral(node.value))
     addFinding({
       collection: accumulator.routes,
@@ -251,7 +246,9 @@ const addWebMcpDeclaration = (
   const schemaPropertyNames = t.isObjectExpression(propertyObject)
     ? propertyObject.properties.flatMap((property) =>
         t.isObjectProperty(property)
-          ? [propertyName(property.key)].filter(Boolean)
+          ? [
+              semanticStaticPropertyName(property.key, property.computed),
+            ].filter(Boolean)
           : [],
       )
     : [];

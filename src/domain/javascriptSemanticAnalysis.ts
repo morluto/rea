@@ -253,8 +253,41 @@ const bindInnerDeclaration = (
       mutable: true,
       kind: "catch",
     });
-  else if (t.isAssignmentExpression(node) && t.isIdentifier(node.left))
-    addAssignment(node.left, node.right, scope, state);
+  else if (t.isAssignmentExpression(node)) {
+    if (t.isIdentifier(node.left))
+      addAssignment(node.left, node.right, scope, state);
+    else
+      for (const identifier of assignedPatternIdentifiers(node.left))
+        addAssignment(identifier, node, scope, state);
+  } else if (t.isUpdateExpression(node) && t.isIdentifier(node.argument))
+    addAssignment(node.argument, node, scope, state);
+  else if (t.isForOfStatement(node) || t.isForInStatement(node))
+    for (const identifier of assignedPatternIdentifiers(node.left))
+      addAssignment(identifier, node, scope, state);
+};
+
+const assignedPatternIdentifiers = (
+  pattern: t.Node,
+): readonly t.Identifier[] => {
+  const identifiers: t.Identifier[] = [];
+  const pending = [pattern];
+  while (pending.length > 0) {
+    const node = pending.pop();
+    if (node === undefined) continue;
+    if (t.isIdentifier(node)) identifiers.push(node);
+    else if (t.isRestElement(node)) pending.push(node.argument);
+    else if (t.isAssignmentPattern(node)) pending.push(node.left);
+    else if (t.isArrayPattern(node)) {
+      for (const element of node.elements)
+        if (element !== null) pending.push(element);
+    } else if (t.isObjectPattern(node)) {
+      for (const property of node.properties)
+        pending.push(
+          t.isRestElement(property) ? property.argument : property.value,
+        );
+    }
+  }
+  return identifiers;
 };
 
 const nestedScope = (
@@ -398,7 +431,10 @@ const bindPattern = (input: BindPatternInput): void => {
     bindPattern({
       ...input,
       pattern: pattern.left,
-      initializer: initializer ?? pattern.right,
+      initializer:
+        kind === "parameter" || kind === "catch"
+          ? initializer
+          : (initializer ?? pattern.right),
     });
     return;
   }
@@ -488,7 +524,7 @@ const createBinding = (
 
 const addAssignment = (
   identifier: t.Identifier,
-  initializer: t.Expression,
+  initializer: t.Node,
   scope: JavaScriptSemanticScopeState,
   state: JavaScriptSemanticAnalysisState,
 ): void => {

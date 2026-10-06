@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { Readable } from "node:stream";
@@ -134,7 +134,7 @@ export class NativeDmgArtifactReader implements ArtifactReader {
   async attach(signal?: AbortSignal): Promise<void> {
     await runChecked(this.host, ["verify", this.path], signal);
     this.#provenance.push(command(["verify", this.path], ["read"]));
-    this.#mountRoot = await mkdtemp(join(tmpdir(), "rea-dmg-"));
+    this.#mountRoot = await realpath(await mkdtemp(join(tmpdir(), "rea-dmg-")));
     try {
       const attached = await runChecked(
         this.host,
@@ -150,8 +150,21 @@ export class NativeDmgArtifactReader implements ArtifactReader {
         signal,
       );
       const parsed = attachOutputSchema.parse(parse(attached.stdout));
-      this.#devices = parsed["system-entities"].map(
-        (entity) => entity["dev-entry"],
+      const devices = [
+        ...new Set(
+          parsed["system-entities"].map((entity) => entity["dev-entry"]),
+        ),
+      ];
+      // Detaching an observed whole disk also detaches its partitions. Do not
+      // subsequently detach the now-unavailable child devices.
+      this.#devices = devices.filter(
+        (device) =>
+          !devices.some(
+            (parent) =>
+              /^\/dev\/disk\d+$/u.test(parent) &&
+              device.startsWith(`${parent}s`) &&
+              /^\d+$/u.test(device.slice(parent.length + 1)),
+          ),
       );
       if (this.#devices.length === 0)
         throw new ArtifactReaderFailure(
