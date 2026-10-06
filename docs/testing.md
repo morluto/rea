@@ -182,7 +182,7 @@ behavior, and complete CI evidence before merging.
 | `npm run test:watch:all`          | Changed tests from every project; builds at startup, so rebuild after production edits before relying on compiled tests |
 | `npm run check:changed`           | Cached typecheck/lint and branch-related source feedback                                                                |
 | `npm run check:pr`                | Opt-in complete local deterministic gate and generated-file checks                                                      |
-| `npm run docs:check`              | Committed generated-document freshness, without API HTML rendering                                                      |
+| `npm run docs:check`              | Committed generated-document freshness                                                                                  |
 
 For example:
 
@@ -229,8 +229,7 @@ process-global, and other boundary projects retain per-file isolation.
 `npm test`, `npm run docs:check`, and `npm run docs:generate` share
 repository-local locks and fail fast when the same class of command is already
 running. The `npm test` build is inside that lock. `check:pr` runs its test task
-before starting generated-document validation. TypeDoc rendering is a separate
-command and CI step.
+before starting generated-document validation.
 
 Vitest and Node persistent compile caches are deliberately not enabled by
 default. To evaluate repeated local runs, opt in for both cold and warm

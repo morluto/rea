@@ -35,7 +35,7 @@ REA is a layered ESM TypeScript application. Dependencies flow inward from pure 
 - `npm run check:changed`: run cached static checks and source tests affected since the branch merge base (default `origin/main`).
 - `npm run check:fast`: run cached typecheck and lint checks.
 - `npm run check:pr`: opt into the complete local deterministic gate and generated-document checks for broad changes; CI owns full coverage. Routine iterations need focused tests and relevant checks, not the whole gate each time.
-- `npm run docs:check`: check committed generated documents; `npm run docs:api:cached` separately renders API HTML when needed.
+- `npm run docs:check`: check committed generated documents; `npm run docs:generate` regenerates them.
 - For provider-dependent changes, see [docs/testing.md](docs/testing.md) and run the matching real-provider verification.
 - Keep each verification lane's prerequisites limited to the claim it checks. Use host-native fixtures for host/provider acceptance; put optional cross-target formats and their external toolchains in a separate lane. Preflight required commands and report the missing dependency and lane clearly.
 

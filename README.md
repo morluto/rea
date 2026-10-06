@@ -382,7 +382,7 @@ relationships, event activity, IPC, process identity, or Electron roles. See
 [Node and Electron runtime observation](docs/javascript-runtime-observation.md)
 for the exact coverage.
 
-Exact package, tool-family, provider, setup-client, schema, and CLI facts are generated from source in [`docs/product-catalog.json`](docs/product-catalog.json). PR CI verifies this catalog, narrative documentation, generated schemas, and a clean TypeDoc render.
+Exact package, tool-family, provider, setup-client, schema, and CLI facts are generated from source in [`docs/product-catalog.json`](docs/product-catalog.json). PR CI verifies this catalog, narrative documentation, and generated schemas.
 
 ## Roadmap
 
@@ -532,7 +532,9 @@ The session also reports active work and cleanup status. If a caller times out, 
 | `1`       | The operation could not complete, for example because of invalid input, host permission denial, cancellation, or timeout. Structured output reports the reason when available. |
 | `128 + N` | The process ended from signal `N`, where the shell or runtime preserves the conventional signal-derived status.                                                                |
 
-`setup` returns `1` for `planned`, `needs_confirmation`, or `needs_human`
+`setup --dry-run` returns status `planned` and exits `0`. A setup result with
+status `cancelled` also exits `0`.
+`setup` returns `1` for `needs_confirmation` or `needs_human`
 because configuration is not ready; rerun it after approval or remediation.
 `doctor` returns `1` when required checks for its readiness scope are unhealthy.
 Unavailable optional provider prerequisites remain visible as informational
@@ -544,7 +546,7 @@ cannot hide its failure:
 
 ```bash
 set -o pipefail
-rea inventory-artifact ./app.asar --json | jq . > inventory.json
+rea inspect-artifact ./app.asar --json | jq . > inspection.json
 ```
 
 ## Current Hopper provider
@@ -651,7 +653,7 @@ Any agent that can run a local MCP server can use the manual configuration. Setu
 
 ## Development
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and contribution checks, and [docs/testing.md](docs/testing.md) for test scopes and real-tool verification. PR CI publishes generated API documentation as the `api-docs` artifact.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and contribution checks, and [docs/testing.md](docs/testing.md) for test scopes and real-tool verification. `npm run docs:check` checks committed generated documents; `npm run docs:generate` regenerates them.
 
 `npm run verify:agent` evaluates native, JavaScript, managed, and browser investigation tasks through a real local Codex CLI. Its report covers tool selection, repeated calls, token use, completion quality, and handling of permissions and unknowns.
 
