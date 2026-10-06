@@ -323,3 +323,16 @@ it("keeps bare module locations unresolved without inventing URL-relative paths"
     )?.resolved_url,
   ).toBe(`${origin}/assets/worker.js`);
 });
+
+it("retains each literal importScripts argument in source order", () => {
+  const result = analyzeCapturedWebBundle(
+    inspection(
+      'importScripts("first.js", dynamicValue, "second.js", "first.js");',
+    ),
+  );
+  expect(
+    result.observations.chunks.edges
+      .filter(({ kind }) => kind === "worker_import")
+      .map(({ specifier }) => specifier),
+  ).toEqual(["first.js", "second.js"]);
+});

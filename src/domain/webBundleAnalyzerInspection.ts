@@ -118,17 +118,12 @@ const inspectCall = (
       node,
       accumulator,
     });
-  if (
-    (name === "importScripts" || name.endsWith(".importScripts")) &&
-    first !== undefined
-  )
-    addEdge({
-      script,
-      specifier: first,
-      kind: "worker_import",
-      node,
-      accumulator,
-    });
+  if (name === "importScripts" || name.endsWith(".importScripts"))
+    for (const argument of node.arguments) {
+      const specifier = stringArgument(argument);
+      if (specifier === undefined) continue;
+      addEdge({ script, specifier, kind: "worker_import", node, accumulator });
+    }
   if (
     routeCallNames.some(
       (candidate) => name === candidate || name.endsWith(`.${candidate}`),
