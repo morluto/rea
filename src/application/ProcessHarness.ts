@@ -409,6 +409,7 @@ export const captureProcessScenario = async (
         "rea-process",
         "capture_process_scenario",
         ownershipReason,
+        { userMessage: ownershipReason },
       ),
     );
   try {

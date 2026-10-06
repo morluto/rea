@@ -13,7 +13,7 @@ export const processCaptureOwnershipUnavailableReason = (
   platform: NodeJS.Platform,
 ): string | undefined =>
   platform === "win32"
-    ? "Windows process-tree ownership and cleanup are unavailable; REA cannot verify that descendants have stopped."
+    ? "Windows PTY process capture is unavailable because this adapter does not yet verify descendant cleanup. Use Linux (including WSL for Linux commands) or macOS. Reinstalling the PTY backend does not enable native Windows capture."
     : undefined;
 
 /** Dependencies that make the native PTY probe's host boundary testable. */

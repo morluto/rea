@@ -201,6 +201,8 @@ describe("analysis error projection: caller contract", () => {
     ]);
     expect(projected[1]).toMatchObject({
       category: "unsupported_provider",
+      message:
+        "This analysis is unavailable for the current target. Choose another analysis or target.",
       details: {
         provider_id: "fixture",
         operation: "overview",
@@ -211,6 +213,31 @@ describe("analysis error projection: caller contract", () => {
       details: { path: "/local/targets/app" },
     });
     expect(JSON.stringify(projected)).not.toContain("secret-token");
+  });
+
+  it("uses explicit capability recovery while retaining the constraint", () => {
+    const projected = projectAnalysisError(
+      new AnalysisCapabilityUnavailableError(
+        "fixture",
+        "capture",
+        "host constraint",
+        {
+          userMessage: "Use the supported host workflow.",
+          cause: new Error("private internal cause"),
+        },
+      ),
+    );
+    expect(projected).toMatchObject({
+      code: "capability_unavailable",
+      category: "unsupported_provider",
+      message: "Use the supported host workflow.",
+      details: {
+        provider_id: "fixture",
+        operation: "capture",
+        reason: "host constraint",
+      },
+    });
+    expect(JSON.stringify(projected)).not.toContain("private internal cause");
   });
 
   it("preserves exact artifact-integrity coordinates", () => {

@@ -5,6 +5,7 @@ import { captureProcessScenario } from "./ProcessHarness.js";
 import { settleProcessCaptureJournal } from "./ProcessCaptureLifecycle.js";
 import { processCaptureSchema } from "../domain/processCapture.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../domain/processCapture.fixture.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 
 it("rejects legacy replay output instead of silently discarding it", () => {
   expect(
@@ -48,9 +49,19 @@ it("fails closed on Windows before resolving or launching scenario paths", async
   const result = await captureProcessScenario(scenario, undefined, "win32");
   expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected Windows ownership refusal");
-  expect(result.error).toBeInstanceOf(AnalysisCapabilityUnavailableError);
+  if (!(result.error instanceof AnalysisCapabilityUnavailableError))
+    throw new Error("expected a capability-unavailable outcome");
   expect(result.error).toMatchObject({
     operation: "capture_process_scenario",
-    reason: expect.stringContaining("Windows process-tree ownership"),
+    reason: expect.stringContaining("Windows PTY process capture"),
+  });
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "capability_unavailable",
+    category: "unsupported_provider",
+    message: expect.stringContaining("does not yet verify descendant cleanup"),
+    details: {
+      operation: "capture_process_scenario",
+      reason: result.error.reason,
+    },
   });
 });

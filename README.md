@@ -631,9 +631,9 @@ Process Capture records behavior and is not a security sandbox.
 Capture a scenario or compare two saved Process Capture Evidence records:
 
 ```bash
-rea capture-process ./scenario.json > authority.json
-rea capture-process ./reconstruction.json > reconstruction.json
-rea compare-process-captures authority.json reconstruction.json
+rea capture-process ./authority-scenario.json --json > authority-capture.json
+rea capture-process ./reconstruction-scenario.json --json > reconstruction-capture.json
+rea compare-process-captures authority-capture.json reconstruction-capture.json --json
 ```
 
 The comparison reports each observed dimension separately and identifies the
@@ -641,9 +641,16 @@ first terminal, interaction, exit, filesystem, or process divergence.
 See [Process Capture](docs/process-capture.md) for scenario fields, limits, and
 evidence boundaries.
 
-REA installs a prebuilt PTY backend for supported macOS, Linux, and Windows
-architectures. If the capability check reports that the backend is unavailable,
-reinstall REA for the current platform and architecture.
+Process Capture currently runs on Linux and macOS with a working native PTY
+backend. Native Windows capture remains unavailable until the PTY adapter can
+verify descendant cleanup; installing or reinstalling its Windows PTY binary
+does not enable capture. For Linux commands, run Linux REA inside WSL.
+Comparing existing capture Evidence remains available on Windows.
+
+On supported capture hosts, a missing or incompatible PTY binary can be fixed
+by reinstalling REA for the current platform, architecture, and Node.js version
+with optional dependencies enabled. Use separate scenario and output files;
+`--json` produces the JSON consumed by the comparison command.
 
 ASAR inventory verifies Electron integrity metadata for both archive entries
 and `.asar.unpacked` companion files. Integrity failures identify the logical
