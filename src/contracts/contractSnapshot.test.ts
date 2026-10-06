@@ -17,8 +17,9 @@ import { BROWSER_SCENARIO_TOOL_CONTRACTS } from "./browserScenarioToolContracts.
 import { ELECTRON_TOOL_CONTRACTS } from "./electronToolContracts.js";
 import { JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS } from "./javascriptRuntimeObservationToolContracts.js";
 import { APPLICATION_TOOL_CONTRACTS } from "./applicationToolContracts.js";
+import { WEB_SCRIPT_TOOL_CONTRACTS } from "./webScriptToolContracts.js";
 import { TOOL_EFFECTS } from "./toolEffects.js";
-import { TOOL_CONTRACTS } from "./toolContracts.js";
+import { TOOL_CONTRACTS, toolContract } from "./toolContracts.js";
 import {
   CLI_COMMAND_ALIASES,
   CLI_COMMAND_NAMES,
@@ -84,9 +85,30 @@ describe("tool contract surface", () => {
       ...ELECTRON_TOOL_CONTRACTS,
       ...JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS,
       ...APPLICATION_TOOL_CONTRACTS,
+      ...WEB_SCRIPT_TOOL_CONTRACTS,
       ...SESSION_TOOL_CONTRACTS,
     ].map(({ name }) => name);
     expect(Object.keys(TOOL_EFFECTS).sort()).toEqual(names.sort());
+  });
+
+  it("advertises local script publication and exclusive output authority", () => {
+    const contract = toolContract("export_web_scripts");
+    expect(contract.effects).toEqual({
+      mutatesTarget: false,
+      mutatesSession: true,
+      writesFilesystem: true,
+      launchesProcess: false,
+      accessesNetwork: false,
+      changesUiState: false,
+      mayDiscardData: false,
+      idempotent: false,
+    });
+    expect(contract.annotations).toEqual({
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    });
   });
 
   it("marks process scenario capture as open world", () => {
