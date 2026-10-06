@@ -12,7 +12,7 @@ import type {
 import {
   semanticCallableIdForNode,
   semanticReferenceRole,
-  semanticStaticPropertyName,
+  semanticStaticPropertyKey,
 } from "./javascriptSemanticProjection.js";
 import {
   resolveSemanticBindingState,
@@ -336,7 +336,7 @@ const collectDynamicProperty = (
 ): void => {
   if (
     (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
-    semanticStaticPropertyName(node.property, node.computed) === ""
+    semanticStaticPropertyKey(node.property, node.computed) === null
   )
     addFrontier(
       {
@@ -351,7 +351,7 @@ const collectDynamicProperty = (
   else if (
     (t.isObjectProperty(node) || t.isObjectMethod(node)) &&
     node.computed &&
-    semanticStaticPropertyName(node.key, true) === ""
+    semanticStaticPropertyKey(node.key, true) === null
   )
     addFrontier(
       {

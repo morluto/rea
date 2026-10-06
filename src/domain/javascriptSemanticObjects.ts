@@ -7,7 +7,7 @@ import type {
 import {
   semanticCallableIdForNode,
   semanticReadsBeforeWrite,
-  semanticStaticPropertyName,
+  semanticStaticPropertyKey,
 } from "./javascriptSemanticProjection.js";
 import {
   resolveSemanticBindingState,
@@ -75,8 +75,8 @@ const collectMember = (
   context: ObjectCollectionContext,
 ): void => {
   const { state, output } = context;
-  const name = semanticStaticPropertyName(node.property, node.computed);
-  if (name.length === 0) return;
+  const name = semanticStaticPropertyKey(node.property, node.computed);
+  if (name === null) return;
   const write =
     (t.isAssignmentExpression(parent) && parent.left === node) ||
     (t.isUpdateExpression(parent) && parent.argument === node);
@@ -118,8 +118,8 @@ const collectDestructuring = (
   const objectBindingId = expressionBindingId(node.init, state);
   for (const property of node.id.properties) {
     if (!t.isObjectProperty(property)) continue;
-    const name = semanticStaticPropertyName(property.key, property.computed);
-    if (name.length === 0) continue;
+    const name = semanticStaticPropertyKey(property.key, property.computed);
+    if (name === null) continue;
     const target = bindingIdentifier(property.value);
     addObjectOperation(
       {

@@ -12,7 +12,7 @@ import {
   collectSemanticReferences,
   immutableSemanticBindings,
   immutableSemanticScopes,
-  semanticStaticPropertyName,
+  semanticStaticPropertyKey,
 } from "./javascriptSemanticProjection.js";
 import type {
   JavaScriptSemanticAnalysisState,
@@ -481,14 +481,11 @@ const bindPattern = (input: BindPatternInput): void => {
           projection: [],
         });
       else {
-        const name = semanticStaticPropertyName(
-          property.key,
-          property.computed,
-        );
+        const name = semanticStaticPropertyKey(property.key, property.computed);
         bindPattern({
           ...input,
           pattern: property.value,
-          projection: [...projection, name === "" ? null : name],
+          projection: [...projection, name],
         });
       }
     }

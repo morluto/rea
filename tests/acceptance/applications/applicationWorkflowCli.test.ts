@@ -239,6 +239,39 @@ describe("rest parameter semantic trace CLI", () => {
   }, 20_000);
 });
 
+describe("empty property key application CLI", () => {
+  it.each(["const root = routes[''];", "const {'': root} = routes;"])(
+    "analyzes a root-route dictionary with %s",
+    async (read) => {
+      const root = await createTestTempDirectory("rea-empty-key-cli-");
+      await writeFile(
+        join(root, "app.js"),
+        `const routes = {'': 'HOME'}; ${read}`,
+      );
+      const evidence = await runCli([
+        "analyze-javascript-application",
+        root,
+        "--json",
+      ]);
+      expect(evidence).toMatchObject({
+        operation: "analyze_javascript_application",
+        normalized_result: {
+          semantic_graph: {
+            nodes: expect.arrayContaining([
+              expect.objectContaining({
+                kind: "property-slot",
+                label: '""',
+                properties: expect.objectContaining({ name: "" }),
+              }),
+            ]),
+          },
+        },
+      });
+    },
+    20_000,
+  );
+});
+
 describe("application workflow CLI input", () => {
   it("rejects Evidence ID-only workflow inputs", async () => {
     const result = await runCli([

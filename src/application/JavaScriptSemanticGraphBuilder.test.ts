@@ -310,3 +310,42 @@ it.each([
     ).toEqual([]);
   },
 );
+
+it.each([
+  "const routes = {'': 'HOME'}; const root = routes[''];",
+  "const routes = {'': 'HOME'}; const {'': root} = routes;",
+])(
+  "preserves empty property identities with valid display labels: %s",
+  (source) => {
+    const graph = graphFor(source);
+    expect(graph.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "property-slot",
+          label: '""',
+          properties: expect.objectContaining({ name: "" }),
+        }),
+      ]),
+    );
+    const root = graph.nodes.find(
+      ({ kind, label }) => kind === "binding" && label === "root",
+    );
+    const literal = graph.nodes.find(
+      ({ kind, identity, properties }) =>
+        kind === "literal" &&
+        properties.value === "HOME" &&
+        identity.role_key.includes(":binding:root:"),
+    );
+    expect(literal).toBeDefined();
+    expect(graph.relations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source_node_id: literal?.node_id,
+          target_node_id: root?.node_id,
+          relation: "defines",
+          resolution: "resolved",
+        }),
+      ]),
+    );
+  },
+);

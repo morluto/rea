@@ -8,7 +8,10 @@ import {
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
-import { semanticStaticPropertyName } from "./javascriptAstValues.js";
+import {
+  semanticStaticPropertyKey,
+  semanticStaticPropertyName,
+} from "./javascriptAstValues.js";
 
 export interface SemanticProjectedBinding {
   readonly bindingId: string;
@@ -96,12 +99,11 @@ const projectedPatternBindings = (
             property.value,
             [
               ...path,
-              semanticStaticPropertyName(property.key, property.computed) ||
-                null,
+              semanticStaticPropertyKey(property.key, property.computed),
             ],
             partial ||
-              semanticStaticPropertyName(property.key, property.computed) ===
-                "",
+              semanticStaticPropertyKey(property.key, property.computed) ===
+                null,
           );
       }
     } else if (t.isArrayPattern(current)) {

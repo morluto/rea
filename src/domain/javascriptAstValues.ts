@@ -12,7 +12,14 @@ export const propertyName = (node: t.Node): string => {
 export const semanticStaticPropertyName = (
   property: t.Node,
   computed: boolean,
-): string =>
-  computed && !t.isStringLiteral(property) && !t.isNumericLiteral(property)
-    ? ""
-    : propertyName(property);
+): string => semanticStaticPropertyKey(property, computed) ?? "";
+
+/** Read an exact property key, preserving the legal empty-string key. */
+export const semanticStaticPropertyKey = (
+  property: t.Node,
+  computed: boolean,
+): string | null => {
+  if (t.isStringLiteral(property) || t.isNumericLiteral(property))
+    return String(property.value);
+  return !computed && t.isIdentifier(property) ? property.name : null;
+};
