@@ -141,7 +141,12 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         expectedCommand: null,
         windowsVerbatimArguments: platform === "win32",
         platform,
-        env: ghidraLaunchEnvironment(paths, this.options.javaHome, platform),
+        env: ghidraLaunchEnvironment(
+          paths,
+          this.options.javaHome,
+          platform,
+          command.command,
+        ),
       });
       await writeGhidraRuntimeFile(
         paths.ownershipPath,
@@ -382,6 +387,7 @@ const ghidraLaunchEnvironment = (
   paths: ReturnType<typeof ghidraRuntimePaths>,
   javaHome: string | undefined,
   platform: NodeJS.Platform,
+  executable: string,
 ): NodeJS.ProcessEnv => {
   return {
     ...ghidraJavaEnvironment(javaHome, process.env, platform),
@@ -390,6 +396,9 @@ const ghidraLaunchEnvironment = (
     TMPDIR: paths.tempRoot,
     ...(platform === "win32"
       ? {
+          // Batch FOR /F launches another command interpreter through ComSpec.
+          // Use the same executable with the spelling consumed by cmd.exe.
+          ComSpec: executable.replaceAll("/", "\\"),
           USERPROFILE: paths.homeRoot,
           APPDATA: paths.configRoot,
           LOCALAPPDATA: paths.cacheRoot,

@@ -79,13 +79,43 @@ try {
   await mkdir(sourceDirectory);
   const source = join(sourceDirectory, "target.bin");
   await writeFile(source, Buffer.alloc(1024 * 1024, 0x37));
+  const sourceIdentity = native.call("open", [source]);
+  try {
+    for (const requested of [
+      source.replaceAll("\\", "/"),
+      source.replace(/\\/u, "/"),
+    ]) {
+      const admitted = native.call("open", [requested]);
+      try {
+        assert.equal(admitted.requestedPath, requested);
+        assert.equal(admitted.finalPath, sourceIdentity.finalPath);
+        assert.equal(admitted.fileId, sourceIdentity.fileId);
+        assert.equal(native.call("read", [admitted.handle, 0, 1])[0], 0x37);
+      } finally {
+        native.call("close", [admitted.handle]);
+      }
+    }
+  } finally {
+    native.call("close", [sourceIdentity.handle]);
+  }
+  for (const rejected of [
+    source.replace(/^([A-Za-z]):\\/u, "$1:"),
+    `${sourceDirectory}/../source/target.bin`,
+    `${sourceDirectory}//target.bin`,
+    `${source}:stream`,
+    `\\\\?\\${source.replaceAll("\\", "/")}`,
+    "//localhost/share/target.bin",
+  ])
+    assert.throws(() => native.call("open", [rejected]));
+  report.controls.ordinaryDriveSeparatorsAndRequestedIdentity = true;
   const snapshotOwner = WindowsPrivateRuntime.create(
-    workspace,
+    workspace.replace(/\\/u, "/"),
     "single-flight-",
   );
   try {
     const rejectedController = new AbortController();
-    const accepted = snapshotOwner.snapshot(source, "accepted.bin");
+    const requestedSource = source.replaceAll("\\", "/");
+    const accepted = snapshotOwner.snapshot(requestedSource, "accepted.bin");
     const rejected = snapshotOwner.snapshot(
       source,
       "rejected.bin",
@@ -94,6 +124,7 @@ try {
     rejectedController.abort();
     await assert.rejects(rejected, /Runtime snapshot is still pending/u);
     const completed = await accepted;
+    assert.equal(completed.source.requestedPath, requestedSource);
     assert.equal(
       completed.sha256,
       createHash("sha256")
@@ -147,7 +178,7 @@ try {
   );
   assert.throws(() => native.call("open", [source + ":stream"]));
   const runtime = native.call("runtime_create", [
-    workspace,
+    workspace.replaceAll("\\", "/"),
     "private root with spaces-",
   ]);
   const sentinel = join(sourceDirectory, "sentinel");
@@ -316,6 +347,23 @@ setInterval(()=>{},1000);\n`,
   assert.match(settled.output, /observed/u);
   native.call("process_close", [exited.handle]);
   report.processes.normalExitAndOutput = true;
+  const forwardCommand = process.execPath.replaceAll("\\", "/");
+  const forwardProcess = native.call("process_spawn", [
+    forwardCommand,
+    [forwardCommand, "-e", "console.log('forward executable')"]
+      .map(quote)
+      .join(" "),
+    workspace,
+    environment,
+  ]);
+  try {
+    const completed = await wait(forwardProcess);
+    assert.equal(completed.exitCode, 0);
+    assert.match(completed.output, /forward executable/u);
+    report.processes.ordinaryDriveSeparators = true;
+  } finally {
+    native.call("process_close", [forwardProcess.handle]);
+  }
   const boundaryFixture = process.argv[3];
   if (boundaryFixture !== undefined) {
     const before = JSON.parse(

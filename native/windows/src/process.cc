@@ -44,7 +44,8 @@ static void pipe(Handle& read, Handle& write) {
 
 std::unique_ptr<Process> spawnProcess(const std::wstring& command, const std::wstring& commandLine,
                                     const std::wstring& cwd, const std::vector<std::wstring>& environment) {
-  require(command.size() >= 3 && command[1] == L':' && command[2] == L'\\',
+  const auto executable = ordinaryDriveSeparators(command);
+  require(executable.size() >= 3 && executable[1] == L':' && executable[2] == L'\\',
           "Owned Windows process requires an absolute executable path", command, ERROR_INVALID_PARAMETER);
   auto result = std::make_unique<Process>();
   result->job = createJob();
@@ -102,7 +103,7 @@ std::unique_ptr<Process> spawnProcess(const std::wstring& command, const std::ws
   if (uniqueEnvironment.empty()) variables.push_back(L'\0');
   std::vector<wchar_t> line(commandLine.begin(), commandLine.end()); line.push_back(L'\0');
   PROCESS_INFORMATION process{};
-  require(CreateProcessW(command.c_str(), line.data(), nullptr, nullptr, TRUE,
+  require(CreateProcessW(executable.c_str(), line.data(), nullptr, nullptr, TRUE,
                          CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_NO_WINDOW,
                          variables.data(), cwd.empty() ? nullptr : cwd.c_str(), &startup.StartupInfo, &process),
           "Create process atomically inside owned Job Object failed", command);

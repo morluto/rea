@@ -109,13 +109,21 @@ const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const runtimeParent = join(workspace, "runtime with spaces");
 await mkdir(runtimeParent);
 const environment = {
-  ...process.env,
+  ...Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([name]) => name.toLowerCase() !== "comspec",
+    ),
+  ),
+  ComSpec: (
+    process.env.ComSpec ??
+    join(process.env.SystemRoot ?? "C:\\Windows", "System32", "cmd.exe")
+  ).replaceAll("\\", "/"),
   REA_ANALYSIS_PROVIDER: "ghidra",
   REA_LOG_LEVEL: "error",
   GHIDRA_HEADLESS_MAXMEM: "512m",
   NODE_OPTIONS: "--max-old-space-size=512",
-  TEMP: runtimeParent,
-  TMP: runtimeParent,
+  TEMP: runtimeParent.replaceAll("\\", "/"),
+  TMP: runtimeParent.replaceAll("\\", "/"),
   HOME: workspace,
   USERPROFILE: workspace,
   APPDATA: join(workspace, "appdata"),

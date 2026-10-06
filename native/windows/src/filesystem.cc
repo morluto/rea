@@ -14,6 +14,7 @@ static std::wstring hex(const unsigned char* bytes, size_t count) {
 }
 
 static std::wstring localPath(std::wstring path) {
+  path = ordinaryDriveSeparators(std::move(path));
   if (path.rfind(L"\\\\?\\", 0) == 0) path.erase(0, 4);
   require(path.size() >= 3 && path[1] == L':' && path[2] == L'\\' &&
           ((path[0] >= L'A' && path[0] <= L'Z') || (path[0] >= L'a' && path[0] <= L'z')),

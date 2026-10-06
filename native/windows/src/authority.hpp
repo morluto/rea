@@ -19,6 +19,16 @@
 
 namespace rea {
 
+// Translate ordinary DOS drive separators without resolving components or
+// changing extended, device, UNC, relative, or drive-relative namespaces.
+inline std::wstring ordinaryDriveSeparators(std::wstring path) {
+  if (path.size() >= 3 && path[1] == L':' &&
+      ((path[0] >= L'A' && path[0] <= L'Z') || (path[0] >= L'a' && path[0] <= L'z')) &&
+      (path[2] == L'\\' || path[2] == L'/'))
+    std::replace(path.begin(), path.end(), L'/', L'\\');
+  return path;
+}
+
 struct Failure : std::runtime_error {
   DWORD win32;
   std::wstring path;
