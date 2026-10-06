@@ -89,6 +89,21 @@ const resolveInternalSpecifier = (
     `${normalized}${suffix}`,
     `${normalized}/index${suffix}`,
   ]);
+  // TypeScript source commonly names the extension emitted for NodeNext.
+  // Retain present runtime files first; substitute only a missing counterpart.
+  if (/\.(?:ts|tsx|mts|cts)$/u.test(fromPath)) {
+    const sourceSuffixes = normalized.endsWith(".js")
+      ? [".ts", ".tsx", ".d.ts"]
+      : normalized.endsWith(".mjs")
+        ? [".mts", ".d.mts"]
+        : normalized.endsWith(".cjs")
+          ? [".cts", ".d.cts"]
+          : normalized.endsWith(".jsx")
+            ? [".tsx", ".d.ts"]
+            : [];
+    const stem = normalized.slice(0, -posix.extname(normalized).length);
+    candidates.push(...sourceSuffixes.map((suffix) => `${stem}${suffix}`));
+  }
   const match = candidates.find((candidate) => filePaths.has(candidate));
   return match === undefined
     ? { to: normalized, resolution: "unresolved" }
