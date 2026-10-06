@@ -273,3 +273,58 @@ describe("JavaScript semantic analysis: dataflow 2", () => {
     ]);
   });
 });
+
+describe("object value overwrite boundaries", () => {
+  it("uses the last named property and keeps later exact overwrites", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      const duplicate = { key: "old", key: "new" };
+      const selected = duplicate.key;
+      const later = { key: "old", ...unknownObject, key: "final" };
+      const final = later.key;
+    `);
+    expect(topLevelBinding(ir, "selected").value).toEqual({
+      status: "literal",
+      value: "new",
+    });
+    expect(topLevelBinding(ir, "final").value).toEqual({
+      status: "literal",
+      value: "final",
+    });
+  });
+  it("does not retain an exact earlier value after an unknown overwrite", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      const spread = { key: "old", ...unknownObject };
+      const dynamic = { key: "old", [unknownKey]: "new" };
+      const method = { key: "old", key() { return "new"; } };
+      const spreadValue = spread.key;
+      const dynamicValue = dynamic.key;
+      const methodValue = method.key;
+    `);
+    for (const name of ["spreadValue", "dynamicValue", "methodValue"])
+      expect(topLevelBinding(ir, name).value.status).toBe("unknown");
+  });
+  it("admits literal computed keys while excluding prototype setters", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      const object = { ["key"]: "value", __proto__: { prototype: true } };
+      const selected = object.key;
+      const prototype = object.__proto__;
+    `);
+    expect(topLevelBinding(ir, "selected").value).toEqual({
+      status: "literal",
+      value: "value",
+    });
+    expect(topLevelBinding(ir, "prototype").value.status).toBe("unknown");
+  });
+});
+
+it("retains shorthand __proto__ as an own data property", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    const __proto__ = "own";
+    const object = { __proto__ };
+    const selected = object.__proto__;
+  `);
+  expect(topLevelBinding(ir, "selected").value).toEqual({
+    status: "literal",
+    value: "own",
+  });
+});
