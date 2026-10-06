@@ -11,7 +11,7 @@ export const parseDemangledSymbols = (
   inputs: readonly string[],
   output: string,
 ) => {
-  const lines = output.trimEnd().split(/\r?\n/u);
+  const lines = output.replace(/\r?\n$/u, "").split(/\r?\n/u);
   if (lines.length !== inputs.length)
     throw new TypeError("swift-demangle output count does not match input");
   return inputs.map((input, index) => {
