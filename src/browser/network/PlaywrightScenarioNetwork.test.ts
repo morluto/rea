@@ -212,6 +212,23 @@ it("keeps metadata-only capture free of body and header-value reads", async () =
   expect(JSON.stringify(events)).not.toContain("private-transport");
 });
 
+it("reports unfinished metadata even when content was not selected", async () => {
+  const { collector, events } = harness({
+    request_body: false,
+    response_body: false,
+    header_values: false,
+  });
+  const request = new RequestFixture("body");
+  collector.request(request);
+  await collector.finish();
+  expect(events.map(({ kind }) => kind)).toEqual([
+    "request",
+    "request-unfinished",
+  ]);
+  expect(collector.limitations()).toHaveLength(1);
+  expect(request.bodyReads + request.headerReads).toBe(0);
+});
+
 it.each([
   {
     selection: {
