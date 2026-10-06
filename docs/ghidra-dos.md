@@ -167,3 +167,22 @@ executable fixtures, an emulator, or an existing analysis database.
 Provider p-code representations can contain process-specific address-space selector
 tokens. The lane preserves those reported values and compares stable dossier
 observations rather than asserting cross-process identity of raw p-code.
+
+## Function annotations
+
+`annotate_native_function` changes the name and/or comments at one exact local function entry, verifies readback, and returns a refreshed dossier. This is useful when recording recovered DOS function roles; it does not claim original-source names. Regular comments map to Ghidra PRE comments and inline comments to EOL comments. Empty text clears a comment; omitted fields preserve it. The whole edit rolls back if a setter, readback or analysis fails.
+
+```json
+{
+  "procedure": "0x10100",
+  "name": "entry",
+  "comment": "Recovered startup role",
+  "inline_comment": "Inspect segment setup"
+}
+```
+
+```bash
+rea annotate-native-function /local/program.com 0x10100 --target-format dos-com --provider ghidra --name entry --comment 'Recovered startup role' --json
+```
+
+The CLI returns the updated analysis before closing its isolated session. MCP edits remain visible to later reads until `close_binary`. Original bytes remain unchanged, database edits are discarded on close, and immutable analysis snapshots are invalidated after edits. This operation does not save a Ghidra project, change ABI/types/body ranges, patch instructions, or emulate a DOS runtime. Windows P0 does not admit it.

@@ -21,7 +21,7 @@ const session = (
   run_id: expected.runId,
   profile_digest: expected.profileDigest,
   provider: { id: "ghidra", version: expected.providerVersion },
-  read_only: true,
+  read_only: false,
   analysis_complete: true,
   analysis_timed_out: false,
   capabilities: [...GHIDRA_SESSION_CAPABILITIES],
@@ -47,6 +47,49 @@ describe("Ghidra DOS import commitment", () => {
   it("rejects compiler drift independently of the language", () => {
     expect(
       parseGhidraSessionInfo(session(undefined, "windows"), expected).ok,
+    ).toBe(false);
+  });
+});
+
+describe("Ghidra mutation handshake", () => {
+  it("requires the exact mutation authority and rejects duplicate capabilities", () => {
+    const value = session();
+    expect(
+      parseGhidraSessionInfo({ ...value, read_only: true }, expected).ok,
+    ).toBe(false);
+    expect(
+      parseGhidraSessionInfo(
+        { ...value, capabilities: [...value.capabilities, "ping"] },
+        expected,
+      ).ok,
+    ).toBe(false);
+    expect(
+      parseGhidraSessionInfo(
+        {
+          ...value,
+          capabilities: value.capabilities.filter(
+            (c) => c !== "annotate_native_function",
+          ),
+        },
+        expected,
+      ).ok,
+    ).toBe(false);
+  });
+  it("excludes database mutation from the Windows transport handshake", () => {
+    const value = session();
+    const windows = {
+      ...value,
+      read_only: true,
+      capabilities: value.capabilities.filter(
+        (c) => c !== "annotate_native_function",
+      ),
+    };
+    expect(
+      parseGhidraSessionInfo(windows, { ...expected, expectedReadOnly: true })
+        .ok,
+    ).toBe(true);
+    expect(
+      parseGhidraSessionInfo(value, { ...expected, expectedReadOnly: true }).ok,
     ).toBe(false);
   });
 });

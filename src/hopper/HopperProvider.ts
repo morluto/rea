@@ -47,6 +47,7 @@ export const HOPPER_PROVIDER_TOOL_CONTRACTS = Object.freeze([
   ...GENERATED_MCP_TOOL_CATALOG.filter(
     ({ kind, name }) =>
       kind === "official-proxy" &&
+      name !== "annotate_native_function" &&
       name !== "inspect_native_load_image" &&
       name !== "inspect_native_data_type" &&
       name !== "inspect_native_instruction" &&

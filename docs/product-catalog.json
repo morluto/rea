@@ -10,15 +10,16 @@
     "skill_version": "27"
   },
   "tools": {
-    "total": 117,
+    "total": 118,
     "families": [
       {
         "id": "direct",
         "surface": "official-proxy",
-        "count": 40,
+        "count": 41,
         "tools": [
           "address_name",
           "address_to_file_offset",
+          "annotate_native_function",
           "comment",
           "current_address",
           "current_document",
@@ -210,6 +211,7 @@
         "address_name",
         "address_to_file_offset",
         "analyze_function",
+        "annotate_native_function",
         "inspect_native_data_type",
         "inspect_native_instruction",
         "inspect_native_load_image",
@@ -469,12 +471,13 @@
     }
   ],
   "cli": {
-    "primary_count": 72,
+    "primary_count": 73,
     "commands": [
       "address-to-file-offset",
       "analyze",
       "analyze-javascript-application",
       "analyze-web-bundle",
+      "annotate-native-function",
       "build-reconstruction-obligation-ledger",
       "capabilities",
       "capture-browser-scenario",
@@ -553,15 +556,15 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 72,
-      "mcp_tools": 117,
+      "cli_commands": 73,
+      "mcp_tools": 118,
       "mcp_prompts": 6
     },
     "digests": {
-      "tools_sha256": "eec70858c8de9e04fc3a87f38ad9e2f0b75ed8717afae80d1837a348f1232086",
+      "tools_sha256": "8f249f132abea569def0056499f2f4c9f3254f746e42789c5f8bdaef8c879d16",
       "prompts_sha256": "4762db348821fec787a5b8c6423f2c48a71f6f0ec2afee97b16ad69030ec504b",
-      "combined_sha256": "55ea35002d0e7ac5267b58794116927ef784d3d0a64c015fbf523ce680fd1960",
-      "providers_sha256": "c1a6849b2524347e6cf9e004a17ba1805f86114b2da72eb689a075afbbb1aada"
+      "combined_sha256": "a79875770e728d25e48f8c12c0cdda938265da27b607fcac71e9dfbc6c86099d",
+      "providers_sha256": "e094c361b60ec930a6062a1a90ee05536ce411541dba5b51ace7e2da2ba25af0"
     }
   }
 }

@@ -176,6 +176,7 @@ describe("canonical CLI catalog", () => {
       "xrefs",
       "trace",
       "function",
+      "annotate-native-function",
       "inspect-native-api",
       "search",
     ]) {

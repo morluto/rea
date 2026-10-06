@@ -38,7 +38,8 @@ export const resolveGhidraAnalysisProfile = (
         available_architectures: [
           ...(target.availableArchitectures ?? []),
         ].sort(),
-        import_mode: "ephemeral-read-only",
+        import_mode: "ephemeral-source-immutable",
+        annotation_policy: "atomic-function-entry-metadata-v1",
         load_image_observations: "source-mappings-entry-context-v2",
         function_body_evidence: "complete-inclusive-ranges-v1",
         ...(dos

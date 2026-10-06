@@ -173,6 +173,88 @@ try {
     (await cli("address-to-file-offset", fixture.near)).normalized_result,
     mapping,
   );
+  const changes = {
+    procedure: fixture.entry,
+    name: "rea_entry",
+    comment: "Regular\nUnicode 註記",
+    inline_comment: "Inline finding",
+  };
+  // Prime provider inventories and the session snapshot before edits.
+  await call("list_names");
+  const updated = await call("annotate_native_function", changes);
+  assert.equal(updated.annotations.name, changes.name);
+  assert.equal(updated.annotations.comment, changes.comment);
+  assert.equal(updated.annotations.inline_comment, changes.inline_comment);
+  assert.equal(updated.dossier.procedure.name, changes.name);
+  assert.ok(updated.dossier.pseudocode.includes(changes.name));
+  assert.equal(
+    await call("procedure_address", { procedure: changes.name }),
+    fixture.entry,
+  );
+  assert.equal(
+    await call("address_name", { address: fixture.entry }),
+    changes.name,
+  );
+  assert.ok(
+    (await call("list_procedures")).some((p) => p.value === changes.name),
+  );
+  assert.ok((await call("list_names")).some((p) => p.value === changes.name));
+  assert.equal(
+    (await call("analyze_function", { procedure: fixture.entry })).procedure
+      .name,
+    changes.name,
+  );
+  const rejected = await client.callTool({
+    name: "annotate_native_function",
+    arguments: {
+      procedure: fixture.entry,
+      comment: "MUST ROLL BACK",
+      name: "invalid name\n",
+    },
+  });
+  assert.equal(
+    rejected.isError,
+    true,
+    "Ghidra accepted an invalid function name",
+  );
+  const retained = await call("annotate_native_function", {
+    procedure: fixture.entry,
+    name: changes.name,
+  });
+  assert.equal(
+    retained.annotations.comment,
+    changes.comment,
+    "Failed edit leaked its earlier comment write",
+  );
+  assert.equal(retained.annotations.inline_comment, changes.inline_comment);
+  assert.equal(retained.dossier.procedure.name, changes.name);
+  const cleared = await call("annotate_native_function", {
+    procedure: fixture.entry,
+    comment: "",
+    inline_comment: "",
+  });
+  assert.equal(cleared.annotations.comment, null);
+  assert.equal(cleared.annotations.inline_comment, null);
+  assert.ok(!cleared.dossier.comments.some((c) => c.address === fixture.entry));
+  assert.equal(
+    (
+      await call("read_bytes", {
+        address: fixture.entry,
+        length: fixture.bytes.length,
+      })
+    ).bytes_hex,
+    fixture.bytes.toString("hex"),
+  );
+  assert.equal((await call("inspect_native_load_image")).status, "verified");
+  const cliAnnotated = await cli("annotate-native-function", fixture.entry, [
+    "--name",
+    changes.name,
+    "--comment",
+    changes.comment,
+    "--inline-comment",
+    changes.inline_comment,
+  ]);
+  assert.deepEqual(cliAnnotated.normalized_result, updated);
   if (captureDirectory !== undefined)
     await writeFile(
       join(captureDirectory, "image.json"),
@@ -204,6 +286,13 @@ try {
       partial_read_bytes: 2,
     },
     functions: { entry: true, near: true, pseudocode_nonempty: true },
+    annotations: {
+      atomic_rollback: true,
+      fresh_inventories: true,
+      fresh_decompiler: true,
+      clear_comments: true,
+      cli_mcp_parity: true,
+    },
     original_unchanged: true,
     limitations: image.limitations,
   };

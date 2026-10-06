@@ -149,7 +149,7 @@ Update either installation with `rea update`.
 - Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+
 - npm; REA does not require or install a particular npm version
 
-Native binary analysis requires [Hopper](https://www.hopperapp.com/) or [Ghidra](#ghidra-read-only-analysis-provider). Hopper is separate software with its own license; its demo supports analysis with vendor-defined limits. REA can use Ghidra that you have already installed.
+Native binary analysis requires [Hopper](https://www.hopperapp.com/) or [Ghidra](#ghidra-analysis-provider). Hopper is separate software with its own license; its demo supports analysis with vendor-defined limits. REA can use Ghidra that you have already installed.
 
 Windows Ghidra support is experimental and currently unavailable. The required Windows process ownership, private-directory permissions, and safe-path checks are not implemented. See [Windows Ghidra P0](docs/windows-ghidra-p0.md) for the remaining requirements.
 
@@ -184,7 +184,7 @@ Install the missing packages and rerun `rea setup`. The Linux demo needs Xvfb, P
 
 REA defaults `HOPPER_LAUNCHER_PATH` to `/Applications/Hopper Disassembler.app/Contents/MacOS/hopper` on macOS and `/opt/hopper/bin/Hopper` on Linux. Explicit configuration always takes precedence.
 
-### Ghidra read-only analysis provider
+### Ghidra analysis provider
 
 Already use Ghidra? REA can connect it to your agent on Linux x64 or macOS x64/arm64. It requires **Ghidra 12.1.4** and a **64-bit JDK 21**. On macOS, your Ghidra installation must also include the native decompiler for your architecture.
 
@@ -200,7 +200,7 @@ rea providers --json
 
 Setup checks the installations and saves their paths in your selected agents' configuration after approval. Ghidra and Java must already be installed; REA does not download or change them.
 
-The adapter exposes **22 read-only operations** for functions, strings, symbols, assembly, decompilation, calls, references, instructions, and data types. These also support REA's overview, search, call-graph, and function-analysis workflows. Ghidra does not provide GUI controls or annotation changes through REA.
+The adapter exposes inventory, function, memory and load-image inspection, plus atomic function annotation edits on Linux and macOS. `annotate_native_function` edits names and entry comments in the session database and returns a refreshed function dossier; executable bytes stay unchanged. Ghidra does not provide GUI controls through REA.
 
 REA analyzes a temporary copy of the target and removes the temporary project when the session closes. Results identify what Ghidra observed and what it could not resolve. Decompilation produces pseudocode rather than the original source.
 
@@ -307,7 +307,7 @@ See [native investigation](docs/native-investigation.md) for keyed archives, ins
 
 | Tool family               | Count | Examples                                                                                                                                                  |
 | ------------------------- | ----: | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Native inspection         |    40 | functions, pseudocode, assembly, strings, symbols, calls, references, annotations, byte reads, and file offsets                                           |
+| Native inspection         |    41 | functions, pseudocode, assembly, strings, symbols, calls, references, annotations, byte reads, and file offsets                                           |
 | Investigation workflows   |    14 | app overviews, function dossiers, native APIs and dispatch, batch decompilation, feature traces, call paths, call graphs, Swift and Objective-C discovery |
 | Native macOS utilities    |     7 | Mach-O metadata, code signatures, plists, architectures, and Swift demangling without launching Hopper                                                    |
 | Artifact graph            |     5 | directory and package inventories, compiled Interface Builder files, Apple asset catalogs, and extraction                                                 |
@@ -453,7 +453,7 @@ flowchart LR
     REA --> Session["Target-bound session router"]
     Session --> Registry["Deep-provider registry<br/>deterministic selection"]
     Registry --> Hopper["Hopper provider"]
-    Registry --> Ghidra["Ghidra provider<br/>read-only inventory + function analysis"]
+    Registry --> Ghidra["Ghidra provider<br/>inventory + function analysis + annotations"]
     Hopper --> Runtime["Owned provider runtime<br/>deadline + bounded diagnostics + cleanup"]
     Ghidra --> Runtime
     Session --> Native["Native macOS provider"]
@@ -522,7 +522,7 @@ Use `--provider`, or `provider_id` in MCP, to choose Hopper or Ghidra for a targ
 
 With `auto`, REA selects the only available tool that supports the target. If both are available, specify one before opening the target. The session keeps that choice until you explicitly switch or close it; a failure never silently switches tools. Artifact-only analysis can work without a native analysis tool.
 
-Run `rea providers` and `rea capabilities` to check availability and supported operations. Ghidra exposes 22 read-only operations on supported Linux and macOS hosts. GUI controls and annotation changes require Hopper. Windows Ghidra operations remain unavailable.
+Run `rea providers` and `rea capabilities` to check availability and supported operations. Ghidra supports inspection and atomic function annotation edits on Linux and macOS. Its database edits are discarded on close; GUI controls require Hopper. Windows Ghidra operations remain unavailable.
 
 The session also reports active work and cleanup status. If a caller times out, the analysis tool may still be busy; `analysis_activity` reports that state. A `cleanup_incomplete` result identifies resources whose shutdown or removal could not be verified. See [provider selection and analysis profiles](docs/adr/0001-provider-selection-and-analysis-profiles.md) for session, cache, and process-tracking details.
 
@@ -628,7 +628,7 @@ No. Setup can install Hopper for you, but Hopper remains separate software with 
 <details>
 <summary><strong>Does REA install or include Ghidra or Java?</strong></summary>
 
-No. REA connects to an existing Ghidra installation. Run setup after providing the Ghidra and Java paths shown in the [Ghidra section](#ghidra-read-only-analysis-provider).
+No. REA connects to an existing Ghidra installation. Run setup after providing the Ghidra and Java paths shown in the [Ghidra section](#ghidra-analysis-provider).
 
 </details>
 

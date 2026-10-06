@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  nativeFunctionAnnotationsInputSchema,
+  nativeFunctionAnnotationsSchema,
+} from "../domain/nativeFunctionAnnotations.js";
 import { nativeDataTypeSchema } from "../domain/nativeDataType.js";
 import {
   nativeInstructionSchema,
@@ -27,8 +31,9 @@ import {
   ghidraProcedureIdentitySchema as procedureIdentity,
 } from "./GhidraInventoryValues.js";
 
-/** Read-only function operations admitted by the Ghidra adapter. */
+/** Function analysis and annotation operations admitted by the Ghidra adapter. */
 export const GHIDRA_FUNCTION_OPERATIONS = [
+  "annotate_native_function",
   "inspect_native_data_type",
   "inspect_native_instruction",
   "resolve_native_call_targets",
@@ -59,6 +64,7 @@ const procedure = ghidraIdentifierSchema;
 const directProcedure = { document, procedure };
 
 const inputSchemas = {
+  annotate_native_function: nativeFunctionAnnotationsInputSchema,
   inspect_native_data_type: z
     .object({
       document,
@@ -356,6 +362,9 @@ const ghidraFunctionInstructionWindow = functionInstructionWindowSchema
   .strict();
 
 const resultSchemas = {
+  annotate_native_function: nativeFunctionAnnotationsSchema.safeExtend({
+    dossier: ghidraFunctionDossier,
+  }),
   analyze_function: ghidraFunctionDossier,
   procedure_assembly: z.string(),
   procedure_callees: z.array(ghidraCanonicalAddressSchema),

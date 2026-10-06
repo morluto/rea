@@ -26,12 +26,10 @@ const sessionInfoSchema = z
         version: z.string().min(1),
       })
       .strict(),
-    read_only: z.literal(true),
+    read_only: z.boolean(),
     analysis_complete: z.boolean(),
     analysis_timed_out: z.boolean(),
-    capabilities: z
-      .array(capabilitySchema)
-      .length(GHIDRA_SESSION_CAPABILITIES.length),
+    capabilities: z.array(capabilitySchema),
     target: z
       .object({
         name: z.string().min(1),
@@ -56,14 +54,21 @@ export const parseGhidraSessionInfo = (
     readonly providerVersion: string;
     readonly profileDigest: string;
     readonly targetSha256: string;
+    readonly expectedReadOnly?: boolean;
     readonly expectedLanguageId?: string;
     readonly expectedCompilerSpecId?: string;
   },
 ): Result<GhidraSessionInfo, Error> => {
   const parsed = sessionInfoSchema.safeParse(value);
+  const readOnly = expected.expectedReadOnly ?? false;
+  const expectedCapabilities = GHIDRA_SESSION_CAPABILITIES.filter(
+    (capability) => !readOnly || capability !== "annotate_native_function",
+  );
   if (
     !parsed.success ||
     parsed.data.run_id !== expected.runId ||
+    parsed.data.read_only !== readOnly ||
+    parsed.data.capabilities.length !== expectedCapabilities.length ||
     parsed.data.provider.version !== expected.providerVersion ||
     parsed.data.profile_digest !== expected.profileDigest ||
     parsed.data.target.sha256 !== expected.targetSha256 ||
@@ -72,9 +77,8 @@ export const parseGhidraSessionInfo = (
     (expected.expectedCompilerSpecId !== undefined &&
       parsed.data.target.compiler_spec_id !==
         expected.expectedCompilerSpecId) ||
-    new Set(parsed.data.capabilities).size !==
-      GHIDRA_SESSION_CAPABILITIES.length ||
-    GHIDRA_SESSION_CAPABILITIES.some(
+    new Set(parsed.data.capabilities).size !== expectedCapabilities.length ||
+    expectedCapabilities.some(
       (capability) => !parsed.data.capabilities.includes(capability),
     ) ||
     parsed.data.analysis_complete === parsed.data.analysis_timed_out

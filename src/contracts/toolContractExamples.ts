@@ -42,6 +42,11 @@ export const TOOL_EXAMPLE_OVERRIDES: Readonly<
   get_call_graph: { address: "0x1000" },
   find_xrefs_to_name: { name: "malloc" },
   analyze_function: { procedure: "main" },
+  annotate_native_function: {
+    procedure: "0x10100",
+    name: "entry",
+    comment: "Analyst observation",
+  },
   analyze_swift_types: { category: "classes", pattern: "Account" },
   inspect_native_api: { procedure: "main" },
   trace_feature: { query: "license" },

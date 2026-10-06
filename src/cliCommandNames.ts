@@ -14,6 +14,7 @@ export const CLI_COMMANDS = Object.freeze({
   capabilities: "capabilities",
   providers: "providers",
   function: "function",
+  annotateNativeFunction: "annotate-native-function",
   inspectNativeApi: "inspect-native-api",
   instructions: "instructions",
   search: "search",

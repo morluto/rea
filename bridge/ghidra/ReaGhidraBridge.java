@@ -117,6 +117,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         "params"
     );
     private static final String[] CAPABILITIES = {
+        "annotate_native_function",
         "inspect_native_load_image",
         "read_bytes",
         "address_to_file_offset",
@@ -184,6 +185,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 "Ghidra imported-byte digest does not match the admitted target"
             );
         }
+        // GhidraScript wraps run() in a transaction. End it before serving so
+        // each edit owns a real outer transaction and can roll back immediately.
+        end(true);
         try {
             initializeDecompiler();
             serve(descriptor);
@@ -347,6 +351,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
             case "resolve_native_call_targets" -> resolveNativeCallTargets(request.params);
             case "xrefs" -> xrefs(request.params);
             case "analyze_function" -> analyzeFunction(request.params);
+            case "annotate_native_function" -> {
+                if (!descriptor.transport.equals("unix-socket"))
+                    throw new RequestFailure("method_unavailable", "Windows P0 does not admit database mutation");
+                yield annotateNativeFunction(request.params);
+            }
             default -> throw new RequestFailure(
                 "method_unavailable",
                 "Bridge method is unavailable"
@@ -379,10 +388,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.addProperty("run_id", descriptor.runId);
         result.addProperty("profile_digest", descriptor.profileDigest);
         result.add("provider", provider);
-        result.addProperty("read_only", true);
+        boolean readOnly = !descriptor.transport.equals("unix-socket");
+        result.addProperty("read_only", readOnly);
         result.addProperty("analysis_complete", !timedOut);
         result.addProperty("analysis_timed_out", timedOut);
-        result.add("capabilities", GSON.toJsonTree(CAPABILITIES));
+        result.add("capabilities", GSON.toJsonTree(
+            java.util.Arrays.stream(CAPABILITIES)
+                .filter(value -> !readOnly || !value.equals("annotate_native_function"))
+                .toArray(String[]::new)
+        ));
         result.add("target", target);
         return result;
     }
@@ -936,6 +950,89 @@ public final class ReaGhidraBridge extends HeadlessScript {
             result.add(canonicalAddress(source));
         }
         return result;
+    }
+
+    private void invalidateAnalysisCaches() {
+        nameInventory = null;
+        procedureInventory = null;
+        stringInventory = null;
+        if (decompiler != null) decompiler.flushCache();
+    }
+
+    private JsonObject annotationReadback(Function function) {
+        Address entry = function.getEntryPoint();
+        JsonObject value = new JsonObject();
+        value.addProperty("address", canonicalAddress(entry));
+        value.addProperty("name", function.getName());
+        value.addProperty("comment", currentProgram.getListing().getComment(CommentType.PRE, entry));
+        value.addProperty("inline_comment", currentProgram.getListing().getComment(CommentType.EOL, entry));
+        return value;
+    }
+
+    private JsonObject annotateNativeFunction(JsonObject params) throws Exception {
+        if (!Set.of("procedure", "name", "comment", "inline_comment").containsAll(params.keySet()))
+            throw new RequestFailure("invalid_request", "Unknown function annotation field");
+        if (!params.has("name") && !params.has("comment") && !params.has("inline_comment"))
+            throw new RequestFailure("invalid_request", "Supply at least one annotation change");
+        Function function = resolveProcedure(requireString(params, "procedure"));
+        Address entry = function.getEntryPoint();
+        if (function.isExternal() || !currentProgram.getMemory().contains(entry))
+            throw new RequestFailure("invalid_request", "Annotations require a local function entry: " + canonicalAddress(entry));
+        int transaction = currentProgram.startTransaction("REA function annotations");
+        boolean commit = false;
+        try {
+            // Validate edits through Ghidra's own setters, including name rules.
+            // A later invalid name must roll back earlier comment writes.
+            for (String field : List.of("comment", "inline_comment")) {
+                if (params.has(field)) {
+                    String text = requireText(params, field);
+                    CommentType type = field.equals("comment") ? CommentType.PRE : CommentType.EOL;
+                    currentProgram.getListing().setComment(entry, type, text.isEmpty() ? null : text);
+                }
+            }
+            if (params.has("name"))
+                function.setName(requireString(params, "name"), SourceType.USER_DEFINED);
+            monitor.checkCancelled();
+            invalidateAnalysisCaches();
+            JsonObject readback = annotationReadback(function);
+            for (String field : List.of("name", "comment", "inline_comment")) {
+                if (!params.has(field)) continue;
+                String requested = requireText(params, field);
+                JsonElement measured = readback.get(field);
+                String expected = !field.equals("name") && requested.isEmpty() ? null : requested;
+                String observed = measured.isJsonNull() ? null : measured.getAsString();
+                if (!java.util.Objects.equals(expected, observed))
+                    throw new RequestFailure("annotation_readback_mismatch", "Annotation readback differs for " + field + " at " + canonicalAddress(entry));
+            }
+            JsonObject query = new JsonObject();
+            query.addProperty("procedure", canonicalAddress(entry));
+            JsonObject result = new JsonObject();
+            result.add("annotations", readback);
+            result.add("dossier", analyzeFunction(query));
+            JsonObject effects = new JsonObject();
+            effects.addProperty("scope", "session-analysis-database");
+            effects.addProperty("source_bytes_modified", false);
+            effects.addProperty("persists_after_close", false);
+            result.add("effects", effects);
+            monitor.checkCancelled();
+            commit = true;
+            return result;
+        }
+        catch (ghidra.util.exception.InvalidInputException | ghidra.util.exception.DuplicateNameException exception) {
+            throw new RequestFailure("invalid_request", "Invalid function name at " + canonicalAddress(entry) + ": " + safeMessage(exception));
+        }
+        finally {
+            currentProgram.endTransaction(transaction, commit);
+            // Rollback also invalidates inventory and decompiler views.
+            invalidateAnalysisCaches();
+        }
+    }
+
+    private static String requireText(JsonObject params, String field) {
+        JsonElement value = params.get(field);
+        if (value == null || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString())
+            throw new RequestFailure("invalid_request", "Annotation " + field + " must be text");
+        return value.getAsString();
     }
 
     private JsonObject analyzeFunction(JsonObject params) throws Exception {

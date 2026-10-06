@@ -151,10 +151,14 @@ describe("GhidraClient", () => {
       value: {
         provider: { id: "ghidra", version: PROVIDER_VERSION },
         profile_digest: PROFILE_DIGEST,
-        read_only: true,
+        read_only: HOST_TRANSPORT !== "unix-socket",
         analysis_complete: true,
         analysis_timed_out: false,
-        capabilities: GHIDRA_SESSION_CAPABILITIES,
+        capabilities: GHIDRA_SESSION_CAPABILITIES.filter(
+          (value) =>
+            HOST_TRANSPORT === "unix-socket" ||
+            value !== "annotate_native_function",
+        ),
         target: {
           image_base: "0x1000",
           default_address_space: "ram",

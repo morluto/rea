@@ -337,7 +337,8 @@ describe("Ghidra client projection", () => {
     expect(resolved.value.profile).toMatchObject({
       provider: { id: "ghidra", name: "Ghidra", version: "12.1.4" },
       parameters: {
-        import_mode: "ephemeral-read-only",
+        import_mode: "ephemeral-source-immutable",
+        annotation_policy: "atomic-function-entry-metadata-v1",
         analyzer_preset: "ghidra-default",
       },
     });
@@ -559,7 +560,7 @@ const sessionInfo = () => ({
   run_id: "11111111-1111-4111-8111-111111111111",
   profile_digest: "a".repeat(64),
   provider: { id: "ghidra" as const, version: "12.1.4" },
-  read_only: true as const,
+  read_only: false as const,
   analysis_complete: true,
   analysis_timed_out: false,
   capabilities: [...GHIDRA_SESSION_CAPABILITIES],

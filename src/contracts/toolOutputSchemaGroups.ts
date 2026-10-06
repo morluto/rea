@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { nativeFunctionAnnotationsSchema } from "../domain/nativeFunctionAnnotations.js";
 import { nativeLoadImageSchema } from "../domain/nativeLoadImage.js";
 import { nativeUiResultSchema } from "../domain/nativeUiObservation.js";
 import { nativeValueTraceSchema } from "../domain/nativeValueTrace.js";
@@ -101,6 +102,7 @@ const addressedString = z.object({
 
 /** Exact structured-content schemas shared by direct analysis providers. */
 export const officialOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
+  annotate_native_function: resultOf(nativeFunctionAnnotationsSchema),
   inspect_native_load_image: resultOf(nativeLoadImageSchema),
   inspect_native_data_type: resultOf(nativeDataTypeSchema),
   inspect_native_instruction: resultOf(nativeInstructionSchema),

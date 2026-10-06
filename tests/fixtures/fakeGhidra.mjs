@@ -190,7 +190,7 @@ const sessionInfo = ({
   run_id: sessionRunId,
   profile_digest: digest,
   provider: { id: "ghidra", version },
-  read_only: true,
+  read_only: transport !== "unix-socket",
   analysis_complete: !timedOut,
   analysis_timed_out: timedOut,
   capabilities: [
@@ -209,6 +209,7 @@ const sessionInfo = ({
     "resolve_containing_procedure",
     "search_procedures",
     "search_strings",
+    "annotate_native_function",
     "inspect_native_data_type",
     "inspect_native_instruction",
     "resolve_native_call_targets",
@@ -221,7 +222,10 @@ const sessionInfo = ({
     "read_function_instructions",
     "procedure_references",
     "xrefs",
-  ],
+  ].filter(
+    (value) =>
+      transport === "unix-socket" || value !== "annotate_native_function",
+  ),
   target: {
     name: "fixture",
     language_id: "x86:LE:64:default",

@@ -19,6 +19,7 @@ export const registerCoreAnalysisCommands = (
   logger: Logger,
 ): void => {
   registerCoreCommands(cli, logger);
+  registerAnnotationCommand(cli, logger);
   cli.command(CLI_COMMANDS.inspectNativeLoadImage, {
     description:
       "Verify loaded native bytes, source mappings, relocations and entry",
@@ -715,6 +716,54 @@ const registerSearchCommand = (cli: CliInstance, logger: Logger): void => {
           directAnalysisOptions(
             logger,
             options.snapshot,
+            options.provider,
+            options["target-format"],
+          ),
+        ),
+      ),
+  });
+};
+
+const registerAnnotationCommand = (cli: CliInstance, logger: Logger): void => {
+  cli.command(CLI_COMMANDS.annotateNativeFunction, {
+    description: "Edit function annotations and return refreshed analysis",
+    args: z.object({
+      path: z.string().describe("Local executable path"),
+      procedure: z
+        .string()
+        .describe("Exact function entry address or unique name"),
+    }),
+    options: z.object({
+      name: z.string().min(1).optional().describe("Analyst function name"),
+      comment: z
+        .string()
+        .optional()
+        .describe("Regular entry comment; empty text clears it"),
+      "inline-comment": z
+        .string()
+        .optional()
+        .describe("Inline entry comment; empty text clears it"),
+      "target-format": formatSelectionOption,
+      provider: providerSelectionOption,
+    }),
+    run: ({ args, options }) =>
+      logCliCommand(logger, CLI_COMMANDS.annotateNativeFunction, () =>
+        runDirectAnalysis(
+          args.path,
+          "annotate_native_function",
+          {
+            procedure: args.procedure,
+            ...(options.name === undefined ? {} : { name: options.name }),
+            ...(options.comment === undefined
+              ? {}
+              : { comment: options.comment }),
+            ...(options["inline-comment"] === undefined
+              ? {}
+              : { inline_comment: options["inline-comment"] }),
+          },
+          directAnalysisOptions(
+            logger,
+            undefined,
             options.provider,
             options["target-format"],
           ),

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { nativeFunctionAnnotationsInputSchema } from "../domain/nativeFunctionAnnotations.js";
 
 import {
   officialOutputSchemas,
@@ -36,6 +37,11 @@ const official = <Name extends string, Schema extends z.ZodObject>(
 
 /** Bridge operations exposed without additional application composition. */
 export const OFFICIAL_TOOL_CONTRACTS = [
+  official(
+    "annotate_native_function",
+    "Atomically update one function name and/or entry comments, read them back, and return a refreshed complete function dossier. Ghidra changes its ephemeral session analysis database only; original executable bytes remain unchanged. Empty comment text clears that comment. Edits remain available to subsequent MCP calls until close; CLI returns the updated dossier before discarding its session. Invalid edits roll back the entire operation. Windows P0 and providers without this capability are unsupported.",
+    nativeFunctionAnnotationsInputSchema,
+  ),
   official(
     "inspect_native_load_image",
     "Verify the provider's loaded DOS MZ or explicitly selected COM image against its immutable target snapshot: complete original/modified source-byte digests, header/module file mappings and memory digests, relocations and external entry. Returns measured observations and independent checks with mismatch coordinates. COM verification includes its imposed entry register context and does not claim PSP/runtime coverage. Overlay and uninitialized coverage remain explicit; other formats return unsupported. Does not execute or modify the target.",

@@ -81,7 +81,7 @@ export type GhidraProviderClientFactory = (
 ) => Pick<GhidraClient, "start" | "callTool" | "close"> &
   Partial<Pick<GhidraClient, "runtimeLineage" | "readTargetSnapshot">>;
 
-/** Ghidra candidate backed by an isolated read-only headless import. */
+/** Ghidra candidate backed by an isolated ephemeral headless import. */
 export class GhidraProvider implements AnalysisProviderCandidate {
   #installation: GhidraInstallationInspection | undefined;
 

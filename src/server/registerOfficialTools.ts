@@ -134,6 +134,9 @@ const projectOfficialArguments = (
   contract: ToolContract,
   input: unknown,
 ): Readonly<Record<string, JsonValue>> => {
+  // Annotation omissions preserve existing values; they are not Python defaults.
+  if (contract.name === "annotate_native_function")
+    return jsonObjectSchema.parse(contract.inputSchema.parse(input));
   const parsed = jsonObjectSchema.parse(input);
   if (!(contract.inputSchema instanceof z.ZodObject))
     throw new TypeError(

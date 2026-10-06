@@ -1,3 +1,5 @@
+import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
+import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -12,6 +14,7 @@ import { createServer } from "../../../src/server/createServer.js";
 const VALID_INPUTS: Readonly<
   Record<string, Readonly<Record<string, JsonValue>>>
 > = {
+  annotate_native_function: { procedure: "0x1000", name: "entry" },
   inspect_native_load_image: {},
   address_name: {},
   inspect_native_instruction: { address: "0x1000" },
@@ -128,6 +131,23 @@ const connect = async (analysis: AnalysisOperationPort) => {
 const inventory: JsonValue = [];
 
 const outputFor = (name: string): JsonValue => {
+  if (name === "annotate_native_function") {
+    const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+    return {
+      annotations: {
+        address: dossier.procedure.address,
+        name: dossier.procedure.name,
+        comment: null,
+        inline_comment: null,
+      },
+      dossier,
+      effects: {
+        scope: "session-analysis-database",
+        source_bytes_modified: false,
+        persists_after_close: false,
+      },
+    };
+  }
   if (name === "inspect_native_load_image")
     return {
       status: "unsupported",
@@ -275,6 +295,10 @@ describe("official Hopper proxy tools", () => {
       expect(result.isError).not.toBe(true);
     }
 
+    expect(
+      invocations.find(({ name }) => name === "annotate_native_function")
+        ?.arguments_,
+    ).toEqual({ procedure: "0x1000", name: "entry" });
     expect(invocations.map(({ name }) => name)).toEqual(
       OFFICIAL_TOOL_CONTRACTS.map(({ name }) => name),
     );

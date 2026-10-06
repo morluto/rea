@@ -41,6 +41,12 @@ const sessionEvidence = effects({ mutatesSession: true });
 
 /** Explicit effect audit for every public tool. */
 export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
+  annotate_native_function: effects({
+    mutatesTarget: true,
+    mutatesSession: true,
+    launchesProcess: true,
+    writesFilesystem: true,
+  }),
   inspect_native_load_image: evidence,
   inspect_native_dispatch_metadata: evidence,
   trace_native_ui_action: evidence,

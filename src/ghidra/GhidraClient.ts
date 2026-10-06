@@ -400,6 +400,8 @@ export class GhidraClient {
       return err(this.#failure("protocol", "Ghidra run identity is missing"));
     const parsed = parseGhidraSessionInfo(value, {
       runId,
+      expectedReadOnly:
+        this.#options.transport === "authenticated-loopback-tcp",
       providerVersion: this.#options.providerVersion,
       profileDigest: this.#options.profileDigest,
       targetSha256: this.#options.targetSha256,

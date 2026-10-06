@@ -20,7 +20,7 @@ const providerContractByName = new Map(
   ).map((contract) => [contract.name, contract]),
 );
 
-/** Provider-neutral read-only contracts implemented by the Ghidra adapter. */
+/** Provider-neutral contracts implemented by the Ghidra adapter. */
 export const GHIDRA_PROVIDER_TOOL_CONTRACTS = Object.freeze(
   [...GHIDRA_INVENTORY_OPERATIONS, ...GHIDRA_FUNCTION_OPERATIONS].map(
     (operation) => {
@@ -37,7 +37,7 @@ export const GHIDRA_PROVIDER_TOOL_CONTRACTS = Object.freeze(
 /** Health limitations shared by every Ghidra-backed capability. */
 export const healthLimitations = Object.freeze([
   "The session serves operations only after Ghidra reports default auto-analysis complete; incomplete analysis does not expose partial results.",
-  "The imported Program and temporary project are ephemeral, read-only to REA, and deleted on close.",
+  "The imported Program and temporary project are ephemeral and deleted on close. Annotation operations edit session database metadata; original executable bytes are never written.",
 ]);
 
 /** Additional limitations applied to the experimental Windows x64 P0 boundary. */
@@ -54,6 +54,12 @@ export const limitationsFor = (operation: string): readonly string[] => {
     "Default-space addresses use lowercase 0x-prefixed hexadecimal; other address spaces use <percent-encoded-space>:0x<hex>.",
   ];
   switch (operation) {
+    case "annotate_native_function":
+      return [
+        ...common,
+        "Names use Ghidra USER_DEFINED source. Regular comments map to PRE and inline comments to EOL at the exact function entry. Changes commit together after readback and refreshed analysis; failure rolls them all back.",
+        "Metadata edits invalidate immutable analysis snapshots and are discarded on close. CLI returns the updated dossier before session cleanup; this is not a saved Ghidra project.",
+      ];
     case "inspect_native_load_image":
       return [
         ...common,
@@ -158,7 +164,7 @@ export const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
       available: true,
       reason: null,
       effects: Object.freeze({
-        mutatesArtifact: false,
+        mutatesArtifact: operation === "annotate_native_function",
         launchesProcess: true,
         mayShowUi: false,
         mayAccessNetwork: false,
