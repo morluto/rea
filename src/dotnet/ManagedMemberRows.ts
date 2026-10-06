@@ -153,7 +153,7 @@ export const parseMethods = ({
       impl_flags: implFlags,
       flags,
       signature: signature(sig),
-      body: methodBody(bytes, pe, rva),
+      body: methodBody(bytes, pe, rva, { implFlags, flags }),
     });
     core.set(token, { token, name, declaringType: declared?.fullName ?? null });
   }

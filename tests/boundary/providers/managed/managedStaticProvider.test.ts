@@ -181,3 +181,53 @@ it("retains U+FEFF metadata through the filesystem target and provider", async (
     fields: [expect.objectContaining({ name: "\uFEFFcounter" })],
   });
 });
+
+it("keeps non-CIL implementation bytes unknown through the real file provider", async () => {
+  const directory = await createTestTempDirectory("rea-managed-native-body-");
+  const path = join(directory, "fixture.exe");
+  const bytes = buildManagedPeFixture();
+  await writeFile(path, bytes);
+  const originalTarget = await parseBinaryTarget(path);
+  expect(originalTarget.ok).toBe(true);
+  if (!originalTarget.ok) return;
+  const original = await new ManagedStaticProvider()
+    .createClient(originalTarget.value)
+    .execute("inspect_managed_members", {});
+  expect(original.ok).toBe(true);
+  if (!original.ok) return;
+  const row = asManagedMemberResult(original.value).methods[0]?.row_offset;
+  expect(row).toBeDefined();
+  if (row === undefined) return;
+  bytes.writeUInt16LE(1, row + 4);
+  await writeFile(path, bytes);
+  const nativeTarget = await parseBinaryTarget(path);
+  expect(nativeTarget.ok).toBe(true);
+  if (!nativeTarget.ok) return;
+  const native = await new ManagedStaticProvider()
+    .createClient(nativeTarget.value)
+    .execute("inspect_managed_members", {});
+  expect(native.ok).toBe(true);
+  if (!native.ok) return;
+  const result = asManagedMemberResult(native.value);
+  expect(result.methods[0]?.body).toMatchObject({
+    status: "partial",
+    rva: 0x2800,
+    il_sha256: null,
+    anchors: [],
+  });
+  expect(result.call_edges).toEqual([]);
+  expect(result.field_accesses).toEqual([]);
+  bytes.writeUInt32LE(0, row);
+  await writeFile(path, bytes);
+  const absentTarget = await parseBinaryTarget(path);
+  expect(absentTarget.ok).toBe(true);
+  if (!absentTarget.ok) return;
+  const absent = await new ManagedStaticProvider()
+    .createClient(absentTarget.value)
+    .execute("inspect_managed_members", {});
+  expect(absent.ok).toBe(true);
+  if (!absent.ok) return;
+  expect(asManagedMemberResult(absent.value).methods[0]?.body.status).toBe(
+    "absent",
+  );
+});
