@@ -74,7 +74,7 @@ it("extracts a selected interval with verified file identity and parent-byte lin
   });
   expect(normalized.derivations[0]).toMatchObject({
     parent_path: "$input",
-    child_path: "rootfs/config",
+    child_path: "$output/rootfs/config",
     handler: "gzip",
     parent_file_range: { offset: 0, length: 4 },
   });
@@ -103,7 +103,7 @@ it.each(["depth", "dependency", "link"])(
     expect(normalized.coverage).toBe("partial");
     expect(normalized.files).toHaveLength(1);
     if (mode === "depth")
-      expect(normalized.depth_limited_paths).toEqual(["rootfs/config"]);
+      expect(normalized.depth_limited_paths).toEqual(["$output/rootfs/config"]);
     if (mode === "dependency")
       expect(normalized.diagnostics).toEqual([
         {
@@ -131,7 +131,28 @@ it.each(["depth", "dependency", "link"])(
   },
 );
 
-it.each(["hash", "malformed", "budget"])(
+it("distinguishes a real output file named $input from the selected original", async () => {
+  const fixture = await firmwareFixture("reserved-name");
+  const outcome = await fixture.service.execute("extract_firmware", {
+    path: fixture.path,
+    output_directory: fixture.output,
+  });
+  if (!outcome.ok) throw outcome.error;
+  const result = firmwareResultSchemas.extract_firmware.parse(
+    outcome.value.normalized_result,
+  );
+  expect(result.files[0]?.relative_path).toBe("$input");
+  expect(result.derivations[0]).toMatchObject({
+    parent_path: "$input",
+    child_path: "$output/$input",
+  });
+  expect(await readFile(`${fixture.output}/$input`, "utf8")).toBe(
+    "firmware=true\n",
+  );
+  await assertFirmwareCleanup(fixture.launches);
+});
+
+it.each(["hash", "malformed", "budget", "missing-file"])(
   "rejects invalid or over-budget extraction and rolls back output: %s",
   async (mode) => {
     const fixture = await firmwareFixture(mode);

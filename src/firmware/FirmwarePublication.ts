@@ -19,6 +19,18 @@ export const publishFirmwareExtraction = async (context: {
 }) => {
   let tree: SafeOutputTree | undefined;
   try {
+    const materialized = new Set(
+      context.entries
+        .filter((entry) => entry.kind === "file")
+        .map((entry) => `$output/${entry.relativePath}`),
+    );
+    for (const path of context.normalized.files.keys()) {
+      if (path !== "$input" && !materialized.has(path))
+        throw new AnalysisOutputError(
+          "extract_firmware",
+          `Reported regular file is absent from materialized output: ${path}`,
+        );
+    }
     const files = [];
     const unpublished = [];
     tree = await SafeOutputTree.create(context.outputDirectory);
@@ -31,14 +43,15 @@ export const publishFirmwareExtraction = async (context: {
         });
         continue;
       }
-      const reported = context.normalized.files.get(entry.relativePath);
+      const logicalPath = `$output/${entry.relativePath}`;
+      const reported = context.normalized.files.get(logicalPath);
       const sha256 = await hashFirmwareFile(entry.path, context.signal);
       if (
         (reported?.sha256 !== null &&
           reported?.sha256 !== undefined &&
           reported.sha256 !== sha256) ||
-        (context.normalized.sizes.has(entry.relativePath) &&
-          context.normalized.sizes.get(entry.relativePath) !== entry.size)
+        (context.normalized.sizes.has(logicalPath) &&
+          context.normalized.sizes.get(logicalPath) !== entry.size)
       )
         throw new AnalysisOutputError(
           "extract_firmware",

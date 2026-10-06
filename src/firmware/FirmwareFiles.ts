@@ -261,5 +261,5 @@ export const firmwareLogicalPath = (
       "extract_firmware",
       `Provider reported a path outside its owned output: ${path}`,
     );
-  return rel === "" ? "$output" : rel.split(sep).join("/");
+  return rel === "" ? "$output" : `$output/${rel.split(sep).join("/")}`;
 };

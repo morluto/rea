@@ -47,10 +47,14 @@ if (args.includes("--version")) {
   } else {
     const output = args[args.indexOf("--extract-dir") + 1];
     await mkdir(output, { recursive: true });
-    const child = join(output, "rootfs", "config");
+    const child =
+      mode === "reserved-name"
+        ? join(output, "$input")
+        : join(output, "rootfs", "config");
     await mkdir(join(output, "rootfs"));
     const content = Buffer.from("firmware=true\n");
-    await writeFile(child, mode === "budget" ? Buffer.alloc(10000) : content);
+    if (mode !== "missing-file")
+      await writeFile(child, mode === "budget" ? Buffer.alloc(10000) : content);
     if (mode === "link") await symlink("/etc/passwd", join(output, "escape"));
     const childHash = createHash("sha256").update(content).digest("hex");
     const depth =

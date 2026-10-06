@@ -82,7 +82,9 @@ build's source revision, so that field remains unknown.
 - Extraction returns regular file paths, independently verified SHA-256 values,
   producer hashes when available, chunks, diagnostics and task derivations.
   Unblob's task report is unordered; REA resolves relationships by paths and
-  blob IDs. Chunk offsets belong to the task's input file. Only chunks in the
+  blob IDs. Logical references use `$input`, `$output`, or `$output/<relative-path>`
+  so a real file named `$input` stays distinct from the original input.
+  Chunk offsets belong to the task's input file. Only chunks in the
   selected input have a known `root_file_range`, adjusted by the selected offset.
 - Decompressed children have unknown original byte ranges and runtime addresses.
   Task lineage does not establish a byte-for-byte mapping through decompression.
