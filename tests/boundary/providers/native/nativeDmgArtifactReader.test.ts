@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { build } from "plist";
@@ -80,4 +80,48 @@ describe("native DMG artifact reader", () => {
       NativeDmgArtifactReader.create("/tmp/image.dmg", undefined, host),
     ).rejects.toThrow("cleanup could not detach every device");
   });
+});
+
+it("owns the canonical mount root and detaches each observed whole image once", async () => {
+  const calls: string[][] = [];
+  const host: NativeDmgHost = {
+    async run(arguments_) {
+      calls.push([...arguments_]);
+      if (arguments_[0] !== "attach") return { stdout: "", exitCode: 0 };
+      const mountRoot = arguments_[arguments_.indexOf("-mountroot") + 1];
+      if (mountRoot === undefined) throw new Error("missing mount root");
+      expect(mountRoot).toBe(await realpath(mountRoot));
+      const mountPoint = join(await realpath(mountRoot), "Fixture");
+      await mkdir(mountPoint);
+      await writeFile(join(mountPoint, "hello.txt"), "hello");
+      return {
+        stdout: build({
+          "system-entities": [
+            { "dev-entry": "/dev/disk41" },
+            { "dev-entry": "/dev/disk41s1" },
+            { "dev-entry": "/dev/disk41s2", "mount-point": mountPoint },
+            { "dev-entry": "/dev/disk42" },
+            { "dev-entry": "/dev/disk42s1" },
+          ],
+        }),
+        exitCode: 0,
+      };
+    },
+  };
+  const reader = await NativeDmgArtifactReader.create(
+    "/tmp/image.dmg",
+    undefined,
+    host,
+  );
+  try {
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry.path);
+    expect(entries).toContain("image.dmg/Fixture/hello.txt");
+  } finally {
+    await reader.close();
+  }
+  expect(calls.filter((call) => call[0] === "detach")).toEqual([
+    ["detach", "/dev/disk42"],
+    ["detach", "/dev/disk41"],
+  ]);
 });
