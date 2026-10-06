@@ -12,10 +12,15 @@ const buildManagedFixtures = async (workspace) => {
     writeFile(
       managedPath,
       buildManagedPeFixture({
+        methods: [
+          { name: "Main", flags: 0x0016 },
+          { name: "NativeMessageBox", flags: 0x2016, rva: 0 },
+        ],
         pinvoke: {
           moduleName: "user32.dll",
           importName: "MessageBoxW",
           mappingFlags: 0x0345,
+          memberRow: 2,
         },
       }),
     ),
@@ -59,7 +64,7 @@ const verifyManagedMembers = async ({ cli, managedPath, environment }) => {
   );
   if (
     managedMembers.operation !== "inspect_managed_members" ||
-    managedMembers.normalized_result?.methods?.length !== 1
+    managedMembers.normalized_result?.methods?.length !== 2
   )
     throw new Error("packaged managed member CLI failed");
   return managedMembers;
