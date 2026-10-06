@@ -79,6 +79,12 @@ export const traverseDirectory = async (
     );
     return { ok: true, value: undefined };
   }
+  if (current.path !== state.root)
+    state.entries.push({
+      status: "read",
+      kind: "directory",
+      path: pathFromRoot(state.root, current.path),
+    });
   const directories: PendingDirectory[] = [];
   for (const name of names.value) {
     const result = await processEntry(state, current, name, directories);
@@ -168,7 +174,6 @@ const processEntry = async (
       await describeSymlink(state.root, absolute, path, state.signal),
     );
   else if (metadata.value.isDirectory()) {
-    state.entries.push({ status: "read", kind: "directory", path });
     directories.push({ path: absolute });
   } else if (!metadata.value.isFile())
     state.entries.push(
