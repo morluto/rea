@@ -225,6 +225,47 @@ describe("web source-map fetching and validation", () => {
   });
 });
 
+describe("indexed source-map offsets", () => {
+  it.each([
+    { line: 0, column: -1 },
+    { line: -1, column: 0 },
+    { line: 0, column: "1" },
+    { line: "0", column: 0 },
+    { line: 0, column: 0.5 },
+    { line: 0.5, column: 0 },
+    { line: 0 },
+    { line: 0, column: Number.MAX_SAFE_INTEGER + 1 },
+  ])("retains an invalid-map item for malformed offset %j", async (offset) => {
+    const result = await fetchWebSourceMaps([request], input(), undefined, {
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              version: 3,
+              sections: [
+                {
+                  offset,
+                  map: {
+                    version: 3,
+                    names: [],
+                    sources: ["original.js"],
+                    sourcesContent: ["export const stable = 1;"],
+                    mappings: "AAAA",
+                  },
+                },
+              ],
+            }),
+            { status: 200 },
+          ),
+        ),
+    });
+    expect(result).toMatchObject({
+      status: "unavailable",
+      items: [{ status: "invalid", artifact: null, mappings: [] }],
+    });
+  });
+});
+
 describe("web source-map sourcesContent validation", () => {
   it.each([
     ["a scalar sourcesContent value", { sourcesContent: "source" }],

@@ -284,7 +284,13 @@ const validSourceMapEnvelope = (text: string): boolean => {
   const pending: unknown[] = [...parsed.sections];
   while (pending.length > 0) {
     const section = pending.pop();
-    if (!isRecord(section) || !isRecord(section.offset) || !("map" in section))
+    if (
+      !isRecord(section) ||
+      !isRecord(section.offset) ||
+      !validSourceMapOffset(section.offset.line) ||
+      !validSourceMapOffset(section.offset.column) ||
+      !("map" in section)
+    )
       return false;
     const map = section.map;
     if (!isRecord(map) || map.version !== 3) return false;
@@ -294,6 +300,9 @@ const validSourceMapEnvelope = (text: string): boolean => {
   }
   return true;
 };
+
+const validSourceMapOffset = (value: unknown): boolean =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
 const validSourceMapLeaf = (map: Readonly<Record<string, unknown>>): boolean =>
   typeof map.mappings === "string" &&
