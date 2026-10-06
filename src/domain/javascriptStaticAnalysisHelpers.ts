@@ -237,9 +237,14 @@ const sourceRelativeFileUrlPath = (node: t.Node): string | undefined => {
   try {
     const resolved = new URL(value, `file://${directory}entry.js`);
     const path = fileURLToPath(resolved, { windows: false });
-    return value.startsWith("/")
-      ? path
-      : posix.relative(directory, path) || ".";
+    if (value.startsWith("/")) return path;
+    const relative = posix.relative(directory, path) || ".";
+    // Keep the established explicit source-directory observation spelling.
+    return value.startsWith("./") &&
+      relative !== "." &&
+      !relative.startsWith("../")
+      ? `./${relative}`
+      : relative;
   } catch (cause: unknown) {
     // Malformed escapes and non-file URL forms remain unknown.
     void cause;
