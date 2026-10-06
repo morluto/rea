@@ -217,7 +217,15 @@ const resolveAppBundle = async (
   const metadata = await stat(path);
   if (!metadata.isDirectory()) return ok(path);
   if (extname(path).toLowerCase() !== ".app")
-    return err(new BinaryTargetError(path, "target is not an app or file"));
+    return err(
+      new BinaryTargetError(
+        path,
+        "this opening route requires a file or macOS app bundle",
+        {
+          constraint: "directory_requires_file",
+        },
+      ),
+    );
   const plistPath = join(path, "Contents", "Info.plist");
   let name: string;
   try {

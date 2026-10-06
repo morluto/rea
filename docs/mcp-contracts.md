@@ -57,6 +57,74 @@ CLI calls work without a progress token and translate SIGINT into the same
 AbortSignal used by providers. Existing controlled-process cleanup and provider
 shutdown rules still apply; REA never kills a process it cannot prove it owns.
 
+## Ghidra first-query deadlines and recovery
+
+A successful MCP initialize handshake establishes the REA connection.
+`open_binary` then selects a target and provider binding; it does not establish
+that Ghidra has finished importing the target. The first Ghidra-backed query,
+such as `binary_overview`, starts the engine and waits for import, default
+auto-analysis, bridge connection, and health readiness before returning analysis.
+
+These deadlines have different owners:
+
+| Deadline             | Owner and effect                                                                                                                                                 |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MCP initialize       | The client bounds transport/REA connection startup, before any target query.                                                                                     |
+| Ghidra startup       | REA allows 330,000 ms for engine readiness from the first provider query; startup failure is reported by that query.                                             |
+| Individual tool call | The client bounds its wait, including cold engine startup. The pinned client SDK 2.3.1 defaults to 60,000 ms and can cancel earlier than REA's startup deadline. |
+
+For an already connected client using the pinned SDK, request options are the
+**second** argument of `callTool`:
+
+```js
+const overview = await client.callTool(
+  { name: "binary_overview", arguments: {} },
+  {
+    timeout: 240000,
+    onprogress: ({ progress, total, message }) => {
+      console.error({ progress, total, message });
+    },
+  },
+);
+```
+
+The SDK's `onprogress` option supplies a progress token and handles matching
+notifications. A raw MCP client can instead send `_meta.progressToken` in the
+request and handle `notifications/progress`. Progress reports do not establish
+engine readiness or a percentage of Ghidra auto-analysis. A longer server
+startup allowance does not extend the client's deadline; progress also does not
+extend it unless the client explicitly implements that policy.
+
+The 240-second setting is a measured example, not a universal timeout: a
+controlled Linux x64/WSL2 fixture took about 64 seconds for its first overview
+with Ghidra 12.1.4 on a mounted NTFS installation, native JDK 21, two CPUs, and a
+512 MiB Java heap. Target size, storage, and analysis work can change that time.
+Configure the deadline in the caller's existing request settings; it is not a
+tool argument, setup grant, or server-side automatic extension. CLI analysis has
+no MCP client request deadline, but keeps the provider startup deadline and
+SIGINT cancellation.
+
+If the client timed out or cancelled during startup, the pending query may have
+been interrupted. Reissuing `open_binary` for the same active target can reuse
+the current client, so it is not a fresh-start recovery. On the same connection:
+
+1. Keep any useful inline Evidence, or export a bundle before closing if retained
+   records are needed. `binary_session` can show the selected binding and its
+   recorded state; target selection alone does not prove engine readiness.
+2. Call `close_binary` and check its result. It drains owned work, closes the
+   provider, and clears retained session records. A `cleanup_incomplete` result
+   must be addressed according to its reported owned resources before retrying.
+3. Call `open_binary` with the same caller-selected path and
+   `provider_id: "ghidra"`, then retry the first query with an appropriate client
+   deadline. The connection and selected provider do not need to change.
+
+This close/reopen flow was exercised on one real Linux stdio connection after a
+controlled startup timeout, followed by a successful overview and function
+analysis. It is not a Windows/macOS coverage claim. REA cleans only resources it
+owns and never switches to another provider automatically. A provider timeout,
+installation failure, or host permission denial needs its own reported recovery;
+increasing a client deadline alone does not fix those failures.
+
 ## Tool results
 
 Evidence-producing tools return `{ result, evidence_id, evidence }` in both

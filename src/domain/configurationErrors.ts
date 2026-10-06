@@ -15,14 +15,21 @@ export class NoBinaryOpenError extends AnalysisError {
   }
 }
 
+/** Additional constraints identified while admitting a filesystem target. */
+export interface BinaryTargetErrorOptions extends ErrorOptions {
+  readonly constraint?: "directory_requires_file";
+}
+
 /** A supplied target path could not be safely opened as a supported app or binary. */
 export class BinaryTargetError extends AnalysisError {
   readonly _tag = "BinaryTargetError";
+  readonly constraint: BinaryTargetErrorOptions["constraint"];
   constructor(
     readonly path: string,
-    reason: string,
-    options?: ErrorOptions,
+    readonly reason: string,
+    options?: BinaryTargetErrorOptions,
   ) {
     super(`Cannot open artifact: ${reason}`, options);
+    this.constraint = options?.constraint;
   }
 }

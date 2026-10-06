@@ -500,3 +500,25 @@ describe("doctor Linux and Hopper discovery", () => {
     );
   });
 });
+
+describe("doctor target admission diagnostics", () => {
+  it("preserves route-specific target diagnostics from the host", async () => {
+    const targetCheck = {
+      name: "target",
+      ok: false,
+      classification: "unsupported_target" as const,
+      detail: "/fixture/javascript-app",
+      remediation: "Use analyze_javascript_application with input_path.",
+    };
+    const result = await runDoctor(
+      targetCheck.detail,
+      host({
+        inspectTarget: () => Promise.resolve(targetCheck),
+        validTarget: () => {
+          throw new Error("the detailed target check should be used");
+        },
+      }),
+    );
+    expect(result.checks).toContainEqual(targetCheck);
+  });
+});

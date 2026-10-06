@@ -202,6 +202,8 @@ Setup checks the installations and saves their paths in your selected agents' co
 
 The adapter exposes inventory, function, memory and load-image inspection, plus atomic function annotation edits on Linux and macOS. `annotate_native_function` edits names and entry comments in the session database and returns a refreshed function dossier; executable bytes stay unchanged. Ghidra does not provide GUI controls through REA.
 
+Opening a Ghidra target selects its provider; the first analysis query starts import and auto-analysis. That query can take longer than a client's default request deadline. See [first-query deadlines and recovery](docs/mcp-contracts.md#ghidra-first-query-deadlines-and-recovery) for an SDK example and cancellation recovery.
+
 REA analyzes a temporary copy of the target and removes the temporary project when the session closes. Results identify what Ghidra observed and what it could not resolve. Decompilation produces pseudocode rather than the original source.
 
 Ghidra also imports DOS MZ executables with an explicit 16-bit x86 real-mode profile. Function results include complete observed body ranges, distinguishing owned bytes from the enclosing span. See the [DOS analysis guide](docs/ghidra-dos.md) for addresses, packing, and verification boundaries.
