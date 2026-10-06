@@ -44,6 +44,13 @@ export const objectString = (
   return t.isStringLiteral(value) ? value.value : undefined;
 };
 
+/** Whether module syntax supplies a URL location without a package/import-map resolver. */
+export const isUrlLikeModuleSpecifier = (specifier: string): boolean =>
+  specifier.startsWith("/") ||
+  specifier.startsWith("./") ||
+  specifier.startsWith("../") ||
+  /^[A-Za-z][A-Za-z0-9+.-]*:/u.test(specifier);
+
 export const resolveSpecifier = (
   specifier: string,
   base: string,

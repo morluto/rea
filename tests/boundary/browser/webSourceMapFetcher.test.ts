@@ -524,3 +524,29 @@ const input = (overrides: Record<string, unknown> = {}) => {
     ...overrides,
   });
 };
+
+it("keeps bare original module specifiers unresolved", async () => {
+  const result = await fetchWebSourceMaps([request], input(), undefined, {
+    fetch: () =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            version: 3,
+            names: [],
+            sources: ["main.ts"],
+            sourcesContent: ['import "package-name"; import "./actual.js";'],
+            mappings: "AAAA",
+          }),
+        ),
+      ),
+  });
+  const edges = result.items[0]?.original_module_edges;
+  expect(
+    edges?.find(({ specifier }) => specifier === "package-name")
+      ?.resolved_source,
+  ).toBeNull();
+  expect(
+    edges?.find(({ specifier }) => specifier === "./actual.js")
+      ?.resolved_source,
+  ).toContain("/assets/actual.js");
+});

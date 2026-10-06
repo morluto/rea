@@ -13,6 +13,7 @@ import {
   objectValue,
   propertyName,
   resolveSpecifier,
+  isUrlLikeModuleSpecifier,
   stringArgument,
 } from "./webBundleAnalyzerAst.js";
 
@@ -198,7 +199,11 @@ const addEdge = (context: AddEdgeContext): void => {
       from_script_key: context.script.script_key,
       kind: context.kind,
       specifier: context.specifier,
-      resolved_url: resolveSpecifier(context.specifier, context.script.url),
+      resolved_url:
+        context.kind === "worker_import" ||
+        isUrlLikeModuleSpecifier(context.specifier)
+          ? resolveSpecifier(context.specifier, context.script.url)
+          : null,
       location: location(context.script.script_key, context.node),
     }),
   );

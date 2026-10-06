@@ -2,6 +2,7 @@ import * as t from "@babel/types";
 import { AnyMap, eachMapping } from "@jridgewell/trace-mapping";
 
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
+import { isUrlLikeModuleSpecifier } from "../domain/webBundleAnalyzerAst.js";
 import { analyzeParsedJavaScriptSemantics } from "../domain/javascriptSemanticAnalysis.js";
 import { parseJavaScriptSource } from "../domain/javascriptSourceParser.js";
 import { hasValidSourceMapContents } from "../domain/sourceMapContents.js";
@@ -352,6 +353,7 @@ const resolveOriginalSource = (
   specifier: string,
   base: string,
 ): string | null => {
+  if (!isUrlLikeModuleSpecifier(specifier)) return null;
   try {
     return sanitizeSource(new URL(specifier, base).href);
   } catch (cause: unknown) {

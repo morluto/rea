@@ -295,3 +295,31 @@ const inspection = (source: string) =>
     },
     limitations: [],
   });
+
+it("keeps bare module locations unresolved without inventing URL-relative paths", () => {
+  const result = analyzeCapturedWebBundle(
+    inspection(`
+    import "package-name";
+    import("@scope/package");
+    require("package-name");
+    import "./actual.js";
+    importScripts("worker.js");
+  `),
+  );
+  for (const specifier of ["package-name", "@scope/package"])
+    expect(
+      result.observations.chunks.edges
+        .filter((edge) => edge.specifier === specifier)
+        .every((edge) => edge.resolved_url === null),
+    ).toBe(true);
+  expect(
+    result.observations.chunks.edges.find(
+      (edge) => edge.specifier === "./actual.js",
+    )?.resolved_url,
+  ).toBe(`${origin}/assets/actual.js`);
+  expect(
+    result.observations.chunks.edges.find(
+      (edge) => edge.specifier === "worker.js",
+    )?.resolved_url,
+  ).toBe(`${origin}/assets/worker.js`);
+});
