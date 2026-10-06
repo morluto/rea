@@ -349,3 +349,40 @@ it.each([
     );
   },
 );
+it.each([
+  "Promise.resolve(1)",
+  "(Promise.resolve(1) as Promise<number>)",
+  "(Promise.resolve(1) satisfies Promise<number>)",
+  "Promise.resolve(1)!",
+  "((Promise.resolve(1) as Promise<number>)!)",
+  "(new Promise(resolve => resolve(1)) as Promise<number>)",
+  "(Promise.all([Promise.resolve(1)]) as Promise<number[]>)",
+  "(Promise.resolve(1).then(value => value) as Promise<number>)",
+])("projects a traversable returned-task link for %s", (expression) => {
+  const graph = graphFor(`const run = () => ${expression};`);
+  const promise = graph.nodes.find(
+    ({ kind, properties }) =>
+      kind === "promise" && properties.ownership === "returned",
+  );
+  const relation = graph.relations.find(
+    ({ relation: kind }) => kind === "returns-task",
+  );
+  expect(promise).toBeDefined();
+  expect(relation).toMatchObject({
+    target_node_id: promise?.node_id,
+    resolution: "resolved",
+  });
+  const returnNode = graph.nodes.find(
+    ({ node_id }) => node_id === relation?.source_node_id,
+  );
+  expect(returnNode?.kind).toBe("return-site");
+  if (returnNode === undefined)
+    throw new Error("Expected the linked return site");
+  const query = queryJavaScriptSemanticGraph(graph, {
+    seed: { kind: "semantic-node", node_id: returnNode.node_id },
+    direction: "forward-influence",
+    allowed_relations: ["returns-task"],
+  });
+  expect(query.relations).toContainEqual(relation);
+  expect(query.nodes.map(({ node_id }) => node_id)).toContain(promise?.node_id);
+});

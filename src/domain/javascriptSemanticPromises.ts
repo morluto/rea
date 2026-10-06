@@ -248,7 +248,7 @@ const ownershipAtAncestor = (
     unwrapExpression(ancestor.body) === candidate.node
     ? returnedPromiseOwnership(
         candidate.ownerCallableId,
-        range(candidate.node),
+        range(ancestor.body),
         callables,
       )
     : "boundary";
