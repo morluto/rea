@@ -11,6 +11,7 @@ export const parseDyldSymbols = (
   output: string,
   mode: "imports" | "exports",
   imageBase: string | null = null,
+  knownExportNames: ReadonlySet<string> = new Set(),
 ) => {
   const offsets = /^\s*offset\s+symbol\s*$/mu.test(output);
   return output.split(/\r?\n/u).flatMap<ParsedDyldSymbol>((rawLine) => {
@@ -45,7 +46,18 @@ export const parseDyldSymbols = (
       ];
     const exported = /^(0x[\da-f]+)\s+(.+?)(?:\s+\[([^\]]+)\])?$/iu.exec(line);
     if (exported?.[1] === undefined || exported[2] === undefined) return [];
-    const absolute = /\babsolute\b/u.test(exported[3] ?? "");
+    const rawName = /^0x[\da-f]+\s+(.+)$/iu.exec(line)?.[1];
+    const literalName = rawName !== undefined && knownExportNames.has(rawName);
+    // If nm establishes both interpretations, the textual row cannot bind an address or flags.
+    // Let the caller retain the exact nm names without guessing which one owns this row.
+    if (
+      literalName &&
+      exported[3] !== undefined &&
+      knownExportNames.has(exported[2])
+    )
+      return [];
+    const annotation = literalName ? undefined : exported[3];
+    const absolute = /\babsolute\b/u.test(annotation ?? "");
     const address =
       offsets && !absolute
         ? imageBase === null
@@ -54,9 +66,9 @@ export const parseDyldSymbols = (
         : canonicalHex(exported[1]);
     return [
       {
-        name: exported[2],
+        name: literalName ? rawName : exported[2],
         address,
-        weak: /\bweak-def\b/u.test(exported[3] ?? "") ? true : null,
+        weak: /\bweak-def\b/u.test(annotation ?? "") ? true : null,
         reexport: false,
         source: null,
       },

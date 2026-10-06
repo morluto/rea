@@ -119,15 +119,14 @@ const normalizeMacho = (
     load.segments.find(
       (segment) => segment.file_offset === 0 && (segment.file_size ?? 0) > 0,
     )?.vm_address ?? null;
+  const nmExports = parseNmExports(byTool("nm").stdout);
   const dyldExports = parseDyldSymbols(
     byTool("dyld_info", 1).stdout,
     "exports",
     imageBase,
+    new Set(nmExports.map(({ name }) => name)),
   );
-  const exports = uniqueSymbols([
-    ...dyldExports,
-    ...parseNmExports(byTool("nm").stdout),
-  ]);
+  const exports = uniqueSymbols([...dyldExports, ...nmExports]);
   const uuid =
     /UUID:\s*([A-Fa-f0-9-]+)/u.exec(byTool("dwarfdump").stdout)?.[1] ??
     load.uuid;
