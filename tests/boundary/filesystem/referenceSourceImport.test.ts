@@ -92,6 +92,7 @@ describe("reference source import error projection", () => {
     const expectedCategories = {
       cancelled: "cancelled",
       "invalid-root": "invalid_input",
+      unsupported: "unsupported_host",
       io: "execution_failure",
       parse: "execution_failure",
     } as const;
@@ -104,7 +105,9 @@ describe("reference source import error projection", () => {
       expect(projected.category).toBe(category);
       expect(projected.message).not.toContain("SECRET");
       expect(projected.message).not.toContain("/private/path");
-      expect(projected.message).toMatch(/try again|when ready|Check that/u);
+      expect(projected.message).toMatch(
+        /try again|when ready|Check that|REA on Linux/u,
+      );
     }
   });
 });

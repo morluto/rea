@@ -250,6 +250,11 @@ Import an older source tree as a reference. REA keeps it separate from observati
 rea import-reference-source /absolute/path/to/source
 ```
 
+Historical-source import requires safe no-follow file opens and currently runs
+on Linux and macOS. Native Windows reports `unsupported_host`; run the import
+with Linux REA in WSL or on another supported host. Changing permissions or
+reinstalling REA does not enable this Windows workflow.
+
 Imports read the path supplied to the command. File names do not cause automatic omissions; files are represented by hashes and metadata. To exclude selected paths, set `REA_REFERENCE_SECRET_PATTERNS_JSON` to a JSON string array of ignore patterns. Exports never replace an existing file unless `--overwrite` is explicit.
 
 Use a snapshot to save successful analysis results and reuse them on later runs. REA reuses a result only when the target bytes, operation, parameters, analysis tool, and settings match. It does not cache changes or cursor-dependent calls. Snapshot files stay local and use owner-only permissions.

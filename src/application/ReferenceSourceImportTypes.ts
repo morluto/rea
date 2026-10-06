@@ -3,7 +3,7 @@ import type { ReferenceSourcePolicy } from "../domain/referenceSourcePolicy.js";
 /** Typed expected failure returned by historical-source imports. */
 export interface ReferenceSourceImportError {
   readonly tag: "reference-source-import";
-  readonly code: "cancelled" | "invalid-root" | "io" | "parse";
+  readonly code: "cancelled" | "invalid-root" | "unsupported" | "io" | "parse";
   readonly message: string;
 }
 
@@ -22,6 +22,12 @@ export const projectReferenceSourceImportError = (
       category: "invalid_input",
       message:
         "Reference source directory could not be opened. Check that the path exists, is readable, and points to a directory.",
+    };
+  if (error.code === "unsupported")
+    return {
+      category: "unsupported_host",
+      message:
+        "Safe no-follow file opens are unavailable on this host. Import the source tree with REA on Linux (including WSL) or macOS.",
     };
   if (error.code === "io")
     return {
