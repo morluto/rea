@@ -196,6 +196,9 @@ const sessionInfo = ({
   capabilities: [
     "ping",
     "shutdown",
+    "inspect_native_load_image",
+    "read_bytes",
+    "address_to_file_offset",
     "address_name",
     "list_documents",
     "list_names",

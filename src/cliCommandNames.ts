@@ -115,8 +115,6 @@ export const MCP_TOOLS_WITHOUT_DEDICATED_CLI = Object.freeze([
   "procedure_callees",
   "procedure_callers",
   "procedure_info",
-  "read_bytes",
-  "address_to_file_offset",
   "procedure_references",
   "resolve_containing_procedure",
   "set_address_name",
