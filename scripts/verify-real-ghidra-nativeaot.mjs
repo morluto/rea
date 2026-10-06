@@ -30,17 +30,18 @@ if (
     "malformed",
     "ambiguous",
     "loader-failure",
+    "default-native",
   ].includes(mode) ||
   process.argv.length > 3
 )
   throw new Error(
-    "Usage: verify-real-ghidra-nativeaot.mjs [symbols|stripped|ordinary|unsupported|malformed|ambiguous|loader-failure]",
+    "Usage: verify-real-ghidra-nativeaot.mjs [symbols|stripped|ordinary|unsupported|malformed|ambiguous|loader-failure|default-native]",
   );
 if (process.platform !== "linux" || process.arch !== "x64")
   throw new Error(
     "verify:ghidra:nativeaot requires a Linux x64 host; Windows host mutation is not supported.",
   );
-for (const key of mode === "loader-failure"
+for (const key of ["loader-failure", "default-native"].includes(mode)
   ? ["GHIDRA_INSTALL_DIR"]
   : ["GHIDRA_INSTALL_DIR", "REA_GHIDRA_NATIVEAOT_JAR"])
   if (!process.env[key] || !isAbsolute(process.env[key]))
@@ -68,8 +69,14 @@ const target =
           "malformed",
           "ambiguous",
           "loader-failure",
+          "default-native",
         ].includes(mode)
-      ? join(fixtureRoot, mode === "loader-failure" ? "ordinary" : mode)
+      ? join(
+          fixtureRoot,
+          ["loader-failure", "default-native"].includes(mode)
+            ? "ordinary"
+            : mode,
+        )
       : symbolTarget;
 const bytes = await readFile(target);
 const sha256 = hash(bytes);
@@ -95,6 +102,7 @@ const env = {
     ? {}
     : { JAVA_HOME: process.env.JAVA_HOME }),
 };
+if (mode === "default-native") delete env.REA_GHIDRA_NATIVEAOT_JAR;
 // Source-built linkage failure exercises the actual JVM loader boundary, not
 // a simulated producer report. Its class/JAR exist only in the owned workspace.
 if (mode === "loader-failure")
@@ -173,6 +181,14 @@ try {
             : /Ambiguous NativeAOT directory candidates/,
     );
     report = { mode, target, sha256, typed_failure: failure };
+  } else if (mode === "default-native") {
+    assert.notEqual(response.isError, true, JSON.stringify(response));
+    opened = true;
+    const image = nativeLoadImageSchema.parse(
+      await call("inspect_native_load_image"),
+    );
+    assert.equal(image.observations.metadata_recovery, undefined);
+    report = { mode, target, sha256, image };
   } else {
     assert.notEqual(response.isError, true, JSON.stringify(response));
     opened = true;

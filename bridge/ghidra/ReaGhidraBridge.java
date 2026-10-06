@@ -108,8 +108,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         "run_id",
         "target_sha256",
         "provider_version",
-        "profile_digest",
-        "analysis_extensions"
+        "profile_digest"
     );
     private static final Set<String> REQUEST_KEYS = Set.of(
         "id",
@@ -3065,10 +3064,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
             throw new IllegalArgumentException("REA session descriptor is invalid");
         }
-        JsonObject object = requireObject(
-            JsonParser.parseString(Files.readString(path, StandardCharsets.UTF_8)),
-            DESCRIPTOR_KEYS
-        );
+        JsonElement parsed = JsonParser.parseString(Files.readString(path, StandardCharsets.UTF_8));
+        Set<String> keys = new HashSet<>(DESCRIPTOR_KEYS);
+        if (parsed.isJsonObject() && parsed.getAsJsonObject().has("analysis_extensions"))
+            keys.add("analysis_extensions");
+        JsonObject object = requireObject(parsed, keys);
         return new SessionDescriptor(
             requireString(object, "transport"),
             requireString(object, "endpoint_path"),
