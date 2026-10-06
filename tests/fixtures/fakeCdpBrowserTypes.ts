@@ -44,6 +44,7 @@ export interface FakeOptions {
   readonly navigateDuringScreenshotUrl?: string;
   readonly screenshotDocumentLoader?: string;
   readonly extraCollections?: boolean;
+  readonly indexedDbDateKeys?: boolean;
   readonly foreignSessionEvents?: boolean;
   readonly redirectToDisallowedOrigin?: boolean;
   readonly unrelatedWorker?: boolean;

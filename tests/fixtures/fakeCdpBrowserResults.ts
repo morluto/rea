@@ -37,7 +37,7 @@ export const resultFor = (
     case "IndexedDB.requestDatabase":
       return indexedDbDatabaseResult(command);
     case "IndexedDB.requestData":
-      return indexedDbDataResult();
+      return indexedDbDataResult(options);
     case "CacheStorage.requestCacheNames":
       return cacheStorageResult(options);
     case "CacheStorage.requestEntries":
@@ -154,16 +154,33 @@ const indexedDbDatabaseResult = (command: FakeCdpCommand) => ({
   },
 });
 
-const indexedDbDataResult = () => ({
+const indexedDbDataResult = (options: FakeOptions) => ({
   objectStoreDataEntries: [
     {
-      key: { type: "string", value: "row-1" },
-      primaryKey: { type: "string", value: "row-1" },
+      key: indexedDbKey(options),
+      primaryKey: indexedDbKey(options),
       value: { type: "string", value: "indexed-db-secret" },
     },
   ],
   hasMore: false,
 });
+
+const indexedDbKey = (options: FakeOptions) =>
+  options.indexedDbDateKeys === true
+    ? {
+        type: "object",
+        subtype: "date",
+        className: "Date",
+        description: "Thu Jan 01 1970 00:00:00 GMT+0000",
+        objectId: "owned-date-key",
+        preview: {
+          type: "object",
+          subtype: "date",
+          overflow: false,
+          properties: [],
+        },
+      }
+    : { type: "string", value: "row-1" };
 
 const cacheStorageResult = (options: FakeOptions) => ({
   caches: [

@@ -251,7 +251,6 @@ const addIndexedDbRecords = async (
         securityOrigin: input.origin,
         databaseName: input.databaseName,
         objectStoreName: input.objectStoreName,
-        indexName: "",
         skipCount,
         pageSize: STORAGE_ENTRY_PAGE_SIZE,
       },
@@ -285,7 +284,10 @@ const addIndexedDbRecords = async (
           primaryKey,
         },
         value,
-        complete: remoteObjectComplete(entry.value),
+        complete:
+          remoteObjectComplete(entry.key) &&
+          remoteObjectComplete(entry.primaryKey) &&
+          remoteObjectComplete(entry.value),
       });
     }
     if (result.hasMore !== true) return;
