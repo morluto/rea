@@ -8,6 +8,7 @@ import {
   installCanonicalSkill,
 } from "../../../src/application/SetupSkill.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
+import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 
 describe("canonical skill transaction", () => {
   it("backs up and upgrades a stale managed skill without touching siblings", async () => {
@@ -34,7 +35,18 @@ describe("canonical skill transaction", () => {
       "stale managed skill\n",
     );
     const installedSkill = await readFile(destination, "utf8");
-    expect(installedSkill).toContain('version: "24"');
+    expect(installedSkill).toBe(
+      await readFile(
+        new URL(
+          "../../../skills/reverse-engineer-anything/SKILL.md",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    );
+    expect(installedSkill).toContain(
+      `version: "${PRODUCT_IDENTITY.skillVersion}"`,
+    );
     expect(installedSkill).toContain("call available analysis tools");
     expect(installedSkill).toContain("obtain approval before setup writes");
     expect(await readFile(`${nativeGuide}.rea.backup`, "utf8")).toBe(

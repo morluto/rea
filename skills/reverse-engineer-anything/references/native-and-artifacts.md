@@ -9,10 +9,11 @@ cross-references. Addresses and recovered pseudocode are analysis observations,
 not original source. Provider unavailability and unsupported metadata remain
 unknown rather than false.
 
-Use `binary_session` with its default summary to check the open target, selected
-provider, alignment, and recommended remediation. Request the capabilities view
-with a family filter and page bounds only when choosing a tool. Request the full
-view only for an explicit session-diagnostic need.
+Use `binary_session` with no arguments to check the open target, selected
+provider, and alignment. Its default `result.tool_availability` includes the
+complete tool inventory with availability reasons and remediation. When choosing
+a tool, use its entry in that result; `tools/list` retains the complete catalog
+when the target or provider state changes.
 
 ## Managed PE/CLI
 

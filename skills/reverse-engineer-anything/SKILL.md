@@ -2,7 +2,7 @@
 name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, and browser applications with REA. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "24"
+  version: "25"
   tool_count: 116
   catalog_digest: "5bb3f994a3c4d0c87a34ff5aab4e28141b5fa6f3a98b5ae7e95686d85d9d983e"
 ---
@@ -37,10 +37,11 @@ name to one clear installed artifact when possible; ask only when matches are
 ambiguous. Never choose an example app on the user's behalf.
 
 In a target-free session, use `open_binary` to bind any archive/package or
-native target whose analysis tool operates on the active target. Do not call a
-tool hidden from `tools/list`; inspect `binary_session` with
-`detail: "capabilities"` for the exact remediation when a desired capability
-is unavailable.
+native target whose analysis tool operates on the active target. `tools/list`
+includes the complete catalog, including unavailable tools. When choosing a
+capability, call `binary_session` with no arguments and read the desired tool's
+entry in `result.tool_availability`. Follow its availability reason and
+remediation before calling an unavailable operation.
 
 ## Work summary-first
 
