@@ -22,6 +22,8 @@ graph TD
     subgraph "Provider Layers"
         HOPPER["src/hopper/<br/>Hopper launch & Unix-socket protocol<br/>BridgeLauncher, HopperClient, protocol"]
         GHIDRA["src/ghidra/<br/>Ghidra discovery, profile & function analysis<br/>snapshot, Unix/Windows transport, bounded lifecycle"]
+        IDA["src/ida/<br/>Upstream MCP contract adaptation<br/>live GUI binding or owned headless database"]
+        IDA_MCP["External ida-pro-mcp<br/>GUI proxy or database supervisor<br/>upstream installation and engine lifecycle"]
         AUX["src/artifacts/ + src/native/<br/>disjoint artifact and native capabilities"]
         BROWSER["src/browser/<br/>Loopback CDP transport<br/>exact-origin passive observation"]
         DOTNET["src/dotnet/<br/>Managed static metadata provider<br/>PE/CLI metadata inventory, members, IL"]
@@ -75,6 +77,10 @@ graph TD
     SESSION --> REGISTRY
     REGISTRY --> HOPPER
     REGISTRY --> GHIDRA
+    REGISTRY --> IDA
+    IDA --> IDA_MCP
+    IDA --> CONTRACTS
+    IDA --> DOMAIN
     SESSION --> AUX
     APP --> JS_RECON
     APP --> INSTALL
@@ -105,6 +111,7 @@ graph TD
     TESTS -.-> MAIN
     TESTS -.-> HOPPER
     TESTS -.-> GHIDRA
+    TESTS -.-> IDA
     TESTS -.-> PROCESS
     TESTS -.-> BROWSER
     TESTS -.-> EVALUATION

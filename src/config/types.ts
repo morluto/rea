@@ -4,6 +4,7 @@ import type { AnalysisProviderSelector } from "../contracts/providerSelection.js
 
 export interface AppConfig {
   readonly analysisProvider: AnalysisProviderSelector;
+  readonly idaMcpConfigPath?: string;
   readonly ghidraInstallDir: string | undefined;
   readonly ghidraJavaHome: string | undefined;
   readonly ghidraNativeAotJar?: string;

@@ -68,6 +68,7 @@ export const isSnapshotCacheable = (
   (!CURSOR_DEFAULT_OPERATIONS.has(operation) ||
     typeof parameters.address === "string") &&
   descriptor?.effects.mutatesArtifact === false &&
+  descriptor.cachePolicy !== "live" &&
   descriptor.effects.mayWriteFilesystem === false &&
   descriptor.effects.changesPermissions === false;
 

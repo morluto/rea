@@ -172,7 +172,7 @@ provider guides describe their supported platforms.
 - Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+
 - npm; REA does not require or install a particular npm version
 
-Native binary analysis requires [Hopper](https://www.hopperapp.com/) or [Ghidra](#ghidra-analysis-provider). Hopper is separate software with its own license; its demo supports analysis with vendor-defined limits. REA can use Ghidra that you have already installed.
+Deep native binary analysis requires [Hopper](https://www.hopperapp.com/), [Ghidra](#ghidra-analysis-provider), or [IDA Pro](#ida-pro-analysis-provider). Hopper is separate software with its own license; its demo supports analysis with vendor-defined limits. Ghidra and IDA are bring-your-own providers.
 
 Firmware region inspection and explicit extraction use caller-supplied Binwalk and Unblob on Linux. See [Firmware analysis](docs/firmware-analysis.md) for setup, provenance, resource limits and native handoff.
 
@@ -247,6 +247,19 @@ rea uninstall --purge-data # also removes only ~/.rea/cache and ~/.rea/state
 ```
 
 Uninstall preserves Hopper, Node.js, Evidence files, captures, unrelated skills, and other MCP servers. It refuses malformed client configuration and never follows purge-data symlinks.
+
+### IDA Pro analysis provider
+
+Already have [mrexodia/ida-pro-mcp](https://github.com/mrexodia/ida-pro-mcp) working? REA can reuse its MCP registration for read-only analysis of the current GUI target, or use its database supervisor to open and analyze a supplied binary headlessly.
+
+```bash
+export REA_IDA_MCP_CONFIG=/absolute/path/to/ida-mcp.json
+rea function /absolute/path/to/program main --provider ida --json
+```
+
+The registration selects `attached` (default, legacy 1.4 tools) or `headless` (modern database supervisor). Setup can preserve this file reference in your selected agent's REA registration. REA adapts existing analysis contracts and manages its own headless database; it leaves an attached GUI database open and never saves it. Results stay live because external IDA database changes are not immutable snapshots.
+
+See the [IDA provider guide](docs/ida-provider.md) for upstream installation links, exact configuration examples, Windows-native headless operation, lifecycle cleanup, and coverage. The initial real workflows cover a Windows GUI and Windows x64 headless IDA 9.3; other engine/platform combinations remain unverified. Use a package version that includes this adapter; repository main can lead the npm release.
 
 ### CLI or agent?
 
@@ -359,7 +372,7 @@ REA supports native application, JavaScript, Electron, .NET, and browser investi
 
 Static Android APK inspection is verified on Linux with headless JADX; see [Android analysis](docs/android-analysis.md) for its separate prerequisites and coverage.
 
-- **Native binaries:** Open Mach-O, ELF, PE, and Mac `.app` targets through Hopper or Ghidra. Inspect functions, strings, assembly, decompilation, calls, and references. Hopper also accepts `.hop` databases and supports annotations.
+- **Native binaries:** Open Mach-O, ELF, PE, and Mac `.app` targets through a selected deep provider. Hopper and Ghidra cover broad inventory and function analysis; the IDA adapter supplies its documented read-only function/string operations. Hopper also accepts `.hop` databases and supports annotations.
 - **Packages and resources:** Inspect directories, ZIP, APK, IPA, ASAR, plists, compiled Interface Builder files, and Apple asset catalogs. Artifact requests name the input and requested extraction or traversal directly; macOS DMG traversal also requires the host's native mounting support.
 - **JavaScript and Electron:** Map modules, imports, source maps, routes, IPC channels, storage, and native add-ons without running the app. Compare builds and trace a feature across the recovered graph. Dynamic and ambiguous relationships remain unresolved. See [JavaScript application workflows](docs/javascript-application-workflows.md).
 - **Websites:** Inspect a selected page in an existing Chrome-family browser. Capture page structure, network metadata, script evidence, and screenshots requested by the call. Passive observation does not navigate or execute page JavaScript. See [browser observation](docs/browser-observation.md).
@@ -489,8 +502,11 @@ flowchart LR
     Session --> Registry["Deep-provider registry<br/>deterministic selection"]
     Registry --> Hopper["Hopper provider"]
     Registry --> Ghidra["Ghidra provider<br/>inventory + function analysis + annotations"]
+    Registry --> Ida["IDA MCP provider<br/>attached GUI or owned headless database"]
     Hopper --> Runtime["Owned provider runtime<br/>deadline + bounded diagnostics + cleanup"]
     Ghidra --> Runtime
+    Ida --> IdaRuntime["Upstream MCP lifecycle<br/>live observations + owned database cleanup"]
+    IdaRuntime --> Target
     Session --> Native["Native macOS provider"]
     Session --> Artifact["Artifact graph provider"]
     REA --> Browser["Browser CDP provider"]
@@ -557,7 +573,7 @@ For MCP, pass the optional selector on `open_binary`:
 }
 ```
 
-Use `--provider`, or `provider_id` in MCP, to choose Hopper or Ghidra for a target. This choice overrides `REA_ANALYSIS_PROVIDER`.
+Use `--provider`, or `provider_id` in MCP, to choose Hopper, Ghidra, or IDA for a target. This choice overrides `REA_ANALYSIS_PROVIDER`.
 
 With `auto`, REA selects the only available tool that supports the target. If both are available, specify one before opening the target. The session keeps that choice until you explicitly switch or close it; a failure never silently switches tools. Artifact-only analysis can work without a native analysis tool.
 
@@ -635,7 +651,7 @@ verified or absent.
 
 ## Security model
 
-Analysis runs locally. REA communicates with Hopper and Ghidra through authenticated private local sockets. Your agent or model provider has its own data policy.
+Analysis runs locally. REA communicates with Hopper and Ghidra through authenticated private local sockets and with IDA through its configured local MCP registration. Your agent or model provider has its own data policy.
 
 Runtime requests act on the declared target and lifecycle. Analysis tools and launched targets run with your user permissions, and native UI capture still depends on macOS Accessibility and Screen Recording access. Static JavaScript analysis does not execute extracted modules; use direct browser, Electron, or process capture when runtime behavior is needed.
 

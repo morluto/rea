@@ -7,7 +7,7 @@
       "client": "2.3.1",
       "core": "2.3.1"
     },
-    "skill_version": "25"
+    "skill_version": "26"
   },
   "tools": {
     "total": 125,
@@ -301,6 +301,25 @@
         "set_current_document",
         "set_inline_comment",
         "unset_bookmark",
+        "xrefs"
+      ]
+    },
+    {
+      "id": "ida",
+      "name": "IDA Pro MCP adapter",
+      "version": "1",
+      "capabilities": [
+        "analyze_function",
+        "list_procedures",
+        "list_strings",
+        "procedure_address",
+        "procedure_assembly",
+        "procedure_callees",
+        "procedure_callers",
+        "procedure_pseudo_code",
+        "read_function_instructions",
+        "search_procedures",
+        "search_strings",
         "xrefs"
       ]
     },
@@ -613,7 +632,7 @@
       "tools_sha256": "eec3abb8fa5b25c6e5d6e361b7ebd157e3599f69b68defda85680dbfe061b3d3",
       "prompts_sha256": "ef2de8814390b340623c32001610aa2709d90bed51537b6e562ab3abf144ab4d",
       "combined_sha256": "ed9c36900e9223561d38ba30a44921f4ff101d5eca989920f9edc9dc91df470b",
-      "providers_sha256": "dfba0ee59f12c82cdfb5320e7e0d70a114e533b2cb88afd15db9b9a4a175c9b0"
+      "providers_sha256": "044634314b36b966bd918f99f116f4684108556ac1dabc912e76ccd351d97e3e"
     }
   }
 }

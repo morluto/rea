@@ -37,6 +37,7 @@ import {
   GHIDRA_PROVIDER_TOOL_CONTRACTS,
 } from "../../../src/ghidra/GhidraProvider.js";
 import { NATIVE_MACOS_PROVIDER_IDENTITY } from "../../../src/native/NativeMacOSProvider.js";
+import { IDA_PROVIDER_IDENTITY } from "../../../src/ida/IdaProvider.js";
 import {
   assertDocumentationFacts,
   documentationFactIssues,
@@ -99,6 +100,7 @@ describe("canonical product catalog", () => {
         BINWALK_PROVIDER_IDENTITY,
         UNBLOB_PROVIDER_IDENTITY,
         GHIDRA_PROVIDER_IDENTITY,
+        IDA_PROVIDER_IDENTITY,
         NATIVE_MACOS_PROVIDER_IDENTITY,
         ARTIFACT_GRAPH_PROVIDER,
         MANAGED_STATIC_PROVIDER,

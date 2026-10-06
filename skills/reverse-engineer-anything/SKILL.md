@@ -2,7 +2,7 @@
 name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "25"
+  version: "26"
   tool_count: 125
   catalog_digest: "ed9c36900e9223561d38ba30a44921f4ff101d5eca989920f9edc9dc91df470b"
 ---
@@ -53,7 +53,7 @@ When tools are absent or registration is stale:
    in the session, then resume the original investigation. If they remain
    absent, inspect the client's MCP launch error rather than repeating setup.
 
-REA setup never installs or upgrades Node.js, npm, Homebrew, Java, Ghidra,
+REA setup never installs or upgrades Node.js, npm, Homebrew, Java, Ghidra, IDA,
 JADX, Binwalk, or Unblob. Use existing prerequisites; do not install unrelated
 software to repair
 MCP registration. For an unsupported client, use manual stdio registration
@@ -96,7 +96,19 @@ explicit path or endpoint and do not need it.
 - User-owned Electron runtime already open: `list_electron_targets`.
 - Native executable, library, or analysis database: `open_binary`, then
   use focused analysis tools directly; call `binary_overview` when metadata or
-  inventory context is useful.
+  inventory context is useful and available from the selected provider.
+
+For an existing IDA MCP configuration, use `open_binary` with the original
+input binary and `provider_id: "ida"`; do not pass an `.idb` or `.i64` database.
+The legacy attached profile binds the already-open GUI input by SHA-256 and
+leaves its database open. The modern headless profile creates and closes an
+owned private database without saving. Installation and registration reuse
+[mrexodia/ida-pro-mcp](https://github.com/mrexodia/ida-pro-mcp); see the
+[IDA provider guide](https://github.com/morluto/rea/blob/main/docs/ida-provider.md).
+Proceed directly to `analyze_function`, pseudocode, or function/string searches
+after opening; IDA does not supply `binary_overview`. Consult session availability
+when composing broader workflows. Modern direct callers and unsupported dossier
+facets remain unknown; live IDA results are not replayed from snapshots.
 
 If the app is missing, ask which app to inspect. Resolve a human-readable app
 name to one clear installed artifact when possible; ask only when matches are

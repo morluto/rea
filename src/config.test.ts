@@ -28,6 +28,16 @@ describe("runtime configuration", () => {
   });
 
   it("parses one shared provider selector and rejects unstable IDs", () => {
+    expect(
+      parseConfig({
+        REA_ANALYSIS_PROVIDER: "ida",
+        REA_IDA_MCP_CONFIG: "/tmp/ida-mcp.json",
+      }),
+    ).toMatchObject({
+      ok: true,
+      value: { analysisProvider: "ida", idaMcpConfigPath: "/tmp/ida-mcp.json" },
+    });
+    expect(parseConfig({ REA_IDA_MCP_CONFIG: "relative.json" }).ok).toBe(false);
     expect(parseConfig({ REA_ANALYSIS_PROVIDER: "ghidra" })).toMatchObject({
       ok: true,
       value: { analysisProvider: "ghidra" },

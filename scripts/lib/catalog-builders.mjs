@@ -107,6 +107,10 @@ export const providerCatalog = (sources) => {
       contracts: sources.ghidraProvider.GHIDRA_PROVIDER_TOOL_CONTRACTS,
     },
     {
+      identity: sources.idaProvider.IDA_PROVIDER_IDENTITY,
+      contracts: sources.idaProvider.IDA_PROVIDER_TOOL_CONTRACTS,
+    },
+    {
       identity: sources.nativeProvider.NATIVE_MACOS_PROVIDER_IDENTITY,
       contracts: sources.nativeContracts.NATIVE_TOOL_CONTRACTS,
     },

@@ -38,7 +38,7 @@
           {
             "patterns": [
               {
-                "group": ["**/ghidra/**", "**/hopper/**"],
+                "group": ["**/ghidra/**", "**/hopper/**", "**/ida/**"],
                 "message": "Deep-provider imports belong behind adapters or in the application composition root."
               }
             ]
@@ -71,6 +71,7 @@
                   "**/browser/**",
                   "**/ghidra/**",
                   "**/hopper/**",
+                  "**/ida/**",
                   "**/replay/**",
                   "**/cli.*",
                   "**/main.*"

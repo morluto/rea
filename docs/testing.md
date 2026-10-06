@@ -47,7 +47,7 @@ The process-global Vitest configuration contract rejects new direct temporary-ro
 creation outside the workspace seam and its narrowly documented boundary/package
 exceptions.
 
-Real Hopper, Ghidra, browser, package, and managed-code claims belong to their
+Real Hopper, Ghidra, IDA, browser, package, and managed-code claims belong to their
 explicit `npm run verify:*` lanes. The reconstruction-readiness lane also
 checks deterministic rerun, tamper, and stale-input handling; those checks do
 not execute extracted JavaScript modules. When application runtime behavior is
@@ -194,6 +194,37 @@ Keep builds/imports sequential on small hosts; scope `GHIDRA_HEADLESS_MAXMEM`
 (e.g. `768M`) to this command and use CPU affinity if needed. REA does not install
 or upgrade Java, Ghidra, .NET or native toolchains. See
 [the supported layout and provenance](ghidra-nativeaot.md).
+
+## IDA MCP adapter
+
+`npm run verify:ida -- --target /absolute/path/to/program --procedure main`
+uses the existing `REA_IDA_MCP_CONFIG` registration. It installs no engine,
+Python package, or compiler. The target must already be open in the GUI for
+the legacy attached profile; the database-supervisor headless profile opens
+a digest-verified private copy. A caller-supplied fixture keeps prerequisites
+limited to the selected engine and host. `tests/conformance/ida/inventory.c`
+provides an optional small native fixture source with an exported
+`rea_fixture_add` function.
+
+The lane invokes the production CLI dispatcher and connects the pinned MCP
+client SDK to the production REA server. It verifies function Evidence and
+CLI/MCP parity, inventory/search, pseudocode, instructions, xrefs, malformed
+input, original-input preservation, and lifecycle cleanup. For headless
+analysis it confirms that the owned database IDs disappear from upstream
+discovery and private workspaces are removed. For attached analysis it confirms
+the existing GUI target remains reachable with the same input identity.
+`--package-root` selects an installed/extracted REA artifact. `--report` writes
+private local observations with mode `0600`; the console summary contains no
+target paths or upstream output.
+
+Adapter and composition tests cover producer parsing, pagination, canonical
+entries, external callees, target switches, cancellation draining, snapshot
+replay exclusion, ownership failures, and incomplete cleanup. They do not
+establish real IDA operation. The initial real workflows cover legacy upstream
+1.4.0 on a Windows GUI and the modern supervisor at upstream commit
+`c133c3853faa111a9b00ee615c013b720d0c4acd` with Windows x64 IDA 9.3.
+Linux/macOS headless, modern attached GUI tools, other engine versions and
+architectures remain unverified; see the [provider guide](ida-provider.md).
 
 ## DOS Ghidra analysis
 

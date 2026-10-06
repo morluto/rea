@@ -2,7 +2,7 @@
 
 ## Product Direction
 
-REA exposes reverse-engineering tools through a CLI and MCP server. Hopper and the bring-your-own Ghidra adapter are operation-capable deep binary-analysis providers. Ghidra is supported on Linux x64 and macOS x64/arm64 with matching native decompiler tools, and has an experimental Windows x64 P0 boundary for approved native x86-64 PE applications; on Linux and macOS it supplies inventory, function analysis, and atomic function annotation edits in an ephemeral database, without modifying executable bytes or controlling a GUI. Windows P0 has no mutation authority. Keep provider-specific code out of the domain and application layers.
+REA exposes reverse-engineering tools through a CLI and MCP server. Hopper, the bring-your-own Ghidra adapter, and the bring-your-own IDA MCP adapter are operation-capable deep binary-analysis providers. Ghidra is supported on Linux x64 and macOS x64/arm64 with matching native decompiler tools, and has an experimental Windows x64 P0 boundary for approved native x86-64 PE applications; on Linux and macOS it supplies inventory, function analysis, and atomic function annotation edits in an ephemeral database, without modifying executable bytes or controlling a GUI. Windows P0 has no mutation authority. IDA adapts upstream legacy attached GUI and modern headless database-supervisor profiles for live read-only analysis; initial real verification covers Windows, and an attached GUI database is never saved or closed. Keep provider-specific code out of the domain and application layers.
 
 Prioritize:
 
@@ -20,7 +20,7 @@ REA is a local-only tool. Preserve caller-selected inputs, captured output, URLs
 REA is a layered ESM TypeScript application. Dependencies flow inward from pure domain logic through contracts, providers, application workflows, and CLI/MCP adapters. See [docs/architecture.mermaid](docs/architecture.mermaid) for the component map.
 
 - `src/domain/` owns pure provider-neutral semantics; `src/contracts/` owns caller-visible schemas and the canonical tool inventory.
-- `src/hopper/`, `src/ghidra/`, `src/browser/`, `src/native/`, `src/artifacts/`, and `src/dotnet/` own provider-specific boundaries. Keep provider protocols out of domain and application code.
+- `src/hopper/`, `src/ghidra/`, `src/ida/`, `src/browser/`, `src/native/`, `src/artifacts/`, and `src/dotnet/` own provider-specific boundaries. Keep provider protocols out of domain and application code.
 - `src/application/` composes shared CLI/MCP workflows; `src/server/` translates MCP requests; `src/cli.ts` and `src/main.ts` are the CLI and MCP entry points.
 - `src/process/` owns shared process lifecycle primitives, not provider wire protocols. `bridge/` contains provider-side adapters.
 - `tests/` contains unit, composition, boundary, acceptance, and conformance tests. `scripts/verify-*` contains real-toolchain checks.
