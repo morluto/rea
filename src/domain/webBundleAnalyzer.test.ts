@@ -369,3 +369,45 @@ describe("web metadata key semantics", () => {
     ]);
   });
 });
+
+it("does not infer call names from dynamic computed identifiers", () => {
+  const result = analyzeCapturedWebBundle(
+    inspection(`
+        const fetch = "render";
+        const require = "render";
+        const registerTool = "render";
+        window[fetch]("/render-only");
+        window[require]("./not-a-module.js");
+        document.modelContext[registerTool]({ name: "not-a-tool" });
+      `),
+  );
+
+  expect(result.observations.endpoints).toEqual([]);
+  expect(result.observations.chunks.edges).toEqual([]);
+  expect(result.observations.webmcp_declarations).toEqual([]);
+});
+
+it("retains direct and literal computed call names", () => {
+  const result = analyzeCapturedWebBundle(
+    inspection(`
+        window.fetch("/direct");
+        window["fetch"]("/literal");
+    window[receiver].fetch("/nested-receiver");
+        window.require("./direct.js");
+        window["require"]("./literal.js");
+        document.modelContext["registerTool"]({ name: "literal-tool" });
+      `),
+  );
+
+  expect(result.observations.endpoints.map(({ value }) => value)).toEqual([
+    "/direct",
+    "/literal",
+    "/nested-receiver",
+  ]);
+  expect(
+    result.observations.chunks.edges.map(({ specifier }) => specifier),
+  ).toEqual(["./direct.js", "./literal.js"]);
+  expect(result.observations.webmcp_declarations).toEqual([
+    expect.objectContaining({ name: "literal-tool" }),
+  ]);
+});
