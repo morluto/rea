@@ -1,3 +1,4 @@
+import { semanticBuiltinNamespacePath } from "./javascriptSemanticProvenance.js";
 import * as t from "@babel/types";
 
 import type {
@@ -338,7 +339,7 @@ const timerNamespaceBinding = (
 ): boolean =>
   binding?.directOrigins.some(
     ({ specifier, importedPath }) =>
-      timerModule(specifier) && importedPath.length === 0,
+      timerModule(specifier) && semanticBuiltinNamespacePath(importedPath),
   ) ?? false;
 
 const timerModule = (specifier: string): boolean =>

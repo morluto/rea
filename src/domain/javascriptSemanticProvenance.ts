@@ -55,3 +55,10 @@ export const semanticPrimitiveKey = (
   value: JavaScriptSemanticPrimitive,
 ): string =>
   `${value === null ? "null" : typeof value}:${JSON.stringify(value)}`;
+
+/** Match namespace paths only after the caller has identified a Node built-in. */
+export const semanticBuiltinNamespacePath = (
+  importedPath: readonly string[],
+): boolean =>
+  importedPath.length === 0 ||
+  (importedPath.length === 1 && importedPath[0] === "default");

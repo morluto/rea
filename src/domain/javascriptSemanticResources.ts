@@ -1,3 +1,4 @@
+import { semanticBuiltinNamespacePath } from "./javascriptSemanticProvenance.js";
 import * as t from "@babel/types";
 
 import type {
@@ -173,7 +174,7 @@ const resourceNamespace = (
 ): boolean =>
   binding?.directOrigins.some(
     ({ specifier, importedPath }) =>
-      resourceModule(specifier) && importedPath.length === 0,
+      resourceModule(specifier) && semanticBuiltinNamespacePath(importedPath),
   ) ?? false;
 
 const resourceModule = (specifier: string): boolean =>

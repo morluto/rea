@@ -1,3 +1,4 @@
+import { semanticBuiltinNamespacePath } from "./javascriptSemanticProvenance.js";
 import * as t from "@babel/types";
 
 import type {
@@ -377,7 +378,7 @@ const requestMethod = (
   return binding?.directOrigins.some(
     ({ specifier, importedPath }) =>
       ["http", "https", "node:http", "node:https"].includes(specifier) &&
-      importedPath.length === 0,
+      semanticBuiltinNamespacePath(importedPath),
   )
     ? method
     : null;
