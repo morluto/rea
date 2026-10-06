@@ -92,7 +92,8 @@ final class ReaGhidraExtensions implements AutoCloseable {
     }
 
     private static void failure(JsonObject report, Throwable ex) {
-        String reason = "Extension loading/analysis failed: " + ex.getClass().getSimpleName() + ": " + ex.getMessage();
+        String reason = "Extension loading/analysis failed: " + ex;
+        if (ex.getCause() != null) reason += "; caused by " + ex.getCause();
         report.addProperty("status", "failed");
         report.addProperty("reason", reason);
         JsonObject result = new JsonObject();

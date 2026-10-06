@@ -177,7 +177,9 @@ runner; analyzing that PE on Linux does not verify a Windows Ghidra host.
 
 Build the clean pinned upstream adapter with `build:ghidra:nativeaot`, then set
 `REA_GHIDRA_NATIVEAOT_JAR`. Run `verify:ghidra:nativeaot -- symbols`, `-- stripped`,
-`-- ordinary`, `-- unsupported`, `-- malformed`, and `-- ambiguous` separately.
+`-- ordinary`, `-- unsupported`, `-- malformed`, `-- ambiguous`, and
+`-- loader-failure` separately. The last mode source-builds a deliberately failing
+JDK 21 initializer and checks the actual loader cause and cleanup.
 The real MCP lane checks source identity, inline format discovery, metadata
 relationships/slots against independent compiler symbols, frozen strings,
 pseudocode and owned cleanup. Set `REA_NATIVEAOT_PROOF_CLI=1` for one equivalent

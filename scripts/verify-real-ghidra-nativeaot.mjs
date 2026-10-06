@@ -29,17 +29,20 @@ if (
     "unsupported",
     "malformed",
     "ambiguous",
+    "loader-failure",
   ].includes(mode) ||
   process.argv.length > 3
 )
   throw new Error(
-    "Usage: verify-real-ghidra-nativeaot.mjs [symbols|stripped|ordinary|unsupported|malformed|ambiguous]",
+    "Usage: verify-real-ghidra-nativeaot.mjs [symbols|stripped|ordinary|unsupported|malformed|ambiguous|loader-failure]",
   );
 if (process.platform !== "linux" || process.arch !== "x64")
   throw new Error(
     "verify:ghidra:nativeaot requires a Linux x64 host; Windows host mutation is not supported.",
   );
-for (const key of ["GHIDRA_INSTALL_DIR", "REA_GHIDRA_NATIVEAOT_JAR"])
+for (const key of mode === "loader-failure"
+  ? ["GHIDRA_INSTALL_DIR"]
+  : ["GHIDRA_INSTALL_DIR", "REA_GHIDRA_NATIVEAOT_JAR"])
   if (!process.env[key] || !isAbsolute(process.env[key]))
     throw new Error(
       `verify:ghidra:nativeaot prerequisite missing: absolute ${key}`,
@@ -59,8 +62,14 @@ const symbolTarget = join(
 const target =
   mode === "stripped"
     ? join(fixtureRoot, "stripped", basename(symbolTarget))
-    : ["ordinary", "unsupported", "malformed", "ambiguous"].includes(mode)
-      ? join(fixtureRoot, mode)
+    : [
+          "ordinary",
+          "unsupported",
+          "malformed",
+          "ambiguous",
+          "loader-failure",
+        ].includes(mode)
+      ? join(fixtureRoot, mode === "loader-failure" ? "ordinary" : mode)
       : symbolTarget;
 const bytes = await readFile(target);
 const sha256 = hash(bytes);
@@ -86,6 +95,39 @@ const env = {
     ? {}
     : { JAVA_HOME: process.env.JAVA_HOME }),
 };
+// Source-built linkage failure exercises the actual JVM loader boundary, not
+// a simulated producer report. Its class/JAR exist only in the owned workspace.
+if (mode === "loader-failure")
+  env.REA_GHIDRA_NATIVEAOT_JAR = join(workspace, "bad-extension.jar");
+async function prepareLoaderFailure() {
+  const source = join(workspace, "NativeAotExtension.java");
+  const classes = join(workspace, "classes");
+  await mkdir(classes);
+  await writeFile(
+    source,
+    `package rea.extensions.nativeaot;
+public final class NativeAotExtension {
+  static { fail(); }
+  private static void fail() { throw new IllegalStateException("REA_INITIALIZER_FIXTURE"); }
+  public NativeAotExtension() {}
+}
+`,
+  );
+  const command = (name) =>
+    process.env.JAVA_HOME === undefined
+      ? name
+      : join(process.env.JAVA_HOME, "bin", name);
+  await promisify(execFile)(
+    command("javac"),
+    ["-J-Xmx512m", "-J-XX:ActiveProcessorCount=1", "-d", classes, source],
+    { timeout: 60000 },
+  );
+  await promisify(execFile)(
+    command("jar"),
+    ["--create", "--file", env.REA_GHIDRA_NATIVEAOT_JAR, "-C", classes, "."],
+    { timeout: 60000 },
+  );
+}
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -100,12 +142,15 @@ transport.stderr?.on("data", (chunk) => {
 let opened = false;
 let report;
 try {
+  if (mode === "loader-failure") await prepareLoaderFailure();
   await client.connect(transport);
   const response = await client.callTool(
     { name: "open_binary", arguments: { path: target, provider_id: "ghidra" } },
     { timeout: 360000 },
   );
-  if (["unsupported", "malformed", "ambiguous"].includes(mode)) {
+  if (
+    ["unsupported", "malformed", "ambiguous", "loader-failure"].includes(mode)
+  ) {
     // MCP open binds a lazy session; the first inspection starts import.
     let failure = response;
     if (failure.isError !== true) {
@@ -123,7 +168,9 @@ try {
         ? /Unsupported NativeAOT RTR format/
         : mode === "malformed"
           ? /Reversed NativeAOT section/
-          : /Ambiguous NativeAOT directory candidates/,
+          : mode === "loader-failure"
+            ? /ExceptionInInitializerError.*REA_INITIALIZER_FIXTURE/
+            : /Ambiguous NativeAOT directory candidates/,
     );
     report = { mode, target, sha256, typed_failure: failure };
   } else {
