@@ -273,3 +273,19 @@ describe("JavaScript semantic analysis: dataflow 2", () => {
     ]);
   });
 });
+
+describe("nonfinite static values", () => {
+  it.each(['+"not-a-number"', '-"not-a-number"', "1e308 + 1e308", "1e309"])(
+    "keeps %s unknown instead of publishing a non-JSON number",
+    (expression) => {
+      const ir = analyzeJavaScriptSemantics(`const answer = ${expression};`);
+      expect(topLevelBinding(ir, "answer").value.status).toBe("unknown");
+    },
+  );
+  it("does not collapse an uncertain nonfinite branch to its finite alternative", () => {
+    const ir = analyzeJavaScriptSemantics(
+      'const answer = condition ? 1 : +"invalid";',
+    );
+    expect(topLevelBinding(ir, "answer").value.status).toBe("ambiguous");
+  });
+});
