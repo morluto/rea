@@ -277,9 +277,18 @@ macOS use a current-user-only local bridge socket and descriptor. The
 experimental Windows transport uses authenticated IPv4 loopback with a
 private native-owned bearer descriptor and Job Object process ownership.
 
-Operations begin only after default auto-analysis completes. The provider
-startup deadline fails the open rather than exposing partial analysis. One
-session contains exactly one imported Program; use `provider_id: "ghidra"`, `--provider ghidra`, or
+Operations begin only after default auto-analysis completes. `open_binary`
+selects and validates the target/provider binding; it does not wait for Ghidra
+import and auto-analysis. The first Ghidra-backed query starts that work lazily.
+The provider startup deadline is 330,000 ms for import, analysis, bridge, and
+health readiness; a startup failure is returned by the query that triggered it,
+without exposing partial analysis. This deadline is separate from MCP transport
+initialization and the client's deadline for that individual tool call. A client
+can time out earlier even when Ghidra would complete within its startup deadline.
+See [Ghidra first-query deadlines and recovery](mcp-contracts.md#ghidra-first-query-deadlines-and-recovery)
+for client options and the close/reopen recovery flow.
+
+One session contains exactly one imported Program; use `provider_id: "ghidra"`, `--provider ghidra`, or
 `REA_ANALYSIS_PROVIDER=ghidra` when both Hopper and Ghidra support the target.
 One persistent decompiler is owned by the Program, and a serial queue keeps
 Ghidra API calls on the owning Program thread without a fixed queue length.
