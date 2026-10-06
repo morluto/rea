@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
-
 import canonicalize from "canonicalize";
+
+import { digestCanonicalValue } from "./canonicalDigest.js";
 
 /** Whether an inventory can support a claim that an item is absent. */
 export const absenceClaimable = (coverage: {
@@ -17,9 +17,7 @@ export const canonicalDigest = (
   value: unknown,
   context = "Comparison",
 ): string => {
-  return createHash("sha256")
-    .update(canonicalJson(value, context))
-    .digest("hex");
+  return digestCanonicalValue(value, context);
 };
 
 /** Canonical JSON used for deterministic tie breaking and stable digests. */

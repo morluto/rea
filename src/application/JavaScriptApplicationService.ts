@@ -14,9 +14,11 @@ import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import type { ExecutionOptions } from "./AnalysisProvider.js";
 import { createJavaScriptApplicationEvidence } from "./JavaScriptApplicationEvidence.js";
 import { reconstructJavaScriptArtifact } from "./JavaScriptArtifactReconstruction.js";
+import { JAVASCRIPT_APPLICATION_PROVIDER } from "./InvestigationProviders.js";
 
 const OPERATION = "analyze_javascript_application" as const;
 
@@ -82,6 +84,42 @@ export const analyzeJavaScriptApplicationValidated = async (
           { cause },
         ),
       );
-    return err(new ArtifactOperationError(OPERATION, "io"));
+    if (
+      cause instanceof Error &&
+      "code" in cause &&
+      typeof cause.code === "string" &&
+      FILESYSTEM_ERROR_CODES.has(cause.code)
+    )
+      return err(new ArtifactOperationError(OPERATION, "io"));
+    return err(
+      new ProviderAdapterError(JAVASCRIPT_APPLICATION_PROVIDER.id, OPERATION, {
+        cause,
+        diagnostics: {
+          input_path: input.input_path,
+          error_name: cause instanceof Error ? cause.name : "UnknownError",
+          error_message:
+            cause instanceof Error
+              ? cause.message
+              : typeof cause === "string"
+                ? cause
+                : "JavaScript analysis failed with a non-Error value",
+        },
+      }),
+    );
   }
 };
+
+const FILESYSTEM_ERROR_CODES = new Set([
+  "ENOENT",
+  "EACCES",
+  "EPERM",
+  "ENOTDIR",
+  "EISDIR",
+  "EIO",
+  "ELOOP",
+  "ENAMETOOLONG",
+  "EMFILE",
+  "ENFILE",
+  "ENOSPC",
+  "EROFS",
+]);

@@ -52,6 +52,23 @@ manifest and graph commitments, JavaScript Application Graph, static
 Electron summary, reconstruction statistics, and explicit limitations. It does
 not require a live Hopper, Ghidra, browser, or Electron process.
 
+## Large results
+
+Graph and Evidence identifiers hash canonical JSON incrementally, without
+assembling a single string for the whole graph. The canonical bytes and existing
+identifiers remain unchanged. The opt-in regression check is
+`npm run verify:javascript:digests`;
+it hashes a value larger than the running Node engine's single-string limit.
+
+Output formatters and MCP transport serialization still assemble whole strings.
+For a large CLI result, select the needed fields
+before formatting, for example `--format json --filter-output
+evidence_id,normalized_result.statistics`. Complete serialization of a result
+beyond the engine's string limit is not established by this digest check.
+Client framing limits also apply: the pinned Node MCP SDK's stdio transport
+defaults to a 10 MiB buffer. Its caller-selected `maxBufferSize` must accommodate
+the complete response, including text and structured Evidence projections.
+
 ## What is reconstructed
 
 The projector reuses the content-addressed artifact inventory and safe artifact

@@ -1,7 +1,6 @@
-import { createHash } from "node:crypto";
-
-import canonicalize from "canonicalize";
 import { z } from "zod";
+
+import { digestCanonicalValue } from "./canonicalDigest.js";
 
 import {
   analysisProfileSchema,
@@ -173,21 +172,10 @@ export interface EvidenceObservation {
   readonly evidenceLinks?: readonly string[];
 }
 
-const sha256 = (value: string): string =>
-  createHash("sha256").update(value).digest("hex");
-
 type WithoutEvidenceId<Record_> = Record_ extends unknown
   ? Omit<Record_, "evidence_id">
   : never;
 type EvidenceWithoutId = WithoutEvidenceId<Evidence>;
-
-/** Serialize JSON according to RFC 8785 JSON Canonicalization Scheme. */
-const canonicalJson = (value: JsonValue): string => {
-  const serialized = canonicalize(value);
-  if (serialized === undefined)
-    throw new TypeError("RFC 8785 canonicalization rejected a JSON value");
-  return serialized;
-};
 
 const semanticProjection = (evidence: EvidenceWithoutId): JsonValue => ({
   subject:
@@ -217,7 +205,7 @@ const semanticProjection = (evidence: EvidenceWithoutId): JsonValue => ({
 
 /** Recompute the semantic identifier, excluding paths and raw payload bytes. */
 const computeEvidenceId = (evidence: EvidenceWithoutId): string =>
-  `ev_${sha256(canonicalJson(semanticProjection(evidence)))}`;
+  `ev_${digestCanonicalValue(semanticProjection(evidence), "Evidence")}`;
 
 /** Parse evidence and reject a syntactically valid but tampered semantic ID. */
 export const parseEvidence = (input: unknown): Evidence => {

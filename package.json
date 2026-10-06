@@ -128,6 +128,7 @@
     "verify:electron": "npm run build:cached && node scripts/verify-real-electron.mjs",
     "verify:inspector": "npm run build:cached && node scripts/verify-real-javascript-runtime-observation.mjs",
     "verify:javascript-runtime": "npm run build:cached && node scripts/verify-local-javascript-runtime.mjs",
+    "verify:javascript:digests": "npm run build:cached && node scripts/verify-large-javascript-digests.mjs",
     "verify:application-workflows": "npm run build:cached && node scripts/verify-local-application-workflows.mjs",
     "verify:managed": "npm run build:cached && node scripts/verify-managed-conformance.mjs",
     "verify:agent": "npm run build:cached && node scripts/verify-agent-experience.mjs",
