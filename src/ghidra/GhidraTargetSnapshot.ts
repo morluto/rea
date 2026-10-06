@@ -18,7 +18,10 @@ export const createGhidraTargetSnapshot = async (
   sourcePath: string,
   runtimeRoot: string,
   expectedSha256: string,
-  signal?: AbortSignal,
+  options: {
+    readonly signal?: AbortSignal;
+    readonly platform?: NodeJS.Platform;
+  } = {},
 ): Promise<GhidraTargetSnapshot> => {
   if (!/^[a-f0-9]{64}$/u.test(expectedSha256))
     throw new TypeError("Ghidra target SHA-256 commitment is invalid");
@@ -27,11 +30,11 @@ export const createGhidraTargetSnapshot = async (
     runtimeRoot,
     `target-${expectedSha256.slice(0, 12)}${suffix}`,
   );
-  if (process.platform === "win32") {
+  if ((options.platform ?? process.platform) === "win32") {
     const observed = await windowsPrivateRuntime(runtimeRoot).snapshot(
       sourcePath,
       `target-${expectedSha256.slice(0, 12)}${suffix}`,
-      signal,
+      options.signal,
     );
     if (observed.sha256 !== expectedSha256)
       throw new Error(

@@ -360,6 +360,7 @@ describe("Ghidra client projection", () => {
     expect(factoryOptions).toEqual([
       expect.objectContaining({
         runId: "11111111-1111-4111-8111-111111111111",
+        platform: "linux",
       }),
     ]);
     expect(toolCalls).toEqual([

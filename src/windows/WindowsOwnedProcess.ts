@@ -170,7 +170,8 @@ export class WindowsOwnedProcess extends EventEmitter {
     } catch (cause: unknown) {
       const failure = cause instanceof Error ? cause : new Error(String(cause));
       this.#failure = failure.message;
-      this.stderr.write(failure.message);
+      // Native lifecycle failures belong to the error/cleanup channels, never
+      // the captured stderr observation produced by the child itself.
       if (this.listenerCount("error") > 0) this.emit("error", failure);
       this.#release();
     }

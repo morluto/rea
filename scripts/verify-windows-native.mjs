@@ -27,6 +27,9 @@ const { requireWindowsNativeAuthority } = await import(
   pathToFileURL(join(packageRoot, "dist/windows/WindowsNativeLoader.js"))
 );
 const native = requireWindowsNativeAuthority();
+const { WindowsPrivateRuntime } = await import(
+  pathToFileURL(join(packageRoot, "dist/windows/WindowsPrivateRuntime.js"))
+);
 const workspace = await mkdtemp(join(tmpdir(), "rea-native-conformance-"));
 const environment = Object.entries(process.env)
   .filter(([, value]) => value !== undefined)
@@ -76,6 +79,35 @@ try {
   await mkdir(sourceDirectory);
   const source = join(sourceDirectory, "target.bin");
   await writeFile(source, Buffer.alloc(1024 * 1024, 0x37));
+  const snapshotOwner = WindowsPrivateRuntime.create(
+    workspace,
+    "single-flight-",
+  );
+  try {
+    const rejectedController = new AbortController();
+    const accepted = snapshotOwner.snapshot(source, "accepted.bin");
+    const rejected = snapshotOwner.snapshot(
+      source,
+      "rejected.bin",
+      rejectedController.signal,
+    );
+    rejectedController.abort();
+    await assert.rejects(rejected, /Runtime snapshot is still pending/u);
+    const completed = await accepted;
+    assert.equal(
+      completed.sha256,
+      createHash("sha256")
+        .update(await readFile(source))
+        .digest("hex"),
+    );
+    assert.equal(
+      await exists(join(snapshotOwner.observation.path, "rejected.bin")),
+      false,
+    );
+    report.controls.singleFlightCancellationOwnership = true;
+  } finally {
+    await snapshotOwner.close();
+  }
   const unrelatedFile = join(workspace, "unrelated-file");
   await writeFile(unrelatedFile, "preserve unrelated writes");
   const admitted = native.call("open", [source]);

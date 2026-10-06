@@ -30,6 +30,8 @@ graph TD
 
     subgraph "Provider Process Foundation"
         PROCESS["src/process/<br/>owned process groups, private roots<br/>deadlines, bounded file reads and diagnostics, cleanup"]
+        WINDOWS["src/windows/<br/>Windows host boundary adapters<br/>package loader, opaque handles, owned jobs and private runtimes"]
+        WINDOWS_NATIVE["native/windows/src/<br/>Node-API implementation<br/>NTFS admission, protected DACLs and atomic Job Object assignment"]
     end
 
     subgraph "Contracts Layer"
@@ -76,6 +78,9 @@ graph TD
     GHIDRA --> GHIDRA_BRIDGE
     HOPPER --> PROCESS
     GHIDRA --> PROCESS
+    GHIDRA --> WINDOWS
+    PROCESS --> WINDOWS
+    WINDOWS --> WINDOWS_NATIVE
     APP --> PROCESS
     APP --> DOMAIN
     JS_RECON --> AUX

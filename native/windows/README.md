@@ -43,6 +43,10 @@ without this lane reports Windows native controls as unavailable.
   is checked between reads, cleanup waits for settlement, and the digest
   commits to the bytes written. Descriptor and snapshot handles remain held
   until runtime cleanup.
+  Snapshot ownership is single-flight per runtime: an overlapping request fails
+  with `ERROR_BUSY` before acquiring cancellation ownership. The TypeScript owner
+  records only the accepted promise and abort listener; aborting a rejected copy
+  must not cancel the active copy.
 - `PROC_THREAD_ATTRIBUTE_JOB_LIST` assigns a suspended child atomically to an
   unnamed, non-inherited Job Object. Membership and kill-on-close policy are
   checked before resume. Breakaway is disabled, and cleanup waits for all
@@ -61,6 +65,15 @@ without this lane reports Windows native controls as unavailable.
 Windows failures retain their constraint, requested coordinate, Win32 code,
 and system message. Unsupported filesystems and reparse paths are distinct
 from OS access denial and missing packaged controls.
+
+The bearer-token descriptor remains under its immutable private lease until
+`runtime_close` on Windows; POSIX removes the descriptor after the bridge reads
+it. Job ownership guarantees process termination on owner death, not deletion
+of private files after a crash. SUBST drive aliases and changing DOS-device
+namespaces are outside the verified P0 scope and are not detected as a separate
+alias policy. Mounted-folder paths that report a reparse tag are rejected by
+component admission; broader namespace variants remain unverified. Preserve
+requested and final handle coordinates rather than treating them as one identity.
 
 ## Real verification
 

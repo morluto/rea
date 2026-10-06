@@ -62,7 +62,7 @@ export type GhidraOperation =
 /** Owns one authenticated, private, read-only Ghidra headless session. */
 export class GhidraClient {
   readonly #options: Required<
-    Pick<GhidraClientOptions, "startupTimeoutMs" | "transport">
+    Pick<GhidraClientOptions, "startupTimeoutMs" | "transport" | "platform">
   > &
     GhidraClientOptions;
   readonly #logger: Logger;
@@ -121,6 +121,7 @@ export class GhidraClient {
     this.#options = {
       ...options,
       startupTimeoutMs: options.startupTimeoutMs ?? GHIDRA_STARTUP_TIMEOUT_MS,
+      platform: options.platform ?? process.platform,
       transport: options.transport ?? "unix-socket",
     };
     this.#logger = options.logger ?? silentLogger;
@@ -282,6 +283,7 @@ export class GhidraClient {
       this.#runtimeRoot = await PrivateRuntimeRoot.create({
         parent: SESSION_ROOT,
         prefix: "rea-ghidra-",
+        platform: this.#options.platform,
       });
     } catch (cause: unknown) {
       return err(
@@ -303,7 +305,7 @@ export class GhidraClient {
         this.#options.targetPath,
         this.#runtimeRoot.path,
         this.#options.targetSha256,
-        deadline.signal,
+        { signal: deadline.signal, platform: this.#options.platform },
       );
       this.#snapshotPath = snapshot.path;
       this.#targetAdmission = snapshot.admission;

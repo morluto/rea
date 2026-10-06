@@ -26,6 +26,9 @@ const runtimes = new Map<string, WindowsPrivateRuntime>();
 
 /** Retain private DACL and path handles until native recursive cleanup settles. */
 export class WindowsPrivateRuntime {
+  // One native snapshot can own cancellation for this runtime at a time. A
+  // second request throws ERROR_BUSY before #pending or its abort listener is
+  // replaced, so aborting a rejected request cannot cancel the accepted copy.
   #pending: Promise<unknown> | undefined;
   #closed = false;
   #closePromise: Promise<void> | undefined;
@@ -68,6 +71,7 @@ export class WindowsPrivateRuntime {
     relativePath: string,
     signal?: AbortSignal,
   ): Promise<z.infer<typeof snapshotSchema>> {
+    // Admission is synchronous; record ownership only after native acceptance.
     const pending = Promise.resolve(
       this.authority.call("runtime_snapshot", [
         this.observation.handle,

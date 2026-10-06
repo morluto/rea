@@ -21,6 +21,22 @@ afterEach(async () => {
 });
 
 describe("Ghidra target snapshot", () => {
+  it("uses the selected installation platform instead of the ambient host", async () => {
+    const root = await createTestTempDirectory("rea-ghidra-platform-");
+    roots.push(root);
+    const source = join(root, "source.exe");
+    const bytes = Buffer.from("platform fixture");
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    await writeFile(source, bytes);
+    const snapshot = await createGhidraTargetSnapshot(source, root, sha256, {
+      platform: "linux",
+    });
+    expect(snapshot.admission).toBeUndefined();
+    await expect(readFile(snapshot.path)).resolves.toEqual(bytes);
+    await expect(
+      createGhidraTargetSnapshot(source, root, sha256, { platform: "win32" }),
+    ).rejects.toThrow(/No native private runtime owns/u);
+  });
   it("copies an exact digest-bound target into the private runtime", async () => {
     const root = await createTestTempDirectory("rea-ghidra-snapshot-");
     roots.push(root);

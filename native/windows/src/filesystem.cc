@@ -79,6 +79,10 @@ std::unique_ptr<File> openFile(const std::wstring& requested, DWORD access, bool
     // Once the next component is pinned against deletion, its parent cannot
     // become empty and NTFS cannot convert that parent into a reparse point.
     // Relax only ancestor write sharing so unrelated child renames can proceed.
+    // Independent evidence: tests/fixtures/windows/processBoundary.cc attempts
+    // FSCTL_SET_REPARSE_POINT on the nonempty pinned ancestor and observes denial.
+    // SUBST aliases and mounted-folder/reparse namespace variants are outside
+    // the admitted P0 evidence; requested and final handle paths remain distinct.
     const auto parentPath = offset == 3 ? path.substr(0, 3) : path.substr(0, offset - 1);
     result->handles.back() = openComponent(parentPath, 0, true, FILE_SHARE_READ | FILE_SHARE_WRITE);
     result->handles.push_back(std::move(child));
@@ -302,6 +306,9 @@ static void dispose(HANDLE handle, const std::wstring& path) {
 
 void closeRuntime(Runtime& root) {
   if (root.closed) return;
+  // Windows keeps the bearer descriptor and snapshot leases until this owner
+  // cleanup. POSIX removes its consumed descriptor earlier. Abrupt owner death
+  // closes process jobs but cannot run this walk, so private files can remain.
   root.immutableFiles.clear();
   struct ReleaseRuntime {
     Runtime& root;
@@ -489,6 +496,8 @@ napi_value filesystemCall(napi_env env, const std::wstring& operation, const std
   auto& root = static_cast<Runtime&>(resource(env, args[0], Kind::Runtime));
   if (operation == L"runtime_snapshot_cancel") { root.snapshotCancelled.store(true); return null(env); }
   require(!root.snapshotPending, "Runtime snapshot is still pending", root.path, ERROR_BUSY);
+  // Reject overlapping operations before snapshot() resets cancellation. The
+  // one accepted worker and WindowsPrivateRuntime retain the same root lease.
   if (operation == L"runtime_close") { closeRuntime(root); return null(env); }
   if (operation == L"runtime_mkdir") { directory(root, wide(env, args[1])); return null(env); }
   if (operation == L"runtime_open") {

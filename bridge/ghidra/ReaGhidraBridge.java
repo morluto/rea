@@ -160,7 +160,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         Path descriptorPath = Path.of(arguments[0]);
         SessionDescriptor descriptor = readDescriptor(descriptorPath);
-        // Windows retains a native immutable file lease until owner cleanup.
+        // Windows retains a native immutable bearer descriptor lease until
+        // runtime_close; POSIX removes it after this read. Normal cleanup removes
+        // the Windows file, while abrupt owner death can leave private residue.
         // Its protected runtime DACL also protects the bearer token while the
         // bridge is running. POSIX keeps its existing consume-and-delete flow.
         if (!isWindowsHost()) {

@@ -365,6 +365,7 @@ jobs:
         run: >-
           npx vitest run --coverage.enabled=false
           tests/boundary/filesystem/binaryTarget.test.ts
+          tests/boundary/filesystem/setupUnavailableProvider.test.ts
           tests/boundary/filesystem/asarInventoryFreshness.test.ts
           tests/composition/javascript-applications/javascriptArtifactReconstruction.test.ts
           tests/conformance/providers/ghidra/windowsCapabilities.test.ts

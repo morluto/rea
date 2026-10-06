@@ -210,6 +210,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
             ]
           : [];
     const client = this.clientFactory({
+      platform: installation.platform,
       launcher: new GhidraHeadlessLauncher({
         analyzeHeadlessPath: prerequisites.value.analyzeHeadlessPath,
         ...(this.config.ghidraJavaHome === undefined

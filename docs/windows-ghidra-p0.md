@@ -79,6 +79,12 @@ short default request timeout; the real verification lane allows the existing
 
 ## Native authority and target identity
 
+The verified boundary excludes SUBST aliases and changing drive-letter/DOS-device
+namespaces. REA does not claim a separate SUBST detector. Mounted-folder entries
+that expose reparse tags fail component admission; broader namespace variants
+have not been established by this lane. Requested paths, final handle paths,
+volume serials, and file IDs remain separate observations.
+
 The loader validates package version, ABI, Node-API compatibility, PE machine,
 and artifact SHA-256 before loading the package-owned addon. Native failure
 reasons remain distinct from a valid installation and an unsupported target.

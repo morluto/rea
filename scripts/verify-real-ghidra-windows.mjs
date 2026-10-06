@@ -74,6 +74,7 @@ if (!profile.ok || profile.value.profile === null)
   throw new Error("Windows Ghidra profile could not be committed");
 
 const client = new GhidraClient({
+  platform: installation.platform,
   launcher: new GhidraHeadlessLauncher({
     analyzeHeadlessPath: installation.analyzeHeadlessPath,
     ...(process.env.JAVA_HOME === undefined
