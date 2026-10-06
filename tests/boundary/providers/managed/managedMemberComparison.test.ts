@@ -18,6 +18,42 @@ import { inspectManagedMembersBytes } from "../../../../src/dotnet/ManagedMember
 import { managedPeFixtureTarget } from "../../../../src/dotnet/ManagedPe.fixture.js";
 import { buildManagedPeFixture } from "../../../../src/dotnet/ManagedPe.fixture.js";
 
+it.each([
+  ["accessibility", 6, 0x0011],
+  ["synchronized implementation", 4, 0x0020],
+])(
+  "reports changed observed method %s despite identical CIL",
+  async (_name, flagOffset, flags) => {
+    const directory = await createTestTempDirectory("rea-managed-flags-");
+    const leftPath = join(directory, "left.dll");
+    const rightPath = join(directory, "right.dll");
+    const left = buildManagedPeFixture();
+    const inspection = inspectManagedMembersBytes(
+      left,
+      managedPeFixtureTarget(left, leftPath),
+    );
+    const method = inspection.methods[0];
+    if (method === undefined) throw new Error("missing method fixture");
+    const right = Buffer.from(left);
+    right.writeUInt16LE(flags, method.row_offset + flagOffset);
+    await writeFile(leftPath, left);
+    await writeFile(rightPath, right);
+    const result = await compareManagedMemberPaths({ leftPath, rightPath });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const comparison = managedMemberComparisonResultSchema.parse(
+      result.value.normalized_result,
+    );
+    expect(comparison.methods[0]).toMatchObject({
+      status: "changed",
+      dimensions: ["metadata"],
+    });
+    expect(comparison.methods[0]?.left?.normalized_il_sha256).toBe(
+      comparison.methods[0]?.right?.normalized_il_sha256,
+    );
+  },
+);
+
 describe("managed member comparison path workflow", () => {
   it("preserves undecoded signatures as unknown through content-addressed partial Evidence", () => {
     const observe = (signature: number, path: string) => {

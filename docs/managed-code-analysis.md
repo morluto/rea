@@ -437,3 +437,11 @@ The managed-code track advances as reviewable pull requests:
 
 Each implementation PR updates generated product facts only for behavior it
 actually ships and states which real-tool checks were performed.
+
+### Method metadata during build comparison
+
+Managed member comparisons report a `metadata` dimension when an observed
+MethodDef flags or implementation flags value differs, including accessibility
+or synchronization changes. This is separate from the CIL/signature matching
+tiers: identical instructions do not establish unchanged method metadata. The
+reported difference is static metadata evidence, not proof of runtime behavior.
