@@ -24,13 +24,13 @@ const runSessionStatus = async (
   }
 };
 
-/** List complete provider identities, capabilities, and availability. */
+/** List binary-session provider candidates and auxiliary operation availability. */
 export const runProviderStatus = (
   logger: Logger = silentLogger,
   environment: Readonly<Record<string, string | undefined>> = process.env,
 ) => runSessionStatus(logger, environment);
 
-/** List complete operation descriptors and availability. */
+/** List binary-session operation descriptors; this is not the full MCP catalog. */
 export const runCapabilityStatus = (
   logger: Logger = silentLogger,
   environment: Readonly<Record<string, string | undefined>> = process.env,

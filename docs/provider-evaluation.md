@@ -1,5 +1,7 @@
 # Static-analysis provider evaluation
 
+This guide describes repository main. Check the [released package boundary](installation.md#released-package-and-main) when using npm.
+
 Ghidra read-only analysis is available on Linux x64 and macOS x64/arm64.
 Install Ghidra 12.1.4 and a full 64-bit JDK 21 separately, then configure REA to
 use them. macOS installations need the matching native decompiler.
@@ -55,8 +57,9 @@ follow.
 optional `JAVA_HOME` must identify a 64-bit full JDK 21, otherwise doctor probes
 `java`/`javac` or `java.exe`/`javac.exe` from `PATH`. Supported Linux and macOS
 hosts accept compatible ELF, PE, and Mach-O executable targets. Host admission
-and target compatibility are separate checks. The intended Windows P0 accepts
-only native x86-64 PE applications; it remains blocked before launch.
+and target compatibility are separate checks. Windows x64 P0 admits only native,
+non-managed, non-DLL x86-64 PE applications on fixed local NTFS, with the packaged
+native authority available before launch.
 
 The launcher creates one ephemeral runtime root with project,
 home/cache/config/data/temp, logs, descriptor, endpoint, target snapshot, and
@@ -67,18 +70,21 @@ On Linux, the mode-0600 descriptor carries the random token without
 exposing it in argv or environment and the Java bridge binds a mode-restricted
 Unix socket. macOS uses the same local transport. The bridge reports actual
 Ghidra/language/compiler/analysis/import-digest metadata and accepts only
-authenticated `ping`, `shutdown`, ten inventory methods, and twelve
-function-analysis methods. Close, cancellation, timeout, malformed protocol,
+authenticated `ping`, `shutdown`, thirteen read-only inventory/load-image methods,
+and twelve function-analysis methods. Linux/macOS also admits atomic function
+annotation changes in the ephemeral database. Close, cancellation, timeout, malformed protocol,
 or process exit stops the owned process resources, closes the socket, and
 removes the runtime root.
 
 The experimental Windows transport uses authenticated IPv4 loopback with a
-token-free endpoint record, but cannot start while the native authority is
-unavailable. Its `taskkill` cleanup code does not establish Job Object ownership,
-private DACLs, or reparse-safe paths.
+token-free endpoint record. The bundled native authority establishes Job Object
+ownership, protected runtime DACLs, and handle-based path admission before
+launch. If the bundle or an admission constraint is unavailable, the provider
+remains unavailable; a `taskkill` fallback does not establish that authority.
 
-The provider catalog lists the 25 Ghidra operations. GUI cursor,
-navigation, and mutation operations remain absent; the router therefore
+The provider catalog lists 25 read-only Ghidra operations and the Linux/macOS
+session annotation operation. GUI cursor/navigation and persistent mutations
+remain unavailable; Windows P0 admits no database mutation. The router therefore
 reports them unavailable instead of borrowing Hopper semantics or inferring
 capability from a successful import.
 
@@ -144,8 +150,8 @@ request cancellation and lifecycle-deadline cleanup, bounded stdout and stderr r
 exact byte counts, process-exit diagnostics, and bounded TERM-to-KILL shutdown.
 Reusable fixtures exercise exit, timeout, cancellation, graceful termination,
 forced termination, double-close, spawn failure, and resource release. Windows
-process-tree termination code exists, but the missing Job Object and private
-runtime controls prevent it from establishing an available Ghidra session.
+Ghidra uses its native Job Object, private runtime, and path-admission boundary;
+generic process-tree termination alone cannot establish provider availability.
 
 The foundation does not define a bridge schema, socket framing, health payload,
 analysis model, or shutdown acknowledgement. Hopper keeps its authenticated

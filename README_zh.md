@@ -98,14 +98,28 @@ Setup 会先展示变更并备份已有配置。要求与更多选项见[安装�
 
 Hopper 支持演示模式。如果首次启动时出现提示，选择演示模式或输入已有许可证。
 
-### 从终端运行
-
-设置完成后：
+### Skill instructions and a first CLI result
 
 ```bash
-npx -y rea-agents@latest doctor
-npx -y rea-agents@latest analyze /Applications/Notes.app
+npx skills add morluto/rea --skill reverse-engineer-anything
 ```
+
+This installs instructions, not MCP registration or analysis engines. Follow the
+[conditional connection guide](skills/reverse-engineer-anything/SKILL.md#connect-only-when-needed).
+`npx rea-agents setup` installs a matching skill and registers selected clients
+only after showing the plan and receiving approval. Restart/reconnect after
+registration, then verify REA tools in the active session. Repository skills can
+be ahead of the [released package](docs/installation.md#released-package-and-main).
+
+For your extracted JavaScript/Electron tree or ASAR, no MCP setup or native
+engine is required:
+
+```bash
+npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+```
+
+Replace the path with your target; Windows paths such as `"D:/apps/example"`
+are supported by this static workflow. Native analysis requires its own engine.
 
 ### 安装 rea 命令
 
@@ -136,7 +150,7 @@ Ghidra 支持 Linux x64 和 macOS x64/arm64。单独安装 Ghidra 12.1.4 和完�
 
 Setup 可以验证安装并保存路径，不会安装或升级 Ghidra、Java、Node.js、npm 或 Homebrew。
 
-Windows Ghidra 分析目前不可用。进程归属、私有目录权限和安全路径检查尚未实现，正确安装 Ghidra 和 Java 也不能启用分析。详见 [Windows Ghidra P0](docs/windows-ghidra-p0.md)。
+Repository main includes experimental Windows x64 Ghidra P0 for native, non-managed, non-DLL x86-64 PE applications on fixed local NTFS. The native controls are implemented; npm 4.0.1 does not contain them. See the [release boundary](docs/installation.md#released-package-and-main) and [Windows Ghidra P0](docs/windows-ghidra-p0.md).
 
 ### 故障排查
 
@@ -152,12 +166,21 @@ Linux 上的默认 Hopper 启动器为 `/opt/hopper/bin/Hopper`。其他路径�
 
 ## 当前状态
 
-REA 可以通过 CLI 和 MCP 分析原生二进制、JavaScript/Electron 应用、.NET 程序集和网站。具体操作取决于主机、目标和所选分析工具。
+The current repository capabilities and platform requirements are described in
+[the English support guide](README.md#current-status). Main can be ahead of the
+[npm release](docs/installation.md#released-package-and-main).
 
-- Hopper 支持原生分析和注释操作；GUI 行为取决于平台。
-- Ghidra 在 Linux x64 和 macOS x64/arm64 上提供 22 项只读操作，包括清单、搜索、反编译、汇编、调用关系、引用、指令与类型检查。它不提供 GUI 或修改操作。
-- 浏览器、Electron 和进程运行时工作流有独立的配置、批准和生命周期要求。详见 [English README](README.md#current-status) 中的完整状态说明。
-- Windows Ghidra 分析尚未启用，跟踪进展见 [#527](https://github.com/morluto/rea/issues/527)。
+- Ghidra provides 25 read-only operations on Linux x64, macOS x64/arm64, and the
+  experimental Windows x64 P0 boundary. Linux/macOS additionally supports atomic
+  session function annotations. Windows P0 is read-only; Ghidra has no GUI controls.
+- Static Android inspection has separate bring-your-own JADX/Java prerequisites;
+  real-provider verification covers Linux. See [Android analysis](docs/android-analysis.md).
+- Browser, Electron, and process requests specify their target, actions, and
+  lifecycle directly. They require the host's actual access, without separate
+  REA permission grants. Setup configuration writes and Hopper installation
+  still require approval of their exact plan.
+- `rea capabilities` describes binary-session operations rather than every
+  application/runtime tool. Consult the full MCP tool list and relevant guide.
 
 ## 一个提示词，完成一次完整调查
 

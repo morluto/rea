@@ -61,6 +61,56 @@ curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh |
 
 Supported options are `--version <semver>`, `--dry-run`, `--no-setup`, `--no-prompt`, and `--verbose`. Neither `--no-prompt` nor a non-interactive shell grants permission to install external dependencies.
 
+## Released package and main
+
+Repository main documents its current code and generated catalog. `@latest`
+selects the npm release, and persistent MCP registrations are pinned to the
+version that performed setup. Installing newer instructions does not update a
+running server or its registration.
+
+The release checked on **2026-10-06** was **4.0.1** (116 MCP tools). That artifact
+has static JavaScript inspection and full inline Evidence workflows, but does
+not include main's Windows native control bundle, Android/JADX or firmware
+tools, Ghidra function annotation workflow, or retained application-Evidence
+references.
+Main's catalog describes those additions; a source build or a subsequent
+release containing them is required. Package startup alone does not verify a
+provider's real platform workflow.
+
+To check the published version, run `npm view rea-agents dist-tags.latest`.
+Use the connected server's actual tool list and advertised input schemas for
+feature selection. The same package version string in a development checkout
+does not establish that its bytes match the npm tarball. Update a registration
+through a reviewed, scoped setup plan, then restart/reconnect the agent.
+
+## Skill-only installation
+
+```bash
+npx skills add morluto/rea --skill reverse-engineer-anything
+```
+
+This installs agent instructions and bundled references, not REA MCP
+registration or analysis engines. Follow the skill's
+[conditional connection guide](../skills/reverse-engineer-anything/SKILL.md#connect-only-when-needed).
+Working tools can be used immediately. If tools are missing, inspect the current
+client's registration with `doctor --client codex --json` (substitute its client
+ID), then plan repairs with `setup --client codex --dry-run --json`. Show and
+approve the exact changes before applying that scope. An aligned registration
+with tools absent from the active session needs a restart/reconnection;
+`doctor` checks files and prerequisites, not the live agent connection.
+
+Guided setup installs the package's matching skill by default. The skills.sh
+route can select newer repository instructions, so follow actual server schemas
+and the release boundary above. Static JavaScript CLI inspection can proceed
+while MCP is unavailable:
+
+```bash
+npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+```
+
+It returns the complete Evidence record directly and requires no native engine.
+Provider failures in doctor do not prevent unrelated target-free tools.
+
 ## Supported agents
 
 Setup can configure these clients for REA's local MCP server:
@@ -319,9 +369,12 @@ host-native Ghidra acceptance lane.
 On a controlled Windows x64 runner, use
 `npm run verify:ghidra:windows`. The verifier generates a deterministic native
 PE fixture from source bytes and requires the Windows native authority before
-opening the provider. This lane remains blocked until those controls are
-implemented; its intended checks include operation coverage, digest identity,
-and complete runtime cleanup.
+opening the provider. The controls are implemented on main; see the
+[release boundary](#released-package-and-main). The lane verifies all 25 admitted
+read-only operations, digest identity, and runtime cleanup. The separate
+`verify:ghidra:windows:package` lane checks the packed CLI/MCP boundary with an
+ordinary user. It requires the built Windows native bundle and an existing
+Ghidra/JDK installation; neither is inferred from startup alone.
 
 ## Diagnose, update, and remove
 

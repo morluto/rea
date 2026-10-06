@@ -1,4 +1,4 @@
-# Managed-code analysis plan
+# Managed-code analysis and planned extensions
 
 REA inspects .NET PE/CLI artifacts without loading or executing their code.
 It can identify an assembly, inspect metadata and CIL, compare members across
@@ -27,6 +27,20 @@ This guide describes the implementation and verification of
 [ADR-0003](adr/0003-managed-code-evidence-and-provider-boundary.md). The canonical
 tool inventory is [`product-catalog.json`](product-catalog.json).
 
+## Shipped scope
+
+The canonical parser admits PE/CLI bytes and their metadata/CIL without loading
+an assembly. It reports observed implementation markers and unavailable facts;
+it does not unpack .NET single-file hosts, decode IL2CPP metadata, or infer a
+NativeAOT identity from an ordinary native PE. Inputs without admitted CLI
+metadata do not become managed assemblies through naming or routing guesses.
+Inspect separately obtained components explicitly and preserve their identities.
+
+The broader deployment classification and native-body mapping below are design
+goals from ADR-0003, not claims that every row has an implemented parser. A
+valid marker can establish a candidate native boundary, not recovered native
+semantics or runtime behavior.
+
 ## Analysis objective
 
 REA's managed-code track is intended to answer five different questions without
@@ -43,9 +57,9 @@ collapsing them:
 The ordinary workflow ends at question four. Static analysis never loads or
 executes the target.
 
-## Classification workflow
+## Planned deployment classification
 
-Classification proceeds from the outermost authenticated bytes inward:
+The intended extended classifier proceeds from outermost authenticated bytes inward:
 
 ```text
 source path
@@ -58,7 +72,7 @@ source path
   -> managed-only, native-only, composed, degraded, or unsupported route
 ```
 
-The result is a vector rather than one label. For example, a single-file modern
+The planned result is a vector rather than one label. For example, a single-file modern
 .NET deployment can contain a native host, ordinary CIL assemblies, and
 ReadyToRun components. Each component receives its own digest, classification,
 coverage, and route while retaining the outer bundle commitment.
@@ -257,17 +271,20 @@ or server-side behavior.
 ## Tool and packaging boundary
 
 The production parser is REA-owned TypeScript and ships with the existing Node
-application. It is verified against the ECMA-335 format and independent pinned
-oracles but has no runtime dependency on them.
+application. Deterministic conformance uses source-owned byte-built PE/CLI
+fixtures and expected semantic facts. An optional real ILSpy lane runs only when
+its executable is explicitly supplied; the default lane does not establish
+independent pinned-oracle parity. Production inspection needs none of those tools.
 
-- `System.Reflection.Metadata` is the primary independent metadata/CIL oracle.
-- `ICSharpCode.Decompiler` and `ilspycmd` are reconstruction and differential
-  oracles. An admitted BYO reconstruction operation records its exact version
+- A pinned `System.Reflection.Metadata` differential oracle is planned; it is
+  not part of the current verifier.
+- `ICSharpCode.Decompiler`/`ilspycmd` can supply reconstruction inference.
+  A BYO reconstruction import records the supplied version
   and remains non-canonical. When `REA_ILSPY_CMD_PATH` points to an absolute
   runnable `ilspycmd`, `verify:managed` runs a source-owned real ILSpy oracle
   and imports its C# output as reconstruction inference against exact static
   member Evidence.
-- dnlib and Mono.Cecil may increase differential coverage. Their mutation APIs
+- dnlib and Mono.Cecil are potential future differential oracles. Their mutation APIs
   are not exposed or included in the production parsing boundary.
 - The package contains no .NET runtime, SDK, ILSpy installation, proprietary
   assembly, or compiled conformance fixture.
@@ -287,6 +304,11 @@ ReadyToRun, C++/CLI, NativeAOT, or IL2CPP coverage is additionally constrained
 by the selected Hopper/Ghidra host and format matrix.
 
 ## Source-built conformance corpus
+
+The current lane uses source-owned byte-built fixtures and malformed-input
+regressions, with optional operator-supplied applications and ILSpy verification.
+The table below describes the desired expanded corpus; it is not a report that
+all compiler-generated forms have been independently verified.
 
 Fixture sources are intentionally small and behavior-focused. Build outputs
 are generated outside tracked fixture directories and must not remain after

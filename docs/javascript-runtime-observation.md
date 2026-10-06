@@ -18,6 +18,24 @@ rea observe-javascript-runtime http://127.0.0.1:9229 TARGET_ID \
   --runtime-kind node --json
 ```
 
+## Start a caller-owned Node target
+
+Run your selected application with Inspector bound to loopback:
+
+```bash
+node --inspect=127.0.0.1:9229 ./app.mjs
+```
+
+Keep it running while listing targets and observing the selected ID. Use a free
+port and the same literal endpoint in both REA calls. Stop the application
+through its normal lifecycle when finished; REA disconnects but does not own or
+terminate it. Node.js must already be installed.
+
+Use `--inspect` for this passive workflow. `--inspect-brk` pauses before the
+application starts, and REA never resumes it or sends
+`Runtime.runIfWaitingForDebugger`. Resume a paused target with a separate
+caller-owned debugger before requesting application runtime observations.
+
 The caller supplies the literal-loopback HTTP endpoint directly. Selecting an endpoint exposes all targets it serves and their local script locations or renderer origins. A target must match the exact requested target ID and expose a same-port WebSocket reported by that endpoint. Targets already marked attached are rejected rather than displacing another debugger. Local paths are canonicalized after symlink resolution.
 
 `list_javascript_runtime_targets` returns every available target in one inline

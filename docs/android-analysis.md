@@ -5,6 +5,10 @@ kept as an unmodified, commit-pinned Git submodule; see
 [upstream provenance](../third_party/README.md). CLI and MCP use the same
 application workflow and return artifact-bound Evidence inline.
 
+This family is present on repository main and absent from npm 4.0.1. Check the
+[released package boundary](installation.md#released-package-and-main) and the
+connected server's tool list before selecting it.
+
 ## Supply tools
 
 Use **Java 17 or newer** and **jadx-headless-mcp 0.7.1**. REA does not install Java,

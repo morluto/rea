@@ -21,6 +21,34 @@ Duration, action, and navigation
 timeouts remain fixed provider-owned liveness limits; the request does not
 accept a caller-controlled `limits` object.
 
+## Minimal launch example
+
+Save this as `browser-scenario.json`, replacing the executable path with an
+already-installed Chrome-family browser and the URL with your running fixture:
+
+```json
+{
+  "browser": {
+    "mode": "launch",
+    "executable_path": "/absolute/path/to/chromium"
+  },
+  "start_url": { "url": "http://127.0.0.1:3000" },
+  "actions": [
+    { "step_id": "settle", "action": "wait_for_timeout", "duration_ms": 100 }
+  ]
+}
+```
+
+```bash
+rea capture-browser-scenario ./browser-scenario.json --json > browser-capture.json
+```
+
+The default capture includes the final URL. Select DOM, screenshots, or events
+only when they help answer the question. REA launches and cleans up the browser
+profile for this request; it does not start your fixture server or install a
+browser. A schema-valid scenario does not prove that the executable or target
+is available on the host.
+
 The browser boundary is part of the contract. Launch mode requires a
 caller-selected executable and always uses a provider-owned temporary profile
 that is closed and deleted during cleanup. Connect mode accepts only an

@@ -4,7 +4,7 @@ REA can attach to a user-owned Chrome-family browser through the Chrome DevTools
 
 ## Shipped surfaces
 
-- `list_browser_targets` / `rea list-browser-targets` discovers page targets at the selected target's current origin by default, with an optional exact-origin filter.
+- `list_browser_targets` / `rea list-browser-targets` discovers all eligible page targets at the endpoint by default, with an optional exact-origin filter.
 - `inspect_web_page` / `rea inspect-web-page` captures DOM structure, accessibility nodes, scripts, resources, safe response/DOM metadata, attach-window network and console metadata, WebSocket frame sizes, workers, quota, and optionally selected storage key names, redacted storage-content fingerprints, or script sources.
 - `analyze_web_bundle` / `rea analyze-web-bundle` parses selected script artifacts without execution and derives chunk edges, route and endpoint candidates, vendor fingerprints, static WebMCP declarations, and optionally source-map/original-source evidence.
 - `observe_web_session` / `rea observe-web-session` arms an observation window of the requested duration for an external user action and records ordered reload, SPA navigation, redirect, failure, lifecycle, and target-termination metadata.
@@ -37,9 +37,9 @@ REA does not launch, own, or terminate this browser. Use a dedicated profile and
 
 ## Request boundary
 
-Each request supplies a literal loopback CDP endpoint and target. Target
-discovery uses the selected target's current origin by default; an optional
-exact HTTP(S) origin filter can narrow the result. `localhost`, private-LAN
+Discovery supplies a literal loopback CDP endpoint and returns all eligible
+page targets unless an exact HTTP(S) origin filter narrows the result. Follow-up
+inspection requests select one target; their default scope is its current origin. `localhost`, private-LAN
 addresses, HTTPS CDP endpoints, credentials, paths, queries, fragments, and
 implicit ports are not valid CDP endpoints. Origin filters contain only scheme,
 host, and port; paths, credentials, queries, fragments, and wildcards are not

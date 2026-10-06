@@ -1,5 +1,6 @@
-import { rm, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -31,6 +32,58 @@ const fixture = async (): Promise<string> => {
   roots.push(root);
   return root;
 };
+
+describe("documented process CLI workflow", () => {
+  it(
+    "feeds the documented JSON capture into the comparison CLI",
+    async () => {
+      const root = await fixture();
+      const guide = await readFile(
+        new URL("../../../docs/process-capture.md", import.meta.url),
+        "utf8",
+      );
+      const recipe = /```sh\nrea capture-process ([^\n]+)\n```/u.exec(
+        guide,
+      )?.[1];
+      if (recipe === undefined)
+        throw new Error("Missing process capture recipe");
+      const [argumentsText, output] = recipe.split(" > ");
+      if (argumentsText === undefined || output === undefined)
+        throw new Error("Missing process capture redirection");
+      const args = argumentsText.split(/\s+/u);
+      const input = args[0];
+      if (input === undefined) throw new Error("Missing scenario path");
+      await writeFile(
+        join(root, input),
+        JSON.stringify({
+          executable: process.execPath,
+          arguments: ["-e", "process.stdout.write('documented-capture')"],
+        }),
+      );
+      const cli = fileURLToPath(
+        new URL("../../../scripts/rea.mjs", import.meta.url),
+      );
+      const capture = await execFileAsync(
+        process.execPath,
+        [cli, "capture-process", ...args],
+        { cwd: root },
+      );
+      expect(JSON.parse(capture.stdout)).toMatchObject({
+        operation: "capture_process_scenario",
+      });
+      await writeFile(join(root, output), capture.stdout);
+      const comparison = await execFileAsync(
+        process.execPath,
+        [cli, "compare-process-captures", output, output, "--json"],
+        { cwd: root },
+      );
+      expect(JSON.parse(comparison.stdout)).toMatchObject({
+        operation: "compare_process_captures",
+      });
+    },
+    CLI_INTEGRATION_TIMEOUT_MS,
+  );
+});
 
 describe("process CLI errors", () => {
   it(

@@ -9,6 +9,7 @@ import {
 } from "../../../src/application/SetupSkill.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
+import { skillReferenceIssues } from "../../../scripts/lib/docs-facts.mjs";
 
 describe("canonical skill transaction", () => {
   it("backs up and upgrades a stale managed skill without touching siblings", async () => {
@@ -54,6 +55,8 @@ describe("canonical skill transaction", () => {
     );
     for (const reference of [
       "native-and-artifacts.md",
+      "javascript-applications.md",
+      "android-applications.md",
       "runtime-observation.md",
       "evidence-workflows.md",
     ]) {
@@ -92,5 +95,6 @@ describe("canonical skill transaction", () => {
     ).toContain("analyze_javascript_application");
     expect(await canonicalSkillNeedsInstall(home)).toBe(false);
     expect(await installCanonicalSkill(home)).toBe("unchanged");
+    expect(await skillReferenceIssues(dirname(destination))).toEqual([]);
   });
 });

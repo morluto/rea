@@ -1,4 +1,4 @@
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -40,6 +40,7 @@ import { NATIVE_MACOS_PROVIDER_IDENTITY } from "../../../src/native/NativeMacOSP
 import {
   assertDocumentationFacts,
   documentationFactIssues,
+  skillReferenceIssues,
 } from "../../../scripts/lib/docs-facts.mjs";
 import { ensureGeneratedFile } from "../../../scripts/lib/generated-file.mjs";
 import {
@@ -63,6 +64,24 @@ afterEach(async () => {
 });
 
 describe("canonical product catalog", () => {
+  it("admits the documented minimal browser scenario through the named contract", async () => {
+    const guide = await readFile(
+      join(root, "docs/browser-scenario-contract.md"),
+      "utf8",
+    );
+    const example = /```json\n([\s\S]*?)\n```/u.exec(guide)?.[1];
+    if (example === undefined)
+      throw new Error("Missing browser scenario example");
+    const contract = TOOL_CONTRACTS.find(
+      ({ name }) => name === "capture_browser_scenario",
+    );
+    if (contract === undefined)
+      throw new Error("Missing browser scenario contract");
+    expect(contract.inputSchema.safeParse(JSON.parse(example)).success).toBe(
+      true,
+    );
+  });
+
   it("matches every source-derived checked-in product fact", async () => {
     const catalog = await createProductCatalog(root);
     expect(catalog.tools.total).toBe(TOOL_CONTRACTS.length);
@@ -198,6 +217,27 @@ describe("canonical CLI catalog", () => {
 });
 
 describe("canonical product catalog drift", () => {
+  it("rejects missing and repository-only links in an independently installed skill", async () => {
+    const directory = await createTestTempDirectory("rea-skill-references-");
+    const bundle = join(directory, "skill");
+    await mkdir(bundle);
+    await writeFile(join(directory, "repo-only.md"), "Repository-only guide");
+    await writeFile(join(bundle, "local.md"), "Bundled guide");
+    await writeFile(
+      join(bundle, "SKILL.md"),
+      [
+        "[bundled](local.md#guide)",
+        "[missing](missing.md)",
+        "[repository-only](../repo-only.md)",
+        "[public](https://example.test/guide)",
+      ].join("\n"),
+    );
+    expect(await skillReferenceIssues(bundle)).toEqual([
+      "SKILL.md: missing skill reference: missing.md",
+      "SKILL.md: reference escapes installed skill bundle: ../repo-only.md",
+    ]);
+  });
+
   it("reports tool-family and setup-client fact drift", async () => {
     const catalog = await createProductCatalog(root);
     const firstFamily = catalog.tools.families[0];

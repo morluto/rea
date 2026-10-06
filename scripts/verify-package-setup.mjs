@@ -2,11 +2,12 @@ import {
   lstat,
   mkdir,
   readFile,
+  readdir,
   rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { spawn } from "@lydell/node-pty";
 
@@ -19,6 +20,7 @@ import {
   runWithStatus,
 } from "./lib/verify-package-core.mjs";
 import { parse as parseJsonc } from "jsonc-parser";
+import { skillReferenceIssues } from "./lib/docs-facts.mjs";
 
 const OPENCODE_ORIGINAL = `{
   // OpenCode preferences must survive setup.
@@ -473,19 +475,23 @@ const assertSkill = async ({ skillPath, siblingSkillPath, root }) => {
   );
   if (skill !== canonicalSkill)
     throw new Error("packaged skill did not match its canonical source");
-  const installedReference = await readFile(
-    join(skillPath, "..", "references/javascript-applications.md"),
-    "utf8",
-  );
-  const canonicalReference = await readFile(
-    join(
-      root,
-      "skills/reverse-engineer-anything/references/javascript-applications.md",
-    ),
-    "utf8",
-  );
-  if (installedReference !== canonicalReference)
-    throw new Error("packaged skill references did not match canonical source");
+  const canonicalRoot = join(root, "skills/reverse-engineer-anything");
+  for (const reference of await readdir(join(canonicalRoot, "references"))) {
+    const installed = await readFile(
+      join(dirname(skillPath), "references", reference),
+      "utf8",
+    );
+    const canonical = await readFile(
+      join(canonicalRoot, "references", reference),
+      "utf8",
+    );
+    if (installed !== canonical)
+      throw new Error(
+        `packaged skill reference did not match canonical source: ${reference}`,
+      );
+  }
+  const issues = await skillReferenceIssues(dirname(skillPath));
+  if (issues.length > 0) throw new Error(issues.join("\n"));
   if ((await readFile(siblingSkillPath, "utf8")) !== "unrelated skill\n")
     throw new Error("packaged skill installation modified a sibling skill");
 };

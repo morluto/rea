@@ -1,5 +1,9 @@
 import type { ProductCatalog } from "./product-catalog.mjs";
 
+export function skillReferenceIssues(
+  skillRoot: string,
+): Promise<readonly string[]>;
+
 export function documentationFactIssues(
   root: string,
   catalog: ProductCatalog,

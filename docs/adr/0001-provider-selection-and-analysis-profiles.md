@@ -5,9 +5,12 @@
 - Implementation status: The provider registry, deterministic selection,
   target binding, analysis-profile commitment, and snapshot/Evidence migration
   are implemented. Ghidra discovery, target/profile resolution, doctor checks,
-  the private headless-session foundation, ten read-only inventory capabilities,
-  and twelve function-analysis capabilities are implemented with real
-  cross-format conformance.
+  the private headless-session foundation, thirteen read-only inventory/load-image
+  capabilities, and twelve function-analysis capabilities are implemented with
+  real cross-format conformance. Linux/macOS also supports atomic session
+  function annotations; experimental Windows x64 P0 uses bundled native controls
+  and admits only the 25 read-only operations. See the
+  [release boundary](../installation.md#released-package-and-main).
 
 ## Context
 
@@ -25,7 +28,7 @@ engine, engine version, or complete analysis configuration. Two analyses of the
 same bytes could therefore disagree because of language, compiler, loader,
 analyzer, or provider-version differences while appearing target-compatible.
 
-These constraints are embodied in the current
+The decision addressed the earlier representations of
 [`CompositeProvider`](../../src/application/CompositeProvider.ts),
 [runtime composition](../../src/application/runtime.ts),
 [`BinarySession`](../../src/application/BinarySession.ts),

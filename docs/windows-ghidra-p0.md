@@ -1,7 +1,11 @@
 # Windows Ghidra P0
 
-Status: experimental Windows x64 support for the read-only P0 boundary. The
-published package bundles native process, filesystem, and DACL controls. REA
+This guide describes repository main. npm 4.0.1 does not include the Windows
+native bundle; check the [release boundary](installation.md#released-package-and-main)
+before applying these instructions to a published package.
+
+Status: experimental Windows x64 support for the read-only P0 boundary. Windows
+package builds bundle native process, filesystem, and DACL controls. REA
 uses them automatically when the analyst selects a Ghidra operation; no
 additional permission flag or degraded mode is required.
 

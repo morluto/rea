@@ -17,8 +17,11 @@ recorded, so its influence may remain unknown.
 Write a JSON scenario and pass its path to the CLI:
 
 ```sh
-rea capture-process ./scenario.json > capture.json
+rea capture-process ./scenario.json --json > capture.json
 ```
+
+`--json` is required when saving input for JSON consumers; the default terminal
+format is TOON. The file contains the complete capture Evidence record.
 
 For example:
 

@@ -4,7 +4,7 @@
 
 # REA: Reverse Engineer Anything
 
-### Reverse engineer anything with agents, from app behavior down to native binaries.
+### One MCP for reverse engineering across binaries, applications, and runtime behavior.
 
 **See a feature you like. Understand how it works, down to the binary level.**
 
@@ -49,7 +49,7 @@ See a feature in an app that you want in your own product? Ask your agent to inv
 
 REA connects your agent to tools for inspecting native binaries, JavaScript and Electron apps, .NET assemblies, and websites. You can also use the same tools from your terminal. Analysis runs locally, and results include the evidence and limitations behind each conclusion.
 
-Setup configures your agent and connects it to Hopper or Ghidra. If you need an analysis tool, setup can install Hopper for you.
+Setup registers REA with your agent and installs matching workflow instructions. Native analysis can use an existing Hopper or Ghidra installation; setup can optionally install Hopper with approval. Static JavaScript analysis needs neither engine.
 
 ## Just ask your agent
 
@@ -114,14 +114,33 @@ After setup, restart your agent and [describe the app or feature](#just-ask-your
 
 REA supports Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, Devin, OpenCode, Antigravity, GitHub Copilot CLI, Command Code, and VS Code. Existing REA registrations are selected by default during setup; other detected agents remain unselected until chosen. Other agents can use the [manual MCP configuration](#manual-mcp-configuration).
 
-### From the terminal with npx
-
-After setup, run:
+### Install the skill separately
 
 ```bash
-npx -y rea-agents@latest doctor
-npx -y rea-agents@latest analyze /Applications/Notes.app
+npx skills add morluto/rea --skill reverse-engineer-anything
 ```
+
+This installs agent instructions, not MCP registration or analysis engines.
+Follow the skill's [conditional connection guide](skills/reverse-engineer-anything/SKILL.md#connect-only-when-needed):
+prepare a scoped `npx rea-agents setup` plan if registration is missing, review
+and approve its actual changes, then restart/reconnect and verify the tools.
+Guided setup above installs a version-matched skill by default. The skills.sh
+route uses repository instructions, which can be ahead of the released server;
+see [released package and main](docs/installation.md#released-package-and-main).
+
+### First result from the terminal
+
+For your extracted JavaScript/Electron application tree or ASAR, run:
+
+```bash
+npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+```
+
+Replace the path with your target (for example, `"D:/apps/example"` on Windows).
+This returns inline Evidence, recovered graph, limitations, and unknowns without
+MCP setup, Hopper, Ghidra, or executing the application. For a native app, configure
+its engine first, then use `analyze` with that app's path. Run `doctor` when you
+need diagnosis; it is not a prerequisite for each analysis.
 
 ### Install the rea command
 
@@ -144,6 +163,10 @@ Update either installation with `rea update`.
 
 ### Requirements
 
+Static JavaScript inspection requires the Node/npm runtime only. Host and
+external-tool prerequisites depend on the selected workflow; the native
+provider guides describe their supported platforms.
+
 - macOS 12 or newer
 - Ubuntu 24.04+, Fedora 41+, or 64-bit Arch Linux
 - Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+
@@ -155,7 +178,7 @@ Firmware region inspection and explicit extraction use caller-supplied Binwalk a
 
 Static APK analysis uses a separately supplied headless JADX JAR and Java, with no emulator or APK execution. See [Android analysis](docs/android-analysis.md) for setup, CLI/MCP operations, coverage and public test fixtures.
 
-Windows Ghidra support is experimental for native x86-64 PE applications on local NTFS. The package bundles native Job Object, private-DACL, and path-admission controls. See [Windows Ghidra P0](docs/windows-ghidra-p0.md) for prerequisites and verified scope.
+Repository main includes experimental Windows x64 Ghidra support for native x86-64 PE applications on local NTFS, with bundled Job Object, private-DACL, and path-admission controls. Check the [release boundary](docs/installation.md#released-package-and-main) before expecting this from an npm package. See [Windows Ghidra P0](docs/windows-ghidra-p0.md) for prerequisites and verified scope.
 
 If something is not working, run:
 
@@ -330,7 +353,7 @@ The public interface describes what the agent is trying to learn. Providers deci
 
 ## Current status
 
-REA supports native application, JavaScript, Electron, .NET, and browser investigation on macOS and Linux. Individual tools have platform and runtime prerequisites; use `rea capabilities` to check what is available on your host.
+REA supports native application, JavaScript, Electron, .NET, and browser investigation on macOS and Linux. Individual tools have platform and runtime prerequisites. `rea capabilities` and `rea providers` describe the binary-session providers and auxiliary operations; they are not an inventory of every browser, Android, or application workflow. Use the connected MCP tool list and `binary_session` tool availability for the full MCP surface, and the relevant guide for each tool's prerequisites. Repository main can be ahead of [the npm release](docs/installation.md#released-package-and-main).
 
 Static Android APK inspection is verified on Linux with headless JADX; see [Android analysis](docs/android-analysis.md) for its separate prerequisites and coverage.
 
@@ -345,7 +368,7 @@ Static Android APK inspection is verified on Linux with headless JADX; see [Andr
 - **Open questions:** Track unresolved findings, contradictions, and follow-up probes. Reconstruction checks report pass, fail, or unknown rather than treating missing evidence as a pass.
 - **Guided workflows:** Start six [MCP investigation workflows](docs/mcp-prompts.md) with suggestions based on your current session.
 
-Windows Ghidra P0 supports the read-only native x86-64 PE boundary on local NTFS. Hopper-only features, such as GUI controls and annotations, are not available through Ghidra.
+Windows x64 Ghidra P0 supports native, non-managed, non-DLL x86-64 PE applications on fixed local NTFS with 25 read-only operations. Linux/macOS Ghidra additionally supports atomic session-scoped function names and entry comments. Ghidra has no GUI controls; Windows P0 has no mutation authority.
 
 ### Website observation with CDP
 

@@ -1,8 +1,8 @@
 ---
 name: reverse-engineer-anything
-description: Reverse engineer native, managed, Electron/JavaScript, packaged, and browser applications with REA. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
+description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "24"
+  version: "25"
   tool_count: 125
   catalog_digest: "297aced29e7ce5e845c505d5f2e9e2dee42b7ed3e628f088f424fe8088c9e8dc"
 ---
@@ -15,17 +15,80 @@ behavior not established by available source. For ordinary analysis of a
 complete source repository, use normal repository tools and do not run REA
 readiness or provider commands.
 
+## Connect only when needed
+
+Installing this skill supplies instructions; it does not register the REA MCP
+server, install analysis engines, or add tools to an already-running agent.
+
+If REA tools are available and their registration is not known to be stale,
+proceed directly to the target. Do not run diagnostics or setup before every
+investigation. Use the connected server's actual tool list and input schemas;
+a skill installed from repository main may describe capabilities absent from
+an older npm release. Keep complete inline Evidence when that server does not
+advertise retained references.
+
+When tools are absent or registration is stale:
+
+1. Diagnose without changing files. For Codex, run
+   `npx -y rea-agents@latest doctor --client codex --json`. Substitute the current
+   supported client: `claude_code`, `claude_desktop`, `codex`, `cursor`,
+   `gemini_cli`, `windsurf`, `devin`, `opencode`, `antigravity`, `copilot_cli`,
+   `commandcode`, or `vscode`. If the client is unknown, use `doctor --json` and
+   inspect its registration results before choosing a setup scope.
+2. Distinguish the reason. Missing, malformed, or stale registration needs a
+   scoped configuration repair. An aligned registration with no tools in the
+   active session needs a restart/reconnection; doctor cannot prove that the
+   current agent has connected. A missing provider affects only tasks requiring
+   that provider: static JavaScript inspection needs neither Hopper nor Ghidra,
+   and Android inspection has separate bring-your-own JADX/Java prerequisites.
+3. For a configuration repair, prepare the read-only plan:
+   `npx -y rea-agents@latest setup --client codex --dry-run --json`.
+   Use the current client's ID, show its exact proposed paths, backups, and
+   changes, and obtain approval before setup writes configuration or installs
+   Hopper. Setup normally installs the matching bundled skill too; include that
+   replacement in the reviewed plan. After approval, apply the same scope with
+   `npx -y rea-agents@latest setup --client codex --yes`. Add `--install-hopper`
+   only if that separate installation was needed and explicitly approved.
+4. Restart/reconnect the affected agent. Verify that REA tools actually appear
+   in the session, then resume the original investigation. If they remain
+   absent, inspect the client's MCP launch error rather than repeating setup.
+
+REA setup never installs or upgrades Node.js, npm, Homebrew, Java, Ghidra,
+JADX, Binwalk, or Unblob. Use existing prerequisites; do not install unrelated
+software to repair
+MCP registration. For an unsupported client, use manual stdio registration
+with a version-pinned `rea-agents` package or continue through the CLI.
+
+A concrete CLI fallback for an operator-supplied JavaScript tree or ASAR is:
+
+```bash
+npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+```
+
+No MCP registration or native engine is required. Read the returned Evidence,
+graph, limitations, and unknowns with the same care as an MCP result; the CLI
+returns the Evidence record directly. This fallback does not establish that
+MCP is configured. Native CLI tasks still require their selected engine.
+
 ## Route the target first
 
-Choose the first tool from the target the user supplied. Do not call
-`open_binary` unless the target is native or an analysis database.
+Choose the first tool from the target the user supplied. Use `open_binary` for
+active-target native or archive workflows; target-free tools take their own
+explicit path or endpoint and do not need it.
 
 - ASAR or extracted JavaScript/Electron tree:
   `analyze_javascript_application`.
-- Archive, application package, ZIP/APK/IPA/MSIX/AppX, or DMG:
+- Archive/package member inventory (ZIP/APK/IPA/MSIX/AppX or DMG):
   `open_binary` with the supplied local path; use `inspect_artifact` when its
   graph and findings help answer the question.
+- Android APK code, classes, methods, or incoming references:
+  `inspect_android_package`, then focused Android tools when advertised.
+  Archive member inventory still uses the archive route above.
 - Managed PE/CLI assembly: `inspect_managed_artifact`.
+- Firmware image: `inspect_firmware_regions` when advertised. Use
+  `extract_firmware` when extraction is requested, with a caller-selected new
+  absolute output directory. These tools use caller-supplied Binwalk/Unblob on
+  Linux; see the [firmware guide](https://github.com/morluto/rea/blob/main/docs/firmware-analysis.md).
 - User-owned browser page already open: `list_browser_targets`.
 - User-owned Electron runtime already open: `list_electron_targets`.
 - Native executable, library, or analysis database: `open_binary`, then
@@ -37,10 +100,10 @@ name to one clear installed artifact when possible; ask only when matches are
 ambiguous. Never choose an example app on the user's behalf.
 
 In a target-free session, use `open_binary` to bind any archive/package or
-native target whose analysis tool operates on the active target. Do not call a
-tool hidden from `tools/list`; inspect `binary_session` with
-`detail: "capabilities"` for the exact remediation when a desired capability
-is unavailable.
+native target whose analysis tool operates on the active target. Do not call an
+unadvertised tool; inspect `binary_session` with `{}` and its
+`result.tool_availability` for availability reasons and remediation. The tool
+list stays complete; availability depends on the operation, target, and host.
 
 ## Work summary-first
 
@@ -98,22 +161,12 @@ as complete while required questions remain open.
   [references/native-and-artifacts.md](references/native-and-artifacts.md)
 - ASARs, extracted JavaScript, feature tracing, and version comparison:
   [references/javascript-applications.md](references/javascript-applications.md)
+- Android APK declarations, classes, methods, and static references:
+  [references/android-applications.md](references/android-applications.md)
 - Passive browser/Electron observation and static/runtime reconciliation:
   [references/runtime-observation.md](references/runtime-observation.md)
 - Evidence paging, comparisons, residual unknowns, and verification:
   [references/evidence-workflows.md](references/evidence-workflows.md)
-
-## Readiness and setup
-
-The readiness rule is conditional: when REA tools are available and their
-registration is not known to be stale, proceed directly; do not run `doctor`
-before every task. Run `npx -y rea-agents@latest doctor` when the MCP server or
-required provider is unavailable, registration is reported stale, or the user
-asks for an environment diagnosis. Propose
-`npx -y rea-agents@latest setup` only when doctor identifies an alignment or
-provider problem. Show the exact plan and obtain approval before setup writes
-configuration or installs Hopper. Restart the agent after MCP registration
-changes; direct CLI commands remain available immediately.
 
 ## Finish the task
 

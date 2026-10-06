@@ -98,14 +98,28 @@ npx rea-agents setup
 
 يمكن تشغيل Hopper في الوضع التجريبي. إذا ظهرت رسالة عند التشغيل الأول، فاختر التجربة أو أدخل ترخيصًا موجودًا.
 
-### الاستخدام من الطرفية
-
-بعد الإعداد، شغّل:
+### Skill instructions and a first CLI result
 
 ```bash
-npx -y rea-agents@latest doctor
-npx -y rea-agents@latest analyze /Applications/Notes.app
+npx skills add morluto/rea --skill reverse-engineer-anything
 ```
+
+This installs instructions, not MCP registration or analysis engines. Follow the
+[conditional connection guide](skills/reverse-engineer-anything/SKILL.md#connect-only-when-needed).
+`npx rea-agents setup` installs a matching skill and registers selected clients
+only after showing the plan and receiving approval. Restart/reconnect after
+registration, then verify REA tools in the active session. Repository skills can
+be ahead of the [released package](docs/installation.md#released-package-and-main).
+
+For your extracted JavaScript/Electron tree or ASAR, no MCP setup or native
+engine is required:
+
+```bash
+npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+```
+
+Replace the path with your target; Windows paths such as `"D:/apps/example"`
+are supported by this static workflow. Native analysis requires its own engine.
 
 ### تثبيت أمر rea
 
@@ -136,7 +150,7 @@ rea setup
 
 يستطيع Setup التحقق من التثبيت وحفظ المسارات؛ ولا يثبت أو يحدّث Ghidra أو Java أو Node.js أو npm أو Homebrew.
 
-تحليل Ghidra على Windows غير متاح. لم تُنفذ بعد ضوابط ملكية العمليات وأذونات المجلدات الخاصة والتحقق الآمن من المسارات. حتى التثبيت الصحيح لـ Ghidra وJava لا يفعّل التحليل. راجع [Windows Ghidra P0](docs/windows-ghidra-p0.md).
+Repository main includes experimental Windows x64 Ghidra P0 for native, non-managed, non-DLL x86-64 PE applications on fixed local NTFS. The native controls are implemented; npm 4.0.1 does not contain them. See the [release boundary](docs/installation.md#released-package-and-main) and [Windows Ghidra P0](docs/windows-ghidra-p0.md).
 
 ### تشخيص المشكلات
 
@@ -152,12 +166,21 @@ rea setup
 
 ## حالة الدعم
 
-يوفر REA عبر CLI وMCP تحليل الملفات التنفيذية الأصلية وتطبيقات JavaScript وElectron وتجميعات .NET والمواقع. تعتمد العمليات المتاحة على الجهاز والهدف وأداة التحليل المختارة.
+The current repository capabilities and platform requirements are described in
+[the English support guide](README.md#current-status). Main can be ahead of the
+[npm release](docs/installation.md#released-package-and-main).
 
-- يدعم Hopper التحليل الأصلي والتعليقات؛ ويختلف سلوك واجهته الرسومية حسب المنصة.
-- يقدم Ghidra على Linux x64 وmacOS x64/arm64 عددًا قدره 22 عملية للقراءة فقط: الجرد والبحث وفك الترجمة والتعليمات والاستدعاءات والمراجع والأنواع. لا يقدم عمليات واجهة رسومية أو تعديل.
-- لسير عمل المتصفح وElectron وتشغيل العمليات متطلبات مستقلة للإعداد والموافقة وإدارة دورة الحياة. راجع [English README](README.md#current-status) للتفاصيل الكاملة.
-- تحليل Ghidra على Windows غير مفعّل. تابع التقدم في [#527](https://github.com/morluto/rea/issues/527).
+- Ghidra provides 25 read-only operations on Linux x64, macOS x64/arm64, and the
+  experimental Windows x64 P0 boundary. Linux/macOS additionally supports atomic
+  session function annotations. Windows P0 is read-only; Ghidra has no GUI controls.
+- Static Android inspection has separate bring-your-own JADX/Java prerequisites;
+  real-provider verification covers Linux. See [Android analysis](docs/android-analysis.md).
+- Browser, Electron, and process requests specify their target, actions, and
+  lifecycle directly. They require the host's actual access, without separate
+  REA permission grants. Setup configuration writes and Hopper installation
+  still require approval of their exact plan.
+- `rea capabilities` describes binary-session operations rather than every
+  application/runtime tool. Consult the full MCP tool list and relevant guide.
 
 ## استقصاء كامل بطلب واحد
 

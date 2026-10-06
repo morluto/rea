@@ -8,6 +8,7 @@ const SKILL_FILES = [
   "SKILL.md",
   "references/native-and-artifacts.md",
   "references/javascript-applications.md",
+  "references/android-applications.md",
   "references/runtime-observation.md",
   "references/evidence-workflows.md",
 ] as const;
