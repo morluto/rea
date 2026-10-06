@@ -5,6 +5,10 @@ import { uniqueSorted } from "./canonicalOrdering.js";
 import { evidenceSchema, parseEvidence, type Evidence } from "./evidence.js";
 import { functionComparisonResultSchema } from "./functionComparison.js";
 import {
+  PROCESS_PROVIDER,
+  isProcessEvidenceProvider,
+} from "./processEvidenceProvider.js";
+import {
   comparisonStatusSchema,
   deriveProcessComparisonStatus,
   PROCESS_COMPARISON_DIMENSIONS,
@@ -86,9 +90,7 @@ type RuntimeStatus = z.infer<typeof processCaptureComparisonSchema>["status"];
 const EXPECTED_PROVIDERS = {
   compare_process_captures: {
     predicates: ["rea.process-comparison"],
-    id: "rea-process",
-    name: "REA deterministic process harness",
-    version: "3",
+    ...PROCESS_PROVIDER,
   },
   compare_artifacts: {
     predicates: ["rea.artifact-comparison"],
@@ -171,9 +173,11 @@ const parseComparisonEvidence = (input: unknown): Evidence => {
   const expected = EXPECTED_PROVIDERS[operation];
   if (
     !acceptsPredicate(expected.predicates, evidence.predicate_type) ||
-    evidence.provider.id !== expected.id ||
-    evidence.provider.name !== expected.name ||
-    evidence.provider.version !== expected.version ||
+    (operation === "compare_process_captures"
+      ? !isProcessEvidenceProvider(evidence.provider)
+      : evidence.provider.id !== expected.id ||
+        evidence.provider.name !== expected.name ||
+        evidence.provider.version !== expected.version) ||
     evidence.confidence !== "derived" ||
     evidence.authority !== "analyst-inference" ||
     evidence.subject !== null

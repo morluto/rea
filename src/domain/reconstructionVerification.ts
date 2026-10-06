@@ -9,6 +9,10 @@ import { uniqueSorted } from "./canonicalOrdering.js";
 import { parseEvidence, type Evidence } from "./evidence.js";
 import { parseEvidenceBundle } from "./evidenceBundle.js";
 import { functionComparisonResultSchema } from "./functionComparison.js";
+import {
+  PROCESS_PROVIDER,
+  isProcessEvidenceProvider,
+} from "./processEvidenceProvider.js";
 import { functionDossierSchema } from "./hopperValues.js";
 import {
   deriveProcessComparisonStatus,
@@ -45,8 +49,7 @@ const providers = {
   behavioral: {
     operation: "compare_process_captures",
     predicates: ["rea.process-comparison"],
-    id: "rea-process",
-    name: "REA deterministic process harness",
+    ...PROCESS_PROVIDER,
   },
   "structural-function": {
     operation: "compare_functions",
@@ -209,9 +212,11 @@ const validateComparisonIdentity = (claim: Claim, evidence: Evidence): void => {
   if (
     evidence.operation !== expected.operation ||
     !acceptsPredicate(expected.predicates, evidence.predicate_type) ||
-    evidence.provider.id !== expected.id ||
-    evidence.provider.name !== expected.name ||
-    evidence.provider.version !== (claim.kind === "behavioral" ? "3" : "1") ||
+    (claim.kind === "behavioral"
+      ? !isProcessEvidenceProvider(evidence.provider)
+      : evidence.provider.id !== expected.id ||
+        evidence.provider.name !== expected.name ||
+        evidence.provider.version !== "1") ||
     evidence.confidence !== "derived" ||
     evidence.authority !== "analyst-inference" ||
     evidence.subject !== null

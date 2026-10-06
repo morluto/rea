@@ -39,6 +39,7 @@ export const normalizeProcessText = (
   return normalized;
 };
 
+/** Project sampled observations under the caller-selected normalization rules. */
 export const normalizeProcessSamples = (
   samples: readonly ProcessSample[],
   scenario: ProcessScenario,
@@ -74,14 +75,20 @@ export const normalizeProcessSamples = (
       sample.at_ms,
       scenario.normalization.time_bucket_ms,
     ),
-    pid: mapping.get(sample.pid) ?? 1,
-    parent_pid: mapping.get(sample.parent_pid) ?? 0,
+    pid: scenario.normalization.pids
+      ? (mapping.get(sample.pid) ?? 1)
+      : sample.pid,
+    parent_pid: scenario.normalization.pids
+      ? (mapping.get(sample.parent_pid) ?? 0)
+      : sample.parent_pid,
     process_group_id:
-      sample.process_group_id === null
-        ? null
+      !scenario.normalization.pids || sample.process_group_id === null
+        ? sample.process_group_id
         : (mapping.get(sample.process_group_id) ?? 0),
     session_id:
-      sample.session_id === null ? null : (mapping.get(sample.session_id) ?? 0),
+      !scenario.normalization.pids || sample.session_id === null
+        ? sample.session_id
+        : (mapping.get(sample.session_id) ?? 0),
     command: normalizeCommand(sample.command),
   }));
 };

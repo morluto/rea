@@ -32,9 +32,12 @@ interface NativeMachoInspectionContext {
   ) => NativeCommandInvocation;
 }
 
-const REQUIRED_COMMANDS = [
+const DISCOVERY_COMMANDS = [
   ["file", ["-b"]],
   ["lipo", ["-detailed_info"]],
+] as const;
+
+const REQUIRED_SLICE_COMMANDS = [
   ["otool", ["-h", "-l"]],
   ["nm", ["-gjU"]],
   ["dyld_info", ["-imports"]],
@@ -51,12 +54,27 @@ export const inspectNativeMacho = async (
   context: NativeMachoInspectionContext,
 ): Promise<Result<NativeMachoObservation, AnalysisError>> => {
   const captures: NativeCommandCapture[] = [];
-  for (const [tool, prefix] of REQUIRED_COMMANDS) {
+  for (const [tool, prefix] of DISCOVERY_COMMANDS) {
+    const captured = await context.run(
+      tool,
+      [...prefix, context.target.path],
+      context.signal,
+    );
+    if (!captured.ok) return err(captured.error);
+    captures.push(captured.value);
+  }
+  const lipo = captures.find(({ tool }) => tool === "lipo");
+  if (lipo === undefined) throw new TypeError("Missing lipo capture");
+  const selectedArchitecture = selectArchitecture(
+    context.target,
+    parseLipoArchitectures(lipo.stdout).map(({ name }) => name),
+  );
+  for (const [tool, prefix] of REQUIRED_SLICE_COMMANDS) {
     const captured = await context.run(
       tool,
       [
         ...prefix,
-        ...selectedArchitectureArguments(tool, context.target),
+        ...selectedArchitectureArguments(tool, selectedArchitecture),
         context.target.path,
       ],
       context.signal,
@@ -70,7 +88,7 @@ export const inspectNativeMacho = async (
     tool,
     [
       ...prefix,
-      ...selectedArchitectureArguments(tool, context.target),
+      ...selectedArchitectureArguments(tool, selectedArchitecture),
       context.target.path,
     ],
     context.signal,
@@ -262,18 +280,37 @@ export const architectureLocations = (
 
 const selectedArchitectureArguments = (
   tool: string,
-  target: BinaryTarget,
+  architecture: string | null,
 ): string[] => {
-  if (
-    target.kind !== "executable" ||
-    target.availableArchitectures.length < 2 ||
-    tool === "file" ||
-    tool === "lipo"
-  )
-    return [];
-  const architecture =
-    target.architecture === "x86" ? "i386" : target.architecture;
+  if (architecture === null) return [];
+  const baseArchitecture = architecture.split(".")[0] ?? architecture;
+  // dyld_info distinguishes arm64e ABI variants; the other Apple tools use
+  // the base CPU-family spelling for the same slice.
+  const toolArchitecture =
+    tool === "dyld_info" ? architecture : baseArchitecture;
   return tool === "dwarfdump"
-    ? [`--arch=${architecture}`]
-    : ["-arch", architecture];
+    ? [`--arch=${toolArchitecture}`]
+    : ["-arch", toolArchitecture];
+};
+
+const selectArchitecture = (
+  target: BinaryTarget,
+  available: readonly string[],
+): string | null => {
+  if (target.kind !== "executable" || target.availableArchitectures.length < 2)
+    return null;
+  const normalized =
+    target.architecture === "x86" ? "i386" : target.architecture;
+  if (available.includes(normalized)) return normalized;
+  // BinaryTarget intentionally normalizes ARM64 CPU subtypes. Recover the
+  // concrete arm64e slice name from lipo before invoking slice-aware tools.
+  if (normalized === "arm64") {
+    const arm64e = available.find((architecture) => architecture === "arm64e");
+    if (arm64e !== undefined) return arm64e;
+    const variant = available.find((architecture) =>
+      /^arm64e\.[A-Za-z0-9_]+$/u.test(architecture),
+    );
+    if (variant !== undefined) return variant;
+  }
+  return normalized;
 };

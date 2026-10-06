@@ -7,6 +7,10 @@ import { artifactComparisonResultSchema } from "./artifactComparison.js";
 import { uniqueSorted } from "./canonicalOrdering.js";
 import { evidenceSchema, parseEvidence, type Evidence } from "./evidence.js";
 import { functionComparisonResultSchema } from "./functionComparison.js";
+import {
+  PROCESS_PROVIDER,
+  isProcessEvidenceProvider,
+} from "./processEvidenceProvider.js";
 import type { JsonValue } from "./jsonValue.js";
 import {
   comparisonStatusSchema,
@@ -151,8 +155,8 @@ const EXPECTED: Readonly<Record<string, ComparisonIdentity>> = {
   ],
   compare_process_captures: [
     "rea.process-comparison",
-    "rea-process",
-    "REA deterministic process harness",
+    PROCESS_PROVIDER.id,
+    PROCESS_PROVIDER.name,
   ],
 };
 
@@ -381,10 +385,11 @@ const assertComparisonIdentity = (evidence: Evidence): void => {
     !(Array.isArray(expected[0])
       ? expected[0].includes(evidence.predicate_type)
       : evidence.predicate_type === expected[0]) ||
-    evidence.provider.id !== expected[1] ||
-    evidence.provider.name !== expected[2] ||
-    evidence.provider.version !==
-      (evidence.operation === "compare_process_captures" ? "3" : "1") ||
+    (evidence.operation === "compare_process_captures"
+      ? !isProcessEvidenceProvider(evidence.provider)
+      : evidence.provider.id !== expected[1] ||
+        evidence.provider.name !== expected[2] ||
+        evidence.provider.version !== "1") ||
     evidence.confidence !== "derived" ||
     evidence.authority !== "analyst-inference" ||
     evidence.subject !== null ||
