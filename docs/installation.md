@@ -213,7 +213,8 @@ copying license secrets into logs, or killing unrelated Hopper processes.
 
 ## Ghidra
 
-REA connects to an existing Ghidra installation on Linux x64 or macOS x64/arm64.
+REA connects to an existing Ghidra installation on Linux x64, macOS x64/arm64,
+or experimental Windows x64 P0.
 It requires Ghidra 12.1.4 and a 64-bit full JDK 21. On macOS, the installation
 must include the native decompiler for the host architecture; REA does not
 build it or change Gatekeeper quarantine settings.
@@ -224,11 +225,11 @@ decompilation, assembly, resolved calls, typed references, xrefs, function
 dossiers, instructions, and recovered data types. GUI controls and annotation
 changes require Hopper.
 
-Windows Ghidra operations are currently unavailable. The adapter reports
-`unsupported_host` until verified Job Object process ownership, private runtime
-DACLs, and reparse-safe path admission are implemented. The
-[Windows Ghidra P0 guide](windows-ghidra-p0.md) describes the intended boundary
-and remaining controls.
+Windows P0 admits native x86-64 PE applications on fixed local NTFS volumes.
+The npm package bundles native Job Object ownership, protected private runtime
+DACLs, and handle-based path admission; no separate addon installation is needed.
+See the [Windows Ghidra P0 guide](windows-ghidra-p0.md) for verified scope and
+limitations.
 
 Extract Ghidra and install the JDK outside REA, then export absolute paths:
 
@@ -239,7 +240,7 @@ rea doctor --json
 rea setup
 ```
 
-For Windows diagnostics, use the same installation paths in PowerShell. These settings do not enable the blocked analysis operations:
+On Windows, configure the existing installation in PowerShell:
 
 ```powershell
 $env:GHIDRA_INSTALL_DIR = "C:\tools\ghidra_12.1.4_PUBLIC"
@@ -252,8 +253,8 @@ rea providers --json
 REA skill after approval. Direct registrations use Node to launch REA's entry
 script; package-runner registrations use the pinned `npx` command. Hopper
 installation remains unavailable on Windows. Setup never installs Ghidra,
-Java, or Python, and agent registration does not enable blocked Ghidra
-operations. See [Windows Ghidra P0](windows-ghidra-p0.md) for provider diagnostics.
+Java, or Python. It preserves valid detected Ghidra/JDK settings in agent
+registrations. See [Windows Ghidra P0](windows-ghidra-p0.md) for provider diagnostics.
 
 Doctor validates the platform, architecture, application version,
 `support/analyzeHeadless` or `support/analyzeHeadless.bat`, Java
@@ -268,8 +269,8 @@ home/cache/config/temp paths. REA passes `-readOnly`, `-deleteProject`, uses
 Ghidra's default analysis and resource settings, and loads its packaged Java
 bridge via `-scriptPath`; it never opens an existing user project. Linux and
 macOS use a current-user-only local bridge socket and descriptor. The
-experimental Windows transport uses authenticated IPv4 loopback, but missing
-native ownership and path controls keep Windows operations unavailable.
+experimental Windows transport uses authenticated IPv4 loopback with a
+private native-owned bearer descriptor and Job Object process ownership.
 
 Operations begin only after default auto-analysis completes. The provider
 startup deadline fails the open rather than exposing partial analysis. One

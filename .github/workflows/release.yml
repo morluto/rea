@@ -108,6 +108,12 @@ jobs:
 
       - run: npm ci
 
+      - name: Prepare Windows native build toolchain
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y g++-mingw-w64-x86-64
+
+      - name: Build and verify bundled Windows native controls
+        run: npm run build:windows-native && npm run verify:windows-native:artifact
+
       - name: Verify packaged release before publishing
         run: npm run verify:package
 

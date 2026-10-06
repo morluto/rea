@@ -146,9 +146,9 @@ actions may change application data or trigger network activity.
 
 Install Ghidra 12.1.4 and a full 64-bit JDK 21 separately, then configure REA to
 use them. Ghidra analysis supports Linux x64 and macOS x64/arm64; macOS requires
-the matching native decompiler. Windows Ghidra analysis is unavailable until
-Job Object process ownership, private runtime DACLs, and reparse-safe path checks
-are implemented and verified. See [Windows Ghidra P0](windows-ghidra-p0.md) and
+the matching native decompiler. Experimental Windows x64 P0 admits native
+x86-64 PE applications on local NTFS using bundled Job Object ownership,
+protected runtime DACLs, and handle-based path admission. See [Windows Ghidra P0](windows-ghidra-p0.md) and
 [issue #527](https://github.com/morluto/rea/issues/527).
 Ghidra has no GUI or mutation authority, and REA never falls back automatically
 to Hopper.

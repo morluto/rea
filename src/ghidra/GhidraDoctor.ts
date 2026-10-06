@@ -3,30 +3,59 @@ import type {
   DoctorProviderInspection,
 } from "../application/Doctor.js";
 import {
+  hasWindowsNativeAuthority,
+  windowsNativeAuthorityUnavailableReason,
+} from "../process/WindowsAuthority.js";
+import {
   inspectGhidraInstallation,
   type GhidraInstallationCheck,
   type GhidraInstallationInspection,
 } from "./GhidraInstallation.js";
 
-/** Project adapter-owned installation facts into the generic doctor contract. */
+/** Project installation and runtime-authority facts into the doctor contract. */
 export const projectGhidraDoctorInspection = (
   inspection: GhidraInstallationInspection,
-): DoctorProviderInspection => ({
-  id: "ghidra",
-  configured: inspection.installDir !== null,
-  available: inspection.status === "available",
-  providerVersion: inspection.providerVersion,
-  registrationEnvironment:
-    inspection.status === "available"
-      ? {
-          GHIDRA_INSTALL_DIR: inspection.installDir,
-          JAVA_HOME: inspection.javaHome,
-        }
-      : {},
-  checks: selectedChecks(inspection).map((check) =>
-    projectCheck(check, inspection.installDir !== null),
-  ),
-});
+): DoctorProviderInspection => {
+  const windowsAuthorityUnavailable =
+    inspection.status === "available" &&
+    inspection.platform === "win32" &&
+    !hasWindowsNativeAuthority(inspection.platform);
+  return {
+    id: "ghidra",
+    configured: inspection.installDir !== null,
+    available:
+      inspection.status === "available" && !windowsAuthorityUnavailable,
+    providerVersion: inspection.providerVersion,
+    registrationEnvironment:
+      inspection.status === "available"
+        ? {
+            GHIDRA_INSTALL_DIR: inspection.installDir,
+            JAVA_HOME: inspection.javaHome,
+          }
+        : {},
+    checks: [
+      ...selectedChecks(inspection).map((check) =>
+        projectCheck(check, inspection.installDir !== null),
+      ),
+      ...(inspection.status === "available" && inspection.platform === "win32"
+        ? [
+            {
+              name: "native_authority",
+              ok: !windowsAuthorityUnavailable,
+              code: windowsAuthorityUnavailable ? "unsupported_host" : null,
+              detail: windowsAuthorityUnavailable
+                ? windowsNativeAuthorityUnavailableReason(inspection.platform)
+                : "Verified Windows native Job Object, private DACL, and reparse-safe handle controls; local NTFS only.",
+              remediation: windowsAuthorityUnavailable
+                ? "Use the matching Windows x64 REA package with its bundled native addon and a writable local NTFS temporary directory. The native failure above identifies the failed constraint; Ghidra installation or registration changes cannot enable a missing native backend."
+                : null,
+              classification: "unsupported_host" as const,
+            },
+          ]
+        : []),
+    ],
+  };
+};
 
 /** Inspect the process-configured BYO Ghidra installation for `rea doctor`. */
 export const inspectSystemGhidraProvider =

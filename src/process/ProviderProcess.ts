@@ -1,5 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import type { EventEmitter } from "node:events";
 import type { Readable } from "node:stream";
+
+import { WindowsOwnedProcess } from "../windows/WindowsOwnedProcess.js";
 
 import type {
   OwnedProcessGroup,
@@ -28,20 +31,34 @@ export interface OwnedProviderProcessSpawnOptions {
 
 /** Spawned process paired with the identity proof required for group cleanup. */
 export interface SpawnedOwnedProviderProcess {
-  readonly process: ChildProcess;
+  readonly process: ProviderProcessHandle;
   readonly ownership: OwnedProcessGroup;
+  readonly cleanup?: () => Promise<ProcessCleanupResult>;
+}
+
+/** Process events and streams required by provider lifecycle supervision. */
+export interface ProviderProcessHandle extends Pick<
+  EventEmitter,
+  "on" | "once" | "off"
+> {
+  readonly pid?: number | undefined;
+  readonly stdout: Readable | null;
+  readonly stderr: Readable | null;
+  readonly exitCode: number | null;
+  readonly signalCode: NodeJS.Signals | null;
+  kill(signal?: NodeJS.Signals | number): boolean;
 }
 
 /** Process handle returned by a provider-specific launcher. */
 export type ProviderProcessLaunch =
   | {
-      readonly process: ChildProcess;
+      readonly process: ProviderProcessHandle;
       readonly ownsProcessLifetime: false;
       readonly ownership?: never;
       readonly cleanup?: never;
     }
   | {
-      readonly process: ChildProcess;
+      readonly process: ProviderProcessHandle;
       readonly ownsProcessLifetime: true;
       readonly ownership?: OwnedProcessGroup;
       readonly cleanup?: () => Promise<ProcessCleanupResult>;
@@ -102,7 +119,7 @@ export type ProviderProcessStopResult =
   | { readonly status: "incomplete"; readonly reason: string };
 
 /**
- * Spawn a provider in a dedicated POSIX process group with an ownership token.
+ * Spawn a provider in an owned Windows job or dedicated POSIX process group.
  *
  * The caller remains responsible for persisting any ownership manifest and for
  * selecting provider-specific command arguments or environment values.
@@ -112,17 +129,37 @@ export const spawnOwnedProviderProcess = async (
 ): Promise<SpawnedOwnedProviderProcess> => {
   const platform = options.platform ?? process.platform;
   const hostEnvironment = options.hostEnvironment ?? process.env;
+  const environment = {
+    ...hostEnvironment,
+    ...options.env,
+    REA_PROCESS_RUN_ID: options.runId,
+  };
+  if (platform === "win32" && process.platform === "win32") {
+    const child = new WindowsOwnedProcess(
+      options.command,
+      options.arguments,
+      options.cwd,
+      environment,
+      options.windowsVerbatimArguments ?? false,
+    );
+    return {
+      process: child,
+      ownership: {
+        runId: options.runId,
+        leaderPid: child.pid,
+        processGroupId: child.pid,
+        expectedParentPid: process.pid,
+      },
+      cleanup: () => child.cleanup(),
+    };
+  }
   const child = spawn(options.command, [...options.arguments], {
     shell: false,
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
     detached: platform !== "win32",
     windowsVerbatimArguments: options.windowsVerbatimArguments ?? false,
-    env: {
-      ...hostEnvironment,
-      ...options.env,
-      REA_PROCESS_RUN_ID: options.runId,
-    },
+    env: environment,
     ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
   });
   await waitForSpawn(child);

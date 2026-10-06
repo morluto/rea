@@ -75,6 +75,7 @@ export class GhidraClient {
   #process: ProviderProcessSupervisor | undefined;
   #runtimeRoot: PrivateRuntimeRoot | undefined;
   #snapshotPath: string | undefined;
+  #targetAdmission: JsonValue | undefined;
   #token: string | undefined;
   // Retain authentication identities for diagnostics from late request settlement.
   readonly #authenticationTokens = new Set<string>();
@@ -279,9 +280,12 @@ export class GhidraClient {
         this.#options.targetPath,
         this.#runtimeRoot.path,
         this.#options.targetSha256,
+        deadline.signal,
       );
       this.#snapshotPath = snapshot.path;
+      this.#targetAdmission = snapshot.admission;
     } catch (cause: unknown) {
+      if (deadline.signal.aborted) return this.#startupInterrupted(deadline);
       const failure = this.#failure(
         "start",
         "Ghidra target snapshot failed admission",
@@ -380,6 +384,9 @@ export class GhidraClient {
       providerVersion: this.#options.providerVersion,
       profileDigest: this.#options.profileDigest,
       targetSha256: this.#options.targetSha256,
+      ...(this.#targetAdmission === undefined
+        ? {}
+        : { targetAdmission: this.#targetAdmission }),
       ...(this.#options.expectedLanguageId === undefined
         ? {}
         : { expectedLanguageId: this.#options.expectedLanguageId }),
@@ -560,6 +567,9 @@ export class GhidraClient {
     return createGhidraDiagnostics({
       targetPath: this.#options.targetPath,
       targetSha256: this.#options.targetSha256,
+      ...(this.#targetAdmission === undefined
+        ? {}
+        : { targetAdmission: this.#targetAdmission }),
       transport: this.#options.transport,
       providerVersion: this.#options.providerVersion,
       profileDigest: this.#options.profileDigest,

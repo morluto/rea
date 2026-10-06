@@ -1,5 +1,7 @@
 import { access, open } from "node:fs/promises";
 
+import { readWindowsPrivateRuntimeFile } from "../windows/WindowsPrivateRuntime.js";
+
 import { err, ok, type Result } from "../domain/result.js";
 import { GhidraSessionError } from "./GhidraSessionError.js";
 
@@ -32,6 +34,24 @@ export const observeGhidraEndpoint = async (
             endpointFailure(
               endpoint,
               "Ghidra socket observation failed",
+              cause,
+            ),
+          );
+    }
+  }
+  if (process.platform === "win32") {
+    try {
+      return parseTcpEndpoint(
+        endpoint,
+        readWindowsPrivateRuntimeFile(endpoint.path),
+      );
+    } catch (cause: unknown) {
+      return isMissing(cause) || isWindowsEndpointWriterBusy(cause)
+        ? ok(null)
+        : err(
+            endpointFailure(
+              endpoint,
+              "Ghidra endpoint observation failed",
               cause,
             ),
           );
@@ -120,3 +140,6 @@ const endpointFailure = (
 
 const isMissing = (cause: unknown): boolean =>
   cause instanceof Error && "code" in cause && cause.code === "ENOENT";
+
+const isWindowsEndpointWriterBusy = (cause: unknown): boolean =>
+  cause instanceof Error && "win32Code" in cause && cause.win32Code === 32;

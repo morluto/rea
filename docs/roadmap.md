@@ -57,11 +57,11 @@ a native type-layout object. A separate lane covers AArch64 ELF, PE, and
 Mach-O cross-target fixtures. See [testing](testing.md) for the prerequisites
 and exact commands.
 
-Windows Ghidra operations remain unavailable until REA implements verified
-Job Object process ownership, private runtime DACLs, and reparse-safe path
-admission. Windows package and adapter tests do not establish a usable real
-Ghidra session. The [Windows P0 guide](windows-ghidra-p0.md) describes the
-intended boundary and remaining requirements.
+Experimental Windows x64 P0 now supplies bundled Job Object ownership,
+protected runtime DACLs, and handle-based admission for native x86-64 PE
+applications on local NTFS. Real ordinary-user CLI/MCP verification covers
+all 22 read-only operations and cleanup. The [Windows P0 guide](windows-ghidra-p0.md)
+describes this boundary and unverified broader coverage.
 
 ## Ghidra maintenance boundary
 
@@ -71,11 +71,10 @@ not expected to match; unresolved targetless flow remains unknown. Automatic
 Ghidra acquisition, if ever added, remains a separately planned and approved
 related-tool change; setup must never install Java.
 
-Before enabling Windows Ghidra operations, add current-user-only DACL creation and
-readback, handle-based reparse-point-safe path authority, a DACL-protected IPC
-backend, and Job Object assignment before provider execution. Process capture,
-Hopper, and broad filesystem-sensitive workflows remain separate Windows
-projects rather than implied parity.
+Maintain Windows P0 with independent DACL readback, handle-based admission,
+private authenticated IPC, and Job Object assignment before provider execution.
+Process capture, Hopper, and broad filesystem-sensitive workflows remain
+separate Windows projects; P0 does not imply their parity.
 
 ## Capability-selective setup
 

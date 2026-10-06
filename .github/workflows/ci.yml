@@ -215,9 +215,30 @@ jobs:
       - name: Verify fixtures from a clean checkout
         run: npm run verify:fixtures
 
+  windows-native-build:
+    name: Build bundled Windows x64 native controls
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.package == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: Prepare cross compiler
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y g++-mingw-w64-x86-64
+      - run: npm run build:windows-native
+      - run: npm run verify:windows-native:artifact
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-native-controls
+          path: native/windows/build/
+          if-no-files-found: error
+
   package-e2e:
     name: Package/install integration (${{ matrix.os }})
-    needs: changes
+    needs: [changes, windows-native-build]
     if: github.event_name == 'push' || needs.changes.outputs.package == 'true'
     strategy:
       fail-fast: false
@@ -231,6 +252,11 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-native-controls
+          path: native/windows/build/
+      - run: npm run verify:windows-native:artifact
       - run: npm run verify:package
 
   apple-artifacts:
@@ -302,7 +328,7 @@ jobs:
 
   windows-curated:
     name: Windows capability and package lane
-    needs: changes
+    needs: [changes, windows-native-build]
     if: github.event_name == 'push' || needs.changes.outputs.package == 'true'
     runs-on: windows-latest
     timeout-minutes: 25
@@ -354,6 +380,12 @@ jobs:
           src/application/Update.test.ts
           tests/process-global/updateMaintenance.test.ts
           tests/conformance/providers/ghidra/realGhidraWindowsWorkflow.test.ts
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-native-controls
+          path: native/windows/build/
+      - run: npm run verify:windows-native:artifact
+      - run: npm run verify:windows-native
       - run: npm run verify:package:windows
       - uses: actions/upload-artifact@v4
         if: always()

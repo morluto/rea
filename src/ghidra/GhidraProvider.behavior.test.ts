@@ -222,7 +222,9 @@ describe("Ghidra platform support", () => {
     expect(ghidra.inspectAvailability()).toMatchObject({
       status: "unavailable",
       code: "unsupported_host",
-      reason: expect.stringContaining("native authority is unavailable"),
+      reason: expect.stringContaining(
+        "Windows native controls are unavailable",
+      ),
       diagnostics: {
         windows_security: {
           job_object_process_ownership: expect.objectContaining({
@@ -247,8 +249,12 @@ describe("Ghidra platform support", () => {
           available: false,
           availabilityCode: "unsupported_host",
           limitations: expect.arrayContaining([
-            expect.stringContaining("bounded taskkill cleanup"),
-            expect.stringContaining("private DACL enforcement"),
+            expect.stringContaining(
+              "matching packaged Windows x64 native addon",
+            ),
+            expect.stringContaining(
+              "private DACLs, and Job Object ownership automatically",
+            ),
           ]),
         }),
       ]),

@@ -151,7 +151,7 @@ Update either installation with `rea update`.
 
 Native binary analysis requires [Hopper](https://www.hopperapp.com/) or [Ghidra](#ghidra-read-only-analysis-provider). Hopper is separate software with its own license; its demo supports analysis with vendor-defined limits. REA can use Ghidra that you have already installed.
 
-Windows Ghidra support is experimental and currently unavailable. The required Windows process ownership, private-directory permissions, and safe-path checks are not implemented. See [Windows Ghidra P0](docs/windows-ghidra-p0.md) for the remaining requirements.
+Windows Ghidra support is experimental for native x86-64 PE applications on local NTFS. The package bundles native Job Object, private-DACL, and path-admission controls. See [Windows Ghidra P0](docs/windows-ghidra-p0.md) for prerequisites and verified scope.
 
 If something is not working, run:
 
@@ -206,7 +206,7 @@ REA analyzes a temporary copy of the target and removes the temporary project wh
 
 Ghidra also imports DOS MZ executables with an explicit 16-bit x86 real-mode profile. Function results include complete observed body ranges, distinguishing owned bytes from the enclosing span. See the [DOS analysis guide](docs/ghidra-dos.md) for addresses, packing, and verification boundaries.
 
-Windows operations remain unavailable pending the controls described in the [Windows Ghidra P0 guide](docs/windows-ghidra-p0.md). See [Ghidra installation](docs/installation.md#ghidra), [provider evaluation](docs/provider-evaluation.md), and [testing](docs/testing.md) for configuration details, coverage, and real-provider verification.
+Windows Ghidra P0 uses bundled native controls for its read-only native x86-64 PE boundary on local NTFS; see the [Windows Ghidra P0 guide](docs/windows-ghidra-p0.md). See [Ghidra installation](docs/installation.md#ghidra), [provider evaluation](docs/provider-evaluation.md), and [testing](docs/testing.md) for configuration details, coverage, and real-provider verification.
 
 To remove only REA-owned MCP registrations and the managed skill:
 
@@ -335,7 +335,7 @@ REA supports native application, JavaScript, Electron, .NET, and browser investi
 - **Open questions:** Track unresolved findings, contradictions, and follow-up probes. Reconstruction checks report pass, fail, or unknown rather than treating missing evidence as a pass.
 - **Guided workflows:** Start six [MCP investigation workflows](docs/mcp-prompts.md) with suggestions based on your current session.
 
-Windows Ghidra operations are currently unavailable. Hopper-only features, such as GUI controls and annotations, are not available through Ghidra.
+Windows Ghidra P0 supports the read-only native x86-64 PE boundary on local NTFS. Hopper-only features, such as GUI controls and annotations, are not available through Ghidra.
 
 ### Website observation with CDP
 
@@ -522,7 +522,7 @@ Use `--provider`, or `provider_id` in MCP, to choose Hopper or Ghidra for a targ
 
 With `auto`, REA selects the only available tool that supports the target. If both are available, specify one before opening the target. The session keeps that choice until you explicitly switch or close it; a failure never silently switches tools. Artifact-only analysis can work without a native analysis tool.
 
-Run `rea providers` and `rea capabilities` to check availability and supported operations. Ghidra exposes 22 read-only operations on supported Linux and macOS hosts. GUI controls and annotation changes require Hopper. Windows Ghidra operations remain unavailable.
+Run `rea providers` and `rea capabilities` to check availability and supported operations. Ghidra exposes 22 read-only operations on supported Linux and macOS hosts. GUI controls and annotation changes require Hopper. Windows Ghidra P0 supports native x86-64 PE applications on local NTFS with bundled native controls.
 
 The session also reports active work and cleanup status. If a caller times out, the analysis tool may still be busy; `analysis_activity` reports that state. A `cleanup_incomplete` result identifies resources whose shutdown or removal could not be verified. See [provider selection and analysis profiles](docs/adr/0001-provider-selection-and-analysis-profiles.md) for session, cache, and process-tracking details.
 
@@ -600,7 +600,7 @@ Analysis runs locally. REA communicates with Hopper and Ghidra through authentic
 
 Runtime requests act on the declared target and lifecycle. Analysis tools and launched targets run with your user permissions, and native UI capture still depends on macOS Accessibility and Screen Recording access. Static JavaScript analysis does not execute extracted modules; use direct browser, Electron, or process capture when runtime behavior is needed.
 
-Windows Ghidra operations are blocked until REA implements the required process ownership, private-directory permissions, and safe-path checks. Report vulnerabilities through the private process in [SECURITY.md](SECURITY.md).
+Windows Ghidra P0 automatically uses native Job Objects, protected private-runtime DACLs, and handle-based admission. Its experimental scope is native x86-64 PE applications on local NTFS. Report vulnerabilities through the private process in [SECURITY.md](SECURITY.md).
 
 ## FAQ
 

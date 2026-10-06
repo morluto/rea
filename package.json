@@ -52,7 +52,10 @@
     "scripts/prepare.mjs",
     "skills",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "native/windows/build/manifest.json",
+    "native/windows/build/rea-windows-x64.node",
+    "scripts/verify-windows-native-artifact.mjs"
   ],
   "scripts": {
     "deps:check": "node scripts/check-dependency-install.mjs",
@@ -154,7 +157,12 @@
     "prepare": "node scripts/prepare.mjs",
     "verify:asset-catalog": "npm run build:cached && node scripts/verify-asset-catalog.mjs",
     "verify:native-ui:permissions": "npm run build:cached && node scripts/verify-native-ui.mjs --allow-permission-denial",
-    "test:focused": "node scripts/run-development-tests.mjs focused"
+    "test:focused": "node scripts/run-development-tests.mjs focused",
+    "build:windows-native": "node scripts/build-windows-native.mjs",
+    "verify:windows-native:artifact": "node scripts/verify-windows-native-artifact.mjs",
+    "prepublishOnly": "npm run verify:windows-native:artifact",
+    "verify:windows-native": "node scripts/verify-windows-native.mjs",
+    "verify:ghidra:windows:package": "node scripts/verify-packaged-ghidra-windows.mjs"
   },
   "lint-staged": {
     "*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}": [

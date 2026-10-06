@@ -2,6 +2,8 @@ import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { WindowsPrivateRuntime } from "../windows/WindowsPrivateRuntime.js";
+
 import {
   windowsNativeCapabilities,
   type WindowsNativeCapability,
@@ -43,7 +45,7 @@ export class PrivateRuntimeRootUnavailableError extends Error {
 }
 
 /**
- * Owns one POSIX mode-0700 temporary runtime root and removes it idempotently.
+ * Owns a private temporary runtime root and removes it idempotently.
  *
  * Protocol adapters decide what belongs inside the directory; this primitive
  * establishes a private filesystem boundary on POSIX and deterministic cleanup.
@@ -52,7 +54,10 @@ export class PrivateRuntimeRootUnavailableError extends Error {
 export class PrivateRuntimeRoot {
   #closePromise: Promise<void> | undefined;
 
-  private constructor(readonly path: string) {}
+  private constructor(
+    readonly path: string,
+    private readonly windowsRuntime?: WindowsPrivateRuntime,
+  ) {}
 
   /** Allocate a new private runtime root without performing protocol work. */
   static async create(
@@ -62,6 +67,13 @@ export class PrivateRuntimeRoot {
     const capability = privateRuntimeRootCapability(platform);
     if (!capability.available)
       throw new PrivateRuntimeRootUnavailableError(capability.reason);
+    if (platform === "win32") {
+      const runtime = WindowsPrivateRuntime.create(
+        options.parent ?? tmpdir(),
+        options.prefix ?? "rea-provider-",
+      );
+      return new PrivateRuntimeRoot(runtime.observation.path, runtime);
+    }
     const path = await mkdtemp(
       join(options.parent ?? tmpdir(), options.prefix ?? "rea-provider-"),
     );
@@ -76,7 +88,10 @@ export class PrivateRuntimeRoot {
 
   /** Remove the runtime root; concurrent and repeated callers share cleanup. */
   close(): Promise<void> {
-    this.#closePromise ??= rm(this.path, { recursive: true, force: true });
+    this.#closePromise ??=
+      this.windowsRuntime === undefined
+        ? rm(this.path, { recursive: true, force: true })
+        : Promise.resolve().then(() => this.windowsRuntime?.close());
     return this.#closePromise;
   }
 }

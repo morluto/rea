@@ -9,6 +9,7 @@ import type { GhidraTransportKind } from "./GhidraTransport.js";
 export interface GhidraDiagnosticsOptions {
   readonly targetPath: string;
   readonly targetSha256: string;
+  readonly targetAdmission?: JsonValue;
   readonly transport: GhidraTransportKind;
   readonly providerVersion: string;
   readonly profileDigest: string;
@@ -37,6 +38,9 @@ export const createGhidraDiagnostics = (
   return {
     target_path: options.targetPath,
     target_sha256: options.targetSha256,
+    ...(options.targetAdmission === undefined
+      ? {}
+      : { target_admission: options.targetAdmission }),
     transport: options.transport,
     provider_version: options.providerVersion,
     profile_digest: options.profileDigest,

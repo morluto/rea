@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { runDoctor, type DoctorHost } from "../application/Doctor.js";
 import { createDoctorHostFixture } from "../application/Doctor.fixture.js";
+import { providerRegistrationEnvironment } from "../application/SetupRegistrationEnvironment.js";
+import { WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON } from "../process/WindowsAuthority.js";
 import {
   inspectGhidraInstallation,
   type GhidraInstallationHost,
@@ -99,28 +101,6 @@ describe("Ghidra doctor integration", () => {
     });
   });
 
-  it("accepts the experimental Windows x64 Ghidra provider boundary", async () => {
-    const ghidra = inspection({
-      installDir: "C:\\tools\\ghidra_12.1.4_PUBLIC",
-      platform: "win32",
-    });
-    const result = await runDoctor(undefined, {
-      ...doctorHost(ghidra),
-      platform: "win32",
-      architecture: "x64",
-      linuxDistribution: () => Promise.resolve(undefined),
-    });
-
-    expect(result.healthy).toBe(true);
-    expect(result.checks.find(({ name }) => name === "host")).toMatchObject({
-      ok: true,
-      detail: "win32 x64",
-    });
-    expect(result.checks.find(({ name }) => name === "ghidra")).toMatchObject({
-      ok: true,
-    });
-  });
-
   it.each([
     [
       "bad installation",
@@ -179,5 +159,97 @@ describe("Ghidra doctor integration", () => {
       ok: false,
       classification: "missing_analysis_engine",
     });
+  });
+});
+
+describe("Windows Ghidra doctor authority", () => {
+  it("distinguishes a valid Windows installation from unavailable native authority", async () => {
+    const ghidra = inspection({
+      installDir: "C:\\tools\\ghidra_12.1.4_PUBLIC",
+      platform: "win32",
+    });
+    const result = await runDoctor(undefined, {
+      ...doctorHost(ghidra),
+      platform: "win32",
+      architecture: "x64",
+      linuxDistribution: () => Promise.resolve(undefined),
+    });
+
+    expect(result.healthy).toBe(false);
+    expect(result.providerInspections?.[0]).toMatchObject({
+      available: false,
+      providerVersion: "12.1.4",
+      registrationEnvironment: {
+        GHIDRA_INSTALL_DIR: "C:\\tools\\ghidra_12.1.4_PUBLIC",
+      },
+    });
+    expect(
+      providerRegistrationEnvironment(result.providerInspections ?? []),
+    ).toMatchObject({
+      GHIDRA_INSTALL_DIR: "C:\\tools\\ghidra_12.1.4_PUBLIC",
+    });
+    expect(result.checks.find(({ name }) => name === "host")).toMatchObject({
+      ok: true,
+      detail: "win32 x64",
+    });
+    expect(result.checks.find(({ name }) => name === "ghidra")).toMatchObject({
+      ok: true,
+    });
+    expect(
+      result.checks.find(({ name }) => name === "ghidra-java"),
+    ).toMatchObject({ ok: true });
+    expect(
+      result.checks.find(({ name }) => name === "ghidra-native_authority"),
+    ).toMatchObject({
+      ok: false,
+      classification: "unsupported_host",
+      detail: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+      remediation: expect.stringContaining("cannot enable"),
+    });
+  });
+
+  it("fails provider-scoped Windows readiness without blaming installation", async () => {
+    const ghidra = inspection({
+      installDir: "C:\\tools\\ghidra_12.1.4_PUBLIC",
+      platform: "win32",
+    });
+    const result = await runDoctor(
+      undefined,
+      {
+        ...doctorHost(ghidra),
+        platform: "win32",
+        linuxDistribution: () => Promise.resolve(undefined),
+      },
+      { providers: ["ghidra"] },
+    );
+    expect(result.healthy).toBe(false);
+    expect(result.scope_checks).toContainEqual(
+      expect.objectContaining({
+        name: "ghidra-native_authority",
+        classification: "unsupported_host",
+        detail: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+      }),
+    );
+  });
+
+  it("keeps missing Windows Java actionable as a dependency failure", () => {
+    const projected = projectGhidraDoctorInspection(
+      inspection(
+        {
+          installDir: "C:\\tools\\ghidra_12.1.4_PUBLIC",
+          platform: "win32",
+        },
+        { probeJava: () => undefined },
+      ),
+    );
+    expect(projected.available).toBe(false);
+    expect(projected.checks).toContainEqual(
+      expect.objectContaining({
+        name: "java",
+        ok: false,
+        classification: "missing_dependency",
+        remediation: expect.any(String),
+      }),
+    );
   });
 });

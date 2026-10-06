@@ -11,9 +11,29 @@ permissions:
   contents: read
 
 jobs:
+  native-artifact:
+    name: Build matching Windows native artifact
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: Prepare cross compiler
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y g++-mingw-w64-x86-64
+      - run: npm run build:windows-native
+      - run: npm run verify:windows-native:artifact
+      - uses: actions/upload-artifact@v4
+        with:
+          name: real-ghidra-windows-native
+          path: native/windows/build/
+          if-no-files-found: error
+
   verify:
     name: Real Ghidra 12.1.4 Windows x64 PE proof
     if: github.ref == 'refs/heads/main'
+    needs: native-artifact
     environment: real-ghidra-windows
     runs-on: [self-hosted, Windows, x64, ghidra-12-1-2]
     timeout-minutes: 20
@@ -23,13 +43,25 @@ jobs:
         with:
           node-version-file: .nvmrc
       - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: real-ghidra-windows-native
+          path: native/windows/build/
+      - run: npm run verify:windows-native:artifact
+      - run: npm run verify:windows-native
       - name: Verify all admitted Windows Ghidra operations
         env:
           REA_ANALYSIS_PROVIDER: ghidra
         run: npm run verify:ghidra:windows | Tee-Object -FilePath windows-ghidra-proof.log
+      - name: Verify ordinary-user CLI and MCP operations
+        env:
+          REA_ANALYSIS_PROVIDER: ghidra
+        run: npm run verify:ghidra:windows:package | Tee-Object -FilePath windows-ghidra-package-proof.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: windows-ghidra-proof
-          path: windows-ghidra-proof.log
+          path: |
+            windows-ghidra-proof.log
+            windows-ghidra-package-proof.log
           retention-days: 30

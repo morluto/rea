@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import type { ProviderProcessHandle } from "../../src/process/ProviderProcess.js";
 
 const fixturePath = fileURLToPath(
   new URL("./providerProcess.mjs", import.meta.url),
@@ -18,7 +19,7 @@ export const spawnProviderProcessFixture = (
 
 /** Wait until a long-lived fixture has installed its signal behavior. */
 export const waitForProviderProcessReady = (
-  child: ChildProcess,
+  child: ProviderProcessHandle,
   timeoutMs = 2_000,
 ): Promise<void> =>
   new Promise((resolve, reject) => {
@@ -54,7 +55,7 @@ export const waitForProviderProcessReady = (
 
 /** Read the distinct process-group leader created by the detached-child mode. */
 export const waitForDetachedProviderChild = (
-  child: ChildProcess,
+  child: ProviderProcessHandle,
   timeoutMs = 2_000,
 ): Promise<number> =>
   new Promise((resolve, reject) => {
@@ -90,7 +91,7 @@ export const waitForDetachedProviderChild = (
 
 /** Kill a fixture if necessary and wait for its process handle to settle. */
 export const stopProviderProcessFixture = async (
-  child: ChildProcess,
+  child: ProviderProcessHandle,
 ): Promise<void> => {
   if (child.exitCode !== null || child.signalCode !== null) return;
   const exited = new Promise<void>((resolve) => {
