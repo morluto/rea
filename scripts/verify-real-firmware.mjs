@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -188,9 +195,14 @@ try {
         expected.sha256,
       );
     console.log("PASS real ext4 extraction with debugfs; no mounts");
+    // Preserve the process-ownership utility while withholding all extractors.
+    const withoutExtractors = join(root, "without-extractors");
+    await access("/bin/ps");
+    await mkdir(withoutExtractors);
+    await symlink("/bin/ps", join(withoutExtractors, "ps"));
     const missing = await cli(
       ["extract-firmware", ext4, join(root, "missing-extractor-output")],
-      { ...environment, PATH: root },
+      { ...environment, PATH: withoutExtractors },
     );
     const partial = firmwareResultSchemas.extract_firmware.parse(
       missing.normalized_result,
