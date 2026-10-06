@@ -17,7 +17,7 @@ export const parseDyldSymbols = (
     const line = rawLine.trim();
     if (mode === "imports") {
       const imported =
-        /^(?:0x[\da-f]+\s+)?(\S+)(?:\s+\[([^\]]+)\])?\s+\(from (.+)\)$/iu.exec(
+        /^(?:0x[\da-f]+\s+)?(.+?)(?:\s+\[([^\]]+)\])?\s+\(from (.+)\)$/iu.exec(
           line,
         );
       if (imported?.[1] !== undefined)
@@ -32,7 +32,7 @@ export const parseDyldSymbols = (
         ];
       return [];
     }
-    const reexport = /^\[re-export\]\s+(\S+)(?:\s+\(from (.+)\))?$/u.exec(line);
+    const reexport = /^\[re-export\]\s+(.+?)(?:\s+\(from (.+)\))?$/u.exec(line);
     if (reexport?.[1] !== undefined)
       return [
         {
@@ -43,7 +43,7 @@ export const parseDyldSymbols = (
           source: reexport[2] ?? null,
         },
       ];
-    const exported = /^(0x[\da-f]+)\s+(\S+)(?:\s+\[([^\]]+)\])?$/iu.exec(line);
+    const exported = /^(0x[\da-f]+)\s+(.+?)(?:\s+\[([^\]]+)\])?$/iu.exec(line);
     if (exported?.[1] === undefined || exported[2] === undefined) return [];
     const absolute = /\babsolute\b/u.test(exported[3] ?? "");
     const address =

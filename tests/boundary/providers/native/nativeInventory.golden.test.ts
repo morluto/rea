@@ -115,3 +115,54 @@ it("retains native inventory facts from captured Apple tool output", async () =>
     source: null,
   });
 });
+
+it("retains symbol names containing spaces in dyld inventory rows", () => {
+  expect(
+    parseDyldSymbols("  0x0000  _entry with space  (from fixture)", "imports"),
+  ).toEqual([
+    {
+      name: "_entry with space",
+      address: null,
+      weak: null,
+      reexport: null,
+      source: "fixture",
+    },
+  ]);
+  expect(
+    parseDyldSymbols(
+      "  offset symbol\n  0x00000348  _entry with space",
+      "exports",
+      "0x0",
+    ),
+  ).toEqual([
+    {
+      name: "_entry with space",
+      address: "0x348",
+      weak: null,
+      reexport: false,
+      source: null,
+    },
+  ]);
+  expect(
+    parseDyldSymbols("[re-export] _entry with space (from fixture)", "exports"),
+  ).toEqual([
+    {
+      name: "_entry with space",
+      address: null,
+      weak: null,
+      reexport: true,
+      source: "fixture",
+    },
+  ]);
+  expect(
+    parseDyldSymbols("0x123 _weak with space [weak-def]", "exports"),
+  ).toEqual([
+    {
+      name: "_weak with space",
+      address: "0x123",
+      weak: true,
+      reexport: false,
+      source: null,
+    },
+  ]);
+});
