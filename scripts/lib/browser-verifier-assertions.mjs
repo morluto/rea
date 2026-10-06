@@ -89,6 +89,14 @@ function assertObservationPrivacy(result) {
 function assertObservationMetadata(result) {
   if (!result.storage.local_storage_keys.includes("rea-storage-key"))
     throw new Error("Real Chrome local-storage key inventory was missing");
+  if (
+    result.storage.content_fingerprints.filter(
+      ({ scope }) => scope === "cookie",
+    ).length !== 2
+  )
+    throw new Error(
+      "Real Chrome root and current-page cookie fingerprints were missing",
+    );
   if (!result.storage.indexed_db_names.includes("rea-browser-db"))
     throw new Error("Real Chrome IndexedDB name inventory was missing");
   if (!result.storage.cache_names.includes("rea-browser-cache"))

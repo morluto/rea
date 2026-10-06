@@ -48,6 +48,7 @@ interface FingerprintRun {
 interface CaptureStorageFingerprintInput {
   readonly context: StorageFingerprintContext;
   readonly origin: string;
+  readonly cookieUrl: string;
   readonly local: CapturedStorageItems;
   readonly session: CapturedStorageItems;
   readonly indexedDbNames: readonly string[];
@@ -64,6 +65,7 @@ type StorageFingerprintCapture = {
 export const captureStorageFingerprints = async ({
   context,
   origin,
+  cookieUrl,
   local,
   session,
   indexedDbNames,
@@ -77,7 +79,7 @@ export const captureStorageFingerprints = async ({
   const run = { context, limitations, state };
   addStorageItems(state, "local_storage", local.items);
   addStorageItems(state, "session_storage", session.items);
-  await addCookies(run, origin);
+  await addCookies(run, cookieUrl);
   await addIndexedDb(run, origin, indexedDbNames);
   await addCaches(run, caches);
   state.items.sort((left, right) =>
@@ -107,12 +109,15 @@ const addStorageItems = (
 
 const addCookies = async (
   run: FingerprintRun,
-  origin: string,
+  pageUrl: string,
 ): Promise<void> => {
+  run.limitations.push(
+    "Cookie fingerprints cover cookies applicable to the current main-frame URL, not every path on its origin.",
+  );
   const raw = await optionalCdpCommand(
     run.context,
     "Network.getCookies",
-    { urls: [origin] },
+    { urls: [pageUrl] },
     run.limitations,
   );
   if (raw === undefined) {

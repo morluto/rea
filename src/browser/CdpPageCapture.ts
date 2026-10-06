@@ -144,7 +144,7 @@ const captureAuthorizedPage = async (
   );
   const storageCapture = await captureStorage(
     context,
-    frames[0]?.origin ?? new URL(attachedUrl).origin,
+    attachedUrl,
     limitations,
   );
   if (!input.include_storage_keys)
