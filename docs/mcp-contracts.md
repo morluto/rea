@@ -8,14 +8,18 @@ registrations, reports their command vectors as aligned, stale, missing, or
 invalid, and keeps live-server state `unknown` unless the active connection
 supplies identity.
 
-Canonical tool names remain stable, while `tools/list` advertises only the
-operations callable for the current target, provider, host, and
-negotiated client capabilities. `binary_session.tool_availability` remains the
-complete inventory: it explains advertised and hidden operations with stable
-availability reasons and remediation. Each entry also reports required and
-optional negotiated client features plus the currently missing features.
-Opening or closing a target or observing a provider health transition emits
+`tools/list` returns the complete canonical tool inventory, including tools that
+are currently unavailable. Opening or closing a target or observing a provider
+health transition leaves that catalog unchanged and does not emit
 `notifications/tools/list_changed`.
+
+Call `binary_session` with `{}` and read `result.tool_availability` to choose a
+callable operation for the current target, provider, host, and negotiated client
+capabilities. The default result includes the complete inventory with each
+tool's availability, reason, and remediation. Each entry also reports required
+and optional negotiated client features plus the currently missing features.
+The optional inputs `expected_package_version`, `expected_catalog_digest`, and
+`expected_server_path` compare the live session with the caller's expectations.
 
 `binary_session.analysis_provider_candidates` is authoritative for deep-engine
 discovery. Target-free discovery is sorted by provider ID, reports host

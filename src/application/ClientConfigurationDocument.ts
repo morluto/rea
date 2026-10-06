@@ -150,6 +150,14 @@ export const clientRegistrationEntry = (
         tools: ["*"],
         ...(Object.keys(environment).length === 0 ? {} : { env: environment }),
       };
+    case "commandcode":
+      return {
+        transport: "stdio",
+        enabled: true,
+        command: executable,
+        args,
+        ...(Object.keys(environment).length === 0 ? {} : { env: environment }),
+      };
     default:
       return {
         command: executable,

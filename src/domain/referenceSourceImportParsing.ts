@@ -1,5 +1,11 @@
 import { parse, type ParserPlugin } from "@babel/parser";
-import type { CallExpression, File, Node, StringLiteral } from "@babel/types";
+import type {
+  CallExpression,
+  File,
+  ImportExpression,
+  Node,
+  StringLiteral,
+} from "@babel/types";
 import {
   isCallExpression,
   isExportAllDeclaration,
@@ -7,6 +13,7 @@ import {
   isIdentifier,
   isImport,
   isImportDeclaration,
+  isImportExpression,
   isMemberExpression,
   isNode,
   isStringLiteral,
@@ -196,18 +203,18 @@ const isRequireCallee = (callee: Node | null | undefined): boolean => {
 const isImportCallee = (callee: Node | null | undefined): boolean =>
   isImport(callee);
 
-const collectCallExpressions = (
+const collectModuleExpressions = (
   node: unknown,
-  targets: CallExpression[],
+  targets: Array<CallExpression | ImportExpression>,
 ): void => {
   if (node === null || node === undefined) return;
   if (typeof node !== "object") return;
   if (Array.isArray(node)) {
-    for (const item of node) collectCallExpressions(item, targets);
+    for (const item of node) collectModuleExpressions(item, targets);
     return;
   }
   if (!isNode(node)) return;
-  if (isCallExpression(node)) {
+  if (isCallExpression(node) || isImportExpression(node)) {
     targets.push(node);
   }
   for (const value of Object.values(node)) {
@@ -217,7 +224,7 @@ const collectCallExpressions = (
       typeof value === "object" &&
       !isSourceLocation(value)
     ) {
-      collectCallExpressions(value, targets);
+      collectModuleExpressions(value, targets);
     }
   }
 };
@@ -234,10 +241,22 @@ const extractRequireAndDynamicImports = (
   from_path: string,
   relationships: ReferenceSourceImportRelationship[],
 ): void => {
-  const calls: CallExpression[] = [];
-  for (const statement of body) collectCallExpressions(statement, calls);
+  const expressions: Array<CallExpression | ImportExpression> = [];
+  for (const statement of body)
+    collectModuleExpressions(statement, expressions);
 
-  for (const call of calls) {
+  for (const call of expressions) {
+    if (isImportExpression(call)) {
+      const specifier = safeModuleName(call.source);
+      appendRelationship(relationships, {
+        fromPath: from_path,
+        to: specifier ?? "<dynamic-import>",
+        kind: "imports",
+        parseState: specifier === undefined ? "partial" : "parsed",
+        ...(specifier === undefined ? { resolution: "unknown" } : {}),
+      });
+      continue;
+    }
     const first = call.arguments[0];
     if (isRequireCallee(call.callee) && isModuleExpression(first)) {
       const result = moduleSpecifierFromExpression(first);

@@ -7,7 +7,7 @@
       "client": "2.3.1",
       "core": "2.3.1"
     },
-    "skill_version": "24"
+    "skill_version": "25"
   },
   "tools": {
     "total": 116,
@@ -449,6 +449,12 @@
       "id": "copilot_cli",
       "display_name": "GitHub Copilot CLI",
       "format": "copilot_cli",
+      "configuration": "managed"
+    },
+    {
+      "id": "commandcode",
+      "display_name": "Command Code",
+      "format": "commandcode",
       "configuration": "managed"
     },
     {

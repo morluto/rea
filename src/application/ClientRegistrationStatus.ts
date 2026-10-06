@@ -47,6 +47,7 @@ const registrationSchema = z
     args: z.array(z.string()).default([]),
     startup_timeout_sec: z.number().positive().optional(),
     type: z.string().optional(),
+    transport: z.string().optional(),
     tools: z.array(z.string()).optional(),
     disabled: z.boolean().optional(),
     enabled: z.boolean().optional(),
@@ -152,6 +153,8 @@ const registrationAligned = (
       JSON.stringify(registration.tools) !== JSON.stringify(["*"]))
   )
     return false;
+  if (client.format === "commandcode" && registration.transport !== "stdio")
+    return false;
   if (
     command.length === 4 &&
     command[0] === "npx" &&
@@ -192,6 +195,8 @@ const parseRegistration = (
     (client.format === "vscode" || client.format === "copilot_cli") &&
     registration.type !== "stdio"
   )
+    throw new TypeError("Expected an stdio registration");
+  if (client.format === "commandcode" && registration.transport !== "stdio")
     throw new TypeError("Expected an stdio registration");
   return registration;
 };

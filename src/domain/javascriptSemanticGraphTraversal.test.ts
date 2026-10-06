@@ -4,6 +4,7 @@ import type { ApplicationGraphEvidence } from "./javascriptApplicationEvidenceSc
 import {
   JAVASCRIPT_SEMANTIC_NODE_KINDS,
   JAVASCRIPT_SEMANTIC_RELATION_FAMILIES,
+  JAVASCRIPT_SEMANTIC_RELATION_FAMILY,
 } from "./javascriptSemanticGraphSchemas.js";
 import {
   createJavaScriptSemanticFingerprint,
@@ -13,6 +14,7 @@ import {
   createJavaScriptSemanticGraphUnknown,
   type JavaScriptSemanticGraph,
   type JavaScriptSemanticGraphNode,
+  type JavaScriptSemanticGraphRelation,
 } from "./javascriptSemanticGraph.js";
 import { queryJavaScriptSemanticGraph } from "./javascriptSemanticQuery.js";
 import type { JsonValue } from "./jsonValue.js";
@@ -395,4 +397,198 @@ it("retains all explicit unresolved candidate node identifiers", () => {
     evidence: unknownEvidence(),
   });
   expect(unknown.candidate_node_ids).toHaveLength(1_001);
+});
+
+const directionalGraph = (
+  nodes: readonly JavaScriptSemanticGraphNode[],
+  relations: readonly JavaScriptSemanticGraphRelation[],
+  partial = false,
+): JavaScriptSemanticGraph =>
+  createJavaScriptSemanticGraph({
+    schema: "JavaScriptSemanticRelationGraph",
+    root_artifact_sha256: SHA,
+    application_graph_id: JAG_ID,
+    root_node_ids: nodes.slice(0, 1).map(({ node_id }) => node_id),
+    nodes: [...nodes],
+    relations: [...relations],
+    fingerprints: [],
+    unknowns: [],
+    coverage: {
+      status: partial ? "partial" : "complete",
+      truncated: false,
+      omitted_nodes: partial ? 1 : 0,
+      omitted_relations: 0,
+      limits: [],
+      families: JAVASCRIPT_SEMANTIC_RELATION_FAMILIES.map((family) => ({
+        family,
+        status: "complete",
+        retained_relations: relations.filter(
+          ({ relation }) =>
+            JAVASCRIPT_SEMANTIC_RELATION_FAMILY[relation] === family,
+        ).length,
+        omitted_relations: 0,
+        unknown_ids: [],
+      })),
+    },
+    limitations: partial ? ["One source graph node was omitted."] : [],
+  });
+
+const relationBetween = (
+  source: JavaScriptSemanticGraphNode,
+  target: JavaScriptSemanticGraphNode,
+  relation: JavaScriptSemanticGraphRelation["relation"],
+  resolution: JavaScriptSemanticGraphRelation["resolution"] = "resolved",
+) =>
+  createJavaScriptSemanticGraphRelation({
+    source_node_id: source.node_id,
+    target_node_id: target.node_id,
+    relation,
+    resolution,
+    properties: {},
+    evidence: evidence("inferred"),
+  });
+
+it.each([
+  {
+    direction: "forward-influence",
+    relation: "calls",
+    incoming: true,
+    relevant: false,
+  },
+  {
+    direction: "forward-influence",
+    relation: "calls",
+    incoming: false,
+    relevant: true,
+  },
+  {
+    direction: "backward-provenance",
+    relation: "calls",
+    incoming: false,
+    relevant: false,
+  },
+  {
+    direction: "backward-provenance",
+    relation: "calls",
+    incoming: true,
+    relevant: true,
+  },
+  { direction: "callers", relation: "reads", incoming: true, relevant: false },
+  { direction: "callers", relation: "calls", incoming: false, relevant: false },
+  { direction: "callers", relation: "calls", incoming: true, relevant: true },
+  {
+    direction: "ownership",
+    relation: "reads",
+    incoming: false,
+    relevant: false,
+  },
+  { direction: "ownership", relation: "owns", incoming: false, relevant: true },
+  { direction: "ownership", relation: "owns", incoming: true, relevant: true },
+] as const)(
+  "limits $direction ambiguity to traversable $relation candidates (incoming=$incoming)",
+  ({ direction, relation, incoming, relevant }) => {
+    const seed = node("function", "directional-seed");
+    const reached = node("function", "directional-reached");
+    const other = node("function", "directional-other");
+    const reverse =
+      direction === "callers" || direction === "backward-provenance";
+    const resolved = relationBetween(
+      reverse ? reached : seed,
+      reverse ? seed : reached,
+      direction === "ownership" ? "owns" : "calls",
+    );
+    const candidate = relationBetween(
+      incoming ? other : reached,
+      incoming ? reached : other,
+      relation,
+      "candidate",
+    );
+    const nodes = [seed, reached, other];
+    const control = queryJavaScriptSemanticGraph(
+      directionalGraph(nodes, [resolved]),
+      {
+        seed: { kind: "semantic-node", node_id: seed.node_id },
+        direction,
+      },
+    );
+    expect(control).toMatchObject({
+      status: "found",
+      coverage: { status: "complete" },
+    });
+    for (const include of [false, true]) {
+      const result = queryJavaScriptSemanticGraph(
+        directionalGraph(nodes, [resolved, candidate]),
+        {
+          seed: { kind: "semantic-node", node_id: seed.node_id },
+          direction,
+          include_ambiguous_dynamic_edges: include,
+        },
+      );
+      expect(result).toMatchObject({
+        status: relevant ? "ambiguous" : "found",
+        coverage: { status: relevant ? "partial" : "complete" },
+      });
+      if (!relevant || !include) {
+        expect(result.nodes).toEqual(control.nodes);
+        expect(result.relations).toEqual(control.relations);
+      } else {
+        expect(result.nodes).toHaveLength(3);
+        expect(result.relations).toContainEqual(candidate);
+      }
+    }
+  },
+);
+
+it("excludes explicitly filtered candidates without hiding partial graph coverage", () => {
+  const seed = node("function", "filtered-seed");
+  const other = node("function", "filtered-other");
+  const candidate = relationBetween(seed, other, "reads", "candidate");
+  for (const partial of [false, true]) {
+    const result = queryJavaScriptSemanticGraph(
+      directionalGraph([seed, other], [candidate], partial),
+      {
+        seed: { kind: "semantic-node", node_id: seed.node_id },
+        direction: "forward-influence",
+        allowed_relations: ["calls"],
+      },
+    );
+    expect(result).toMatchObject({
+      status: "found",
+      coverage: { status: partial ? "partial" : "complete" },
+      relations: [],
+    });
+  }
+});
+
+it("keeps candidate uncertainty at the end of a long reachable path", () => {
+  const chain = Array.from({ length: 72 }, (_, index) =>
+    node("binding", `candidate-chain-${index}`),
+  );
+  const relations = chain.slice(1).map((target, index) => {
+    const source = chain[index];
+    if (source === undefined) throw new TypeError("Missing chain source");
+    return relationBetween(
+      source,
+      target,
+      "reads",
+      index === 70 ? "candidate" : "resolved",
+    );
+  });
+  const seed = chain[0];
+  if (seed === undefined) throw new TypeError("Missing chain seed");
+  for (const include of [false, true]) {
+    const result = queryJavaScriptSemanticGraph(
+      directionalGraph(chain, relations),
+      {
+        seed: { kind: "semantic-node", node_id: seed.node_id },
+        direction: "forward-influence",
+        include_ambiguous_dynamic_edges: include,
+      },
+    );
+    expect(result).toMatchObject({
+      status: "ambiguous",
+      coverage: { status: "partial" },
+    });
+    expect(result.nodes).toHaveLength(include ? 72 : 71);
+  }
 });

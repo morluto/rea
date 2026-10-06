@@ -126,3 +126,59 @@ describe("client registration status", () => {
     ]);
   });
 });
+
+describe("commandcode registration status", () => {
+  const writeCommandcodeRegistration = async (
+    home: string,
+    registration: Record<string, unknown>,
+  ): Promise<void> => {
+    await mkdir(join(home, ".commandcode"));
+    await writeFile(
+      join(home, ".commandcode/mcp.json"),
+      JSON.stringify({ mcpServers: { rea: registration } }),
+    );
+  };
+
+  const ownedArgs = (): readonly string[] => [
+    "-y",
+    PRODUCT_IDENTITY.registrationPackageSpecifier,
+    "mcp",
+  ];
+
+  it.each([undefined, "sse"])(
+    "reports transport %j as invalid",
+    async (transport) => {
+      const home = await createTestTempDirectory("rea-commandcode-transport-");
+      await writeCommandcodeRegistration(home, {
+        ...(transport === undefined ? {} : { transport }),
+        command: "npx",
+        args: [...ownedArgs()],
+      });
+
+      expect(await readClientRegistrationStatuses(home)).toEqual([
+        expect.objectContaining({
+          client: "commandcode",
+          state: "invalid",
+          command: [],
+        }),
+      ]);
+    },
+  );
+
+  it("reports a disabled registration as stale", async () => {
+    const home = await createTestTempDirectory("rea-commandcode-disabled-");
+    await writeCommandcodeRegistration(home, {
+      transport: "stdio",
+      enabled: false,
+      command: "npx",
+      args: [...ownedArgs()],
+    });
+
+    expect(await readClientRegistrationStatuses(home)).toEqual([
+      expect.objectContaining({
+        client: "commandcode",
+        state: "stale",
+      }),
+    ]);
+  });
+});

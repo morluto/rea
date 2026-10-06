@@ -35,9 +35,14 @@ afterEach(() => vi.unstubAllEnvs());
 
 const getClients = (home: string) =>
   supportedClients(home).filter(({ name }) =>
-    ["opencode", "antigravity", "copilot_cli", "vscode", "devin"].includes(
-      name,
-    ),
+    [
+      "opencode",
+      "antigravity",
+      "copilot_cli",
+      "commandcode",
+      "vscode",
+      "devin",
+    ].includes(name),
   );
 
 describe("additional client configuration dialects", () => {
@@ -45,6 +50,7 @@ describe("additional client configuration dialects", () => {
     "opencode",
     "antigravity",
     "copilot_cli",
+    "commandcode",
     "vscode",
     "devin",
   ] as const)("registers, reads back, and uninstalls %s", async (name) => {
@@ -90,6 +96,13 @@ describe("additional client configuration dialects", () => {
       });
     if (name === "copilot_cli")
       expect(registration).toMatchObject({ type: "stdio", tools: ["*"] });
+    if (name === "commandcode")
+      expect(registration).toMatchObject({
+        transport: "stdio",
+        enabled: true,
+        command: "npx",
+        args: command.slice(1),
+      });
 
     const statuses = await readClientRegistrationStatuses(home);
     expect(statuses).toEqual(

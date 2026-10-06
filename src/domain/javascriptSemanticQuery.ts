@@ -281,17 +281,15 @@ const relevantCandidateRelationCount = (
   nodeIds: ReadonlySet<string>,
   input: JavaScriptSemanticQueryInput,
 ): number => {
-  const allowed =
-    input.allowed_relations === undefined
-      ? null
-      : new Set(input.allowed_relations);
-  return graph.relations.filter(
-    (relation) =>
-      relation.resolution === "candidate" &&
-      (allowed === null || allowed.has(relation.relation)) &&
-      (nodeIds.has(relation.source_node_id) ||
-        nodeIds.has(relation.target_node_id)),
-  ).length;
+  const adjacency = buildAdjacency(
+    graph.relations.filter(({ resolution }) => resolution === "candidate"),
+    { ...input, include_ambiguous_dynamic_edges: true },
+  );
+  const relevant = new Set<string>();
+  for (const nodeId of nodeIds)
+    for (const { relation } of adjacency.get(nodeId) ?? [])
+      relevant.add(relation.relation_id);
+  return relevant.size;
 };
 
 const expectedMatchesFor = (

@@ -15,6 +15,8 @@
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 [![Discord](https://img.shields.io/discord/1556595354999332884?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/GkcryMnJDM)
 
+<a href="https://trendshift.io/repositories/82054?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/82054/weekly?language=TypeScript" alt="morluto/rea | Trendshift" width="250" height="55" /></a>
+
 [クイックスタート](#クイックスタート) · [現在の対応状況](#現在の対応状況) · [バイナリから動作へ](#バイナリから動作へ) · [調査ツールカタログ](#調査ツールカタログ) · [ロードマップ](#ロードマップ) · [仕組み](#仕組み)
 
 <table aria-label="REA community">
@@ -92,7 +94,7 @@ Setup は最初に連携するエージェントを複数選択できるよう�
 
 ### エージェントで使う
 
-設定後にエージェントを再起動し、調べたいアプリや機能を説明します。REA は Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI、Windsurf、Devin、OpenCode、Antigravity、GitHub Copilot CLI、VS Code に対応します。既存の REA 登録は初期選択され、それ以外の検出済みクライアントは選択が必要です。その他のエージェントは下記の MCP 設定を使えます。
+設定後にエージェントを再起動し、調べたいアプリや機能を説明します。REA は Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI、Windsurf、Devin、OpenCode、Antigravity、GitHub Copilot CLI、Command Code、VS Code に対応します。既存の REA 登録は初期選択され、それ以外の検出済みクライアントは選択が必要です。その他のエージェントは下記の MCP 設定を使えます。
 
 Hopper はデモモードで使えます。初回起動の画面ではデモを選択するか、既存のライセンスを入力してください。
 
@@ -208,7 +210,7 @@ REA は手順 1〜5 のバイナリ解析を処理し、手順 6 はエージェ
 
 ## 他のコーディングエージェントで使う
 
-Setup は Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI、Windsurf、Devin、OpenCode、Antigravity、GitHub Copilot CLI、VS Code に対応します。既存の REA 登録は初期選択され、それ以外の検出済みクライアントは選択が必要です。ローカル MCP サーバーに対応するエージェントは、次の設定でも接続できます。
+Setup は Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI、Windsurf、Devin、OpenCode、Antigravity、GitHub Copilot CLI、Command Code、VS Code に対応します。既存の REA 登録は初期選択され、それ以外の検出済みクライアントは選択が必要です。ローカル MCP サーバーに対応するエージェントは、次の設定でも接続できます。
 
 <!-- x-release-please-start-version -->
 

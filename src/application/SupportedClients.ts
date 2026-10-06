@@ -13,6 +13,7 @@ export interface SetupClient {
     | "vscode"
     | "copilot_cli"
     | "opencode"
+    | "commandcode"
     | "unsupported";
 }
 
@@ -78,6 +79,9 @@ const codexDirectory = ({ home, env }: ClientPathContext): string =>
 
 const copilotDirectory = ({ home, env }: ClientPathContext): string =>
   env.COPILOT_HOME ?? join(home, ".copilot");
+
+const commandCodeDirectory = ({ home }: ClientPathContext): string =>
+  join(home, ".commandcode");
 
 const opencodeDirectory = ({ home, env }: ClientPathContext): string =>
   join(env.XDG_CONFIG_HOME ?? join(home, ".config"), "opencode");
@@ -191,6 +195,14 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
       join(copilotDirectory(context), "mcp-config.json"),
     markerPath: copilotDirectory,
     format: "copilot_cli",
+  },
+  {
+    name: "commandcode",
+    displayName: "Command Code",
+    configPath: (context: ClientPathContext) =>
+      join(commandCodeDirectory(context), "mcp.json"),
+    markerPath: commandCodeDirectory,
+    format: "commandcode",
   },
   {
     name: "vscode",

@@ -8,6 +8,7 @@ import {
 } from "./functionComparison.js";
 import { createEvidence, type Evidence } from "./evidence.js";
 import { functionDossierSchema } from "./hopperValues.js";
+import { canonicalDigest, canonicalJson } from "./comparisonSemantics.js";
 import { jsonValueSchema } from "./jsonValue.js";
 
 const dossier = (
@@ -169,6 +170,79 @@ describe("function comparison normalized identity", () => {
     expect(
       result.dimensions.find(({ dimension }) => dimension === "calls"),
     ).toMatchObject({ status });
+  });
+});
+
+describe("function collection collation ties", () => {
+  const composed = { address: "0x2000", name: "caf\u00e9" };
+  const decomposed = { address: "0x3000", name: "cafe\u0301" };
+  const calling = (
+    callees: readonly { readonly address: string; readonly name: string }[],
+  ) =>
+    functionDossierSchema.parse({
+      ...dossier("return 0;", "0x1000"),
+      callees,
+    });
+
+  it("ignores reordered callees whose distinct names collate equally", () => {
+    const result = compareFunctions(
+      observe("b", calling([composed, decomposed])),
+      observe("c", calling([decomposed, composed])),
+    );
+    expect(result.status).toBe("unchanged");
+    const calls = result.dimensions.find(
+      ({ dimension }) => dimension === "calls",
+    );
+    expect(calls).toMatchObject({
+      status: "unchanged",
+      left_count: 2,
+      right_count: 2,
+    });
+    expect(calls?.left_digest).toBe(calls?.right_digest);
+  });
+
+  it.each([
+    ["remove composed", [decomposed]],
+    ["remove decomposed", [composed]],
+    ["replace composed", [decomposed, decomposed]],
+    ["replace decomposed", [composed, composed]],
+  ] as const)("preserves an exact name change: %s", (_label, changed) => {
+    const result = compareFunctions(
+      observe("b", calling([composed, decomposed])),
+      observe("c", calling(changed)),
+    );
+    expect(result.status).toBe("changed");
+    const calls = result.dimensions.find(
+      ({ dimension }) => dimension === "calls",
+    );
+    expect(calls).toMatchObject({ status: "changed" });
+    expect(calls?.left_digest).not.toBe(calls?.right_digest);
+  });
+
+  it("preserves existing digests when canonical records do not collate equally", () => {
+    const callees = ["zeta", "Alpha", "alpha", "_helper", "beta"].map(
+      (name, index) => ({
+        address: `0x${(0x2000 + index).toString(16)}`,
+        name,
+      }),
+    );
+    const legacyProjection = callees
+      .map(({ name }) => ({ direction: "out", name }))
+      .sort((left, right) =>
+        canonicalJson(left).localeCompare(canonicalJson(right)),
+      );
+    const result = compareFunctions(
+      observe("b", calling(callees)),
+      observe("c", calling([...callees].reverse())),
+    );
+    const calls = result.dimensions.find(
+      ({ dimension }) => dimension === "calls",
+    );
+    expect(calls).toMatchObject({
+      status: "unchanged",
+      left_digest: canonicalDigest(legacyProjection),
+      right_digest: canonicalDigest(legacyProjection),
+    });
   });
 });
 

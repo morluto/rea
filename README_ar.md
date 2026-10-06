@@ -15,6 +15,8 @@
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 [![Discord](https://img.shields.io/discord/1556595354999332884?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/GkcryMnJDM)
 
+<a href="https://trendshift.io/repositories/82054?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/82054/weekly?language=TypeScript" alt="morluto/rea | Trendshift" width="250" height="55" /></a>
+
 [البدء السريع](#البدء-السريع) · [حالة الدعم](#حالة-الدعم) · [من الملف التنفيذي إلى السلوك](#من-الملف-التنفيذي-إلى-السلوك) · [منصة أدوات التحقيق](#منصة-أدوات-التحقيق) · [خطة العمل](#خطة-العمل) · [كيف يعمل؟](#كيف-يعمل)
 
 <table aria-label="REA community">
@@ -92,7 +94,7 @@ npx rea-agents setup
 
 ### الاستخدام مع وكيل
 
-بعد الإعداد، أعد تشغيل الوكيل واشرح التطبيق أو الميزة التي تريد استقصاءها. يدعم REA Claude Code وClaude Desktop وCodex وCursor وGemini CLI وWindsurf وDevin وOpenCode وAntigravity وGitHub Copilot CLI وVS Code. تكون تسجيلات REA الموجودة محددة افتراضياً، ويجب اختيار العملاء المكتشفين الآخرين يدوياً. يمكن للوكلاء الآخرين استخدام إعداد MCP أدناه.
+بعد الإعداد، أعد تشغيل الوكيل واشرح التطبيق أو الميزة التي تريد استقصاءها. يدعم REA Claude Code وClaude Desktop وCodex وCursor وGemini CLI وWindsurf وDevin وOpenCode وAntigravity وGitHub Copilot CLI وCommand Code وVS Code. تكون تسجيلات REA الموجودة محددة افتراضياً، ويجب اختيار العملاء المكتشفين الآخرين يدوياً. يمكن للوكلاء الآخرين استخدام إعداد MCP أدناه.
 
 يمكن تشغيل Hopper في الوضع التجريبي. إذا ظهرت رسالة عند التشغيل الأول، فاختر التجربة أو أدخل ترخيصًا موجودًا.
 
@@ -219,7 +221,7 @@ rea setup
 
 ## استخدام REA مع وكلاء برمجة آخرين
 
-يدعم Setup Claude Code وClaude Desktop وCodex وCursor وGemini CLI وWindsurf وDevin وOpenCode وAntigravity وGitHub Copilot CLI وVS Code. تكون تسجيلات REA الموجودة محددة افتراضياً، ويجب اختيار العملاء المكتشفين الآخرين يدوياً. يمكن لأي وكيل يدعم خوادم MCP المحلية الاتصال باستخدام الإعداد التالي:
+يدعم Setup Claude Code وClaude Desktop وCodex وCursor وGemini CLI وWindsurf وDevin وOpenCode وAntigravity وGitHub Copilot CLI وCommand Code وVS Code. تكون تسجيلات REA الموجودة محددة افتراضياً، ويجب اختيار العملاء المكتشفين الآخرين يدوياً. يمكن لأي وكيل يدعم خوادم MCP المحلية الاتصال باستخدام الإعداد التالي:
 
 <!-- x-release-please-start-version -->
 

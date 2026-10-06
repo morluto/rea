@@ -1,5 +1,4 @@
 import { Cli } from "incur";
-import { fileURLToPath } from "node:url";
 
 import { createLogger, parseLogLevel } from "./logger.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
@@ -40,15 +39,7 @@ export const createCli = (
       instructions:
         "Ask what software, artifact, protocol, or behavior the user wants to understand, then choose the available investigation capabilities that can produce evidence.",
     },
-    sync: {
-      cwd: fileURLToPath(new URL("..", import.meta.url)),
-      include: ["skills/*"],
-      suggestions: [
-        "understand how a software feature works",
-        "investigate an artifact or observed behavior",
-        "check my REA setup",
-      ],
-    },
+    sync: false,
   });
 
   registerSetupCommands(cli, logger);

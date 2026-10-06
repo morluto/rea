@@ -15,6 +15,8 @@
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 [![Discord](https://img.shields.io/discord/1556595354999332884?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/GkcryMnJDM)
 
+<a href="https://trendshift.io/repositories/82054?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/82054/weekly?language=TypeScript" alt="morluto/rea | Trendshift" width="250" height="55" /></a>
+
 [빠른 시작](#빠른-시작) · [현재 지원 범위](#현재-지원-범위) · [바이너리에서 동작까지](#바이너리에서-동작까지) · [조사 도구 카탈로그](#조사-도구-카탈로그) · [로드맵](#로드맵) · [작동 방식](#작동-방식)
 
 <table aria-label="REA community">
@@ -93,7 +95,7 @@ Setup은 먼저 연결할 에이전트를 여러 개 선택하도록 안내합�
 
 ### 에이전트에서 사용하기
 
-설정 후 에이전트를 다시 시작하고 조사할 앱이나 기능을 설명하세요. REA는 Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, Devin, OpenCode, Antigravity, GitHub Copilot CLI, VS Code를 지원합니다. 기존 REA 등록은 기본 선택되고, 그 밖의 감지된 클라이언트는 직접 선택해야 합니다. 다른 에이전트는 아래 MCP 설정을 사용할 수 있습니다.
+설정 후 에이전트를 다시 시작하고 조사할 앱이나 기능을 설명하세요. REA는 Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, Devin, OpenCode, Antigravity, GitHub Copilot CLI, Command Code, VS Code를 지원합니다. 기존 REA 등록은 기본 선택되고, 그 밖의 감지된 클라이언트는 직접 선택해야 합니다. 다른 에이전트는 아래 MCP 설정을 사용할 수 있습니다.
 
 Hopper는 데모 모드로 사용할 수 있습니다. 첫 실행 안내가 나오면 데모를 선택하거나 기존 라이선스를 입력하세요.
 
@@ -209,7 +211,7 @@ REA는 1–5단계의 바이너리 분석을 처리합니다. 6단계는 에이�
 
 ## 다른 코딩 에이전트에서 사용하기
 
-Setup은 Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, Devin, OpenCode, Antigravity, GitHub Copilot CLI, VS Code를 지원합니다. 기존 REA 등록은 기본 선택되고, 그 밖의 감지된 클라이언트는 직접 선택해야 합니다. 로컬 MCP 서버를 지원하는 에이전트는 다음 설정으로 연결할 수 있습니다.
+Setup은 Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, Devin, OpenCode, Antigravity, GitHub Copilot CLI, Command Code, VS Code를 지원합니다. 기존 REA 등록은 기본 선택되고, 그 밖의 감지된 클라이언트는 직접 선택해야 합니다. 로컬 MCP 서버를 지원하는 에이전트는 다음 설정으로 연결할 수 있습니다.
 
 <!-- x-release-please-start-version -->
 

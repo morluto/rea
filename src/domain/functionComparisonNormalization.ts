@@ -1,5 +1,7 @@
 import canonicalize from "canonicalize";
 
+import { compareCodePoints } from "./canonicalOrdering.js";
+
 import type {
   FunctionCollection,
   FunctionSnapshot,
@@ -176,9 +178,15 @@ export const stringAndNameProjection = (
 };
 
 export const sorted = (values: readonly unknown[]): readonly unknown[] =>
-  [...values].sort((left, right) =>
-    canonicalJson(left).localeCompare(canonicalJson(right)),
-  );
+  [...values].sort((left, right) => {
+    const leftJson = canonicalJson(left);
+    const rightJson = canonicalJson(right);
+    // Preserve existing collation while ordering distinct values within a tie.
+    return (
+      leftJson.localeCompare(rightJson) ||
+      compareCodePoints(leftJson, rightJson)
+    );
+  });
 
 export const combineCoverage = <Item>(
   left: FunctionCollection<Item>,
