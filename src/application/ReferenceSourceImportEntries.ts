@@ -91,6 +91,7 @@ const resolveInternalSpecifier = (
   ]);
   // TypeScript source commonly names the extension emitted for NodeNext.
   // Retain present runtime files first; substitute only a missing counterpart.
+  // Counterparts cover explicit filenames, not directory/index resolution.
   if (/\.(?:ts|tsx|mts|cts)$/u.test(fromPath)) {
     const sourceSuffixes = normalized.endsWith(".js")
       ? [".ts", ".tsx", ".d.ts"]

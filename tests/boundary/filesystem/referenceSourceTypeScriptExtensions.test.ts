@@ -15,6 +15,9 @@ it.each([
   ["main.ts", "dep.js", "dep.d.ts"],
   ["main.mts", "dep.mjs", "dep.d.mts"],
   ["main.cts", "dep.cjs", "dep.d.cts"],
+  ["main.d.ts", "dep.js", "dep.d.ts"],
+  ["main.d.mts", "dep.mjs", "dep.d.mts"],
+  ["main.d.cts", "dep.cjs", "dep.d.cts"],
 ])(
   "resolves %s runtime-extension imports to present source %s/%s",
   async (from, specifier, target) => {
