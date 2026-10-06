@@ -7,15 +7,15 @@
       "client": "2.3.1",
       "core": "2.3.1"
     },
-    "skill_version": "26"
+    "skill_version": "24"
   },
   "tools": {
-    "total": 117,
+    "total": 116,
     "families": [
       {
         "id": "direct",
         "surface": "official-proxy",
-        "count": 40,
+        "count": 39,
         "tools": [
           "address_name",
           "address_to_file_offset",
@@ -27,7 +27,6 @@
           "inline_comment",
           "inspect_native_data_type",
           "inspect_native_instruction",
-          "inspect_native_load_image",
           "list_bookmarks",
           "list_documents",
           "list_names",
@@ -208,11 +207,9 @@
       "version": null,
       "capabilities": [
         "address_name",
-        "address_to_file_offset",
         "analyze_function",
         "inspect_native_data_type",
         "inspect_native_instruction",
-        "inspect_native_load_image",
         "list_documents",
         "list_names",
         "list_procedures",
@@ -225,7 +222,6 @@
         "procedure_info",
         "procedure_pseudo_code",
         "procedure_references",
-        "read_bytes",
         "read_function_instructions",
         "resolve_containing_procedure",
         "resolve_native_call_targets",
@@ -456,12 +452,6 @@
       "configuration": "managed"
     },
     {
-      "id": "commandcode",
-      "display_name": "Command Code",
-      "format": "commandcode",
-      "configuration": "managed"
-    },
-    {
       "id": "vscode",
       "display_name": "VS Code",
       "format": "vscode",
@@ -469,9 +459,8 @@
     }
   ],
   "cli": {
-    "primary_count": 72,
+    "primary_count": 69,
     "commands": [
-      "address-to-file-offset",
       "analyze",
       "analyze-javascript-application",
       "analyze-web-bundle",
@@ -515,7 +504,6 @@
       "inspect-native-data-type",
       "inspect-native-dispatch-metadata",
       "inspect-native-instruction",
-      "inspect-native-load-image",
       "inspect-plist",
       "inspect-signature",
       "inspect-web-page",
@@ -529,7 +517,6 @@
       "observe-web-session",
       "project-managed-application-graph",
       "providers",
-      "read-bytes",
       "reconcile-javascript-runtime",
       "resolve-native-call-targets",
       "search",
@@ -553,15 +540,15 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 72,
-      "mcp_tools": 117,
+      "cli_commands": 69,
+      "mcp_tools": 116,
       "mcp_prompts": 6
     },
     "digests": {
-      "tools_sha256": "29258155c0d2a5e174bf63b777c35689cec70bd016c85046c62ebaad8e8a57a9",
+      "tools_sha256": "22626fa13e3ceb6d055ca0821d84f78434f50c2212c35daf81d54565d2515232",
       "prompts_sha256": "4762db348821fec787a5b8c6423f2c48a71f6f0ec2afee97b16ad69030ec504b",
-      "combined_sha256": "61b0a8d47bf5bf791e15b7ffe774f8f54e8371742283e110a8d307df308eb110",
-      "providers_sha256": "c1a6849b2524347e6cf9e004a17ba1805f86114b2da72eb689a075afbbb1aada"
+      "combined_sha256": "8439d45bbaeb976877a302b8149cbd73686d215ab83d3a242138e8e2fb292679",
+      "providers_sha256": "2ae8b85b20be338739e500549d275e78e875aaa10235d2ca283f0ade7787da90"
     }
   }
 }

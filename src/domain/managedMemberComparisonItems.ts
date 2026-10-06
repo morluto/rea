@@ -36,6 +36,8 @@ const methodDimensions = (
   readonly bodyUnknown: boolean;
 } => {
   const dimensions: MethodItem["dimensions"] = [];
+  if (left.flags !== right.flags || left.impl_flags !== right.impl_flags)
+    dimensions.push("metadata");
   if (left.signature.raw_sha256 !== right.signature.raw_sha256)
     dimensions.push("signature");
   const leftBodyComplete =

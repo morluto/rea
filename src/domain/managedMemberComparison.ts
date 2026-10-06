@@ -125,6 +125,7 @@ const methodComparisonItemSchema = comparisonItemSchema(
     item_id: prefixedDigestSchema("mmc_method"),
     dimensions: z.array(
       z.enum([
+        "metadata",
         "signature",
         "cil",
         "opcode-shape",
