@@ -162,6 +162,7 @@ export const captureDom = (
       completeness?.exclude("dom", exclusionReasonForUrl(documentUrl));
       continue;
     }
+    const baseUrl = indexedString(strings, document.baseURL) || documentUrl;
     const documentNodes = recordValue(document.nodes);
     if (documentNodes === undefined) continue;
     const nodeTypes = numberArray(documentNodes.nodeType);
@@ -191,7 +192,8 @@ export const captureDom = (
       const metadata = domMetadata({
         strings,
         attributes: attributeIndexes,
-        documentUrl,
+        // The BASE element itself resolves against the document fallback URL.
+        baseUrl: nodeName.toLowerCase() === "base" ? documentUrl : baseUrl,
         nodeIndex,
         nodeName,
         allowedOrigins,
@@ -360,7 +362,7 @@ const numberArray = (value: unknown): readonly number[] =>
 interface DomMetadataOptions {
   readonly strings: readonly string[];
   readonly attributes: readonly number[];
-  readonly documentUrl: string;
+  readonly baseUrl: string;
   readonly nodeIndex: number;
   readonly nodeName: string;
   readonly allowedOrigins: ReadonlySet<string>;
@@ -372,14 +374,8 @@ const domMetadata = (
   readonly urls: WebPageInspection["metadata"]["dom_urls"];
   readonly agentHints: WebPageInspection["metadata"]["agent_hints"];
 } => {
-  const {
-    strings,
-    attributes,
-    documentUrl,
-    nodeIndex,
-    nodeName,
-    allowedOrigins,
-  } = options;
+  const { strings, attributes, baseUrl, nodeIndex, nodeName, allowedOrigins } =
+    options;
   const pairs = new Map<string, string>();
   for (let index = 0; index + 1 < attributes.length; index += 2) {
     const name = indexedString(strings, attributes[index]).toLowerCase();
@@ -390,7 +386,7 @@ const domMetadata = (
   for (const attribute of domUrlAttributes) {
     const value = pairs.get(attribute);
     if (value === undefined) continue;
-    const destination = domDestination(value, documentUrl, allowedOrigins);
+    const destination = domDestination(value, baseUrl, allowedOrigins);
     urls.push({
       node_index: nodeIndex,
       attribute,
@@ -417,14 +413,14 @@ const domMetadata = (
 
 const domDestination = (
   value: string,
-  documentUrl: string,
+  baseUrl: string,
   allowedOrigins: ReadonlySet<string>,
 ): {
   readonly url: string | null;
   readonly scope: "approved" | "outside_policy" | "unsupported";
 } => {
   try {
-    const parsed = new URL(value, documentUrl);
+    const parsed = new URL(value, baseUrl);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
       return { url: null, scope: "unsupported" };
     if (!allowedOrigins.has(parsed.origin))

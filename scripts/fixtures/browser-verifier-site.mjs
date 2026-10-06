@@ -57,7 +57,7 @@ export async function startBrowserVerifierSite() {
       "rea-app-cookie=app-fixture; Path=/app; SameSite=Lax",
     ]);
     response.end(
-      '<!doctype html><html><head><title>REA browser verifier</title></head><body><main><h1>Browser evidence</h1><button aria-label="ax-private-label-value">Verify</button></main><script type="module" src="/app.js?token=script-query-secret"></script></body></html>',
+      '<!doctype html><html><head><title>REA browser verifier</title><base href="assets/"></head><body><main><h1>Browser evidence</h1><a href="guide">Guide</a><button aria-label="ax-private-label-value">Verify</button></main><script type="module" src="/app.js?token=script-query-secret"></script></body></html>',
     );
   });
   const webSockets = new WebSocketServer({ noServer: true });

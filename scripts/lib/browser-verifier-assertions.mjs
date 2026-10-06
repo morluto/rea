@@ -22,7 +22,7 @@ export function assertObservation(result, origin) {
   assertObservationInventory(result, origin);
   assertObservationEvents(result);
   assertObservationPrivacy(result);
-  assertObservationMetadata(result);
+  assertObservationMetadata(result, origin);
 }
 
 function assertObservationInventory(result, origin) {
@@ -86,7 +86,16 @@ function assertObservationPrivacy(result) {
     );
 }
 
-function assertObservationMetadata(result) {
+function assertObservationMetadata(result, origin) {
+  if (
+    !result.metadata.dom_urls.some(
+      ({ attribute, url }) =>
+        attribute === "href" && url === `${origin}/assets/guide`,
+    )
+  )
+    throw new Error(
+      "Real Chrome relative DOM URL did not use the document base",
+    );
   if (!result.storage.local_storage_keys.includes("rea-storage-key"))
     throw new Error("Real Chrome local-storage key inventory was missing");
   if (
