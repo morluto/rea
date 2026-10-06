@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
+import pino from "pino";
+import type { Logger } from "../../../../src/logger.js";
 
 import { ok } from "../../../../src/domain/result.js";
 import {
@@ -39,6 +41,8 @@ type FixtureMode =
   | "future_id"
   | "analysis_timeout"
   | "remote_error"
+  | "shutdown_error"
+  | "invalid_shutdown_ack"
   | "hang_after_start"
   | "hang_tools"
   | "exit_tools"
@@ -94,6 +98,7 @@ const clientFor = (
     readonly onDiagnostic?: (event: GhidraDiagnostic) => void;
     readonly transport?: GhidraTransportKind;
     readonly runId?: string;
+    readonly logger?: Logger;
   } = {},
 ): GhidraClient => {
   const client = new GhidraClient({
@@ -105,6 +110,7 @@ const clientFor = (
     profileDigest: PROFILE_DIGEST,
     startupTimeoutMs: options.startupTimeoutMs ?? 1_000,
     ...(options.runId === undefined ? {} : { runId: options.runId }),
+    ...(options.logger === undefined ? {} : { logger: options.logger }),
     ...(options.onDiagnostic === undefined
       ? {}
       : { onDiagnostic: options.onDiagnostic }),
@@ -385,3 +391,215 @@ const waitForExit = async (
 
 const wait = (milliseconds: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+describe("GhidraClient rejected requests", () => {
+  it("redacts authentication after failed startup cleanup and retry", async () => {
+    const fixture = new FixtureLauncher();
+    const tokens: string[] = [];
+    const launcher: GhidraLauncher = {
+      launch: async (session) => {
+        tokens.push(session.token);
+        if (tokens.length === 1)
+          throw new Error("Launch rejected before process creation");
+        return fixture.launch(session);
+      },
+    };
+    let rejectCompletion = false;
+    const logger = pino(
+      {
+        level: "debug",
+        hooks: {
+          logMethod(args, method) {
+            const fields = args[0];
+            if (
+              rejectCompletion &&
+              typeof fields === "object" &&
+              fields !== null &&
+              "method" in fields &&
+              fields.method === "list_procedures"
+            )
+              throw new Error(
+                `Late failure ${tokens.join(" ")} /tmp/public-fixture`,
+              );
+            method.apply(this, args);
+          },
+        },
+      },
+      { write: () => undefined },
+    );
+    const client = clientFor(launcher, { logger });
+    await expect(client.start()).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "start" },
+    });
+    await expect(client.start()).resolves.toMatchObject({ ok: true });
+    expect(tokens).toHaveLength(2);
+    rejectCompletion = true;
+    const result = await client.callTool("list_procedures", { document: null });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        diagnostics: {
+          failure_cause: {
+            message: "Late failure [REDACTED] [REDACTED] /tmp/public-fixture",
+          },
+        },
+      },
+    });
+    if (result.ok) throw new Error("Expected late failure");
+    for (const token of tokens)
+      expect(JSON.stringify(result.error.diagnostics)).not.toContain(token);
+  });
+
+  it("retains an unexpected wire rejection and continues serial requests", async () => {
+    const launcher = new FixtureLauncher();
+    const cause = Object.assign(new TypeError("Request completion rejected"), {
+      code: "ECOMPLETION",
+    });
+    let rejectCompletion = true;
+    const logger = pino(
+      {
+        level: "debug",
+        hooks: {
+          logMethod(args, method) {
+            const fields = args[0];
+            if (
+              rejectCompletion &&
+              typeof fields === "object" &&
+              fields !== null &&
+              "method" in fields &&
+              fields.method === "list_procedures"
+            ) {
+              rejectCompletion = false;
+              throw cause;
+            }
+            method.apply(this, args);
+          },
+        },
+      },
+      { write: () => undefined },
+    );
+    const client = clientFor(launcher, { logger });
+    const first = client.callTool("list_procedures", { document: null });
+    const second = client.callTool("list_procedures", { document: null });
+    const result = await first;
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        kind: "protocol",
+        diagnostics: {
+          failure_cause: {
+            name: "TypeError",
+            message: cause.message,
+            code: "ECOMPLETION",
+          },
+        },
+      },
+    });
+    if (result.ok) throw new Error("Expected rejected request");
+    expect(result.error.cause).toBe(cause);
+    await expect(second).resolves.toMatchObject({ ok: true });
+  });
+});
+
+describe("GhidraClient shutdown diagnostics", () => {
+  it("logs an unexpected shutdown rejection and still removes its process and runtime", async () => {
+    const launcher = new FixtureLauncher();
+    const logs: string[] = [];
+    const logger = pino(
+      {
+        level: "debug",
+        hooks: {
+          logMethod(args, method) {
+            const fields = args[0];
+            if (
+              typeof fields === "object" &&
+              fields !== null &&
+              "method" in fields &&
+              fields.method === "shutdown"
+            )
+              throw Object.assign(
+                new Error(
+                  `Shutdown rejected ${launcher.tokens[0]} /tmp/password-fixture`,
+                ),
+                { code: "ESHUTDOWN" },
+              );
+            method.apply(this, args);
+          },
+        },
+      },
+      {
+        write: (line) => {
+          logs.push(line);
+        },
+      },
+    );
+    const client = clientFor(launcher, { logger });
+    await expect(client.start()).resolves.toMatchObject({ ok: true });
+    await expect(client.close()).resolves.toBeUndefined();
+    const warning: unknown[] = logs.map((line) => JSON.parse(line));
+    expect(warning).toContainEqual(
+      expect.objectContaining({
+        status: "failed",
+        kind: "process",
+        message: "Ghidra shutdown request failed",
+        diagnostics: expect.objectContaining({
+          failure_cause: {
+            name: "Error",
+            message: "Shutdown rejected [REDACTED] /tmp/password-fixture",
+            code: "ESHUTDOWN",
+          },
+        }),
+      }),
+    );
+    expect(logs.join("")).not.toContain(launcher.tokens[0]);
+    await expect(access(launcher.runtimeRoots[0] ?? "")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(waitForExit(launcher.processes[0])).resolves.toBe(true);
+  });
+
+  it.each(["shutdown_error", "invalid_shutdown_ack"] as const)(
+    "keeps cleanup best effort for %s",
+    async (mode) => {
+      const launcher = new FixtureLauncher(mode);
+      const logs: string[] = [];
+      const logger = pino(
+        { level: "warn" },
+        {
+          write: (line) => {
+            logs.push(line);
+          },
+        },
+      );
+      const client = clientFor(launcher, { logger });
+      await expect(client.start()).resolves.toMatchObject({ ok: true });
+      await expect(client.close()).resolves.toBeUndefined();
+      const warning: unknown[] = logs.map((line) => JSON.parse(line));
+      expect(warning).toContainEqual(
+        expect.objectContaining({
+          msg: "Ghidra bridge shutdown was not confirmed",
+          status:
+            mode === "shutdown_error" ? "failed" : "invalid-acknowledgement",
+        }),
+      );
+      if (mode === "shutdown_error") {
+        expect(warning).toContainEqual(
+          expect.objectContaining({
+            kind: "remote",
+            diagnostics: expect.objectContaining({
+              remote_code: "shutdown_fixture_failure",
+              remote_message:
+                "Shutdown denied for [REDACTED]: /tmp/password-fixture http://localhost/secret?token=public-value",
+            }),
+          }),
+        );
+      }
+      expect(logs.join("")).not.toContain(launcher.tokens[0]);
+      await expect(
+        access(launcher.runtimeRoots[0] ?? ""),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(waitForExit(launcher.processes[0])).resolves.toBe(true);
+    },
+  );
+});

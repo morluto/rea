@@ -118,8 +118,21 @@ const handleRequest = (socket, server, request, state) => {
     socket.end(
       `${JSON.stringify({
         id: request.id,
-        ok: true,
-        result: { shutdown: true, project_ephemeral: true },
+        ...(state.mode === "shutdown_error"
+          ? {
+              ok: false,
+              error: {
+                code: "shutdown_fixture_failure",
+                message: `Shutdown denied for ${state.token}: /tmp/password-fixture http://localhost/secret?token=public-value`,
+              },
+            }
+          : {
+              ok: true,
+              result: {
+                shutdown: state.mode !== "invalid_shutdown_ack",
+                project_ephemeral: true,
+              },
+            }),
       })}\n`,
     );
     server.close(() => process.exit(0));

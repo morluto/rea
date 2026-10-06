@@ -24,15 +24,19 @@ import {
 
 const INSTALL = "/opt/ghidra_12.1.4_PUBLIC";
 
-export const connectGhidraMcp = async (name: string) => {
+export const connectGhidraMcp = async (
+  name: string,
+  execute?: ReturnType<GhidraProviderClientFactory>["callTool"],
+) => {
   const calls: GhidraOperation[] = [];
   const factory: GhidraProviderClientFactory = (options) => ({
     start: () =>
       Promise.resolve(
         ok(sessionInfo(options.profileDigest, options.targetSha256)),
       ),
-    callTool: (operation, input) => {
+    callTool: (operation, input, options) => {
       calls.push(operation);
+      if (execute !== undefined) return execute(operation, input, options);
       return Promise.resolve(ok(resultFor(operation, input)));
     },
     close: () => Promise.resolve(),

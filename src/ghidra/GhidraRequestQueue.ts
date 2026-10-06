@@ -148,13 +148,14 @@ export class GhidraRequestQueue {
         executionSettled = true;
         entry.resolve(result);
       })
-      .catch(() => {
+      .catch((cause: unknown) => {
         executionSettled = true;
         entry.resolve(
           err(
             this.failure(
               "protocol",
               "Ghidra serial request execution rejected unexpectedly",
+              cause,
             ),
           ),
         );

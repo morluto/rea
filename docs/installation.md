@@ -281,6 +281,14 @@ is no fixed per-operation or response-size ceiling. Unresolved computed calls
 remain unknown, reference-kind provenance is preserved, and provider-specific
 pseudocode is never treated as original source or Hopper-equivalent text.
 
+Unexpected request failures retain their original internal cause. CLI and MCP
+errors expose Error names, messages, and available codes under
+`details.diagnostics.failure_cause`; other rejection values retain their
+primitive value or an explicit type. Shutdown warnings include the failure
+kind, message, and diagnostics, while process and temporary-project cleanup
+continues. These messages redact known bridge authentication tokens and
+preserve local paths and other analysis context.
+
 Run `GHIDRA_INSTALL_DIR=... npm run verify:ghidra` from a source checkout to
 compile and analyze debug and stripped host-native fixtures (ELF on Linux x64
 or Mach-O on macOS), plus a native DWARF 4 type-layout object. This lane needs a

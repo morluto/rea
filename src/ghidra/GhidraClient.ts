@@ -76,6 +76,8 @@ export class GhidraClient {
   #runtimeRoot: PrivateRuntimeRoot | undefined;
   #snapshotPath: string | undefined;
   #token: string | undefined;
+  // Retain authentication identities for diagnostics from late request settlement.
+  readonly #authenticationTokens = new Set<string>();
   #runId: string | undefined;
   readonly #lineage = new ProviderRunLineage();
   #nextId = 1;
@@ -85,7 +87,10 @@ export class GhidraClient {
   #startupController: AbortController | undefined;
   #startPromise: Promise<GhidraStartResult> | undefined;
   #closePromise: Promise<void> | undefined;
-  readonly #failure = bindGhidraSessionFailure(() => this.#diagnostics());
+  readonly #failure = bindGhidraSessionFailure(
+    () => this.#diagnostics(),
+    (value) => this.#redactAuthentication(value),
+  );
   readonly #wire: GhidraWire;
   readonly #requestQueue: GhidraRequestQueue;
   readonly #responseRouter = new GhidraResponseRouter({
@@ -287,6 +292,7 @@ export class GhidraClient {
     }
     if (deadline.signal.aborted) return this.#startupInterrupted(deadline);
     this.#token = randomBytes(32).toString("hex");
+    this.#authenticationTokens.add(this.#token);
     this.#lineage.reset();
     this.#runId = this.#options.runId ?? randomUUID();
     const launched = await this.#options.launcher
@@ -419,12 +425,23 @@ export class GhidraClient {
       if (!forceStop && socket !== undefined && !socket.destroyed) {
         const shutdown = await this.#wire
           .request("shutdown", {}, { timeoutMs: SHUTDOWN_TIMEOUT_MS })
-          .catch(() =>
-            err(this.#failure("process", "Ghidra shutdown request failed")),
+          .catch((cause: unknown) =>
+            err(
+              this.#failure("process", "Ghidra shutdown request failed", cause),
+            ),
           );
         if (!shutdown.ok || !isGhidraShutdownAcknowledgement(shutdown.value))
           this.#logger.warn(
-            { status: shutdown.ok ? "invalid-acknowledgement" : "failed" },
+            {
+              status: shutdown.ok ? "invalid-acknowledgement" : "failed",
+              ...(shutdown.ok
+                ? {}
+                : {
+                    kind: shutdown.error.kind,
+                    message: shutdown.error.message,
+                    diagnostics: shutdown.error.diagnostics,
+                  }),
+            },
             "Ghidra bridge shutdown was not confirmed",
           );
       }
@@ -478,6 +495,12 @@ export class GhidraClient {
     } finally {
       this.#closing = false;
     }
+  }
+
+  #redactAuthentication(value: string): string {
+    for (const token of this.#authenticationTokens)
+      value = value.replaceAll(token, "[REDACTED]");
+    return value;
   }
 
   #onProcessDiagnostic(event: ProviderProcessDiagnostic): void {

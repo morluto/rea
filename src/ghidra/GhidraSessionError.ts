@@ -44,6 +44,7 @@ const createGhidraSessionError = (failure: {
   readonly cause?: unknown;
   readonly timeoutMs?: number;
   readonly remoteCode?: string;
+  readonly redact: (value: string) => string;
 }): GhidraSessionError =>
   new GhidraSessionError(
     failure.kind,
@@ -52,7 +53,7 @@ const createGhidraSessionError = (failure: {
       ? failure.diagnostics
       : {
           ...failure.diagnostics,
-          remote_code: failure.remoteCode,
+          remote_code: failure.redact(failure.remoteCode),
           remote_message: failure.message,
         },
     {
@@ -68,7 +69,10 @@ const createGhidraSessionError = (failure: {
 
 /** Bind session-failure construction to a live, token-redacted diagnostic view. */
 export const bindGhidraSessionFailure =
-  (diagnostics: () => Readonly<Record<string, JsonValue>>) =>
+  (
+    diagnostics: () => Readonly<Record<string, JsonValue>>,
+    redact: (value: string) => string = (value) => value,
+  ) =>
   (
     kind: GhidraSessionFailureKind,
     message: string,
@@ -77,8 +81,39 @@ export const bindGhidraSessionFailure =
   ): GhidraSessionError =>
     createGhidraSessionError({
       kind,
-      message,
-      diagnostics: diagnostics(),
+      message: redact(message),
+      diagnostics: {
+        ...diagnostics(),
+        ...(cause === undefined
+          ? {}
+          : { failure_cause: describeCause(cause, redact) }),
+      },
+      redact,
       ...(cause === undefined ? {} : { cause }),
       ...options,
     });
+
+const describeCause = (
+  cause: unknown,
+  redact: (value: string) => string,
+): JsonValue => {
+  if (cause instanceof Error) {
+    const code = "code" in cause ? cause.code : undefined;
+    return {
+      name: redact(cause.name),
+      message: redact(cause.message),
+      ...(typeof code === "string"
+        ? { code: redact(code) }
+        : typeof code === "number" && Number.isFinite(code)
+          ? { code }
+          : {}),
+    };
+  }
+  if (typeof cause === "string")
+    return { type: "string", message: redact(cause) };
+  if (cause === null || typeof cause === "boolean")
+    return { type: cause === null ? "null" : "boolean", value: cause };
+  if (typeof cause === "number" && Number.isFinite(cause))
+    return { type: "number", value: cause };
+  return { type: typeof cause };
+};
