@@ -408,3 +408,39 @@ describe("nonfinite static values", () => {
     expect(topLevelBinding(ir, "answer").value.status).toBe("ambiguous");
   });
 });
+
+describe("binding write invalidation", () => {
+  it.each([
+    "let value = 1; value++; const observed = value;",
+    "let value = 1; --value; const observed = value;",
+    'let value = "old"; [value] = ["new"]; const observed = value;',
+    'let value = "old"; ({key: value} = {key: "new"}); const observed = value;',
+    'let value = "old"; for (value of ["new"]) {} const observed = value;',
+    'let value = "old"; for (value in {new: true}) {} const observed = value;',
+  ])("does not retain an exact initializer across %s", (source) => {
+    const ir = analyzeJavaScriptSemantics(source);
+    expect(topLevelBinding(ir, "observed").value.status).toBe("ambiguous");
+    expect(
+      topLevelBinding(ir, "value").definitions.some(
+        ({ kind }) => kind === "assignment",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not treat destructuring keys or member owners as assigned bindings", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      const key = "stable";
+      const owner = "stable";
+      let target = "old";
+      ({key: target} = {key: "new"});
+      ({owner: object.slot} = {owner: "new"});
+      const preservedKey = key;
+      const preservedOwner = owner;
+    `);
+    for (const name of ["preservedKey", "preservedOwner"])
+      expect(topLevelBinding(ir, name).value).toEqual({
+        status: "literal",
+        value: "stable",
+      });
+  });
+});
