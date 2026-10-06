@@ -1,5 +1,6 @@
-import { semanticBuiltinNamespacePath } from "./javascriptSemanticProvenance.js";
 import * as t from "@babel/types";
+
+import { semanticBuiltinNamespacePath } from "./javascriptSemanticProvenance.js";
 
 import type {
   JavaScriptSemanticBoundaryOperation,
