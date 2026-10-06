@@ -234,3 +234,52 @@ describe("JavaScript semantic analysis: calls 2", () => {
     );
   });
 });
+
+describe("JavaScript semantic rest parameter flow", () => {
+  it.each([
+    {
+      parameters: "first, ...rest",
+      arguments: "1, 2, 3",
+      expected: [
+        [0, "first"],
+        [1, "rest"],
+        [2, "rest"],
+      ],
+    },
+    {
+      parameters: "...rest",
+      arguments: "1, 2, 3",
+      expected: [
+        [0, "rest"],
+        [1, "rest"],
+        [2, "rest"],
+      ],
+    },
+    {
+      parameters: "first, second",
+      arguments: "1, 2, 3",
+      expected: [
+        [0, "first"],
+        [1, "second"],
+      ],
+    },
+    {
+      parameters: "first, ...rest",
+      arguments: "1, ...values, 3",
+      expected: [[0, "first"]],
+    },
+  ])(
+    "links exact positions for ($parameters) called with ($arguments)",
+    ({ parameters, arguments: arguments_, expected }) => {
+      const ir = analyzeJavaScriptSemantics(
+        `function collect(${parameters}) { return 1; } collect(${arguments_});`,
+      );
+      expect(
+        ir.argumentFlows.map(({ argumentIndex, parameterBindingId }) => [
+          argumentIndex,
+          semanticBinding(ir, parameterBindingId)?.name,
+        ]),
+      ).toEqual(expected);
+    },
+  );
+});

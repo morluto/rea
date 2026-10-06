@@ -179,21 +179,28 @@ export const parameterBindings = (
         binding.definitions.some(
           ({ kind, location }) =>
             kind === "parameter" &&
-            parameterIndex(callable, location, state) === index,
+            parameterAcceptsArgument(callable, location, index, state),
         ),
     )
     .sort((left, right) => compareCodePoints(left.bindingId, right.bindingId));
 };
 
-const parameterIndex = (
+const parameterAcceptsArgument = (
   callable: JavaScriptSemanticCallable,
   location: JavaScriptSemanticArgumentFlow["parameterLocation"],
+  argumentIndex: number,
   state: JavaScriptSemanticAnalysisState,
-): number => {
+): boolean => {
   const node = state.callableNodesById.get(callable.callableId);
-  if (!t.isFunction(node)) return -1;
-  return node.params.findIndex((parameter) =>
+  if (!t.isFunction(node)) return false;
+  const parameterIndex = node.params.findIndex((parameter) =>
     rangeContains(range(parameter), location),
+  );
+  if (parameterIndex === argumentIndex) return true;
+  return (
+    parameterIndex >= 0 &&
+    parameterIndex < argumentIndex &&
+    t.isRestElement(node.params[parameterIndex])
   );
 };
 
