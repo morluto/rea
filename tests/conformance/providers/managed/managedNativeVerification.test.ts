@@ -8,6 +8,7 @@ import {
   managedNativeVerificationResultSchema,
   verifyManagedNativeBoundaries,
 } from "../../../../src/domain/managedNativeVerification.js";
+import { managedNativeBoundaryInspectionSchema } from "../../../../src/domain/managedArtifact.js";
 import { inspectMachoSchema } from "../../../../src/domain/nativeInspection.js";
 
 const exampleInput = () =>
@@ -262,4 +263,49 @@ describe("managed/native verification result algebra", () => {
       }).success,
     ).toBe(false);
   });
+});
+
+it("does not erase a C identifier underscore beyond the Mach-O ABI prefix", () => {
+  const result = verifyManagedNativeBoundaries({
+    ...exampleInput(),
+    native_observations: [nativeEvidenceWithExports(["__open_native"])],
+  });
+  expect(result.summary).toMatchObject({ inferred: 0, unresolved: 1 });
+  expect(result.pinvoke_imports[0]).toMatchObject({
+    status: "unresolved",
+    candidates: [],
+    matched_native: null,
+  });
+});
+
+it("does not treat a raw Mach-O ABI name as an exact underscored C identifier", () => {
+  const input = exampleInput();
+  const managed = input.managed_boundaries;
+  const normalized = managedNativeBoundaryInspectionSchema.parse(
+    managed.normalized_result,
+  );
+  const imports = normalized.pinvoke_imports;
+  const result = verifyManagedNativeBoundaries({
+    ...input,
+    managed_boundaries: createEvidence(undefined, managed.provider, {
+      operation: managed.operation,
+      parameters: managed.parameters,
+      result: {
+        ...normalized,
+        pinvoke_imports: imports.map((item) => ({
+          ...item,
+          import_name: "_open_native",
+          no_mangle: true,
+        })),
+      },
+      rawResult: null,
+    }),
+    native_observations: [nativeEvidenceWithExports(["_open_native"])],
+  });
+  expect(result.summary).toMatchObject({
+    verified: 0,
+    inferred: 0,
+    unresolved: 1,
+  });
+  expect(result.pinvoke_imports[0]?.candidates).toEqual([]);
 });

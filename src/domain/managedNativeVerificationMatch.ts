@@ -100,10 +100,11 @@ export const collectNativeSymbols = (
   return { symbols, accepted, unsupported };
 };
 
-const normalizeSymbol = (value: string): string => value.replace(/^_+/u, "");
-
-const sameSymbolName = (left: string, right: string): boolean =>
-  normalizeSymbol(left) === normalizeSymbol(right);
+const sameSymbolName = (expected: string, native: NativeSymbol): boolean =>
+  expected ===
+  (native.source === "macho-export" && native.name.startsWith("_")
+    ? native.name.slice(1)
+    : native.name);
 
 const normalizeModule = (value: string): string =>
   basename(value)
@@ -164,7 +165,7 @@ const matchPinvoke = (
 ): PinvokeCandidateMatch => {
   const names = candidateNames(managed);
   const allCandidates = symbols.filter((symbol) =>
-    names.some((name) => sameSymbolName(name, symbol.name)),
+    names.some((name) => sameSymbolName(name, symbol)),
   );
   const [first, ...remaining] = allCandidates;
   if (first === undefined)
