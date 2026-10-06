@@ -73,12 +73,19 @@ class SilentLauncher implements BridgeLauncher {
 
 class CancelThenFixtureLauncher implements BridgeLauncher {
   #launches = 0;
+  #firstLaunchReady: ((process: ChildProcess) => void) | undefined;
+  readonly firstLaunch = new Promise<ChildProcess>((resolve) => {
+    this.#firstLaunchReady = resolve;
+  });
 
-  launch(session: BridgeSession) {
+  async launch(session: BridgeSession) {
     this.#launches += 1;
-    return this.#launches === 1
+    const launched = await (this.#launches === 1
       ? new SilentLauncher().launch()
-      : new FixtureLauncher().launch(session);
+      : new FixtureLauncher().launch(session));
+    if (this.#launches === 1 && launched.ok)
+      this.#firstLaunchReady?.(launched.value.process);
+    return launched;
   }
 }
 
@@ -155,27 +162,59 @@ afterEach(async () => {
 
 describe("HopperClient startup failures", () => {
   it("cancels bridge startup without waiting for the startup timeout", async () => {
+    const launcher = new CancelThenFixtureLauncher();
     const client = new HopperClient({
-      launcher: new CancelThenFixtureLauncher(),
+      launcher,
       // Keep the retry proof independent from scheduler pressure when the
       // complete boundary project is starting several child-process fixtures.
       startupTimeoutMs: 30_000,
     });
     clients.push(client);
     const controller = new AbortController();
-    const startedAt = Date.now();
     const pending = client.callTool("echo", {}, { signal: controller.signal });
-    setTimeout(() => {
-      controller.abort();
-    }, 10);
+    // Cancel after launch: a timer can fire during runtime-directory creation,
+    // leaving the silent first launch to be consumed by the retry instead.
+    const firstProcess = await launcher.firstLaunch;
+    const startedAt = Date.now();
+    controller.abort();
     const result = await pending;
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error._tag).toBe("HopperCancelledError");
     expect(Date.now() - startedAt).toBeLessThan(500);
+    expect(
+      firstProcess.exitCode !== null || firstProcess.signalCode !== null,
+    ).toBe(true);
     await expect(client.start()).resolves.toEqual({
       ok: true,
       value: { name: "REA Hopper bridge", version: "1.0.0" },
     });
+    await expect(
+      client.callTool("echo", { value: "retried" }),
+    ).resolves.toEqual({
+      ok: true,
+      value: { value: "retried" },
+    });
+  });
+
+  it("retries after cancellation before the launcher starts", async () => {
+    const launcher = new FixtureLauncher();
+    const client = new HopperClient({ launcher, startupTimeoutMs: 30_000 });
+    clients.push(client);
+    const controller = new AbortController();
+
+    const pending = client.callTool("echo", {}, { signal: controller.signal });
+    controller.abort();
+
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      error: { _tag: "HopperCancelledError" },
+    });
+    expect(launcher.processes).toHaveLength(0);
+    await expect(client.start()).resolves.toEqual({
+      ok: true,
+      value: { name: "REA Hopper bridge", version: "1.0.0" },
+    });
+    expect(launcher.processes).toHaveLength(1);
     await expect(
       client.callTool("echo", { value: "retried" }),
     ).resolves.toEqual({
