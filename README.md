@@ -350,20 +350,20 @@ See [native investigation](docs/native-investigation.md) for keyed archives, ins
 
 ## Tool catalog for investigation
 
-| Tool family               | Count | Examples                                                                                                                                                  |
-| ------------------------- | ----: | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Native inspection         |    41 | functions, pseudocode, assembly, strings, symbols, calls, references, annotations, byte reads, and file offsets                                           |
-| Investigation workflows   |    14 | app overviews, function dossiers, native APIs and dispatch, batch decompilation, feature traces, call paths, call graphs, Swift and Objective-C discovery |
-| Native macOS utilities    |     7 | Mach-O metadata, code signatures, plists, architectures, and Swift demangling without launching Hopper                                                    |
-| Artifact graph            |     5 | directory and package inventories, compiled Interface Builder files, Apple asset catalogs, and extraction                                                 |
-| Managed PE/CLI            |     7 | .NET identity, metadata, CIL instructions, native dependencies, reconstruction imports, and build comparisons                                             |
-| Firmware                  |     2 | Linux firmware region inspection and explicit extraction                                                                                                  |
-| Android APK               |     5 | package and manifest declarations, class search, member inventories, method decompilation, and incoming static references                                 |
-| Browser observation       |     9 | page structure, network metadata, scripts, source maps, WebMCP discovery, screenshots, and capture comparisons                                            |
-| Electron analysis         |     5 | renderer observation, static app mapping, and static/runtime reconciliation                                                                               |
-| JavaScript runtime        |     2 | Node/Electron Inspector target discovery, script locations, and execution-context events                                                                  |
-| Application workflows     |     7 | cross-layer feature traces, build comparisons, historical source mapping, static return-shape comparison, and reconstruction checks                       |
-| Workspace and observation |    21 | sessions, evidence bundles, navigation context, process/artifact/function comparisons, and open-question tracking                                         |
+| Tool family               | Count | Examples                                                                                                                                                            |
+| ------------------------- | ----: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Native inspection         |    41 | functions, pseudocode, assembly, strings, symbols, calls, references, annotations, byte reads, and file offsets                                                     |
+| Investigation workflows   |    14 | app overviews, function dossiers, native APIs and dispatch, batch decompilation, feature traces, call paths, call graphs, Swift and Objective-C discovery           |
+| Native macOS utilities    |     7 | Mach-O metadata, code signatures, plists, architectures, and Swift demangling without launching Hopper                                                              |
+| Artifact graph            |     5 | directory and package inventories, compiled Interface Builder files, Apple asset catalogs, and extraction                                                           |
+| Managed PE/CLI            |     7 | .NET identity, metadata, CIL instructions, native dependencies, reconstruction imports, and build comparisons                                                       |
+| Firmware                  |     2 | Linux firmware region inspection and explicit extraction                                                                                                            |
+| Android APK               |     5 | package and manifest declarations, class search, member inventories, method decompilation, and incoming static references                                           |
+| Browser observation       |     9 | page structure, network metadata, scripts, source maps, WebMCP discovery, screenshots, and capture comparisons                                                      |
+| Electron analysis         |     5 | renderer observation, static app mapping, and static/runtime reconciliation                                                                                         |
+| JavaScript runtime        |     2 | Node/Electron Inspector target discovery, script locations, and execution-context events                                                                            |
+| Application workflows     |     8 | captured website script export; cross-layer feature traces, build comparisons, historical source mapping, static return-shape comparison, and reconstruction checks |
+| Workspace and observation |    21 | sessions, evidence bundles, navigation context, process/artifact/function comparisons, and open-question tracking                                                   |
 
 The public interface describes what the agent is trying to learn. Providers decide how to answer. macOS utilities handle common semantic inspection without launching Hopper; Hopper handles deeper native analysis; the process harness records direct behavioral captures.
 
@@ -377,6 +377,13 @@ Static Android APK inspection is verified on Linux with headless JADX; see [Andr
 - **Packages and resources:** Inspect directories, ZIP, APK, IPA, ASAR, plists, compiled Interface Builder files, and Apple asset catalogs. Artifact requests name the input and requested extraction or traversal directly; macOS DMG traversal also requires the host's native mounting support.
 - **JavaScript and Electron:** Map modules, imports, source maps, routes, IPC channels, storage, and native add-ons without running the app. Compare builds and trace a feature across the recovered graph. Dynamic and ambiguous relationships remain unresolved. See [JavaScript application workflows](docs/javascript-application-workflows.md).
 - **Websites:** Inspect a selected page in an existing Chrome-family browser. Capture page structure, network metadata, script evidence, and screenshots requested by the call. Passive observation does not navigate or execute page JavaScript. See [browser observation](docs/browser-observation.md).
+
+  Export retained scripts with `export_web_scripts` / `rea export-web-scripts`
+  into a verified local directory, then use the existing JavaScript analysis
+  and tracing tools. Source URLs, frame or transaction references, competing
+  versions, and missing-source states remain inline. See
+  [captured website scripts](docs/website-script-export.md).
+
 - **Electron and Node runtime observation:** Inspect selected Electron pages or attach to a Node/Electron V8 Inspector target. Inspector observation records script locations and execution-context events; it does not infer imports, IPC activity, or which modules executed. See [runtime observation](docs/javascript-runtime-observation.md).
 - **.NET assemblies:** Inspect metadata and CIL instructions, compare builds, and check declared native dependencies without loading or running the assembly. Imported decompiler output is labeled as analyst inference. See [managed-code analysis](docs/managed-code-analysis.md).
 - **Controlled behavior capture:** Run process, browser, or Electron scenarios with the target, actions, and lifecycle declared in each request, then compare the resulting evidence. Missing observations cannot establish that two runs behaved the same way.

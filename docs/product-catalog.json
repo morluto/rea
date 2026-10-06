@@ -10,7 +10,7 @@
     "skill_version": "26"
   },
   "tools": {
-    "total": 125,
+    "total": 126,
     "families": [
       {
         "id": "direct",
@@ -179,13 +179,14 @@
       {
         "id": "application",
         "surface": "application-workflow",
-        "count": 7,
+        "count": 8,
         "tools": [
           "build_reconstruction_obligation_ledger",
           "compare_application_versions",
           "compare_javascript_export_shapes",
           "compare_source_to_bundle",
           "evaluate_reconstruction_coverage",
+          "export_web_scripts",
           "trace_application_feature",
           "trace_javascript_semantics"
         ]
@@ -451,6 +452,12 @@
       ]
     },
     {
+      "id": "rea-web-script-export",
+      "name": "REA captured script export",
+      "version": "1",
+      "capabilities": ["export_web_scripts"]
+    },
+    {
       "id": "unblob",
       "name": "Unblob",
       "version": "26.6.4",
@@ -532,7 +539,7 @@
     }
   ],
   "cli": {
-    "primary_count": 80,
+    "primary_count": 81,
     "commands": [
       "address-to-file-offset",
       "analyze",
@@ -562,6 +569,7 @@
       "evaluate-reconstruction-coverage",
       "evidence-export",
       "evidence-import",
+      "export-web-scripts",
       "extract-artifact",
       "extract-firmware",
       "function",
@@ -624,15 +632,15 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 80,
-      "mcp_tools": 125,
+      "cli_commands": 81,
+      "mcp_tools": 126,
       "mcp_prompts": 6
     },
     "digests": {
-      "tools_sha256": "24bd870a291b473a8d22fa93fcb0c0595e534f0d69e4275832c6f37d37ab9068",
+      "tools_sha256": "e9f97be6d329e2bc0c5b808b394e502ac58bf349fad7edfa2b821b6e62b45252",
       "prompts_sha256": "ef2de8814390b340623c32001610aa2709d90bed51537b6e562ab3abf144ab4d",
-      "combined_sha256": "1e812d0cef0fc9a479a62b873c26023d2c9491837434ec59857fb03f17bda5fc",
-      "providers_sha256": "044634314b36b966bd918f99f116f4684108556ac1dabc912e76ccd351d97e3e"
+      "combined_sha256": "11e44d66e0739ad93353bd51ac51287cffb2b5c6c3eda5acf10d7737a1d1c287",
+      "providers_sha256": "7949ddcf2eb5ba41b022bb3dfa1951ab96dbf5640285fa7fd5d35b0e4a5bdab3"
     }
   }
 }

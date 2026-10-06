@@ -1,5 +1,9 @@
 # Website observation with CDP
 
+Captured Debugger sources can be exported for REA's existing static JavaScript
+analysis with `export_web_scripts`. See [captured website scripts](website-script-export.md)
+for the capture options, source mappings, and browser/local resolution limits.
+
 REA can attach to a user-owned Chrome-family browser through the Chrome DevTools Protocol (CDP) and produce bounded Evidence about an existing page. This is a passive reverse-engineering capability, not a general browser automation or remote-control surface.
 
 ## Shipped surfaces

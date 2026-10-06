@@ -215,6 +215,11 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   list_javascript_runtime_targets: browserEvidence,
   observe_javascript_runtime: browserEvidence,
   analyze_javascript_application: evidence,
+  export_web_scripts: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    idempotent: false,
+  }),
   reconcile_javascript_runtime: evidence,
   trace_application_feature: evidence,
   trace_javascript_semantics: evidence,

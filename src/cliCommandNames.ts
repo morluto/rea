@@ -60,6 +60,7 @@ export const CLI_COMMANDS = Object.freeze({
   listBrowserTargets: "list-browser-targets",
   inspectWebPage: "inspect-web-page",
   analyzeWebBundle: "analyze-web-bundle",
+  exportWebScripts: "export-web-scripts",
   observeWebSession: "observe-web-session",
   discoverWebMcpTools: "discover-webmcp-tools",
   compareWebCaptures: "compare-web-captures",

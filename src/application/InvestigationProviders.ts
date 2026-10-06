@@ -53,6 +53,13 @@ export const ANDROID_APPLICATION_PROVIDER = {
   version: "1",
 } as const;
 
+/** Provider identity for verified publication of retained website scripts. */
+export const WEB_SCRIPT_EXPORT_PROVIDER = {
+  id: "rea-web-script-export",
+  name: "REA captured script export",
+  version: "1",
+} as const;
+
 /** Provider identity for deterministic static JavaScript application analysis. */
 export const JAVASCRIPT_APPLICATION_PROVIDER = {
   id: "rea-javascript-application",

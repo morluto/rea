@@ -36,6 +36,7 @@ import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 import { verifyLargeScreenshotE2e } from "./lib/browser-screenshot-e2e.mjs";
 import { verifyPopupEventCoverage } from "./lib/browser-popup-e2e.mjs";
 import { verifyBrowserNetworkEvidence } from "./lib/browser-network-e2e.mjs";
+import { verifyBrowserScriptExport } from "./lib/browser-script-export-e2e.mjs";
 
 const REAL_BROWSER_STARTUP_TIMEOUT_MS = 60_000;
 const SCENARIO_SECRET_VALUE = "rea-browser-verifier-secret";
@@ -326,6 +327,10 @@ try {
     undefined,
     { cdp_endpoint: endpoint, target_id: target },
   );
+  const scriptExport = await verifyBrowserScriptExport(executable, undefined, {
+    cdp_endpoint: endpoint,
+    target_id: target,
+  });
   process.stdout.write(
     `${JSON.stringify({
       verifier_run: await completeVerifierRun(verifierRun),
@@ -346,6 +351,7 @@ try {
       largeScreenshot,
       popupEvents,
       networkEvidence,
+      scriptExport,
       browserScenarioCli: true,
       browserScenarioAttachCleanup: "disconnected-external",
       browserScenarioLaunchCleanup: "terminated-owned-process",
