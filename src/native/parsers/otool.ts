@@ -58,7 +58,7 @@ export const parseOtoolLoadCommands = (raw: string) => {
   const output = normalizeLineEndings(raw);
   const header = parseHeader(output);
   const state = createLoadCommandState(header?.flags);
-  for (const block of output.split(/(?=Load command \d+)/u))
+  for (const block of output.split(/(?=^Load command \d+$)/mu))
     parseLoadCommand(block, state);
   return {
     fileType: header?.fileType ?? null,

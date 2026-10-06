@@ -319,3 +319,39 @@ const signatureRunner = (outputs: {
     );
   },
 });
+
+it.each([
+  "/tmp/Load command 12/plugin.dylib",
+  "@rpath/plugin-Load command 34.dylib",
+])(
+  "keeps load-command-looking text inside native install names: %s",
+  (installName) => {
+    const parsed = parseOtoolLoadCommands(`Load command 0
+          cmd LC_ID_DYLIB
+      cmdsize 80
+         name ${installName} (offset 24)
+   time stamp 2 Thu Jan  1 00:00:02 1970
+      current version 3.2.1
+compatibility version 1.0.0
+Load command 1
+          cmd LC_UUID
+      cmdsize 24
+         uuid 01234567-89AB-CDEF-0123-456789ABCDEF
+`);
+    expect(parsed.commands.map(({ index, kind }) => ({ index, kind }))).toEqual(
+      [
+        { index: 0, kind: "LC_ID_DYLIB" },
+        { index: 1, kind: "LC_UUID" },
+      ],
+    );
+    expect(parsed.dependencies).toEqual([
+      {
+        path: installName,
+        kind: "LC_ID_DYLIB",
+        current_version: "3.2.1",
+        compatibility_version: "1.0.0",
+      },
+    ]);
+    expect(parsed.uuid).toBe("01234567-89AB-CDEF-0123-456789ABCDEF");
+  },
+);
