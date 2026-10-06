@@ -143,7 +143,7 @@ const registerNativeCommands = (cli: CliInstance, logger: Logger): void => {
         runProviderAnalysis(
           args.path,
           "inspect_plist",
-          { relative_path: options.relativePath },
+          { path: options.relativePath },
           logger,
         ),
       ),
