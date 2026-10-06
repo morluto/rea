@@ -36,11 +36,12 @@ export const acquireHopperTargetLease = async (input: {
   const directory = input.directory ?? leaseDirectory;
   await ensureLeaseDirectory(directory);
   // The canonical path only derives the lease key; it never authorizes access.
-  // `realpath` is expected to fail when the target or a path component is
-  // missing (ENOENT, ENOTDIR), unreadable (EACCES), or a symlink loop (ELOOP).
-  // The lexical `resolve` fallback still yields a deterministic key, so the
-  // only cost is that symlinked spellings of such a path may take separate
-  // leases.
+  // Common expected `realpath` failures include a missing target or path
+  // component (ENOENT, ENOTDIR), an unreadable component (EACCES), or a
+  // symlink loop (ELOOP). This catch also falls back for every other error,
+  // which may hide a real filesystem problem. The lexical `resolve` fallback
+  // still yields a deterministic key, but aliases may take separate leases
+  // whenever `realpath` cannot resolve them.
   const targetPath = await realpath(input.targetPath).catch(() =>
     resolve(input.targetPath),
   );
