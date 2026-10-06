@@ -285,7 +285,8 @@ const filenameIsTest = (filename: string): boolean => {
   if (lower.includes(".test.") || lower.includes(".spec.")) return true;
   if (lower.startsWith("test_") || lower.startsWith("spec_")) return true;
   if (lower.endsWith("_test") || lower.endsWith("_spec")) return true;
-  return false;
+  const stem = basenameParts(lower).base;
+  return stem.endsWith("_test") || stem.endsWith("_spec");
 };
 
 const filenameIsGenerated = (filename: string): boolean => {
@@ -321,11 +322,10 @@ const isPathUnderAny = (path: string, names: ReadonlySet<string>): boolean => {
 /** Detect a source language from a POSIX path. */
 export const detectReferenceSourceLanguage = (path: string): string | null => {
   const filename = posix.basename(path);
-  if (filename === "Dockerfile" || filename.startsWith("Dockerfile."))
-    return "Dockerfile";
-  if (filename.toLowerCase().startsWith("dockerfile")) return "Dockerfile";
-
   const lower = filename.toLowerCase();
+  if (lower === "dockerfile" || lower.startsWith("dockerfile."))
+    return "Dockerfile";
+
   if (lower.endsWith(".d.ts")) return "TypeScript";
   if (lower.endsWith(".d.mts")) return "TypeScript";
   if (lower.endsWith(".d.cts")) return "TypeScript";
