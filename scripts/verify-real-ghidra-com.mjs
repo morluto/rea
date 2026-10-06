@@ -44,6 +44,13 @@ if (captureDirectory !== undefined) {
   );
   await mkdir(captureDirectory, { recursive: true, mode: 0o700 });
 }
+const packageRoot = process.env.REA_COM_PROOF_PACKAGE_ROOT;
+if (packageRoot !== undefined && !isAbsolute(packageRoot))
+  throw new Error("REA_COM_PROOF_PACKAGE_ROOT must be absolute");
+const entrypoint =
+  packageRoot === undefined
+    ? fileURLToPath(new URL("./rea.mjs", import.meta.url))
+    : join(packageRoot, "scripts", "rea.mjs");
 const run = createVerifierRun();
 const workspace = await mkdtemp(join(tmpdir(), "rea-com-proof-"));
 const runtime = join(workspace, "runtime");
@@ -52,13 +59,6 @@ const fixture = buildDosComFixture();
 const targetPath = join(workspace, "fixture.com");
 await writeFile(targetPath, fixture.bytes, { mode: 0o600 });
 const sha256 = digest(fixture.bytes);
-const packageRoot = process.env.REA_COM_PROOF_PACKAGE_ROOT;
-if (packageRoot !== undefined && !isAbsolute(packageRoot))
-  throw new Error("REA_COM_PROOF_PACKAGE_ROOT must be absolute");
-const entrypoint =
-  packageRoot === undefined
-    ? fileURLToPath(new URL("./rea.mjs", import.meta.url))
-    : join(packageRoot, "scripts", "rea.mjs");
 const env = {
   PATH: process.env.PATH ?? "/usr/bin:/bin",
   TMPDIR: runtime,
@@ -82,11 +82,12 @@ const client = new Client({ name: "rea-real-com-proof", version: "1" });
 let opened = false;
 let stderr = "";
 let report;
+transport.stderr?.on("data", (chunk) => {
+  stderr = (stderr + chunk.toString()).slice(-65536);
+});
 try {
   await client.connect(transport);
-  transport.stderr?.on("data", (chunk) => {
-    stderr = (stderr + chunk.toString()).slice(-65536);
-  });
+
   const untyped = await client.callTool({
     name: "open_binary",
     arguments: { path: targetPath, provider_id: "ghidra" },
