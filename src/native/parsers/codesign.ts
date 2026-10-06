@@ -19,7 +19,8 @@ export const parseCodeSignature = (
     const separator = line.indexOf("=");
     if (separator < 1) continue;
     const key = line.slice(0, separator).trim();
-    const value = line.slice(separator + 1).trim();
+    const rawValue = line.slice(separator + 1);
+    const value = key === "Identifier" ? rawValue : rawValue.trim();
     if (key === "Authority") authorities.push(value);
     else if (key === "CDHash") cdhashes.push(value);
     else values.set(key, value);
