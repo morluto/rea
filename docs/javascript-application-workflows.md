@@ -55,6 +55,16 @@ registrations/removals and dispatch, Node timers and cancellation handles, async
 defaults, request construction and response consumers, parse/coercion/
 validation boundaries, and built-in resource acquisition/release.
 
+Mutation tracking covers explicit member assignments, updates, deletion, and
+loop assignment targets, including the supported local aliases and shared
+nested references. Calls such as `Object.assign`, `Reflect.set`, and
+`Reflect.deleteProperty`, and writes reaching a caller's object through another
+function's parameter, are not tracked by this mutation pass. These channels
+can leave an initializer-derived literal in the graph even after the runtime
+value changes. Treat such a result as an uncovered mutation channel, not as
+proof of the current runtime value; a follow-up needs to model that channel
+and verify its caller/alias behavior.
+
 Function fingerprints commit normalized syntax, control-flow shape, relation
 shape, literal sets, arity, and detected effects without using local names or
 source offsets. Equal duplicate fingerprints remain ambiguous. Dynamic
