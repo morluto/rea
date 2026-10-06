@@ -93,6 +93,11 @@ describe("browserScenarioSchema", () => {
       service_workers: "block",
     });
     expect(parsed.capture).toEqual({
+      network: {
+        request_body: false,
+        response_body: false,
+        header_values: false,
+      },
       after_each_step: ["screenshot", "url", "accessibility"],
       at_end: ["dom", "storage"],
       events: ["console", "page-errors", "network", "websockets"],

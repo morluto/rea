@@ -484,3 +484,32 @@ it("preserves read errors and does not turn unexposed or empty bytes into the sa
   );
   expect(collector.limitations().length).toBeGreaterThan(0);
 });
+
+it("redacts declared encodings in body media metadata", async () => {
+  const { collector, events } = harness({
+    request_body: false,
+    response_body: true,
+    header_values: false,
+  });
+  const request = new RequestFixture("input");
+  const response = new ResponseFixture(request, "ordinary-bytes");
+  const headers = response.headers();
+  response.headers = () => ({
+    ...headers,
+    "content-type": `text/plain; fixture=${encodeURIComponent("私密")}`,
+  });
+  collector.request(request);
+  collector.response(response);
+  collector.finished(request);
+  await collector.finish();
+  expect(events).toContainEqual(
+    expect.objectContaining({
+      kind: "network-content",
+      phase: "response",
+      body: expect.objectContaining({
+        state: "captured",
+        media_type: "text/plain; fixture=[REDACTED:declared]",
+      }),
+    }),
+  );
+});

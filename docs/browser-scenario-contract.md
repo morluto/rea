@@ -201,6 +201,26 @@ and unfinished-request metadata. Select content independently:
 
 ```json
 {
+  "browser": {
+    "mode": "launch",
+    "executable_path": "/absolute/path/to/chromium"
+  },
+  "start_url": { "url": "http://127.0.0.1:3000" },
+  "actions": [
+    {
+      "step_id": "run",
+      "action": "click",
+      "locator": { "kind": "css", "selector": "#start" },
+      "timeout_ms": 10000
+    },
+    {
+      "step_id": "ready",
+      "action": "wait_for",
+      "locator": { "kind": "css", "selector": "#done" },
+      "state": "visible",
+      "timeout_ms": 10000
+    }
+  ],
   "capture": {
     "network": {
       "request_body": true,

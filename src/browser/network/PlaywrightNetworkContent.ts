@@ -100,7 +100,9 @@ export const captureNetworkBody = async (
       bytes: retained.length,
       sha256: createHash("sha256").update(retained).digest("hex"),
       media_type:
-        contentType === undefined ? null : secrets.redact(contentType),
+        contentType === undefined
+          ? null
+          : secrets.redactBytes(Buffer.from(contentType)).toString("utf8"),
       redacted: !retained.equals(observed),
     };
   } catch (cause: unknown) {
