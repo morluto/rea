@@ -340,12 +340,36 @@ const scopeKind = (
   // Each `static {}` block is its own lexical scope; otherwise a `let` in two
   // static blocks would collide in the enclosing class scope.
   if (t.isStaticBlock(node)) return "static-block";
-  if (
-    t.isBlockStatement(node) &&
-    !(parent !== null && t.isFunction(parent) && parent.body === node)
-  )
+  if (t.isBlockStatement(node)) {
+    if (parent !== null && t.isFunction(parent) && parent.body === node) {
+      // Parameter expressions execute outside the body var environment. A
+      // body-local declaration must never become visible to a default value
+      // or a computed destructuring key.
+      return parent.params.some(parameterHasExpressions)
+        ? "function"
+        : undefined;
+    }
     return "block";
+  }
   return undefined;
+};
+
+const parameterHasExpressions = (node: t.Node): boolean => {
+  if (t.isAssignmentPattern(node)) return true;
+  if (t.isTSParameterProperty(node))
+    return parameterHasExpressions(node.parameter);
+  if (t.isRestElement(node)) return parameterHasExpressions(node.argument);
+  if (t.isArrayPattern(node))
+    return node.elements.some(
+      (element) => element !== null && parameterHasExpressions(element),
+    );
+  if (t.isObjectPattern(node))
+    return node.properties.some((property) =>
+      t.isRestElement(property)
+        ? parameterHasExpressions(property.argument)
+        : property.computed || parameterHasExpressions(property.value),
+    );
+  return false;
 };
 
 const bindImports = (
