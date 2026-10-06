@@ -32,7 +32,11 @@ import {
 } from "./DoctorScope.js";
 
 /** Deep provider IDs whose readiness can be selected explicitly by doctor. */
-export const DOCTOR_PROVIDER_IDS = ["hopper", "ghidra"] as const;
+export const DOCTOR_PROVIDER_IDS = [
+  "hopper",
+  "ghidra",
+  "binary-ninja",
+] as const;
 /** One actionable environment diagnostic. */
 export interface DoctorCheck {
   readonly name: string;

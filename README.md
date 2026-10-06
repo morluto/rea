@@ -172,7 +172,7 @@ provider guides describe their supported platforms.
 - Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+
 - npm; REA does not require or install a particular npm version
 
-Native binary analysis requires [Hopper](https://www.hopperapp.com/) or [Ghidra](#ghidra-analysis-provider). Hopper is separate software with its own license; its demo supports analysis with vendor-defined limits. REA can use Ghidra that you have already installed.
+Native binary analysis requires [Hopper](https://www.hopperapp.com/), [Ghidra](#ghidra-analysis-provider), or the experimental [Binary Ninja MCP backend](docs/binary-ninja.md). Hopper is separate software with its own license; its demo supports analysis with vendor-defined limits. REA can use Ghidra that you have already installed.
 
 Firmware region inspection and explicit extraction use caller-supplied Binwalk and Unblob on Linux. See [Firmware analysis](docs/firmware-analysis.md) for setup, provenance, resource limits and native handoff.
 

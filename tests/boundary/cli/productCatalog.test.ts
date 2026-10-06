@@ -36,6 +36,10 @@ import {
   GHIDRA_PROVIDER_IDENTITY,
   GHIDRA_PROVIDER_TOOL_CONTRACTS,
 } from "../../../src/ghidra/GhidraProvider.js";
+import {
+  BINARY_NINJA_PROVIDER_IDENTITY,
+  BINARY_NINJA_PROVIDER_TOOL_CONTRACTS,
+} from "../../../src/binaryNinja/BinaryNinjaProvider.js";
 import { NATIVE_MACOS_PROVIDER_IDENTITY } from "../../../src/native/NativeMacOSProvider.js";
 import {
   assertDocumentationFacts,
@@ -99,6 +103,7 @@ describe("canonical product catalog", () => {
         BINWALK_PROVIDER_IDENTITY,
         UNBLOB_PROVIDER_IDENTITY,
         GHIDRA_PROVIDER_IDENTITY,
+        BINARY_NINJA_PROVIDER_IDENTITY,
         NATIVE_MACOS_PROVIDER_IDENTITY,
         ARTIFACT_GRAPH_PROVIDER,
         MANAGED_STATIC_PROVIDER,
@@ -123,6 +128,13 @@ describe("canonical product catalog", () => {
       catalog.providers.find(({ id }) => id === GHIDRA_PROVIDER_IDENTITY.id)
         ?.capabilities,
     ).toEqual(GHIDRA_PROVIDER_TOOL_CONTRACTS.map(({ name }) => name).sort());
+    expect(
+      catalog.providers.find(
+        ({ id }) => id === BINARY_NINJA_PROVIDER_IDENTITY.id,
+      )?.capabilities,
+    ).toEqual(
+      BINARY_NINJA_PROVIDER_TOOL_CONTRACTS.map(({ name }) => name).sort(),
+    );
     expect(
       catalog.providers.find(
         ({ id }) => id === CDP_ELECTRON_PROVIDER_IDENTITY.id,

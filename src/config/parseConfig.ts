@@ -1,5 +1,5 @@
 import { ConfigurationError } from "../domain/configurationErrors.js";
-import { ok, type Result } from "../domain/result.js";
+import { err, ok, type Result } from "../domain/result.js";
 import { parseEnvironment } from "./environment.js";
 import { parseStringArray, parseLoaderArgs } from "./parsers.js";
 import type { AppConfig } from "./types.js";
@@ -16,6 +16,40 @@ export const parseConfig = (
   const parsed = parseEnvironment(environment);
   if (!parsed.ok) return parsed;
   const env = parsed.value;
+  if (
+    env.REA_BINARY_NINJA_MCP_URL !== undefined &&
+    env.REA_BINARY_NINJA_MCP_COMMAND !== undefined
+  )
+    return err(
+      new ConfigurationError(
+        "Set either REA_BINARY_NINJA_MCP_URL or REA_BINARY_NINJA_MCP_COMMAND, not both",
+      ),
+    );
+  if (
+    env.REA_BINARY_NINJA_MCP_TOKEN !== undefined &&
+    env.REA_BINARY_NINJA_MCP_URL === undefined
+  )
+    return err(
+      new ConfigurationError(
+        "REA_BINARY_NINJA_MCP_TOKEN requires REA_BINARY_NINJA_MCP_URL",
+      ),
+    );
+  const binaryNinjaArgs = parseLoaderArgs(env.REA_BINARY_NINJA_MCP_ARGS_JSON);
+  if (!binaryNinjaArgs.ok)
+    return err(
+      new ConfigurationError(
+        "REA_BINARY_NINJA_MCP_ARGS_JSON must be a JSON array of strings",
+      ),
+    );
+  if (
+    binaryNinjaArgs.value.length > 0 &&
+    env.REA_BINARY_NINJA_MCP_COMMAND === undefined
+  )
+    return err(
+      new ConfigurationError(
+        "REA_BINARY_NINJA_MCP_ARGS_JSON requires REA_BINARY_NINJA_MCP_COMMAND",
+      ),
+    );
   const loaderArgs = parseLoaderArgs(env.HOPPER_LOADER_ARGS_JSON);
   if (!loaderArgs.ok) return loaderArgs;
   const secretPatterns = parseStringArray(
@@ -24,6 +58,24 @@ export const parseConfig = (
   );
   if (!secretPatterns.ok) return secretPatterns;
   return ok({
+    ...(env.REA_BINARY_NINJA_MCP_URL === undefined &&
+    env.REA_BINARY_NINJA_MCP_COMMAND === undefined
+      ? {}
+      : {
+          binaryNinjaMcp: {
+            ...(env.REA_BINARY_NINJA_MCP_URL === undefined
+              ? {}
+              : { url: env.REA_BINARY_NINJA_MCP_URL }),
+            ...(env.REA_BINARY_NINJA_MCP_COMMAND === undefined
+              ? {}
+              : { command: env.REA_BINARY_NINJA_MCP_COMMAND }),
+            ...(env.REA_BINARY_NINJA_MCP_TOKEN === undefined
+              ? {}
+              : { token: env.REA_BINARY_NINJA_MCP_TOKEN }),
+            args: binaryNinjaArgs.value,
+            timeoutMs: env.REA_BINARY_NINJA_MCP_TIMEOUT_MS,
+          },
+        }),
     analysisProvider: env.REA_ANALYSIS_PROVIDER,
     ghidraInstallDir: env.GHIDRA_INSTALL_DIR,
     ghidraJavaHome: env.JAVA_HOME,

@@ -1,5 +1,7 @@
 # Testing REA
 
+For the experimental Binary Ninja built-in MCP adapter, see [configuration and coverage](binary-ninja.md). Deterministic tests use synthetic servers; real engine verification requires an installation with the built-in server and `npm run verify:binary-ninja -- /absolute/path/to/native-executable`.
+
 Prefer evidence in this order: full end-to-end workflows with real production
 providers, integration tests across data/API boundaries, then golden regressions
 from real captured inputs. Keep focused module tests for distinct failure or

@@ -2,6 +2,7 @@ import type { AppConfig } from "../config.js";
 import type { BinarySession } from "./BinarySession.js";
 import { HopperProvider } from "../hopper/HopperProvider.js";
 import { GhidraProvider } from "../ghidra/GhidraProvider.js";
+import { BinaryNinjaProvider } from "../binaryNinja/BinaryNinjaProvider.js";
 import { silentLogger, type Logger } from "../logger.js";
 import { GENERATED_AUXILIARY_PROVIDERS } from "../generatedMcpToolCatalog.js";
 import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
@@ -42,7 +43,10 @@ export const createBinarySession = (
     });
   };
   return composeBinarySession(
-    new AnalysisProviderRegistry([hopper, ghidra], config.analysisProvider),
+    new AnalysisProviderRegistry(
+      [hopper, ghidra, new BinaryNinjaProvider(config)],
+      config.analysisProvider,
+    ),
     [
       lazyProvider("rea-artifact-graph", async () => {
         const { ArtifactProvider } =

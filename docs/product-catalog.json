@@ -222,6 +222,31 @@
   },
   "providers": [
     {
+      "id": "binary-ninja",
+      "name": "Binary Ninja",
+      "version": null,
+      "capabilities": [
+        "address_name",
+        "analyze_function",
+        "list_documents",
+        "list_names",
+        "list_procedures",
+        "list_segments",
+        "list_strings",
+        "procedure_address",
+        "procedure_assembly",
+        "procedure_callees",
+        "procedure_callers",
+        "procedure_info",
+        "procedure_pseudo_code",
+        "read_bytes",
+        "read_function_instructions",
+        "search_procedures",
+        "search_strings",
+        "xrefs"
+      ]
+    },
+    {
       "id": "binwalk",
       "name": "Binwalk",
       "version": "3.1.0",
@@ -613,7 +638,7 @@
       "tools_sha256": "45a8aea00dba2a8ad8563b4943cd177d07b14889bc9b823bc39b89b6ddb26d2c",
       "prompts_sha256": "ef2de8814390b340623c32001610aa2709d90bed51537b6e562ab3abf144ab4d",
       "combined_sha256": "297aced29e7ce5e845c505d5f2e9e2dee42b7ed3e628f088f424fe8088c9e8dc",
-      "providers_sha256": "dfba0ee59f12c82cdfb5320e7e0d70a114e533b2cb88afd15db9b9a4a175c9b0"
+      "providers_sha256": "43070b7e0dbab2c55a7cd7f34b926fd05e19630f7ce5ce6845e1775e2d507325"
     }
   }
 }

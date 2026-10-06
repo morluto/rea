@@ -6,6 +6,33 @@ import { err, ok, type Result } from "../domain/result.js";
 import { analysisProviderSelectorSchema } from "../contracts/providerSelection.js";
 
 const environmentSchema = z.object({
+  REA_BINARY_NINJA_MCP_URL: z
+    .url()
+    .refine((value) => {
+      const url = new URL(value);
+      return (
+        ["http:", "https:"].includes(url.protocol) &&
+        ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) &&
+        url.username === "" &&
+        url.password === "" &&
+        url.search === "" &&
+        url.hash === ""
+      );
+    }, "Binary Ninja MCP must use a loopback HTTP URL without credentials, query, or fragment")
+    .optional(),
+  REA_BINARY_NINJA_MCP_COMMAND: z
+    .string()
+    .min(1)
+    .refine(isAbsolute, "Binary Ninja MCP command must be absolute")
+    .optional(),
+  REA_BINARY_NINJA_MCP_ARGS_JSON: z.string().default("[]"),
+  REA_BINARY_NINJA_MCP_TOKEN: z.string().min(1).optional(),
+  REA_BINARY_NINJA_MCP_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(2_147_483_647)
+    .default(300_000),
   REA_ANALYSIS_PROVIDER: analysisProviderSelectorSchema.default("auto"),
   GHIDRA_INSTALL_DIR: z
     .string()

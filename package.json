@@ -122,6 +122,8 @@
     "verify:native-ui": "npm run build:cached && node scripts/verify-native-ui.mjs",
     "verify:keyed-archive": "npm run build:cached && node scripts/verify-keyed-archive.mjs",
     "verify:ghidra": "npm run build:cached && node scripts/verify-real-ghidra.mjs",
+    "verify:binary-ninja": "npm run build:cached && node scripts/verify-real-binary-ninja.mjs",
+    "inspect:binary-ninja": "npm run build:cached && node scripts/inspect-binary-ninja-mcp.mjs",
     "verify:ghidra:switch": "npm run build:cached && node scripts/verify-real-ghidra-switch.mjs",
     "verify:ghidra:dos": "npm run build:cached && node scripts/verify-real-ghidra-dos.mjs",
     "verify:ghidra:com": "npm run build:cached && node scripts/verify-real-ghidra-com.mjs",

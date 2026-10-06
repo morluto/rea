@@ -3,6 +3,13 @@ import type { ReferenceSourcePolicy } from "../domain/referenceSourcePolicy.js";
 import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
 
 export interface AppConfig {
+  readonly binaryNinjaMcp?: {
+    readonly url?: string;
+    readonly command?: string;
+    readonly args: readonly string[];
+    readonly token?: string;
+    readonly timeoutMs: number;
+  };
   readonly analysisProvider: AnalysisProviderSelector;
   readonly ghidraInstallDir: string | undefined;
   readonly ghidraJavaHome: string | undefined;

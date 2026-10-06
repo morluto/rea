@@ -2,6 +2,61 @@ import { describe, expect, it } from "vitest";
 
 import { parseConfig } from "./config.js";
 
+it("configures Binary Ninja GUI HTTP or headless stdio independently of Hopper/Ghidra", () => {
+  expect(
+    parseConfig({
+      REA_ANALYSIS_PROVIDER: "binary-ninja",
+      REA_BINARY_NINJA_MCP_URL: "http://127.0.0.1:24642/mcp",
+      REA_BINARY_NINJA_MCP_TOKEN: "secret",
+    }),
+  ).toMatchObject({
+    ok: true,
+    value: {
+      analysisProvider: "binary-ninja",
+      binaryNinjaMcp: {
+        url: "http://127.0.0.1:24642/mcp",
+        token: "secret",
+        args: [],
+        timeoutMs: 300_000,
+      },
+    },
+  });
+  expect(
+    parseConfig({
+      REA_BINARY_NINJA_MCP_COMMAND: "/opt/binaryninja/binaryninja_mcp",
+      REA_BINARY_NINJA_MCP_ARGS_JSON: '["-p"]',
+    }),
+  ).toMatchObject({
+    ok: true,
+    value: {
+      binaryNinjaMcp: {
+        command: "/opt/binaryninja/binaryninja_mcp",
+        args: ["-p"],
+      },
+    },
+  });
+});
+
+it.each([
+  { REA_BINARY_NINJA_MCP_URL: "http://example.com/mcp" },
+  { REA_BINARY_NINJA_MCP_URL: "file:///mcp" },
+  { REA_BINARY_NINJA_MCP_URL: "http://user:secret@localhost/mcp" },
+  { REA_BINARY_NINJA_MCP_URL: "http://localhost/mcp?token=secret" },
+  { REA_BINARY_NINJA_MCP_URL: "http://localhost/mcp#fragment" },
+  {
+    REA_BINARY_NINJA_MCP_URL: "http://localhost/mcp",
+    REA_BINARY_NINJA_MCP_COMMAND: "/opt/binaryninja_mcp",
+  },
+  { REA_BINARY_NINJA_MCP_COMMAND: "relative/binaryninja_mcp" },
+  { REA_BINARY_NINJA_MCP_TOKEN: "secret" },
+  { REA_BINARY_NINJA_MCP_ARGS_JSON: "[1]" },
+  { REA_BINARY_NINJA_MCP_ARGS_JSON: '["-p"]' },
+  { REA_BINARY_NINJA_MCP_TIMEOUT_MS: "0" },
+  { REA_BINARY_NINJA_MCP_TIMEOUT_MS: "NaN" },
+])("rejects invalid Binary Ninja transport configuration %#", (env) => {
+  expect(parseConfig(env).ok).toBe(false);
+});
+
 describe("runtime configuration", () => {
   it("allows target-free startup and defaults to Hopper's documented launcher", () => {
     const empty = parseConfig({});
