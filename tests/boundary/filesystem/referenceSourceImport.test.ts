@@ -330,3 +330,35 @@ describe("reference source path selection", () => {
     }
   });
 });
+
+describe("reference source rooted module specifiers", () => {
+  it("does not rebase an absolute import onto a coincidentally matching source member", async () => {
+    const root = await createTestTempDirectory("rea-reference-rooted-");
+    await mkdir(join(root, "src", "outside"), { recursive: true });
+    await writeFile(
+      join(root, "src", "main.js"),
+      'import "/outside/dep.js"; import "./outside/dep.js";\n',
+    );
+    await writeFile(
+      join(root, "src", "outside", "dep.js"),
+      "export const value = 1;\n",
+    );
+    const result = await importTree(root);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.relationships).toContainEqual({
+      from_path: "src/main.js",
+      to: "/outside/dep.js",
+      kind: "imports",
+      resolution: "unresolved",
+      parse_state: "parsed",
+    });
+    expect(result.value.relationships).toContainEqual({
+      from_path: "src/main.js",
+      to: "src/outside/dep.js",
+      kind: "imports",
+      resolution: "internal",
+      parse_state: "parsed",
+    });
+  });
+});

@@ -77,6 +77,8 @@ const resolveInternalSpecifier = (
   specifier: string,
   filePaths: ReadonlySet<string>,
 ): { to: string; resolution: "internal" | "unresolved" } => {
+  if (posix.isAbsolute(specifier))
+    return { to: specifier, resolution: "unresolved" };
   const normalized = posix.normalize(
     posix.join(posix.dirname(fromPath), specifier),
   );
