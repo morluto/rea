@@ -82,7 +82,11 @@ const argumentSchema = (
   argument: PromptArgumentContract,
   completion: PromptCompletionSource,
 ): z.ZodType => {
-  const value = z.string().trim().min(1).describe(argument.description);
+  const value = z
+    .string()
+    .min(1)
+    .refine((value) => value.trim().length > 0)
+    .describe(argument.description);
   const kind = argument.completion;
   const completed =
     kind === undefined

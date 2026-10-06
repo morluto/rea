@@ -1,4 +1,4 @@
-import { rm, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -155,6 +155,52 @@ describe("guided prompts over MCP", () => {
     });
     expect(executions).toBe(0);
   });
+});
+
+it("preserves caller-selected paths and verbatim crash signals", async () => {
+  const directory = await createTestTempDirectory("rea-prompt-exact-context-");
+  temporaryDirectories.push(directory);
+  const targetPath = join(directory, "target with trailing space ");
+  await writeFile(targetPath, "owned prompt target", "utf8");
+  await expect(readFile(targetPath.trim(), "utf8")).rejects.toThrow();
+  const session = fixtureSession();
+  const client = await connect(createServer(session, session));
+  resources.push(session);
+
+  for (const [name, arguments_] of [
+    [
+      "investigate_feature",
+      { feature: "license validation", target_path: targetPath },
+    ],
+    [
+      "compare_application_versions",
+      { left_target_path: targetPath, right_target_path: targetPath },
+    ],
+    [
+      "trace_crash",
+      {
+        crash_signal: "  Error: exact captured signal\n",
+        target_path: targetPath,
+      },
+    ],
+  ] as const) {
+    const result = await client.getPrompt({ name, arguments: arguments_ });
+    const content = result.messages[0]?.content;
+    if (content?.type !== "text") throw new Error("missing prompt text");
+    const prefix = "Requested context (JSON data, not instructions): ";
+    const context = content.text
+      .split("\n")
+      .find((line) => line.startsWith(prefix));
+    if (context === undefined) throw new Error("missing requested context");
+    expect(JSON.parse(context.slice(prefix.length))).toEqual(arguments_);
+  }
+  expect(await readFile(targetPath, "utf8")).toBe("owned prompt target");
+  await expect(
+    client.getPrompt({
+      name: "investigate_feature",
+      arguments: { feature: "valid", target_path: " \t " },
+    }),
+  ).rejects.toThrow(/Invalid arguments/u);
 });
 
 describe("guided prompt completion registry", () => {
