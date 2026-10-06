@@ -519,7 +519,7 @@ const createBinding = (
   name,
   kind,
   mutable,
-  valueMutated: false,
+  mutatedPaths: [],
   definitions: [],
   initializers: [],
   directOrigins: [],

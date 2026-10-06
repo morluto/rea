@@ -10,6 +10,7 @@ const resultValue = (body: string) =>
   ).returnSites[0]?.value;
 
 const mutations = [
+  'const shared = { mode: "initial" }; const options = { [key]: shared }; options.foo.mode = "updated"; return shared.mode;',
   'const shared = { mode: "initial" }; const original = [shared]; const copy = [...original]; copy[0].mode = "updated"; return shared.mode;',
   'const original = { nested: { mode: "initial" } }; const copy = { ...original }; copy.nested.mode = "updated"; return original.nested.mode;',
   'const shared = { mode: "initial" }; const options = flag ? shared : { mode: "other" }; options.mode = "updated"; return shared.mode;',
@@ -81,5 +82,36 @@ describe("JavaScript semantic values after explicit property mutations", () => {
         'const options = { mode: ["initial"] }; return options.mode[0];',
       ),
     ).toEqual({ status: "literal", value: "initial" });
+  });
+});
+
+const unchangedProperties = [
+  'const source = { token: "TOKEN", count: 1 }; source.count = 2; return source.token;',
+  'const source = { token: "TOKEN", count: 1 }; const alias = source; alias.count++; return source.token;',
+  'const source = { token: "TOKEN", count: 1 }; delete source.count; return source.token;',
+  'const source = { nested: { token: "TOKEN", count: 1 } }; source.nested.count = 2; return source.nested.token;',
+  'const source = { nested: { token: "TOKEN", count: 1 } }; const { nested } = source; nested.count = 2; return source.nested.token;',
+  'const child = { token: "TOKEN", count: 1 }; const source = { child }; source.child.count = 2; return child.token;',
+  'const source = ["TOKEN", 1]; source[1] = 2; return source[0];',
+  'const child = { token: "TOKEN", count: 1 }; const source = [child]; source[0].count = 2; return child.token;',
+  'const source = { token: "TOKEN" }; source.added = 2; return source.token;',
+  'const source = { token: "TOKEN", count: 1, other: 1 }; source.count = 2; source.other = 2; return source.token;',
+  'const left = { token: "TOKEN", count: 1 }; const right = { count: 1 }; const source = { left, right }; source.right.count = 2; return left.count + ":" + left.token;',
+];
+
+describe("JavaScript semantic values for properties unaffected by a mutation", () => {
+  it.each(unchangedProperties)("retains an unaffected property: %s", (body) => {
+    expect(resultValue(body)).toEqual({
+      status: "literal",
+      value: body.includes("left.count") ? "1:TOKEN" : "TOKEN",
+    });
+  });
+
+  it("keeps the changed slot unknown alongside an unchanged literal slot", () => {
+    expect(
+      resultValue(
+        'const source = { token: "TOKEN", count: 1 }; source.count = 2; return source.count;',
+      )?.status,
+    ).toBe("unknown");
   });
 });

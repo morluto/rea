@@ -1,5 +1,7 @@
 import * as t from "@babel/types";
 
+import { invalidateSemanticMutationPath } from "./javascriptSemanticMutationValues.js";
+
 import type {
   JavaScriptBindingProvenance,
   JavaScriptModuleOrigin,
@@ -58,11 +60,6 @@ const evaluateBinding = (
   binding: JavaScriptSemanticBindingState,
   context: EvaluationContext,
 ): JavaScriptSemanticValue => {
-  if (binding.valueMutated)
-    return {
-      status: "unknown",
-      reason: `Binding ${binding.name} has a property mutation.`,
-    };
   if (context.bindings.has(binding.bindingId))
     return { status: "cycle", reason: `Alias cycle at ${binding.name}.` };
   if (binding.initializers.length === 0)
@@ -79,10 +76,11 @@ const evaluateBinding = (
   if (initializer === undefined)
     return { status: "unknown", reason: "Missing binding initializer." };
   const nested = nestedContext(context, binding.bindingId);
-  return projectValue(
+  const value = projectValue(
     evaluateExpression(initializer.node, nested),
     initializer.projection,
   );
+  return binding.mutatedPaths.reduce(invalidateSemanticMutationPath, value);
 };
 
 const evaluateExpression = (
