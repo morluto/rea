@@ -85,6 +85,14 @@ regressions until a real fixture establishes equivalent coverage.
 decoding. Its SDK client explicitly permits the larger inline JSON response;
 this lane does not establish large image-comparison request transport coverage.
 
+`verify:browser:network` is a focused real-browser lane for transaction identity,
+selected request/response bytes, binary and compressed responses, duplicate
+headers, credential and declared-secret redaction, redirects, streaming cutoff,
+CLI/MCP parity, and owned-profile cleanup. Set `REA_BROWSER_EXECUTABLE` to an
+installed Chrome-family browser. An optional script argument selects an already
+installed package's `scripts/rea.mjs` entry point for packaged-artifact checks.
+The complete `verify:browser` lane includes these same checks.
+
 The [test suite audit](test-suite-audit.md) records the pruning decisions,
 replacement evidence and remaining priorities.
 

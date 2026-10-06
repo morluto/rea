@@ -3,6 +3,10 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import { emptyArraySchema } from "./emptyArraySchema.js";
+import {
+  browserNetworkBodySchema,
+  browserNetworkHeadersSchema,
+} from "./browserNetworkEvidence.js";
 import { sanitizedBrowserUrlSchema } from "./browserObservation.js";
 import { webScreenshotArtifactSchema } from "./webScreenshot.js";
 import { digestSchema } from "./../domain/digests.js";
@@ -123,6 +127,8 @@ const eventBase = {
 const eventUrl = sanitizedBrowserUrlSchema.nullable();
 const networkEventShape = {
   ...eventBase,
+  transaction_id: z.string().min(1).optional(),
+  redirected_from_transaction_id: z.string().min(1).nullable().optional(),
   method: z.string().min(1),
   url: sanitizedBrowserUrlSchema,
   resource_type: z.string().min(1),
@@ -167,6 +173,28 @@ export const browserScenarioEventSchema = z.union([
     kind: z.literal("request-failed"),
     status: z.null(),
     failure: z.string().min(1),
+  }),
+  z.strictObject({
+    ...networkEventShape,
+    kind: z.literal("request-finished"),
+    status: z.null(),
+    failure: z.null(),
+  }),
+  z.strictObject({
+    ...networkEventShape,
+    kind: z.literal("request-unfinished"),
+    status: z.null(),
+    failure: z.null(),
+    reason: z.enum(["capture-ended", "cancelled"]),
+  }),
+  z.strictObject({
+    ...eventBase,
+    kind: z.literal("network-content"),
+    transaction_id: z.string().min(1),
+    source_event_sequence: z.number().int().min(1),
+    phase: z.enum(["request", "response"]),
+    headers: browserNetworkHeadersSchema,
+    body: browserNetworkBodySchema,
   }),
   z.strictObject({
     ...eventBase,

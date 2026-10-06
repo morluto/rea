@@ -289,6 +289,7 @@ const runScenario = async (
       start_origin: new URL(scenario.start_url.url).origin,
       action_count: scenario.actions.length,
       secret_references: scenario.secrets.map(({ secret_id: id }) => id).sort(),
+      network_content: scenario.capture.network,
     },
     duration_ms: Date.now() - startedAt,
     steps,
@@ -296,7 +297,10 @@ const runScenario = async (
     completeness,
     limitations: [
       "Event sequence records provider receipt order; simultaneous browser causality is not inferred.",
-      "Response bodies are not retained.",
+      "Network content is retained only when selected; response bytes are browser-decoded, not compressed wire bytes.",
+      "Request bytes are limited to what Playwright exposes; not_exposed does not establish body absence or multipart file coverage.",
+      "Network content reads settle within 5 seconds each and never wait for unfinished responses or refetch them.",
+      "Playwright scenario events do not expose request initiator stacks; receipt order does not prove causality.",
       "Storage values are hashed only after declared-secret redaction.",
       ...(session.eventLimitations?.() ?? []),
       ...(session.mode === "connect"

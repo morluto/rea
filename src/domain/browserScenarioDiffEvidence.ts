@@ -98,11 +98,54 @@ export const actionState = (step: BrowserScenarioStep) => ({
 export const eventsFor = (
   capture: BrowserScenarioCapture,
   stepIndex: number,
-): readonly unknown[] =>
-  capture.events.items.flatMap(
-    ({ sequence: _sequence, step_index: eventStepIndex, ...event }) =>
-      eventStepIndex === stepIndex ? [event] : [],
+): readonly unknown[] => {
+  const sourceSteps = new Map(
+    capture.events.items.map(({ sequence, step_index }) => [
+      sequence,
+      step_index,
+    ]),
   );
+  return capture.events.items.flatMap<unknown>(
+    ({ sequence: _sequence, step_index: eventStepIndex, ...event }) => {
+      if (event.kind === "network-content") {
+        const { source_event_sequence: sourceSequence, ...content } = event;
+        return sourceSteps.get(sourceSequence) === stepIndex ? [content] : [];
+      }
+      return eventStepIndex === stepIndex ? [event] : [];
+    },
+  );
+};
+
+/** Different content selection is missing comparability, not an observed website change. */
+export const networkContentCoverageReason = (
+  before: BrowserScenarioCapture,
+  after: BrowserScenarioCapture,
+): string | undefined => {
+  const left = before.scenario.network_content;
+  const right = after.scenario.network_content;
+  if (left === undefined || right === undefined) {
+    const events = [...before.events.items, ...after.events.items];
+    if (
+      events.some((event) => event.kind === "network-content") ||
+      ((left === undefined) !== (right === undefined) &&
+        events.some(
+          (event) =>
+            event.kind === "request" ||
+            event.kind === "response" ||
+            event.kind === "request-failed" ||
+            event.kind === "request-finished" ||
+            event.kind === "request-unfinished",
+        ))
+    )
+      return "Network content selection is unknown in a legacy capture; capture both sides with matching content selection.";
+    return undefined;
+  }
+  return left.request_body !== right.request_body ||
+    left.response_body !== right.response_body ||
+    left.header_values !== right.header_values
+    ? "Network content selections differ; capture both sides with matching content selection before comparing network evidence."
+    : undefined;
+};
 
 /** Wrap one value as captured comparison evidence. */
 export const captured = <Value>(value: Value): CaptureState<Value> => ({

@@ -16,6 +16,8 @@ import {
   type BrowserScenarioEvent,
 } from "../domain/browserScenarioCapture.js";
 import type { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
+import type { BrowserNetworkContentSelection } from "../domain/browserNetworkEvidence.js";
+import { PlaywrightScenarioNetwork } from "./network/PlaywrightScenarioNetwork.js";
 
 type EventName =
   | "console"
@@ -40,6 +42,8 @@ interface EventCaptureOptions {
   readonly ownsContext?: boolean;
   readonly enabled: ReadonlySet<EventName>;
   readonly secrets: BrowserScenarioSecrets;
+  readonly network?: BrowserNetworkContentSelection;
+  readonly signal?: AbortSignal;
 }
 
 /** Arrival-ordered Playwright event capture with current-step attribution. */
@@ -52,9 +56,19 @@ export class PlaywrightScenarioEvents {
   private readonly ownsContext: boolean;
   private readonly pages = new Set<Page>();
   private readonly incompleteFamilies = new Set<EventName>();
+  private readonly network: PlaywrightScenarioNetwork | undefined;
+  private stopNetwork: (() => void) | undefined;
+  private sealed = false;
 
   constructor(options: EventCaptureOptions) {
-    this.enabled = options.enabled;
+    const network = options.network ?? {
+      request_body: false,
+      response_body: false,
+      header_values: false,
+    };
+    this.enabled = new Set(options.enabled);
+    if (network.request_body || network.response_body || network.header_values)
+      this.enabled = new Set([...this.enabled, "network"]);
     this.secrets = options.secrets;
     this.ownsContext = options.ownsContext === true;
     this.pages.add(options.page);
@@ -64,6 +78,13 @@ export class PlaywrightScenarioEvents {
       );
     if (this.enabled.has("network")) {
       const context = options.context ?? options.page.context();
+      const collector = new PlaywrightScenarioNetwork({
+        selection: network,
+        secrets: options.secrets,
+        emit: (event) => this.push(event),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      });
+      this.network = collector;
       const inScope = (request: Request): boolean => {
         if (this.ownsContext) return true;
         try {
@@ -75,15 +96,28 @@ export class PlaywrightScenarioEvents {
           return false;
         }
       };
-      context.on("request", (request) => {
-        if (inScope(request)) this.request("request", request);
-      });
-      context.on("response", (response) => {
-        if (inScope(response.request())) this.response(response);
-      });
-      context.on("requestfailed", (request) => {
-        if (inScope(request)) this.request("request-failed", request);
-      });
+      const onRequest = (request: Request) => {
+        if (inScope(request)) collector.request(request);
+      };
+      const onResponse = (response: Response) => {
+        if (inScope(response.request())) collector.response(response);
+      };
+      const onFailed = (request: Request) => {
+        if (inScope(request)) collector.failed(request);
+      };
+      const onFinished = (request: Request) => {
+        if (inScope(request)) collector.finished(request);
+      };
+      context.on("request", onRequest);
+      context.on("response", onResponse);
+      context.on("requestfailed", onFailed);
+      context.on("requestfinished", onFinished);
+      this.stopNetwork = () => {
+        context.off("request", onRequest);
+        context.off("response", onResponse);
+        context.off("requestfailed", onFailed);
+        context.off("requestfinished", onFinished);
+      };
     }
     this.observePage(options.page);
   }
@@ -100,18 +134,30 @@ export class PlaywrightScenarioEvents {
     return this.sequence;
   }
 
+  /** Drain selected network content and freeze the result before browser teardown. */
+  async finish(): Promise<void> {
+    this.stopNetwork?.();
+    this.stopNetwork = undefined;
+    try {
+      await this.network?.finish();
+    } finally {
+      this.sealed = true;
+    }
+  }
+
   /** Report selected popup event families with unrecoverable pre-discovery gaps. */
   limitations(): readonly string[] {
     const popupGaps = [...this.incompleteFamilies].map(
       (family) =>
         `Popup ${family} events before Page discovery are unavailable; later events are retained.`,
     );
+    const gaps = [...popupGaps, ...(this.network?.limitations() ?? [])];
     return this.enabled.has("network") && !this.ownsContext
       ? [
           "Shared-context network capture excludes requests without a known root or descendant Page frame.",
-          ...popupGaps,
+          ...gaps,
         ]
-      : popupGaps;
+      : gaps;
   }
 
   result(): {
@@ -126,7 +172,8 @@ export class PlaywrightScenarioEvents {
     };
   }
 
-  private push(event: UnindexedEvent): void {
+  private push(event: UnindexedEvent): number {
+    if (this.sealed) return this.sequence;
     this.sequence += 1;
     const parsed = browserScenarioEventSchema.parse({
       ...event,
@@ -134,6 +181,7 @@ export class PlaywrightScenarioEvents {
       step_index: this.stepIndex,
     });
     this.items.push(parsed);
+    return this.sequence;
   }
 
   private observePage(page: Page): void {
@@ -177,47 +225,6 @@ export class PlaywrightScenarioEvents {
       level: this.secrets.redact(message.type()),
       text: this.secrets.redact(message.text()),
       url: location.url === "" ? null : this.safeUrl(location.url),
-    });
-  }
-
-  private request(kind: "request" | "request-failed", request: Request): void {
-    const observation = {
-      method: this.secrets.redact(request.method()),
-      url: this.safeUrl(request.url()),
-      resource_type: this.secrets.redact(request.resourceType()),
-      header_names: Object.keys(request.headers())
-        .map((name) => this.secrets.redact(name))
-        .sort(),
-    };
-    if (kind === "request-failed") {
-      this.push({
-        ...observation,
-        kind,
-        status: null,
-        failure: this.secrets.redact(request.failure()?.errorText ?? "unknown"),
-      });
-      return;
-    }
-    this.push({
-      ...observation,
-      kind,
-      status: null,
-      failure: null,
-    });
-  }
-
-  private response(response: Response): void {
-    const request = response.request();
-    this.push({
-      kind: "response",
-      method: this.secrets.redact(request.method()),
-      url: this.safeUrl(response.url()),
-      resource_type: this.secrets.redact(request.resourceType()),
-      status: response.status(),
-      header_names: Object.keys(response.headers())
-        .map((name) => this.secrets.redact(name))
-        .sort(),
-      failure: null,
     });
   }
 

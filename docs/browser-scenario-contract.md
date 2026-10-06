@@ -194,6 +194,63 @@ external browser without closing it. The request itself defines the operation;
 there is no additional REA grant step. The browser and host still enforce their
 own access and process rules.
 
+## Network evidence
+
+`capture.events: ["network"]` retains request, response, completion, failure,
+and unfinished-request metadata. Select content independently:
+
+```json
+{
+  "capture": {
+    "network": {
+      "request_body": true,
+      "response_body": true,
+      "header_values": true
+    }
+  }
+}
+```
+
+All three options default to `false`. Any selected network content also enables
+network metadata observation; listing `network` in `events` is then optional.
+Each observed request object receives a capture-scoped `transaction_id`.
+Requests sharing a URL remain distinct. Redirects link to the preceding
+transaction only when it was observed; a null predecessor does not establish
+that no earlier hop existed. Older captures without IDs remain readable and
+their transaction association is unknown.
+
+`scenario.network_content` records the resolved content selection. Comparing
+captures with different selection, or legacy captures without that coverage
+information, reports network evidence as unknown with a recovery instruction.
+Capturing more data alone does not establish a website change.
+
+`network-content` events reference the exact request or response event through
+`source_event_sequence`. They include independently typed headers and body
+states. Captured bodies retain base64 bytes, byte count, media type, and SHA-256
+of the retained bytes. Request bytes are those exposed by Playwright; a
+`not_exposed` request body does not prove absence or complete multipart file
+coverage. Response bytes are decoded by the browser, not the compressed wire
+representation. No later fetch is substituted for the original response.
+Headers preserve producer order and duplicates. Authorization,
+Proxy-Authorization, Cookie, and Set-Cookie values are null with
+`redacted: true`; ordinary values remain intact. Declared UTF-8 secret values
+and their standard URI/form or JSON-escaped representations are replaced without
+decoding unrelated binary bytes. Other encodings are not interpreted. Digests describe the
+retained representation after redaction.
+
+Only completed responses are read. At the end of the final step, observation
+stops; requests still in flight emit `request-unfinished`, and their observed
+responses have explicitly unavailable bodies. This cutoff does not wait for
+long-lived streaming connections. Already-started content reads settle before
+browser cleanup, with a provider-owned five-second timeout per read and
+cancellation support. Failed or unexposed reads retain per-content states and make selected
+event coverage incomplete. Body events can arrive during later steps or final
+drain; event bounds describe receipt during the step, while the source event
+reference establishes the transaction phase. Comparison attributes content to
+its source event's step and excludes the sequence reference from normalization.
+Playwright scenario capture does not supply initiator stacks; passive CDP
+observation retains its own initiator evidence.
+
 ## Scenario comparison
 
 `compare_web_captures` and `compare-web-captures` also accept two complete

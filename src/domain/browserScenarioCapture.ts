@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { browserNetworkContentSelectionValuesSchema } from "./browserNetworkEvidence.js";
 
 import {
   browserScenarioCompletenessSchema,
@@ -33,6 +34,7 @@ export const browserScenarioCaptureSchema = z
       start_origin: z.string().min(1),
       action_count: z.number().int().min(1),
       secret_references: z.array(z.string().min(1)),
+      network_content: browserNetworkContentSelectionValuesSchema.optional(),
     }),
     duration_ms: z.number().int().min(0),
     steps: z.array(browserScenarioStepSchema).min(1),
@@ -45,6 +47,30 @@ export const browserScenarioCaptureSchema = z
     limitations: z.array(z.string().min(1)),
   })
   .superRefine((capture, context) => {
+    const bySequence = new Map(
+      capture.events.items.map((event) => [event.sequence, event]),
+    );
+    if (bySequence.size !== capture.events.items.length)
+      context.addIssue({
+        code: "custom",
+        path: ["events", "items"],
+        message: "Event sequence numbers must be unique",
+      });
+    for (const [index, event] of capture.events.items.entries()) {
+      if (event.kind !== "network-content") continue;
+      const source = bySequence.get(event.source_event_sequence);
+      if (
+        source?.kind !== event.phase ||
+        source.transaction_id !== event.transaction_id ||
+        source.sequence >= event.sequence
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["events", "items", index, "source_event_sequence"],
+          message:
+            "Network content must reference an earlier matching transaction phase",
+        });
+    }
     if (capture.events.retained !== capture.events.items.length)
       context.addIssue({
         code: "custom",
