@@ -156,6 +156,16 @@ describe("captured script publication boundary", () => {
 });
 
 describe("captured script publication failures and cleanup", () => {
+  it("preserves adapter-reported limitations without strengthening their string contract", async () => {
+    const { input } = await setup();
+    const capture = {
+      ...selectScriptCapture(scriptScenarioFixture()),
+      limitations: ["", "producer-reported limitation"],
+    };
+    const result = await publishWebScripts(input, capture, "a".repeat(64));
+    expect(result.limitations.slice(0, 2)).toEqual(capture.limitations);
+  });
+
   it.each([
     Buffer.from("{"),
     Buffer.from([255, 254]),

@@ -87,7 +87,7 @@ export const webScriptExportManifestSchema = z.strictObject({
     })
     .nullable(),
   scripts: z.array(exportedWebScriptSchema),
-  limitations: z.array(z.string().min(1)),
+  limitations: z.array(z.string()),
 });
 
 /** Verified publication including the digest of the persisted manifest. */
