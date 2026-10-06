@@ -36,7 +36,8 @@ export const validateCliOutputArguments = (
   let tokenWindow = false;
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index];
-    if (argument === "--") break;
+    // Incur scans builtins across `--` and accepts only the spaced --format form.
+    // Mirror its effective format so malformed requests still emit complete JSON.
     if (argument === "--json") {
       format = "json";
       continue;
@@ -47,10 +48,6 @@ export const validateCliOutputArguments = (
         format = value;
         index += 1;
       }
-      continue;
-    }
-    if (argument?.startsWith("--format=")) {
-      format = argument.slice("--format=".length);
       continue;
     }
     if (argument === "--token-limit" || argument === "--token-offset") {

@@ -58,6 +58,25 @@ describe("CLI output argument and sanitization boundary", () => {
   });
 
   workspaceCliTest(
+    "preserves complete JSON errors when native builtin flags follow unusual arguments",
+    async ({ cli }) => {
+      for (const arguments_ of [
+        ["providers", "--", "--json", "--token-limit", "5"],
+        ["providers", "--json", "--format=toon", "--token-limit", "5"],
+      ]) {
+        const result = await cli.run({ arguments: arguments_ });
+        expect(result.exitCode).toBe(1);
+        expect(result.stdout).not.toContain("[truncated:");
+        expect(JSON.parse(result.stdout)).toMatchObject({
+          ok: false,
+          error: { code: "UNSUPPORTED_OUTPUT_COMBINATION" },
+        });
+      }
+    },
+    CLI_INTEGRATION_TIMEOUT_MS,
+  );
+
+  workspaceCliTest(
     "fails before emitting a truncated JSON document",
     async ({ cli }) => {
       const result = await cli.run({
