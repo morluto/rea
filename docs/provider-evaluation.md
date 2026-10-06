@@ -4,7 +4,7 @@ Ghidra read-only analysis is available on Linux x64 and macOS x64/arm64.
 Install Ghidra 12.1.4 and a full 64-bit JDK 21 separately, then configure REA to
 use them. macOS installations need the matching native decompiler.
 
-REA imports one target into a temporary project and exposes 22 read-only
+REA imports one target into a temporary project and exposes 25 read-only
 operations after analysis completes. They cover inventories, search,
 decompilation, assembly, function metadata, resolved calls, references, control
 flow, instructions, and recovered types. Results identify the provider version,
@@ -13,7 +13,7 @@ Ghidra does not expose Hopper's GUI or annotation operations.
 
 Windows x64 P0 supports native x86-64 PE applications on local NTFS with
 bundled Job Object ownership, protected runtime DACLs, and handle-based path
-admission. Real ordinary-user verification covers all 22 read-only operations
+admission. Real ordinary-user verification covers all 25 read-only operations
 through the packaged CLI and MCP, target integrity, and cleanup. This remains
 an experimental boundary; see [Windows Ghidra P0](windows-ghidra-p0.md) and
 [issue #527](https://github.com/morluto/rea/issues/527).
@@ -74,7 +74,7 @@ token-free endpoint record, but cannot start while the native authority is
 unavailable. Its `taskkill` cleanup code does not establish Job Object ownership,
 private DACLs, or reparse-safe paths.
 
-The provider catalog lists the 22 Ghidra operations. GUI cursor,
+The provider catalog lists the 25 Ghidra operations. GUI cursor,
 navigation, and mutation operations remain absent; the router therefore
 reports them unavailable instead of borrowing Hopper semantics or inferring
 capability from a successful import.
@@ -124,7 +124,7 @@ these tools before compilation. Keeping this matrix separate lets Linux
 host/provider acceptance run with only the host compiler.
 
 `npm run verify:ghidra:windows` checks the source-owned native x86-64 PE
-fixture, all 22 read-only operations, target/snapshot/import SHA-256 linkage,
+fixture, all 25 read-only operations, target/snapshot/import SHA-256 linkage,
 and project, endpoint, process, and runtime cleanup. The independent native
 lane checks DACLs, handle admission, cancellation, and Job Object lifecycle.
 `npm run verify:ghidra:windows:package` packs and installs REA into an isolated
@@ -154,7 +154,7 @@ only the generic process mechanisms.
 
 | Provider                                                                                    | License / automation surface                                                                                                                                           | What it brings                                                                                                                                          | REA fit and blockers                                                                                                                                                                                                                                                                                                                       |
 | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [Ghidra](https://github.com/NationalSecurityAgency/ghidra)                                  | Apache-2.0 source license; `analyzeHeadless`, Java APIs, and PyGhidra                                                                                                  | Static analysis, multiple processors and formats, scripting, and project/database workflows                                                             | 22 read-only operations shipped on Linux/macOS with installation checks, temporary projects, a serial API queue, and real ELF/PE/Mach-O conformance. Experimental Windows x64 P0 supports native x86-64 PE on local NTFS with bundled native controls and ordinary-user CLI/MCP verification; GUI and mutation operations are unavailable. |
+| [Ghidra](https://github.com/NationalSecurityAgency/ghidra)                                  | Apache-2.0 source license; `analyzeHeadless`, Java APIs, and PyGhidra                                                                                                  | Static analysis, multiple processors and formats, scripting, and project/database workflows                                                             | 25 read-only operations shipped on Linux/macOS with installation checks, temporary projects, a serial API queue, and real ELF/PE/Mach-O conformance. Experimental Windows x64 P0 supports native x86-64 PE on local NTFS with bundled native controls and ordinary-user CLI/MCP verification; GUI and mutation operations are unavailable. |
 | [Rizin](https://github.com/rizinorg/rizin) / [rz-pipe](https://github.com/rizinorg/rz-pipe) | Rizin repository contains LGPL-3.0 and GPL-3.0 components; `rizin`, `rz-bin`, and language bridges through `rzpipe`                                                    | Portable CLI analysis, disassembly/debugging, many architectures and file formats, JSON command output                                                  | Good candidate for a process-backed Linux provider and fast metadata fallback. License/component inventory must be preserved; command output needs version-pinned parsers and semantic conformance before evidence is trusted.                                                                                                             |
 | [LIEF](https://github.com/lief-project/LIEF)                                                | Apache-2.0; C++, Python, and other bindings                                                                                                                            | Deterministic parsing and modification of ELF, PE, Mach-O, COFF, and related executable formats; headers, sections, symbols, relocations, and functions | Best near-term complement, not a decompiler replacement. It can cover format metadata and artifact evidence without a long-lived analysis process; function semantics, pseudocode, CFG, and cross-reference parity remain out of scope unless separately demonstrated.                                                                     |
 | [Binary Ninja](https://docs.binary.ninja/dev/index.html)                                    | API/documentation components are MIT, while the analysis product is licensed by edition; commercial, Ultimate, or Headless license is required for headless automation | Python/Core/C++/Rust APIs, headless loading, IL layers, function analysis, plugins, and configurable analysis                                           | Strong technical fit for a native provider, especially function dossiers. Commercial licensing, license-secret handling, native runtime packaging, and multithreaded lifecycle rules are material deployment blockers.                                                                                                                     |

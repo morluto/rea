@@ -132,7 +132,16 @@ try {
         ],
         {
           encoding: "utf8",
-          env: { ...process.env, REA_TEST_PRIVATE_RUNTIME_PATH: runtime.path },
+          // A pwsh caller can supply module paths incompatible with the
+          // Windows PowerShell observer. Let that observer build its own path.
+          env: {
+            ...Object.fromEntries(
+              Object.entries(process.env).filter(
+                ([name]) => name.toLowerCase() !== "psmodulepath",
+              ),
+            ),
+            REA_TEST_PRIVATE_RUNTIME_PATH: runtime.path,
+          },
         },
       ),
     );

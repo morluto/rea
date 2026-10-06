@@ -12,7 +12,12 @@ additional permission flag or degraded mode is required.
 - an operator-installed official Ghidra 12.1.4 distribution;
 - a 64-bit full JDK 21;
 - an explicit native, non-managed, non-DLL x86-64 PE application; and
-- the 22 read-only Ghidra inventory and function-analysis operations.
+- the 25 read-only Ghidra inventory, memory, and function-analysis operations.
+
+Loaded memory reads and file offsets preserve Ghidra's observed source mappings.
+PE load-image inspection returns measurements with an explicit unsupported
+attestation status; independent format-specific verification currently supports
+DOS MZ only.
 
 This boundary does not establish general Windows feature parity. Ghidra GUI
 state, annotations, other target architectures and formats, and Hopper-only

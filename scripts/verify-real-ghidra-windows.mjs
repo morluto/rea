@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { access } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -126,6 +126,27 @@ try {
   );
   if (procedure === undefined)
     throw new Error("Windows Ghidra fixture exposed no local procedure");
+
+  await inventory("inspect_native_load_image", {});
+  const memory = await inventory("read_bytes", {
+    address: procedure.address,
+    length: 16,
+  });
+  const mapping = await inventory("address_to_file_offset", {
+    address: procedure.address,
+  });
+  const sourceBytes = await readFile(targetPath);
+  if (
+    memory.complete !== true ||
+    memory.returned_bytes !== 16 ||
+    memory.bytes_hex !==
+      sourceBytes
+        .subarray(mapping.file_offset, mapping.file_offset + 16)
+        .toString("hex")
+  )
+    throw new Error(
+      "Windows loaded bytes disagree with the observed source-file mapping",
+    );
 
   await inventory("address_name", { address: procedure.address });
   const resolvedAddress = await inventory("procedure_address", {

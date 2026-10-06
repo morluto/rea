@@ -47,8 +47,8 @@ GitHub Copilot CLI, Command Code, and VS Code using each client's configuration 
 
 Ghidra analysis supports Linux x64 and macOS x64/arm64 with Ghidra 12.1.4 and a
 64-bit full JDK 21. macOS also requires the matching native decompiler. The
-adapter exposes ten inventory operations and twelve function-analysis
-operations, for 22 read-only operations total. Approved setup saves verified
+adapter exposes thirteen inventory operations and twelve function-analysis
+operations, for 25 read-only operations total. Approved setup saves verified
 installation paths in agent configurations without installing or changing
 Ghidra or Java.
 
@@ -60,7 +60,7 @@ and exact commands.
 Experimental Windows x64 P0 now supplies bundled Job Object ownership,
 protected runtime DACLs, and handle-based admission for native x86-64 PE
 applications on local NTFS. Real ordinary-user CLI/MCP verification covers
-all 22 read-only operations and cleanup. The [Windows P0 guide](windows-ghidra-p0.md)
+all 25 read-only operations and cleanup. The [Windows P0 guide](windows-ghidra-p0.md)
 describes this boundary and unverified broader coverage.
 
 ## Ghidra maintenance boundary

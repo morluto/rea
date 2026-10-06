@@ -219,10 +219,13 @@ It requires Ghidra 12.1.4 and a 64-bit full JDK 21. On macOS, the installation
 must include the native decompiler for the host architecture; REA does not
 build it or change Gatekeeper quarantine settings.
 
-The adapter exposes 22 read-only operations: ten inventory/name/search
+The adapter exposes 25 read-only operations: thirteen inventory/name/search
 operations and twelve function-analysis operations. These cover metadata,
 decompilation, assembly, resolved calls, typed references, xrefs, function
-dossiers, instructions, and recovered data types. GUI controls and annotation
+dossiers, instructions, recovered data types, measured load mappings, loaded
+memory bytes, and observed file offsets. Independent load-image attestation
+currently supports DOS MZ only; PE returns its measurements with that limitation.
+GUI controls and annotation
 changes require Hopper.
 
 Windows P0 admits native x86-64 PE applications on fixed local NTFS volumes.

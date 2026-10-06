@@ -200,7 +200,7 @@ rea providers --json
 
 Setup checks the installations and saves their paths in your selected agents' configuration after approval. Ghidra and Java must already be installed; REA does not download or change them.
 
-The adapter exposes **22 read-only operations** for functions, strings, symbols, assembly, decompilation, calls, references, instructions, and data types. These also support REA's overview, search, call-graph, and function-analysis workflows. Ghidra does not provide GUI controls or annotation changes through REA.
+The adapter exposes **25 read-only operations** for functions, strings, symbols, assembly, decompilation, calls, references, instructions, and data types. These also support REA's overview, search, call-graph, and function-analysis workflows. Ghidra does not provide GUI controls or annotation changes through REA.
 
 REA analyzes a temporary copy of the target and removes the temporary project when the session closes. Results identify what Ghidra observed and what it could not resolve. Decompilation produces pseudocode rather than the original source.
 
@@ -522,7 +522,7 @@ Use `--provider`, or `provider_id` in MCP, to choose Hopper or Ghidra for a targ
 
 With `auto`, REA selects the only available tool that supports the target. If both are available, specify one before opening the target. The session keeps that choice until you explicitly switch or close it; a failure never silently switches tools. Artifact-only analysis can work without a native analysis tool.
 
-Run `rea providers` and `rea capabilities` to check availability and supported operations. Ghidra exposes 22 read-only operations on supported Linux and macOS hosts. GUI controls and annotation changes require Hopper. Windows Ghidra P0 supports native x86-64 PE applications on local NTFS with bundled native controls.
+Run `rea providers` and `rea capabilities` to check availability and supported operations. Ghidra exposes 25 read-only operations on supported Linux and macOS hosts. GUI controls and annotation changes require Hopper. Windows Ghidra P0 supports native x86-64 PE applications on local NTFS with bundled native controls.
 
 The session also reports active work and cleanup status. If a caller times out, the analysis tool may still be busy; `analysis_activity` reports that state. A `cleanup_incomplete` result identifies resources whose shutdown or removal could not be verified. See [provider selection and analysis profiles](docs/adr/0001-provider-selection-and-analysis-profiles.md) for session, cache, and process-tracking details.
 

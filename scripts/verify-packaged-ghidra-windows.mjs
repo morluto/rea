@@ -207,6 +207,28 @@ try {
       procedures.find((item) => item.procedure?.external === false) ??
       procedures[0];
     assert.ok(procedure !== undefined);
+    const loadImage = await call("inspect_native_load_image", {});
+    assert.equal(
+      loadImage.status,
+      "unsupported",
+      "PE load-image attestation must remain explicitly unsupported.",
+    );
+    assert.ok(loadImage.observations !== undefined);
+    const memory = await call("read_bytes", {
+      address: procedure.address,
+      length: 16,
+    });
+    const mapping = await call("address_to_file_offset", {
+      address: procedure.address,
+    });
+    assert.equal(memory.complete, true);
+    assert.equal(memory.returned_bytes, 16);
+    assert.equal(
+      memory.bytes_hex,
+      (await readFile(target))
+        .subarray(mapping.file_offset, mapping.file_offset + 16)
+        .toString("hex"),
+    );
     await call("address_name", { address: procedure.address });
     assert.equal(
       await call("procedure_address", { procedure: procedure.value }),
