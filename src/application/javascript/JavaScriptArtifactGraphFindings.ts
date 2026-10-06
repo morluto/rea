@@ -268,11 +268,12 @@ const addSourceMapEdge = (
   context: JavaScriptArtifactGraphContext,
   input: FindingInput<StaticSourceMap>,
 ): void => {
-  const resolvedPath = resolveArtifactPath(
-    input.value.declared_url,
-    input.file.path,
-    context.filesByPath,
-  );
+  const resolvedPath = resolveArtifactPathByContext({
+    declaredPath: input.value.declared_url,
+    sourcePath: input.file.path,
+    context: "url-reference",
+    files: context.filesByPath,
+  }).resolved_path;
   const resolvedFile =
     resolvedPath === null ? undefined : context.filesByPath.get(resolvedPath);
   const resolvedNode =
@@ -341,17 +342,26 @@ const resolveReference = (
       ? null
       : { path: `${sourcePath}#module:${specifier}`, file, node: module };
   }
-  const path = resolveArtifactPath(
-    specifier,
-    sourcePath,
-    context.filesByPath,
-    reference.kind === "require"
-      ? "require"
-      : reference.kind === "static-import" ||
-          reference.kind === "dynamic-import"
-        ? "import"
-        : undefined,
-  );
+  // Worker scripts are URLs relative to the script, not module specifiers.
+  const path =
+    reference.kind === "worker" || reference.kind === "service-worker"
+      ? resolveArtifactPathByContext({
+          declaredPath: specifier,
+          sourcePath,
+          context: "url-reference",
+          files: context.filesByPath,
+        }).resolved_path
+      : resolveArtifactPath(
+          specifier,
+          sourcePath,
+          context.filesByPath,
+          reference.kind === "require"
+            ? "require"
+            : reference.kind === "static-import" ||
+                reference.kind === "dynamic-import"
+              ? "import"
+              : undefined,
+        );
   if (path === null) return null;
   const file = context.filesByPath.get(path);
   const node = context.fileNodes.get(path);

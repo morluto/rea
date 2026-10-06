@@ -13,7 +13,8 @@ type ArtifactPathResolutionContext =
   | "package-entrypoint"
   | "filesystem-expression"
   | "module-specifier"
-  | "html-reference";
+  | "html-reference"
+  | "url-reference";
 
 type UnresolvedArtifactPathStatus =
   | "not-found"
@@ -127,10 +128,15 @@ const contextualCandidate = (
   const { context } = input;
   const declared =
     context === "html-reference" ||
+    context === "url-reference" ||
     (context === "module-specifier" && input.moduleKind !== "require")
       ? stripQueryAndFragment(input.declaredPath)
       : input.declaredPath;
   if (context === "html-reference") return htmlCandidate(input);
+  if (context === "url-reference" && declared.startsWith("//"))
+    return unresolvedOutcome(input, "external", [
+      "Protocol-relative URLs are outside this local artifact path context.",
+    ]);
   if (context === "module-specifier") {
     const fileUrl = fileUrlPath(declared);
     if (fileUrl !== undefined) return fileUrl;
