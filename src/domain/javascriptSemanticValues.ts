@@ -205,11 +205,16 @@ const evaluateArray = (
     if (t.isSpreadElement(element)) {
       unknownItems = true;
       omittedItems = null;
-      continue;
+      // Subsequent elements have no fixed index after an unknown-length spread.
+      break;
     }
     if (element === null) {
       unknownItems = true;
       if (omittedItems !== null) omittedItems += 1;
+      items.push({
+        status: "unknown",
+        reason: "Array hole has no primitive value.",
+      });
       continue;
     }
     items.push(evaluateExpression(element, nestedContext(context)));
@@ -292,8 +297,18 @@ const projectValue = (
           reason: `Object property ${key} was not observed.`,
         };
       current = property.value;
-    } else if (current.status === "array" && typeof key === "number") {
-      const item = current.items[key];
+    } else if (current.status === "array") {
+      const index = typeof key === "number" ? key : Number(key);
+      if (
+        !Number.isSafeInteger(index) ||
+        index < 0 ||
+        String(index) !== String(key)
+      )
+        return {
+          status: "unknown",
+          reason: `Array property ${String(key)} is not a canonical index.`,
+        };
+      const item = current.items[index];
       if (item === undefined)
         return {
           status: "unknown",

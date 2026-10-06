@@ -290,3 +290,50 @@ describe("primitive addition values", () => {
     });
   });
 });
+
+describe("array positional value recovery", () => {
+  it("keeps holes at their actual destructuring indices", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      const list = ["zero", , "two"];
+      const [first, second, third] = list;
+    `);
+    expect(topLevelBinding(ir, "first").value).toEqual({
+      status: "literal",
+      value: "zero",
+    });
+    expect(topLevelBinding(ir, "second").value.status).toBe("unknown");
+    expect(topLevelBinding(ir, "third").value).toEqual({
+      status: "literal",
+      value: "two",
+    });
+  });
+
+  it("projects canonical array indices without treating arbitrary strings as indices", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      const list = ["zero", "one"];
+      const numeric = list[1];
+      const quoted = list["1"];
+      const leadingZero = list["01"];
+      const negative = list[-1];
+    `);
+    for (const name of ["numeric", "quoted"])
+      expect(topLevelBinding(ir, name).value).toEqual({
+        status: "literal",
+        value: "one",
+      });
+    for (const name of ["leadingZero", "negative"])
+      expect(topLevelBinding(ir, name).value.status).toBe("unknown");
+  });
+
+  it("does not shift trailing values across an unknown spread", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      const values = ["first", ...unknownValues, "last"];
+      const [first, second] = values;
+    `);
+    expect(topLevelBinding(ir, "first").value).toEqual({
+      status: "literal",
+      value: "first",
+    });
+    expect(topLevelBinding(ir, "second").value.status).toBe("unknown");
+  });
+});
