@@ -15,7 +15,12 @@ import {
 import type { AppConfig } from "../config.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
-import { jsonObjectSchema } from "../domain/jsonValue.js";
+import { jsonObjectSchema, jsonValueSchema } from "../domain/jsonValue.js";
+import {
+  nativeLoadImageObservationSchema,
+  nativeLoadImageSchema,
+} from "../domain/nativeLoadImage.js";
+import { attestGhidraDosLoadImage } from "./GhidraLoadImageValues.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -71,7 +76,7 @@ const SUPPORTED_ARCHITECTURES = new Set(["x86", "x86_64", "arm", "arm64"]);
 export type GhidraProviderClientFactory = (
   options: GhidraClientOptions,
 ) => Pick<GhidraClient, "start" | "callTool" | "close"> &
-  Partial<Pick<GhidraClient, "runtimeLineage">>;
+  Partial<Pick<GhidraClient, "runtimeLineage" | "readTargetSnapshot">>;
 
 /** Ghidra candidate backed by an isolated read-only headless import. */
 export class GhidraProvider implements AnalysisProviderCandidate {
@@ -277,8 +282,52 @@ export class GhidraProvider implements AnalysisProviderCandidate {
           ? parseGhidraFunctionResult(operation, called.value)
           : parseGhidraInventoryResult(operation, called.value);
         if (!result.ok) return result;
+        let normalized = result.value;
+        if (operation === "inspect_native_load_image") {
+          const observations = nativeLoadImageObservationSchema.parse(
+            result.value,
+          );
+          if (target.format !== "dos-mz") {
+            normalized = jsonValueSchema.parse(
+              nativeLoadImageSchema.parse({
+                status: "unsupported",
+                reason:
+                  "Independent load-image verification currently supports DOS MZ targets only.",
+                observations,
+                limitations: [
+                  "Other formats expose measured mappings and source identities; no format-specific verification was performed.",
+                ],
+              }),
+            );
+          } else {
+            if (client.readTargetSnapshot === undefined)
+              return err(
+                new ProviderAdapterError("ghidra", operation, {
+                  diagnostics: {
+                    reason:
+                      "The Ghidra client does not expose its immutable target snapshot for independent load-image verification.",
+                  },
+                }),
+              );
+            const snapshot = await client.readTargetSnapshot();
+            if (!snapshot.ok)
+              return err(projectSessionError(operation, snapshot.error));
+            const attested = attestGhidraDosLoadImage(
+              snapshot.value,
+              target.sha256 ?? "",
+              observations,
+            );
+            if (!attested.ok)
+              return err(
+                new ProviderAdapterError("ghidra", operation, {
+                  diagnostics: { reason: attested.error },
+                }),
+              );
+            normalized = jsonValueSchema.parse(attested.value);
+          }
+        }
         return ok(
-          createAnalysisExecution(result.value, committedProfile.provider, {
+          createAnalysisExecution(normalized, committedProfile.provider, {
             rawResult: called.value,
             analysisProfile: committedProfile,
             limitations: [

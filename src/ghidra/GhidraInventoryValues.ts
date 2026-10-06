@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { nativeLoadImageObservationSchema } from "../domain/nativeLoadImage.js";
 
 import {
   AnalysisInputError,
@@ -13,6 +14,9 @@ import { err, ok, type Result } from "../domain/result.js";
 
 /** Read-only direct inventory operations admitted by the Ghidra adapter. */
 export const GHIDRA_INVENTORY_OPERATIONS = [
+  "inspect_native_load_image",
+  "read_bytes",
+  "address_to_file_offset",
   "address_name",
   "list_documents",
   "list_names",
@@ -49,6 +53,16 @@ const searchInput = {
 };
 
 const inputSchemas = {
+  inspect_native_load_image: z.strictObject({}),
+  read_bytes: z.strictObject({
+    document,
+    address: explicitAddress,
+    length: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).default(256),
+  }),
+  address_to_file_offset: z.strictObject({
+    document,
+    address: explicitAddress,
+  }),
   address_name: z.object({ document, address: explicitAddress }).strict(),
   list_documents: z.object({}).strict(),
   list_names: z.object({ document, address: filteredAddress }).strict(),
@@ -217,6 +231,30 @@ const containingProcedure = z.discriminatedUnion("found", [
 ]);
 
 const resultSchemas = {
+  inspect_native_load_image: nativeLoadImageObservationSchema,
+  read_bytes: z
+    .strictObject({
+      address: canonicalAddress,
+      requested_bytes: z.number().int().min(1),
+      returned_bytes: z.number().int().min(0),
+      bytes_hex: z.string().regex(/^(?:[a-f0-9]{2})*$/u),
+      complete: z.boolean(),
+    })
+    .superRefine((value, context) => {
+      if (
+        value.returned_bytes * 2 !== value.bytes_hex.length ||
+        value.returned_bytes > value.requested_bytes ||
+        value.complete !== (value.returned_bytes === value.requested_bytes)
+      )
+        context.addIssue({
+          code: "custom",
+          message: "Read-byte length and completeness disagree",
+        });
+    }),
+  address_to_file_offset: z.strictObject({
+    address: canonicalAddress,
+    file_offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  }),
   address_name: z.string().nullable(),
   list_documents: z.array(z.string().min(1)).length(1),
   list_names: z.array(symbolItem),

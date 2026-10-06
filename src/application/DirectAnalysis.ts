@@ -42,6 +42,9 @@ export {
 } from "./DirectAnalysisStatus.js";
 
 type DirectAnalysisTool =
+  | "inspect_native_load_image"
+  | "read_bytes"
+  | "address_to_file_offset"
   | "binary_overview"
   | "procedure_pseudo_code"
   | "read_function_instructions"

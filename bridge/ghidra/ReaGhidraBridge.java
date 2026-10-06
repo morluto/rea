@@ -73,6 +73,11 @@ import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.InstructionIterator;
 import ghidra.program.model.listing.Variable;
 import ghidra.program.model.mem.MemoryBlock;
+import ghidra.program.model.mem.MemoryBlockSourceInfo;
+import ghidra.program.database.mem.FileBytes;
+import ghidra.program.model.address.SegmentedAddress;
+import ghidra.program.model.reloc.Relocation;
+import java.io.ByteArrayOutputStream;
 import ghidra.program.model.symbol.RefType;
 import ghidra.program.model.symbol.Reference;
 import ghidra.program.model.symbol.ReferenceIterator;
@@ -112,6 +117,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
         "params"
     );
     private static final String[] CAPABILITIES = {
+        "inspect_native_load_image",
+        "read_bytes",
+        "address_to_file_offset",
         "ping",
         "shutdown",
         "address_name",
@@ -309,6 +317,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
             );
         }
         return switch (request.method) {
+            case "inspect_native_load_image" -> inspectNativeLoadImage(request.params);
+            case "read_bytes" -> readMemoryBytes(request.params);
+            case "address_to_file_offset" -> addressToFileOffset(request.params);
             case "address_name" -> addressName(request.params);
             case "list_documents" -> listDocuments(request.params);
             case "list_names" -> listNames(request.params);
@@ -368,6 +379,185 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.addProperty("analysis_timed_out", timedOut);
         result.add("capabilities", GSON.toJsonTree(CAPABILITIES));
         result.add("target", target);
+        return result;
+    }
+
+    private static String bytesHex(byte[] bytes) {
+        return java.util.HexFormat.of().formatHex(bytes);
+    }
+
+    private String hashFileBytes(FileBytes source, boolean modified) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        byte[] chunk = new byte[65536];
+        for (long offset = 0; offset < source.getSize();) {
+            monitor.checkCancelled();
+            int length = (int) Math.min(chunk.length, source.getSize() - offset);
+            int read = modified
+                ? source.getModifiedBytes(offset, chunk, 0, length)
+                : source.getOriginalBytes(offset, chunk, 0, length);
+            if (read != length) throw new IOException("Incomplete FileBytes read at " + offset);
+            digest.update(chunk, 0, read);
+            offset += read;
+        }
+        return bytesHex(digest.digest());
+    }
+
+    private String hashMemory(Address start, long length) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        byte[] chunk = new byte[65536];
+        for (long offset = 0; offset < length;) {
+            monitor.checkCancelled();
+            int count = (int) Math.min(chunk.length, length - offset);
+            int read = currentProgram.getMemory().getBytes(start.add(offset), chunk, 0, count);
+            if (read != count) throw new IOException("Incomplete memory read at " + start.add(offset));
+            digest.update(chunk, 0, read);
+            offset += read;
+        }
+        return bytesHex(digest.digest());
+    }
+
+    private JsonObject inspectNativeLoadImage(JsonObject params) throws Exception {
+        requireKeys(params, Set.of());
+        JsonObject result = new JsonObject();
+        result.addProperty("executable_format", currentProgram.getExecutableFormat());
+        result.addProperty("language_id", currentProgram.getLanguageID().getIdAsString());
+        result.addProperty("compiler_spec_id", currentProgram.getCompilerSpec().getCompilerSpecID().getIdAsString());
+        result.addProperty("image_base", canonicalAddress(currentProgram.getImageBase()));
+        result.addProperty("default_address_space", sessionDefaultAddressSpace.getName());
+        List<FileBytes> files = currentProgram.getMemory().getAllFileBytes();
+        JsonArray sources = new JsonArray();
+        for (FileBytes file : files) {
+            JsonObject source = new JsonObject();
+            source.addProperty("name", file.getFilename());
+            source.addProperty("size", file.getSize());
+            source.addProperty("original_sha256", hashFileBytes(file, false));
+            source.addProperty("modified_sha256", hashFileBytes(file, true));
+            sources.add(source);
+        }
+        result.add("source_files", sources);
+        JsonArray mappings = new JsonArray();
+        for (MemoryBlock block : currentProgram.getMemory().getBlocks()) {
+            for (MemoryBlockSourceInfo source : block.getSourceInfos()) {
+                monitor.checkCancelled();
+                JsonObject mapping = new JsonObject();
+                mapping.addProperty("block", block.getName());
+                mapping.addProperty("start", canonicalAddress(source.getMinAddress()));
+                mapping.addProperty("end", canonicalAddress(source.getMaxAddress()));
+                mapping.addProperty("address_space", source.getMinAddress().getAddressSpace().getName());
+                mapping.addProperty("initialized", block.isInitialized());
+                mapping.addProperty("loaded", block.isLoaded());
+                mapping.addProperty("overlay", block.isOverlay());
+                mapping.addProperty("length", source.getLength());
+                FileBytes backing = source.getFileBytes().orElse(null);
+                int sourceIndex = backing == null ? -1 : files.indexOf(backing);
+                if (sourceIndex < 0) mapping.add("source_file_index", JsonNull.INSTANCE);
+                else mapping.addProperty("source_file_index", sourceIndex);
+                long offset = source.getFileBytesOffset();
+                if (offset < 0) mapping.add("file_offset", JsonNull.INSTANCE);
+                else mapping.addProperty("file_offset", offset);
+                if (block.isInitialized()) mapping.addProperty("sha256", hashMemory(source.getMinAddress(), source.getLength()));
+                else mapping.add("sha256", JsonNull.INSTANCE);
+                mappings.add(mapping);
+            }
+        }
+        result.add("mappings", mappings);
+        JsonArray relocations = new JsonArray();
+        Iterator<Relocation> iterator = currentProgram.getRelocationTable().getRelocations();
+        while (iterator.hasNext()) {
+            monitor.checkCancelled();
+            Relocation relocation = iterator.next();
+            Address location = relocation.getAddress();
+            JsonObject row = new JsonObject();
+            row.addProperty("address", canonicalAddress(location));
+            if (location instanceof SegmentedAddress segmented) {
+                row.addProperty("segment", segmented.getSegment());
+                row.addProperty("offset", segmented.getSegmentOffset());
+            } else {
+                row.add("segment", JsonNull.INSTANCE);
+                row.add("offset", JsonNull.INSTANCE);
+            }
+            row.addProperty("status", relocation.getStatus().toString());
+            row.addProperty("type", relocation.getType());
+            row.add("values", GSON.toJsonTree(relocation.getValues() == null ? new long[0] : relocation.getValues()));
+            byte[] original = relocation.getBytes();
+            row.add("original_bytes_hex", original == null ? JsonNull.INSTANCE : GSON.toJsonTree(bytesHex(original)));
+            if (original != null && original.length > 0) {
+                byte[] memory = new byte[original.length];
+                int read = currentProgram.getMemory().getBytes(location, memory);
+                row.add("memory_bytes_hex", read == memory.length ? GSON.toJsonTree(bytesHex(memory)) : JsonNull.INSTANCE);
+            } else row.add("memory_bytes_hex", JsonNull.INSTANCE);
+            relocations.add(row);
+        }
+        result.add("relocations", relocations);
+        List<Address> entries = new ArrayList<>();
+        var entryIterator = currentProgram.getSymbolTable().getExternalEntryPointIterator();
+        while (entryIterator.hasNext()) entries.add(entryIterator.next());
+        entries.sort(Address::compareTo);
+        JsonArray entryPoints = new JsonArray();
+        for (Address entry : entries) entryPoints.add(canonicalAddress(entry));
+        result.add("entry_points", entryPoints);
+        return result;
+    }
+
+    private JsonObject readMemoryBytes(JsonObject params) throws Exception {
+        requireKeys(params, Set.of("document", "address", "length"));
+        requireDocument(params);
+        Address start = requireAddress(params, "address");
+        JsonElement requested = params.get("length");
+        long length;
+        try {
+            if (requested == null || !requested.isJsonPrimitive() || !requested.getAsJsonPrimitive().isNumber())
+                throw new IllegalArgumentException();
+            length = requested.getAsBigDecimal().longValueExact();
+            if (length < 1 || length > 9007199254740991L) throw new IllegalArgumentException();
+        } catch (RuntimeException failure) {
+            throw new RequestFailure("invalid_request", "Byte length must be a positive safe integer");
+        }
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        byte[] chunk = new byte[65536];
+        for (long offset = 0; offset < length;) {
+            monitor.checkCancelled();
+            Address at;
+            try { at = start.addNoWrap(offset); }
+            catch (Exception endOfSpace) { break; }
+            MemoryBlock block = currentProgram.getMemory().getBlock(at);
+            if (block == null || !block.isInitialized()) break;
+            int count = (int) Math.min(chunk.length, Math.min(length - offset, block.getEnd().subtract(at) + 1));
+            int read = currentProgram.getMemory().getBytes(at, chunk, 0, count);
+            bytes.write(chunk, 0, read);
+            if (read != count) break;
+            offset += read;
+        }
+        JsonObject result = new JsonObject();
+        result.addProperty("address", canonicalAddress(start));
+        result.addProperty("requested_bytes", length);
+        result.addProperty("returned_bytes", bytes.size());
+        result.addProperty("bytes_hex", bytesHex(bytes.toByteArray()));
+        result.addProperty("complete", bytes.size() == length);
+        return result;
+    }
+
+    private JsonObject addressToFileOffset(JsonObject params) {
+        requireKeys(params, Set.of("document", "address"));
+        requireDocument(params);
+        Address address = requireAddress(params, "address");
+        MemoryBlock block = currentProgram.getMemory().getBlock(address);
+        if (block == null || !block.isInitialized())
+            throw new RequestFailure("invalid_request", "Address has no initialized file-backed memory: " + canonicalAddress(address));
+        Long fileOffset = null;
+        int mappings = 0;
+        for (MemoryBlockSourceInfo source : block.getSourceInfos()) {
+            if (!source.contains(address) || source.getFileBytes().isEmpty()) continue;
+            long offset = source.getFileBytesOffset(address);
+            if (offset < 0) continue;
+            fileOffset = offset;
+            mappings++;
+        }
+        if (mappings != 1)
+            throw new RequestFailure("invalid_request", "Address has " + mappings + " authoritative source mappings: " + canonicalAddress(address));
+        JsonObject result = new JsonObject();
+        result.addProperty("address", canonicalAddress(address));
+        result.addProperty("file_offset", fileOffset);
         return result;
     }
 

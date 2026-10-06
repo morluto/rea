@@ -106,6 +106,78 @@ try {
   assert.equal(target.kind, "executable");
   assert.equal(target.architecture, "x86");
   assert.equal(target.sha256, sha256);
+  const image = await call("inspect_native_load_image");
+  assert.equal(
+    image.status,
+    "verified",
+    JSON.stringify(image.checks?.filter((check) => !check.matched)),
+  );
+  assert.equal(image.target_sha256, sha256);
+  assert.equal(image.header_bytes, fixture.header_bytes);
+  assert.equal(image.module_bytes, fixture.module_bytes);
+  assert.equal(image.entry.linear_address, expected.entry);
+  assert.ok(image.checks.every((check) => check.matched));
+  const cliImage = await cliEvidence("inspect-native-load-image");
+  // Snapshot filenames are session-specific. Every measured byte/range/check is stable.
+  const stableImage = (value) => ({
+    ...value,
+    observations: {
+      ...value.observations,
+      source_files: value.observations.source_files.map(
+        ({ name: _name, ...file }) => file,
+      ),
+    },
+  });
+  assert.deepEqual(stableImage(cliImage.normalized_result), stableImage(image));
+  const mapped = await call("address_to_file_offset", {
+    address: expected.entry,
+  });
+  assert.equal(mapped.file_offset, fixture.header_bytes);
+  const headerMapping = await call("address_to_file_offset", {
+    address: "HEADER:0x0",
+  });
+  assert.equal(headerMapping.file_offset, 0);
+  const fileRelocation = await call("address_to_file_offset", {
+    address: address(fixture.relocation_offset),
+  });
+  assert.equal(
+    fileRelocation.file_offset,
+    fixture.header_bytes + fixture.relocation_offset,
+  );
+  const memoryRelocation = await call("read_bytes", {
+    address: address(fixture.relocation_offset),
+    length: 2,
+  });
+  assert.equal(memoryRelocation.bytes_hex, "0410");
+  assert.equal(memoryRelocation.complete, true);
+  assert.deepEqual(
+    (
+      await cliEvidence("read-bytes", address(fixture.relocation_offset), [
+        "--length",
+        "2",
+      ])
+    ).normalized_result,
+    memoryRelocation,
+  );
+  assert.deepEqual(
+    (await cliEvidence("address-to-file-offset", expected.entry))
+      .normalized_result,
+    mapped,
+  );
+  const tail = await call("read_bytes", {
+    address: address(fixture.module_bytes - 2),
+    length: 8,
+  });
+  assert.equal(tail.returned_bytes, 2);
+  assert.equal(tail.complete, false);
+  const unmapped = await call("read_bytes", { address: "0x80000", length: 8 });
+  assert.equal(unmapped.returned_bytes, 0);
+  assert.equal(unmapped.complete, false);
+  const noSource = await client.callTool({
+    name: "address_to_file_offset",
+    arguments: { address: "0x80000" },
+  });
+  assert.equal(noSource.isError, true);
   const procedures = await call("list_procedures");
   assert.ok(
     Array.isArray(procedures),
@@ -330,6 +402,22 @@ try {
       load_segment: profile.parameters.load_segment,
     },
     transport: { cli: true, stdio_mcp: true },
+    load_image: {
+      status: image.status,
+      checks: image.checks.length,
+      mappings: image.observations.mappings.length,
+      relocations: image.observations.relocations.length,
+      cli_mcp_parity: true,
+    },
+    memory_evidence: {
+      relocated_word_hex: memoryRelocation.bytes_hex,
+      entry_file_offset: mapped.file_offset,
+      header_file_offset: headerMapping.file_offset,
+      partial_read_bytes: tail.returned_bytes,
+      unmapped_read_bytes: unmapped.returned_bytes,
+      unmapped_file_offset_rejected: true,
+      cli_mcp_parity: true,
+    },
     functions: facts,
     instruction_oracles: {
       entry_bytes: hexBytes(move.bytes),
@@ -401,6 +489,10 @@ function hexBytes(bytes) {
 }
 function assertProfile(profile) {
   assert.equal(
+    profile.parameters.load_image_evidence,
+    "independent-mz-mapping-relocations-v1",
+  );
+  assert.equal(
     profile.parameters.function_body_evidence,
     "complete-inclusive-ranges-v1",
   );
@@ -471,14 +563,15 @@ async function evidenceCall(name, arguments_) {
   assertProfile(evidence.analysis_profile.parameters.upstream_analysis_profile);
   return evidence;
 }
-async function cliEvidence(command, procedure) {
+async function cliEvidence(command, procedure, options = []) {
   const { stdout } = await promisify(execFile)(
     process.execPath,
     [
       entrypoint,
       command,
       targetPath,
-      procedure,
+      ...(procedure === undefined ? [] : [procedure]),
+      ...options,
       "--provider",
       "ghidra",
       "--json",

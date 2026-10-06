@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { nativeLoadImageSchema } from "../domain/nativeLoadImage.js";
 import { nativeUiResultSchema } from "../domain/nativeUiObservation.js";
 import { nativeValueTraceSchema } from "../domain/nativeValueTrace.js";
 import { nativeDataTypeSchema } from "../domain/nativeDataType.js";
@@ -100,6 +101,7 @@ const addressedString = z.object({
 
 /** Exact structured-content schemas shared by direct analysis providers. */
 export const officialOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
+  inspect_native_load_image: resultOf(nativeLoadImageSchema),
   inspect_native_data_type: resultOf(nativeDataTypeSchema),
   inspect_native_instruction: resultOf(nativeInstructionSchema),
   resolve_native_call_targets: resultOf(nativeCallTargetsSchema),

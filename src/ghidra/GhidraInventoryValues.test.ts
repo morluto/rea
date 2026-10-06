@@ -7,6 +7,57 @@ import {
 } from "./GhidraInventoryValues.js";
 
 describe("Ghidra inventory boundary values", () => {
+  it("admits explicit byte reads and source offset mapping without invented caps", () => {
+    expect(
+      parseGhidraInventoryInput("read_bytes", { address: "0x10000" }),
+    ).toEqual({
+      ok: true,
+      value: { address: "0x10000", document: null, length: 256 },
+    });
+    expect(
+      parseGhidraInventoryInput("read_bytes", {
+        address: "0x10000",
+        length: 4097,
+      }).ok,
+    ).toBe(true);
+    expect(
+      parseGhidraInventoryInput("read_bytes", { address: "0x10000", length: 0 })
+        .ok,
+    ).toBe(false);
+    expect(
+      parseGhidraInventoryInput("address_to_file_offset", {
+        address: "HEADER:0x1",
+      }).ok,
+    ).toBe(true);
+  });
+  it("checks byte length and completeness before accepting memory Evidence", () => {
+    const result = {
+      address: "0x10000",
+      requested_bytes: 4,
+      returned_bytes: 2,
+      bytes_hex: "0410",
+      complete: false,
+    };
+    expect(parseGhidraInventoryResult("read_bytes", result)).toEqual({
+      ok: true,
+      value: result,
+    });
+    for (const change of [
+      { complete: true },
+      { returned_bytes: 4 },
+      { bytes_hex: "04" },
+      { requested_bytes: 1 },
+    ])
+      expect(
+        parseGhidraInventoryResult("read_bytes", { ...result, ...change }).ok,
+      ).toBe(false);
+    expect(
+      parseGhidraInventoryResult("address_to_file_offset", {
+        address: "0x10000",
+        file_offset: -1,
+      }).ok,
+    ).toBe(false);
+  });
   it("accepts complete inventories and searches without page controls", () => {
     expect(parseGhidraInventoryInput("list_procedures", {})).toEqual({
       ok: true,
