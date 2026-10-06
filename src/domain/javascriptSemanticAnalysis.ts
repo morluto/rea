@@ -431,7 +431,10 @@ const bindPattern = (input: BindPatternInput): void => {
     bindPattern({
       ...input,
       pattern: pattern.left,
-      initializer: initializer ?? pattern.right,
+      initializer:
+        kind === "parameter" || kind === "catch"
+          ? initializer
+          : (initializer ?? pattern.right),
     });
     return;
   }
