@@ -94,6 +94,7 @@ describe("enhanced MCP tools", () => {
             error: {
               code: "unreadable_output",
               category: "execution_failure",
+              details: { operation: "decompile", reason: "failed" },
               message:
                 "Analysis returned an unreadable result. Retry once; if it continues, run `rea doctor`.",
               retryable: false,
