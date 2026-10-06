@@ -345,7 +345,7 @@ const decodeFixedString = (blob: Buffer): string | null => {
   const start = 2 + length.prefix;
   if (start > blob.length - length.length) return null;
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
       blob.subarray(start, start + length.length),
     );
   } catch (cause: unknown) {

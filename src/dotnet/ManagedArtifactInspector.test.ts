@@ -139,3 +139,19 @@ describe("managed artifact inventory", () => {
     });
   });
 });
+
+it("preserves U+FEFF in references and fixed attribute strings", () => {
+  const bytes = buildManagedPeFixture({
+    references: ["\uFEFFSystem.Runtime", "System.\uFEFFRuntime"],
+    targetFramework: "\uFEFF.NETCoreApp,Version=v8.0",
+  });
+  const result = inspectManagedArtifactBytes(
+    bytes,
+    managedPeFixtureTarget(bytes),
+  );
+  expect(result.references.map((reference) => reference.name)).toEqual([
+    "\uFEFFSystem.Runtime",
+    "System.\uFEFFRuntime",
+  ]);
+  expect(result.target_frameworks).toEqual(["\uFEFF.NETCoreApp,Version=v8.0"]);
+});

@@ -146,3 +146,22 @@ it("keeps an admitted but unimplemented element type unsupported", () => {
     issue: "unsupported element type 0x14",
   });
 });
+
+it("preserves leading U+FEFF as metadata name content", () => {
+  const bytes = buildManagedPeFixture({
+    typeNamespace: "\uFEFFFixture",
+    typeName: "\uFEFFProgram",
+    methodName: "\uFEFFMain",
+    fieldName: "\uFEFFcounter",
+  });
+  const result = inspectManagedMembersBytes(
+    bytes,
+    managedPeFixtureTarget(bytes),
+  );
+  expect(result.types[0]?.full_name).toBe("\uFEFFFixture.\uFEFFProgram");
+  expect(result.methods[0]?.name).toBe("\uFEFFMain");
+  expect(result.fields[0]?.name).toBe("\uFEFFcounter");
+  expect(result.call_edges[0]?.caller).toBe(
+    "\uFEFFFixture.\uFEFFProgram.\uFEFFMain",
+  );
+});

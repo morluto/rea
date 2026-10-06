@@ -147,3 +147,37 @@ const asManagedMemberResult = (execution: AnalysisExecution) =>
 
 const asManagedNativeBoundaryResult = (execution: AnalysisExecution) =>
   managedNativeBoundaryInspectionSchema.parse(execution.result);
+
+it("retains U+FEFF metadata through the filesystem target and provider", async () => {
+  const directory = await createTestTempDirectory("rea-managed-bom-");
+  const path = join(directory, "fixture.exe");
+  await writeFile(
+    path,
+    buildManagedPeFixture({
+      typeName: "\uFEFFProgram",
+      methodName: "\uFEFFMain",
+      fieldName: "\uFEFFcounter",
+      references: ["\uFEFFSystem.Runtime"],
+      targetFramework: "\uFEFF.NETCoreApp,Version=v8.0",
+    }),
+  );
+  const parsed = await parseBinaryTarget(path);
+  expect(parsed.ok).toBe(true);
+  if (!parsed.ok) return;
+  const client = new ManagedStaticProvider().createClient(parsed.value);
+  const artifact = await client.execute("inspect_managed_artifact", {});
+  expect(artifact.ok).toBe(true);
+  if (!artifact.ok) return;
+  expect(asManagedResult(artifact.value)).toMatchObject({
+    references: [expect.objectContaining({ name: "\uFEFFSystem.Runtime" })],
+    target_frameworks: ["\uFEFF.NETCoreApp,Version=v8.0"],
+  });
+  const members = await client.execute("inspect_managed_members", {});
+  expect(members.ok).toBe(true);
+  if (!members.ok) return;
+  expect(asManagedMemberResult(members.value)).toMatchObject({
+    types: [expect.objectContaining({ name: "\uFEFFProgram" })],
+    methods: [expect.objectContaining({ name: "\uFEFFMain" })],
+    fields: [expect.objectContaining({ name: "\uFEFFcounter" })],
+  });
+});

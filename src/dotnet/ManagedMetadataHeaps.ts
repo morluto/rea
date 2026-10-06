@@ -131,7 +131,7 @@ export const readMetadataString = (
       start,
     );
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
       bytes.subarray(start, end),
     );
   } catch (cause: unknown) {
