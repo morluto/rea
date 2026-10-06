@@ -68,6 +68,47 @@ directly to `compare_functions`, and `inspect_artifact` Evidence to
 `compare_artifacts`. Use `get_evidence_bundle` when the task needs broader
 retained session history or an explicit bundle for transfer.
 
+## Retained application Evidence inputs
+
+`trace_application_feature`, `trace_javascript_semantics`,
+`compare_application_versions`, `compare_source_to_bundle`, and
+`compare_javascript_export_shapes` accept complete inline application Evidence
+or an exact reference to a record already retained by the current connection:
+
+```json
+{
+  "name": "trace_application_feature",
+  "arguments": {
+    "application": {
+      "kind": "retained-evidence",
+      "evidence_id": "ev_<64 lowercase hex characters>"
+    },
+    "seed": { "kind": "module", "value": "search.js", "match": "exact" }
+  }
+}
+```
+
+Use the `evidence_id` returned by `analyze_javascript_application` (or another
+compatible application-graph producer). Comparisons accept this form in `left`
+and `right`; each side can independently be inline or retained. Native
+observation arrays continue to take complete inline Evidence. Results and their
+Evidence remain complete inline, and both input forms pass the same semantic,
+identity, authority, and provenance checks without running the producer again.
+
+References belong to the current connection's Evidence ledger. Opening another
+target preserves retained records; `close_binary` clears them, even when no
+binary is active. A fresh connection has its own ledger. A missing reference
+reports its exact ID and `details.reason: "missing"`; the server cannot infer
+whether it was never recorded, cleared, or retained by another connection.
+Supply complete inline Evidence, repeat its producer, or import an exported
+Evidence bundle before referencing that imported record. Export a bundle before
+closing if the investigation needs it later.
+
+CLI application workflows continue to read portable inline Evidence from files
+and run the same analysis workflows; a standalone CLI invocation cannot resolve
+another MCP connection's retained records. No additional lookup call, provider
+selection, or approval step is required for a same-session follow-up.
+
 ## Aggregate native context
 
 `get_navigation_context` composes the selected document, current address, and

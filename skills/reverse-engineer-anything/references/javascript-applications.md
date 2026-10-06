@@ -34,3 +34,14 @@ variants, and incomplete parent-property coverage stay unknown. This is static
 inference, not runtime behavior. When runtime semantics are needed, run
 behavioral probes against the relevant application versions and capture them
 through the available browser, Electron, or process workflows.
+
+## Reusing application Evidence
+
+Application trace and compare tools accept complete inline Evidence or
+`{"kind":"retained-evidence","evidence_id":"ev_<64 lowercase hex characters>"}`
+for their application input (`application`, or `left`/`right`). Use the exact ID
+returned by the producer on the same MCP connection. Resolution does not run
+analysis or select a provider; findings remain inline. Native observation
+arrays still take full Evidence. `close_binary` clears retained references;
+export a bundle before closing, or supply portable inline Evidence in another
+connection. A missing reference includes its ID and recovery guidance.

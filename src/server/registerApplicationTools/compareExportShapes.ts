@@ -1,3 +1,4 @@
+import { resolvePairedEvidenceRequest } from "../../application/EvidenceInputResolver.js";
 import { recordSessionEvidenceSources } from "../sessionEvidence.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 
@@ -21,7 +22,12 @@ export const registerCompareJavaScriptExportShapesTool = (
     contract.name,
     toolRegistrationOptions(contract),
     async (input) => {
-      const parsed = input;
+      const resolved = resolvePairedEvidenceRequest(
+        input,
+        options.evidenceById,
+      );
+      if (!resolved.ok) return toCallToolResult(resolved, contract);
+      const parsed = resolved.value;
       const result = await logToolExecution(options.logger, contract.name, () =>
         Promise.resolve(compareJavaScriptExportShapesEvidenceValidated(parsed)),
       );

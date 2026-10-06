@@ -43,6 +43,10 @@ const reconstructionObligationLedgerOutputSchema = evidenceResultOf(
   reconstructionObligationLedgerSchema,
 );
 const HASH = "0".repeat(64);
+const retained = (evidence_id: string) => ({
+  kind: "retained-evidence" as const,
+  evidence_id,
+});
 
 /** Provider-neutral graph workflow contracts shared by MCP and CLI adapters. */
 export const APPLICATION_TOOL_CONTRACTS = [
@@ -50,7 +54,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     name: "trace_application_feature",
     ...toolContractMetadata("trace_application_feature"),
     description:
-      "Trace a typed literal seed through every reachable part of an authenticated JavaScript Application Graph supplied as inline Evidence. Original static, native, passive-runtime, inferred, and unknown authorities remain distinct; native addon handoffs never open a provider or execute the application.",
+      "Trace a typed literal seed through every reachable part of an authenticated JavaScript Application Graph supplied as inline Evidence or exact same-session retained references. Original static, native, passive-runtime, inferred, and unknown authorities remain distinct; native addon handoffs never open a provider or execute the application.",
     kind: "application",
     inputSchema: traceApplicationFeatureRequestSchema,
     outputSchema: traceOutputSchema,
@@ -59,13 +63,22 @@ export const APPLICATION_TOOL_CONTRACTS = [
         title: "Trace one module seed through a retained application graph",
         input: JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
       },
+      {
+        title: "Use exact Evidence already retained in this session",
+        input: {
+          ...JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
+          application: retained(
+            JAVASCRIPT_FEATURE_TRACE_EXAMPLE.application.evidence_id,
+          ),
+        },
+      },
     ],
   },
   {
     name: "trace_javascript_semantics",
     ...toolContractMetadata("trace_javascript_semantics"),
     description:
-      "Trace static JavaScript data-flow, direct call/return, and closure relations from inline application Evidence. Dynamic or unsupported semantics remain explicit unknowns; static reachability never claims runtime execution.",
+      "Trace static JavaScript data-flow, direct call/return, and closure relations from inline application Evidence or an exact same-session retained reference. Dynamic or unsupported semantics remain explicit unknowns; static reachability never claims runtime execution.",
     kind: "application",
     inputSchema: traceJavaScriptSemanticsRequestSchema,
     outputSchema: semanticTraceOutputSchema,
@@ -86,7 +99,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     name: "compare_application_versions",
     ...toolContractMetadata("compare_application_versions"),
     description:
-      "Compare two authenticated JavaScript Application Graph versions supplied as inline Evidence. Uses unique-only exact digest, module source digest, source-map identity, structural fingerprint, and non-module semantic-key tiers. Reports added, removed, changed, ambiguous, and unknown entities plus the complete matching changed_from graph without fuzzy or module-ordinal pairing.",
+      "Compare two authenticated JavaScript Application Graph versions supplied as inline Evidence or exact same-session retained references. Uses unique-only exact digest, module source digest, source-map identity, structural fingerprint, and non-module semantic-key tiers. Reports added, removed, changed, ambiguous, and unknown entities plus the complete matching changed_from graph without fuzzy or module-ordinal pairing.",
     kind: "application",
     inputSchema: compareApplicationVersionsRequestSchema,
     outputSchema: comparisonOutputSchema,
@@ -95,13 +108,25 @@ export const APPLICATION_TOOL_CONTRACTS = [
         title: "Compare authenticated static and reconciled application graphs",
         input: JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
       },
+      {
+        title: "Use exact Evidence already retained in this session",
+        input: {
+          ...JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
+          left: retained(
+            JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE.left.evidence_id,
+          ),
+          right: retained(
+            JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE.right.evidence_id,
+          ),
+        },
+      },
     ],
   },
   {
     name: "compare_source_to_bundle",
     ...toolContractMetadata("compare_source_to_bundle"),
     description:
-      "Compare a cryptographically committed HistoricalSourceGraph with inline authenticated JavaScript Application Graph Evidence. Uses explicit exact-digest, source-map path, current-path, suffix, and basename signals with stable weights. Classifies unchanged, modified, removed, split, merged, duplicated, and unknown; incomplete coverage and ambiguous weak signals never become absence or forced matches.",
+      "Compare a cryptographically committed HistoricalSourceGraph with authenticated JavaScript Application Graph Evidence supplied inline or by exact same-session retained reference. Uses explicit exact-digest, source-map path, current-path, suffix, and basename signals with stable weights. Classifies unchanged, modified, removed, split, merged, duplicated, and unknown; incomplete coverage and ambiguous weak signals never become absence or forced matches.",
     kind: "application",
     inputSchema: compareSourceToBundleRequestSchema,
     outputSchema: sourceToBundleOutputSchema,
@@ -117,7 +142,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     name: "compare_javascript_export_shapes",
     ...toolContractMetadata("compare_javascript_export_shapes"),
     description:
-      "Compare static return shapes for one exact module/export selector on each authenticated JavaScript Application Graph supplied as inline Evidence. Variants pair only by reciprocal unique literal discriminants; dynamic values, incomplete properties, and ambiguous variants remain unknown. Reports JSON Pointer changes without executing JavaScript; runtime behavior requires a separate agent-run probe.",
+      "Compare static return shapes for one exact module/export selector on each authenticated JavaScript Application Graph supplied as inline Evidence or exact same-session retained references. Variants pair only by reciprocal unique literal discriminants; dynamic values, incomplete properties, and ambiguous variants remain unknown. Reports JSON Pointer changes without executing JavaScript; runtime behavior requires a separate agent-run probe.",
     kind: "application",
     inputSchema: compareJavaScriptExportShapesRequestSchema,
     outputSchema: exportShapeComparisonOutputSchema,
@@ -125,6 +150,18 @@ export const APPLICATION_TOOL_CONTRACTS = [
       {
         title: "Compare one exact parser export without execution",
         input: JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE,
+      },
+      {
+        title: "Use exact Evidence already retained in this session",
+        input: {
+          ...JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE,
+          left: retained(
+            JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE.left.evidence_id,
+          ),
+          right: retained(
+            JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE.right.evidence_id,
+          ),
+        },
       },
     ],
   },

@@ -1,3 +1,4 @@
+import { resolveApplicationEvidenceRequest } from "../../application/EvidenceInputResolver.js";
 import { recordSessionEvidenceSources } from "../sessionEvidence.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 
@@ -20,13 +21,19 @@ export const registerTraceFeatureTool = (
     traceContract.name,
     toolRegistrationOptions(traceContract),
     async (input) => {
+      const resolved = resolveApplicationEvidenceRequest(
+        input,
+        options.evidenceById,
+      );
+      if (!resolved.ok) return toCallToolResult(resolved, traceContract);
+      const parsed = resolved.value;
       const result = await logToolExecution(
         options.logger,
         traceContract.name,
-        () => Promise.resolve(traceApplicationFeatureEvidenceValidated(input)),
+        () => Promise.resolve(traceApplicationFeatureEvidenceValidated(parsed)),
       );
       if (!result.ok) return toCallToolResult(result, traceContract);
-      const sources = [input.application, ...input.native_observations];
+      const sources = [parsed.application, ...parsed.native_observations];
       const recorded = recordSessionEvidenceSources(
         options.recordEvidence,
         sources,

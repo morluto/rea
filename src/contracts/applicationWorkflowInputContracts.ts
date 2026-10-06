@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { evidenceSchema } from "../domain/evidence.js";
+import { evidenceInputSchema } from "./evidenceInputContracts.js";
 import { compareApplicationVersionsInputSchema } from "../domain/javascriptApplicationVersionComparisonSchemas.js";
 import { compareJavaScriptExportShapesInputSchema } from "../domain/javascriptExportShapeComparisonSchemas.js";
 import { traceApplicationFeatureInputSchema } from "../domain/javascriptFeatureTraceSchemas.js";
@@ -14,15 +14,15 @@ const traceApplicationFeatureFacts = {
   direction: traceApplicationFeatureInputSchema.shape.direction,
 } as const;
 
-/** MCP/CLI trace request carrying all Evidence inline. */
+/** Application trace request accepting inline or same-session application Evidence. */
 export const traceApplicationFeatureRequestSchema = z.strictObject({
   ...traceApplicationFeatureFacts,
-  application: evidenceSchema,
+  application: evidenceInputSchema,
 });
 
-/** MCP/CLI semantic trace request carrying Evidence inline. */
+/** Semantic trace request accepting inline or same-session application Evidence. */
 export const traceJavaScriptSemanticsRequestSchema = z.strictObject({
-  application: evidenceSchema,
+  application: evidenceInputSchema,
   query: javaScriptSemanticQueryInputSchema,
 });
 
@@ -33,21 +33,21 @@ const compareApplicationVersionsFacts = {
     compareApplicationVersionsInputSchema.shape.right_native_observations,
 } as const;
 
-/** MCP/CLI comparison request carrying all Evidence inline. */
+/** Application comparison request accepting inline or same-session application Evidence. */
 export const compareApplicationVersionsRequestSchema = z.strictObject({
   ...compareApplicationVersionsFacts,
-  left: evidenceSchema,
-  right: evidenceSchema,
+  left: evidenceInputSchema,
+  right: evidenceInputSchema,
 });
 
 const compareSourceToBundleFacts = {
   reference: compareSourceToBundleInputSchema.shape.reference,
 } as const;
 
-/** Historical-source comparison carrying application Evidence inline. */
+/** Historical-source comparison accepting inline or same-session application Evidence. */
 export const compareSourceToBundleRequestSchema = z.strictObject({
   ...compareSourceToBundleFacts,
-  application: evidenceSchema,
+  application: evidenceInputSchema,
 });
 
 const compareJavaScriptExportShapesFacts = {
@@ -61,9 +61,9 @@ const compareJavaScriptExportShapesFacts = {
     compareJavaScriptExportShapesInputSchema.shape.right_export_name,
 } as const;
 
-/** MCP/CLI export-shape request carrying application Evidence inline. */
+/** Export-shape request accepting inline or same-session application Evidence. */
 export const compareJavaScriptExportShapesRequestSchema = z.strictObject({
   ...compareJavaScriptExportShapesFacts,
-  left: evidenceSchema,
-  right: evidenceSchema,
+  left: evidenceInputSchema,
+  right: evidenceInputSchema,
 });

@@ -1,3 +1,4 @@
+import { resolveApplicationEvidenceRequest } from "../../application/EvidenceInputResolver.js";
 import { recordSessionEvidenceSources } from "../sessionEvidence.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 
@@ -20,12 +21,18 @@ export const registerTraceJavaScriptSemanticsTool = (
     contract.name,
     toolRegistrationOptions(contract),
     async (input) => {
+      const resolved = resolveApplicationEvidenceRequest(
+        input,
+        options.evidenceById,
+      );
+      if (!resolved.ok) return toCallToolResult(resolved, contract);
+      const parsed = resolved.value;
       const result = await logToolExecution(options.logger, contract.name, () =>
-        Promise.resolve(traceJavaScriptSemanticsEvidenceValidated(input)),
+        Promise.resolve(traceJavaScriptSemanticsEvidenceValidated(parsed)),
       );
       if (!result.ok) return toCallToolResult(result, contract);
       const recorded = recordSessionEvidenceSources(options.recordEvidence, [
-        input.application,
+        parsed.application,
       ]);
       if (!recorded.ok) return toCallToolResult(recorded, contract);
       return recordResult(options, contract, result.value);

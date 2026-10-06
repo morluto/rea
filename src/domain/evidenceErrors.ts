@@ -9,7 +9,11 @@ export class EvidenceIntegrityError extends AnalysisError {
 export class EvidenceReferenceError extends EvidenceIntegrityError {
   constructor(
     readonly evidenceId: string,
-    readonly reason: "missing" | "wrong_operation" | "wrong_predicate",
+    readonly reason:
+      | "missing"
+      | "wrong_operation"
+      | "wrong_predicate"
+      | "identity_mismatch",
     readonly expected: string,
     readonly actual: string | null,
   ) {

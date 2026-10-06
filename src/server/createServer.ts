@@ -93,14 +93,19 @@ export const createServer = (
   const server = createMcpServer(session);
   const availability = installSessionToolAvailability(server, session, options);
   const toolLogger = logger.child({ layer: "server" });
-  const { activeTarget, recordEvidence, recordEvidenceWithUnknown } =
-    createSessionRecorders(server, session);
+  const {
+    evidenceById,
+    activeTarget,
+    recordEvidence,
+    recordEvidenceWithUnknown,
+  } = createSessionRecorders(server, session);
   const toolContext: ServerToolContext = {
     server,
     analysis,
     session,
     options,
     logger: toolLogger,
+    evidenceById,
     activeTarget,
     recordEvidence,
     recordEvidenceWithUnknown,
@@ -124,6 +129,10 @@ const createSessionRecorders = (
   server: McpServer,
   session: BinarySessionPort | undefined,
 ) => ({
+  evidenceById:
+    session === undefined
+      ? undefined
+      : (evidenceId: string) => session.evidenceById(evidenceId),
   activeTarget:
     session === undefined ? undefined : () => session.activeTarget(),
   recordEvidence:
@@ -198,6 +207,7 @@ const registerBinaryAnalysisTools = ({
 };
 
 const registerObservationTools = ({
+  evidenceById,
   server,
   options,
   logger,
@@ -223,6 +233,7 @@ const registerObservationTools = ({
     runtime: options.javascriptRuntimeObservation,
   });
   registerApplicationTools(server, {
+    evidenceById,
     logger,
     recordEvidence,
     recordEvidenceWithUnknown,

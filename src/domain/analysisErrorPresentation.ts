@@ -6,7 +6,11 @@ import {
   NoBinaryOpenError,
 } from "./configurationErrors.js";
 import { BrowserObservationError } from "./browserObservationError.js";
-import { EvidenceFileError, EvidenceIntegrityError } from "./evidenceErrors.js";
+import {
+  EvidenceFileError,
+  EvidenceIntegrityError,
+  EvidenceReferenceError,
+} from "./evidenceErrors.js";
 import {
   HopperRemoteError,
   HopperProcessError,
@@ -36,6 +40,8 @@ export const analysisErrorRemediationAction = (
       : `Use the active REA session ${error.ownerRunId} or close it before opening this target again.`;
   if (error instanceof HopperRemoteError)
     return "Review the Hopper diagnostic details; correct the request or retry if the failure was transient.";
+  if (error instanceof EvidenceReferenceError)
+    return "Use an exact Evidence reference retained by this session, supply the complete inline Evidence, re-run its producer, or import its Evidence bundle. close_binary clears retained records.";
   if (error instanceof AnalysisInputError)
     return "Correct the listed arguments and retry.";
   if (error instanceof UnknownRegistryError && error.reason === "not-found")
@@ -117,6 +123,10 @@ export const analysisErrorUserMessage = (error: AnalysisError): string => {
   if (standardMessage !== undefined) return standardMessage;
   if (error instanceof ArtifactOperationError)
     return artifactMessage(error.reason);
+  if (error instanceof EvidenceReferenceError)
+    return error.reason === "missing"
+      ? `Evidence ${error.evidenceId} is not retained in this session. Supply complete inline Evidence, re-run its producer, or import its bundle before using this reference.`
+      : `Evidence ${error.evidenceId} does not match the requested reference (${error.reason}). Check the expected and actual identity in the diagnostic details.`;
   if (error instanceof EvidenceIntegrityError)
     return "Evidence is invalid or has changed. Recreate or re-import it, then try again.";
   if (error instanceof EvidenceFileError)
