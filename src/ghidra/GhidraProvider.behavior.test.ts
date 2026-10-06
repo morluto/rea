@@ -208,6 +208,33 @@ describe("Ghidra provider", () => {
   });
 });
 
+describe("Ghidra Mach-O slice support", () => {
+  it("refuses universal targets whose selected slice cannot be enforced", () => {
+    const ghidra = provider();
+    const universal: BinaryTarget = {
+      path: "/tmp/fixture",
+      sha256: "a".repeat(64),
+      kind: "executable",
+      format: "mach-o",
+      architecture: "arm64",
+      availableArchitectures: ["x86_64", "arm64"],
+    };
+
+    expect(ghidra.inspectTargetSupport(universal)).toMatchObject({
+      status: "unsupported",
+      code: "architecture_unsupported",
+      reason: expect.stringContaining("universal Mach-O"),
+      diagnostics: {
+        architecture: "arm64",
+        available_architectures: ["x86_64", "arm64"],
+      },
+    });
+    expect(
+      ghidra.inspectTargetSupport(executableTarget("mach-o", "arm64")),
+    ).toMatchObject({ status: "supported" });
+  });
+});
+
 describe("Ghidra platform support", () => {
   it("keeps Windows annotation mutation unavailable independently of native controls", () => {
     const ghidra = provider({ ...installationHost(), platform: "win32" });

@@ -15,7 +15,11 @@ import {
 import type { AppConfig } from "../config.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
-import { jsonObjectSchema, jsonValueSchema } from "../domain/jsonValue.js";
+import {
+  jsonObjectSchema,
+  jsonValueSchema,
+  type JsonValue,
+} from "../domain/jsonValue.js";
 import {
   nativeLoadImageObservationSchema,
   nativeLoadImageSchema,
@@ -144,6 +148,10 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       target_kind: target.kind,
       target_format: target.format,
       architecture: target.architecture ?? null,
+      available_architectures:
+        target.kind === "executable"
+          ? [...target.availableArchitectures]
+          : null,
       executable_role: target.executableRole ?? null,
       managed: target.managed ?? null,
     };
@@ -156,6 +164,14 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       };
     if (hostPlatform === "win32")
       return inspectWindowsP0TargetSupport(target, diagnostics);
+    if (target.format === "mach-o" && target.availableArchitectures.length > 1)
+      return {
+        status: "unsupported",
+        code: "architecture_unsupported",
+        reason:
+          "Ghidra v1 cannot enforce the selected architecture when importing a universal Mach-O; analyze a thinned Mach-O slice instead.",
+        diagnostics,
+      };
     if (!SUPPORTED_ARCHITECTURES.has(target.architecture))
       return {
         status: "unsupported",
@@ -381,7 +397,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
 
 const inspectWindowsP0TargetSupport = (
   target: BinaryTarget,
-  diagnostics: Readonly<Record<string, string | boolean | null>>,
+  diagnostics: Readonly<Record<string, JsonValue>>,
 ): ProviderTargetSupport => {
   if (target.format !== "pe")
     return {

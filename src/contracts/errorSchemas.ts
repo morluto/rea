@@ -60,14 +60,21 @@ export const analysisErrorProjectionSchema = z.discriminatedUnion("code", [
   generic("execution_failure"),
 ]);
 
-/** Legacy CLI envelope: a human label plus the canonical projected error fields. */
+/** CLI label and input diagnostics surrounding the strict canonical error projection. */
 export const analysisCliErrorEnvelopeSchema = z
   .object({
     error: z.string().min(1),
+    input_path: z.string().optional(),
+    input_reason: z.enum(["invalid-json", "read-failed"]).optional(),
   })
   .passthrough()
   .superRefine((value, context) => {
-    const { error: _label, ...projection } = value;
+    const {
+      error: _label,
+      input_path: _inputPath,
+      input_reason: _inputReason,
+      ...projection
+    } = value;
     const parsed = analysisErrorProjectionSchema.safeParse(projection);
     if (!parsed.success) {
       context.addIssue({

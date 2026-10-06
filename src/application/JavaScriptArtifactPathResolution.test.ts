@@ -474,13 +474,22 @@ describe("contextual JavaScript module identity", () => {
     const analysis = analyzeJavaScriptStaticSource(
       `
         new BrowserWindow({ webPreferences: {
-          preload: path.resolve(__dirname, "preload.cjs")
+          preload: path.resolve("ignored", __dirname, "preload.cjs")
         }});
         new BrowserWindow({ webPreferences: {
           preload: fileURLToPath(new URL("./preload.mjs", import.meta.url))
         }});
         new BrowserWindow({ webPreferences: {
           preload: path.join(path.dirname(__filename), "legacy-preload.js")
+        }});
+        new BrowserWindow({ webPreferences: {
+          preload: path.posix.resolve("/ignored", dirname(fileURLToPath(import.meta.url)), "esm-preload.js")
+        }});
+        new BrowserWindow({ webPreferences: {
+          preload: path.posix.resolve(__dirname, "/shared", "absolute-preload.js/")
+        }});
+        new BrowserWindow({ webPreferences: {
+          preload: path.posix.resolve(\`/templates\`, "template-preload.js")
         }});
         new BrowserWindow({ webPreferences: {
           preload: new URL("./remote-base.js", location.href)
@@ -504,6 +513,18 @@ describe("contextual JavaScript module identity", () => {
           resolution_context: "filesystem-expression",
         }),
         expect.objectContaining({
+          path: "esm-preload.js",
+          resolution_context: "filesystem-expression",
+        }),
+        expect.objectContaining({
+          path: "/shared/absolute-preload.js",
+          resolution_context: "filesystem-expression",
+        }),
+        expect.objectContaining({
+          path: "/templates/template-preload.js",
+          resolution_context: "filesystem-expression",
+        }),
+        expect.objectContaining({
           path: "file:///renderer/index.html",
           resolution_context: "module-specifier",
         }),
@@ -517,6 +538,18 @@ describe("contextual JavaScript module identity", () => {
         }),
         expect.objectContaining({
           preload_path: "./preload.mjs",
+          preload_resolution_context: "filesystem-expression",
+        }),
+        expect.objectContaining({
+          preload_path: "esm-preload.js",
+          preload_resolution_context: "filesystem-expression",
+        }),
+        expect.objectContaining({
+          preload_path: "/shared/absolute-preload.js",
+          preload_resolution_context: "filesystem-expression",
+        }),
+        expect.objectContaining({
+          preload_path: "/templates/template-preload.js",
           preload_resolution_context: "filesystem-expression",
         }),
       ]),

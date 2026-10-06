@@ -192,8 +192,11 @@ const staticCallPath = (
     isFileIdentity(argumentNode(node.arguments[0]))
   )
     return "";
-  if (!name.endsWith(".join") && !name.endsWith(".resolve") && name !== "join")
-    return undefined;
+  if (name.endsWith(".resolve"))
+    return name === "win32.resolve" || name.endsWith(".win32.resolve")
+      ? undefined
+      : staticResolvedPath(node);
+  if (!name.endsWith(".join") && name !== "join") return undefined;
   const parts: string[] = [];
   for (const argument of node.arguments) {
     if (isDirectoryIdentity(argumentNode(argument))) continue;
@@ -202,6 +205,32 @@ const staticCallPath = (
     parts.push(value);
   }
   return parts.length === 0 ? undefined : posix.join(...parts);
+};
+
+const staticResolvedPath = (
+  node: t.CallExpression | t.NewExpression,
+): string | undefined => {
+  const parts: (string | null)[] = [];
+  for (const argument of node.arguments) {
+    if (isDirectoryIdentity(argumentNode(argument))) {
+      parts.push(null);
+      continue;
+    }
+    const value = t.isNode(argument) ? staticPathAt(argument) : undefined;
+    // Validate every argument, including those before the last anchor.
+    if (value === undefined) return undefined;
+    parts.push(value);
+  }
+  const anchor = parts.findLastIndex(
+    (part) => part === null || posix.isAbsolute(part),
+  );
+  // Relative-only calls depend on the target process cwd, which is unknown.
+  if (anchor === -1) return undefined;
+  // A null anchor is the source directory; preserve its relative projection.
+  const path = posix.join(
+    ...parts.slice(anchor).filter((part) => part !== null),
+  );
+  return path === "/" ? path : path.replace(/\/$/u, "");
 };
 
 const isFilesystemPathExpression = (node: t.Node): boolean => {
@@ -214,6 +243,8 @@ const isFilesystemPathExpression = (node: t.Node): boolean => {
     );
   if (t.isCallExpression(node) || t.isNewExpression(node)) {
     const name = calleeName(node.callee);
+    if (name.endsWith(".resolve") && staticCallPath(node) !== undefined)
+      return true;
     if (name === "URL" || name.endsWith(".URL"))
       return isFileIdentity(argumentNode(node.arguments[1]));
     if (name === "fileURLToPath" || name.endsWith(".fileURLToPath"))

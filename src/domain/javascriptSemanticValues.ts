@@ -481,10 +481,9 @@ const mergeValues = (
   const primitives = values.flatMap(
     (value) => primitiveCandidates(value) ?? [],
   );
-  return primitives.length === values.length ||
-    values.every(
-      (value) => value.status === "union" || value.status === "literal",
-    )
+  return values.every(
+    (value) => value.status === "union" || value.status === "literal",
+  )
     ? primitiveSet(primitives)
     : { status: "ambiguous", reason: "Branches have incompatible values." };
 };

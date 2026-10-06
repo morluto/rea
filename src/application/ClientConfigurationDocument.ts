@@ -66,7 +66,9 @@ const parseDocument = (
 ): Record<string, unknown> => {
   if (format === "toml") return objectSchema.parse(parseToml(text));
   const errors: ParseError[] = [];
-  const document = parseJsonc(text, errors, { allowTrailingComma: true });
+  // Accept a UTF-8 BOM without shifting diagnostics or editing the original text.
+  const jsonText = text.startsWith("\uFEFF") ? ` ${text.slice(1)}` : text;
+  const document = parseJsonc(jsonText, errors, { allowTrailingComma: true });
   const firstError = errors[0];
   if (firstError !== undefined)
     throw new SyntaxError(

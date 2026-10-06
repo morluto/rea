@@ -14,6 +14,8 @@ export interface ApplicationFeatureSeedMatch {
 interface CandidateField {
   readonly basis: ApplicationFeatureSeedMatch["basis"];
   readonly field: string;
+  /** Structural field path, retaining literal keys but omitting array indexes. */
+  readonly selectionPath?: string;
   readonly value: string;
 }
 
@@ -110,10 +112,20 @@ const candidateFields = (
   ];
   if (seedKind === "string") return fields;
   const names = relevantFields[seedKind];
-  return fields.filter(({ field }) =>
-    names.some((name) => field === "identity" || field.endsWith(name)),
+  return fields.filter(({ field, selectionPath = field }) =>
+    names.some((name) => {
+      const path = memberFieldSuffixes.has(name) ? selectionPath : field;
+      return path === "identity" || path.endsWith(name);
+    }),
   );
 };
+
+const memberFieldSuffixes = new Set([
+  ".members",
+  ".methods",
+  ".exports",
+  ".requested_members",
+]);
 
 const relevantFields = {
   route: [".label", ".value", ".path"],
@@ -164,28 +176,43 @@ const propertyFields = (
   prefix: string,
 ): CandidateField[] => {
   const output: CandidateField[] = [];
-  const pending: { readonly current: JsonValue; readonly path: string }[] = [
-    { current: value, path: prefix },
-  ];
+  const pending: {
+    readonly current: JsonValue;
+    readonly path: string;
+    readonly selectionPath: string;
+  }[] = [{ current: value, path: prefix, selectionPath: prefix }];
   while (pending.length > 0) {
     const next = pending.pop();
     if (next === undefined) continue;
-    const { current, path } = next;
+    const { current, path, selectionPath } = next;
     if (typeof current === "string") {
-      output.push({ basis: "property", field: path, value: current });
+      output.push({
+        basis: "property",
+        field: path,
+        selectionPath,
+        value: current,
+      });
       continue;
     }
     if (Array.isArray(current)) {
       for (let index = current.length - 1; index >= 0; index -= 1) {
         const item = current[index];
         if (item !== undefined)
-          pending.push({ current: item, path: `${path}[${String(index)}]` });
+          pending.push({
+            current: item,
+            path: `${path}[${String(index)}]`,
+            selectionPath,
+          });
       }
       continue;
     }
     if (current !== null && typeof current === "object") {
       for (const key of Object.keys(current).sort(compareCodePoints).reverse())
-        pending.push({ current: current[key] ?? null, path: `${path}.${key}` });
+        pending.push({
+          current: current[key] ?? null,
+          path: `${path}.${key}`,
+          selectionPath: `${selectionPath}.${key}`,
+        });
     }
   }
   return output;

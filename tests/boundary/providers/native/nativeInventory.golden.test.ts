@@ -1,4 +1,11 @@
 import { expect, it } from "vitest";
+import { err, ok } from "../../../../src/domain/result.js";
+import {
+  NativeCommandFailure,
+  type NativeCommandCapture,
+  type NativeCommandOptions,
+  type NativeCommandRunner,
+} from "../../../../src/native/CommandRunner.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
 import { parseOtoolLoadCommands } from "../../../../src/native/parsers/otool.js";
 import { parseDyldSymbols } from "../../../../src/native/parsers/dyldInfo.js";
@@ -31,6 +38,74 @@ it("distinguishes a codesign execution failure from an observed unsigned artifac
         expect(execution.value.result).toMatchObject({ signed: false });
     }
   }
+});
+
+it("reports unsigned slices when a universal Mach-O has mixed signatures", async () => {
+  const signedFixture = await fixture("codesign.txt");
+  const unsigned = await fixture("dyld-inventory/codesign-unsigned.txt");
+  const entitlements = await fixture("entitlements.xml");
+  for (const signedArchitecture of ["arm64", "arm64e"]) {
+    const signed = signedFixture.replace(
+      /^Format=.*$/mu,
+      `Format=Mach-O universal (x86_64 ${signedArchitecture})`,
+    );
+    const client = new NativeMacOSProvider(
+      signatureRunner({ signed, unsigned, entitlements }),
+      "darwin",
+    ).createClient(machoTarget("/private/fixture"));
+
+    const execution = await client.execute("inspect_signature", {});
+
+    expect(execution.ok).toBe(true);
+    if (!execution.ok) continue;
+    expect(execution.value.result).toMatchObject({
+      signed: true,
+      identifier: "com.example.fixture",
+      designated_requirement: null,
+      entitlements: { "com.apple.security.app-sandbox": true },
+      limitations: expect.arrayContaining([
+        "Unsigned Mach-O slices: x86_64.",
+        "The aggregate designated requirement is unavailable because Mach-O slices have mixed signing states.",
+      ]),
+      provenance: expect.arrayContaining([
+        expect.objectContaining({
+          command: [
+            "/usr/bin/codesign",
+            "-d",
+            "-a",
+            "x86_64",
+            "--verbose=4",
+            "$ARTIFACT",
+          ],
+          exit: { code: 1, signal: null },
+        }),
+        expect.objectContaining({
+          command: expect.arrayContaining(["-a", signedArchitecture]),
+          exit: { code: 0, signal: null },
+        }),
+      ]),
+    });
+  }
+});
+
+it("rejects nonzero supplemental codesign output that is not an unsigned observation", async () => {
+  const signed = await fixture("codesign.txt");
+  const entitlements = await fixture("entitlements.xml");
+  const client = new NativeMacOSProvider(
+    signatureRunner({
+      signed,
+      unsigned: "/private/fixture: invalid or unsupported format\n",
+      entitlements,
+    }),
+    "darwin",
+  ).createClient(machoTarget("/private/fixture"));
+
+  const execution = await client.execute("inspect_signature", {});
+
+  expect(execution).toMatchObject({
+    ok: false,
+    error: { _tag: "ProviderAdapterError" },
+  });
 });
 
 it("retains native inventory facts from captured Apple tool output", async () => {
@@ -199,4 +274,48 @@ Section
     file_offset: 16384,
     sections: [{ segment: "0001", name: "0002", size: 8 }],
   });
+});
+
+const signatureRunner = (outputs: {
+  readonly signed: string;
+  readonly unsigned: string;
+  readonly entitlements: string;
+}): NativeCommandRunner => ({
+  run(
+    tool: string,
+    arguments_: readonly string[],
+    options: NativeCommandOptions,
+  ) {
+    const architectureIndex = arguments_.indexOf("-a");
+    const architecture =
+      architectureIndex < 0 ? null : arguments_[architectureIndex + 1];
+    const response = arguments_.includes("-r-")
+      ? { output: outputs.unsigned, exitCode: 1 }
+      : arguments_.includes("--entitlements")
+        ? { output: outputs.entitlements, exitCode: 0 }
+        : architecture === "x86_64"
+          ? { output: outputs.unsigned, exitCode: 1 }
+          : { output: outputs.signed, exitCode: 0 };
+    const capture: NativeCommandCapture = {
+      tool,
+      executable: `/usr/bin/${tool}`,
+      executableSha256: "a".repeat(64),
+      toolVersion: null,
+      versionReason: "fixture",
+      arguments: [...arguments_],
+      stdout: "",
+      stderr: response.output,
+      stdoutBytes: 0,
+      stderrBytes: Buffer.byteLength(response.output),
+      exitCode: response.exitCode,
+      signal: null,
+    };
+    return Promise.resolve(
+      response.exitCode === 0 || options.acceptNonZero === true
+        ? ok(capture)
+        : err(
+            new NativeCommandFailure(tool, "nonzero-exit", response.exitCode),
+          ),
+    );
+  },
 });
