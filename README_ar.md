@@ -92,7 +92,7 @@ npx rea-agents setup
 
 ### الاستخدام مع وكيل
 
-بعد الإعداد، أعد تشغيل الوكيل واشرح التطبيق أو الميزة التي تريد استقصاءها. يدعم REA Claude Code وClaude Desktop وCodex وCursor وGemini CLI وWindsurf وDevin وOpenCode وAntigravity وGitHub Copilot CLI وVS Code. تكون تسجيلات REA الموجودة محددة افتراضياً، ويجب اختيار العملاء المكتشفين الآخرين يدوياً. يمكن للوكلاء الآخرين استخدام إعداد MCP أدناه.
+بعد الإعداد، أعد تشغيل الوكيل واشرح التطبيق أو الميزة التي تريد استقصاءها. يدعم REA Claude Code وClaude Desktop وCodex وCursor وGemini CLI وWindsurf وDevin وOpenCode وAntigravity وGitHub Copilot CLI وCommand Code وVS Code. تكون تسجيلات REA الموجودة محددة افتراضياً، ويجب اختيار العملاء المكتشفين الآخرين يدوياً. يمكن للوكلاء الآخرين استخدام إعداد MCP أدناه.
 
 يمكن تشغيل Hopper في الوضع التجريبي. إذا ظهرت رسالة عند التشغيل الأول، فاختر التجربة أو أدخل ترخيصًا موجودًا.
 
@@ -219,7 +219,7 @@ rea setup
 
 ## استخدام REA مع وكلاء برمجة آخرين
 
-يدعم Setup Claude Code وClaude Desktop وCodex وCursor وGemini CLI وWindsurf وDevin وOpenCode وAntigravity وGitHub Copilot CLI وVS Code. تكون تسجيلات REA الموجودة محددة افتراضياً، ويجب اختيار العملاء المكتشفين الآخرين يدوياً. يمكن لأي وكيل يدعم خوادم MCP المحلية الاتصال باستخدام الإعداد التالي:
+يدعم Setup Claude Code وClaude Desktop وCodex وCursor وGemini CLI وWindsurf وDevin وOpenCode وAntigravity وGitHub Copilot CLI وCommand Code وVS Code. تكون تسجيلات REA الموجودة محددة افتراضياً، ويجب اختيار العملاء المكتشفين الآخرين يدوياً. يمكن لأي وكيل يدعم خوادم MCP المحلية الاتصال باستخدام الإعداد التالي:
 
 <!-- x-release-please-start-version -->
 

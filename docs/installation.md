@@ -77,6 +77,7 @@ Setup can configure these clients for REA's local MCP server:
 | OpenCode           | `opencode`       |
 | Antigravity        | `antigravity`    |
 | GitHub Copilot CLI | `copilot_cli`    |
+| Command Code       | `commandcode`    |
 | VS Code            | `vscode`         |
 
 ## Review setup changes

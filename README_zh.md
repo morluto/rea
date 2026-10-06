@@ -92,7 +92,7 @@ Setup 会先展示变更并备份已有配置。要求与更多选项见[安装�
 
 ### 使用智能体
 
-设置完成后，重启智能体并描述你想了解的应用或功能。REA 支持 Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI、Windsurf、Devin、OpenCode、Antigravity、GitHub Copilot CLI 和 VS Code。已有 REA 注册默认选中；其他检测到的客户端需手动选择。其他智能体可以使用下方的 MCP 配置。
+设置完成后，重启智能体并描述你想了解的应用或功能。REA 支持 Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI、Windsurf、Devin、OpenCode、Antigravity、GitHub Copilot CLI、Command Code 和 VS Code。已有 REA 注册默认选中；其他检测到的客户端需手动选择。其他智能体可以使用下方的 MCP 配置。
 
 Hopper 支持演示模式。如果首次启动时出现提示，选择演示模式或输入已有许可证。
 
@@ -208,7 +208,7 @@ REA 负责第 1–5 步中的二进制分析。第 6 步由智能体使用其常
 
 ## 与其他编程智能体一起使用
 
-Setup 支持 Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI、Windsurf、Devin、OpenCode、Antigravity、GitHub Copilot CLI 和 VS Code。已有 REA 注册默认选中；其他检测到的客户端需手动选择。任何支持本地 MCP 服务器的智能体都可以使用以下配置连接 REA。
+Setup 支持 Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI、Windsurf、Devin、OpenCode、Antigravity、GitHub Copilot CLI、Command Code 和 VS Code。已有 REA 注册默认选中；其他检测到的客户端需手动选择。任何支持本地 MCP 服务器的智能体都可以使用以下配置连接 REA。
 
 <!-- x-release-please-start-version -->
 

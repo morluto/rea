@@ -110,7 +110,7 @@ Setup shows its changes before applying them and backs up existing configuration
 
 After setup, restart your agent and [describe the app or feature](#just-ask-your-agent) you want to understand. Hopper can run in demo mode; if it shows a first-run prompt, choose the demo or enter an existing license.
 
-REA supports Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, Devin, OpenCode, Antigravity, GitHub Copilot CLI, and VS Code. Existing REA registrations are selected by default during setup; other detected agents remain unselected until chosen. Other agents can use the [manual MCP configuration](#manual-mcp-configuration).
+REA supports Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, Devin, OpenCode, Antigravity, GitHub Copilot CLI, Command Code, and VS Code. Existing REA registrations are selected by default during setup; other detected agents remain unselected until chosen. Other agents can use the [manual MCP configuration](#manual-mcp-configuration).
 
 ### From the terminal with npx
 

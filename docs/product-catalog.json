@@ -452,6 +452,12 @@
       "configuration": "managed"
     },
     {
+      "id": "commandcode",
+      "display_name": "Command Code",
+      "format": "commandcode",
+      "configuration": "managed"
+    },
+    {
       "id": "vscode",
       "display_name": "VS Code",
       "format": "vscode",

@@ -92,7 +92,7 @@ Setup は最初に連携するエージェントを複数選択できるよう�
 
 ### エージェントで使う
 
-設定後にエージェントを再起動し、調べたいアプリや機能を説明します。REA は Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI、Windsurf、Devin、OpenCode、Antigravity、GitHub Copilot CLI、VS Code に対応します。既存の REA 登録は初期選択され、それ以外の検出済みクライアントは選択が必要です。その他のエージェントは下記の MCP 設定を使えます。
+設定後にエージェントを再起動し、調べたいアプリや機能を説明します。REA は Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI、Windsurf、Devin、OpenCode、Antigravity、GitHub Copilot CLI、Command Code、VS Code に対応します。既存の REA 登録は初期選択され、それ以外の検出済みクライアントは選択が必要です。その他のエージェントは下記の MCP 設定を使えます。
 
 Hopper はデモモードで使えます。初回起動の画面ではデモを選択するか、既存のライセンスを入力してください。
 
@@ -208,7 +208,7 @@ REA は手順 1〜5 のバイナリ解析を処理し、手順 6 はエージェ
 
 ## 他のコーディングエージェントで使う
 
-Setup は Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI、Windsurf、Devin、OpenCode、Antigravity、GitHub Copilot CLI、VS Code に対応します。既存の REA 登録は初期選択され、それ以外の検出済みクライアントは選択が必要です。ローカル MCP サーバーに対応するエージェントは、次の設定でも接続できます。
+Setup は Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI、Windsurf、Devin、OpenCode、Antigravity、GitHub Copilot CLI、Command Code、VS Code に対応します。既存の REA 登録は初期選択され、それ以外の検出済みクライアントは選択が必要です。ローカル MCP サーバーに対応するエージェントは、次の設定でも接続できます。
 
 <!-- x-release-please-start-version -->
 

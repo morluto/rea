@@ -60,6 +60,7 @@ describe("client configuration filesystem lifecycle", () => {
       "opencode",
       "antigravity",
       "copilot_cli",
+      "commandcode",
       "vscode",
     ]);
     expect(
