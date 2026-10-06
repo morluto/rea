@@ -130,6 +130,7 @@ export const registerProcessComparisonTool = (
             {
               left_evidence_id: leftRecord.evidence_id,
               right_evidence_id: rightRecord.evidence_id,
+              comparison_evidence_id: evidence.evidence_id,
             },
             comparison,
           ),
@@ -144,6 +145,7 @@ const comparisonUnknownInput = (
   parsed: {
     readonly left_evidence_id: string;
     readonly right_evidence_id: string;
+    readonly comparison_evidence_id: string;
   },
   comparison: ReturnType<typeof compareProcessCaptures>,
 ): RecordUnknownInput | undefined => {
@@ -158,8 +160,10 @@ const comparisonUnknownInput = (
     .filter(([, status]) => status !== "unchanged")
     .map(([scope]) => scope)
     .join(", ");
+  // Unknown identity uses the question, not its supporting records. Bind the
+  // question to this comparison so distinct capture pairs and policies coexist.
   return {
-    question: `Process captures disagree across: ${differingScopes}`,
+    question: `Process captures disagree across: ${differingScopes} (comparison ${parsed.comparison_evidence_id})`,
     severity: "high",
     domain: "process-comparison",
     supporting_evidence_ids: [parsed.left_evidence_id],

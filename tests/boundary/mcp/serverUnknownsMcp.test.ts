@@ -13,7 +13,8 @@ import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysis
 import { err } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { createEvidence } from "../../../src/domain/evidence.js";
+import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
+import { parseEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { processCaptureSchema } from "../../../src/domain/processCapture.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/contracts/processCaptureExample.js";
 import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
@@ -194,6 +195,7 @@ it("records capture disagreement as a contradicted unknown", async () => {
     },
   });
   expect(compared.isError).not.toBe(true);
+  const firstEvidence = parseEvidence(structured(compared).evidence);
   expect(
     structured(await client.callTool({ name: "list_unknowns", arguments: {} })),
   ).toMatchObject({
@@ -202,10 +204,58 @@ it("records capture disagreement as a contradicted unknown", async () => {
         {
           status: "contradicted",
           domain: "process-comparison",
-          question: "Process captures disagree across: interaction",
+          question: `Process captures disagree across: interaction (comparison ${firstEvidence.evidence_id})`,
           contradicting_evidence_ids: [rightEvidence.evidence_id],
         },
       ],
     },
   });
+  const repeatedCapture = captureEvidence(
+    processCaptureSchema.parse({
+      ...right,
+      interaction_events: right.interaction_events.map((event) => ({
+        ...event,
+        data: "second observation",
+      })),
+    }),
+  );
+  expect(session.recordEvidence(repeatedCapture).ok).toBe(true);
+  const secondComparison = await client.callTool({
+    name: "compare_process_captures",
+    arguments: { left: leftEvidence, right: repeatedCapture },
+  });
+  expect(secondComparison.isError, JSON.stringify(secondComparison)).not.toBe(
+    true,
+  );
+  const secondEvidence = parseEvidence(structured(secondComparison).evidence);
+  expect(secondEvidence.normalized_result).toMatchObject({
+    status: "changed",
+    interaction: "added",
+  });
+  expect(secondEvidence.evidence_id).not.toBe(firstEvidence.evidence_id);
+
+  const unknowns = session.listUnknowns({ domain: "process-comparison" });
+  expect(unknowns).toHaveLength(2);
+  expect(unknowns.map((unknown) => unknown.contradicting_evidence_ids)).toEqual(
+    expect.arrayContaining([
+      [rightEvidence.evidence_id],
+      [repeatedCapture.evidence_id],
+    ]),
+  );
+  const beforeRepeat = parseEvidenceBundle(
+    structured(await client.callTool({ name: "get_evidence_bundle" })).result,
+  );
+  const repeatedComparison = await client.callTool({
+    name: "compare_process_captures",
+    arguments: { left: leftEvidence, right: repeatedCapture },
+  });
+  expect(repeatedComparison.isError).not.toBe(true);
+  expect(parseEvidence(structured(repeatedComparison).evidence)).toEqual(
+    secondEvidence,
+  );
+  expect(
+    parseEvidenceBundle(
+      structured(await client.callTool({ name: "get_evidence_bundle" })).result,
+    ),
+  ).toEqual(beforeRepeat);
 });
