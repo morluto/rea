@@ -274,6 +274,8 @@ jobs:
       - run: npm ci
       - run: npm run verify:keyed-archive
       - run: npm run verify:asset-catalog
+      - name: Native compiled NIB hierarchy regressions
+        run: npm run test:focused -- src/application/NibNativeHierarchy.test.ts
       - name: Real binary metadata and Interface Builder integration
         run: npm run verify:apple-dispatch && npm run verify:interface-builder
 
