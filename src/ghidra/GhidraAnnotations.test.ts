@@ -75,6 +75,21 @@ describe("Ghidra function annotations", () => {
       ).toBe(false);
   });
 
+  it("preserves qualified names in readback and the refreshed dossier", () => {
+    const value = result();
+    const name = "namespace::recovered_routine";
+    expect(
+      parseGhidraFunctionResult("annotate_native_function", {
+        ...value,
+        annotations: { ...value.annotations, name },
+        dossier: {
+          ...value.dossier,
+          procedure: { ...value.dossier.procedure, name },
+        },
+      }).ok,
+    ).toBe(true);
+  });
+
   it("declares mutation only for the admitted operation and keeps Windows and Hopper unavailable", () => {
     expect(
       CAPABILITIES.find((c) => c.operation === "annotate_native_function"),

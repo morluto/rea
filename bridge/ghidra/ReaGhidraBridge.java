@@ -963,7 +963,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         Address entry = function.getEntryPoint();
         JsonObject value = new JsonObject();
         value.addProperty("address", canonicalAddress(entry));
-        value.addProperty("name", function.getName());
+        value.addProperty("name", procedureName(function));
         value.addProperty("comment", currentProgram.getListing().getComment(CommentType.PRE, entry));
         value.addProperty("inline_comment", currentProgram.getListing().getComment(CommentType.EOL, entry));
         return value;
@@ -1000,7 +1000,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 String requested = requireText(params, field);
                 JsonElement measured = readback.get(field);
                 String expected = !field.equals("name") && requested.isEmpty() ? null : requested;
-                String observed = measured.isJsonNull() ? null : measured.getAsString();
+                String observed = field.equals("name") ? function.getName() :
+                    (measured.isJsonNull() ? null : measured.getAsString());
                 if (!java.util.Objects.equals(expected, observed))
                     throw new RequestFailure("annotation_readback_mismatch", "Annotation readback differs for " + field + " at " + canonicalAddress(entry));
             }
@@ -1019,7 +1020,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             return result;
         }
         catch (ghidra.util.exception.InvalidInputException | ghidra.util.exception.DuplicateNameException exception) {
-            throw new RequestFailure("invalid_request", "Invalid function name at " + canonicalAddress(entry) + ": " + safeMessage(exception));
+            throw new RequestFailure("invalid_function_name", "Invalid function name at " + canonicalAddress(entry) + ": " + safeMessage(exception));
         }
         finally {
             currentProgram.endTransaction(transaction, commit);

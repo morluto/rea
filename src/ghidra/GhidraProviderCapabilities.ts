@@ -57,7 +57,7 @@ export const limitationsFor = (operation: string): readonly string[] => {
     case "annotate_native_function":
       return [
         ...common,
-        "Names use Ghidra USER_DEFINED source. Regular comments map to PRE and inline comments to EOL at the exact function entry. Changes commit together after readback and refreshed analysis; failure rolls them all back.",
+        "Names use Ghidra USER_DEFINED source. Name writes preserve the existing namespace; readback uses the fully qualified name. Regular comments map to PRE and inline comments to EOL at the exact function entry. Changes commit together after readback and refreshed analysis; failure rolls them all back.",
         "Metadata edits invalidate immutable analysis snapshots and are discarded on close. CLI returns the updated dossier before session cleanup; this is not a saved Ghidra project.",
       ];
     case "inspect_native_load_image":

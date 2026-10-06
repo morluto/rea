@@ -170,7 +170,7 @@ observations rather than asserting cross-process identity of raw p-code.
 
 ## Function annotations
 
-`annotate_native_function` changes the name and/or comments at one exact local function entry, verifies readback, and returns a refreshed dossier. This is useful when recording recovered DOS function roles; it does not claim original-source names. Regular comments map to Ghidra PRE comments and inline comments to EOL comments. Empty text clears a comment; omitted fields preserve it. The whole edit rolls back if a setter, readback or analysis fails.
+`annotate_native_function` changes the name and/or comments at one exact local function entry, verifies readback, and returns a refreshed dossier. This is useful when recording recovered DOS function roles; it does not claim original-source names. Name writes preserve the existing namespace; readback returns the fully qualified name used by function inventories. Regular comments map to Ghidra PRE comments and inline comments to EOL comments. Empty text clears a comment; omitted fields preserve it. The whole edit rolls back if a setter, readback or analysis fails.
 
 ```json
 {

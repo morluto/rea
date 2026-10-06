@@ -446,6 +446,46 @@ describe("Ghidra result projection", () => {
     },
   );
 
+  it("preserves the rejected name constraint and function address", async () => {
+    const message =
+      "Invalid function name at 0x10100: Symbol name contains invalid characters";
+    const ghidra = provider(installationHost(), () => ({
+      start: () => Promise.resolve(ok(sessionInfo())),
+      callTool: () =>
+        Promise.resolve(
+          err(
+            new GhidraSessionError(
+              "remote",
+              message,
+              {},
+              { remoteCode: "invalid_function_name" },
+            ),
+          ),
+        ),
+      close: () => Promise.resolve(),
+    }));
+    const resolved = await ghidra.resolveAnalysisProfile(
+      executableTarget("elf", "x86_64"),
+    );
+    if (!resolved.ok) throw resolved.error;
+    if (resolved.value.profile === null)
+      throw new Error("Expected a bound profile");
+    await expect(
+      ghidra
+        .createClient(executableTarget("elf", "x86_64"), resolved.value.profile)
+        .execute("annotate_native_function", {
+          procedure: "0x10100",
+          name: "bad name",
+        }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        issues: [{ path: ["name"], reason: "invalid_value", message }],
+      },
+    });
+  });
+
   it("projects remote decompile cancellation as a provider-neutral interruption", async () => {
     const code = "decompile_cancelled";
     const tag = "AnalysisCancelledError";
