@@ -136,6 +136,8 @@
     "verify:javascript:digests": "npm run build:cached && node scripts/verify-large-javascript-digests.mjs",
     "verify:application-workflows": "npm run build:cached && node scripts/verify-local-application-workflows.mjs",
     "verify:managed": "npm run build:cached && node scripts/verify-managed-conformance.mjs",
+    "verify:firmware": "npm run build:cached && node scripts/verify-real-firmware.mjs",
+    "fixtures:firmware": "node scripts/generate-firmware-fixtures.mjs",
     "verify:android": "npm run build:cached && node scripts/verify-real-android.mjs",
     "fixtures:android": "node scripts/fetch-android-fixtures.mjs",
     "verify:agent": "npm run build:cached && node scripts/verify-agent-experience.mjs",

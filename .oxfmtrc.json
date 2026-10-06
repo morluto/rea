@@ -11,6 +11,6 @@
     "CHANGELOG.md",
     "package-lock.json",
     "_reference/**",
-    "third_party/jadx-headless-mcp/**"
+    "third_party/**"
   ]
 }

@@ -18,6 +18,10 @@ import { registerElectronTools } from "./registerElectronTools.js";
 import { registerEnhancedTools } from "./registerEnhancedTools.js";
 import { registerJavaScriptRuntimeObservationTools } from "./registerJavaScriptRuntimeObservationTools.js";
 import { registerManagedTools } from "./registerManagedTools.js";
+import { registerFirmwareTools } from "./registerFirmwareTools.js";
+import { FirmwareAnalysisService } from "../application/FirmwareAnalysisService.js";
+import type { FirmwareAnalysisPort } from "../application/FirmwareAnalysisPort.js";
+import { FirmwareProvider } from "../firmware/FirmwareProvider.js";
 import { registerAndroidTools } from "./registerAndroidTools.js";
 import { AndroidAnalysisService } from "../application/AndroidAnalysisService.js";
 import type { AndroidAnalysisPort } from "../application/AndroidAnalysisPort.js";
@@ -38,6 +42,7 @@ const ACTIVE_TARGET_INSTRUCTIONS =
 
 export interface CreateServerOptions {
   readonly logger?: Logger;
+  readonly firmwareAnalysis?: FirmwareAnalysisPort;
   readonly androidAnalysis?: AndroidAnalysisPort;
   readonly browserObservation?: BrowserObservationPort;
   readonly browserScenarioCapture?: BrowserScenarioCapturePort;
@@ -55,6 +60,14 @@ const installSessionToolAvailability = (
   if (session === undefined) return undefined;
   const policy = sessionAvailabilityPolicy(options.availabilityPolicy, {
     optionalFeatures: {
+      firmwareInspectionEnabled:
+        options.firmwareAnalysis !== undefined ||
+        (process.platform === "linux" &&
+          isAbsolute(process.env.REA_BINWALK_COMMAND ?? "")),
+      firmwareExtractionEnabled:
+        options.firmwareAnalysis !== undefined ||
+        (process.platform === "linux" &&
+          isAbsolute(process.env.REA_UNBLOB_COMMAND ?? "")),
       androidAnalysisEnabled:
         options.androidAnalysis !== undefined ||
         ((process.platform === "linux" || process.platform === "darwin") &&
@@ -124,6 +137,14 @@ export const createServer = (
   registerAndroidTools(
     server,
     new AndroidAnalysisService(options.androidAnalysis ?? new JadxProvider()),
+    toolLogger,
+    recordEvidence,
+  );
+  registerFirmwareTools(
+    server,
+    new FirmwareAnalysisService(
+      options.firmwareAnalysis ?? new FirmwareProvider(),
+    ),
     toolLogger,
     recordEvidence,
   );

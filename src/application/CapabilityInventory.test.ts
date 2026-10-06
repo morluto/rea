@@ -55,6 +55,27 @@ const entry = (
 };
 
 describe("capability inventory: provider status", () => {
+  it("reports firmware inspection and extraction prerequisites independently", () => {
+    const policy = {
+      processCaptureEnabled: true,
+      firmwareInspectionEnabled: true,
+    };
+    expect(entry("inspect_firmware_regions", status(), policy)).toMatchObject({
+      available: true,
+      surface: "firmware-provider",
+    });
+    expect(entry("extract_firmware", status(), policy)).toMatchObject({
+      available: false,
+      reason: "provider_missing",
+      remediation: expect.stringContaining("REA_UNBLOB_COMMAND"),
+    });
+    expect(
+      entry("extract_firmware", status(), {
+        processCaptureEnabled: true,
+        firmwareExtractionEnabled: true,
+      }),
+    ).toMatchObject({ available: true });
+  });
   it("keeps Android APK operations target-free and reports their explicit engine prerequisite", () => {
     expect(
       entry("inspect_android_package", status(), {

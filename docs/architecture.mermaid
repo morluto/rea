@@ -25,6 +25,7 @@ graph TD
         AUX["src/artifacts/ + src/native/<br/>disjoint artifact and native capabilities"]
         BROWSER["src/browser/<br/>Loopback CDP transport<br/>exact-origin passive observation"]
         DOTNET["src/dotnet/<br/>Managed static metadata provider<br/>PE/CLI metadata inventory, members, IL"]
+        FIRMWARE["src/firmware/<br/>Binwalk / Unblob adapters<br/>owned processes, report normalization, private extraction"]
         ANDROID["src/android/<br/>Static APK adapter<br/>owned SDK stdio, pinned headless JADX, normalization"]
         REFERENCE["src/reference/<br/>Filesystem reference-source reader<br/>bounded traversal, validation, errors"]
     end
@@ -62,6 +63,9 @@ graph TD
     MAIN --> SERVER
     MAIN --> APP
     CLI --> APP
+    APP --> FIRMWARE
+    FIRMWARE --> PROCESS
+    FIRMWARE --> CONTRACTS
     APP --> ANDROID
     ANDROID --> PROCESS
     ANDROID --> CONTRACTS

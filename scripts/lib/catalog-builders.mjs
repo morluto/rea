@@ -32,6 +32,11 @@ export const toolFamilyCatalog = (sources) => {
       ],
     },
     {
+      id: "firmware",
+      surface: "firmware-provider",
+      contracts: sources.firmwareContracts.FIRMWARE_TOOL_CONTRACTS,
+    },
+    {
       id: "android",
       surface: "android-provider",
       contracts: sources.androidContracts.ANDROID_TOOL_CONTRACTS,
@@ -117,6 +122,18 @@ export const providerCatalog = (sources) => {
       identity: sources.artifactProviders.MANAGED_WORKFLOW_PROVIDER,
       contracts:
         sources.managedWorkflowContracts.MANAGED_WORKFLOW_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.firmwareProvider.BINWALK_PROVIDER_IDENTITY,
+      contracts: sources.firmwareContracts.FIRMWARE_TOOL_CONTRACTS.filter(
+        ({ name }) => name === "inspect_firmware_regions",
+      ),
+    },
+    {
+      identity: sources.firmwareProvider.UNBLOB_PROVIDER_IDENTITY,
+      contracts: sources.firmwareContracts.FIRMWARE_TOOL_CONTRACTS.filter(
+        ({ name }) => name === "extract_firmware",
+      ),
     },
     {
       identity: sources.androidProvider.JADX_PROVIDER_IDENTITY,

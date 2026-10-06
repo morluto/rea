@@ -151,6 +151,8 @@ Update either installation with `rea update`.
 
 Native binary analysis requires [Hopper](https://www.hopperapp.com/) or [Ghidra](#ghidra-analysis-provider). Hopper is separate software with its own license; its demo supports analysis with vendor-defined limits. REA can use Ghidra that you have already installed.
 
+Firmware region inspection and explicit extraction use caller-supplied Binwalk and Unblob on Linux. See [Firmware analysis](docs/firmware-analysis.md) for setup, provenance, resource limits and native handoff.
+
 Static APK analysis uses a separately supplied headless JADX JAR and Java, with no emulator or APK execution. See [Android analysis](docs/android-analysis.md) for setup, CLI/MCP operations, coverage and public test fixtures.
 
 Windows Ghidra support is experimental for native x86-64 PE applications on local NTFS. The package bundles native Job Object, private-DACL, and path-admission controls. See [Windows Ghidra P0](docs/windows-ghidra-p0.md) for prerequisites and verified scope.
@@ -316,6 +318,7 @@ See [native investigation](docs/native-investigation.md) for keyed archives, ins
 | Native macOS utilities    |     7 | Mach-O metadata, code signatures, plists, architectures, and Swift demangling without launching Hopper                                                    |
 | Artifact graph            |     5 | directory and package inventories, compiled Interface Builder files, Apple asset catalogs, and extraction                                                 |
 | Managed PE/CLI            |     7 | .NET identity, metadata, CIL instructions, native dependencies, reconstruction imports, and build comparisons                                             |
+| Firmware                  |     2 | Linux firmware region inspection and explicit extraction                                                                                                  |
 | Android APK               |     5 | package and manifest declarations, class search, member inventories, method decompilation, and incoming static references                                 |
 | Browser observation       |     9 | page structure, network metadata, scripts, source maps, WebMCP discovery, screenshots, and capture comparisons                                            |
 | Electron analysis         |     5 | renderer observation, static app mapping, and static/runtime reconciliation                                                                               |
@@ -468,6 +471,8 @@ flowchart LR
     REA --> Browser["Browser CDP provider"]
     REA --> Android["Android static provider<br/>headless JADX adapter"]
     Android --> Runtime
+    REA --> Firmware["Firmware providers<br/>Binwalk / Unblob adapters"]
+    Firmware --> Runtime
     REA --> Process["Process capture provider"]
     Runtime --> Target["Target software"]
     Process --> Target

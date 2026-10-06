@@ -6,6 +6,7 @@ import { SESSION_TOOL_CONTRACTS } from "./sessionToolContracts.js";
 import { TOOL_CONTRACTS } from "./toolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "./artifactToolContracts.js";
 import { MANAGED_TOOL_CONTRACTS } from "./managedToolContracts.js";
+import { FIRMWARE_TOOL_CONTRACTS } from "./firmwareToolContracts.js";
 import { ANDROID_TOOL_CONTRACTS } from "./androidToolContracts.js";
 import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "./managedWorkflowToolContracts.js";
 import { NATIVE_TOOL_CONTRACTS } from "./nativeToolContracts.js";
@@ -21,6 +22,7 @@ const GROUPS = {
   artifact: ARTIFACT_TOOL_CONTRACTS,
   managed: MANAGED_TOOL_CONTRACTS,
   android: ANDROID_TOOL_CONTRACTS,
+  firmware: FIRMWARE_TOOL_CONTRACTS,
   managed_workflow: MANAGED_WORKFLOW_TOOL_CONTRACTS,
   browser_provider: BROWSER_PROVIDER_TOOL_CONTRACTS,
   electron: ELECTRON_TOOL_CONTRACTS,
@@ -93,6 +95,8 @@ const PUBLISHED_TOOL_NAME_FLOOR = [
   "inspect_electron_page",
   "inspect_macho",
   "inspect_managed_artifact",
+  "inspect_firmware_regions",
+  "extract_firmware",
   "inspect_android_package",
   "search_android_classes",
   "inspect_android_class",

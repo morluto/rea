@@ -28,6 +28,8 @@ type ToolAvailabilityReason = "available" | ToolUnavailabilityReason;
 type ProviderDescriptor = ProviderCapability;
 export type AvailabilityPolicy = {
   readonly processCaptureEnabled: boolean;
+  readonly firmwareInspectionEnabled?: boolean;
+  readonly firmwareExtractionEnabled?: boolean;
   readonly androidAnalysisEnabled?: boolean;
   readonly browserObservationEnabled?: boolean;
   readonly browserScenarioEnabled?: boolean;
@@ -206,6 +208,19 @@ const workflowAvailabilityFor = ({
   kind,
   policy,
 }: AvailabilityContext): Availability | null => {
+  if (kind === "firmware-provider") {
+    const enabled =
+      name === "inspect_firmware_regions"
+        ? policy.firmwareInspectionEnabled
+        : policy.firmwareExtractionEnabled;
+    return enabled === true
+      ? { reason: "available", remediation: null }
+      : {
+          reason: "provider_missing",
+          remediation:
+            "On Linux, provide an absolute REA_BINWALK_COMMAND (Binwalk 3.1.0) or REA_UNBLOB_COMMAND (Unblob 26.6.4) path and util-linux prlimit. Extraction also requires the selected format’s external extractor.",
+        };
+  }
   if (kind === "android-provider")
     return policy.androidAnalysisEnabled === true
       ? { reason: "available", remediation: null }

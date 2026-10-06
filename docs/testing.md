@@ -311,3 +311,15 @@ allows a host-permission-boundary-only result and explicitly reports
 Both commands reject a changed executable digest and clean up the fixture
 process and helper. These lanes require an interactive macOS desktop. See [native investigation](native-investigation.md)
 for the exact ABI, authority, graph and observation boundaries.
+
+### Firmware adapters
+
+`npm run fixtures:firmware` uses existing Python 3 and a host C compiler to make
+an ignored gzip/USTAR firmware fixture and independent offset/hash oracle.
+`npm run verify:firmware` requires caller-supplied Binwalk 3.1.0, Unblob 26.6.4
+and util-linux prlimit on Linux. It verifies CLI/MCP parity, selected ranges,
+unknown chunks, depth limits and extracted child digests. The optional
+`REA_FIRMWARE_VERIFY_EXT4=1` lane requires existing mke2fs/debugfs; the separate
+`REA_FIRMWARE_VERIFY_GHIDRA=1` lane checks a selected host ELF through real Ghidra.
+Neither optional toolchain is a base-lane prerequisite. See
+[firmware analysis](firmware-analysis.md) for limits and unverified formats.

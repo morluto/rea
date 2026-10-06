@@ -12,6 +12,8 @@ export interface SessionAvailabilityDefaults {
     | "electronAutomationEnabled"
     | "v8InspectorObservationEnabled"
     | "androidAnalysisEnabled"
+    | "firmwareInspectionEnabled"
+    | "firmwareExtractionEnabled"
   >;
 }
 
@@ -23,6 +25,10 @@ export const sessionAvailabilityPolicy = (
   configured ??
   (() => ({
     processCaptureEnabled: platform !== "win32",
+    firmwareInspectionEnabled:
+      defaults.optionalFeatures?.firmwareInspectionEnabled ?? false,
+    firmwareExtractionEnabled:
+      defaults.optionalFeatures?.firmwareExtractionEnabled ?? false,
     androidAnalysisEnabled:
       defaults.optionalFeatures?.androidAnalysisEnabled ?? false,
     browserObservationEnabled:

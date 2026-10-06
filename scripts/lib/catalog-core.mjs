@@ -43,6 +43,8 @@ const SOURCE_PATHS = {
   nativeContracts: "dist/contracts/nativeToolContracts.js",
   artifactContracts: "dist/contracts/artifactToolContracts.js",
   managedContracts: "dist/contracts/managedToolContracts.js",
+  firmwareContracts: "dist/contracts/firmwareToolContracts.js",
+  firmwareProvider: "dist/firmware/FirmwareRelease.js",
   androidContracts: "dist/contracts/androidToolContracts.js",
   androidProvider: "dist/android/JadxRelease.js",
   managedWorkflowContracts: "dist/contracts/managedWorkflowToolContracts.js",
