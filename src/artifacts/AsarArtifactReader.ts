@@ -1,3 +1,4 @@
+import { createReadStream } from "node:fs";
 import { sep } from "node:path";
 import { Readable } from "node:stream";
 
@@ -110,6 +111,12 @@ export class AsarArtifactReader implements ArtifactReader {
         asarFailure(this.path, `read ${entry.path}`, cause),
       );
     }
+  }
+
+  /** Open raw container bytes to verify the inventory identity before analysis. */
+  openContainer(signal?: AbortSignal): Readable {
+    abortIfNeeded(signal);
+    return createReadStream(this.path, signal === undefined ? {} : { signal });
   }
 
   close(): Promise<void> {
