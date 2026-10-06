@@ -67,7 +67,7 @@ describe("reference source import error projection", () => {
     ).toEqual([malformed, unexpected]);
   });
 
-  it("projects entry failures without low-level reader diagnostics", () => {
+  it("retains entry failure diagnostics alongside recovery guidance", () => {
     for (const [kind, code] of [
       ["directory", "io"],
       ["symlink", "io"],
@@ -80,11 +80,12 @@ describe("reference source import error projection", () => {
         path: "safe/path",
         kind,
         code,
-        message: "SECRET internal diagnostic /private/path",
+        message: "Observed entry failure at /owned/fixture/path",
       });
-      expect(message).not.toContain("SECRET");
-      expect(message).not.toContain("/private/path");
-      expect(message).toMatch(/Check|try again|when ready|smaller|supported/u);
+      expect(message).toContain(
+        "Observed entry failure at /owned/fixture/path",
+      );
+      expect(message).toMatch(/Check|try again|when ready|Exclude/u);
     }
   });
 

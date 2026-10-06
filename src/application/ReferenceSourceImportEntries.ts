@@ -20,14 +20,18 @@ export interface ParsedReferenceSourceEntries {
   readonly limitations: string[];
 }
 
-/** Project a low-level entry failure into safe import guidance. */
+/** Preserve the observed reader failure and add entry-specific recovery guidance. */
 export const projectReferenceSourceEntryFailure = (
+  entry: Extract<ReferenceSourceEntry, { status: "failed" }>,
+): string => `${entry.message} ${entryRecoveryGuidance(entry)}`;
+
+const entryRecoveryGuidance = (
   entry: Extract<ReferenceSourceEntry, { status: "failed" }>,
 ): string => {
   if (entry.code === "cancelled")
     return "This entry was not read because the import was cancelled. Start the import again when ready.";
   if (entry.code === "unsupported")
-    return "This entry cannot be read safely on this system. Exclude it or import the directory on a supported system.";
+    return "Exclude this entry or replace it with a regular file.";
   if (entry.kind === "directory")
     return "This directory could not be read. Check its permissions, then try again.";
   if (entry.kind === "symlink")
