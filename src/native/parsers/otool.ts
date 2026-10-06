@@ -219,7 +219,10 @@ const parseFields = (block: string): Record<string, string | number | null> => {
     const match = /^((?:time stamp)|\S+(?:\s+version)?)\s+(.+)$/u.exec(line);
     if (match?.[1] === undefined || match[2] === undefined) continue;
     const value = match[2].trim();
-    fields[match[1]] = numeric(value) ?? value;
+    fields[match[1]] =
+      match[1] === "segname" || match[1] === "sectname"
+        ? value
+        : (numeric(value) ?? value);
   }
   return fields;
 };
