@@ -273,3 +273,32 @@ describe("JavaScript semantic analysis: dataflow 2", () => {
     ]);
   });
 });
+
+describe("JavaScript semantic analysis: unknown default inputs", () => {
+  it.each([
+    'function launch(mode = "safe") { return mode; }',
+    'function launch({ mode } = { mode: "safe" }) { return mode; }',
+    'function launch([mode] = ["safe"]) { return mode; }',
+  ])("does not assume an optional argument is omitted: %s", (source) => {
+    const ir = analyzeJavaScriptSemantics(source);
+    expect(onlyCallable(ir, "launch").returnSites[0]?.value.status).toBe(
+      "unknown",
+    );
+  });
+
+  it("preserves known declaration inputs and unknown catch bindings", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      const { mode: retained = "fallback" } = { mode: "actual" };
+      function caught() {
+        try { risky(); } catch ({ message = "fallback" }) { return message; }
+      }
+    `);
+    expect(topLevelBinding(ir, "retained").value).toMatchObject({
+      status: "literal",
+      value: "actual",
+    });
+    expect(onlyCallable(ir, "caught").returnSites[0]?.value.status).toBe(
+      "unknown",
+    );
+  });
+});
