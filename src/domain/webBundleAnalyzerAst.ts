@@ -1,6 +1,7 @@
 import * as t from "@babel/types";
 
 import { sanitizeBrowserUrl } from "./browserObservation.js";
+import { semanticStaticPropertyName } from "./javascriptAstValues.js";
 
 /** Name of a call/new callee from its AST node. */
 export const calleeName = (callee: t.Node): string => {
@@ -30,10 +31,18 @@ export const objectValue = (
   object: t.ObjectExpression,
   name: string,
 ): t.ObjectProperty["value"] | undefined => {
-  for (const property of object.properties)
-    if (t.isObjectProperty(property) && propertyName(property.key) === name)
-      return property.value;
-  return undefined;
+  let value: t.ObjectProperty["value"] | undefined;
+  for (const property of object.properties) {
+    if (t.isSpreadElement(property)) {
+      value = undefined;
+      continue;
+    }
+    const key = semanticStaticPropertyName(property.key, property.computed);
+    if (key === "" && !t.isStringLiteral(property.key)) value = undefined;
+    else if (key === name)
+      value = t.isObjectProperty(property) ? property.value : undefined;
+  }
+  return value;
 };
 
 export const objectString = (

@@ -295,3 +295,36 @@ const inspection = (source: string) =>
     },
     limitations: [],
   });
+
+describe("web metadata key semantics", () => {
+  it("keeps computed metadata keys and overwrite order conservative", () => {
+    const result = analyzeCapturedWebBundle(
+      inspection(`
+      const path = "description";
+      const routes = [{ [path]: "/not-a-route" }, { ["path"]: "/real" }];
+      document.modelContext.registerTool({
+        name: "old", name: "new",
+        inputSchema: { properties: { [name]: {}, literal: {} } }
+      });
+      document.modelContext.registerTool({ name: "old", ...dynamic });
+      document.modelContext.registerTool({ name: "old", [name]: "dynamic" });
+      document.modelContext.registerTool({ name: "old", get name() {} });
+      document.modelContext.registerTool({ ...dynamic, ["name"]: "restored" });
+      document.modelContext.registerTool({ name: "valid", [""]: 0 });
+    `),
+    );
+
+    expect(result.observations.routes.map(({ value }) => value)).toEqual([
+      "/real",
+    ]);
+    expect(result.observations.webmcp_declarations).toEqual([
+      expect.objectContaining({
+        name: "new",
+        schema_property_names: ["literal"],
+      }),
+      expect.objectContaining({ name: null }),
+      expect.objectContaining({ name: "restored" }),
+      expect.objectContaining({ name: "valid" }),
+    ]);
+  });
+});
