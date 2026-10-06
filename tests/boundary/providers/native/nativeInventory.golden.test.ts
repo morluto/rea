@@ -319,3 +319,62 @@ const signatureRunner = (outputs: {
     );
   },
 });
+
+it.each(["weak-def", "absolute", "literal suffix"])(
+  "preserves an nm-proven export name ending in [%s]",
+  (suffix) => {
+    const name = `symbol [${suffix}]`;
+    expect(
+      parseDyldSymbols(
+        `offset symbol\n0x120 ${name}`,
+        "exports",
+        "0x1000",
+        new Set([name]),
+      ),
+    ).toEqual([
+      { name, address: "0x1120", weak: null, reexport: false, source: null },
+    ]);
+  },
+);
+
+it("keeps true weak annotations when nm establishes the unannotated name", () => {
+  expect(
+    parseDyldSymbols(
+      "0x120 _weak [weak-def]",
+      "exports",
+      null,
+      new Set(["_weak"]),
+    ),
+  ).toEqual([
+    {
+      name: "_weak",
+      address: "0x120",
+      weak: true,
+      reexport: false,
+      source: null,
+    },
+  ]);
+});
+
+it("leaves an ambiguous short and literal name to the caller's nm inventory", () => {
+  expect(
+    parseDyldSymbols(
+      "0x120 symbol [weak-def]",
+      "exports",
+      null,
+      new Set(["symbol", "symbol [weak-def]"]),
+    ),
+  ).toEqual([]);
+});
+
+it("retains annotation parsing without nm name evidence", () => {
+  expect(parseDyldSymbols("0x120 _weak [weak-def]", "exports")).toEqual([
+    {
+      name: "_weak",
+      address: "0x120",
+      weak: true,
+      reexport: false,
+      source: null,
+    },
+  ]);
+});
