@@ -148,5 +148,7 @@ const isArtifactInventorySubject = (
   subject: EvidenceSubjectTarget,
   target: BinaryTarget,
 ): boolean =>
-  (operation === "inventory_artifact" || operation === "inspect_artifact") &&
+  (operation === "inventory_artifact" ||
+    operation === "inspect_artifact" ||
+    operation === "extract_artifact") &&
   subject.path === (target.sourcePath ?? target.path);
