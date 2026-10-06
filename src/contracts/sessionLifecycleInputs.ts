@@ -1,9 +1,15 @@
+import { executableFormatHintSchema } from "../domain/dosCom.js";
 import { z } from "zod";
 import { analysisProviderSelectorSchema } from "./providerSelection.js";
 
 /** Input contract for opening a target with an optional staged snapshot. */
 export const openBinaryInputSchema = z.object({
   path: z.string().min(1),
+  format: executableFormatHintSchema
+    .optional()
+    .describe(
+      "Explicit headerless DOS COM interpretation; omission preserves header-based detection",
+    ),
   provider_id: analysisProviderSelectorSchema.optional(),
   snapshot_path: z.string().min(1).optional(),
 });

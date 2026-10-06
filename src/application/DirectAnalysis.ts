@@ -1,3 +1,4 @@
+import type { ExecutableFormatHint } from "../domain/dosCom.js";
 import { parseConfig } from "../config.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { EnhancedTools } from "./EnhancedTools.js";
@@ -75,6 +76,7 @@ export const runDirectAnalysis = async (
     readonly snapshotPath?: string | undefined;
     readonly signal?: AbortSignal;
     readonly providerId?: AnalysisProviderSelector;
+    readonly formatHint?: ExecutableFormatHint;
   } = {},
 ): Promise<JsonValue> =>
   withProcessCancellation(options.signal, (signal) =>
@@ -82,6 +84,9 @@ export const runDirectAnalysis = async (
       logger: options.logger ?? silentLogger,
       snapshotPath: options.snapshotPath,
       signal,
+      ...(options.formatHint === undefined
+        ? {}
+        : { formatHint: options.formatHint }),
       ...(options.providerId === undefined
         ? {}
         : { providerId: options.providerId }),
@@ -156,6 +161,7 @@ const runAnalysis = async (
     readonly snapshotPath: string | undefined;
     readonly signal: AbortSignal;
     readonly providerId?: AnalysisProviderSelector;
+    readonly formatHint?: ExecutableFormatHint;
     /**
      * Environment the configuration is read from. Defaults to the process
      * environment so existing callers are unchanged, but a caller may supply
@@ -174,11 +180,17 @@ const runAnalysis = async (
     const prepared = await prepareSnapshot({
       path,
       snapshotPath,
+      ...(options.formatHint === undefined
+        ? {}
+        : { formatHint: options.formatHint }),
     });
     if (!prepared.ok) return cliError(prepared.error);
     const { snapshot } = prepared.value;
     const opened = await session.open(path, {
       signal,
+      ...(options.formatHint === undefined
+        ? {}
+        : { formatHint: options.formatHint }),
       ...(snapshot === undefined ? {} : { snapshot }),
       ...(options.providerId === undefined
         ? {}
@@ -320,6 +332,7 @@ const withProcessCancellation = async <Value>(
 
 const prepareSnapshot = async (options: {
   readonly path: string;
+  readonly formatHint?: ExecutableFormatHint;
   readonly snapshotPath: string | undefined;
 }): Promise<
   Result<{ readonly snapshot?: AnalysisSnapshot }, AnalysisError>
@@ -329,7 +342,13 @@ const prepareSnapshot = async (options: {
     return ok({});
   const loaded = await readAnalysisSnapshot(snapshotPath);
   if (!loaded.ok) return loaded;
-  const target = await parseBinaryTarget(path);
+  const target = await parseBinaryTarget(
+    path,
+    process.cwd(),
+    process.arch,
+    undefined,
+    options.formatHint,
+  );
   if (!target.ok) return target;
   if (!snapshotMatchesTarget(loaded.value.target, target.value))
     return err(

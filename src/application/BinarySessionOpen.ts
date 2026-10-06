@@ -1,3 +1,4 @@
+import type { ExecutableFormatHint } from "../domain/dosCom.js";
 import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import {
@@ -17,6 +18,7 @@ import { SessionProviderRouter } from "./SessionProviderRouter.js";
 export interface BinarySessionOpenOptions {
   readonly signal?: AbortSignal;
   readonly targetKind?: BinaryTarget["kind"];
+  readonly formatHint?: ExecutableFormatHint;
   readonly snapshot?: AnalysisSnapshot;
   readonly providerId?: AnalysisProviderSelector;
 }
@@ -54,6 +56,7 @@ export const resolveSessionOpen = async (
     process.cwd(),
     process.arch,
     options.targetKind,
+    options.formatHint,
   );
   if (!parsed.ok) return parsed;
   const target = parsed.value;

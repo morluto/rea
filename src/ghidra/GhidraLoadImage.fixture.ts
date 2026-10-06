@@ -92,7 +92,63 @@ export const fixtureDosLoadImage = (): {
           memory_bytes_hex: "0410",
         },
       ],
+      entry_context: [],
       entry_points: ["0x10000"],
+    },
+  };
+};
+
+/** Source-owned headerless COM image and measured real-mode import facts. */
+export const fixtureDosComLoadImage = (): {
+  bytes: Buffer;
+  sha256: string;
+  observation: NativeLoadImageObservation;
+} => {
+  const bytes = Buffer.from("b83412c3", "hex");
+  const digest = hash(bytes);
+  return {
+    bytes,
+    sha256: digest,
+    observation: {
+      executable_format: "Raw Binary",
+      language_id: "x86:LE:16:Real Mode",
+      compiler_spec_id: "default",
+      image_base: "0x0",
+      default_address_space: "ram",
+      source_files: [
+        {
+          name: "fixture.com",
+          size: bytes.length,
+          original_sha256: digest,
+          modified_sha256: digest,
+        },
+      ],
+      mappings: [
+        {
+          block: "ram",
+          start: "0x10100",
+          end: "0x10103",
+          address_space: "ram",
+          initialized: true,
+          loaded: true,
+          overlay: false,
+          length: bytes.length,
+          source_file_index: 0,
+          file_offset: 0,
+          sha256: digest,
+        },
+      ],
+      relocations: [],
+      entry_points: ["0x10100"],
+      entry_context: [
+        {
+          address: "0x10100",
+          registers: ["CS", "DS", "ES", "SS"].map((name) => ({
+            name,
+            value_hex: "0x1000",
+          })),
+        },
+      ],
     },
   };
 };

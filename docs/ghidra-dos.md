@@ -1,6 +1,6 @@
-# DOS MZ analysis with Ghidra
+# DOS MZ and COM analysis with Ghidra
 
-REA can analyze DOS MZ executables through the bring-your-own Ghidra adapter.
+REA can analyze DOS MZ executables and explicitly selected COM images through the bring-your-own Ghidra adapter.
 The Linux x64 verification lane exercises actual 16-bit disassembly and
 decompilation through the CLI and stdio MCP. It requires the same Ghidra
 12.1.4 and 64-bit JDK 21 installation as other Ghidra sessions; no DOS emulator
@@ -40,6 +40,43 @@ drift. Closing the session deletes the temporary project and snapshot.
 The profile also commits `function_body_evidence: complete-inclusive-ranges-v1`,
 so snapshots from older length-only Ghidra results do not satisfy the current
 profile.
+
+## Headerless COM images
+
+COM has no identifying header. Select its interpretation explicitly; neither the
+`.com` suffix nor arbitrary unrecognized bytes are enough to admit it.
+
+```bash
+rea inspect /absolute/path/to/legacy.com --target-format dos-com --provider ghidra --json
+rea function /absolute/path/to/legacy.com 0x10100 --target-format dos-com --provider ghidra --json
+rea inspect-native-load-image /absolute/path/to/legacy.com --target-format dos-com --provider ghidra --json
+```
+
+```json
+{
+  "name": "open_binary",
+  "arguments": {
+    "path": "/absolute/path/to/legacy.com",
+    "format": "dos-com",
+    "provider_id": "ghidra"
+  }
+}
+```
+
+The caller's interpretation applies to the complete file, even if its filename
+suggests another format. Files must contain 1..65280 bytes: the 64 KiB COM segment
+minus the 256-byte PSP prefix. Ghidra uses `BinaryLoader` with real-mode language
+and maps file offset zero at `1000:0100` (linear `0x10100`). A packaged pre-analysis
+script seeds the entry function and CS/DS/ES/SS context `0x1000`. These settings
+and the preparation policy are committed in the analysis profile; a failed
+preparation prevents the resident bridge from serving results.
+
+Load-image verification checks all original and modified file bytes, complete
+source mapping/memory digests, absence of relocations, entry and measured register
+context. The context is imposed for analysis, not observed from execution. PSP
+memory, initial stack contents/SP, DOS interrupts and PC-98 devices are not
+modeled. COM has no MZ header, relocation table or appended-overlay model; all
+selected bytes belong to its analysis module. The original file stays unchanged.
 
 ## Addresses and function extent
 
@@ -89,7 +126,7 @@ range's file offset and analysis address; it does not locate the first differing
 byte inside that range. Mapping ends are **inclusive**, unlike the exclusive ends
 from `list_segments`. Appended overlays remain in source-file identity and are
 excluded from initialized module coverage. Uninitialized allocations are reported;
-their contents and DOS runtime semantics are not verified. Other formats return
+their contents and DOS runtime semantics are not verified. Formats other than MZ and explicit COM return
 `unsupported` with measured observations, not a successful MZ verification.
 
 `read_bytes` returns initialized provider memory, including loader fixups; an

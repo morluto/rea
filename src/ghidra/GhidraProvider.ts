@@ -20,7 +20,10 @@ import {
   nativeLoadImageObservationSchema,
   nativeLoadImageSchema,
 } from "../domain/nativeLoadImage.js";
-import { attestGhidraDosLoadImage } from "./GhidraLoadImageValues.js";
+import {
+  attestGhidraDosLoadImage,
+  attestGhidraDosComLoadImage,
+} from "./GhidraLoadImageValues.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -219,6 +222,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
           new URL("../../bridge/ghidra/ReaGhidraBridge.java", import.meta.url),
         ),
         ...(target.format === "dos-mz" ? { dosMz: true } : {}),
+        ...(target.format === "dos-com" ? { dosCom: true } : {}),
         platform: installation.platform,
       }),
       targetPath: target.path,
@@ -229,7 +233,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
           : "unix-socket",
       providerVersion: prerequisites.value.providerVersion,
       profileDigest: committedProfile.digest,
-      ...(target.format === "dos-mz"
+      ...(["dos-mz", "dos-com"].includes(target.format)
         ? {
             expectedLanguageId: "x86:LE:16:Real Mode",
             expectedCompilerSpecId: "default",
@@ -287,12 +291,12 @@ export class GhidraProvider implements AnalysisProviderCandidate {
           const observations = nativeLoadImageObservationSchema.parse(
             result.value,
           );
-          if (target.format !== "dos-mz") {
+          if (target.format !== "dos-mz" && target.format !== "dos-com") {
             normalized = jsonValueSchema.parse(
               nativeLoadImageSchema.parse({
                 status: "unsupported",
                 reason:
-                  "Independent load-image verification currently supports DOS MZ targets only.",
+                  "Independent load-image verification currently supports DOS MZ and explicit DOS COM targets only.",
                 observations,
                 limitations: [
                   "Other formats expose measured mappings and source identities; no format-specific verification was performed.",
@@ -312,11 +316,11 @@ export class GhidraProvider implements AnalysisProviderCandidate {
             const snapshot = await client.readTargetSnapshot();
             if (!snapshot.ok)
               return err(projectSessionError(operation, snapshot.error));
-            const attested = attestGhidraDosLoadImage(
-              snapshot.value,
-              target.sha256 ?? "",
-              observations,
-            );
+            const attested = (
+              target.format === "dos-com"
+                ? attestGhidraDosComLoadImage
+                : attestGhidraDosLoadImage
+            )(snapshot.value, target.sha256 ?? "", observations);
             if (!attested.ok)
               return err(
                 new ProviderAdapterError("ghidra", operation, {

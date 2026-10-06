@@ -64,6 +64,35 @@ afterEach(async () => {
   );
 });
 
+describe("Ghidra COM loader", () => {
+  it("loads explicit COM at its PSP-relative entry before auto-analysis", () => {
+    const arguments_ = ghidraHeadlessArguments({
+      projectRoot: "/tmp/project",
+      targetPath: "/tmp/target.com",
+      bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
+      descriptorPath: "/tmp/session.json",
+      ghidraLogPath: "/tmp/ghidra.log",
+      scriptLogPath: "/tmp/script.log",
+      dosCom: true,
+    });
+    expect(arguments_.slice(4, 12)).toEqual([
+      "-loader",
+      "BinaryLoader",
+      "-loader-baseAddr",
+      "1000:0100",
+      "-processor",
+      "x86:LE:16:Real Mode",
+      "-cspec",
+      "default",
+    ]);
+    const prepare = arguments_.indexOf("-preScript");
+    expect(arguments_[prepare + 1]).toBe("ReaGhidraPrepareCom.java");
+    expect(prepare).toBeLessThan(arguments_.indexOf("-postScript"));
+    expect(arguments_).toContain("-readOnly");
+    expect(arguments_).toContain("-deleteProject");
+  });
+});
+
 describe("Ghidra headless launcher", () => {
   it("forces the admitted real-mode language and loader for DOS MZ", () => {
     const arguments_ = ghidraHeadlessArguments({

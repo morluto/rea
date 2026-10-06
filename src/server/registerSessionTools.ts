@@ -173,6 +173,7 @@ const registerOpenLifecycleTool = ({
       const opened = await logToolExecution(logger, openContract.name, () =>
         session.open(input.path, {
           signal: context.mcpReq.signal,
+          ...(input.format === undefined ? {} : { formatHint: input.format }),
           ...(input.provider_id === undefined
             ? {}
             : { providerId: input.provider_id }),

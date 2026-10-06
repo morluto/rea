@@ -141,6 +141,7 @@ const outputFor = (name: string): JsonValue => {
         source_files: [],
         mappings: [],
         relocations: [],
+        entry_context: [],
         entry_points: [],
       },
       limitations: ["Transport fixture only"],

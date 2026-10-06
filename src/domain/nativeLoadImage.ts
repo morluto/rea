@@ -55,6 +55,20 @@ export const nativeLoadImageObservationSchema = z.strictObject({
     }),
   ),
   entry_points: z.array(address),
+  entry_context: z.array(
+    z.strictObject({
+      address,
+      registers: z.array(
+        z.strictObject({
+          name: z.string().min(1),
+          value_hex: z
+            .string()
+            .regex(/^0x[a-f0-9]+$/u)
+            .nullable(),
+        }),
+      ),
+    }),
+  ),
 });
 
 /** Independent comparison, preserving both expectations and measured values. */
@@ -77,7 +91,7 @@ export const nativeLoadImageSchema = z.discriminatedUnion("status", [
   }),
   z.strictObject({
     status: z.enum(["verified", "mismatch"]),
-    format: z.literal("dos-mz"),
+    format: z.enum(["dos-mz", "dos-com"]),
     target_sha256: digest,
     load_segment: integer.max(0xffff),
     header_bytes: integer,
@@ -100,3 +114,5 @@ export type NativeLoadImage = z.infer<typeof nativeLoadImageSchema>;
 export type NativeLoadImageObservation = z.infer<
   typeof nativeLoadImageObservationSchema
 >;
+/** One independently compared native import fact. */
+export type NativeLoadImageCheck = z.infer<typeof nativeLoadImageCheckSchema>;

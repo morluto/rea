@@ -16,6 +16,10 @@ import { isPathWithinRoot } from "../domain/localPath.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
+import {
+  validateDosComLength,
+  type ExecutableFormatHint,
+} from "../domain/dosCom.js";
 import { mzWindowsHeaderOffset } from "../domain/dosMz.js";
 import {
   hasZipSignature,
@@ -40,6 +44,7 @@ export const parseBinaryTarget = async (
   cwd = process.cwd(),
   hostArchitecture: NodeJS.Architecture = process.arch,
   targetKind?: BinaryTarget["kind"],
+  formatHint?: ExecutableFormatHint,
 ): Promise<Result<BinaryTarget, BinaryTargetError>> => {
   const candidate = isAbsolute(input) ? input : resolve(cwd, input);
   try {
@@ -52,6 +57,26 @@ export const parseBinaryTarget = async (
     try {
       if (!(await handle.stat()).isFile())
         return err(new BinaryTargetError(path, "target is not a regular file"));
+      if (formatHint === "dos-com") {
+        if (targetKind !== undefined && targetKind !== "executable")
+          return err(
+            new BinaryTargetError(
+              path,
+              "DOS COM format requires an executable target kind",
+            ),
+          );
+        const length = validateDosComLength((await handle.stat()).size);
+        if (!length.ok) return err(new BinaryTargetError(path, length.error));
+        return ok({
+          path,
+          sourcePath: canonical,
+          sha256: await sha256Handle(handle),
+          kind: "executable",
+          format: "dos-com",
+          architecture: "x86",
+          availableArchitectures: ["x86"],
+        });
+      }
       if (
         targetKind === "database" ||
         (targetKind === undefined && path.toLowerCase().endsWith(".hop"))
@@ -126,7 +151,7 @@ const detectArtifactFormat = async (
 ): Promise<
   | Exclude<
       BinaryTarget["format"],
-      "analysis-database" | "mach-o" | "elf" | "pe" | "dos-mz"
+      "analysis-database" | "mach-o" | "elf" | "pe" | "dos-mz" | "dos-com"
     >
   | undefined
 > => {
@@ -168,7 +193,7 @@ const namedArtifactFormat = (
 const isArchiveFormat = (
   format: Exclude<
     BinaryTarget["format"],
-    "analysis-database" | "mach-o" | "elf" | "pe" | "dos-mz"
+    "analysis-database" | "mach-o" | "elf" | "pe" | "dos-mz" | "dos-com"
   >,
 ): format is Extract<BinaryTarget, { kind: "archive" }>["format"] =>
   ["zip", "ipa", "apk", "msix", "appx", "asar", "dmg", "pkg"].includes(format);
