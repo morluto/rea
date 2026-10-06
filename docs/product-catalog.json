@@ -10,7 +10,7 @@
     "skill_version": "24"
   },
   "tools": {
-    "total": 118,
+    "total": 123,
     "families": [
       {
         "id": "direct",
@@ -119,6 +119,18 @@
           "inspect_managed_native_boundaries",
           "project_managed_application_graph",
           "verify_managed_native_boundaries"
+        ]
+      },
+      {
+        "id": "android",
+        "surface": "android-provider",
+        "count": 5,
+        "tools": [
+          "inspect_android_class",
+          "inspect_android_method",
+          "inspect_android_package",
+          "search_android_classes",
+          "trace_android_references"
         ]
       },
       {
@@ -278,6 +290,18 @@
         "set_inline_comment",
         "unset_bookmark",
         "xrefs"
+      ]
+    },
+    {
+      "id": "jadx",
+      "name": "JADX headless",
+      "version": "0.7.1",
+      "capabilities": [
+        "inspect_android_class",
+        "inspect_android_method",
+        "inspect_android_package",
+        "search_android_classes",
+        "trace_android_references"
       ]
     },
     {
@@ -471,7 +495,7 @@
     }
   ],
   "cli": {
-    "primary_count": 73,
+    "primary_count": 78,
     "commands": [
       "address-to-file-offset",
       "analyze",
@@ -506,6 +530,9 @@
       "import-managed-reconstruction",
       "import-reference-source",
       "inspect",
+      "inspect-android-class",
+      "inspect-android-method",
+      "inspect-android-package",
       "inspect-artifact",
       "inspect-asset-catalog",
       "inspect-electron-page",
@@ -536,8 +563,10 @@
       "reconcile-javascript-runtime",
       "resolve-native-call-targets",
       "search",
+      "search-android-classes",
       "setup",
       "trace",
+      "trace-android-references",
       "trace-application-feature",
       "trace-javascript-semantics",
       "trace-native-ui-action",
@@ -556,15 +585,15 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 73,
-      "mcp_tools": 118,
+      "cli_commands": 78,
+      "mcp_tools": 123,
       "mcp_prompts": 6
     },
     "digests": {
-      "tools_sha256": "270e49d736a98880133a74f356e4c568db7d7adc55fd576358c9da71017485ad",
+      "tools_sha256": "6e60913fad4c67f3a12aa8bf5113971ce6a57e9492ce402c8cd9e539d6fde01f",
       "prompts_sha256": "ef2de8814390b340623c32001610aa2709d90bed51537b6e562ab3abf144ab4d",
-      "combined_sha256": "88cedc97288ecd044f4257a670a6707ca474906de73cab3f5bf436bff24f0cc7",
-      "providers_sha256": "e094c361b60ec930a6062a1a90ee05536ce411541dba5b51ace7e2da2ba25af0"
+      "combined_sha256": "d5fbda3a283916ab3489a62fe88aeb89da8b0a7b19c248e3742c970b1b51600e",
+      "providers_sha256": "e60c6e949f499fe8a015a20ff36752516ce57edcb1ce355f0308361c8d322dd6"
     }
   }
 }

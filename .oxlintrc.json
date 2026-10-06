@@ -139,6 +139,7 @@
     ".cache",
     ".codex",
     ".devin",
-    ".factory"
+    ".factory",
+    "third_party/jadx-headless-mcp"
   ]
 }

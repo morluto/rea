@@ -55,6 +55,27 @@ const entry = (
 };
 
 describe("capability inventory: provider status", () => {
+  it("keeps Android APK operations target-free and reports their explicit engine prerequisite", () => {
+    expect(
+      entry("inspect_android_package", status(), {
+        processCaptureEnabled: true,
+        androidAnalysisEnabled: true,
+      }),
+    ).toMatchObject({
+      available: true,
+      surface: "android-provider",
+      reason: "available",
+    });
+    expect(
+      entry("inspect_android_package", status(), {
+        processCaptureEnabled: true,
+      }),
+    ).toMatchObject({
+      available: false,
+      reason: "provider_missing",
+      remediation: expect.stringContaining("REA_JADX_MCP_JAR"),
+    });
+  });
   it.each([
     {
       label: "requires a target",

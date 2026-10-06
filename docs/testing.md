@@ -148,6 +148,23 @@ the CLI and stdio MCP, including special filenames, unresolved discovery
 locations, and independently resolved loaded scripts. Double-quote filenames
 are tested on POSIX only because Windows does not support them.
 
+## Android APK analysis
+
+`npm run verify:android` requires an existing Java 17+ and an explicit
+`REA_JADX_MCP_JAR` for jadx-headless-mcp 0.7.1. Set `REA_ANDROID_TEST_APK` to the
+fixed public ApiDemos v6.0.18 fixture. Obtain both with the explicit
+`npm run fixtures:android` command; files are SHA-256 verified and
+kept under ignored `_reference/`. No Gradle build, Android SDK, emulator or
+application execution is required. The lane compares real CLI/MCP package,
+class search, class inventory, method decompilation and incoming references.
+See [Android analysis](android-analysis.md) for boundaries and resource budgets.
+
+Synthetic producer regressions run independently:
+
+```sh
+npm run test:focused -- tests/boundary/android/jadxIntegration.test.ts tests/boundary/mcp/androidAnalysisMcp.test.ts
+```
+
 ## DOS Ghidra analysis
 
 `npm run verify:ghidra:dos` requires the supported Ghidra and JDK installation

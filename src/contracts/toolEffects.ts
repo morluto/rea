@@ -41,6 +41,31 @@ const sessionEvidence = effects({ mutatesSession: true });
 
 /** Explicit effect audit for every public tool. */
 export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
+  inspect_android_package: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    writesFilesystem: true,
+  }),
+  search_android_classes: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    writesFilesystem: true,
+  }),
+  inspect_android_class: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    writesFilesystem: true,
+  }),
+  inspect_android_method: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    writesFilesystem: true,
+  }),
+  trace_android_references: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    writesFilesystem: true,
+  }),
   annotate_native_function: effects({
     mutatesTarget: true,
     mutatesSession: true,

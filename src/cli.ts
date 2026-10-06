@@ -7,6 +7,7 @@ import { registerCoreAnalysisCommands } from "./cli/coreAnalysisCommands.js";
 import { registerUtilityCommands } from "./cli/utilityCommands.js";
 import { registerArtifactCommands } from "./cli/artifactCommands.js";
 import { registerManagedCommands } from "./cli/managedCommands.js";
+import { registerAndroidCommands } from "./cli/androidCommands.js";
 import { registerEvidenceCommands } from "./cliEvidenceCommands.js";
 import { registerProcessCommands } from "./cli/processCommands.js";
 import { registerBrowserCommands } from "./cli/browserCommands.js";
@@ -47,6 +48,7 @@ export const createCli = (
   registerUtilityCommands(cli, logger, environment);
   registerArtifactCommands(cli, logger);
   registerManagedCommands(cli, logger);
+  registerAndroidCommands(cli, logger, environment);
   registerEvidenceCommands(cli, logger);
   registerProcessCommands(cli, logger, environment);
   registerBrowserCommands(cli, logger);

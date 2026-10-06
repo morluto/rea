@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/server";
+import { isAbsolute } from "node:path";
 
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
 import type { BinarySessionPort } from "../application/BinarySession.js";
@@ -17,6 +18,10 @@ import { registerElectronTools } from "./registerElectronTools.js";
 import { registerEnhancedTools } from "./registerEnhancedTools.js";
 import { registerJavaScriptRuntimeObservationTools } from "./registerJavaScriptRuntimeObservationTools.js";
 import { registerManagedTools } from "./registerManagedTools.js";
+import { registerAndroidTools } from "./registerAndroidTools.js";
+import { AndroidAnalysisService } from "../application/AndroidAnalysisService.js";
+import type { AndroidAnalysisPort } from "../application/AndroidAnalysisPort.js";
+import { JadxProvider } from "../android/JadxProvider.js";
 import { registerManagedWorkflowTools } from "./registerManagedWorkflowTools.js";
 import { registerNativeTools } from "./registerNativeTools.js";
 import { registerOfficialTools } from "./registerOfficialTools.js";
@@ -33,6 +38,7 @@ const ACTIVE_TARGET_INSTRUCTIONS =
 
 export interface CreateServerOptions {
   readonly logger?: Logger;
+  readonly androidAnalysis?: AndroidAnalysisPort;
   readonly browserObservation?: BrowserObservationPort;
   readonly browserScenarioCapture?: BrowserScenarioCapturePort;
   readonly electronObservation?: ElectronObservationPort;
@@ -49,6 +55,10 @@ const installSessionToolAvailability = (
   if (session === undefined) return undefined;
   const policy = sessionAvailabilityPolicy(options.availabilityPolicy, {
     optionalFeatures: {
+      androidAnalysisEnabled:
+        options.androidAnalysis !== undefined ||
+        ((process.platform === "linux" || process.platform === "darwin") &&
+          isAbsolute(process.env.REA_JADX_MCP_JAR ?? "")),
       browserObservationEnabled: options.browserObservation !== undefined,
       browserScenarioEnabled: options.browserScenarioCapture !== undefined,
       electronObservationEnabled: options.electronObservation !== undefined,
@@ -111,6 +121,12 @@ export const createServer = (
     recordEvidenceWithUnknown,
   };
   registerBinaryAnalysisTools(toolContext);
+  registerAndroidTools(
+    server,
+    new AndroidAnalysisService(options.androidAnalysis ?? new JadxProvider()),
+    toolLogger,
+    recordEvidence,
+  );
   registerObservationTools(toolContext);
   registerGuidedPrompts(server, analysis, session);
   if (session !== undefined) {

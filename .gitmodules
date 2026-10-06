@@ -1,0 +1,3 @@
+[submodule "third_party/jadx-headless-mcp"]
+	path = third_party/jadx-headless-mcp
+	url = https://github.com/1013503897/jadx-headless-mcp.git

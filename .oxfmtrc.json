@@ -10,6 +10,7 @@
     "node_modules/**",
     "CHANGELOG.md",
     "package-lock.json",
-    "_reference/**"
+    "_reference/**",
+    "third_party/jadx-headless-mcp/**"
   ]
 }

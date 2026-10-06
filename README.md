@@ -151,6 +151,8 @@ Update either installation with `rea update`.
 
 Native binary analysis requires [Hopper](https://www.hopperapp.com/) or [Ghidra](#ghidra-analysis-provider). Hopper is separate software with its own license; its demo supports analysis with vendor-defined limits. REA can use Ghidra that you have already installed.
 
+Static APK analysis uses a separately supplied headless JADX JAR and Java, with no emulator or APK execution. See [Android analysis](docs/android-analysis.md) for setup, CLI/MCP operations, coverage and public test fixtures.
+
 Windows Ghidra support is experimental for native x86-64 PE applications on local NTFS. The package bundles native Job Object, private-DACL, and path-admission controls. See [Windows Ghidra P0](docs/windows-ghidra-p0.md) for prerequisites and verified scope.
 
 If something is not working, run:
@@ -314,6 +316,7 @@ See [native investigation](docs/native-investigation.md) for keyed archives, ins
 | Native macOS utilities    |     7 | Mach-O metadata, code signatures, plists, architectures, and Swift demangling without launching Hopper                                                    |
 | Artifact graph            |     5 | directory and package inventories, compiled Interface Builder files, Apple asset catalogs, and extraction                                                 |
 | Managed PE/CLI            |     7 | .NET identity, metadata, CIL instructions, native dependencies, reconstruction imports, and build comparisons                                             |
+| Android APK               |     5 | package and manifest declarations, class search, member inventories, method decompilation, and incoming static references                                 |
 | Browser observation       |     9 | page structure, network metadata, scripts, source maps, WebMCP discovery, screenshots, and capture comparisons                                            |
 | Electron analysis         |     5 | renderer observation, static app mapping, and static/runtime reconciliation                                                                               |
 | JavaScript runtime        |     2 | Node/Electron Inspector target discovery, script locations, and execution-context events                                                                  |
@@ -325,6 +328,8 @@ The public interface describes what the agent is trying to learn. Providers deci
 ## Current status
 
 REA supports native application, JavaScript, Electron, .NET, and browser investigation on macOS and Linux. Individual tools have platform and runtime prerequisites; use `rea capabilities` to check what is available on your host.
+
+Static Android APK inspection is verified on Linux with headless JADX; see [Android analysis](docs/android-analysis.md) for its separate prerequisites and coverage.
 
 - **Native binaries:** Open Mach-O, ELF, PE, and Mac `.app` targets through Hopper or Ghidra. Inspect functions, strings, assembly, decompilation, calls, and references. Hopper also accepts `.hop` databases and supports annotations.
 - **Packages and resources:** Inspect directories, ZIP, APK, IPA, ASAR, plists, compiled Interface Builder files, and Apple asset catalogs. Artifact requests name the input and requested extraction or traversal directly; macOS DMG traversal also requires the host's native mounting support.
@@ -461,6 +466,8 @@ flowchart LR
     Session --> Native["Native macOS provider"]
     Session --> Artifact["Artifact graph provider"]
     REA --> Browser["Browser CDP provider"]
+    REA --> Android["Android static provider<br/>headless JADX adapter"]
+    Android --> Runtime
     REA --> Process["Process capture provider"]
     Runtime --> Target["Target software"]
     Process --> Target

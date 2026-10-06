@@ -1,6 +1,7 @@
 import { NATIVE_TOOL_CONTRACTS } from "./nativeToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "./artifactToolContracts.js";
 import { MANAGED_TOOL_CONTRACTS } from "./managedToolContracts.js";
+import { ANDROID_TOOL_CONTRACTS } from "./androidToolContracts.js";
 import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "./managedWorkflowToolContracts.js";
 import { BROWSER_PROVIDER_TOOL_CONTRACTS } from "./browserProviderToolContracts.js";
 import { ELECTRON_TOOL_CONTRACTS } from "./electronToolContracts.js";
@@ -19,6 +20,7 @@ export const TOOL_CONTRACTS = [
   ...NATIVE_TOOL_CONTRACTS,
   ...ARTIFACT_TOOL_CONTRACTS,
   ...MANAGED_TOOL_CONTRACTS,
+  ...ANDROID_TOOL_CONTRACTS,
   ...MANAGED_WORKFLOW_TOOL_CONTRACTS,
   ...BROWSER_PROVIDER_TOOL_CONTRACTS,
   ...ELECTRON_TOOL_CONTRACTS,

@@ -9,6 +9,7 @@
     ".codex/**",
     ".devin/**",
     "tests/fixtures/**",
+    "third_party/jadx-headless-mcp/**",
     "tests/conformance/**/*.c",
     "tests/conformance/**/*.m",
     "tests/conformance/**/*.swift",

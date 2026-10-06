@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import type { EventEmitter } from "node:events";
-import type { Readable } from "node:stream";
+import type { Readable, Writable } from "node:stream";
 
 import { WindowsOwnedProcess } from "../windows/WindowsOwnedProcess.js";
 
@@ -27,6 +27,8 @@ export interface OwnedProviderProcessSpawnOptions {
   readonly platform?: NodeJS.Platform;
   /** Host environment used as the base for the child environment. */
   readonly hostEnvironment?: NodeJS.ProcessEnv;
+  /** Opt into a writable protocol stream; other providers retain ignored stdin. */
+  readonly stdin?: "pipe";
 }
 
 /** Spawned process paired with the identity proof required for group cleanup. */
@@ -43,6 +45,7 @@ export interface ProviderProcessHandle extends Pick<
 > {
   readonly pid?: number | undefined;
   readonly stdout: Readable | null;
+  readonly stdin?: Writable | null;
   readonly stderr: Readable | null;
   readonly exitCode: number | null;
   readonly signalCode: NodeJS.Signals | null;
@@ -135,6 +138,10 @@ export const spawnOwnedProviderProcess = async (
     REA_PROCESS_RUN_ID: options.runId,
   };
   if (platform === "win32" && process.platform === "win32") {
+    if (options.stdin === "pipe")
+      throw new Error(
+        "Owned Windows provider processes do not support protocol stdin",
+      );
     const child = new WindowsOwnedProcess(
       options.command,
       options.arguments,
@@ -156,7 +163,7 @@ export const spawnOwnedProviderProcess = async (
   const child = spawn(options.command, [...options.arguments], {
     shell: false,
     windowsHide: true,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: [options.stdin ?? "ignore", "pipe", "pipe"],
     detached: platform !== "win32",
     windowsVerbatimArguments: options.windowsVerbatimArguments ?? false,
     env: environment,

@@ -11,6 +11,7 @@ export interface SessionAvailabilityDefaults {
     | "electronObservationEnabled"
     | "electronAutomationEnabled"
     | "v8InspectorObservationEnabled"
+    | "androidAnalysisEnabled"
   >;
 }
 
@@ -22,6 +23,8 @@ export const sessionAvailabilityPolicy = (
   configured ??
   (() => ({
     processCaptureEnabled: platform !== "win32",
+    androidAnalysisEnabled:
+      defaults.optionalFeatures?.androidAnalysisEnabled ?? false,
     browserObservationEnabled:
       defaults.optionalFeatures?.browserObservationEnabled ?? false,
     browserScenarioEnabled:

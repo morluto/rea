@@ -28,6 +28,7 @@ type ToolAvailabilityReason = "available" | ToolUnavailabilityReason;
 type ProviderDescriptor = ProviderCapability;
 export type AvailabilityPolicy = {
   readonly processCaptureEnabled: boolean;
+  readonly androidAnalysisEnabled?: boolean;
   readonly browserObservationEnabled?: boolean;
   readonly browserScenarioEnabled?: boolean;
   readonly electronObservationEnabled?: boolean;
@@ -205,6 +206,14 @@ const workflowAvailabilityFor = ({
   kind,
   policy,
 }: AvailabilityContext): Availability | null => {
+  if (kind === "android-provider")
+    return policy.androidAnalysisEnabled === true
+      ? { reason: "available", remediation: null }
+      : {
+          reason: "provider_missing",
+          remediation:
+            "Set REA_JADX_MCP_JAR to a caller-supplied jadx-headless-mcp 0.7.1 JAR and provide Java on Linux or macOS. Only Linux has real-provider verification.",
+        };
   const browser = browserProviderAvailability(name, kind, policy);
   if (browser !== null) return browser;
   if (name === "capture_process_scenario" && !policy.processCaptureEnabled)

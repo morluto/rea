@@ -22,6 +22,7 @@ import { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "../../../src/brow
 import { V8_INSPECTOR_PROVIDER_IDENTITY } from "../../../src/browser/V8InspectorProvider.js";
 import { CLI_COMMAND_NAMES } from "../../../src/cliCommandNames.js";
 import { createCli } from "../../../src/cli.js";
+import { JADX_PROVIDER_IDENTITY } from "../../../src/android/JadxRelease.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import {
   HOPPER_PROVIDER_IDENTITY,
@@ -71,6 +72,7 @@ describe("canonical product catalog", () => {
     expect(catalog.providers.map(({ id }) => id).sort()).toEqual(
       [
         HOPPER_PROVIDER_IDENTITY,
+        JADX_PROVIDER_IDENTITY,
         GHIDRA_PROVIDER_IDENTITY,
         NATIVE_MACOS_PROVIDER_IDENTITY,
         ARTIFACT_GRAPH_PROVIDER,
