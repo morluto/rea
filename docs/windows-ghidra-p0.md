@@ -32,6 +32,10 @@ REA does not install or upgrade Ghidra, Java, Python, npm, Node.js, Hopper, or a
 compiler. The adapter uses the packaged Java `HeadlessScript`; Python and
 PyGhidra are not prerequisites. Users do not build the native addon.
 
+REA selects its packaged bridge scripts by explicit path. Same-named files or
+directories in the caller's working directory do not select a different
+script or require users to clean that directory before analysis.
+
 ## Configuration
 
 ```powershell

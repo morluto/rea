@@ -95,7 +95,9 @@ describe("Ghidra COM loader", () => {
       "default",
     ]);
     const prepare = arguments_.indexOf("-preScript");
-    expect(arguments_[prepare + 1]).toBe("ReaGhidraPrepareCom.java");
+    expect(arguments_[prepare + 1]).toBe(
+      join("/package/bridge", "ReaGhidraPrepareCom.java"),
+    );
     expect(prepare).toBeLessThan(arguments_.indexOf("-postScript"));
     expect(arguments_).toContain("-readOnly");
     expect(arguments_).toContain("-deleteProject");
@@ -148,7 +150,7 @@ describe("Ghidra headless launcher", () => {
       "-scriptPath",
       "/package/bridge",
       "-postScript",
-      "ReaGhidraBridge.java",
+      "/package/bridge/ReaGhidraBridge.java",
       "/tmp/session.json",
     ]);
   });

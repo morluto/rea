@@ -322,10 +322,15 @@ export const ghidraHeadlessArguments = (
   "-scriptPath",
   dirname(options.bridgeScriptPath),
   ...(options.dosCom === true
-    ? ["-preScript", "ReaGhidraPrepareCom.java"]
+    ? [
+        "-preScript",
+        join(dirname(options.bridgeScriptPath), "ReaGhidraPrepareCom.java"),
+      ]
     : []),
   "-postScript",
-  basename(options.bridgeScriptPath),
+  // Ghidra checks the caller's cwd before scriptPath for a basename. Select
+  // the packaged source explicitly so unrelated entries cannot shadow it.
+  options.bridgeScriptPath,
   options.descriptorPath,
 ];
 
