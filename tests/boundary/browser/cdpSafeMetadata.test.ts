@@ -190,3 +190,62 @@ describe("safe CDP response metadata CSP sources", () => {
     ]);
   });
 });
+
+describe("Link header value delimiters", () => {
+  const captureLinks = (link: string) =>
+    safeResponseMetadata(
+      "owned",
+      "https://owned.test/page",
+      {
+        headers: { Link: link },
+      },
+      new Set(["https://owned.test"]),
+    ).response.links;
+
+  it("preserves commas in URI references and separates later links", () => {
+    const links = captureLinks(
+      '</assets/red,blue.js>; rel="preload"; as=script, </ordinary.js>; rel="modulepreload"',
+    );
+    expect(links.map(({ href }) => href)).toEqual([
+      "https://owned.test/assets/red,blue.js",
+      "https://owned.test/ordinary.js",
+    ]);
+    expect(links[0]?.as).toBe("script");
+  });
+
+  it("preserves semicolons and commas inside quoted parameter values", () => {
+    const links = captureLinks(
+      '</plugin.js>; rel="preload"; type="text/javascript; charset=utf-8"; title="a,b", </ordinary.js>; rel="modulepreload"',
+    );
+    expect(links).toHaveLength(2);
+    expect(links[0]?.type).toBe("text/javascript; charset=utf-8");
+    expect(links[1]?.href).toBe("https://owned.test/ordinary.js");
+  });
+
+  it("counts quoted-pair escapes rather than treating every preceding slash as an escape", () => {
+    const links = captureLinks(
+      String.raw`</one.js>; title="ends with \\"; rel="preload", </two.js>; rel="modulepreload"`,
+    );
+    expect(links.map(({ href }) => href)).toEqual([
+      "https://owned.test/one.js",
+      "https://owned.test/two.js",
+    ]);
+    expect(links[0]?.rel).toEqual(["preload"]);
+  });
+
+  it("keeps a quoted escaped quote from exposing a delimiter", () => {
+    const links = captureLinks(
+      String.raw`</one.js>; title="quoted \" comma, value"; rel="preload", </two.js>; rel="modulepreload"`,
+    );
+    expect(links).toHaveLength(2);
+    expect(links[0]?.rel).toEqual(["preload"]);
+  });
+
+  it("retains the existing outside-policy classification", () => {
+    const links = captureLinks(
+      '<https://elsewhere.test/red,blue.js>; rel="preload", </ordinary.js>; rel="modulepreload"',
+    );
+    expect(links[0]?.destination_scope).toBe("outside_policy");
+    expect(links[1]?.destination_scope).toBe("approved");
+  });
+});

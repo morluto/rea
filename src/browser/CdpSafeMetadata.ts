@@ -213,16 +213,30 @@ const parseLinks = (
   return links;
 };
 
-const splitLinkHeader = (value: string): string[] => {
+const splitLinkHeader = (
+  value: string,
+  delimiter: "," | ";" = ",",
+): string[] => {
   const entries: string[] = [];
   let start = 0;
   let quoted = false;
+  let escaped = false;
+  let target = false;
   for (let index = 0; index < value.length; index += 1) {
     const character = value[index];
-    if (character === '"' && value[index - 1] !== "\\") quoted = !quoted;
-    if (character !== "," || quoted) continue;
-    entries.push(value.slice(start, index));
-    start = index + 1;
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') quoted = false;
+      continue;
+    }
+    if (character === '"' && !target) quoted = true;
+    else if (delimiter === "," && character === "<") target = true;
+    else if (delimiter === "," && character === ">") target = false;
+    else if (character === delimiter && !target) {
+      entries.push(value.slice(start, index));
+      start = index + 1;
+    }
   }
   entries.push(value.slice(start));
   return entries;
@@ -230,7 +244,7 @@ const splitLinkHeader = (value: string): string[] => {
 
 const linkParameters = (value: string): ReadonlyMap<string, string> => {
   const parameters = new Map<string, string>();
-  for (const raw of value.split(";").slice(1)) {
+  for (const raw of splitLinkHeader(value, ";").slice(1)) {
     const separator = raw.indexOf("=");
     const name = (separator < 0 ? raw : raw.slice(0, separator))
       .trim()
