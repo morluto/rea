@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import { createGhidraTestRuntime } from "../../../fixtures/ghidraRuntime.js";
+import type { PrivateRuntimeRoot } from "../../../../src/process/PrivateRuntimeRoot.js";
 
 import {
   ghidraHeadlessArguments,
@@ -21,6 +23,7 @@ const fixturePath = fileURLToPath(
   ),
 );
 const roots: string[] = [];
+const runtimes: PrivateRuntimeRoot[] = [];
 
 const expectIsolatedEnvironment = (
   environment: Record<string, string>,
@@ -46,7 +49,7 @@ const expectIsolatedEnvironment = (
     JAVA_TOOL_OPTIONS: "",
     JDK_JAVA_OPTIONS:
       process.platform === "win32"
-        ? `"-Duser.home=${join(runtimeRoot, "home")}" "-Djava.io.tmpdir=${join(runtimeRoot, "tmp")}"`
+        ? `"-Duser.home=${join(runtimeRoot, "home")}" "-Djava.io.tmpdir=${join(runtimeRoot, "tmp")}" "-XX:-UsePerfData"`
         : "",
     _JAVA_OPTIONS: "",
     JAVA_HOME: javaHome,
@@ -64,6 +67,7 @@ beforeAll(async () => {
 });
 afterEach(async () => {
   vi.unstubAllEnvs();
+  await Promise.all(runtimes.splice(0).map((runtime) => runtime.close()));
   await Promise.all(
     roots.splice(0).map((path) => rm(path, { recursive: true, force: true })),
   );
@@ -167,8 +171,11 @@ describe("Ghidra headless launcher", () => {
     vi.stubEnv("JAVA_TOOL_OPTIONS", "-Duser.home=/unapproved/home");
     vi.stubEnv("JDK_JAVA_OPTIONS", "-XX:MaxRAMPercentage=99");
     vi.stubEnv("_JAVA_OPTIONS", "-Xmx99G");
-    const runtimeRoot = await createTestTempDirectory("rea-launcher-test-");
-    roots.push(runtimeRoot);
+    const parent = await createTestTempDirectory("rea-launcher-test-");
+    roots.push(parent);
+    const runtime = await createGhidraTestRuntime(parent);
+    runtimes.push(runtime);
+    const runtimeRoot = runtime.path;
     const token = "secret-token-that-must-not-leak";
     const javaHome =
       process.platform === "win32" ? "C:\\Java\\jdk-21" : "/opt/jdk-21";
