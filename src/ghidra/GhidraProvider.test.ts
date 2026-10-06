@@ -7,11 +7,13 @@ import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryValues.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 
 describe("Ghidra provider capabilities", () => {
-  it("publishes only admitted read-only operations and resists caller mutation", () => {
+  it("publishes admitted operation effects and resists caller mutation", () => {
     const config = parseConfig({});
     expect(config.ok).toBe(true);
     if (!config.ok) return;
     const provider = new GhidraProvider(config.value, silentLogger, {
+      platform: "linux",
+      architecture: "x64",
       readText: () => undefined,
       executable: () => false,
       probeJava: () => undefined,
@@ -26,7 +28,7 @@ describe("Ghidra provider capabilities", () => {
         available: true,
         reason: null,
         effects: {
-          mutatesArtifact: false,
+          mutatesArtifact: descriptor.operation === "annotate_native_function",
           mayShowUi: false,
           mayAccessNetwork: false,
           changesPermissions: false,

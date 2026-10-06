@@ -22,7 +22,8 @@ describe("Ghidra MCP evidence parity", () => {
         analysis_profile: {
           provider: { id: "ghidra", version: "12.1.4" },
           parameters: {
-            import_mode: "ephemeral-read-only",
+            import_mode: "ephemeral-source-immutable",
+            annotation_policy: "atomic-function-entry-metadata-v1",
             analyzer_preset: "ghidra-default",
           },
         },

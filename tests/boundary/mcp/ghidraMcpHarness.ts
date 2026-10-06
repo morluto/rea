@@ -118,7 +118,7 @@ const sessionInfo = (profileDigest: string, targetSha256: string) => ({
   run_id: "11111111-1111-4111-8111-111111111111",
   profile_digest: profileDigest,
   provider: { id: "ghidra" as const, version: "12.1.4" },
-  read_only: true as const,
+  read_only: false as const,
   analysis_complete: true,
   analysis_timed_out: false,
   capabilities: [...GHIDRA_SESSION_CAPABILITIES],

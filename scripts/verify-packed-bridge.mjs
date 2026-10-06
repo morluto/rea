@@ -27,7 +27,11 @@ export async function verifyPackedBridge({
     "extends HeadlessScript",
     'request.method.equals("ping")',
     'request.method.equals("shutdown")',
-    'result.addProperty("read_only", true)',
+    'boolean readOnly = !descriptor.transport.equals("unix-socket")',
+    'result.addProperty("read_only", readOnly)',
+    'case "annotate_native_function"',
+    'currentProgram.startTransaction("REA function annotations")',
+    "currentProgram.endTransaction(transaction, commit)",
     "analysisTimeoutOccurred()",
   ])
     if (!ghidraSource.includes(commitment))

@@ -498,7 +498,11 @@ function assertProfile(profile) {
   );
   assert.equal(profile.provider.id, "ghidra");
   assert.equal(profile.parameters.target_format, "dos-mz");
-  assert.equal(profile.parameters.import_mode, "ephemeral-read-only");
+  assert.equal(profile.parameters.import_mode, "ephemeral-source-immutable");
+  assert.equal(
+    profile.parameters.annotation_policy,
+    "atomic-function-entry-metadata-v1",
+  );
   assert.equal(profile.parameters.loader, "MzLoader");
   assert.equal(profile.parameters.language_id, "x86:LE:16:Real Mode");
   assert.equal(profile.parameters.compiler_spec_id, "default");
