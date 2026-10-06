@@ -37,6 +37,11 @@ const official = <Name extends string, Schema extends z.ZodObject>(
 /** Bridge operations exposed without additional application composition. */
 export const OFFICIAL_TOOL_CONTRACTS = [
   official(
+    "inspect_native_load_image",
+    "Verify the provider's loaded DOS MZ image against its immutable target snapshot: complete original/modified source-byte digests, header/module file mappings and memory digests, relocations and external entry. Returns measured observations and independent checks with mismatch coordinates. Overlay and uninitialized coverage remain explicit; other formats return unsupported. Does not execute or modify the target.",
+    z.strictObject({}),
+  ),
+  official(
     "inspect_native_data_type",
     "Inspect one recovered type by exact database category path or defined typed data address. Returns observed size, alignment, packing, fields, bitfields, enum values, and child type identities; source-level authority and flexible-tail semantics remain unknown unless substantiated.",
     nativeDataTypeInputSchema,

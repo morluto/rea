@@ -12,6 +12,7 @@ import { createServer } from "../../../src/server/createServer.js";
 const VALID_INPUTS: Readonly<
   Record<string, Readonly<Record<string, JsonValue>>>
 > = {
+  inspect_native_load_image: {},
   address_name: {},
   inspect_native_instruction: { address: "0x1000" },
   resolve_native_call_targets: { address: "0x1000" },
@@ -127,6 +128,23 @@ const connect = async (analysis: AnalysisOperationPort) => {
 const inventory: JsonValue = [];
 
 const outputFor = (name: string): JsonValue => {
+  if (name === "inspect_native_load_image")
+    return {
+      status: "unsupported",
+      reason: "Fixture provider has no load-image verifier",
+      observations: {
+        executable_format: "ELF",
+        language_id: "x86:LE:64:default",
+        compiler_spec_id: "gcc",
+        image_base: "0x0",
+        default_address_space: "ram",
+        source_files: [],
+        mappings: [],
+        relocations: [],
+        entry_points: [],
+      },
+      limitations: ["Transport fixture only"],
+    };
   if (name === "inspect_native_instruction")
     return {
       address: "0x1000",

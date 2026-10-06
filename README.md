@@ -307,7 +307,7 @@ See [native investigation](docs/native-investigation.md) for keyed archives, ins
 
 | Tool family               | Count | Examples                                                                                                                                                  |
 | ------------------------- | ----: | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Native inspection         |    39 | functions, pseudocode, assembly, strings, symbols, calls, references, annotations, byte reads, and file offsets                                           |
+| Native inspection         |    40 | functions, pseudocode, assembly, strings, symbols, calls, references, annotations, byte reads, and file offsets                                           |
 | Investigation workflows   |    14 | app overviews, function dossiers, native APIs and dispatch, batch decompilation, feature traces, call paths, call graphs, Swift and Objective-C discovery |
 | Native macOS utilities    |     7 | Mach-O metadata, code signatures, plists, architectures, and Swift demangling without launching Hopper                                                    |
 | Artifact graph            |     5 | directory and package inventories, compiled Interface Builder files, Apple asset catalogs, and extraction                                                 |

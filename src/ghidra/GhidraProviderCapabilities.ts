@@ -57,6 +57,21 @@ export const limitationsFor = (operation: string): readonly string[] => {
     "Default-space addresses use lowercase 0x-prefixed hexadecimal; other address spaces use <percent-encoded-space>:0x<hex>.",
   ];
   switch (operation) {
+    case "inspect_native_load_image":
+      return [
+        ...common,
+        "Independent verification currently supports DOS MZ only. Measured source mappings use inclusive end addresses and complete region digests; no target execution or project mutation occurs.",
+      ];
+    case "read_bytes":
+      return [
+        ...common,
+        "Bytes reflect Ghidra's initialized memory, including loader fixups. Reads stop at an unmapped or uninitialized byte and report completeness explicitly.",
+      ];
+    case "address_to_file_offset":
+      return [
+        ...common,
+        "Offsets come from Ghidra source-byte mappings, not virtual-address arithmetic. Uninitialized memory, missing mappings and ambiguous mappings fail explicitly.",
+      ];
     case "list_documents":
       return [
         ...common,

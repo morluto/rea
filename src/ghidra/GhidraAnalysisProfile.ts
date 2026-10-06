@@ -38,6 +38,9 @@ export const resolveGhidraAnalysisProfile = (
         ].sort(),
         import_mode: "ephemeral-read-only",
         function_body_evidence: "complete-inclusive-ranges-v1",
+        ...(dosMz
+          ? { load_image_evidence: "independent-mz-mapping-relocations-v1" }
+          : {}),
         jump_table_evidence: "typed-case-default-blocks-v1",
         decompiler_jump_loads: true,
         loader: dosMz ? "MzLoader" : "auto-from-header",

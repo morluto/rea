@@ -15,6 +15,63 @@ export const registerCoreAnalysisCommands = (
   logger: Logger,
 ): void => {
   registerCoreCommands(cli, logger);
+  cli.command(CLI_COMMANDS.inspectNativeLoadImage, {
+    description:
+      "Verify loaded native bytes, source mappings, relocations and entry",
+    args: z.object({ path: z.string().describe("Local executable path") }),
+    options: z.object({ provider: providerSelectionOption }),
+    run: ({ args, options }) =>
+      logCliCommand(logger, CLI_COMMANDS.inspectNativeLoadImage, () =>
+        runDirectAnalysis(
+          args.path,
+          "inspect_native_load_image",
+          {},
+          directAnalysisOptions(logger, undefined, options.provider),
+        ),
+      ),
+  });
+  cli.command(CLI_COMMANDS.readBytes, {
+    description: "Read exact provider memory bytes at one analysis address",
+    args: z.object({
+      path: z.string().describe("Local executable path"),
+      address: z.string().describe("Exact provider memory address"),
+    }),
+    options: z.object({
+      length: z
+        .number()
+        .int()
+        .min(1)
+        .default(256)
+        .describe("Requested byte count"),
+      provider: providerSelectionOption,
+    }),
+    run: ({ args, options }) =>
+      logCliCommand(logger, CLI_COMMANDS.readBytes, () =>
+        runDirectAnalysis(
+          args.path,
+          "read_bytes",
+          { address: args.address, length: options.length },
+          directAnalysisOptions(logger, undefined, options.provider),
+        ),
+      ),
+  });
+  cli.command(CLI_COMMANDS.addressToFileOffset, {
+    description: "Resolve an analysis address to its original file byte offset",
+    args: z.object({
+      path: z.string().describe("Local executable path"),
+      address: z.string().describe("Exact provider memory address"),
+    }),
+    options: z.object({ provider: providerSelectionOption }),
+    run: ({ args, options }) =>
+      logCliCommand(logger, CLI_COMMANDS.addressToFileOffset, () =>
+        runDirectAnalysis(
+          args.path,
+          "address_to_file_offset",
+          { address: args.address },
+          directAnalysisOptions(logger, undefined, options.provider),
+        ),
+      ),
+  });
   cli.command(CLI_COMMANDS.traceNativeValues, {
     description: "Trace bounded native def-use and call dependencies",
     args: z.object({

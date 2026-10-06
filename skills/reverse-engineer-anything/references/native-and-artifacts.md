@@ -15,6 +15,20 @@ complete tool inventory with availability reasons and remediation. When choosing
 a tool, use its entry in that result; `tools/list` retains the complete catalog
 when the target or provider state changes.
 
+## DOS MZ with Ghidra
+
+For an admitted DOS MZ target, use `inspect_native_load_image` to check measured
+loaded bytes, file mappings, relocations and the entry against the immutable
+snapshot. Keep `mismatch` and `unsupported` explicit. Verified import covers the
+reported static image, not runtime DOS or PC-98 hardware behavior.
+
+Use `read_bytes` for initialized analysis memory and `address_to_file_offset` to
+anchor one observed address to original file bytes. Loader fixups can change a
+word; a source offset does not imply byte equality. Complete function body ranges
+use inclusive ends and can contain gaps. Do not treat the enclosing span as code.
+For packed targets, retain the original and separately derived artifact identities;
+decompiling an unpacking stub does not recover the unpacked program.
+
 ## Managed PE/CLI
 
 Start with `inspect_managed_artifact`. REA's canonical managed inspection is

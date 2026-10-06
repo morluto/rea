@@ -38,6 +38,7 @@ import {
   type GhidraSessionInfo,
 } from "./GhidraSessionValues.js";
 import { createGhidraTargetSnapshot } from "./GhidraTargetSnapshot.js";
+import { readFile } from "node:fs/promises";
 import { connectGhidraSocket } from "./GhidraSocketConnection.js";
 import type { GhidraEndpoint } from "./GhidraTransport.js";
 import { GhidraWire } from "./GhidraClientWire.js";
@@ -199,6 +200,28 @@ export class GhidraClient {
       parameters,
       options.signal === undefined ? {} : { signal: options.signal },
     );
+  }
+
+  /** Read the private immutable source for independent import verification. */
+  async readTargetSnapshot(): Promise<Result<Buffer, GhidraSessionError>> {
+    if (this.#snapshotPath === undefined)
+      return err(
+        this.#failure(
+          "protocol",
+          "Ghidra target snapshot is unavailable before startup or after close",
+        ),
+      );
+    try {
+      return ok(await readFile(this.#snapshotPath));
+    } catch (cause: unknown) {
+      return err(
+        this.#failure(
+          "protocol",
+          "Ghidra target snapshot could not be read for load-image verification",
+          cause,
+        ),
+      );
+    }
   }
 
   /** Stop the owned process group and remove all project/runtime artifacts. */

@@ -124,6 +124,23 @@ afterEach(async () => {
 });
 
 describe("GhidraClient", () => {
+  it("exposes the immutable import snapshot only during the live session", async () => {
+    const client = clientFor(new FixtureLauncher());
+    await expect(client.readTargetSnapshot()).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "protocol" },
+    });
+    await expect(client.start()).resolves.toMatchObject({ ok: true });
+    const snapshot = await client.readTargetSnapshot();
+    expect(snapshot.ok).toBe(true);
+    if (snapshot.ok) expect(snapshot.value).toEqual(readFileSync(fixturePath));
+    await client.close();
+    await expect(client.readTargetSnapshot()).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "protocol" },
+    });
+  });
+
   it("completes an exact, fragmented post-analysis handshake", async () => {
     const launcher = new FixtureLauncher("fragmented");
     const client = clientFor(launcher);

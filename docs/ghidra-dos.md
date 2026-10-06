@@ -13,6 +13,9 @@ rea inspect /absolute/path/to/legacy.exe --provider ghidra --json
 rea search /absolute/path/to/legacy.exe entry --kind procedures --provider ghidra --json
 rea instructions /absolute/path/to/legacy.exe entry --provider ghidra --json
 rea function /absolute/path/to/legacy.exe entry --provider ghidra --json
+rea inspect-native-load-image /absolute/path/to/legacy.exe --provider ghidra --json
+rea read-bytes /absolute/path/to/legacy.exe 0x10000 --length 16 --provider ghidra --json
+rea address-to-file-offset /absolute/path/to/legacy.exe 0x10000 --provider ghidra --json
 ```
 
 Use an observed procedure name or address from discovery when the target does
@@ -70,6 +73,30 @@ spaces. Gaps and shared tails must not be treated as owned bytes. This is
 Ghidra's database observation, not a proof of original source ownership or
 exhaustive code discovery. Providers that do not report complete ranges return
 `available: false` and an explicit reason.
+
+## Loaded-image evidence
+
+`inspect_native_load_image` independently checks the immutable session snapshot
+against the loaded Ghidra Program. It measures complete original and modified
+FileBytes digests, every source mapping and its memory digest, relocation records
+(including multiplicity), and external entry points. It verifies MZ header and
+module partitions, relocation fixups and linear coordinates rather than relying
+on the imported executable SHA alone.
+
+The result is `verified`, `mismatch`, or `unsupported`. Every check retains its
+expected and observed values. A memory-digest mismatch identifies the source
+range's file offset and analysis address; it does not locate the first differing
+byte inside that range. Mapping ends are **inclusive**, unlike the exclusive ends
+from `list_segments`. Appended overlays remain in source-file identity and are
+excluded from initialized module coverage. Uninitialized allocations are reported;
+their contents and DOS runtime semantics are not verified. Other formats return
+`unsupported` with measured observations, not a successful MZ verification.
+
+`read_bytes` returns initialized provider memory, including loader fixups; an
+unmapped or uninitialized byte ends the read with an explicit returned length and
+`complete: false`. `address_to_file_offset` uses the provider's source mapping;
+unmapped, uninitialized and ambiguous mappings fail explicitly. A relocated word
+can differ from the original file word even when its source offset is known.
 
 ## Coverage boundaries
 

@@ -1,6 +1,8 @@
 // Fake-backed provider coverage; real Ghidra verification lives in
 // `npm run verify:ghidra` and its focused variants.
 import { describe, expect, it } from "vitest";
+import { fixtureDosLoadImage } from "./GhidraLoadImage.fixture.js";
+import { jsonValueSchema } from "../domain/jsonValue.js";
 
 import { parseConfig } from "../config.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
@@ -495,6 +497,67 @@ describe("Ghidra result projection", () => {
       error: { _tag: "AnalysisCancelledError", operation: "open_binary" },
     });
   });
+});
+
+describe("Ghidra measured load-image projection", () => {
+  it.each([
+    "verified",
+    "mismatch",
+    "changed-snapshot",
+    "unsupported",
+    "missing-snapshot",
+  ] as const)(
+    "preserves %s state and producing observations",
+    async (state) => {
+      const fixture = fixtureDosLoadImage();
+      if (state === "mismatch") fixture.observation.entry_points = ["0x10001"];
+      if (state === "changed-snapshot") fixture.bytes[0] = 0;
+      const factory: GhidraProviderClientFactory = () => ({
+        start: () => Promise.resolve(ok(sessionInfo())),
+        callTool: () =>
+          Promise.resolve(ok(jsonValueSchema.parse(fixture.observation))),
+        close: () => Promise.resolve(),
+        ...(state === "missing-snapshot"
+          ? {}
+          : {
+              readTargetSnapshot: () => Promise.resolve(ok(fixture.bytes)),
+            }),
+      });
+      const ghidra = provider(installationHost(), factory);
+      const target: BinaryTarget = {
+        path: "/tmp/source-owned-fixture.exe",
+        sha256: fixture.sha256,
+        kind: "executable",
+        format: state === "unsupported" ? "elf" : "dos-mz",
+        architecture: "x86",
+        availableArchitectures: ["x86"],
+      };
+      const profile = await ghidra.resolveAnalysisProfile(target);
+      if (!profile.ok || profile.value.profile === null)
+        throw new Error("Expected admitted profile");
+      const result = await ghidra
+        .createClient(target, profile.value.profile)
+        .execute("inspect_native_load_image", {});
+      if (state === "changed-snapshot" || state === "missing-snapshot") {
+        expect(result).toMatchObject({
+          ok: false,
+          error: {
+            _tag: "ProviderAdapterError",
+            diagnostics: { reason: expect.stringContaining("snapshot") },
+          },
+        });
+      } else {
+        expect(result).toMatchObject({
+          ok: true,
+          value: {
+            result: { status: state, observations: fixture.observation },
+            rawResult: fixture.observation,
+            analysisProfile: profile.value.profile,
+          },
+        });
+      }
+    },
+  );
 });
 
 const sessionInfo = () => ({
