@@ -54,7 +54,7 @@ final class ReaGhidraExtensions implements AutoCloseable {
             } catch (InvocationTargetException ex) {
                 if (ex.getCause() instanceof CancelledException cancelled) throw cancelled;
                 failure(report, ex.getCause());
-            } catch (Exception ex) {
+            } catch (Exception | LinkageError ex) {
                 failure(report, ex);
             } finally {
                 if (loader != null) loader.close();

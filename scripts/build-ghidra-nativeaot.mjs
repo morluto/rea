@@ -46,6 +46,11 @@ const run = (command, args) => {
     );
   return result.stdout.trim();
 };
+const javac = java ? join(java, "javac") : "javac";
+if (!/^javac 21(?:\.|$)/u.test(run(javac, ["-version"])))
+  throw new Error(
+    "NativeAOT build lane requires an existing JDK 21 javac; REA does not install or upgrade Java.",
+  );
 const revision = run("git", ["-C", source, "rev-parse", "HEAD"]);
 if (
   revision !== "effeb734fc570c32650f88b159608979dc7b423e" ||
@@ -85,7 +90,7 @@ try {
       .map((s) => `"${s.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`)
       .join("\n"),
   );
-  run(java ? join(java, "javac") : "javac", [
+  run(javac, [
     "-J-Xmx512m",
     "-J-XX:ActiveProcessorCount=1",
     `@${join(output, "javac.args")}`,
