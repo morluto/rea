@@ -135,9 +135,13 @@ describe("source-produced export comparison inventories", () => {
         `export const candidate${String(index)} = ${String(index)};`,
     ).join("\n");
     const inventorySource = `export default function parse(value) {\n${returnSites}\n  throw new Error("no match");\n}\n${extraExports}`;
+    const pairedVariantsSource = `export default function parse(value) {
+${returnSites}
+  throw new Error("no match");
+}`;
     const [inventoryLeft, inventoryRight] = await Promise.all([
       analyzeSourceEvidence(inventorySource),
-      analyzeSourceEvidence(inventorySource),
+      analyzeSourceEvidence(pairedVariantsSource),
     ]);
     const variants = compareEvidence(inventoryLeft, inventoryRight);
     expect(variants.left).toMatchObject({ status: "selected" });

@@ -112,16 +112,6 @@ export const buildJavaScriptExportShapeChanges = (
   return [...paired, ...unpairedLeft, ...unpairedRight];
 };
 
-/** Sort changes by semantic content rather than traversal order. */
-export const compareJavaScriptExportShapeChanges = (
-  left: JavaScriptExportShapeComparisonChange,
-  right: JavaScriptExportShapeComparisonChange,
-): number =>
-  compareCodePoints(
-    canonicalExportShapeValue(changeSortKey(left)),
-    canonicalExportShapeValue(changeSortKey(right)),
-  );
-
 /** Report whether any retained shape lacks complete property coverage. */
 export const hasPartialJavaScriptExportPropertyCoverage = (
   shapes: readonly Shape[],
@@ -427,15 +417,6 @@ const changeWithId = (
 ): JavaScriptExportShapeComparisonChange => ({
   ...semantic,
   change_id: `jesc_change_${digestExportShapeValue(semantic)}`,
-});
-
-const changeSortKey = (change: JavaScriptExportShapeComparisonChange) => ({
-  discriminant: change.discriminant,
-  path: change.path,
-  status: change.status,
-  left_source_range: change.left_source_range,
-  right_source_range: change.right_source_range,
-  change_id: change.change_id,
 });
 
 const literalValue = (
