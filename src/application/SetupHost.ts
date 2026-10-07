@@ -22,7 +22,12 @@ import {
 } from "./SetupClientConfiguration.js";
 import { setupInstallFailure } from "./SetupInstallFailure.js";
 import { providerRegistrationEnvironment } from "./SetupRegistrationEnvironment.js";
-import type { SetupHost, SetupProviderEnvironment } from "./SetupTypes.js";
+import type {
+  SetupHost,
+  SetupInitialState,
+  SetupProviderEnvironment,
+} from "./SetupTypes.js";
+import type { DoctorScope } from "./Doctor.js";
 
 /** Resolve the executable and arguments used in a managed MCP registration. */
 export const setupRegistrationCommand = (
@@ -91,6 +96,25 @@ export const systemSetupHost = (
     macosVersion: () => doctorHost.macosVersion(),
     linuxDistribution: readLinuxDistribution,
     hopperPath: async () => (await runDoctor(undefined, doctorHost)).hopperPath,
+    initialSetupState: async (
+      scope?: DoctorScope,
+    ): Promise<SetupInitialState> => {
+      const diagnosis = await runDoctor(undefined, doctorHost, scope);
+      return {
+        ...(diagnosis.hopperPath === undefined
+          ? {}
+          : { hopperPath: diagnosis.hopperPath }),
+        providerEnvironment: {
+          ...providerRegistrationEnvironment(
+            diagnosis.providerInspections ?? [],
+          ),
+          ...(diagnosis.hopperPath === undefined
+            ? {}
+            : { HOPPER_LAUNCHER_PATH: diagnosis.hopperPath }),
+        },
+        doctor: diagnosis,
+      };
+    },
     providerEnvironment: async () => {
       const diagnosis = await runDoctor(undefined, doctorHost);
       return {

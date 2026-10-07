@@ -116,6 +116,7 @@ describe("setup workflow", () => {
     expect(host.configurations).toBe(0);
   });
 
+
   it("installs Hopper when unattended authorization is explicit", async () => {
     const host = new FakeSetupHost("linux");
     host.distribution = {

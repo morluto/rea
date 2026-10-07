@@ -9,6 +9,13 @@ import type {
 /** Exact non-secret provider variables propagated into managed registrations. */
 export type SetupProviderEnvironment = Readonly<Record<string, string>>;
 
+/** Read-only host facts shared by the initial setup plan. */
+export interface SetupInitialState {
+  readonly hopperPath?: string;
+  readonly providerEnvironment: SetupProviderEnvironment;
+  readonly doctor: DoctorReport;
+}
+
 /** Result of one backup/write/readback transaction. */
 export type ClientConfigurationResult =
   | {
@@ -38,6 +45,7 @@ export interface SetupHost {
   macosVersion(): Promise<string | undefined>;
   linuxDistribution(): Promise<LinuxDistribution | undefined>;
   hopperPath(): Promise<string | undefined>;
+  initialSetupState?(scope?: DoctorScope): Promise<SetupInitialState>;
   installHopper(replaceExisting: boolean): Promise<SetupHopperInstallResult>;
   providerEnvironment?(): Promise<SetupProviderEnvironment>;
   detectedClients(): Promise<readonly SetupClient[]>;
