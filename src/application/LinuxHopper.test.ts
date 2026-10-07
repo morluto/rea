@@ -59,6 +59,7 @@ describe("Linux Hopper host classification", () => {
     ['ID=ubuntu\nVERSION_ID="24.04"\n', "deb"],
     ["ID=fedora\nVERSION_ID=41\n", "rpm"],
     ["ID=arch\n", "arch"],
+    ["ID=cachyos\nID_LIKE=arch\n", "arch"],
   ] as const)("accepts an official Hopper distribution", (document, family) => {
     expect(parseLinuxDistribution(document)).toMatchObject({
       packageFamily: family,
@@ -88,6 +89,8 @@ describe("Linux Hopper host classification", () => {
     'ID=ubuntu\nVERSION_ID="22.04"\n',
     "ID=fedora\nVERSION_ID=40\n",
     'ID=debian\nVERSION_ID="13"\nID_LIKE=debian\n',
+    "ID=manjaro\nID_LIKE=arch\n",
+    "ID=garuda\nID_LIKE=arch\n",
   ])("rejects unsupported vendor/version combinations", (document) => {
     expect(parseLinuxDistribution(document).supported).toBe(false);
   });

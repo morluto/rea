@@ -139,7 +139,7 @@ rea setup
 ### 요구 사항
 
 - macOS 12 이상
-- Ubuntu 24.04+, Fedora 41+ 또는 64비트 Arch Linux
+- Ubuntu 24.04+, Fedora 41+, 64비트 Arch Linux 또는 CachyOS
 - Node.js 22.x (>=22.19), 24.x (>=24.11) 또는 26+와 npm
 
 네이티브 바이너리 분석에는 Hopper 또는 Ghidra가 필요합니다. Hopper는 별도 소프트웨어입니다. 데모에는 공급업체의 제한이 있지만 유료 라이선스가 필수는 아닙니다.
@@ -154,7 +154,7 @@ Setup은 설치를 확인하고 경로를 저장할 수 있습니다. Ghidra, Ja
 
 `npx -y rea-agents@latest doctor`는 호스트, 의존성, 분석 도구, 에이전트 설정을 변경 없이 확인합니다. 구조화된 진단에는 `--json`을 추가하세요.
 
-Linux의 기본 Hopper 실행 파일은 `/opt/hopper/bin/Hopper`입니다. 다른 위치에는 `HOPPER_LAUNCHER_PATH`를 설정하세요. 파일이 있는데도 분석 엔진이 없다고 하면 `ldd /opt/hopper/bin/Hopper | grep 'not found'`로 누락된 라이브러리를 확인하세요. 자세한 내용은 [Hopper 안내](docs/installation.md#hopper)를 참고하세요.
+Linux에서는 실행 가능한 `/opt/hopper/bin/Hopper`를 우선 사용하고, 사용할 수 없으면 `~/.local/share/rea/hopper/bin/Hopper`를 자동으로 확인합니다. 다른 위치에는 `HOPPER_LAUNCHER_PATH`를 설정하세요. 파일이 있는데도 분석 엔진이 없다고 하면 실제 Hopper 경로에 대해 `ldd /absolute/path/to/Hopper | grep 'not found'`를 실행해 누락된 라이브러리를 확인하세요. 자세한 내용은 [Hopper 안내](docs/installation.md#hopper)를 참고하세요.
 
 ### 업데이트와 제거
 

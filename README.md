@@ -157,7 +157,7 @@ external-tool prerequisites depend on the selected workflow; the native
 provider guides describe their supported platforms.
 
 - macOS 12 or newer
-- Ubuntu 24.04+, Fedora 41+, or 64-bit Arch Linux
+- Ubuntu 24.04+, Fedora 41+, 64-bit Arch Linux, or CachyOS
 - Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+
 - npm; REA does not require or install a particular npm version
 
@@ -183,7 +183,7 @@ On macOS, setup can install Hopper in `~/Applications` after approval. It verifi
 
 On supported Linux distributions, setup can install Hopper and its demo-session dependencies through your system package manager. You may see a system authorization prompt. Demo sessions use a private virtual display, leaving your desktop alone. See [Hopper installation](docs/installation.md#hopper) for download verification and platform details.
 
-The normal Linux launcher is `/opt/hopper/bin/Hopper`. If Hopper was installed elsewhere:
+REA prefers an executable `/opt/hopper/bin/Hopper` on Linux. If it is unavailable, REA automatically checks `~/.local/share/rea/hopper/bin/Hopper`. If Hopper was installed elsewhere:
 
 ```bash
 export HOPPER_LAUNCHER_PATH=/absolute/path/to/Hopper
@@ -193,12 +193,12 @@ rea doctor --json
 If doctor reports a missing analysis engine even though the file exists, inspect shared-library resolution with:
 
 ```bash
-ldd /opt/hopper/bin/Hopper | grep 'not found'
+ldd /absolute/path/to/Hopper | grep 'not found'
 ```
 
 Install the missing packages and rerun `rea setup`. The Linux demo needs Xvfb, Python 3, X11, and XTEST; approved setup installs these dependencies. If you use the curl installer, add `~/.local/bin` to your shell `PATH` when needed.
 
-REA defaults `HOPPER_LAUNCHER_PATH` to `/Applications/Hopper Disassembler.app/Contents/MacOS/hopper` on macOS and `/opt/hopper/bin/Hopper` on Linux. Explicit configuration always takes precedence.
+REA uses `/Applications/Hopper Disassembler.app/Contents/MacOS/hopper` by default on macOS. On Linux it prefers executable `/opt/hopper/bin/Hopper`, then executable `~/.local/share/rea/hopper/bin/Hopper`, and keeps `/opt/hopper/bin/Hopper` as the diagnostic fallback if neither exists. Explicit `HOPPER_LAUNCHER_PATH` configuration always takes precedence.
 
 ### Ghidra analysis provider
 

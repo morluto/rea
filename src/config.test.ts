@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { parseConfig } from "./config.js";
 
 describe("runtime configuration", () => {
-  it("allows target-free startup and defaults to Hopper's documented launcher", () => {
+  it("allows target-free startup and applies runtime defaults", () => {
     const empty = parseConfig({});
     expect(empty.ok).toBe(true);
     if (empty.ok) {
@@ -13,11 +13,6 @@ describe("runtime configuration", () => {
     const result = parseConfig({ HOPPER_TARGET_PATH: "/usr/bin/true" });
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value.hopperLauncherPath).toBe(
-        process.platform === "linux"
-          ? "/opt/hopper/bin/Hopper"
-          : "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper",
-      );
       expect(result.value.hopperTargetKind).toBe("executable");
       expect(result.value.hopperLoaderArgs).toEqual([]);
       expect(result.value.logLevel).toBe("info");
