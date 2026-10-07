@@ -27,8 +27,11 @@ import {
   type ProcessCleanupResult,
   type ProcessLineageObservation,
 } from "../process/ProcessOwnership.js";
-import { prepareProcessOwnershipInspection } from "../process/ProcessOwnershipObservation.js";
-import { observeOwnedProcessLineage } from "../process/ProcessOwnershipObservation.js";
+import {
+  observeOwnedProcessLineage,
+  prepareProcessOwnershipInspection,
+  systemProcessOwnershipHost,
+} from "../process/ProcessOwnershipObservation.js";
 import { selectCapturedProcessGroupIds } from "../process/ProcessOwnershipProcessTree.js";
 import {
   runElectronActions,
@@ -161,6 +164,10 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
       await prepareProcessOwnershipInspection(options.signal);
       const startupDeadline = Date.now() + STARTUP_TIMEOUT_MS;
       const paths = await canonicalPaths(input);
+      const captureBaseline =
+        await systemProcessOwnershipHost.captureBaseline?.();
+      if (options.signal?.aborted)
+        throw new BrowserObservationError(OPERATION, "cancelled");
       application = await electron.launch({
         executablePath: paths.executable,
         cwd: paths.root,
@@ -185,6 +192,7 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         expectedParentPid: process.pid,
         expectedCommand: paths.executable,
         sweepTokenOwnedProcesses: true,
+        ...(captureBaseline === undefined ? {} : { captureBaseline }),
       };
       const actions = await runElectronActions(application, input, options);
       const state = await runWithExecutionLimits(
@@ -279,7 +287,11 @@ const cleanupElectronProcesses = async (
     if (!result.cleaned) return result;
     signaled ||= result.signaled;
   }
-  const remaining = await verifyNoTokenOwnedProcesses(ownership.runId);
+  const remaining = await verifyNoTokenOwnedProcesses(
+    ownership.runId,
+    undefined,
+    ownership.captureBaseline,
+  );
   if (!remaining.cleaned) return remaining;
   return { cleaned: true, signaled };
 };
