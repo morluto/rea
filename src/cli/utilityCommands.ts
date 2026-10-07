@@ -4,7 +4,7 @@ import {
   runCapabilityStatus,
   runProviderAnalysis,
   runProviderStatus,
-} from "../application/DirectAnalysis.js";
+} from "../composition/directAnalysis.js";
 import { importReferenceSource } from "../application/ReferenceSourceImport.js";
 import { projectReferenceSourceImportError } from "../application/ReferenceSourceImportTypes.js";
 import { parseConfig } from "../config.js";
@@ -12,11 +12,11 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { safeParseJson } from "../domain/safeJson.js";
-import { nativeUiScenarioInputSchema } from "../domain/nativeUiObservation.js";
+import { nativeUiScenarioInputSchema } from "../domain/native/nativeUiObservation.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { logCliCommand } from "../cliLogging.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { swiftSymbolsSchema } from "../contracts/nativeToolContracts.js";
+import { swiftSymbolsSchema } from "../contracts/native/nativeToolContracts.js";
 import type { Logger } from "../logger.js";
 import { isReferenceSourceImportCliFailure } from "./referenceSourceImportStatus.js";
 import type { CliInstance } from "./types.js";

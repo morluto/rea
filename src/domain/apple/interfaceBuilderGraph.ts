@@ -10,7 +10,7 @@ import {
   nativeInvestigationGraphSchema,
   nativeInvestigationNodeSchema,
   nativeInvestigationTraceLimitsSchema,
-} from "../nativeInvestigationGraph.js";
+} from "../native/nativeInvestigationGraph.js";
 
 export { parseInterfaceBuilderRecords } from "./interfaceBuilderKeyedArchive.js";
 

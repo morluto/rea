@@ -14,7 +14,7 @@ import {
   managedNativeVerificationResultSchema,
   verifyManagedNativeBoundaries,
 } from "../../../src/domain/managed/managedNativeVerification.js";
-import { nativeUiResultSchema } from "../../../src/domain/nativeUiObservation.js";
+import { nativeUiResultSchema } from "../../../src/domain/native/nativeUiObservation.js";
 import { processCaptureSchema } from "../../../src/domain/processCapture.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 

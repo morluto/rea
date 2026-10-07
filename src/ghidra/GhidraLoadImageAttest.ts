@@ -5,7 +5,7 @@ import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import {
   nativeLoadImageObservationSchema,
   nativeLoadImageSchema,
-} from "../domain/nativeLoadImage.js";
+} from "../domain/native/nativeLoadImage.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {

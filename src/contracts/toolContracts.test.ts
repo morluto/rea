@@ -9,13 +9,14 @@ import { MANAGED_TOOL_CONTRACTS } from "./managed/managedToolContracts.js";
 import { FIRMWARE_TOOL_CONTRACTS } from "./firmware/firmwareToolContracts.js";
 import { ANDROID_TOOL_CONTRACTS } from "./android/androidToolContracts.js";
 import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "./managed/managedWorkflowToolContracts.js";
-import { NATIVE_TOOL_CONTRACTS } from "./nativeToolContracts.js";
+import { NATIVE_TOOL_CONTRACTS } from "./native/nativeToolContracts.js";
 import { BROWSER_PROVIDER_TOOL_CONTRACTS } from "./browserProviderToolContracts.js";
 import { ELECTRON_TOOL_CONTRACTS } from "./javascript/electronToolContracts.js";
 import { JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS } from "./javascript/javascriptRuntimeObservationToolContracts.js";
 import { APPLICATION_TOOL_CONTRACTS } from "./applicationToolContracts.js";
 import { JAVASCRIPT_RECOVERY_TOOL_CONTRACTS } from "./javascript/javascriptRecoveryToolContracts.js";
 import { WEB_SCRIPT_TOOL_CONTRACTS } from "./webScriptToolContracts.js";
+import { WEB_RUNTIME_TOOL_CONTRACTS } from "./webRuntimeToolContracts.js";
 
 const GROUPS = {
   official: OFFICIAL_TOOL_CONTRACTS,
@@ -32,6 +33,7 @@ const GROUPS = {
   application: APPLICATION_TOOL_CONTRACTS,
   javascript_recovery: JAVASCRIPT_RECOVERY_TOOL_CONTRACTS,
   web_script_export: WEB_SCRIPT_TOOL_CONTRACTS,
+  web_runtime: WEB_RUNTIME_TOOL_CONTRACTS,
   session: SESSION_TOOL_CONTRACTS,
 } as const;
 
@@ -85,6 +87,8 @@ const PUBLISHED_TOOL_NAME_FLOOR = [
   "export_web_scripts",
   "trace_web_module_imports",
   "trace_web_source_location",
+  "observe_web_execution",
+  "inspect_web_event_listeners",
   "find_changed_behavior",
   "find_xrefs_to_name",
   "get_call_graph",

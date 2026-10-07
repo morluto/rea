@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { writeAnalysisSnapshot } from "../../../src/application/binary/AnalysisSnapshotFiles.js";
-import { runDirectAnalysis } from "../../../src/application/DirectAnalysis.js";
+import { runDirectAnalysis } from "../../../src/composition/directAnalysis.js";
 import type { AnalysisSnapshot } from "../../../src/domain/analysisSnapshot.js";
 import {
   snapshotBinding,

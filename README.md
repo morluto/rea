@@ -410,7 +410,7 @@ See [native investigation](docs/native-investigation.md) for keyed archives, ins
 | Managed PE/CLI            |     7 | .NET identity, metadata, CIL instructions, native dependencies, reconstruction imports, and build comparisons                                                                                            |
 | Firmware                  |     2 | Linux firmware region inspection and explicit extraction                                                                                                                                                 |
 | Android APK               |     5 | package and manifest declarations, class search, member inventories, method decompilation, and incoming static references                                                                                |
-| Browser observation       |     9 | page structure, network metadata, scripts, source maps, WebMCP discovery, screenshots, and capture comparisons                                                                                           |
+| Browser observation       |    11 | page structure, network metadata, scripts, source maps, WebMCP discovery, screenshots, and capture comparisons                                                                                           |
 | Electron analysis         |     5 | renderer observation, static app mapping, and static/runtime reconciliation                                                                                                                              |
 | JavaScript runtime        |     2 | Node/Electron Inspector target discovery, script locations, and execution-context events                                                                                                                 |
 | Application workflows     |    13 | captured website script export; Android/Apple inventory projections; cross-layer feature traces, build comparisons, historical source mapping, static return-shape comparison, and reconstruction checks |
@@ -434,6 +434,10 @@ Static Android APK inspection supports Linux and macOS; the current metadata bri
   and tracing tools. Source URLs, frame or transaction references, competing
   versions, and missing-source states remain inline. See
   [captured website scripts](docs/website-script-export.md).
+  Inspect a selected node's listener sources or observe an externally triggered
+  execution window with `inspect_web_event_listeners` / `observe_web_execution`.
+  Precise coverage resets counters and affects optimized execution; see
+  [website runtime attribution](docs/web-runtime.md).
   Trace one exported script's native imports with `trace_web_module_imports` /
   `rea trace-web-module-imports`, preserving query/fragment identity and optional
   import-map context. Requires caller-supplied Chromium via

@@ -2,7 +2,7 @@ import { z } from "incur";
 import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 
-import { runDirectAnalysis } from "../application/DirectAnalysis.js";
+import { runDirectAnalysis } from "../composition/directAnalysis.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "../logger.js";

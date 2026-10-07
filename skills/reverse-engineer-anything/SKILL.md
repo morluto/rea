@@ -3,8 +3,8 @@ name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
   version: "27"
-  tool_count: 131
-  catalog_digest: "55539736429c9ae757ecc48424a267fcbc168e65a236cb63ea446bc38a45d66a"
+  tool_count: 133
+  catalog_digest: "d64b8355620006445299313cffb9ac273b8c5b1a1fd080303f893911c44d88c7"
 ---
 
 # REA

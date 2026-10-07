@@ -187,7 +187,8 @@
     "verify:test-discovery": "node scripts/verify-test-discovery.mjs",
     "verify:javascript:recovery": "node scripts/verify/javascript/recovery.mjs",
     "verify:module-boundaries": "node scripts/verify-module-boundaries.mjs",
-    "verify:browser:source-maps": "npm run build:cached && node scripts/verify-browser-source-maps.mjs"
+    "verify:browser:source-maps": "npm run build:cached && node scripts/verify-browser-source-maps.mjs",
+    "verify:browser:runtime": "npm run build:cached && node scripts/verify-browser-runtime.mjs"
   },
   "lint-staged": {
     "*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}": [

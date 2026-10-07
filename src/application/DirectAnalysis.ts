@@ -3,11 +3,12 @@ import { parseConfig } from "../config.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { EnhancedTools } from "./EnhancedTools.js";
 import { executeFunctionAnalysisEvidence } from "./FunctionAnalysisEvidence.js";
-import { createBinarySession, createManagedBinarySession } from "./runtime.js";
+import type { DirectAnalysisDependencies } from "./DirectAnalysisDependencies.js";
+import type { BinarySession } from "./binary/BinarySession.js";
 import { silentLogger, type Logger } from "../logger.js";
 import { createEvidence } from "../domain/evidence.js";
 import type { Evidence } from "../domain/evidence.js";
-import type { NativeToolName } from "../contracts/nativeToolContracts.js";
+import type { NativeToolName } from "../contracts/native/nativeToolContracts.js";
 import type { ArtifactAnalysisOperation } from "../contracts/artifactToolContracts.js";
 import {
   isManagedToolName,
@@ -38,11 +39,6 @@ import {
 import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
 import { artifactInspectionResultSchema } from "../domain/artifactInspection.js";
 
-export {
-  runCapabilityStatus,
-  runProviderStatus,
-} from "./DirectAnalysisStatus.js";
-
 type DirectAnalysisTool =
   | "annotate_native_function"
   | "inspect_native_load_image"
@@ -70,6 +66,7 @@ type DirectAnalysisTool =
  * retain a target or provider client for a subsequent command.
  */
 export const runDirectAnalysis = async (
+  dependencies: DirectAnalysisDependencies,
   path: string,
   tool: DirectAnalysisTool,
   arguments_: Readonly<Record<string, JsonValue>>,
@@ -82,7 +79,7 @@ export const runDirectAnalysis = async (
   } = {},
 ): Promise<JsonValue> =>
   withProcessCancellation(options.signal, (signal) =>
-    runAnalysis(path, tool, arguments_, {
+    runAnalysis(dependencies, path, tool, arguments_, {
       logger: options.logger ?? silentLogger,
       snapshotPath: options.snapshotPath,
       signal,
@@ -97,6 +94,7 @@ export const runDirectAnalysis = async (
 
 /** Execute one provider-native semantic operation with atomic provenance. */
 export const runProviderAnalysis = async (
+  dependencies: DirectAnalysisDependencies,
   ...[path, tool, arguments_, logger = silentLogger, signal]: readonly [
     path: string,
     tool: NativeToolName | ArtifactAnalysisOperation | ManagedToolName,
@@ -106,9 +104,9 @@ export const runProviderAnalysis = async (
   ]
 ): Promise<JsonValue> =>
   isManagedToolName(tool)
-    ? runManagedProviderAnalysis(path, tool, signal)
+    ? runManagedProviderAnalysis(dependencies, path, tool, signal)
     : withProcessCancellation(signal, (operationSignal) =>
-        runAnalysis(path, tool, arguments_, {
+        runAnalysis(dependencies, path, tool, arguments_, {
           logger,
           snapshotPath: undefined,
           signal: operationSignal,
@@ -117,12 +115,13 @@ export const runProviderAnalysis = async (
 
 /** Execute managed metadata inspection in an isolated managed-only session. */
 export const runManagedProviderExecution = async (
+  dependencies: DirectAnalysisDependencies,
   path: string,
   tool: ManagedToolName,
   signal?: AbortSignal,
 ): Promise<Result<AnalysisExecution, AnalysisError>> =>
   withProcessCancellation(signal, async (operationSignal) => {
-    const session = createManagedBinarySession();
+    const session = dependencies.createManagedBinarySession();
     try {
       const opened = await session.open(path, { signal: operationSignal });
       if (!opened.ok) return opened;
@@ -133,11 +132,17 @@ export const runManagedProviderExecution = async (
   });
 
 const runManagedProviderAnalysis = async (
+  dependencies: DirectAnalysisDependencies,
   path: string,
   tool: ManagedToolName,
   signal?: AbortSignal,
 ): Promise<JsonValue> => {
-  const execution = await runManagedProviderExecution(path, tool, signal);
+  const execution = await runManagedProviderExecution(
+    dependencies,
+    path,
+    tool,
+    signal,
+  );
   if (!execution.ok) return cliError(execution.error);
   const value = execution.value;
   return createEvidence(value.subject ?? undefined, value.provider, {
@@ -151,6 +156,7 @@ const runManagedProviderAnalysis = async (
 };
 
 const runAnalysis = async (
+  dependencies: DirectAnalysisDependencies,
   path: string,
   tool:
     | NativeToolName
@@ -177,7 +183,7 @@ const runAnalysis = async (
   const { logger, signal, snapshotPath } = options;
   const config = parseConfig(options.environment ?? process.env);
   if (!config.ok) return cliError(config.error);
-  const session = createBinarySession(config.value, logger);
+  const session = dependencies.createBinarySession(config.value, logger);
   try {
     const prepared = await prepareSnapshot({
       path,
@@ -247,13 +253,13 @@ const runAnalysis = async (
 };
 
 const canReplayDirectTool = (
-  session: ReturnType<typeof createBinarySession>,
-  tool: Parameters<typeof runAnalysis>[1],
+  session: BinarySession,
+  tool: Parameters<typeof runAnalysis>[2],
 ): boolean =>
   tool !== "trace_native_ui_action" && session.allowsSnapshotReplay(tool);
 
 const executeAnalysisTool = async (input: {
-  readonly session: ReturnType<typeof createBinarySession>;
+  readonly session: BinarySession;
   readonly openedTarget: BinaryTarget;
   readonly tool:
     | NativeToolName
@@ -372,7 +378,7 @@ const prepareSnapshot = async (options: {
 };
 
 const replayProviderFor = (
-  session: ReturnType<typeof createBinarySession>,
+  session: BinarySession,
   tool:
     | NativeToolName
     | ArtifactAnalysisOperation
@@ -384,7 +390,7 @@ const replayProviderFor = (
     : session.providerIdentity(tool);
 
 const analysisProfileForEvidence = (
-  session: ReturnType<typeof createBinarySession>,
+  session: BinarySession,
   tool:
     | NativeToolName
     | ArtifactAnalysisOperation

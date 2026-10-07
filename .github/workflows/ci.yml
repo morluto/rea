@@ -312,6 +312,8 @@ jobs:
         run: npm run verify:apple-dispatch && npm run verify:interface-builder
       - name: Native plist CLI selection regressions
         run: npm run test:focused -- tests/boundary/cli/nativePlistCli.test.ts tests/boundary/cli/nativePlistPrototypeKeyCli.test.ts tests/boundary/cli/nativePlistSelectionFailureCli.test.ts
+      - name: Native Swift demangling CLI and MCP regressions
+        run: npm run test:focused -- tests/boundary/cli/nativeDemangleCli.test.ts tests/boundary/mcp/nativeDemangleMcp.test.ts
 
   reconstruction-readiness:
     name: Reconstruction readiness

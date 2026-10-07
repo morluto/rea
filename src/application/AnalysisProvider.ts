@@ -1,7 +1,7 @@
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import type { OfficialToolName } from "../contracts/officialToolContracts.js";
 import type { EnhancedToolName } from "../contracts/enhancedInputs.js";
-import type { NativeToolName } from "../contracts/nativeToolContracts.js";
+import type { NativeToolName } from "../contracts/native/nativeToolContracts.js";
 import type { ArtifactAnalysisOperation } from "../contracts/artifactToolContracts.js";
 import type { ManagedToolName } from "../contracts/managed/managedToolContracts.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";

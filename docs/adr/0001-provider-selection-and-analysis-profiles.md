@@ -30,7 +30,7 @@ analyzer, or provider-version differences while appearing target-compatible.
 
 The decision addressed the earlier representations of
 [`CompositeProvider`](https://github.com/morluto/rea/blob/main/src/application/binary/CompositeProvider.ts),
-[runtime composition](https://github.com/morluto/rea/blob/main/src/application/runtime.ts),
+[runtime composition](https://github.com/morluto/rea/blob/main/src/composition/binary.ts),
 [`BinarySession`](https://github.com/morluto/rea/blob/main/src/application/binary/BinarySession.ts),
 [`BinaryTarget`](https://github.com/morluto/rea/blob/main/src/domain/binaryTarget.ts),
 [analysis snapshot](https://github.com/morluto/rea/blob/main/src/domain/analysisSnapshot.ts), and

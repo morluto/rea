@@ -95,6 +95,14 @@ in `src/artifacts/apple/`. The npm entrypoints are unchanged. Format-specific
 Swift/XIB/asset sources and goldens retain their locations; real Apple workflows
 resolve them from the verifier file URL and run in the macOS CI lane.
 
+Portable native semantics and their tests live in `src/domain/native/`; shared
+analyst workflows and service-lane tests live in `src/application/native/`.
+Named native contracts live in `src/contracts/native/`. Provider protocol and
+host UI tests retain their adapter/boundary lanes, and real verifier command
+names remain unchanged.
+The existing Apple CI job also runs the host Swift-demangling CLI/MCP regression
+suites, including option-like symbols, carriage returns and multiline rejection.
+
 MCP SDK transport tests with recording providers remain integration tests.
 They are useful for schema drift and failure projection but do not prove that
 Hopper, Ghidra or another substituted engine works. `verify:package` proves
@@ -543,3 +551,19 @@ checks an installed package after building the verifier dependencies. The separa
 conditional `real-web-source-map` CI job supplies Chrome and an isolated pinned
 fixture compiler; static/unit checks do not acquire a browser. See
 [the source location guide](web-source-location.md) for the verified decoder profile.
+
+### Website runtime attribution lane
+
+`npm run verify:browser:runtime` uses caller-supplied
+`REA_BROWSER_EXECUTABLE` and an owned synthetic site/profile. It exercises public
+CLI and stdio MCP for precise execution and native listener source locations,
+including actual armed progress, Unicode/CRLF digests, repeated source URLs with
+distinct script IDs, zero branches and function-only unknowns on repeated
+coverage, request initiators and an externally owned page that remains open.
+
+An optional entrypoint argument to `scripts/verify-browser-runtime.mjs` runs the
+same checks through an isolated installed package. The conditional
+`real-web-runtime` CI job runs only for relevant changes and needs no fixture
+compiler. Ordinary unit/static gates acquire no browser. See
+[website runtime attribution](web-runtime.md) for effects, resource bounds and
+coverage limits.

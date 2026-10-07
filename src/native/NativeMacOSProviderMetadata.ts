@@ -2,7 +2,7 @@ import type {
   CapabilityDescriptor,
   ProviderIdentity,
 } from "../application/AnalysisProvider.js";
-import { NATIVE_TOOL_CONTRACTS } from "../contracts/nativeToolContracts.js";
+import { NATIVE_TOOL_CONTRACTS } from "../contracts/native/nativeToolContracts.js";
 
 /** Public identity committed by macOS-native inspection observations. */
 export const NATIVE_MACOS_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({

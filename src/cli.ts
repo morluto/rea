@@ -15,6 +15,7 @@ import { registerBrowserCommands } from "./cli/browserCommands.js";
 import { registerWebScriptCommands } from "./cli/webScriptCommands.js";
 import { registerWebModuleCommands } from "./cli/webModuleCommands.js";
 import { registerWebSourceLocationCommands } from "./cli/webSourceLocationCommands.js";
+import { registerWebRuntimeCommands } from "./cli/webRuntimeCommands.js";
 import { registerJavaScriptRecoveryCommands } from "./cli/javascriptRecoveryCommands.js";
 import { registerAdvancedBrowserCommands } from "./cli/browserAdvancedCommands.js";
 import { registerBrowserScenarioCommands } from "./cliBrowserScenarioCommands.js";
@@ -61,6 +62,7 @@ export const createCli = (
   registerWebScriptCommands(cli, logger);
   registerWebModuleCommands(cli, logger, environment);
   registerWebSourceLocationCommands(cli, logger, environment);
+  registerWebRuntimeCommands(cli, logger);
   registerJavaScriptRecoveryCommands(cli, logger, environment);
   registerAdvancedBrowserCommands(cli, logger);
   registerBrowserScenarioCommands(cli, logger);

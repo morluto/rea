@@ -6,7 +6,7 @@ import { ELECTRON_TOOL_CONTRACTS } from "../../dist/contracts/javascript/electro
 import { JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS } from "../../dist/contracts/javascript/javascriptRuntimeObservationToolContracts.js";
 import { TOOL_CONTRACTS } from "../../dist/contracts/toolContracts.js";
 import { parseConfig } from "../../dist/config.js";
-import { createBinarySession } from "../../dist/application/runtime.js";
+import { createBinarySession } from "../../dist/composition/binary.js";
 
 // Mutate only this child's presentation arrays, before importing registration.
 if (process.argv[2] === "reversed") {

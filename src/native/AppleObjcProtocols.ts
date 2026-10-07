@@ -1,4 +1,4 @@
-import type { ObjcSwiftMetadata } from "../domain/objcSwiftMetadata.js";
+import type { ObjcSwiftMetadata } from "../domain/native/objcSwiftMetadata.js";
 import type { SwiftMetadataReaders } from "./AppleSwiftVtables.js";
 
 /** Read protocol lists and absolute protocol method declarations with cycle-safe identities. */

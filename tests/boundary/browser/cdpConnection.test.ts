@@ -62,4 +62,26 @@ describe("CDP connection", () => {
       await connection.close();
     }
   });
+  it("preserves the selected payload limit reason for pending and subsequent commands", async () => {
+    const browser = await startFakeCdpBrowser({
+      commandResult: () => ({ oversized: "x".repeat(2_048) }),
+    });
+    browsers.push(browser);
+    const connection = await CdpConnection.connect(
+      browser.browserWebSocketUrl,
+      "observe_web_execution",
+      undefined,
+      { maxPayloadBytes: 512 },
+    );
+    try {
+      for (const method of ["Runtime.enable", "Debugger.enable"]) {
+        await expect(connection.send(method)).rejects.toMatchObject({
+          reason: "payload_limit",
+          userMessage: expect.stringContaining("512 byte protocol budget"),
+        });
+      }
+    } finally {
+      await connection.close();
+    }
+  });
 });

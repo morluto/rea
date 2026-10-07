@@ -19,6 +19,7 @@ import {
 } from "./CdpCaptureValues.js";
 import { mainFrameUrl } from "./CdpCaptureDocuments.js";
 import { isMainFrameNavigation } from "./CdpCaptureEventHelpers.js";
+import { cdpTargetEventMatches } from "./CdpTargetEvents.js";
 
 interface ObservationContext {
   readonly connection: CdpConnection;
@@ -51,7 +52,7 @@ export const observeCdpSession = async (
     sessionId: context.sessionId,
     signal: context.signal,
     allowedOrigins,
-    delayOperation: "observe_web_session",
+    operation: "observe_web_session",
   });
   const initialUrl = mainFrameUrl(initial) ?? "";
   const mainFrameId = frameId(initial);
@@ -59,8 +60,7 @@ export const observeCdpSession = async (
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
   const capture = new TimelineCapture(allowedOrigins, mainFrameId, initialUrl);
   const removeListener = context.connection.onEvent((event) => {
-    if (observationEventMatches(event, context.sessionId))
-      capture.ingest(event);
+    if (cdpTargetEventMatches(event, context.sessionId)) capture.ingest(event);
   });
   const removeDisconnectListener = context.connection.onDisconnect(() =>
     capture.targetTerminated(),
@@ -335,18 +335,6 @@ class TimelineCapture {
     });
   }
 }
-
-const observationEventMatches = (
-  event: CdpEvent,
-  sessionId: string | undefined,
-): boolean => {
-  if (event.method !== "Target.detachedFromTarget")
-    return event.sessionId === sessionId;
-  return (
-    sessionId !== undefined &&
-    cdpStringValue(recordValue(event.params)?.sessionId) === sessionId
-  );
-};
 
 const waitForWindow = async (
   durationMs: number,
