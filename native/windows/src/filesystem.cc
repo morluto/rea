@@ -284,7 +284,7 @@ static Handle createPrivateFile(Runtime& root, const std::wstring& relative) {
   verifyPrivate(parent->get(), parentPath, parentPath == root.path);
   Security security;
   auto file = createRelative(parent->get(), path.substr(path.find_last_of(L'\\') + 1),
-                             GENERIC_WRITE | GENERIC_READ | READ_CONTROL, false, security, path);
+                             DELETE | GENERIC_WRITE | GENERIC_READ | READ_CONTROL, false, security, path);
   verifyPrivate(file.get(), path, false);
   return file;
 }
@@ -412,6 +412,18 @@ static void copySnapshot(napi_env, void* pointer) {
 static void completeSnapshot(napi_env env, napi_status status, void* pointer) {
   std::unique_ptr<SnapshotWork> work(static_cast<SnapshotWork*>(pointer));
   work->root->snapshotPending = false;
+  const auto reject = [&](const Failure& failure) {
+    try {
+      dispose(work->destination.get(), work->path);
+      work->destination.reset();
+      napi_reject_deferred(env, work->deferred, failureValue(env, failure));
+    } catch (const Failure& cleanupFailure) {
+      const Failure combined(
+          failure.constraint + "; incomplete snapshot cleanup failed: " + cleanupFailure.constraint,
+          work->path, cleanupFailure.win32);
+      napi_reject_deferred(env, work->deferred, failureValue(env, combined));
+    }
+  };
   try {
     if (work->failure) throw *work->failure;
     require(status == napi_ok && !work->root->snapshotCancelled.load(), "Native snapshot worker was cancelled", work->path, ERROR_OPERATION_ABORTED);
@@ -422,10 +434,9 @@ static void completeSnapshot(napi_env env, napi_status status, void* pointer) {
     work->root->immutableFiles.push_back(std::move(work->destination));
     check(napi_resolve_deferred(env, work->deferred, result));
   } catch (const Failure& failure) {
-    napi_reject_deferred(env, work->deferred, failureValue(env, failure));
+    reject(failure);
   } catch (const std::exception& failure) {
-    napi_reject_deferred(env, work->deferred,
-                         failureValue(env, Failure(failure.what(), work->path, ERROR_GEN_FAILURE)));
+    reject(Failure(failure.what(), work->path, ERROR_GEN_FAILURE));
   }
   napi_delete_reference(env, work->rootReference);
   napi_delete_async_work(env, work->work);
@@ -506,7 +517,13 @@ napi_value filesystemCall(napi_env env, const std::wstring& operation, const std
     auto file = runtimeDirectory(root, path.substr(0, path.find_last_of(L'\\')));
     file->path = path;
     file->requestedPath = path;
-    file->handles.push_back(openComponent(path, GENERIC_READ, false));
+    // Retained output handles have write and DELETE access, so this read open
+    // must share both to pass Windows' symmetric share check. Those retained
+    // handles still omit FILE_SHARE_WRITE and FILE_SHARE_DELETE, blocking
+    // competing writes and delete opens.
+    file->handles.push_back(openComponent(path, GENERIC_READ, false,
+                                          FILE_SHARE_READ | FILE_SHARE_WRITE |
+                                              FILE_SHARE_DELETE));
     verifyPrivate(file->get(), path, false);
     auto result = identity(env, file->get(), path);
     set(env, result, "handle", wrap(env, std::move(file)));

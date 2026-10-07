@@ -233,6 +233,20 @@ const finishProcessRun = async (options: {
   );
 };
 
+const normalizeCaptureFailure = (
+  cause: unknown,
+  signal: AbortSignal | undefined,
+): unknown => {
+  if (cause instanceof ProcessCaptureError) return cause;
+  if (
+    signal?.aborted === true &&
+    (cause === signal.reason ||
+      (cause instanceof Error && cause.name === "AbortError"))
+  )
+    return processCaptureCancelled();
+  return cause;
+};
+
 const completeCapture = async (options: {
   readonly scenario: ProcessScenario;
   readonly hostPlatform: NodeJS.Platform;
@@ -245,6 +259,7 @@ const completeCapture = async (options: {
   readonly interactions: readonly InteractionEvent[];
   readonly exit: Awaited<ReturnType<typeof awaitTerminalExit>>;
   readonly signal?: AbortSignal;
+  readonly captureSnapshot: typeof snapshotRoots;
   readonly initiallyTruncated: boolean;
   readonly eventJournal: readonly ProcessCaptureEventJournalEntry[];
   readonly recordEvent: RecordProcessCaptureEvent;
@@ -262,7 +277,7 @@ const completeCapture = async (options: {
   const samplingPartial = (await runtime.stopSampler()).partial;
   await settleProcessCaptureJournal(options.eventJournal);
   assertNotCancelled(options.signal);
-  const after = await snapshotRoots(scenario, options.signal);
+  const after = await options.captureSnapshot(scenario, options.signal);
   options.recordEvent("filesystem_checkpoints", 1);
   const renderedFrames = await runtime.renderer.frames();
   const checkpoints: UnverifiedProcessCapture["filesystem_checkpoints"] = [
@@ -319,10 +334,12 @@ const runProcessScenario = async (
   signal?: AbortSignal,
   hostEnvironment: Readonly<Record<string, string | undefined>> = process.env,
   hostPlatform: NodeJS.Platform = process.platform,
+  captureSnapshot: typeof snapshotRoots = snapshotRoots,
 ): Promise<ProcessCapture> => {
   const { temporaryRoot, runId, before } = await prepareProcessCapture(
     scenario,
     signal,
+    captureSnapshot,
   );
   const frames: TerminalFrame[] = [];
   const samples: ProcessSample[] = [];
@@ -377,11 +394,12 @@ const runProcessScenario = async (
       initiallyTruncated: before.truncated,
       eventJournal,
       recordEvent,
+      captureSnapshot,
       ...(signal === undefined ? {} : { signal }),
     });
   } catch (cause: unknown) {
     runtime?.terminal.kill("SIGKILL");
-    executionFailure = cause;
+    executionFailure = normalizeCaptureFailure(cause, signal);
   }
   return finishProcessRun({
     runtime,
@@ -401,6 +419,7 @@ export const captureProcessScenario = async (
   signal?: AbortSignal,
   platform: NodeJS.Platform = process.platform,
   environment: Readonly<Record<string, string | undefined>> = process.env,
+  captureSnapshot: typeof snapshotRoots = snapshotRoots,
 ): Promise<Result<ProcessCapture, ProcessCaptureError | AnalysisError>> => {
   const ownershipReason = processCaptureOwnershipUnavailableReason(platform);
   if (ownershipReason !== undefined)
@@ -419,12 +438,19 @@ export const captureProcessScenario = async (
       environment,
     );
     return ok(
-      await runProcessScenario(resolvedScenario, signal, environment, platform),
+      await runProcessScenario(
+        resolvedScenario,
+        signal,
+        environment,
+        platform,
+        captureSnapshot,
+      ),
     );
   } catch (cause: unknown) {
+    const failure = normalizeCaptureFailure(cause, signal);
     return err(
-      cause instanceof ProcessCaptureError
-        ? cause
+      failure instanceof ProcessCaptureError
+        ? failure
         : new ProcessCaptureError("process capture failed", { cause }),
     );
   }

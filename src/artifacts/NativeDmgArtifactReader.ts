@@ -37,13 +37,18 @@ export interface NativeDmgHost {
     arguments_: readonly string[],
     signal?: AbortSignal,
     options?: { readonly timeoutMs: number },
-  ): Promise<{ readonly stdout: string; readonly exitCode: number }>;
+  ): Promise<{
+    readonly stdout: string;
+    readonly stderr?: string;
+    readonly exitCode: number;
+    readonly cause?: unknown;
+  }>;
 }
 
 const systemHost: NativeDmgHost = {
   async run(arguments_, signal, options) {
     try {
-      const { stdout } = await execFileOutput(
+      const { stdout, stderr } = await execFileOutput(
         "/usr/bin/hdiutil",
         [...arguments_],
         {
@@ -51,13 +56,23 @@ const systemHost: NativeDmgHost = {
           ...(signal === undefined ? {} : { signal }),
         },
       );
-      return { stdout, exitCode: 0 };
+      return { stdout, stderr, exitCode: 0 };
     } catch (cause: unknown) {
       if (cause instanceof Error && cause.name === "AbortError")
         throw new ArtifactReaderFailure("cancelled", "DMG operation cancelled");
-      throw new ArtifactReaderFailure("format", "hdiutil rejected the DMG", {
-        cause,
-      });
+      const exitCode = processExitCode(cause);
+      if (exitCode !== undefined)
+        return {
+          stdout: processOutput(cause, "stdout"),
+          stderr: processOutput(cause, "stderr"),
+          exitCode,
+          cause,
+        };
+      throw new ArtifactReaderFailure(
+        commandFailureReason(cause, arguments_[0]),
+        `hdiutil ${arguments_[0] ?? "operation"} failed: ${describeCommandFailure(cause, arguments_)}`,
+        { cause },
+      );
     }
   },
 };
@@ -250,13 +265,155 @@ const runChecked = async (
   signal?: AbortSignal,
   options?: { readonly timeoutMs: number },
 ): Promise<{ readonly stdout: string; readonly exitCode: 0 }> => {
-  const result = await host.run(arguments_, signal, options);
-  if (result.exitCode !== 0)
+  let result: Awaited<ReturnType<NativeDmgHost["run"]>>;
+  try {
+    result = await host.run(arguments_, signal, options);
+  } catch (cause: unknown) {
+    if (cause instanceof ArtifactReaderFailure) throw cause;
+    if (cause instanceof Error && cause.name === "AbortError")
+      throw new ArtifactReaderFailure("cancelled", "DMG operation cancelled", {
+        cause,
+      });
     throw new ArtifactReaderFailure(
-      "unavailable",
-      `hdiutil ${arguments_[0] ?? "operation"} failed with a non-zero exit code`,
+      commandFailureReason(cause, arguments_[0]),
+      `hdiutil ${arguments_[0] ?? "operation"} failed: ${describeCommandFailure(
+        cause,
+        arguments_,
+      )}`,
+      { cause },
     );
+  }
+  if (result.exitCode !== 0) {
+    const failure = {
+      command: "/usr/bin/hdiutil",
+      exitCode: result.exitCode,
+      ...(result.cause === undefined
+        ? {}
+        : { code: processExitCode(result.cause) }),
+      stdout: result.stdout,
+      ...(result.stderr === undefined ? {} : { stderr: result.stderr }),
+    };
+    const reason = commandFailureReason(failure, arguments_[0]);
+    const details = describeCommandFailure(failure, arguments_);
+    const unknownVerifyFailure =
+      arguments_[0] === "verify" && reason === "unavailable";
+    throw new ArtifactReaderFailure(
+      reason,
+      unknownVerifyFailure
+        ? `hdiutil verify failed; captured diagnostics do not establish the failure cause: ${details}`
+        : `hdiutil ${arguments_[0] ?? "operation"} failed: ${details}`,
+      result.cause === undefined ? undefined : { cause: result.cause },
+    );
+  }
   return { stdout: result.stdout, exitCode: 0 };
+};
+
+const describeCommandFailure = (
+  cause: unknown,
+  arguments_: readonly string[],
+): string => {
+  const fields: Record<string, string | number | readonly string[]> = {
+    command: "/usr/bin/hdiutil",
+    arguments: [...arguments_],
+  };
+  if (typeof cause === "object" && cause !== null) {
+    for (const key of [
+      "code",
+      "exitCode",
+      "errno",
+      "syscall",
+      "signal",
+      "stdout",
+      "stderr",
+    ] as const) {
+      const value = Reflect.get(cause, key);
+      if (typeof value === "string" || typeof value === "number")
+        fields[key] = value;
+    }
+    const code = Reflect.get(cause, "code");
+    if (typeof code === "number") fields.exitCode = code;
+  }
+  if (cause instanceof ArtifactReaderFailure) fields.message = cause.message;
+  else if (cause instanceof Error) fields.message = cause.message;
+  return JSON.stringify(fields);
+};
+
+const processExitCode = (cause: unknown): number | undefined => {
+  if (typeof cause !== "object" || cause === null) return undefined;
+  const exitCode = Reflect.get(cause, "exitCode");
+  if (typeof exitCode === "number") return exitCode;
+  const code = Reflect.get(cause, "code");
+  return typeof code === "number" ? code : undefined;
+};
+
+const processOutput = (cause: unknown, field: "stdout" | "stderr"): string => {
+  if (typeof cause !== "object" || cause === null) return "";
+  const value = Reflect.get(cause, field);
+  return typeof value === "string" ? value : "";
+};
+
+const commandFailureReason = (
+  cause: unknown,
+  operation: string | undefined,
+): ArtifactReaderFailure["reason"] => {
+  if (typeof cause !== "object" || cause === null) return "unavailable";
+  const code = Reflect.get(cause, "code");
+  const exitCode = Reflect.get(cause, "exitCode");
+  if (typeof code === "number" || typeof exitCode === "number")
+    return operation === "verify" ? verifyFailureReason(cause) : "unavailable";
+  if (code === "ENOENT") {
+    const syscall = Reflect.get(cause, "syscall");
+    return typeof syscall === "string" && syscall.startsWith("spawn")
+      ? "unavailable"
+      : "io";
+  }
+  if (
+    code === "EACCES" ||
+    code === "EPERM" ||
+    code === "EIO" ||
+    code === "ENOTDIR" ||
+    code === "EISDIR" ||
+    code === "ENODEV" ||
+    code === "EROFS" ||
+    code === "EMFILE" ||
+    code === "ENFILE"
+  )
+    return "io";
+  return "unavailable";
+};
+
+const verifyFailureReason = (
+  cause: unknown,
+): ArtifactReaderFailure["reason"] => {
+  const diagnostic = verifyFailureDiagnostic(
+    processOutput(cause, "stdout"),
+    processOutput(cause, "stderr"),
+  );
+  switch (diagnostic) {
+    case "image not recognized":
+      return "format";
+    case "invalid checksum":
+    case "image data corrupted":
+      return "integrity";
+    case "No such file or directory":
+    case "Permission denied":
+    case "Input/output error":
+      return "io";
+    default:
+      return "unavailable";
+  }
+};
+
+const verifyFailureDiagnostic = (
+  stdout: string,
+  stderr: string,
+): string | undefined => {
+  const prefix = "hdiutil: verify failed - ";
+  return `${stdout}\n${stderr}`
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find((line) => line.startsWith(prefix))
+    ?.slice(prefix.length);
 };
 
 const command = (

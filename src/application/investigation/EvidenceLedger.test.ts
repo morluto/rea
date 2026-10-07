@@ -38,9 +38,55 @@ describe("evidence ledger recording", () => {
     });
     expect(ledger.import(createEvidenceBundle([evidence]))).toEqual({
       ok: true,
-      value: { recordsAdded: 0, unknownsAdded: 0, changed: false },
+      value: {
+        recordsAdded: 0,
+        unknownsAdded: 0,
+        changed: false,
+        metadataChanged: false,
+      },
     });
     expect(ledger.export().records).toEqual([evidence]);
+    const relocatedBundleRecord = createEvidence(
+      { ...TARGET, path: "/relocated/fixture-renamed" },
+      PROVIDER,
+      { operation: "health", parameters: {}, result: true },
+    );
+    expect(
+      ledger.import(createEvidenceBundle([relocatedBundleRecord])),
+    ).toEqual({
+      ok: true,
+      value: {
+        recordsAdded: 0,
+        unknownsAdded: 0,
+        changed: true,
+        metadataChanged: true,
+      },
+    });
+    expect(ledger.get(evidence.evidence_id)).toEqual(relocatedBundleRecord);
+    expect(ledger.export().records).toEqual([relocatedBundleRecord]);
+    expect(
+      ledger.import(createEvidenceBundle([relocatedBundleRecord])),
+    ).toEqual({
+      ok: true,
+      value: {
+        recordsAdded: 0,
+        unknownsAdded: 0,
+        changed: false,
+        metadataChanged: false,
+      },
+    });
+    const conflictingBundle = createEvidenceBundle([
+      evidence,
+      relocatedBundleRecord,
+    ]);
+    expect(ledger.import(conflictingBundle).ok).toBe(false);
+    expect(ledger.get(evidence.evidence_id)).toEqual(relocatedBundleRecord);
+    ledger.clear();
+    expect(ledger.export().records).toEqual([]);
+  });
+
+  it("ignores JSON object key order during imported identity checks", () => {
+    const ledger = new EvidenceLedger();
     const ordered = createEvidence(TARGET, PROVIDER, {
       operation: "health",
       parameters: { alpha: 1, beta: 2 },
@@ -60,10 +106,77 @@ describe("evidence ledger recording", () => {
     );
     expect(ledger.import(reorderedBundle)).toEqual({
       ok: true,
-      value: { recordsAdded: 0, unknownsAdded: 0, changed: false },
+      value: {
+        recordsAdded: 0,
+        unknownsAdded: 0,
+        changed: false,
+        metadataChanged: false,
+      },
     });
     ledger.clear();
     expect(ledger.export().records).toEqual([]);
+  });
+});
+
+describe("evidence ledger metadata imports", () => {
+  it("reports and commits metadata replacement when importing unknown history", () => {
+    const ledger = new EvidenceLedger();
+    const mutation = createEvidence(TARGET, PROVIDER, {
+      predicateType: "rea.residual-unknown-mutation",
+      operation: "record_unknown",
+      parameters: {},
+      result: { action: "record", question: "Which path is current?" },
+    });
+    const created = ledger.recordUnknown(
+      recordUnknownInputSchema.parse({
+        approved: true,
+        question: "Which path is current?",
+        severity: "high",
+        domain: "fixture",
+        required_authority: null,
+        required_confidence: "derived",
+        required_environment: null,
+        recommended_probes: [],
+        relationships: [],
+      }),
+      mutation,
+    );
+    expect(created.ok).toBe(true);
+    const relocatedMutation = createEvidence(
+      { ...TARGET, path: "/relocated/mutation" },
+      PROVIDER,
+      {
+        predicateType: "rea.residual-unknown-mutation",
+        operation: "record_unknown",
+        parameters: {},
+        result: { action: "record", question: "Which path is current?" },
+      },
+    );
+    expect(relocatedMutation.evidence_id).toBe(mutation.evidence_id);
+    const bundle = createEvidenceBundle(
+      [relocatedMutation],
+      ledger.export().unknowns,
+    );
+
+    expect(ledger.import(bundle)).toEqual({
+      ok: true,
+      value: {
+        recordsAdded: 0,
+        unknownsAdded: 0,
+        changed: true,
+        metadataChanged: true,
+      },
+    });
+    expect(ledger.get(mutation.evidence_id)).toEqual(relocatedMutation);
+    expect(ledger.import(bundle)).toEqual({
+      ok: true,
+      value: {
+        recordsAdded: 0,
+        unknownsAdded: 0,
+        changed: false,
+        metadataChanged: false,
+      },
+    });
   });
 
   it("retains more than ten thousand inline evidence records", () => {

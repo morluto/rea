@@ -77,6 +77,78 @@ const update = (
   });
 
 describe("residual unknown registry reads and identity", () => {
+  it("merges record-only bundles without changing retained unknown history", () => {
+    const store = ledger();
+    const created = store.recordUnknown(
+      input("Does a later record preserve this unknown?"),
+      mutation("record-only-import"),
+    );
+    expect(created.ok).toBe(true);
+    const originalUnknowns = store.export().unknowns;
+    const addition = evidence("record-only-addition");
+    const bundle = createEvidenceBundle([addition]);
+
+    expect(store.import(bundle)).toEqual({
+      ok: true,
+      value: {
+        recordsAdded: 1,
+        unknownsAdded: 0,
+        changed: true,
+        metadataChanged: false,
+      },
+    });
+    expect(store.export().unknowns).toEqual(originalUnknowns);
+    expect(store.import(bundle)).toEqual({
+      ok: true,
+      value: {
+        recordsAdded: 0,
+        unknownsAdded: 0,
+        changed: false,
+        metadataChanged: false,
+      },
+    });
+  });
+});
+
+describe("residual unknown dependency histories", () => {
+  it("imports a valid dependency chain deeper than the JavaScript call stack", () => {
+    const records = [];
+    const unknowns: ResidualUnknown[] = [];
+    let previousId: string | undefined;
+    for (let index = 0; index < 10_000; index += 1) {
+      const mutationEvidence = mutation(`deep-chain-${index}`);
+      records.push(mutationEvidence);
+      const relationships =
+        previousId === undefined
+          ? []
+          : [{ type: "depends-on" as const, unknown_id: previousId }];
+      const unknown = createResidualUnknown(
+        input(`Does chain item ${index} meet the expected state?`, {
+          domain: "chain-profile",
+          required_authority: null,
+          relationships,
+        }),
+        mutationEvidence.evidence_id,
+        null,
+      );
+      unknowns.push(unknown);
+      previousId = unknown.unknown_id;
+    }
+    const bundle = createEvidenceBundle(records, unknowns);
+    const store = ledger();
+
+    expect(store.import(bundle)).toEqual({
+      ok: true,
+      value: {
+        recordsAdded: 10_000,
+        unknownsAdded: 10_000,
+        changed: true,
+        metadataChanged: false,
+      },
+    });
+    expect(store.export()).toEqual(bundle);
+  });
+
   it("returns detached unknowns and evidence bundles from every read surface", () => {
     const store = ledger();
     expect(store.record(evidence("detached-record")).ok).toBe(true);

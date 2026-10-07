@@ -449,6 +449,7 @@ export const resolveProcessResult = (
 export const prepareProcessCapture = async (
   scenario: ProcessScenario,
   signal: AbortSignal | undefined,
+  captureSnapshot: typeof snapshotRoots = snapshotRoots,
   host: ProcessPreparationHost = systemProcessPreparationHost,
 ): Promise<{
   readonly temporaryRoot: string;
@@ -456,7 +457,7 @@ export const prepareProcessCapture = async (
   readonly before: SnapshotResult;
 }> => {
   assertNotCancelled(signal);
-  const before = await snapshotRoots(scenario, signal);
+  const before = await captureSnapshot(scenario, signal);
   const temporaryRoot = await host.createTemporaryRoot();
   try {
     const runId = randomUUID();

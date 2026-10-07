@@ -13,7 +13,7 @@
     <link rel="stylesheet" href="../../assets/styles.css" />
     <script src="../../assets/main.js" defer></script>
   </head>
-  <body>
+  <body id="top">
     <a class="skip-link" href="#main">Skip to content</a>
     <header class="site-header">
       <div class="container header-inner">
@@ -85,11 +85,11 @@
               </div>
               <div>
                 <dt>45,380</dt>
-                <dd>original-x86 differential cases</dd>
+                <dd>comparisons with original code</dd>
               </div>
               <div>
                 <dt>33</dt>
-                <dd>byte-exact functions</dd>
+                <dd>functions with matching compiled bytes</dd>
               </div>
             </dl>
             <p class="caption">
@@ -111,12 +111,6 @@
               inspection utilities and an analysis library. Work on the playable
               game continues with ball and paddle physics, power-up handling and
               Windows integration.
-            </p>
-            <p>
-              The analysis starts from the DX-Ball 1.07 executable. REA returns
-              function code, instructions, callers and state references. These
-              findings guide the C implementation; execution of the original x86
-              functions and compiler replay check the result.
             </p>
           </section>
 
@@ -267,12 +261,6 @@
                 </p>
               </li>
             </ol>
-            <p>
-              REA exposes these operations through CLI and MCP, with target
-              identity and Evidence IDs in the results. The agent can follow up
-              on a caller or data address directly, then use the findings to
-              write maintained C.
-            </p>
 
             <h3 class="small-heading">From REA's findings to C</h3>
             <p>
@@ -523,10 +511,8 @@
           <section class="article-section" id="checking">
             <h2>Checking the recovered function</h2>
             <p>
-              The input, caller context and constant values returned through REA
-              guided the maintained C implementation. The project then checked
-              it against the original x86 function and the pinned compiler. For
-              this function, both checks pass.
+              The recovered function passes two checks: its return values match
+              the original, and its compiled bytes match the executable.
             </p>
             <div class="verification">
               <div>
@@ -634,5 +620,8 @@
       </div>
     </footer>
     <p class="sr-only" id="copy-status" role="status" aria-live="polite"></p>
+    <a class="back-to-top" href="#top" aria-label="Back to top">
+      <span aria-hidden="true">↑</span> Top
+    </a>
   </body>
 </html>

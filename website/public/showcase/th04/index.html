@@ -13,7 +13,7 @@
     <link rel="stylesheet" href="../../assets/styles.css" />
     <script src="../../assets/main.js" defer></script>
   </head>
-  <body>
+  <body id="top">
     <a class="skip-link" href="#main">Skip to content</a>
     <header class="site-header">
       <div class="container header-inner">
@@ -54,15 +54,15 @@
             <span class="flow-label">01 · Original game</span
             ><strong class="flow-node">MAIN.EXE</strong
             ><span class="flow-note"
-              >The PC-98 executable and a reviewed bullet helper.</span
+              >The PC-98 executable and its bullet-angle helper.</span
             >
           </li>
           <li>
             <span class="flow-label">02 · Inspect with REA</span
             ><strong class="flow-node">Instructions + references</strong
             ><span class="flow-note"
-              >Check the loaded image, read the arithmetic and anchor it to file
-              bytes.</span
+              >Verify the loaded DOS code and read the angle calculation from
+              the executable.</span
             >
           </li>
           <li>
@@ -76,8 +76,8 @@
             <span class="flow-label">04 · Check the source</span
             ><strong class="flow-node">2,139 matching bytes</strong
             ><span class="flow-note"
-              >Recorded compiler checks cover the containing bullet-add
-              code.</span
+              >Recorded compiler checks cover the bullet-generation code that
+              contains this helper.</span
             >
           </li>
         </ol>
@@ -196,11 +196,10 @@ bullet_template_tune();</code></pre>
           <section class="article-section" id="rea">
             <h2>What REA returns</h2>
             <p>
-              The project already has a reviewed boundary for
-              <code>bullet_velocity_and_angle_set()</code>. Inspecting that
-              original function through REA returns its instructions, pseudocode
-              and references together. Here are three parts of the result that
-              explain the pattern.
+              We inspect <code>bullet_velocity_and_angle_set()</code>, the
+              function that sets each bullet's velocity and angle. REA returns
+              its instructions, pseudocode and references. Three parts of that
+              result explain the pattern.
             </p>
             <ol class="rea-queries">
               <li>
@@ -499,25 +498,23 @@ no_aim:
           <section class="article-section" id="checking">
             <h2>Checking the maintained source</h2>
             <p>
-              The TH04 project checks this compiler-sensitive C++ with its
-              pinned Turbo C++ 4.0J toolchain. Recorded checks cover the
-              complete bullet-add source owner containing this helper.
+              The TH04 project's recorded checks compile the bullet-generation
+              code, including this helper, with its pinned Turbo C++ 4.0J
+              toolchain.
             </p>
             <div class="verification">
               <div>
                 <h3>2,139 matching bytes</h3>
                 <p>
-                  The rebuilt code matches the complete original target extent.
-                  The comparison also checks the MAP contribution and
-                  overlapping relocation.
+                  The compiled bullet-generation code matches a 2,139-byte
+                  section of the original executable.
                 </p>
               </div>
               <div>
                 <h3>Two clean builds</h3>
                 <p>
-                  Two isolated compiler runs produce the same matching result.
-                  The recorded input hashes match the maintained bullet source
-                  shown here.
+                  Two separate builds produce the same matching bytes. The
+                  recorded input hashes match the maintained source shown here.
                 </p>
               </div>
             </div>
@@ -555,6 +552,11 @@ no_aim:
                   </tbody>
                 </table>
               </div>
+              <p>
+                Compiler checks cover the complete bullet-add code section,
+                including this helper. They also compare its MAP contribution
+                and overlapping relocation.
+              </p>
               <p>
                 REA verified the static DOS load image at load segment
                 <code>0x1000</code>. Its addresses describe that analysis image.
@@ -633,5 +635,8 @@ no_aim:
       </div>
     </footer>
     <p class="sr-only" id="copy-status" role="status" aria-live="polite"></p>
+    <a class="back-to-top" href="#top" aria-label="Back to top">
+      <span aria-hidden="true">↑</span> Top
+    </a>
   </body>
 </html>

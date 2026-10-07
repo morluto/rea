@@ -109,6 +109,8 @@ file workflows live in `src/application/process/`; producer-backed Evidence/host
 cases run in the serial `tests/boundary/process/` lane. Installed-package probes
 load the compiled capture capability owner, including the missing-optional-module
 case. Real capture tests preserve actual descendant and cleanup checks.
+The existing Apple job also exercises the relocated filesystem snapshot identity,
+cancellation and descriptor cleanup regressions on macOS.
 
 MCP SDK transport tests with recording providers remain integration tests.
 They are useful for schema drift and failure projection but do not prove that

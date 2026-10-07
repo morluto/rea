@@ -13,7 +13,7 @@
     <link rel="stylesheet" href="../assets/styles.css" />
     <script src="../assets/main.js" defer></script>
   </head>
-  <body>
+  <body id="top">
     <a class="skip-link" href="#main">Skip to content</a>
     <header class="site-header">
       <div class="container header-inner">
@@ -32,7 +32,7 @@
     <main id="main" class="container">
       <div class="page-heading">
         <p class="breadcrumb"><a href="../">Home</a> / Get started</p>
-        <h1>Start with a question.</h1>
+        <h1>Set up REA.</h1>
         <p class="lede">
           Connect REA to your coding agent, or inspect a local app from your
           terminal.
@@ -43,17 +43,17 @@
       </div>
       <div class="article-layout">
         <nav class="contents" aria-label="On this page">
-          <p>Choose your starting point</p>
+          <p>Setup options</p>
           <ul>
-            <li><a href="#agent">With your agent</a></li>
-            <li><a href="#terminal">From the terminal</a></li>
-            <li><a href="#native">Native binaries</a></li>
+            <li><a href="#agent">Connect your coding agent</a></li>
+            <li><a href="#terminal">Use the CLI</a></li>
+            <li><a href="#native">Set up native analysis</a></li>
             <li><a href="#help">Getting help</a></li>
           </ul>
         </nav>
         <article class="article" aria-label="REA getting started guide">
           <section class="article-section" id="agent">
-            <h2>With your agent</h2>
+            <h2>Connect your coding agent</h2>
             <p>
               Run setup to connect REA to your coding agent. Client choices
               include Claude Code, Codex, Cursor, Gemini CLI, Windsurf and other
@@ -118,19 +118,14 @@
                 involved, with the source locations for your findings.
               </p>
             </blockquote>
-            <p>
-              Replace the path with your local target. Read the findings, then
-              ask a narrower follow-up about a function or connection you want
-              to understand.
-            </p>
+            <p>Replace the path with your local target.</p>
           </section>
 
           <section class="article-section" id="terminal">
-            <h2>From the terminal</h2>
+            <h2>Use the CLI</h2>
             <p>
-              You can start with a JavaScript or Electron application folder or
-              ASAR archive. This path uses Node.js and npm and reads the app
-              without running it.
+              Analyze a JavaScript or Electron application folder or ASAR
+              archive without running the app:
             </p>
             <div class="code-block">
               <div class="code-header">
@@ -153,10 +148,9 @@
               <code>"D:/apps/example"</code> works here.
             </p>
             <p>
-              The result includes the application's identity, recovered module
-              relationships and evidence locations. It also records
-              relationships that remain unresolved. Use those findings to choose
-              where to investigate next.
+              The result identifies the app, shows connections between modules
+              and gives their source locations. Connections REA cannot resolve
+              are marked in the result.
             </p>
             <p>
               If you'd like a permanent <code>rea</code> command in your shell:
@@ -183,116 +177,121 @@
           </section>
 
           <section class="article-section" id="native">
-            <h2>Working with native binaries</h2>
+            <h2>Set up native analysis</h2>
             <p>
-              REA connects your agent to a local analysis provider. Choose the
-              tool you already use, configure its connection, then ask about
-              your executable or library.
+              Native binaries need a local analysis tool. Choose and configure
+              one below, then give REA your executable or library.
             </p>
-            <div class="provider-list">
-              <div class="provider">
-                <h3>Ghidra</h3>
-                <div>
-                  <p>
-                    Use an existing Ghidra 12.1.x installation and a 64-bit JDK
-                    21 or newer on Linux x64 or macOS x64/arm64. Set the paths
-                    before running setup:
-                  </p>
-                  <details class="evidence-details">
-                    <summary>Connect your Ghidra installation</summary>
-                    <div class="code-block">
-                      <div class="code-header">
-                        <span>Ghidra connection · macOS / Linux</span
-                        ><button
-                          class="copy-button"
-                          type="button"
-                          data-copy="ghidra-connect"
-                          aria-label="Copy ghidra connection · macos / linux"
-                        >
-                          Copy
-                        </button>
-                      </div>
-                      <pre><code id="ghidra-connect">export GHIDRA_INSTALL_DIR=/absolute/path/to/ghidra_12.1.4_PUBLIC
+            <details class="evidence-details">
+              <summary>Choose a tool: Ghidra, Hopper or IDA</summary>
+              <div class="provider-list">
+                <div class="provider">
+                  <h3>Ghidra</h3>
+                  <div>
+                    <p>
+                      Use an existing Ghidra 12.1.x installation and a 64-bit
+                      JDK 21 or newer on Linux x64 or macOS x64/arm64. Set the
+                      paths before running setup:
+                    </p>
+                    <details class="evidence-details">
+                      <summary>Connect your Ghidra installation</summary>
+                      <div class="code-block">
+                        <div class="code-header">
+                          <span>Ghidra connection · macOS / Linux</span
+                          ><button
+                            class="copy-button"
+                            type="button"
+                            data-copy="ghidra-connect"
+                            aria-label="Copy ghidra connection · macos / linux"
+                          >
+                            Copy
+                          </button>
+                        </div>
+                        <pre><code id="ghidra-connect">export GHIDRA_INSTALL_DIR=/absolute/path/to/ghidra_12.1.4_PUBLIC
 export JAVA_HOME=/absolute/path/to/jdk-21
 npx -y rea-agents@latest doctor --provider ghidra --json
 npx rea-agents@latest setup</code></pre>
-                    </div>
-                    <p>
-                      Replace both paths with your existing installations. Setup
-                      checks them and records valid settings for your selected
-                      client. On macOS, use a Ghidra package with the native
-                      decompiler matching your host architecture.
-                    </p>
-                  </details>
-                </div>
-              </div>
-              <div class="provider">
-                <h3>Hopper</h3>
-                <div>
-                  <p>
-                    Connect Hopper on macOS or Linux. Run the setup command
-                    above; it detects an existing installation or offers an
-                    installation plan for your approval.
-                  </p>
-                  <p>
-                    On macOS, complete Hopper's first-run choice of demo mode or
-                    license activation before an unattended analysis.
-                  </p>
-                </div>
-              </div>
-              <div class="provider">
-                <h3>IDA</h3>
-                <div>
-                  <p>
-                    The verified IDA setups use Windows, with an existing MCP
-                    registration for an attached GUI or a headless database.
-                    Linux and macOS headless analysis remains unverified.
-                  </p>
-                  <details class="evidence-details">
-                    <summary>Connect an existing IDA MCP registration</summary>
-                    <p>
-                      Keep the upstream server's working <code>command</code>,
-                      <code>args</code> and optional <code>env</code> in a JSON
-                      file. An existing <code>mcpServers</code> object with an
-                      <code>ida-pro-mcp</code> entry is also accepted. Point REA
-                      at that file before setup:
-                    </p>
-                    <div class="code-block">
-                      <div class="code-header">
-                        <span>IDA connection · Windows PowerShell</span
-                        ><button
-                          class="copy-button"
-                          type="button"
-                          data-copy="ida-connect"
-                          aria-label="Copy IDA connection for Windows PowerShell"
-                        >
-                          Copy
-                        </button>
                       </div>
-                      <pre><code id="ida-connect">$env:REA_IDA_MCP_CONFIG = "C:/analysis/ida-mcp.json"
+                      <p>
+                        Replace both paths with your existing installations.
+                        Setup checks them and records valid settings for your
+                        selected client. On macOS, use a Ghidra package with the
+                        native decompiler matching your host architecture.
+                      </p>
+                    </details>
+                  </div>
+                </div>
+                <div class="provider">
+                  <h3>Hopper</h3>
+                  <div>
+                    <p>
+                      Connect Hopper on macOS or Linux. Run the setup command
+                      above; it detects an existing installation or offers an
+                      installation plan for your approval.
+                    </p>
+                    <p>
+                      On macOS, complete Hopper's first-run choice of demo mode
+                      or license activation before an unattended analysis.
+                    </p>
+                  </div>
+                </div>
+                <div class="provider">
+                  <h3>IDA</h3>
+                  <div>
+                    <p>
+                      The verified IDA setups use Windows, with an existing MCP
+                      registration for an attached GUI or a headless database.
+                      Linux and macOS headless analysis remains unverified.
+                    </p>
+                    <details class="evidence-details">
+                      <summary>
+                        Connect an existing IDA MCP registration
+                      </summary>
+                      <p>
+                        Keep the upstream server's working <code>command</code>,
+                        <code>args</code> and optional <code>env</code> in a
+                        JSON file. An existing <code>mcpServers</code> object
+                        with an <code>ida-pro-mcp</code> entry is also accepted.
+                        Point REA at that file before setup:
+                      </p>
+                      <div class="code-block">
+                        <div class="code-header">
+                          <span>IDA connection · Windows PowerShell</span
+                          ><button
+                            class="copy-button"
+                            type="button"
+                            data-copy="ida-connect"
+                            aria-label="Copy IDA connection for Windows PowerShell"
+                          >
+                            Copy
+                          </button>
+                        </div>
+                        <pre><code id="ida-connect">$env:REA_IDA_MCP_CONFIG = "C:/analysis/ida-mcp.json"
 $env:REA_ANALYSIS_PROVIDER = "ida"
 npx -y rea-agents@latest doctor --provider ida --json
 npx rea-agents@latest setup</code></pre>
-                    </div>
-                    <p>
-                      The attached profile uses upstream legacy 1.4.0 tools with
-                      the original binary already open in IDA. The headless
-                      profile uses the upstream database-supervisor API and a
-                      registration with <code>"mode": "headless"</code>; real
-                      verification covers an IDA 9.3 Windows x64 supervisor.
-                      Doctor checks the registration without starting IDA.
-                    </p>
-                    <p>
-                      Give REA the original executable path, with
-                      <code>--provider ida</code> in a CLI query. For an agent,
-                      include <code>REA_IDA_MCP_CONFIG</code> in the REA
-                      registration's environment and select IDA when opening the
-                      binary.
-                    </p>
-                  </details>
+                      </div>
+                      <p>
+                        The attached profile uses upstream legacy 1.4.0 tools
+                        with the original binary already open in IDA. The
+                        headless profile uses the upstream database-supervisor
+                        API and a registration with
+                        <code>"mode": "headless"</code>; real verification
+                        covers an IDA 9.3 Windows x64 supervisor. Doctor checks
+                        the registration without starting IDA.
+                      </p>
+                      <p>
+                        Give REA the original executable path, with
+                        <code>--provider ida</code> in a CLI query. For an
+                        agent, include <code>REA_IDA_MCP_CONFIG</code> in the
+                        REA registration's environment and select IDA when
+                        opening the binary.
+                      </p>
+                    </details>
+                  </div>
                 </div>
               </div>
-            </div>
+            </details>
             <p class="small-heading">
               For an existing Ghidra setup, inspect a function with:
             </p>
@@ -308,15 +307,21 @@ npx rea-agents@latest setup</code></pre>
                   Copy
                 </button>
               </div>
-              <pre><code id="native-function">rea function /absolute/path/to/program main \
+              <pre><code id="native-function">npx -y rea-agents@latest function /absolute/path/to/program main \
   --provider ghidra --json</code></pre>
             </div>
             <p>
               Replace <code>main</code> with the function name or address you
-              want to inspect. Each CLI invocation imports and analyzes the
-              target in its own session. Your agent's MCP queries reuse the
-              imported binary while that session is open.
+              want to inspect.
             </p>
+            <details class="evidence-details">
+              <summary>How native analysis sessions work</summary>
+              <p>
+                Each CLI command imports and analyzes the binary, then closes
+                its session. Your agent's MCP queries reuse the imported binary
+                while that session is open.
+              </p>
+            </details>
             <p>
               <a href="../guides/native/">Follow a native analysis example</a>
               to see how the function result leads to a recovered calculation.
@@ -327,8 +332,8 @@ npx rea-agents@latest setup</code></pre>
             <h2>Getting help</h2>
             <h3>If your agent doesn't see REA</h3>
             <p>
-              Restart or reconnect the client after setup. To check its
-              registration, use a client-scoped report; for Codex:
+              Restart or reconnect the client after setup. Check its REA
+              connection with <code>doctor</code>; for Codex:
             </p>
             <div class="code-block">
               <div class="code-header">
@@ -394,5 +399,8 @@ npx rea-agents@latest setup</code></pre>
       </div>
     </footer>
     <p class="sr-only" id="copy-status" role="status" aria-live="polite"></p>
+    <a class="back-to-top" href="#top" aria-label="Back to top">
+      <span aria-hidden="true">↑</span> Top
+    </a>
   </body>
 </html>
