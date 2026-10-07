@@ -268,7 +268,7 @@ describe("fresh run identity", () => {
   });
 });
 
-describe("replay of exact immutable calls", () => {
+describe("evidence metadata imports and snapshot cache", () => {
   it("invalidates cached analysis when an import changes evidence path metadata", async () => {
     const [target] = await createBinarySessionTargets();
     const calls: string[] = [];
@@ -338,7 +338,9 @@ describe("replay of exact immutable calls", () => {
     });
     await session.close();
   });
+});
 
+describe("replay of exact immutable calls", () => {
   it("replays exact immutable calls from a matching provider-neutral snapshot", async () => {
     const [first, second] = await createBinarySessionTargets();
     const initialCalls: string[] = [];
