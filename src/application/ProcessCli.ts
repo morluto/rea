@@ -165,7 +165,11 @@ const readJson = async (path: string): Promise<unknown> => {
     );
   }
   try {
-    const parsed: unknown = JSON.parse(bytes.toString("utf8"));
+    const text = new TextDecoder("utf-8", {
+      fatal: true,
+      ignoreBOM: true,
+    }).decode(bytes);
+    const parsed: unknown = JSON.parse(text);
     return parsed;
   } catch (cause: unknown) {
     void cause;

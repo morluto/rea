@@ -27,6 +27,13 @@ const projectIssue = (
         ),
       ),
     );
+  if (issue.code === "invalid_key")
+    return issue.issues.flatMap((keyIssue) =>
+      projectIssue(
+        { ...keyIssue, path: [...issue.path, ...keyIssue.path] },
+        input,
+      ),
+    );
   if (issue.code === "unrecognized_keys")
     return issue.keys.map((key) => ({
       path: [...path, key],
@@ -48,7 +55,16 @@ const projectIssue = (
   if (issue.code === "too_big")
     return [boundedIssue(path, "maximum", numericBound(issue.maximum))];
   if (issue.code === "invalid_format")
-    return [{ path, reason: "invalid_format", expected: issue.format }];
+    return [
+      {
+        path,
+        reason: "invalid_format",
+        expected: issue.format,
+        ...(issue.format === "regex" && issue.message.length > 0
+          ? { message: issue.message }
+          : {}),
+      },
+    ];
   if (issue.code === "invalid_value")
     return [
       {

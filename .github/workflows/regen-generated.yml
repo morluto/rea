@@ -1,0 +1,75 @@
+name: Regenerate generated metadata
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "skills/**/SKILL.md"
+      - "scripts/generate-*.mjs"
+      - "scripts/check-doc-facts.mjs"
+      - "scripts/lib/*.mjs"
+      - "scripts/verify/managed/**"
+      - "scripts/fixtures/managed/**"
+      - "package.json"
+      - "package-lock.json"
+
+concurrency:
+  group: regen-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  HUSKY: "0"
+
+permissions:
+  contents: write
+
+jobs:
+  regen:
+    name: Regenerate and push tracked generated files
+    # Same-repo PRs only: the default token cannot push to forks.
+    # The bot-actor guard stops looped runs triggered by our own push.
+    if: >-
+      github.actor != 'github-actions[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run docs:generate
+      - name: Commit regenerated files
+        shell: bash
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          generated_paths=(
+            docs/product-catalog.json
+            docs/error-contract.schema.json
+            docs/verification/managed-conformance-manifest.json
+            docs/verification/managed-conformance-ledger.json
+            skills/reverse-engineer-anything/SKILL.md
+            src/generatedPackageMetadata.ts
+          )
+          if git diff --quiet -- "${generated_paths[@]}"; then
+            echo "Generated metadata is already canonical."
+            exit 0
+          fi
+          git diff --check
+          # Refuse to sweep unrelated working-tree changes into the bot commit.
+          unexpected="$(git diff --name-only | grep -vxF -f <(printf '%s\n' "${generated_paths[@]}") || true)"
+          if [[ -n "${unexpected}" ]]; then
+            echo "docs:generate left unexpected tracked changes:" >&2
+            printf '%s\n' "${unexpected}" >&2
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- "${generated_paths[@]}"
+          git commit -m "chore: regenerate generated metadata"
+          git push origin "HEAD:${HEAD_REF}"

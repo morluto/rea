@@ -25,6 +25,8 @@ export const execFileOutput = (
       },
       (error, stdout, stderr) => {
         if (error !== null) {
+          Reflect.set(error, "stdout", stdout);
+          Reflect.set(error, "stderr", stderr);
           reject(error);
           return;
         }

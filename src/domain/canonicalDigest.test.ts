@@ -62,6 +62,13 @@ describe("incremental canonical digest", () => {
     expect(digestCanonicalValue(value)).toBe(legacyDigest(value));
   });
 
+  it("keeps digests identical when buffered parts cross flush boundaries", () => {
+    const manyKeys: Record<string, unknown> = {};
+    for (let i = 0; i < 2000; i += 1) manyKeys[`k${i}`] = i;
+    const value = { keys: manyKeys, tail: ["€", "😀", "x".repeat(9000)] };
+    expect(digestCanonicalValue(value)).toBe(legacyDigest(value));
+  });
+
   it("preserves canonicalize property access and toJSON cycle behavior", () => {
     const createAccessor = () => {
       let reads = 0;

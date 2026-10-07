@@ -9,6 +9,7 @@ import {
 import {
   metadataRowCursor,
   metadataCodedToken,
+  metadataCodedTokenInvalidReason,
   metadataToken,
   readMetadataBlob,
   readMetadataGuid,
@@ -365,6 +366,7 @@ export const readCustomAttribute = (
   const parentRaw = cursor.readIndex(
     layout.codedIndexSize("HasCustomAttribute"),
   );
+  const typeOffset = cursor.offset;
   const typeRaw = cursor.readIndex(
     layout.codedIndexSize("CustomAttributeType"),
   );
@@ -381,23 +383,48 @@ export const readCustomAttribute = (
       6, 4, 1, 2, 8, 9, 10, 0, 14, 23, 20, 17, 26, 27, 32, 35, 38, 39, 40, 42,
       44, 43,
     ],
+    layout.rowCounts,
+  );
+  const parentReason = metadataCodedTokenInvalidReason(
+    parentRaw,
+    5,
+    [
+      6, 4, 1, 2, 8, 9, 10, 0, 14, 23, 20, 17, 26, 27, 32, 35, 38, 39, 40, 42,
+      44, 43,
+    ],
+    layout.rowCounts,
   );
   if (parent === null)
     throw managedFailure(
       "invalid-row",
-      "metadata.CustomAttribute",
-      "CustomAttribute parent coded index is invalid",
+      `metadata.CustomAttribute:${metadataToken(12, row)}`,
+      `CustomAttribute parent coded index 0x${parentRaw.toString(16)} is invalid${parentReason === null ? " because the required parent is null" : `: ${parentReason}`}`,
       cursor.start,
+    );
+  const typeReason = metadataCodedTokenInvalidReason(
+    typeRaw,
+    3,
+    [undefined, undefined, 6, 10],
+    layout.rowCounts,
+  );
+  if (typeReason !== null || typeRaw === 0)
+    throw managedFailure(
+      "invalid-row",
+      `metadata.CustomAttribute:${metadataToken(12, row)}`,
+      typeReason === null
+        ? "CustomAttribute constructor coded index 0x0 is null, but Type must reference a MethodDef or MemberRef row"
+        : `CustomAttribute constructor coded index 0x${typeRaw.toString(16)} is invalid: ${typeReason}`,
+      typeOffset,
     );
   const typeName = attributeTypeName(bytes, layout, typeRaw, heapExtent);
   return {
     parent_token: parent,
-    constructor_token: metadataCodedToken(typeRaw, 3, [
-      undefined,
-      undefined,
-      6,
-      10,
-    ]),
+    constructor_token: metadataCodedToken(
+      typeRaw,
+      3,
+      [undefined, undefined, 6, 10],
+      layout.rowCounts,
+    ),
     type_name: typeName,
     value_length: value.length,
     value_sha256: sha256Bytes(value),
@@ -434,6 +461,7 @@ export const readResource = ({
     cursor.readIndex(layout.stringIndexSize),
     Math.max(layout.strings.size, layout.blob.size),
   );
+  const implementationOffset = cursor.offset;
   const implementationRaw = cursor.readIndex(
     layout.codedIndexSize("Implementation"),
   );
@@ -441,7 +469,21 @@ export const readResource = ({
     implementationRaw,
     2,
     [38, 35, 39],
+    layout.rowCounts,
   );
+  const implementationReason = metadataCodedTokenInvalidReason(
+    implementationRaw,
+    2,
+    [38, 35, 39],
+    layout.rowCounts,
+  );
+  if (implementationReason !== null)
+    issues.push({
+      code: "invalid-row",
+      scope: `metadata.ManifestResource:${metadataToken(40, row)}`,
+      offset: implementationOffset,
+      detail: `ManifestResource implementation coded index 0x${implementationRaw.toString(16)} is invalid: ${implementationReason}`,
+    });
   let dataLength: number | null = null;
   let dataSha256: string | null = null;
   if (implementationRaw === 0) {

@@ -199,7 +199,10 @@ export const managedNativeVerificationResultSchema = z
         path: ["summary", "native_body_unresolved"],
         message: "Native body summary must match unresolved implementations",
       });
-  });
+  })
+  .describe(
+    "Counts must agree across the result: native accepted plus unsupported equals total; each P/Invoke summary count equals the number of items with that status; and native_body_unresolved equals native_implementations.unresolved. REA checks these cross-field invariants after constructing the result.",
+  );
 
 export type ManagedNativeVerificationResult = z.infer<
   typeof managedNativeVerificationResultSchema

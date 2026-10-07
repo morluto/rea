@@ -8,18 +8,25 @@
         "package-lock.json",
         "scripts/check-dependency-install.mjs",
         "scripts/clean-build-output.mjs",
+        "scripts/generate-mcp-tool-catalog.mjs",
         "scripts/generate-package-metadata.mjs",
         "scripts/lib/generated-file.mjs",
         "skills/reverse-engineer-anything/SKILL.md",
         "src/**/*.ts",
         "!src/**/*.test.ts",
         "!src/**/*.fixture.ts",
+        "!src/generatedMcpToolCatalog.ts",
         "tsconfig.json",
         "tsconfig.build.json"
       ],
-      "outputs": ["dist/**", ".cache/tsconfig.build.tsbuildinfo"]
+      "outputs": [
+        "dist/**",
+        ".cache/tsconfig.build.tsbuildinfo",
+        "src/generatedMcpToolCatalog.ts"
+      ]
     },
     "typecheck": {
+      "dependsOn": ["build"],
       "inputs": [
         ".nvmrc",
         "package.json",
@@ -57,6 +64,7 @@
     },
     "format:check": {},
     "knip": {
+      "dependsOn": ["build"],
       "inputs": [
         ".nvmrc",
         "knip.json",

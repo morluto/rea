@@ -181,6 +181,95 @@ describe("curl installer scenarios", { timeout: 20_000 }, () => {
   });
 });
 
+describe("installer semantic version parsing", { timeout: 20_000 }, () => {
+  it.each(["01.2.3", "1.2.3-01", "1.2.3-alpha..1"])(
+    "rejects malformed semantic versions before invoking npm: %s",
+    async (version) => {
+      const fixture = await createFixture();
+      await expect(
+        runInstaller(fixture, ["--version", version, "--dry-run"]),
+      ).rejects.toMatchObject({
+        stderr:
+          "REA installation failed: version must be an exact semantic version.\n",
+      });
+      await expect(readFile(fixture.npmLog, "utf8")).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
+
+  it("rejects valid build metadata before printing a plan or invoking npm", async () => {
+    const fixture = await createFixture();
+    const failure = await runInstaller(fixture, [
+      "--version",
+      "1.2.3+build.01",
+      "--dry-run",
+    ]).then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+    expect(failure).toBeInstanceOf(Error);
+    const stderr = getProcessOutput(failure, "stderr");
+    expect(stderr).toBe(
+      "REA installation failed: npm cannot install an exact version with build metadata. Pass a version without build metadata, then retry.\n",
+    );
+    expect(getProcessOutput(failure, "stdout")).not.toContain(
+      "REA install plan",
+    );
+    await expect(readFile(fixture.npmLog, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("accepts a valid prerelease version without build metadata", async () => {
+    const fixture = await createFixture();
+    const result = await runInstaller(fixture, [
+      "--version",
+      "1.2.3-alpha.0",
+      "--dry-run",
+    ]);
+    expect(result.stdout).toContain("Version: 1.2.3-alpha.0");
+    await expect(readFile(fixture.npmLog, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("rejects build metadata in the latest release tag before printing a plan", async () => {
+    const fixture = await createFixture();
+    const failure = await runInstaller(fixture, [], {
+      FAKE_CURL_BODY: '{"tag_name":"rea-agents-1.2.3+build.01"}',
+    }).then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+    expect(failure).toBeInstanceOf(Error);
+    expect(getProcessOutput(failure, "stderr")).toBe(
+      "REA installation failed: npm cannot install an exact version with build metadata. Pass a version without build metadata, then retry.\n",
+    );
+    expect(getProcessOutput(failure, "stdout")).not.toContain(
+      "REA install plan",
+    );
+    await expect(readFile(fixture.npmLog, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("rejects an invalid semantic version from the latest release tag", async () => {
+    const fixture = await createFixture();
+    await expect(
+      runInstaller(fixture, [], {
+        FAKE_CURL_BODY: '{"tag_name":"rea-agents-1.2.3-01"}',
+      }),
+    ).rejects.toMatchObject({
+      stderr:
+        "REA installation failed: the latest release tag was invalid. Retry later or pass --version VERSION.\n",
+    });
+    await expect(readFile(fixture.npmLog, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+});
+
 interface InstallerFixture {
   readonly home: string;
   readonly bin: string;
@@ -188,6 +277,20 @@ interface InstallerFixture {
   readonly npmLog: string;
   readonly reaLog: string;
 }
+
+const getProcessOutput = (
+  failure: unknown,
+  stream: "stdout" | "stderr",
+): string => {
+  if (!(failure instanceof Error)) return "";
+  if (stream === "stdout" && "stdout" in failure) {
+    return typeof failure.stdout === "string" ? failure.stdout : "";
+  }
+  if (stream === "stderr" && "stderr" in failure) {
+    return typeof failure.stderr === "string" ? failure.stderr : "";
+  }
+  return "";
+};
 
 const createFixture = async (): Promise<InstallerFixture> => {
   const root = await createTestTempDirectory("rea-install-test-");

@@ -8,7 +8,7 @@ import { annotationsFromEffects } from "../../../src/contracts/toolEffects.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 
 describe("tool registration options", () => {
-  it("generates the checked-in catalog from the SDK wire projection", async () => {
+  it("generates the build catalog from the SDK wire projection", async () => {
     const server = new McpServer({ name: "catalog-test", version: "0" });
     for (const contract of TOOL_CONTRACTS)
       server.registerTool(

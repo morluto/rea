@@ -4,16 +4,21 @@ import type { ToolContract } from "../toolContracts.js";
 import { managedOutputSchemas } from "../toolOutputSchemas.js";
 import { toolContractMetadata } from "../toolEffects.js";
 import { requireOutputSchema } from "../toolOutputSchemaPrimitives.js";
+import { isAbsoluteLocalPath } from "../../domain/localPath.js";
 
 /** Exact caller boundary for execution-free PE/CLI triage and identity. */
 const managedTargetInputSchema = z.object({
   path: z
     .string()
     .min(1)
-    .optional()
+    .refine(isAbsoluteLocalPath, {
+      message:
+        "path must be an absolute local filesystem path (for example /tmp/Example.dll or C:\\Example.dll)",
+    })
     .describe(
-      "Explicit managed PE/CLI path; omit to reuse the previously selected managed target",
-    ),
+      "Explicit absolute managed PE/CLI path; omit to reuse the previously selected managed target",
+    )
+    .optional(),
 });
 
 export const managedArtifactInputSchema = managedTargetInputSchema;
