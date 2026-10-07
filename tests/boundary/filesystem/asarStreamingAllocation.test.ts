@@ -177,6 +177,64 @@ describe("ASAR read failures", () => {
     },
   );
 
+  it.skipIf(process.platform === "win32")(
+    "closes the opened unpacked file and retains ASAR context when handle stat fails",
+    async () => {
+      const root = await createTestTempDirectory("rea-asar-unpacked-stat-");
+      const source = join(root, "source");
+      const archive = join(root, "fixture.asar");
+      await mkdir(source);
+      await writeFile(join(source, "small.js"), "module.exports = 1;\n");
+      await createPackageWithOptions(source, archive, { unpack: "small.js" });
+      const unpackedPath = join(`${archive}.unpacked`, "small.js");
+      const identity = await lstat(unpackedPath);
+      const ioError = Object.assign(new Error("device stat failed"), {
+        code: "EIO",
+        errno: -5,
+        syscall: "fstat",
+      });
+      let closeCount = 0;
+      const reader = new AsarArtifactReader(archive, async (path, flags) => {
+        const handle = await openFile(path, flags);
+        expect(await matchingDescriptorCount(identity)).toBeGreaterThan(0);
+        let statCount = 0;
+        return {
+          async stat() {
+            statCount += 1;
+            if (statCount === 2) throw ioError;
+            return handle.stat();
+          },
+          async close() {
+            closeCount += 1;
+            await handle.close();
+          },
+          createReadStream: (options) => handle.createReadStream(options),
+        };
+      });
+
+      try {
+        const entries = [];
+        for await (const entry of reader.entries()) entries.push(entry);
+        const entry = entries.find(({ path }) => path === "small.js");
+        if (entry === undefined)
+          throw new Error("Expected unpacked ASAR member");
+
+        await expect(reader.open(entry)).rejects.toMatchObject({
+          name: "ArtifactReaderFailure",
+          reason: "io",
+          message: expect.stringContaining(
+            `Could not read ${entry.path} ASAR at ${archive}: device stat failed`,
+          ),
+          cause: { code: "EIO", errno: -5, syscall: "fstat" },
+        });
+        expect(closeCount).toBe(1);
+        await waitForNoMatchingDescriptor(identity);
+      } finally {
+        await reader.close();
+      }
+    },
+  );
+
   it.each(["missing", "replaced"] as const)(
     "validates the container before returning a zero-length member when it is %s",
     async (change) => {

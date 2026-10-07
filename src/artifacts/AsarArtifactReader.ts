@@ -1,4 +1,4 @@
-import { constants, createReadStream } from "node:fs";
+import { constants, createReadStream, type Stats } from "node:fs";
 import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { Readable } from "node:stream";
@@ -25,7 +25,10 @@ export class AsarArtifactReader implements ArtifactReader {
   #headerSize: number | undefined;
   readonly #entries = new Map<string, AsarFileMetadata>();
 
-  constructor(private readonly path: string) {}
+  constructor(
+    private readonly path: string,
+    private readonly openUnpackedFile: OpenAsarUnpackedFile = open,
+  ) {}
 
   async *entries(signal?: AbortSignal): AsyncIterable<ArtifactEntry> {
     let paths: string[];
@@ -122,7 +125,7 @@ export class AsarArtifactReader implements ArtifactReader {
           );
       } catch (cause: unknown) {
         await handle.close().catch(() => undefined);
-        throw cause;
+        throw asarFailure(this.path, `read ${entry.path}`, cause);
       }
       const source = handle.createReadStream({
         start: 0,
@@ -213,7 +216,7 @@ export class AsarArtifactReader implements ArtifactReader {
     return [];
   }
 
-  async #openUnpackedEntry(entry: ArtifactEntry): Promise<FileHandle> {
+  async #openUnpackedEntry(entry: ArtifactEntry): Promise<UnpackedFileHandle> {
     const unpackedRoot = `${this.path}.unpacked`;
     try {
       const rootMetadata = await lstat(unpackedRoot);
@@ -241,7 +244,7 @@ export class AsarArtifactReader implements ArtifactReader {
           "path",
           `ASAR unpacked entry is not a regular file: ${entry.path}`,
         );
-      const handle = await open(
+      const handle = await this.openUnpackedFile(
         canonical,
         constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
       );
@@ -295,6 +298,15 @@ export class AsarArtifactReader implements ArtifactReader {
 }
 
 type AsarFileMetadata = Extract<ReturnType<typeof statFile>, { size: number }>;
+type UnpackedFileHandle = {
+  stat(): Promise<Stats>;
+  close(): Promise<void>;
+  createReadStream: FileHandle["createReadStream"];
+};
+type OpenAsarUnpackedFile = (
+  path: string,
+  flags: number,
+) => Promise<UnpackedFileHandle>;
 
 const isAsarFileMetadata = (
   metadata: ReturnType<typeof statFile>,
