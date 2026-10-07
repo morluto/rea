@@ -220,3 +220,24 @@ describe("Linux private display selection", () => {
     expect(processes).not.toContain(hangingHelperPath);
   });
 });
+
+describe("private display probe output settlement", () => {
+  it.skipIf(process.platform === "win32")(
+    "retains inherited diagnostics written after the launcher exits",
+    async () => {
+      const result = await runLinuxPrivateDisplayProbe("direct", {
+        helperPath: fileURLToPath(
+          new URL("../../../fixtures/x11ProbeOutput.py", import.meta.url),
+        ),
+        timeoutMs: 5_000,
+      });
+      expect(result).toEqual({
+        outcome: "exited",
+        exitCode: 0,
+        stderr: "firstlast",
+        stderrBytes: Buffer.byteLength("firstlast"),
+        cleanupIncomplete: false,
+      });
+    },
+  );
+});
