@@ -58,6 +58,7 @@ it.skipIf(process.platform !== "linux" || process.arch !== "x64")(
     const evidence = parseEvidence(parsed.evidence);
     expect(parsed.result).toEqual(evidence.normalized_result);
     expect(parsed.evidence_id).toBe(evidence.evidence_id);
+    expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
     await assertRecoveryCleanup(fixture.launches);
   },
 );

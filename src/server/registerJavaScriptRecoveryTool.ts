@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import type { JavaScriptRecoveryService } from "../application/JavaScriptRecoveryService.js";
-import type { BinarySessionPort } from "../application/BinarySession.js";
+import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
@@ -12,7 +12,7 @@ export const registerJavaScriptRecoveryTool = (
   server: McpServer,
   service: JavaScriptRecoveryService,
   logger: Logger,
-  recordEvidence?: BinarySessionPort["recordEvidence"],
+  recordEvidence?: EvidenceWriter["recordEvidence"],
 ): void => {
   const contract = toolContract("recover_javascript_sources");
   server.registerTool(
