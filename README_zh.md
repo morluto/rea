@@ -17,6 +17,8 @@
 
 <a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
 
+**[网站（英文）](https://morluto.github.io/rea/) · [使用指南](https://morluto.github.io/rea/guides/) · [DX-Ball 案例](https://morluto.github.io/rea/showcase/dx-ball/)**
+
 [快速开始](#快速开始) · [当前状态](#当前状态) · [从二进制到行为](#从二进制到行为) · [调查工具目录](#调查工具目录) · [路线图](#路线图) · [工作原理](#工作原理)
 
 <table aria-label="REA community">

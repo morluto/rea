@@ -17,6 +17,8 @@
 
 <a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
 
+**[ウェブサイト（英語）](https://morluto.github.io/rea/) · [ガイド](https://morluto.github.io/rea/guides/) · [DX-Ball の事例](https://morluto.github.io/rea/showcase/dx-ball/)**
+
 [クイックスタート](#クイックスタート) · [現在の対応状況](#現在の対応状況) · [バイナリから動作へ](#バイナリから動作へ) · [調査ツールカタログ](#調査ツールカタログ) · [ロードマップ](#ロードマップ) · [仕組み](#仕組み)
 
 <table aria-label="REA community">
