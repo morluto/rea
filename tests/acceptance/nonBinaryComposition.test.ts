@@ -89,6 +89,24 @@ cliTest.skipIf(process.platform !== "linux")(
   },
 );
 
+cliTest.skipIf(process.platform !== "linux")(
+  "resolves relative firmware CLI paths against the operator working directory",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-firmware-cli-relative-");
+    await writeFile(join(root, "input.bin"), "firmware fixture");
+    const cliResult = await cli.run({
+      arguments: ["inspect-firmware-regions", "input.bin", "--json"],
+      cwd: root,
+      environment: { REA_LOG_LEVEL: "silent" },
+      timeoutMs: 10_000,
+    });
+    // A relative path must pass input validation and reach the provider,
+    // which reports the missing firmware engine — not a validation error.
+    expect(cliResult.exitCode).toBe(1);
+    expect(cliResult.json).toMatchObject({ code: "capability_unavailable" });
+  },
+);
+
 cliTest(
   "preserves optional JavaScript recovery configuration through CLI and MCP",
   async ({ cli }) => {

@@ -10,13 +10,13 @@ import { functionComparisonResultSchema } from "./functionComparison.js";
 import {
   PROCESS_PROVIDER,
   isProcessEvidenceProvider,
-} from "./processEvidenceProvider.js";
+} from "./process/processEvidenceProvider.js";
 import type { JsonValue } from "./jsonValue.js";
 import {
   comparisonStatusSchema,
   processCaptureComparisonSchema,
-} from "./processCapture.js";
-import { PROCESS_COMPARISON_DIMENSIONS } from "./processComparison.js";
+} from "./process/processCapture.js";
+import { PROCESS_COMPARISON_DIMENSIONS } from "./process/processComparison.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");

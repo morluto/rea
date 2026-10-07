@@ -6,6 +6,7 @@ export interface ModuleBoundaryViolation {
   readonly target: string;
   readonly boundary:
     | "artifact-acquisition"
+    | "process-capture"
     | "pure-layer"
     | "application-composition"
     | "provider-construction"

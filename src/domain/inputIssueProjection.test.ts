@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { projectInputIssues } from "./inputIssueProjection.js";
-import { processScenarioSchema } from "./processScenario.js";
+import { processScenarioSchema } from "./process/processScenario.js";
 
 describe("input issue projection", () => {
   it("preserves static regex guidance without echoing the rejected value", () => {

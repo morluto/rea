@@ -8,6 +8,28 @@ import { describe, expect, it } from "vitest";
 import { inspectModuleBoundaries } from "../../scripts/lib/module-boundaries.mjs";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
+describe("process capture implementation ownership", () => {
+  it.each([
+    ["../../application/process/ProcessEvidence.js", false],
+    ["../../composition/binary.js", false],
+    ["../../server/createServer.js", false],
+    ["../../cli.ts", false],
+    ["../../main.js", false],
+    ["../../domain/process/processEvidenceProvider.js", true],
+    ["../ProcessOwnership.js", true],
+    ["../../windows/WindowsOwnedProcess.js", true],
+    ["./TerminalRenderer.js", true],
+  ])("checks capture importing %s", (dependency, allowed) => {
+    const violations = inspectModuleBoundaries(
+      "src/process/capture/ProcessHarness.ts",
+      `import { value } from "${dependency}";`,
+      process.cwd(),
+    );
+    if (allowed) expect(violations).toEqual([]);
+    else expect(violations).toMatchObject([{ boundary: "process-capture" }]);
+  });
+});
+
 describe("binary production construction ownership", () => {
   it.each([
     "hopper/HopperProvider.js",

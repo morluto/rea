@@ -2,7 +2,7 @@ import { access, realpath, stat } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
 
-import type { ProcessScenario } from "../domain/processCapture.js";
+import type { ProcessScenario } from "../../domain/process/processCapture.js";
 import {
   ProcessCaptureError,
   processCaptureCancelled,

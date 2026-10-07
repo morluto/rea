@@ -4,7 +4,7 @@ import {
   processCaptureProbeFailureReason,
   processCaptureOwnershipUnavailableReason,
   probeProcessCaptureCapability,
-} from "../../../src/application/ProcessCaptureCapability.js";
+} from "../../../src/process/capture/ProcessCaptureCapability.js";
 
 describe("process capture capability diagnostics", () => {
   it("distinguishes missing native modules from runtime ABI mismatches", () => {

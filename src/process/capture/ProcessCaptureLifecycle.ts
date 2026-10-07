@@ -16,18 +16,18 @@ import type {
   ProcessCaptureEventJournalEntry,
   RecordProcessCaptureEvent,
   TerminalFrame,
-} from "../domain/processCapture.js";
+} from "../../domain/process/processCapture.js";
 import {
   digestProcessCommitment,
   processComparisonContract,
   processScenarioCommitment,
-} from "../domain/processCapture.js";
-import { PRODUCT_IDENTITY } from "../identity.js";
+} from "../../domain/process/processCapture.js";
+import { PRODUCT_IDENTITY } from "../../identity.js";
 import type { SnapshotResult } from "./FilesystemSnapshot.js";
 import { snapshotRoots } from "./FilesystemSnapshot.js";
 import { classifyFilesystemEffects } from "./ProcessFilesystemEffects.js";
-import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
-import { observeOwnedProcessGroup } from "../process/ProcessOwnershipObservation.js";
+import { cleanupOwnedProcessGroup } from "../ProcessOwnership.js";
+import { observeOwnedProcessGroup } from "../ProcessOwnershipObservation.js";
 import { ProcessCaptureError } from "./ProcessCaptureError.js";
 import { assertNotCancelled } from "./ProcessScenarioRuntimeValidation.js";
 import {
@@ -35,7 +35,7 @@ import {
   normalizeProcessSamples,
   normalizeProcessText,
 } from "./ProcessNormalization.js";
-import { PROCESS_PROVIDER } from "./ProcessEvidence.js";
+import { PROCESS_PROVIDER } from "../../domain/process/processEvidenceProvider.js";
 import { TerminalRenderer } from "./TerminalRenderer.js";
 import { scheduleProcessInterval, type ProcessTimer } from "./ProcessTimer.js";
 

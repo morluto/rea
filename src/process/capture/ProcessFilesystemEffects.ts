@@ -1,7 +1,7 @@
 import type {
   FileState,
   FilesystemCheckpoint,
-} from "../domain/processCapture.js";
+} from "../../domain/process/processCapture.js";
 
 /** Classify path-stable filesystem effects between two bounded states. */
 export const classifyFilesystemEffects = (

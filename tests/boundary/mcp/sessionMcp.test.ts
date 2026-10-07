@@ -15,7 +15,7 @@ import type {
   AnalysisProvider,
   CapabilityDescriptor,
 } from "../../../src/application/AnalysisProvider.js";
-import { probeProcessCaptureCapability } from "../../../src/application/ProcessHarness.js";
+import { probeProcessCaptureCapability } from "../../../src/process/capture/ProcessHarness.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";

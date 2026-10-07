@@ -1,7 +1,7 @@
 import type {
   ProcessSample,
   ProcessScenario,
-} from "../domain/processCapture.js";
+} from "../../domain/process/processCapture.js";
 
 /** Bucket one elapsed process-capture timestamp under scenario normalization. */
 export const normalizeProcessElapsedTime = (

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { isAbsoluteLocalPath } from "./localPath.js";
 import { browserNetworkContentSelectionSchema } from "./browserNetworkEvidence.js";
 
 import {
@@ -11,7 +12,14 @@ export const scenarioIdentifierSchema = z
   .string()
   .regex(/^[A-Za-z][A-Za-z0-9._-]*$/u);
 
-const browserExecutablePathSchema = z.string().trim().min(1);
+const browserExecutablePathSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .refine(isAbsoluteLocalPath, {
+    message:
+      "executable_path must be an absolute local filesystem path (for example /opt/chromium/chrome or C:\\chromium\\chrome.exe)",
+  });
 
 const browserScenarioBaseUrlSchema = z
   .string()
@@ -67,7 +75,9 @@ export type BrowserScenarioUrl = z.infer<typeof browserScenarioUrlSchema>;
 export const browserScenarioBrowserSchema = z.discriminatedUnion("mode", [
   z.strictObject({
     mode: z.literal("launch"),
-    executable_path: browserExecutablePathSchema,
+    executable_path: browserExecutablePathSchema.describe(
+      "Absolute local filesystem path for the browser executable; relative paths are rejected.",
+    ),
     headless: z
       .boolean()
       .default(true)
