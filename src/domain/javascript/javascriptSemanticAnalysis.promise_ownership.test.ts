@@ -176,3 +176,25 @@ it("links returned promises to the exact return site in each callable", () => {
     });
   }
 });
+
+it("does not assign a return site to a Promise owned by a binding", () => {
+  const ir = analyzeJavaScriptSemantics(
+    "function unrelated() { return Promise.resolve(2); }\nconst pending = Promise.resolve(1);",
+  );
+  const owned = ir.promiseOperations.find(
+    ({ ownerCallableId }) => ownerCallableId !== null,
+  );
+  const assigned = ir.promiseOperations.find(
+    ({ ownerCallableId }) => ownerCallableId === null,
+  );
+
+  expect(owned).toMatchObject({
+    ownership: "returned",
+    returnSiteId: ir.callables.find(({ name }) => name === "unrelated")
+      ?.returnSites[0]?.returnSiteId,
+  });
+  expect(assigned).toMatchObject({
+    ownership: "assigned",
+    returnSiteId: null,
+  });
+});
