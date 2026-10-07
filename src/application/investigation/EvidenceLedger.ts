@@ -5,10 +5,10 @@ import {
   parseEvidenceBundle,
   validateResidualUnknownAddition,
   type EvidenceBundle,
-} from "../domain/evidenceBundle.js";
-import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
-import { UnknownRegistryError } from "../domain/unknownRegistryError.js";
-import { parseEvidence, type Evidence } from "../domain/evidence.js";
+} from "../../domain/evidenceBundle.js";
+import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
+import { UnknownRegistryError } from "../../domain/unknownRegistryError.js";
+import { parseEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   createResidualUnknown,
   updateResidualUnknown,
@@ -16,8 +16,8 @@ import {
   type ResidualUnknown,
   type UnknownStatus,
   type UpdateUnknownInput,
-} from "../domain/residualUnknown.js";
-import { err, ok, type Result } from "../domain/result.js";
+} from "../../domain/residualUnknown.js";
+import { err, ok, type Result } from "../../domain/result.js";
 
 type EvidenceLedgerFailure = EvidenceIntegrityError;
 type RecordResult = Result<"added" | "duplicate", EvidenceLedgerFailure>;

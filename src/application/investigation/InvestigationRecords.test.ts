@@ -10,7 +10,7 @@ import {
   recordUnknownInputSchema,
   updateUnknownInputSchema,
 } from "../../domain/residualUnknown.js";
-import { unknownMutationEvidence } from "../UnknownEvidence.js";
+import { unknownMutationEvidence } from "./UnknownEvidence.js";
 import { InvestigationRecords } from "./InvestigationRecords.js";
 
 const unknownInput = (question: string) =>

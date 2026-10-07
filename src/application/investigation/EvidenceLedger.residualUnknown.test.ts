@@ -1,19 +1,19 @@
 import { describe, expect, it } from "vitest";
 
 import { EvidenceLedger } from "./EvidenceLedger.js";
-import { createEvidence } from "../domain/evidence.js";
+import { createEvidence } from "../../domain/evidence.js";
 import {
   createEvidenceBundle,
   parseEvidenceBundle,
   serializeEvidenceBundle,
-} from "../domain/evidenceBundle.js";
+} from "../../domain/evidenceBundle.js";
 import {
   createResidualUnknown,
   recordUnknownInputSchema,
   updateUnknownInputSchema,
   type RecordUnknownInput,
   type ResidualUnknown,
-} from "../domain/residualUnknown.js";
+} from "../../domain/residualUnknown.js";
 
 const provider = { id: "fixture", name: "Fixture", version: "1" };
 const ledger = (): EvidenceLedger => new EvidenceLedger();

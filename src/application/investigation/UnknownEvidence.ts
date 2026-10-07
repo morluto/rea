@@ -1,10 +1,10 @@
-import type { BinaryTarget } from "../domain/binaryTarget.js";
-import { createEvidence, type Evidence } from "../domain/evidence.js";
+import type { BinaryTarget } from "../../domain/binaryTarget.js";
+import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import type {
   RecordUnknownInput,
   UpdateUnknownInput,
-} from "../domain/residualUnknown.js";
-import type { ProviderIdentity } from "./AnalysisProvider.js";
+} from "../../domain/residualUnknown.js";
+import type { ProviderIdentity } from "../AnalysisProvider.js";
 
 /** Provider identity for analyst-authored residual-unknown mutations. */
 export const UNKNOWN_REGISTRY_PROVIDER: ProviderIdentity = {

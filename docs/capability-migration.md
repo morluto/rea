@@ -141,6 +141,12 @@ owner explicitly; the direct BinarySession constructor retains a fresh default
 for compatibility. There is no second ledger, global store, persistence or new
 retention policy.
 
+The ledger, Unknown Evidence helper and the ledger's two original behavior tests
+now live beside the owner in `src/application/investigation/`. Bundle validation
+and record-owner consumers follow the new paths; retained-reference access still
+uses the narrow record ports. The move preserves implementation bodies and test
+assertions. Binary snapshot/cache files remain with their existing owner.
+
 EvidenceReader, EvidenceWriter and EvidenceUnknownWriter describe existing
 read/write/atomic callback needs. UnknownRegistryPort preserves optimistic
 revisions and consistency verification. Non-binary MCP registrars use these

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import type { BinaryTarget } from "../domain/binaryTarget.js";
-import { createEvidence } from "../domain/evidence.js";
-import { createEvidenceBundle } from "../domain/evidenceBundle.js";
-import { recordUnknownInputSchema } from "../domain/residualUnknown.js";
+import type { BinaryTarget } from "../../domain/binaryTarget.js";
+import { createEvidence } from "../../domain/evidence.js";
+import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
+import { recordUnknownInputSchema } from "../../domain/residualUnknown.js";
 import { EvidenceLedger } from "./EvidenceLedger.js";
 
 const TARGET: BinaryTarget = {
