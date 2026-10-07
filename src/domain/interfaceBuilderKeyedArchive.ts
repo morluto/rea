@@ -217,10 +217,12 @@ const parseKeyedArchive = (
     ) {
       const controlAction = /ControlConnector/iu.test(className);
       // AppKit connectors (NSNibOutletConnector, NSNibControlConnector)
-      // archive their endpoints and outlet or selector under NS-prefixed keys.
+      // archive NSSource as the outlet owner or sending control and
+      // NSDestination as the outlet value or action target, so they are read
+      // in that order without the inversion the unprefixed fields use.
       const source = firstObjectReference(
         controlAction ? fields.destination : fields.source,
-        controlAction ? fields.NSDestination : fields.NSSource,
+        fields.NSSource,
         controlAction ? fields.to : fields.from,
         controlAction ? fields.target : fields.owner,
       );
@@ -232,7 +234,7 @@ const parseKeyedArchive = (
         source_id: source,
         destination_id: firstObjectReference(
           controlAction ? fields.source : fields.destination,
-          controlAction ? fields.NSSource : fields.NSDestination,
+          fields.NSDestination,
           controlAction ? fields.from : fields.to,
           controlAction ? fields.owner : fields.target,
         ),

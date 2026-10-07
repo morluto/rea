@@ -366,10 +366,61 @@ describe("AppKit keyed archive connectors", () => {
       }),
       expect.objectContaining({
         kind: "action",
-        source_id: "1",
-        destination_id: "2",
+        source_id: "2",
+        destination_id: "1",
         label: "buttonClicked:",
       }),
     ]);
+  });
+
+  it("projects an AppKit action from the control through the selector to its target", () => {
+    const analysis = buildInterfaceBuilderAnalysis({
+      targetSha256: hash,
+      toolVersion: "test",
+      documents: [
+        {
+          relativePath: "MainMenu.nib",
+          archiveSha256: hash,
+          documentKind: "nib",
+          raw: {
+            $archiver: "NSKeyedArchiver",
+            $objects: [
+              "$null",
+              { $class: { UID: 4 } },
+              { $class: { UID: 5 } },
+              {
+                $class: { UID: 6 },
+                NSSource: { UID: 2 },
+                NSDestination: { UID: 1 },
+                NSLabel: "buttonClicked:",
+              },
+              { $classname: "BuildDelegate", $classes: ["NSObject"] },
+              { $classname: "NSButton", $classes: ["NSButton", "NSObject"] },
+              {
+                $classname: "NSNibControlConnector",
+                $classes: ["NSNibControlConnector", "NSObject"],
+              },
+            ],
+            $top: {},
+          },
+        },
+      ],
+      limits: interfaceBuilderLimitsSchema.parse({}),
+    });
+    const byId = new Map(analysis.graph.nodes.map((node) => [node.id, node]));
+    const action = analysis.graph.nodes.find(({ kind }) => kind === "action");
+    const from = analysis.graph.edges
+      .filter(
+        ({ to, relation }) => relation === "target_action" && to === action?.id,
+      )
+      .map(({ from: id }) => byId.get(id)?.name);
+    const to = analysis.graph.edges
+      .filter(
+        ({ from: id, relation }) =>
+          relation === "target_action" && id === action?.id,
+      )
+      .map(({ to: id }) => (id === null ? null : byId.get(id)?.kind));
+    expect(from).toEqual(["NSButton"]);
+    expect(to).toEqual(expect.arrayContaining(["objc_selector", "unknown"]));
   });
 });
