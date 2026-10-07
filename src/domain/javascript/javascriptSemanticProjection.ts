@@ -100,13 +100,16 @@ export const collectSemanticReferences = (
 ): JavaScriptSemanticReference[] => {
   const output: JavaScriptSemanticReference[] = [];
   const seen = new Set<string>();
+  const patterns: t.Node[] = [];
   traverseJavaScriptAst(program, {
     enter: (node, parent, readAncestors) => {
+      if (isPatternNode(node)) patterns.push(node);
       if (
         !t.isIdentifier(node) ||
         parent === null ||
         (name !== undefined && node.name !== name) ||
-        isNonReferenceKey(node, parent)
+        (isNonReferenceKey(node, parent) &&
+          !patterns.some((pattern) => bindsIdentifier(pattern, parent, node)))
       )
         return;
       const role = semanticIdentifierRole(node, parent, readAncestors());
@@ -138,6 +141,9 @@ export const collectSemanticReferences = (
                 : "unbound",
         });
       }
+    },
+    exit: (node) => {
+      if (isPatternNode(node)) patterns.pop();
     },
   });
   return output;
