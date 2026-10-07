@@ -9,7 +9,13 @@ import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCo
 import { err, ok } from "../../domain/result.js";
 import type { SelectedWebScriptInput } from "../../domain/webScriptArtifacts.js";
 import { webScriptExportManifestSchema } from "../../domain/webScriptExport.js";
-import { decodeWebArtifact, readWebArtifactJson, webArtifactReadError, WebArtifactFormatFailure, type WebArtifactReadContext } from "./WebArtifactReads.js";
+import {
+  decodeWebArtifact,
+  readWebArtifactJson,
+  webArtifactReadError,
+  WebArtifactFormatFailure,
+  type WebArtifactReadContext,
+} from "./WebArtifactReads.js";
 
 /** Read one digest-verified captured source under the manifest's current location. */
 export class LocalWebScriptArtifacts implements WebScriptArtifactPort {
@@ -25,9 +31,7 @@ export class LocalWebScriptArtifacts implements WebScriptArtifactPort {
         32 * 1024 * 1024,
         options?.signal,
       );
-      const manifest = webScriptExportManifestSchema.parse(
-        manifestBytes.value,
-      );
+      const manifest = webScriptExportManifestSchema.parse(manifestBytes.value);
       field = ["script_index"];
       const selected = manifest.scripts[input.script_index];
       if (selected === undefined)
@@ -79,12 +83,26 @@ export class LocalWebScriptArtifacts implements WebScriptArtifactPort {
       const source = decodeWebArtifact(sourceBytes.bytes);
       return ok({
         manifest,
-        manifestFile: { path: input.manifest_path, sha256: manifestBytes.sha256, bytes: manifestBytes.bytes.length },
-        sourceFile: { path: sourcePath, sha256: sourceBytes.sha256, bytes: sourceBytes.bytes.length },
+        manifestFile: {
+          path: input.manifest_path,
+          sha256: manifestBytes.sha256,
+          bytes: manifestBytes.bytes.length,
+        },
+        sourceFile: {
+          path: sourcePath,
+          sha256: sourceBytes.sha256,
+          bytes: sourceBytes.bytes.length,
+        },
         source,
       });
     } catch (cause: unknown) {
-      return err(webArtifactReadError(cause, { operation: this.operation, field, targetPath }, options?.signal));
+      return err(
+        webArtifactReadError(
+          cause,
+          { operation: this.operation, field, targetPath },
+          options?.signal,
+        ),
+      );
     }
   }
 }

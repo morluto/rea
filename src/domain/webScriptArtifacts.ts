@@ -4,10 +4,19 @@ import { webScriptExportManifestSchema } from "./webScriptExport.js";
 
 /** Select one source from an existing captured-script export. */
 export const selectedWebScriptInputSchema = z.strictObject({
-  manifest_path: z.string().min(1).describe("Absolute export_web_scripts manifest path"),
-  script_index: z.number().int().min(0).describe("Zero-based index in manifest.scripts"),
+  manifest_path: z
+    .string()
+    .min(1)
+    .describe("Absolute export_web_scripts manifest path"),
+  script_index: z
+    .number()
+    .int()
+    .min(0)
+    .describe("Zero-based index in manifest.scripts"),
 });
-export type SelectedWebScriptInput = z.output<typeof selectedWebScriptInputSchema>;
+export type SelectedWebScriptInput = z.output<
+  typeof selectedWebScriptInputSchema
+>;
 
 /** Exact identity of one local file, independently read as bytes. */
 export const webArtifactFileSchema = z.strictObject({
@@ -23,7 +32,9 @@ export const selectedWebScriptArtifactsSchema = z.strictObject({
   sourceFile: webArtifactFileSchema,
   source: z.string(),
 });
-export type SelectedWebScriptArtifacts = z.output<typeof selectedWebScriptArtifactsSchema>;
+export type SelectedWebScriptArtifacts = z.output<
+  typeof selectedWebScriptArtifactsSchema
+>;
 
 /** Preserve original capture authority and completeness alongside the actual manifest identity. */
 export const capturedWebManifestIdentitySchema = webArtifactFileSchema.extend({

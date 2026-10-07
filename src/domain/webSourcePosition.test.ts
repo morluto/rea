@@ -11,11 +11,13 @@ it("uses UTF-16 columns and actual JavaScript line terminators", () => {
   expect(webSourceOffset(text, { line: 7, column: 0 })).toBeUndefined();
 });
 
-it.each([{ line: 0, column: 0 }, { line: 1, column: -1 }, { line: 1.5, column: 0 }])(
-  "rejects invalid source positions: %j", (position) => {
-    expect(webSourceOffset("", position)).toBeUndefined();
-  },
-);
+it.each([
+  { line: 0, column: 0 },
+  { line: 1, column: -1 },
+  { line: 1.5, column: 0 },
+])("rejects invalid source positions: %j", (position) => {
+  expect(webSourceOffset("", position)).toBeUndefined();
+});
 
 it("retains the empty source and the final empty line", () => {
   expect(webSourceOffset("", { line: 1, column: 0 })).toBe(0);

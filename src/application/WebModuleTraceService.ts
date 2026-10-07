@@ -24,7 +24,10 @@ import {
   type WebModuleTraceResult,
 } from "../domain/webModuleTrace.js";
 import { selectedWebScriptArtifactsSchema } from "../domain/webScriptArtifacts.js";
-import { capturedWebManifestIdentity, validateSelectedWebScript } from "./ValidateSelectedWebScript.js";
+import {
+  capturedWebManifestIdentity,
+  validateSelectedWebScript,
+} from "./ValidateSelectedWebScript.js";
 import type { ExecutionOptions } from "./AnalysisProvider.js";
 import type {
   WebModuleArtifactPort,
