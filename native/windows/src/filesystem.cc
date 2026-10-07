@@ -277,14 +277,15 @@ static void directory(Runtime& root, const std::wstring& relative) {
   }
 }
 
-static Handle createPrivateFile(Runtime& root, const std::wstring& relative) {
+static Handle createPrivateFile(Runtime& root, const std::wstring& relative,
+                                DWORD access = DELETE | GENERIC_WRITE | GENERIC_READ | READ_CONTROL) {
   const auto path = relativePath(root, relative);
   const auto parentPath = path.substr(0, path.find_last_of(L'\\'));
   auto parent = runtimeDirectory(root, parentPath);
   verifyPrivate(parent->get(), parentPath, parentPath == root.path);
   Security security;
   auto file = createRelative(parent->get(), path.substr(path.find_last_of(L'\\') + 1),
-                             DELETE | GENERIC_WRITE | GENERIC_READ | READ_CONTROL, false, security, path);
+                              access, false, security, path);
   verifyPrivate(file.get(), path, false);
   return file;
 }
@@ -303,6 +304,26 @@ static void dispose(HANDLE handle, const std::wstring& path) {
   }
   FILE_DISPOSITION_INFO deletion{TRUE};
   require(SetFileInformationByHandle(handle, FileDispositionInfo, &deletion, sizeof(deletion)), "Delete owned object by handle failed", path);
+}
+
+static void disposeSnapshot(Runtime& root, Handle& file, const std::wstring& path) {
+  // Snapshot readers do not share DELETE access. Release the writer only for
+  // failed-copy cleanup, with its parent pinned and its identity recorded.
+  auto parent = runtimeDirectory(root, path.substr(0, path.find_last_of(L'\\')));
+  FILE_ID_INFO expected{};
+  require(GetFileInformationByHandleEx(file.get(), FileIdInfo, &expected, sizeof(expected)),
+          "Read incomplete snapshot identity failed", path);
+  file.reset();
+  auto cleanup = openComponent(path, DELETE | GENERIC_READ | FILE_WRITE_ATTRIBUTES, false);
+  FILE_ID_INFO observed{};
+  require(GetFileInformationByHandleEx(cleanup.get(), FileIdInfo, &observed, sizeof(observed)),
+          "Read snapshot cleanup identity failed", path);
+  require(expected.VolumeSerialNumber == observed.VolumeSerialNumber &&
+          std::equal(std::begin(expected.FileId.Identifier), std::end(expected.FileId.Identifier),
+                     std::begin(observed.FileId.Identifier)),
+          "Incomplete snapshot identity changed before cleanup", path, ERROR_ACCESS_DENIED);
+  verifyPrivate(cleanup.get(), path, false);
+  dispose(cleanup.get(), path);
 }
 
 void closeRuntime(Runtime& root) {
@@ -414,8 +435,7 @@ static void completeSnapshot(napi_env env, napi_status status, void* pointer) {
   work->root->snapshotPending = false;
   const auto reject = [&](const Failure& failure) {
     try {
-      dispose(work->destination.get(), work->path);
-      work->destination.reset();
+      disposeSnapshot(*work->root, work->destination, work->path);
       napi_reject_deferred(env, work->deferred, failureValue(env, failure));
     } catch (const Failure& cleanupFailure) {
       const Failure combined(
@@ -447,7 +467,9 @@ static napi_value snapshot(napi_env env, napi_value rootValue, Runtime& root,
   auto work = std::make_unique<SnapshotWork>(env, root);
   work->source = openFile(sourcePath);
   work->path = relativePath(root, relative);
-  work->destination = createPrivateFile(root, relative);
+  // Retain the write lease with read-only sharing, but omit DELETE authority:
+  // Java's RandomAccessFile reader shares read/write, not delete access.
+  work->destination = createPrivateFile(root, relative, GENERIC_WRITE | GENERIC_READ | READ_CONTROL);
   napi_value promise;
   check(napi_create_promise(env, &work->deferred, &promise));
   check(napi_create_reference(env, rootValue, 1, &work->rootReference));
