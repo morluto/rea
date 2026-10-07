@@ -128,11 +128,14 @@ describeBrowser("CdpBrowserProvider: redirect errors", () => {
       status: 201,
       mime_type: "application/json",
       encoded_data_length: null,
-      body_shapes: { response: null },
+      body_shapes: { status: "partial", response: null },
     });
     expect(inspection.metadata.responses).toHaveLength(1);
     expect(inspection.metadata.responses[0]?.url).toBe(
       `${browser.allowedOrigin}/malformed-redirect-prior`,
+    );
+    expect(inspection.completeness.unavailable_sections).toContain(
+      "json_body_shapes",
     );
     expect(inspection.completeness.excluded).toContainEqual({
       section: "network_requests",
