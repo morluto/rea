@@ -93,5 +93,7 @@ const addAdjacency = (
   nodeId: string,
   entry: AdjacencyEntry,
 ): void => {
-  adjacency.set(nodeId, [...(adjacency.get(nodeId) ?? []), entry]);
+  const entries = adjacency.get(nodeId);
+  if (entries === undefined) adjacency.set(nodeId, [entry]);
+  else entries.push(entry);
 };

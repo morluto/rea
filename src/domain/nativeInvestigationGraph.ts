@@ -204,16 +204,20 @@ export const traceNativeInvestigationGraph = (
   let reachedDepth = 0;
   let truncated = false;
   let reason: string | null = null;
+  const adjacency = new Map<string, NativeInvestigationEdge[]>();
+  for (const edge of graph.edges) {
+    const nodeId = direction === "forward" ? edge.from : edge.to;
+    if (nodeId === null) continue;
+    const entries = adjacency.get(nodeId);
+    if (entries === undefined) adjacency.set(nodeId, [edge]);
+    else entries.push(edge);
+  }
 
   while (queue.length > 0) {
     const current = queue.shift();
     if (current === undefined) break;
     reachedDepth = Math.max(reachedDepth, current.depth);
-    const adjacent = graph.edges.filter((edge) =>
-      direction === "forward"
-        ? edge.from === current.id
-        : edge.to === current.id,
-    );
+    const adjacent = adjacency.get(current.id) ?? [];
 
     for (const edge of adjacent) {
       if (selectedEdges.size + unresolved.size >= limits.max_edges) {
