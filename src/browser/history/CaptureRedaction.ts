@@ -11,7 +11,15 @@ const CREDENTIAL_HEADERS = new Set([
 /** Literal redaction and structural authentication exclusions preserve unrelated local evidence. */
 export class CaptureRedaction {
   readonly redactions: Redaction[] = [];
-  constructor(readonly sensitiveValues: readonly string[]) {}
+  readonly #sensitiveByteValues: readonly Buffer[];
+  constructor(readonly sensitiveValues: readonly string[]) {
+    // An unpaired surrogate has no UTF-8 representation. Buffer.from would
+    // invent replacement-character bytes and incorrectly discard real evidence.
+    this.#sensitiveByteValues = sensitiveValues.flatMap((value) => {
+      const encoded = Buffer.from(value, "utf8");
+      return encoded.toString("utf8") === value ? [encoded] : [];
+    });
+  }
 
   /** Preserve exact text unless explicitly sensitive or known transport URL userinfo. */
   text(value: string, pointer: string, transportUrl = false): string | null {
@@ -71,9 +79,7 @@ export class CaptureRedaction {
 
   /** Preserve bytes unless an explicitly declared UTF-8 literal occurs in them. */
   sensitiveBytes(bytes: Buffer): boolean {
-    return this.sensitiveValues.some((value) =>
-      bytes.includes(Buffer.from(value)),
-    );
+    return this.#sensitiveByteValues.some((value) => bytes.includes(value));
   }
 }
 

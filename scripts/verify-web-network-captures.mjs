@@ -476,6 +476,30 @@ try {
     sensitive_values: ["\ud800", "ordinary-scalar"],
   });
   cases++;
+  const replacementHar = JSON.parse(
+    await readFile(join(runtime.path, "producer.har"), "utf8"),
+  );
+  replacementHar.log.entries[0].response.content = {
+    size: 3,
+    mimeType: "application/octet-stream",
+    encoding: "base64",
+    text: "77+9",
+  };
+  const replacementHarPath = join(runtime.path, "unicode-scalar.har");
+  await writeFile(replacementHarPath, JSON.stringify(replacementHar));
+  for (const literal of ["\ud800", "\udfff", "\ufffd"]) {
+    const unicode = await inspect("mcp", {
+      capture_path: replacementHarPath,
+      format: "har",
+      sensitive_values: [literal],
+    });
+    const body = unicode.records[0].binary_fields.find(
+      (field) => field.pointer === "/response/content/text",
+    );
+    assert.equal(body?.state, literal === "\ufffd" ? "redacted" : "retained");
+    assert.equal(body.content_base64, literal === "\ufffd" ? null : "77+9");
+    cases++;
+  }
   const oversizedPath = join(runtime.path, "oversized-capture");
   await writeFile(oversizedPath, "");
   await truncate(oversizedPath, WEB_NETWORK_CAPTURE_LIMITS.inputBytes + 1);

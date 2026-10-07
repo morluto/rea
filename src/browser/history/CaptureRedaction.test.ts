@@ -33,3 +33,21 @@ it("preserves the same URL-looking text in an ordinary extension", () => {
   expect(redactor.text(value, "/_extension")).toBe(value);
   expect(redactor.redactions).toEqual([]);
 });
+
+it.each(["\ud800", "\udfff"])(
+  "does not invent replacement UTF-8 bytes for a non-scalar declaration",
+  (literal) => {
+    const redactor = new CaptureRedaction([literal]);
+    expect(redactor.sensitiveBytes(Buffer.from("\ufffd"))).toBe(false);
+    expect(redactor.text(literal, "/reported")).toBe(null);
+  },
+);
+
+it("matches scalar UTF-8 declarations and complete surrogate pairs exactly", () => {
+  expect(
+    new CaptureRedaction(["\ufffd"]).sensitiveBytes(Buffer.from("\ufffd")),
+  ).toBe(true);
+  expect(
+    new CaptureRedaction(["\ud83d\ude00"]).sensitiveBytes(Buffer.from("😀")),
+  ).toBe(true);
+});
