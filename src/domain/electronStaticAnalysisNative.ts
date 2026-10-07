@@ -1,6 +1,7 @@
 import * as t from "@babel/types";
 
 import { compareCodePoints } from "./canonicalOrdering.js";
+import { stripQueryAndFragment } from "./artifactPathSyntax.js";
 import type { ElectronNativeAddonBindingFinding } from "./electronStaticAnalysisTypes.js";
 import { addLocatedFinding } from "./javascriptStaticAnalysisFindings.js";
 import {
@@ -208,8 +209,6 @@ const isNativeSpecifier = (
   moduleKind: ElectronNativeAddonBindingFinding["module_kind"],
 ): boolean => {
   const path =
-    moduleKind === "require"
-      ? specifier
-      : (specifier.split("#", 1)[0]?.split("?", 1)[0] ?? "");
+    moduleKind === "require" ? specifier : stripQueryAndFragment(specifier);
   return path.toLowerCase().endsWith(".node");
 };

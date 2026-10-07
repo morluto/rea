@@ -2,6 +2,12 @@ import { builtinModules } from "node:module";
 import { posix } from "node:path";
 
 import type { JavaScriptArtifactFile } from "./JavaScriptArtifactFiles.js";
+import {
+  admitsCanonicalPathSyntax,
+  hasScheme,
+  looksExternal,
+  stripQueryAndFragment,
+} from "../domain/artifactPathSyntax.js";
 
 type ArtifactPathResolutionContext =
   | "package-entrypoint"
@@ -115,12 +121,6 @@ const rejectDeclaration = (
   return null;
 };
 
-/** Path syntax admitted for a canonical artifact path. */
-const admitsCanonicalPathSyntax = (value: string): boolean =>
-  !value.includes("\0") &&
-  !value.includes("\\") &&
-  !/%(?:2e|2f|5c)/iu.test(value);
-
 const contextualCandidate = (
   input: ResolveArtifactPathInput,
 ): string | ArtifactPathResolution => {
@@ -212,7 +212,7 @@ const htmlCandidate = (
   input: ResolveArtifactPathInput,
 ): string | ArtifactPathResolution => {
   const declared = stripQueryAndFragment(input.declaredPath);
-  if (hasScheme(declared) || declared.startsWith("//"))
+  if (looksExternal(declared))
     return unresolvedOutcome(input, "external", [
       "External HTML references are not mapped to local artifact assets.",
     ]);
@@ -221,11 +221,7 @@ const htmlCandidate = (
     rawBase === undefined || rawBase === null
       ? rawBase
       : stripQueryAndFragment(rawBase);
-  if (
-    base !== undefined &&
-    base !== null &&
-    (hasScheme(base) || base.startsWith("//"))
-  )
+  if (base !== undefined && base !== null && looksExternal(base))
     return unresolvedOutcome(input, "external", [
       "The document base href is external, so its script reference is not a local artifact path.",
     ]);
@@ -538,9 +534,6 @@ const notFoundCandidate = (): CandidateResolution => ({
   ],
 });
 
-const hasScheme = (value: string): boolean =>
-  /^[A-Za-z][A-Za-z+.-]*:/u.test(value);
-
 const fileUrlPath = (value: string): string | undefined => {
   if (!value.startsWith("file://")) return undefined;
   try {
@@ -553,9 +546,6 @@ const fileUrlPath = (value: string): string | undefined => {
     return undefined;
   }
 };
-
-const stripQueryAndFragment = (value: string): string =>
-  value.split("#", 1)[0]?.split("?", 1)[0] ?? "";
 
 const outcome = (
   input: ResolveArtifactPathInput,
