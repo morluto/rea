@@ -57,16 +57,17 @@ type NativeAotReport = z.infer<typeof report>;
 const validateNonRecoveryMetadata = (
   value: NativeAotReport,
   recovered: boolean,
-): string | null =>
-  !recovered &&
-  (value.reason === null ||
-    value.reason.trim().length === 0 ||
-    value.method_tables !== 0 ||
+): string | null => {
+  if (recovered) return null;
+  if (value.reason === null || value.reason.trim().length === 0)
+    return "NativeAOT non-recovery status omits its required reason.";
+  return value.method_tables !== 0 ||
     value.types !== undefined ||
     value.derived_memory !== undefined ||
-    value.coverage !== undefined)
-    ? "NativeAOT non-recovery status contradicts its reason or recovered metadata."
+    value.coverage !== undefined
+    ? "NativeAOT non-recovery status carries recovered metadata."
     : null;
+};
 
 /** Validate the pinned producer representation before its result enters Evidence. */
 export const validateNativeAotReport = (

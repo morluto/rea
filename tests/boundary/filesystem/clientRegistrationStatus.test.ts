@@ -206,6 +206,25 @@ describe("Node-wrapped registration policy", () => {
     },
   );
 
+  it("checks a direct-launcher Codex startup timeout without Node wrapping", async () => {
+    const home = await createTestTempDirectory("rea-direct-registration-");
+    await mkdir(join(home, ".codex"));
+    await writeFile(
+      join(home, ".codex/config.toml"),
+      '[mcp_servers.rea]\ncommand = "/current/rea"\nargs = ["mcp"]\nstartup_timeout_sec = 1\n',
+    );
+    const statuses = await readClientRegistrationStatuses(
+      home,
+      "/current/rea",
+      {
+        environment: {},
+      },
+    );
+    expect(statuses).toEqual([
+      expect.objectContaining({ client: "codex", state: "stale" }),
+    ]);
+  });
+
   it.each([{ tools: ["binary_session"] }, { tools: ["*"] }])(
     "checks Copilot tool selection $tools independently of launcher",
     async ({ tools }) => {

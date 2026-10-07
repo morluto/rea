@@ -498,6 +498,8 @@ const buildWebMcpResult = (options: WebMcpResultOptions): WebMcpDiscovery => {
 };
 
 const toolKey = (frameUrl: string, frameId: string, name: string): string =>
+  // Registrations without a known admitted frame are excluded above, so the
+  // frame ID here always distinguishes owners and keys cannot collapse.
   `webmcp_${createHash("sha256").update(`${frameUrl}\0${frameId}\0${name}`).digest("hex")}`;
 
 const booleanOrNull = (value: unknown): boolean | null =>

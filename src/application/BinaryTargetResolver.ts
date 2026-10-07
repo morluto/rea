@@ -275,6 +275,7 @@ const parseXmlPlistExecutable = (plist: string): string => {
 };
 
 const readBinaryPlistExecutable = async (plistPath: string): Promise<string> =>
+  // `-n` strips only the newline plutil appends; it requires macOS 12+.
   (
     await execFileAsync("/usr/bin/plutil", [
       "-extract",

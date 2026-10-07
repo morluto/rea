@@ -434,7 +434,7 @@ describe("Ghidra extension recovery coverage", () => {
           [extension],
           [{ ...report, result: { ...report.result, method_tables: 1 } }],
         ),
-      ).not.toBeNull();
+      ).toBe("NativeAOT non-recovery status carries recovered metadata.");
       for (const reason of [null, "", " "] as const)
         expect(
           validateGhidraExtensionResults(
@@ -447,7 +447,7 @@ describe("Ghidra extension recovery coverage", () => {
               },
             ],
           ),
-        ).not.toBeNull();
+        ).toBe("NativeAOT non-recovery status omits its required reason.");
     },
   );
 });

@@ -69,6 +69,31 @@ describe("reference import native entry failure details", () => {
     },
   );
 
+  it.skipIf(process.platform === "win32")(
+    "excludes secret-patterned paths before failure projection",
+    async () => {
+      const root = await createTestTempDirectory("rea-import-native-secret-");
+      await promisify(execFile)("mkfifo", [join(root, "secret-events.pipe")], {
+        timeout: 2_000,
+      });
+      const imported = await importReferenceSource({
+        root,
+        caller: "native-entry-secret-detail-test",
+        policy: { secretPatterns: ["*secret*"] },
+      });
+      if (!imported.ok) throw new Error(imported.error.message);
+      expect(
+        imported.value.entries.find(
+          (item) => item.path === "secret-events.pipe",
+        ),
+      ).toBeUndefined();
+      expect(imported.value.exclusions).toContainEqual({
+        path: "secret-events.pipe",
+        reason: "configured-secret",
+      });
+    },
+  );
+
   it("preserves an ordinary readable source-file control", async () => {
     const root = await createTestTempDirectory("rea-import-native-readable-");
     await writeFile(join(root, "main.ts"), "export const value = 1;\n");

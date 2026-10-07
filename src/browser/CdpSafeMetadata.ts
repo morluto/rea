@@ -331,7 +331,8 @@ const referrerPolicy = (value: string | undefined): string | null => {
   let policy: string | null = null;
   for (const raw of (value ?? "").split(",")) {
     const token = raw.trim().toLowerCase();
-    if (!/^[a-z-]*$/u.test(token)) return null;
+    if (token === "") continue;
+    if (!/^[a-z-]+$/u.test(token)) return null;
     if (referrerPolicies.has(token)) policy = token;
   }
   return policy;
