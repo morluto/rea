@@ -17,15 +17,18 @@ export type { CallPathInput, CallPathResult };
 /** Minimal directed caller-to-callee adjacency for call-path search. */
 class CallGraph {
   private readonly successors = new Map<string, Set<string>>();
+  private readonly predecessors = new Map<string, Set<string>>();
 
   mergeNode(node: string): void {
     if (!this.successors.has(node)) this.successors.set(node, new Set());
+    if (!this.predecessors.has(node)) this.predecessors.set(node, new Set());
   }
 
   mergeDirectedEdge(source: string, target: string): void {
     this.mergeNode(source);
     this.mergeNode(target);
     this.successors.get(source)?.add(target);
+    this.predecessors.get(target)?.add(source);
   }
 
   hasNode(node: string): boolean {
@@ -39,29 +42,31 @@ class CallGraph {
   outNeighbors(node: string): string[] {
     return [...(this.successors.get(node) ?? [])];
   }
+
+  inNeighbors(node: string): string[] {
+    return [...(this.predecessors.get(node) ?? [])];
+  }
 }
 
-/** Breadth-first shortest depth from start to goal, or null when unreachable. */
-const shortestPathDepth = (
+/** Shortest remaining distance for every node that can reach the goal. */
+const distancesToGoal = (
   graph: CallGraph,
-  start: string,
   goal: string,
-): number | null => {
-  if (start === goal) return 0;
-  const depth = new Map<string, number>([[start, 0]]);
-  const queue = [start];
+): ReadonlyMap<string, number> => {
+  if (!graph.hasNode(goal)) return new Map();
+  const depth = new Map<string, number>([[goal, 0]]);
+  const queue = [goal];
   for (let index = 0; index < queue.length; index += 1) {
     const node = queue[index] ?? "";
     const next = (depth.get(node) ?? 0) + 1;
-    for (const neighbor of graph.outNeighbors(node)) {
-      if (neighbor === goal) return next;
+    for (const neighbor of graph.inNeighbors(node)) {
       if (!depth.has(neighbor)) {
         depth.set(neighbor, next);
         queue.push(neighbor);
       }
     }
   }
-  return null;
+  return depth;
 };
 
 interface SearchState {
@@ -82,10 +87,8 @@ export const buildCallPath = (input: CallPathInput): CallPathResult => {
     start: parsed.start.address,
     goal: parsed.goal.address,
   });
-  const shortestDepth =
-    graph.hasNode(parsed.start.address) && graph.hasNode(parsed.goal.address)
-      ? shortestPathDepth(graph, parsed.start.address, parsed.goal.address)
-      : null;
+  const goalDistances = distancesToGoal(graph, parsed.goal.address);
+  const shortestDepth = goalDistances.get(parsed.start.address) ?? null;
   const paths =
     shortestDepth === null
       ? []
@@ -93,7 +96,7 @@ export const buildCallPath = (input: CallPathInput): CallPathResult => {
           graph,
           start: parsed.start.address,
           goal: parsed.goal.address,
-          shortestDepth,
+          goalDistances,
         }).paths.map((path) => citePath(path, snapshots));
   const shortestHops = paths[0]?.hops;
   const found = shortestHops !== undefined;
@@ -135,7 +138,10 @@ const summarizeSearch = (
     (count, node) => count + (graph.hasNode(node) ? graph.outDegree(node) : 0),
     0,
   ),
-  depth_reached: Math.max(0, ...reached.values()),
+  depth_reached: [...reached.values()].reduce(
+    (maximum, depth) => Math.max(maximum, depth),
+    0,
+  ),
 });
 
 const prepareCallGraph = (input: CallPathInput) => {
@@ -261,57 +267,63 @@ interface EnumerationInput {
   readonly graph: CallGraph;
   readonly start: string;
   readonly goal: string;
-  readonly shortestDepth: number;
+  readonly goalDistances: ReadonlyMap<string, number>;
 }
 
 const enumeratePaths = ({
   graph,
   start,
   goal,
-  shortestDepth,
+  goalDistances,
 }: EnumerationInput): {
   readonly paths: string[][];
 } => {
   const output: string[][] = [];
-  const state: EnumerationState = {
-    graph,
-    goal,
-    path: [start],
-    visited: new Set([start]),
-    output,
+  const path = [start];
+  const neighbors = new Map<string, readonly string[]>();
+  const frame = (node: string): EnumerationFrame => {
+    let candidates = neighbors.get(node);
+    if (candidates === undefined) {
+      const distance = goalDistances.get(node);
+      candidates = graph
+        .outNeighbors(node)
+        .filter(
+          (neighbor) =>
+            distance !== undefined &&
+            goalDistances.get(neighbor) === distance - 1,
+        )
+        .sort((left, right) => left.localeCompare(right));
+      neighbors.set(node, candidates);
+    }
+    return { neighbors: candidates, nextIndex: 0 };
   };
-  enumerateAtDepth(state, shortestDepth);
+  const pending = [frame(start)];
+  while (pending.length > 0) {
+    const current = pending.at(-1);
+    if (current === undefined) break;
+    if (path.at(-1) === goal) {
+      output.push([...path]);
+      pending.pop();
+      path.pop();
+      continue;
+    }
+    const neighbor = current.neighbors[current.nextIndex];
+    if (neighbor === undefined) {
+      pending.pop();
+      path.pop();
+      continue;
+    }
+    current.nextIndex += 1;
+    path.push(neighbor);
+    pending.push(frame(neighbor));
+  }
   return { paths: output };
 };
 
-interface EnumerationState {
-  readonly graph: CallGraph;
-  readonly goal: string;
-  readonly path: string[];
-  readonly visited: Set<string>;
-  readonly output: string[][];
+interface EnumerationFrame {
+  readonly neighbors: readonly string[];
+  nextIndex: number;
 }
-
-const enumerateAtDepth = (state: EnumerationState, remaining: number): void => {
-  const { graph, goal, path, visited, output } = state;
-  const current = path.at(-1);
-  if (current === undefined) return;
-  if (remaining === 0) {
-    if (current === goal) output.push([...path]);
-    return;
-  }
-  if (current === goal) return;
-  for (const neighbor of graph
-    .outNeighbors(current)
-    .sort((left, right) => left.localeCompare(right))) {
-    if (visited.has(neighbor)) continue;
-    visited.add(neighbor);
-    path.push(neighbor);
-    enumerateAtDepth(state, remaining - 1);
-    path.pop();
-    visited.delete(neighbor);
-  }
-};
 
 const citePath = (
   addresses: readonly string[],

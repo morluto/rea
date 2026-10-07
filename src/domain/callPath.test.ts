@@ -130,7 +130,106 @@ describe("call path reconstruction", () => {
       "0x3000",
     ]);
   });
+});
 
+describe("call path topology and capacity", () => {
+  it("retains every shortest path through merging branches and cycles", () => {
+    const result = run([
+      observe("0x1000", ["0x3000", "0x2000", "0x1000"]),
+      observe("0x2000", ["0x3000", "0x5000", "0x6000"]),
+      observe("0x3000", ["0x6000", "0x5000"]),
+      observe("0x5000", ["0x4000", "0x1000"]),
+      observe("0x6000", ["0x4000"]),
+    ]);
+    expect(
+      result.paths.map(({ nodes }) => nodes.map(({ address }) => address)),
+    ).toEqual([
+      ["0x1000", "0x2000", "0x5000", "0x4000"],
+      ["0x1000", "0x2000", "0x6000", "0x4000"],
+      ["0x1000", "0x3000", "0x5000", "0x4000"],
+      ["0x1000", "0x3000", "0x6000", "0x4000"],
+    ]);
+  });
+
+  it("keeps uncovered dead ends in search limitations when a path is found", () => {
+    const result = run([
+      observe("0x1000", ["0x2000", "0x5000"]),
+      observe("0x2000", ["0x4000"]),
+    ]);
+    expect(result).toMatchObject({
+      status: "found",
+      shortest_hops: 2,
+      search_scope: { exhaustive: false },
+      explored: { nodes: 4, edges: 3, depth_reached: 2 },
+    });
+    expect(result.limitations).toContain(
+      "No analyze_function Evidence covers reachable function 0x5000",
+    );
+  });
+
+  it("returns a zero-hop path when start and goal are the same function", () => {
+    const result = run([observe("0x1000", ["0x2000"])], {
+      goal: { address: "0x1000" },
+    });
+    expect(result).toMatchObject({
+      status: "found",
+      shortest_hops: 0,
+      search_scope: { exhaustive: true },
+    });
+    expect(
+      result.paths.map(({ nodes }) => nodes.map(({ address }) => address)),
+    ).toEqual([["0x1000"]]);
+  });
+
+  it("reconstructs a deep function chain without exhausting the call stack", () => {
+    const length = 20_000;
+    const address = (index: number) => `0x${index.toString(16)}`;
+    const functions = Array.from({ length }, (_, index) =>
+      observe(address(index + 1), [address(index + 2)]),
+    );
+    const result = run(functions, {
+      start: { address: address(1) },
+      goal: { address: address(length + 1) },
+    });
+    expect(result).toMatchObject({ status: "found", shortest_hops: length });
+    expect(result.paths).toHaveLength(1);
+    expect(result.paths[0]?.nodes).toHaveLength(length + 1);
+    expect(result.paths[0]?.edges).toHaveLength(length);
+    expect(result.paths[0]?.nodes.at(-1)?.address).toBe(address(length + 1));
+  });
+
+  it("returns the sole shortest path alongside a deep merging dead-end graph", () => {
+    const stages = 28;
+    const address = (index: number) => `0x${index.toString(16)}`;
+    const functions = [observe("0x1", ["0x2", "0x1000"])];
+    for (let index = 2; index < stages + 2; index += 1)
+      functions.push(observe(address(index), [address(index + 1)]));
+    for (let index = 0; index < stages; index += 1) {
+      const base = 0x1000 + index * 2;
+      const next = [address(base + 2), address(base + 3)];
+      functions.push(observe(address(base), next));
+      functions.push(observe(address(base + 1), next));
+    }
+    functions.push(observe(address(0x1000 + stages * 2), []));
+    functions.push(observe(address(0x1001 + stages * 2), []));
+    const result = run(functions, {
+      start: { address: "0x1" },
+      goal: { address: address(stages + 2) },
+    });
+    expect(result).toMatchObject({
+      status: "found",
+      shortest_hops: stages + 1,
+      search_scope: { exhaustive: true },
+    });
+    expect(
+      result.paths.map(({ nodes }) => nodes.map(({ address }) => address)),
+    ).toEqual([
+      Array.from({ length: stages + 2 }, (_, index) => address(index + 1)),
+    ]);
+  });
+});
+
+describe("call path evidence admission", () => {
   it("normalizes hex addresses and rejects duplicates and mixed providers", () => {
     expect(
       run([observe("0x001000", [])], {
