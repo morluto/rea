@@ -73,35 +73,89 @@ export class DarwinProcessOwnershipInspectionError extends Error {
   }
 }
 
+interface ProcessReaderCompilation {
+  readonly controller: AbortController;
+  promise: Promise<string>;
+  waiters: number;
+  aborting: boolean;
+  settled: boolean;
+}
+
+const abortReason = (signal: AbortSignal): unknown => {
+  if (signal.reason !== undefined) return signal.reason;
+  const error = new Error("The operation was aborted");
+  error.name = "AbortError";
+  return error;
+};
+
+const isExpectedAbort = (cause: unknown, signal: AbortSignal): boolean =>
+  signal.aborted &&
+  (cause === signal.reason ||
+    (cause instanceof Error && cause.name === "AbortError"));
+
+const waitForCompilation = async (
+  promise: Promise<string>,
+  signal: AbortSignal | undefined,
+): Promise<string> => {
+  if (signal === undefined) return promise;
+  if (signal.aborted) throw abortReason(signal);
+  return new Promise((resolve, reject) => {
+    let completed = false;
+    const finish = (callback: () => void) => {
+      if (completed) return;
+      completed = true;
+      signal.removeEventListener("abort", onAbort);
+      callback();
+    };
+    const onAbort = () => finish(() => reject(abortReason(signal)));
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => finish(() => resolve(value)),
+      (cause: unknown) => finish(() => reject(cause)),
+    );
+    if (signal.aborted) onAbort();
+  });
+};
+
 /** Compile and retain the narrow Darwin sysctl reader for this REA process. */
 export const createDarwinProcessRunTokenReader = (
   options: { readonly xcrun?: string } = {},
 ) => {
   let root: string | undefined;
   let executable: string | undefined;
-  let compilePromise: Promise<string> | undefined;
+  let compilation: ProcessReaderCompilation | undefined;
+  let closePromise: Promise<void> | undefined;
   let closed = false;
   let exitCleanupInstalled = false;
 
   const cleanupAtExit = () => {
     if (root !== undefined) rmSync(root, { recursive: true, force: true });
   };
-  const compile = async (signal?: AbortSignal): Promise<string> => {
-    if (closed) throw new Error("Darwin process token reader is closed");
-    if (executable !== undefined) return executable;
-    if (compilePromise !== undefined) return compilePromise;
-    compilePromise = (async () => {
-      root = await mkdtemp(join(tmpdir(), "rea-process-token-"));
+  const cleanupRoot = async (target = root): Promise<void> => {
+    if (target === undefined) return;
+    await rm(target, { recursive: true, force: true });
+    if (root !== target) return;
+    root = undefined;
+    executable = undefined;
+    if (exitCleanupInstalled) process.removeListener("exit", cleanupAtExit);
+    exitCleanupInstalled = false;
+  };
+  const runCompilation = async (signal: AbortSignal): Promise<string> => {
+    let operationRoot: string | undefined;
+    try {
+      operationRoot = await mkdtemp(join(tmpdir(), "rea-process-token-"));
+      root = operationRoot;
       process.once("exit", cleanupAtExit);
       exitCleanupInstalled = true;
-      const output = join(root, "reader");
+      if (signal.aborted || closed) throw abortReason(signal);
+      const output = join(operationRoot, "reader");
       try {
         await execFileOutput(
           options.xcrun ?? "/usr/bin/xcrun",
           [
             "swiftc",
             "-module-cache-path",
-            join(root, "modules"),
+            join(operationRoot, "modules"),
             ...sourceFiles,
             "-o",
             output,
@@ -109,16 +163,11 @@ export const createDarwinProcessRunTokenReader = (
           {
             timeout: 60_000,
             maxBuffer: 1024 * 1024,
-            ...(signal === undefined ? {} : { signal }),
+            signal,
           },
         );
       } catch (cause: unknown) {
-        if (
-          signal?.aborted === true &&
-          (cause === signal.reason ||
-            (cause instanceof Error && cause.name === "AbortError"))
-        )
-          throw cause;
+        if (isExpectedAbort(cause, signal)) throw cause;
         const code =
           cause instanceof Error && "code" in cause
             ? String(cause.code)
@@ -128,19 +177,72 @@ export const createDarwinProcessRunTokenReader = (
           { cause },
         );
       }
+      if (signal.aborted || closed) throw abortReason(signal);
       executable = output;
       return output;
-    })();
-    try {
-      return await compilePromise;
     } catch (cause: unknown) {
-      if (exitCleanupInstalled) process.removeListener("exit", cleanupAtExit);
-      exitCleanupInstalled = false;
-      if (root !== undefined) await rm(root, { recursive: true, force: true });
-      root = undefined;
-      executable = undefined;
-      compilePromise = undefined;
+      const ownsRoot = operationRoot !== undefined && root === operationRoot;
+      if (operationRoot !== undefined) {
+        if (ownsRoot) await cleanupRoot(operationRoot);
+        else await rm(operationRoot, { recursive: true, force: true });
+      }
       throw cause;
+    }
+  };
+
+  const beginCompilation = (): ProcessReaderCompilation => {
+    const controller = new AbortController();
+    const operation: ProcessReaderCompilation = {
+      controller,
+      promise: runCompilation(controller.signal).finally(() => {
+        operation.settled = true;
+        if (compilation === operation) compilation = undefined;
+      }),
+      waiters: 0,
+      aborting: false,
+      settled: false,
+    };
+    compilation = operation;
+    return operation;
+  };
+
+  const compile = async (signal?: AbortSignal): Promise<string> => {
+    if (closed) throw new Error("Darwin process token reader is closed");
+    signal?.throwIfAborted();
+    while (true) {
+      if (closed) throw new Error("Darwin process token reader is closed");
+      signal?.throwIfAborted();
+      if (executable !== undefined) return executable;
+      if (compilation === undefined && root !== undefined) {
+        await cleanupRoot();
+        continue;
+      }
+      let operation = compilation;
+      if (operation?.aborting === true) {
+        try {
+          await waitForCompilation(operation.promise, signal);
+        } catch (cause: unknown) {
+          if (signal !== undefined && isExpectedAbort(cause, signal))
+            throw cause;
+        }
+        continue;
+      }
+      operation ??= beginCompilation();
+      operation.waiters += 1;
+      try {
+        return await waitForCompilation(operation.promise, signal);
+      } finally {
+        operation.waiters -= 1;
+        if (
+          operation.waiters === 0 &&
+          !operation.settled &&
+          !operation.aborting
+        ) {
+          operation.aborting = true;
+          operation.controller.abort();
+          await operation.promise.catch(() => undefined);
+        }
+      }
     }
   };
 
@@ -236,13 +338,23 @@ export const createDarwinProcessRunTokenReader = (
     return observations;
   };
 
-  const close = async () => {
-    if (closed) return;
+  const close = (): Promise<void> => {
+    if (closePromise !== undefined) return closePromise;
     closed = true;
-    if (exitCleanupInstalled) process.removeListener("exit", cleanupAtExit);
-    if (root !== undefined) await rm(root, { recursive: true, force: true });
-    root = undefined;
-    executable = undefined;
+    const pendingClose = (async () => {
+      const operation = compilation;
+      if (operation !== undefined && !operation.settled) {
+        operation.aborting = true;
+        operation.controller.abort();
+        await operation.promise.catch(() => undefined);
+      }
+      await cleanupRoot();
+    })().catch((cause: unknown) => {
+      if (closePromise === pendingClose) closePromise = undefined;
+      throw cause;
+    });
+    closePromise = pendingClose;
+    return closePromise;
   };
 
   return { read, identities, prepare: compile, close };

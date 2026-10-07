@@ -31,10 +31,12 @@ const onDarwin = process.platform === "darwin";
 const writeBlockingCompiler = async (directory: string) => {
   const executable = join(directory, "fake-xcrun");
   const statePath = join(directory, "compile-state.json");
+  const releasePath = join(directory, "release-compiler");
   const source = `#!/usr/bin/env node
 const fs = require("node:fs");
 const path = require("node:path");
 const statePath = ${JSON.stringify(statePath)};
+const releasePath = ${JSON.stringify(releasePath)};
 const state = fs.existsSync(statePath)
   ? JSON.parse(fs.readFileSync(statePath, "utf8"))
   : { calls: 0 };
@@ -43,16 +45,21 @@ const moduleIndex = process.argv.indexOf("-module-cache-path");
 state.root = path.dirname(process.argv[moduleIndex + 1]);
 const outputIndex = process.argv.indexOf("-o");
 state.output = process.argv[outputIndex + 1];
+state.releasePath = releasePath;
 fs.writeFileSync(statePath, JSON.stringify(state));
 if (state.calls === 1) {
-  setInterval(() => {}, 1000);
+  const timer = setInterval(() => {
+    if (!fs.existsSync(releasePath)) return;
+    clearInterval(timer);
+    fs.writeFileSync(state.output, "compiled");
+  }, 10);
 } else {
   fs.writeFileSync(state.output, "compiled");
 }
 `;
   await writeFile(executable, source);
   await chmod(executable, 0o755);
-  return { executable, statePath };
+  return { executable, statePath, releasePath };
 };
 
 const writeBlockingIdentityCompiler = async (directory: string) => {
@@ -90,12 +97,15 @@ const waitForCompileState = async (statePath: string) => {
         "root" in parsed &&
         typeof parsed.root === "string" &&
         "output" in parsed &&
-        typeof parsed.output === "string"
+        typeof parsed.output === "string" &&
+        "releasePath" in parsed &&
+        typeof parsed.releasePath === "string"
       )
         return {
           calls: parsed.calls,
           root: parsed.root,
           output: parsed.output,
+          releasePath: parsed.releasePath,
         };
     } catch {
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -191,6 +201,138 @@ it.skipIf(process.platform === "win32")(
     } finally {
       if (!controller.signal.aborted) controller.abort();
       await compilation;
+      await reader.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32").each(["first", "second"] as const)(
+  "keeps shared compilation alive when the %s waiter cancels",
+  async (cancelledWaiter) => {
+    const directory = await mkdtemp(
+      join(tmpdir(), "rea-process-token-shared-compile-test-"),
+    );
+    const fakeCompiler = await writeBlockingCompiler(directory);
+    const reader = createDarwinProcessRunTokenReader({
+      xcrun: fakeCompiler.executable,
+    });
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    const firstWaiter = reader.prepare(firstController.signal).then(
+      (value) => ({ state: "fulfilled" as const, value }),
+      (cause: unknown) => ({ state: "rejected" as const, cause }),
+    );
+    const secondWaiterPromise = (async () => {
+      const state = await waitForCompileState(fakeCompiler.statePath);
+      const secondWaiter = reader.prepare(secondController.signal).then(
+        (value) => ({ state: "fulfilled" as const, value }),
+        (cause: unknown) => ({ state: "rejected" as const, cause }),
+      );
+      const cancelled =
+        cancelledWaiter === "first" ? firstWaiter : secondWaiter;
+      const surviving =
+        cancelledWaiter === "first" ? secondWaiter : firstWaiter;
+      (cancelledWaiter === "first"
+        ? firstController
+        : secondController
+      ).abort();
+      const firstOutcome = await cancelled;
+      expect(firstOutcome.state).toBe("rejected");
+      if (firstOutcome.state !== "rejected")
+        throw new Error("cancelled compilation waiter unexpectedly succeeded");
+      expect(firstOutcome.cause).toMatchObject({ name: "AbortError" });
+      await expect(access(state.root)).resolves.toBeUndefined();
+      await writeFile(fakeCompiler.releasePath, "release");
+      return { state, outcome: await surviving };
+    })();
+
+    try {
+      const { state, outcome } = await secondWaiterPromise;
+      expect(state.calls).toBe(1);
+      expect(outcome.state).toBe("fulfilled");
+      if (outcome.state !== "fulfilled") throw outcome.cause;
+      expect(outcome.value).toBe(state.output);
+      await reader.close();
+      await expect(access(state.root)).rejects.toThrow();
+    } finally {
+      if (!firstController.signal.aborted) firstController.abort();
+      if (!secondController.signal.aborted) secondController.abort();
+      await Promise.allSettled([firstWaiter, secondWaiterPromise]);
+      await reader.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "retains a failed compilation cleanup for a later close retry",
+  async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), "rea-process-token-cleanup-retry-test-"),
+    );
+    const fakeCompiler = await writeBlockingCompiler(directory);
+    const reader = createDarwinProcessRunTokenReader({
+      xcrun: fakeCompiler.executable,
+    });
+    const controller = new AbortController();
+    const preparation = reader.prepare(controller.signal).then(
+      () => ({ state: "fulfilled" as const }),
+      (cause: unknown) => ({ state: "rejected" as const, cause }),
+    );
+    let compilationRoot: string | undefined;
+    try {
+      const state = await waitForCompileState(fakeCompiler.statePath);
+      compilationRoot = state.root;
+      await writeFile(
+        join(state.root, "retained.txt"),
+        "cleanup must remain tracked",
+      );
+      await chmod(state.root, 0o000);
+      controller.abort();
+      expect((await preparation).state).toBe("rejected");
+      await expect(reader.close()).rejects.toThrow();
+      await chmod(state.root, 0o700);
+      await reader.close();
+      await expect(access(state.root)).rejects.toThrow();
+    } finally {
+      if (!controller.signal.aborted) controller.abort();
+      await preparation;
+      if (compilationRoot !== undefined)
+        await chmod(compilationRoot, 0o700).catch(() => undefined);
+      await reader.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "aborts and cleans an active compilation when the reader closes",
+  async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), "rea-process-token-close-compile-test-"),
+    );
+    const fakeCompiler = await writeBlockingCompiler(directory);
+    const reader = createDarwinProcessRunTokenReader({
+      xcrun: fakeCompiler.executable,
+    });
+    const preparation = reader.prepare().then(
+      () => ({ state: "fulfilled" as const }),
+      (cause: unknown) => ({ state: "rejected" as const, cause }),
+    );
+    try {
+      const state = await waitForCompileState(fakeCompiler.statePath);
+      await reader.close();
+      const outcome = await preparation;
+      expect(outcome.state).toBe("rejected");
+      if (outcome.state !== "rejected")
+        throw new Error("closed reader compilation unexpectedly succeeded");
+      expect(outcome.cause).toMatchObject({ name: "AbortError" });
+      await expect(access(state.root)).rejects.toThrow();
+      await expect(reader.prepare()).rejects.toThrow(/reader is closed/u);
+      await expect(reader.close()).resolves.toBeUndefined();
+    } finally {
+      await Promise.allSettled([preparation]);
       await reader.close();
       await rm(directory, { recursive: true, force: true });
     }
