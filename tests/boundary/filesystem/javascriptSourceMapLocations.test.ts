@@ -48,12 +48,17 @@ it("resolves a bare source-map file name and worker URL next to the script", asy
   await mkdir(join(root, "dist"));
   await writeFile(
     join(root, "dist", "app.js"),
-    'new Worker("worker.js");\n//# sourceMappingURL=app.js.map',
+    [
+      'new Worker("worker.js");',
+      'navigator.serviceWorker.register("sw.js");',
+      "//# sourceMappingURL=app.js.map",
+    ].join("\n"),
   );
   await writeFile(
     join(root, "dist", "worker.js"),
     "self.onmessage = () => {};",
   );
+  await writeFile(join(root, "dist", "sw.js"), "self.onfetch = () => {};");
   await writeFile(
     join(root, "dist", "app.js.map"),
     JSON.stringify({
@@ -83,5 +88,13 @@ it("resolves a bare source-map file name and worker URL next to the script", asy
   );
   expect(workerEdge?.properties).toMatchObject({
     resolved_path: "dist/worker.js",
+  });
+  const serviceWorkerEdge = result.graph.edges.find(
+    ({ relation, source_node_id }) =>
+      relation === "maps_to" &&
+      nodes.get(source_node_id)?.kind === "service-worker",
+  );
+  expect(serviceWorkerEdge?.properties).toMatchObject({
+    resolved_path: "dist/sw.js",
   });
 });

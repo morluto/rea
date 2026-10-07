@@ -133,10 +133,6 @@ const contextualCandidate = (
       ? stripQueryAndFragment(input.declaredPath)
       : input.declaredPath;
   if (context === "html-reference") return htmlCandidate(input);
-  if (context === "url-reference" && declared.startsWith("//"))
-    return unresolvedOutcome(input, "external", [
-      "Protocol-relative URLs are outside this local artifact path context.",
-    ]);
   if (context === "module-specifier") {
     const fileUrl = fileUrlPath(declared);
     if (fileUrl !== undefined) return fileUrl;
@@ -146,9 +142,9 @@ const contextualCandidate = (
       ]);
     if (!declared.startsWith(".") && !declared.startsWith("/"))
       return bareModuleCandidate(input, declared);
-  } else if (hasScheme(declared))
+  } else if (looksExternal(declared))
     return unresolvedOutcome(input, "external", [
-      "URL schemes are outside this local artifact path context.",
+      "URL schemes and protocol-relative URLs are outside this local artifact path context.",
     ]);
   const relative = declared.startsWith("/") ? declared.slice(1) : declared;
   return declared.startsWith("/")
