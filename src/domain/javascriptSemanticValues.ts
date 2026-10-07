@@ -268,12 +268,38 @@ const evaluateAddition = (
   node: t.BinaryExpression,
   context: EvaluationContext,
 ): JavaScriptSemanticValue => {
-  const left = primitiveCandidates(
-    evaluateExpression(node.left, nestedContext(context)),
-  );
-  const right = primitiveCandidates(
-    evaluateExpression(node.right, nestedContext(context)),
-  );
+  const pending: {
+    readonly node: t.BinaryExpression;
+    left: JavaScriptSemanticValue | undefined;
+  }[] = [];
+  let current: t.Node = node;
+  while (true) {
+    if (t.isBinaryExpression(current, { operator: "+" })) {
+      pending.push({ node: current, left: undefined });
+      current = current.left;
+      continue;
+    }
+    let value = evaluateExpression(current, nestedContext(context));
+    while (true) {
+      const parent = pending.at(-1);
+      if (parent === undefined) return value;
+      if (parent.left === undefined) {
+        parent.left = value;
+        current = parent.node.right;
+        break;
+      }
+      value = addPrimitiveValues(parent.left, value);
+      pending.pop();
+    }
+  }
+};
+
+const addPrimitiveValues = (
+  leftValue: JavaScriptSemanticValue,
+  rightValue: JavaScriptSemanticValue,
+): JavaScriptSemanticValue => {
+  const left = primitiveCandidates(leftValue);
+  const right = primitiveCandidates(rightValue);
   if (left === null || right === null)
     return { status: "unknown", reason: "Non-primitive addition." };
   const values = left.flatMap((leftValue) =>
