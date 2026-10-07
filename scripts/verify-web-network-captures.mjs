@@ -263,7 +263,7 @@ try {
       const error = await inspect(
         mode,
         { capture_path: path, format },
-        "capability_unavailable",
+        "unsupported_provider",
       );
       assert.ok(
         JSON.stringify(error).includes("JSON schema boundary cannot preserve"),
