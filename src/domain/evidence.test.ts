@@ -156,6 +156,23 @@ describe("analysis evidence identity", () => {
   });
 });
 
+it("binds an explicit unknown-subject reason into the semantic Evidence identity", () => {
+  const reason = "Caller excluded the observed digest.";
+  const observation = { operation: "health", parameters: {}, result: true };
+  const explicit = createEvidence(undefined, PROVIDER, {
+    ...observation,
+    subjectUnavailableReason: reason,
+  });
+  const defaulted = createEvidence(undefined, PROVIDER, observation);
+  expect(explicit.subject).toBeNull();
+  expect(explicit.limitations).toEqual([reason]);
+  expect(defaulted.limitations).toEqual([
+    "Artifact identity is unavailable for this observation.",
+  ]);
+  expect(explicit.evidence_id).not.toBe(defaulted.evidence_id);
+  expect(parseEvidence(explicit)).toEqual(explicit);
+});
+
 it("derives byte-stable bundle manifests independent of record order", () => {
   const artifactEvidence = createEvidence(TARGET, PROVIDER, {
     operation: "health",

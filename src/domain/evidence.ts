@@ -169,6 +169,8 @@ export interface EvidenceObservation {
   readonly authority?: EvidenceAuthority;
   readonly environment?: ExecutionEnvironment | null;
   readonly limitations?: readonly string[];
+  /** Reason the subject identity is unavailable, when no target identity is supplied. */
+  readonly subjectUnavailableReason?: string;
   readonly locations?: readonly EvidenceLocation[];
   readonly evidenceLinks?: readonly string[];
 }
@@ -262,7 +264,10 @@ export const createEvidence = (
     environment: observation.environment ?? null,
     limitations: [
       ...(target === undefined
-        ? ["Artifact identity is unavailable for this observation."]
+        ? [
+            observation.subjectUnavailableReason ??
+              "Artifact identity is unavailable for this observation.",
+          ]
         : []),
       ...(observation.limitations ?? []),
     ],

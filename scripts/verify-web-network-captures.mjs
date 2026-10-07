@@ -601,6 +601,28 @@ try {
       }
     }
   }
+  for (const mode of ["cli", "mcp"]) {
+    for (const format of ["har", "mitmproxy"]) {
+      const capturePath = join(
+        runtime.path,
+        format === "har" ? "producer.har" : "flows.mitm",
+      );
+      const digest = createHash("sha256")
+        .update(await readFile(capturePath))
+        .digest("hex");
+      for (const literal of [digest, digest.slice(0, 12)]) {
+        const value = await inspect(mode, {
+          capture_path: capturePath,
+          format,
+          sensitive_values: [literal],
+        });
+        assert.equal(value.artifact.sha256, null);
+        assert.equal(value.artifact.path, capturePath);
+        assert.ok(!JSON.stringify(value).includes(literal));
+        cases++;
+      }
+    }
+  }
   const oversizedPath = join(runtime.path, "oversized-capture");
   for (const mode of ["cli", "mcp"]) {
     for (const literal of ["log", "entries"]) {
@@ -875,6 +897,8 @@ function assertSensitiveLimitations(evidence, literals) {
           "Declared literal retained in Evidence parameter",
         );
   const result = evidence.normalized_result;
+  if (result.artifact.sha256 === null) assert.equal(evidence.subject, null);
+  else assert.equal(evidence.subject.digest.sha256, result.artifact.sha256);
   assert.deepEqual(
     evidence.provider,
     result.decoder,

@@ -3,6 +3,7 @@ import { WebNetworkCaptureService } from "./WebNetworkCaptureService.js";
 import { historicalHar } from "../../tests/fixtures/historicalHar.js";
 import { ok } from "../domain/result.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { parseEvidence } from "../domain/evidence.js";
 import {
   webNetworkCaptureSchema,
   type WebNetworkCapture,
@@ -73,6 +74,55 @@ const fixture = (): WebNetworkCapture => ({
   format: "har",
   runtime_attribution: "unknown",
   limitations: ["historical fixture"],
+});
+
+it.each(["a".repeat(64), "aaaa"])(
+  "marks an explicitly sensitive artifact digest unknown without inventing another identity: %s",
+  async (literal) => {
+    const result = await new WebNetworkCaptureService({
+      inspect: () => Promise.resolve(ok(fixture())),
+    }).inspect({
+      capture_path: "/capture.har",
+      format: "har",
+      sensitive_values: [literal],
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value.subject).toBeNull();
+    expect(result.value.normalized_result).toMatchObject({
+      artifact: { path: "/capture.har", sha256: null, bytes: 10 },
+    });
+    expect(result.value.parameters.capture_path).toBe("/capture.har");
+    expect(result.value.locations).toEqual([
+      { kind: "artifact-path", path: "/capture.har" },
+    ]);
+    expect(parseEvidence(result.value)).toEqual(result.value);
+  },
+);
+
+it("projects the unknown-subject explanation before generating its Evidence ID", async () => {
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(fixture())),
+  }).inspect({
+    capture_path: "/capture.har",
+    format: "har",
+    sensitive_values: ["a"],
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.subject).toBeNull();
+  expect(result.value.limitations.every((text) => !text.includes("a"))).toBe(
+    true,
+  );
+  expect(parseEvidence(result.value)).toEqual(result.value);
+});
+
+it("rejects an adapter omitting its original observed digest before caller projection", async () => {
+  const report = fixture();
+  report.artifact.sha256 = null;
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(report)),
+  }).inspect({ capture_path: report.artifact.path, format: "har" });
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error._tag).toBe("AnalysisOutputError");
 });
 
 it.each([

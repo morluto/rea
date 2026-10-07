@@ -93,6 +93,14 @@ export class WebNetworkCaptureService {
         ),
       );
     const value = report.data;
+    const artifactSha256 = value.artifact.sha256;
+    if (artifactSha256 === null)
+      return failure(
+        new AnalysisOutputError(
+          OPERATION,
+          "Capture adapter omitted its observed artifact digest before explicit projection.",
+        ),
+      );
     if (
       value.artifact.path !== input.capture_path ||
       value.format !== input.format ||
@@ -133,14 +141,22 @@ export class WebNetworkCaptureService {
     )
       ? ""
       : input.capture_path;
-    const limitations = (
-      safePath === ""
+    const safeSha256 = input.sensitive_values.some((literal) =>
+      artifactSha256.includes(literal),
+    )
+      ? null
+      : artifactSha256;
+    const subjectUnavailableReason = redactText(
+      "The explicitly sensitive artifact digest is excluded; its cryptographic identity is unknown in this Evidence.",
+    );
+    const limitations = [
+      ...safeValue.limitations,
+      ...(safePath === ""
         ? [
-            ...safeValue.limitations,
-            "The explicitly sensitive artifact path is excluded; its observed SHA-256 and size remain available.",
+            "The explicitly sensitive artifact path is excluded; its size remains available.",
           ]
-        : safeValue.limitations
-    ).map(redactText);
+        : []),
+    ].map(redactText);
     const parameters = jsonObjectSchema.parse({
       capture_path: safePath,
       ...(input.sensitive_values.some((literal) =>
@@ -153,24 +169,30 @@ export class WebNetworkCaptureService {
     });
     return ok(
       createEvidence(
-        {
-          path: safePath,
-          sha256: value.artifact.sha256,
-          format: "file",
-        },
+        safeSha256 === null
+          ? undefined
+          : {
+              path: safePath,
+              sha256: safeSha256,
+              format: "file",
+            },
         value.decoder,
         {
           operation: OPERATION,
           parameters,
           result: {
             ...safeValue,
-            artifact: { ...value.artifact, path: safePath },
+            artifact: { ...value.artifact, path: safePath, sha256: safeSha256 },
             records,
-            limitations,
+            limitations:
+              safeSha256 === null
+                ? [...limitations, subjectUnavailableReason]
+                : limitations,
           },
           confidence: "observed",
           authority: "historical-reference",
           limitations,
+          ...(safeSha256 === null ? { subjectUnavailableReason } : {}),
           locations:
             safePath === "" ? [] : [{ kind: "artifact-path", path: safePath }],
         },

@@ -27,7 +27,7 @@ export const inspectWebNetworkCaptureInputSchema = z.strictObject({
     .array(z.string().min(1))
     .default([])
     .describe(
-      "Literal values explicitly marked sensitive. Values are never persisted in Evidence parameters.",
+      "Literal text excluded from capture payloads, byte/numeric projections, producer coordinates, artifact paths/digests and diagnostic text. Declaration strings are never persisted in Evidence parameters. Canonical contract keys, enums and provider identities remain intact.",
     ),
 });
 
@@ -105,7 +105,13 @@ export const webNetworkCaptureSchema = z.strictObject({
       .describe(
         "Selected artifact path; empty when explicitly excluded from Evidence.",
       ),
-    sha256: z.string().regex(/^[0-9a-f]{64}$/),
+    sha256: z
+      .string()
+      .regex(/^[0-9a-f]{64}$/)
+      .nullable()
+      .describe(
+        "Observed artifact SHA-256; null only when explicitly excluded by a sensitive declaration.",
+      ),
     bytes: z.number().int().nonnegative(),
   }),
   format: z.enum(["har", "mitmproxy"]),
