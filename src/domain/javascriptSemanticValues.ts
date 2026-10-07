@@ -255,7 +255,8 @@ const evaluateMember = (
 ): JavaScriptSemanticValue => {
   if (!t.isNode(node.object))
     return { status: "unknown", reason: "Unsupported member base." };
-  const key = memberKey(node);
+  const key =
+    semanticStaticPropertyKey(node.property, node.computed) ?? undefined;
   if (key === undefined)
     return { status: "unknown", reason: "Dynamic member key." };
   return projectValue(evaluateExpression(node.object, nestedContext(context)), [
@@ -415,7 +416,8 @@ const provenanceForExpression = (
         "unknown",
         "Unsupported member base.",
       );
-    const member = memberKey(node);
+    const member =
+      semanticStaticPropertyKey(node.property, node.computed) ?? undefined;
     if (typeof member !== "string")
       return semanticUnresolvedProvenance(
         "unknown",
@@ -459,7 +461,8 @@ const requireOrigin = (
   if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
     if (!t.isNode(node.object)) return undefined;
     const nested = requireOrigin(node.object, state);
-    const member = memberKey(node);
+    const member =
+      semanticStaticPropertyKey(node.property, node.computed) ?? undefined;
     return nested === undefined || typeof member !== "string"
       ? undefined
       : { ...nested, importedPath: [...nested.importedPath, member] };
@@ -489,13 +492,6 @@ const mergeValues = (
   )
     ? primitiveSet(primitives)
     : { status: "ambiguous", reason: "Branches have incompatible values." };
-};
-
-const memberKey = (
-  node: t.MemberExpression | t.OptionalMemberExpression,
-): string | number | undefined => {
-  const name = semanticStaticPropertyKey(node.property, node.computed);
-  return name ?? undefined;
 };
 
 const nestedContext = (

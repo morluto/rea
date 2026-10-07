@@ -164,6 +164,26 @@ describe("web bundle analyzer", () => {
   });
 });
 
+describe("web bundle static-analysis parity", () => {
+  it("recognizes endpoints through nested dynamic receivers like static analysis", () => {
+    const result = analyzeCapturedWebBundle(
+      inspection('window[recv].fetch("/nested-fetch");'),
+    );
+    expect(result.observations.endpoints).toContainEqual(
+      expect.objectContaining({ value: "/nested-fetch" }),
+    );
+  });
+
+  it("recognizes loadURL endpoints like static analysis", () => {
+    const result = analyzeCapturedWebBundle(
+      inspection('window.win.loadURL("https://embedded.test/app");'),
+    );
+    expect(result.observations.endpoints).toContainEqual(
+      expect.objectContaining({ value: "https://embedded.test/app" }),
+    );
+  });
+});
+
 describe("web bundle artifact metadata", () => {
   it("preserves long provider media types in artifact summaries", () => {
     const result = analyzeCapturedWebBundle(inspection("export {};"));

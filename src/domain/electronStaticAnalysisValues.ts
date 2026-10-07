@@ -3,10 +3,7 @@ import * as t from "@babel/types";
 import { compareCodePoints } from "./canonicalOrdering.js";
 import type { ElectronStaticValue } from "./electronStaticAnalysisTypes.js";
 import { semanticStaticPropertyName } from "./javascriptAstValues.js";
-import {
-  propertyName,
-  sourceSlice,
-} from "./javascriptStaticAnalysisHelpers.js";
+import { sourceSlice } from "./javascriptStaticAnalysisHelpers.js";
 
 /** Preserve one literal value or the exact inert expression. */
 export const electronStaticValue = (
@@ -128,7 +125,7 @@ const collectMembersAt = (
       state.unknown += 1;
       continue;
     }
-    const name = propertyName(property.key);
+    const name = semanticStaticPropertyName(property.key, property.computed);
     if (name === "" || property.computed) {
       state.unknown += 1;
       continue;

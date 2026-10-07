@@ -6,7 +6,10 @@ import {
 } from "./javascriptSemanticState.js";
 import { evaluateSemanticBinding } from "./javascriptSemanticValues.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
-import { semanticStaticPropertyName } from "./javascriptAstValues.js";
+import {
+  semanticStaticPropertyKey,
+  semanticStaticPropertyName,
+} from "./javascriptAstValues.js";
 
 type PropertyPath = readonly (string | number | null)[];
 
@@ -36,7 +39,11 @@ export const collectSemanticMemberMutations = (
       return;
     }
     if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
-      markValue(node.object, [propertyKey(node), ...path], bindings);
+      markValue(
+        node.object,
+        [semanticStaticPropertyKey(node.property, node.computed), ...path],
+        bindings,
+      );
       return;
     }
     for (const value of referencedValues(node, path))
@@ -44,7 +51,11 @@ export const collectSemanticMemberMutations = (
   };
   const markTarget = (node: t.Node): void => {
     if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
-      markValue(node.object, [propertyKey(node)], new Set());
+      markValue(
+        node.object,
+        [semanticStaticPropertyKey(node.property, node.computed)],
+        new Set(),
+      );
     else if (t.isRestElement(node)) markTarget(node.argument);
     else if (t.isAssignmentPattern(node)) markTarget(node.left);
     else if (t.isArrayPattern(node)) {
@@ -128,13 +139,4 @@ const referencedValues = (
       { node: node.right, path },
     ];
   return [];
-};
-
-const propertyKey = (
-  node: t.MemberExpression | t.OptionalMemberExpression,
-): string | null => {
-  const name = semanticStaticPropertyName(node.property, node.computed);
-  return name !== "" || t.isStringLiteral(node.property, { value: "" })
-    ? name
-    : null;
 };

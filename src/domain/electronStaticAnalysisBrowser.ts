@@ -20,11 +20,11 @@ import { addLocatedFinding } from "./javascriptStaticAnalysisFindings.js";
 import {
   argumentNode,
   calleeName,
-  propertyName,
   range,
   staticPath,
   staticPathResolutionContext,
 } from "./javascriptStaticAnalysisHelpers.js";
+import { semanticStaticPropertyName } from "./javascriptAstValues.js";
 import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.js";
 
 /** Inspect BrowserWindow, contextBridge, and utility-process syntax. */
@@ -115,7 +115,7 @@ const collectWebPreferences = (
       });
       continue;
     }
-    const name = propertyName(property.key);
+    const name = semanticStaticPropertyName(property.key, property.computed);
     if (name === "" || property.computed) {
       unknown += 1;
       preferences.push({

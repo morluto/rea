@@ -8,13 +8,15 @@ import { semanticStaticPropertyName } from "./javascriptAstValues.js";
 import {
   calleeName,
   endpointArgument,
+  stringValue,
+} from "./javascriptStaticAnalysisHelpers.js";
+import {
   location,
   locationFields,
   objectString,
   objectValue,
   resolveSpecifier,
   isUrlLikeModuleSpecifier,
-  stringArgument,
 } from "./webBundleAnalyzerAst.js";
 
 type BundleObservations = WebBundleAnalysis["observations"];
@@ -109,7 +111,7 @@ const inspectCall = (
   accumulator: AnalysisAccumulator,
 ): void => {
   const name = calleeName(node.callee);
-  const first = stringArgument(node.arguments[0]);
+  const first = stringValue(node.arguments[0]);
   if ((name === "require" || name.endsWith(".require")) && first !== undefined)
     addEdge({
       script,
@@ -120,7 +122,7 @@ const inspectCall = (
     });
   if (name === "importScripts" || name.endsWith(".importScripts"))
     for (const argument of node.arguments) {
-      const specifier = stringArgument(argument);
+      const specifier = stringValue(argument);
       if (specifier === undefined) continue;
       addEdge({ script, specifier, kind: "worker_import", node, accumulator });
     }
