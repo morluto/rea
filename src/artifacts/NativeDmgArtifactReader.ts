@@ -60,7 +60,7 @@ const systemHost: NativeDmgHost = {
       if (cause instanceof Error && cause.name === "AbortError")
         throw new ArtifactReaderFailure("cancelled", "DMG operation cancelled");
       throw new ArtifactReaderFailure(
-        commandFailureReason(cause),
+        commandFailureReason(cause, arguments_[0]),
         `hdiutil ${arguments_[0] ?? "operation"} failed: ${describeCommandFailure(cause, arguments_)}`,
         { cause },
       );
@@ -256,10 +256,27 @@ const runChecked = async (
   signal?: AbortSignal,
   options?: { readonly timeoutMs: number },
 ): Promise<{ readonly stdout: string; readonly exitCode: 0 }> => {
-  const result = await host.run(arguments_, signal, options);
+  let result: Awaited<ReturnType<NativeDmgHost["run"]>>;
+  try {
+    result = await host.run(arguments_, signal, options);
+  } catch (cause: unknown) {
+    if (cause instanceof ArtifactReaderFailure) throw cause;
+    if (cause instanceof Error && cause.name === "AbortError")
+      throw new ArtifactReaderFailure("cancelled", "DMG operation cancelled", {
+        cause,
+      });
+    throw new ArtifactReaderFailure(
+      commandFailureReason(cause, arguments_[0]),
+      `hdiutil ${arguments_[0] ?? "operation"} failed: ${describeCommandFailure(
+        cause,
+        arguments_,
+      )}`,
+      { cause },
+    );
+  }
   if (result.exitCode !== 0)
     throw new ArtifactReaderFailure(
-      "unavailable",
+      commandFailureReason({ exitCode: result.exitCode }, arguments_[0]),
       `hdiutil ${arguments_[0] ?? "operation"} failed: ${describeCommandFailure(
         {
           command: "/usr/bin/hdiutil",
@@ -287,6 +304,7 @@ const describeCommandFailure = (
       "exitCode",
       "errno",
       "syscall",
+      "signal",
       "stdout",
       "stderr",
     ] as const) {
@@ -294,6 +312,8 @@ const describeCommandFailure = (
       if (typeof value === "string" || typeof value === "number")
         fields[key] = value;
     }
+    const code = Reflect.get(cause, "code");
+    if (typeof code === "number") fields.exitCode = code;
   }
   if (cause instanceof ArtifactReaderFailure) fields.message = cause.message;
   else if (cause instanceof Error) fields.message = cause.message;
@@ -302,10 +322,32 @@ const describeCommandFailure = (
 
 const commandFailureReason = (
   cause: unknown,
+  operation: string | undefined,
 ): ArtifactReaderFailure["reason"] => {
-  if (typeof cause !== "object" || cause === null || !("code" in cause))
-    return "unavailable";
-  return typeof cause.code === "number" ? "unavailable" : "io";
+  if (typeof cause !== "object" || cause === null) return "unavailable";
+  const code = Reflect.get(cause, "code");
+  const exitCode = Reflect.get(cause, "exitCode");
+  if (typeof code === "number" || typeof exitCode === "number")
+    return operation === "verify" ? "format" : "unavailable";
+  if (code === "ENOENT") {
+    const syscall = Reflect.get(cause, "syscall");
+    return typeof syscall === "string" && syscall.startsWith("spawn")
+      ? "unavailable"
+      : "io";
+  }
+  if (
+    code === "EACCES" ||
+    code === "EPERM" ||
+    code === "EIO" ||
+    code === "ENOTDIR" ||
+    code === "EISDIR" ||
+    code === "ENODEV" ||
+    code === "EROFS" ||
+    code === "EMFILE" ||
+    code === "ENFILE"
+  )
+    return "io";
+  return "unavailable";
 };
 
 const command = (

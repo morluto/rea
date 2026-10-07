@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { build } from "plist";
 import { describe, expect, it } from "vitest";
 
+import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import { ArtifactReaderFailure } from "../../../../src/artifacts/ArtifactReader.js";
 import {
   NativeDmgArtifactReader,
   type NativeDmgHost,
@@ -61,7 +63,7 @@ describe("native DMG artifact reader", () => {
           }),
       }),
     ).rejects.toMatchObject({
-      reason: "unavailable",
+      reason: "format",
       message: expect.stringMatching(
         /"arguments":\["verify","\/tmp\/image\.dmg"\].*"exitCode":1.*"stderr":"hdiutil: verification failed"/u,
       ),
@@ -99,6 +101,81 @@ describe("native DMG artifact reader", () => {
       NativeDmgArtifactReader.create("/tmp/image.dmg", undefined, host),
     ).rejects.toThrow("cleanup could not detach every device");
   });
+});
+
+describe("native DMG command failure diagnostics", () => {
+  it("keeps unknown attach failures unavailable with command evidence", async () => {
+    await expect(
+      NativeDmgArtifactReader.create("/tmp/image.dmg", undefined, {
+        run(arguments_) {
+          if (arguments_[0] === "verify")
+            return Promise.resolve({ stdout: "", exitCode: 0 });
+          return Promise.resolve({
+            stdout: "attach output",
+            stderr: "attach failed for an unknown reason",
+            exitCode: 2,
+          });
+        },
+      }),
+    ).rejects.toMatchObject({
+      reason: "unavailable",
+      message: expect.stringMatching(
+        /"arguments":\["attach".*"exitCode":2.*"stderr":"attach failed for an unknown reason"/u,
+      ),
+    });
+  });
+
+  it("distinguishes child launch and host permission failures", async () => {
+    await expect(
+      NativeDmgArtifactReader.create("/tmp/image.dmg", undefined, {
+        run: () =>
+          Promise.reject(
+            Object.assign(new Error("could not launch hdiutil"), {
+              code: "ENOENT",
+              syscall: "spawn /usr/bin/hdiutil",
+            }),
+          ),
+      }),
+    ).rejects.toMatchObject({
+      reason: "unavailable",
+      message: expect.stringContaining('"code":"ENOENT"'),
+    });
+
+    await expect(
+      NativeDmgArtifactReader.create("/tmp/image.dmg", undefined, {
+        run: () =>
+          Promise.reject(
+            Object.assign(new Error("permission denied"), {
+              code: "EACCES",
+              syscall: "spawn /usr/bin/hdiutil",
+            }),
+          ),
+      }),
+    ).rejects.toMatchObject({
+      reason: "io",
+      message: expect.stringContaining('"code":"EACCES"'),
+    });
+  });
+
+  it.skipIf(process.platform !== "darwin")(
+    "classifies a real hdiutil verify refusal as a format failure with captured output",
+    async () => {
+      const root = await createTestTempDirectory("rea-invalid-dmg-");
+      const path = join(root, "invalid.dmg");
+      await writeFile(path, "This is not a disk image.\n");
+      const failure = await NativeDmgArtifactReader.create(path).catch(
+        (cause: unknown) => cause,
+      );
+      expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+      if (!(failure instanceof ArtifactReaderFailure)) return;
+      expect(failure.reason).toBe("format");
+      expect(failure.message).toContain('"command":"/usr/bin/hdiutil"');
+      expect(failure.message).toContain('"arguments":["verify"');
+      expect(failure.message).toContain('"exitCode":1');
+      expect(failure.message).toContain('"stdout":""');
+      expect(failure.message).toContain('"stderr":"');
+    },
+  );
 });
 
 it("owns the canonical mount root and detaches each observed whole image once", async () => {
