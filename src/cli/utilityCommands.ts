@@ -84,7 +84,7 @@ export const registerUtilityCommands = (
                 ? { ok: true as const, value: undefined }
                 : safeParseJson(options.steps);
             if (!decoded.ok)
-              return invalidNativeUiScenarioInput(command, [
+              return invalidNativeUiScenarioInput(operation, [
                 { path: ["steps"], reason: "invalid_format", expected: "JSON" },
               ]);
             const parsed = nativeUiScenarioInputSchema.safeParse({
@@ -93,7 +93,7 @@ export const registerUtilityCommands = (
             });
             if (!parsed.success)
               return invalidNativeUiScenarioInput(
-                command,
+                operation,
                 projectInputIssues(parsed.error.issues, {
                   ...parameters,
                   ...(options.steps === undefined

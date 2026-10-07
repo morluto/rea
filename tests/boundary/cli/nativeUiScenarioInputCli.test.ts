@@ -6,7 +6,7 @@ import type { TestCli } from "../../support/cli/cliFixture.js";
 const runCapture = async (cli: TestCli, steps: string | undefined) => {
   const arguments_ = [
     "capture-native-ui-scenario",
-    "/usr/bin/true",
+    "/provider-must-not-be-invoked",
     "--pid",
     "1",
     "--window-id",
@@ -30,7 +30,7 @@ describe("native UI scenario CLI input", () => {
       expect(result.json).toMatchObject({
         code: "invalid_request",
         details: {
-          operation: "capture-native-ui-scenario",
+          operation: "capture_native_ui_scenario",
           issues: [{ path: ["steps"], reason: "missing_argument" }],
         },
       });
@@ -44,7 +44,7 @@ describe("native UI scenario CLI input", () => {
     expect(result.json).toMatchObject({
       code: "invalid_request",
       details: {
-        operation: "capture-native-ui-scenario",
+        operation: "capture_native_ui_scenario",
         issues: [
           {
             path: ["steps"],
@@ -65,7 +65,7 @@ describe("native UI scenario CLI input", () => {
       expect(result.json).toMatchObject({
         code: "invalid_request",
         details: {
-          operation: "capture-native-ui-scenario",
+          operation: "capture_native_ui_scenario",
           issues: [{ path: ["steps"], reason: "out_of_range", minimum: 1 }],
         },
       });

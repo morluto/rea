@@ -121,6 +121,58 @@ describe("compiled CLI JSON input failure status", () => {
       expect(result.exitCode).toBe(1);
     },
   );
+
+  cliTest(
+    "classifies an overlong malformed inline value before dispatch",
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-cli-json-overlong-");
+      const input = `[${"x".repeat(3_000)}`;
+      const result = await cli.run({
+        arguments: ["compare-javascript-export-shapes", input, "--json"],
+        environment: {
+          HOME: root,
+          XDG_CONFIG_HOME: root,
+          XDG_CACHE_HOME: root,
+        },
+      });
+
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        category: "invalid_input",
+        details: {
+          operation: "compare-javascript-export-shapes",
+          issues: [{ path: [], reason: "invalid_format", expected: "JSON" }],
+        },
+      });
+      expect(result.json).not.toHaveProperty("input_path");
+      expect(result.stdout).not.toContain("read-failed");
+      expect(result.stderr).toBe("");
+      expect(result.exitCode).toBe(1);
+    },
+  );
+
+  cliTest(
+    "preserves explicit overlong JSON path diagnostics",
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-cli-json-overlong-path-");
+      const input = `[${"x".repeat(3_000)}.json`;
+      const result = await cli.run({
+        arguments: ["compare-javascript-export-shapes", input, "--json"],
+        environment: {
+          HOME: root,
+          XDG_CONFIG_HOME: root,
+          XDG_CACHE_HOME: root,
+        },
+      });
+
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        input_path: input,
+        input_reason: "read-failed",
+      });
+      expect(result.exitCode).toBe(1);
+    },
+  );
 });
 
 describe("compiled JSON parser and logger success seam", () => {
