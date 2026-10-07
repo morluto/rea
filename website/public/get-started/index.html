@@ -216,8 +216,9 @@ npx rea-agents@latest setup</code></pre>
                 <h3>IDA</h3>
                 <div>
                   <p>
-                    Use a working IDA MCP registration for read-only analysis
-                    through an attached GUI or headless database.
+                    The verified IDA setups use Windows, with an existing MCP
+                    registration for an attached GUI or a headless database.
+                    Linux and macOS headless analysis remains unverified.
                   </p>
                   <details class="evidence-details">
                     <summary>Connect an existing IDA MCP registration</summary>
@@ -230,17 +231,18 @@ npx rea-agents@latest setup</code></pre>
                     </p>
                     <div class="code-block">
                       <div class="code-header">
-                        <span>IDA connection · macOS / Linux</span
+                        <span>IDA connection · Windows PowerShell</span
                         ><button
                           class="copy-button"
                           type="button"
                           data-copy="ida-connect"
-                          aria-label="Copy ida connection · macos / linux"
+                          aria-label="Copy IDA connection for Windows PowerShell"
                         >
                           Copy
                         </button>
                       </div>
-                      <pre><code id="ida-connect">export REA_IDA_MCP_CONFIG=/absolute/path/to/ida-mcp.json
+                      <pre><code id="ida-connect">$env:REA_IDA_MCP_CONFIG = "C:/analysis/ida-mcp.json"
+$env:REA_ANALYSIS_PROVIDER = "ida"
 npx -y rea-agents@latest doctor --provider ida --json
 npx rea-agents@latest setup</code></pre>
                     </div>
@@ -248,7 +250,9 @@ npx rea-agents@latest setup</code></pre>
                       The attached profile uses upstream legacy 1.4.0 tools with
                       the original binary already open in IDA. The headless
                       profile uses the upstream database-supervisor API and a
-                      registration with <code>"mode": "headless"</code>.
+                      registration with <code>"mode": "headless"</code>; real
+                      verification covers an IDA 9.3 Windows x64 supervisor.
+                      Doctor checks the registration without starting IDA.
                     </p>
                     <p>
                       Give REA the original executable path, with
@@ -281,8 +285,9 @@ npx rea-agents@latest setup</code></pre>
             </div>
             <p>
               Replace <code>main</code> with the function name or address you
-              want to inspect. The first query imports and analyzes the target,
-              so it can take longer than later requests.
+              want to inspect. Each CLI invocation imports and analyzes the
+              target in its own session. Your agent's MCP queries reuse the
+              imported binary while that session is open.
             </p>
             <p>
               <a href="../guides/native/">Follow a native analysis example</a>

@@ -247,8 +247,9 @@ return (DxBallInt)pan;</code></pre>
             </div>
             <p>
               Replace the target path and <code>main</code> with your own
-              function name or address. The first query imports and analyzes the
-              binary; later queries reuse that session while it remains open.
+              function name or address. Each CLI invocation imports and analyzes
+              the binary, then closes its session. Your agent's MCP queries
+              reuse the imported binary while that session is open.
             </p>
             <p>
               Read the pseudocode alongside instructions and references. When a
