@@ -64,6 +64,11 @@ respecting reduced-motion preferences. Both the prompt and animation work
 without JavaScript. The homepage and agent setup section share a copyable
 installation prompt; setup still presents its plan for approval.
 
+Reading pages share a small `↑ Top` link at the bottom right. It appears after
+scrolling and returns to the page header, with smooth scrolling when reduced
+motion is disabled. Keyboard activation returns focus to the first navigation
+link. Without JavaScript, the link stays visible and uses its `#top` anchor.
+
 DX-Ball figures and findings refer to the linked 7 October 2026 checkpoint,
 commit `a55dca27ec0a07018c1b2c95ae2be027f7d8c3c4`. Update those links and figures
 together when moving to another checkpoint. Case-study source excerpts come
