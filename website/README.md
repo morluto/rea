@@ -69,16 +69,31 @@ code; the scoped lint override admits `require` only in that example directory.
 It is the sole Pages publisher, manually triggered and restricted to `main`;
 ordinary pushes and pull requests do not publish the site.
 
-`.github/workflows/pages.yml` only checks the VitePress documentation build. It
+Website checks run only for pull requests that change `website/`, the verification
+script or workflow definitions. They check local links, HTML fragments, SVG XML
+and the single Pages publisher without installing npm dependencies. The same
+checks run before each manual deployment. You can also run them locally:
+
+```sh
+python3 scripts/verify-website.py
+```
+
+`.github/workflows/pages.yml` is a separate, manual-only VitePress build. It
 has no Pages artifact upload, deployment job or deployment permissions. This
 prevents documentation updates from replacing the public website. The legacy
-remote workflow was disabled after it overwrote the site; re-enable it only
-after the build-only replacement has merged.
+publishing job has been removed, so enabling this build workflow cannot publish
+the old site.
 
 After the site is approved and merged, select **GitHub Actions** under the
 repository's **Settings → Pages → Build and deployment**. Then run **Publish REA
 website** from the Actions tab on `main`. The workflow uses the `github-pages`
 environment and the official Pages actions.
+
+The equivalent CLI command is:
+
+```sh
+gh workflow run website-pages.yml --repo morluto/rea --ref main
+```
 
 Local development does not change Pages settings or run the deployment workflow.
 Any environment protection rules are configured separately when publication is
