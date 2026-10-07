@@ -6,7 +6,7 @@ import { canonicalDigest } from "../domain/comparisonSemantics.js";
 import { createWebTextArtifact } from "../domain/webContentArtifact.js";
 import type { CdpConnection } from "./CdpConnection.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
-import { requiredRecord, stringValue } from "./CdpCaptureValues.js";
+import { requiredRecord, cdpStringValue } from "./CdpCaptureValues.js";
 import type { ElectronScriptDraft } from "./CdpElectronScriptEvents.js";
 import { authorizedElectronFile } from "./ElectronFileScope.js";
 
@@ -94,7 +94,7 @@ const captureScriptSource = async (
       input.signal,
     ),
   );
-  const text = stringValue(result.scriptSource) ?? "";
+  const text = cdpStringValue(result.scriptSource) ?? "";
   return {
     source: {
       included: true,

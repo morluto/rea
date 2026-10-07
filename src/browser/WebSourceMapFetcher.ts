@@ -14,6 +14,10 @@ import type {
 import { webSourceMapsSchema } from "../domain/webBundleAnalysis.js";
 import { createWebTextArtifact } from "../domain/webContentArtifact.js";
 import { safeParseJson } from "../domain/safeJson.js";
+import {
+  flattenSourceMapLeaves,
+  isVersion3Map,
+} from "../domain/sourceMapEnvelope.js";
 
 export interface WebSourceMapRequest {
   readonly scriptKey: string;
@@ -278,31 +282,12 @@ const validSourceMapEnvelope = (text: string): boolean => {
   const parsedResult = safeParseJson(text);
   if (!parsedResult.ok) return false;
   const parsed: unknown = parsedResult.value;
-  if (!isRecord(parsed) || parsed.version !== 3) return false;
-  if (typeof parsed.mappings === "string") return validSourceMapLeaf(parsed);
-  if (!Array.isArray(parsed.sections)) return false;
-  const pending: unknown[] = [...parsed.sections];
-  while (pending.length > 0) {
-    const section = pending.pop();
-    if (
-      !isRecord(section) ||
-      !isRecord(section.offset) ||
-      !validSourceMapOffset(section.offset.line) ||
-      !validSourceMapOffset(section.offset.column) ||
-      !("map" in section)
-    )
-      return false;
-    const map = section.map;
-    if (!isRecord(map) || map.version !== 3) return false;
-    if (Array.isArray(map.sections))
-      for (const child of map.sections) pending.push(child);
-    else if (!validSourceMapLeaf(map)) return false;
-  }
-  return true;
+  if (isVersion3Map(parsed) && typeof parsed.mappings === "string")
+    return validSourceMapLeaf(parsed);
+  const leaves = flattenSourceMapLeaves(parsed, { validateOffsets: true });
+  if (leaves === undefined) return false;
+  return leaves.every(validSourceMapLeaf);
 };
-
-const validSourceMapOffset = (value: unknown): boolean =>
-  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
 const validSourceMapLeaf = (map: Readonly<Record<string, unknown>>): boolean =>
   typeof map.mappings === "string" &&
@@ -379,9 +364,6 @@ const sourceMediaType = (source: string | null): string =>
   source?.endsWith(".cts")
     ? "text/typescript"
     : "text/javascript";
-
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const originalDependency = (
   node: t.Node,

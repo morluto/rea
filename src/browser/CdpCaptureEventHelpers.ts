@@ -3,7 +3,7 @@ import {
   numberValue,
   recordValue,
   recordsValue,
-  stringValue,
+  cdpStringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
 import type { CdpEvent } from "./CdpConnection.js";
@@ -17,10 +17,10 @@ export const isMainFrameNavigation = (
   if (params === undefined) return false;
   const frameId =
     event.method === "Page.frameNavigated"
-      ? stringValue(recordValue(params.frame)?.id)
+      ? cdpStringValue(recordValue(params.frame)?.id)
       : event.method === "Page.frameRequestedNavigation" ||
           event.method === "Page.navigatedWithinDocument"
-        ? stringValue(params.frameId)
+        ? cdpStringValue(params.frameId)
         : undefined;
   return frameId === mainFrameId;
 };
@@ -38,7 +38,7 @@ export const initiatorLocation = (
     if (frame !== undefined) return frame;
     stack = recordValue(stack.parent);
   }
-  return stringValue(initiator?.url) === undefined ? undefined : initiator;
+  return cdpStringValue(initiator?.url) === undefined ? undefined : initiator;
 };
 
 export const exclusionReasonForUrl = (
@@ -69,7 +69,7 @@ export const isJsonContentType = (
   for (const [name, value] of Object.entries(headers))
     if (
       name.toLowerCase() === "content-type" &&
-      isJsonMediaType(stringValue(value))
+      isJsonMediaType(cdpStringValue(value))
     )
       return true;
   return false;
@@ -85,7 +85,7 @@ export const isJsonMediaType = (value: string | null | undefined): boolean => {
 export const consolePrimitive = (
   value: UnknownRecord,
 ): { readonly type: string; readonly text: string } | undefined => {
-  const type = stringValue(value.type);
+  const type = cdpStringValue(value.type);
   switch (type) {
     case "string":
       return typeof value.value === "string"

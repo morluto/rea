@@ -19,7 +19,7 @@ import { err, ok, type Result } from "../domain/result.js";
 import {
   numberValue,
   recordValue,
-  stringValue,
+  cdpStringValue,
   delayWithCancellation,
 } from "./CdpCaptureValues.js";
 import { CdpConnection, type CdpEvent } from "./CdpConnection.js";
@@ -331,7 +331,7 @@ const ingestScript = (
 ): void => {
   state.scriptsObserved += 1;
   const value = recordValue(event.params);
-  const rawUrl = stringValue(value?.url);
+  const rawUrl = cdpStringValue(value?.url);
   if (rawUrl === undefined || rawUrl === "") {
     state.invalidScripts += 1;
     retainEvent(state, 0);
@@ -340,7 +340,7 @@ const ingestScript = (
   const draft: ScriptDraft = {
     rawUrl,
     executionContextKey: contextKey(value?.executionContextId),
-    cdpHash: stringValue(value?.hash) ?? null,
+    cdpHash: cdpStringValue(value?.hash) ?? null,
     length: nonnegativeInteger(value?.length),
     isModule: value?.isModule === true,
   };
@@ -375,7 +375,7 @@ const ingestContext = (
   }
   const origin =
     event.method === "Runtime.executionContextCreated"
-      ? (stringValue(runtimeContext?.origin) ?? null)
+      ? (cdpStringValue(runtimeContext?.origin) ?? null)
       : null;
   const draft: ContextDraft = {
     contextKey: key,

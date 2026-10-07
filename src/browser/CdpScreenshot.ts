@@ -11,7 +11,7 @@ import type { CdpConnection, CdpEvent } from "./CdpConnection.js";
 import {
   allowedSanitizedUrl,
   recordValue,
-  stringValue,
+  cdpStringValue,
 } from "./CdpCaptureValues.js";
 import { mainFrameUrl } from "./CdpCaptureDocuments.js";
 import { captureFrames } from "./CdpCaptureDocuments.js";
@@ -63,7 +63,7 @@ export const captureCdpScreenshot = async (
     changed: false,
     leftScope: false,
     url: beforeUrl,
-    loaderId: stringValue(initialFrame?.loaderId),
+    loaderId: cdpStringValue(initialFrame?.loaderId),
   };
   const removeListener = context.connection.onEvent((event) => {
     if (event.sessionId !== context.sessionId) return;
@@ -89,7 +89,7 @@ export const captureCdpScreenshot = async (
   } finally {
     removeListener();
   }
-  const encoded = stringValue(result?.data);
+  const encoded = cdpStringValue(result?.data);
   const bytes =
     encoded === undefined ? undefined : decodeCanonicalBase64(encoded);
   if (bytes === undefined)
@@ -149,8 +149,8 @@ const observeScreenshotNavigation = (
     event.method === "Page.frameNavigated" &&
     state.loaderId !== undefined &&
     state.loaderId !== "" &&
-    stringValue(frame?.loaderId) === state.loaderId &&
-    stringValue(frame?.url) === state.url
+    cdpStringValue(frame?.loaderId) === state.loaderId &&
+    cdpStringValue(frame?.url) === state.url
   )
     return;
 

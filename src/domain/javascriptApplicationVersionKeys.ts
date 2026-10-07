@@ -239,9 +239,9 @@ const semanticValue = (
   if (node.kind === "ipc-channel")
     return properties.resolution === "dynamic"
       ? null
-      : (stringValue(properties.channel) ?? firstLabel(node));
+      : (nonEmptyString(properties.channel) ?? firstLabel(node));
   if (node.kind === "context-bridge-api")
-    return firstLabel(node) ?? stringValue(properties.api_name);
+    return firstLabel(node) ?? nonEmptyString(properties.api_name);
   if (node.kind === "native-export")
     return (
       joined(
@@ -258,8 +258,8 @@ const semanticValue = (
     ].includes(node.kind)
   )
     return joined(properties.declared_path, properties.resolved_path);
-  if (node.kind === "package") return stringValue(properties.name);
-  return canonicalPath(node) ?? stringValue(properties.path);
+  if (node.kind === "package") return nonEmptyString(properties.name);
+  return canonicalPath(node) ?? nonEmptyString(properties.path);
 };
 
 const canonicalPath = (node: ApplicationNode): string | null =>
@@ -286,11 +286,11 @@ const uniqueStringProperty = (
 };
 
 const joined = (...values: readonly unknown[]): string | null => {
-  const strings = values.map(stringValue);
+  const strings = values.map(nonEmptyString);
   return strings.some((value) => value === null) ? null : strings.join("\0");
 };
 
-const stringValue = (value: unknown): string | null =>
+const nonEmptyString = (value: unknown): string | null =>
   typeof value === "string" && value !== "" ? value : null;
 
 const stringList = (value: unknown): string[] =>

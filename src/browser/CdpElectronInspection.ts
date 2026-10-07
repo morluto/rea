@@ -14,7 +14,7 @@ import {
   recordValue,
   recordsValue,
   requiredRecord,
-  stringValue,
+  cdpStringValue,
 } from "./CdpCaptureValues.js";
 import { walkFrameTrees } from "./CdpCaptureDocuments.js";
 import {
@@ -220,9 +220,9 @@ const navigatedFrameId = (event: CdpEvent): string | undefined => {
   const params = recordValue(event.params);
   if (params === undefined) return undefined;
   if (event.method === "Page.frameNavigated")
-    return stringValue(recordValue(params.frame)?.id);
+    return cdpStringValue(recordValue(params.frame)?.id);
   if (event.method === "Page.navigatedWithinDocument")
-    return stringValue(params.frameId);
+    return cdpStringValue(params.frameId);
   return undefined;
 };
 
@@ -238,15 +238,15 @@ const captureFrames = async (
     completeness.exclude("frames", "invalid_protocol_value"),
   )) {
     const frame = recordValue(tree.frame);
-    const frameId = stringValue(frame?.id);
-    const path = await authorizedElectronFile(stringValue(frame?.url) ?? "");
+    const frameId = cdpStringValue(frame?.id);
+    const path = await authorizedElectronFile(cdpStringValue(frame?.url) ?? "");
     if (frameId === undefined || path === undefined) {
       completeness.exclude("frames", "out_of_target_scope");
       continue;
     }
     frames.push({
       frame_id: frameId,
-      parent_frame_id: stringValue(frame?.parentId) ?? null,
+      parent_frame_id: cdpStringValue(frame?.parentId) ?? null,
       file_path: path,
     });
   }
@@ -274,7 +274,7 @@ const captureResources = async (
     if (tree === undefined) break;
     for (const resource of recordsValue(tree.resources)) {
       const path = await authorizedElectronFile(
-        stringValue(resource.url) ?? "",
+        cdpStringValue(resource.url) ?? "",
       );
       if (path === undefined) {
         completeness.exclude("resources", "out_of_target_scope");
@@ -282,8 +282,8 @@ const captureResources = async (
       }
       const item = {
         file_path: path,
-        type: stringValue(resource.type) ?? "Other",
-        mime_type: stringValue(resource.mimeType) ?? "",
+        type: cdpStringValue(resource.type) ?? "Other",
+        mime_type: cdpStringValue(resource.mimeType) ?? "",
         content_size:
           numberValue(resource.contentSize) === undefined
             ? null
@@ -358,7 +358,7 @@ const captureDom = async (
 const mainFilePath = async (result: unknown): Promise<string | undefined> => {
   const frameTree = recordValue(requiredRecord(result).frameTree);
   const frame = recordValue(frameTree?.frame);
-  return await authorizedElectronFile(stringValue(frame?.url) ?? "");
+  return await authorizedElectronFile(cdpStringValue(frame?.url) ?? "");
 };
 
 const arrayValue = (value: unknown): readonly unknown[] =>

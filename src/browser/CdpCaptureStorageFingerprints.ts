@@ -9,7 +9,11 @@ import type {
 import { compareCodePoints } from "../domain/canonicalOrdering.js";
 import { CdpConnection } from "./CdpConnection.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
-import { recordValue, recordsValue, stringValue } from "./CdpCaptureValues.js";
+import {
+  recordValue,
+  recordsValue,
+  cdpStringValue,
+} from "./CdpCaptureValues.js";
 
 type StorageFingerprint =
   WebPageInspection["storage"]["content_fingerprints"][number];
@@ -132,10 +136,10 @@ const addCookies = async (
   const cookies = recordsValue(cookieValues);
   if (cookies.length !== cookieValues.length) run.state.complete = false;
   for (const cookie of cookies) {
-    const name = stringValue(cookie.name);
-    const value = stringValue(cookie.value);
-    const domain = stringValue(cookie.domain);
-    const path = stringValue(cookie.path);
+    const name = cdpStringValue(cookie.name);
+    const value = cdpStringValue(cookie.value);
+    const domain = cdpStringValue(cookie.domain);
+    const path = cdpStringValue(cookie.path);
     if (
       name === undefined ||
       value === undefined ||
@@ -176,7 +180,7 @@ const addIndexedDb = async (
       run.state.complete = false;
       continue;
     }
-    if (stringValue(database.name) !== databaseName) {
+    if (cdpStringValue(database.name) !== databaseName) {
       run.state.complete = false;
       continue;
     }
@@ -194,7 +198,7 @@ const addIndexedDb = async (
       complete: indexedDbSchemaComplete(stores),
     });
     for (const store of stores) {
-      const objectStoreName = stringValue(store.name);
+      const objectStoreName = cdpStringValue(store.name);
       if (objectStoreName === undefined) {
         run.state.complete = false;
         continue;
@@ -209,11 +213,11 @@ const addIndexedDb = async (
 };
 
 const indexedDbStoreSchema = (store: Readonly<Record<string, unknown>>) => ({
-  name: stringValue(store.name) ?? null,
+  name: cdpStringValue(store.name) ?? null,
   key_path: stableValue(store.keyPath),
   auto_increment: store.autoIncrement === true,
   indexes: recordsValue(store.indexes).map((index) => ({
-    name: stringValue(index.name) ?? null,
+    name: cdpStringValue(index.name) ?? null,
     key_path: stableValue(index.keyPath),
     unique: index.unique === true,
     multi_entry: index.multiEntry === true,
@@ -225,14 +229,14 @@ const indexedDbSchemaComplete = (
 ): boolean =>
   stores.every(
     (store) =>
-      stringValue(store.name) !== undefined &&
+      cdpStringValue(store.name) !== undefined &&
       stableValueComplete(store.keyPath) &&
       typeof store.autoIncrement === "boolean" &&
       Array.isArray(store.indexes) &&
       recordsValue(store.indexes).length === store.indexes.length &&
       recordsValue(store.indexes).every(
         (index) =>
-          stringValue(index.name) !== undefined &&
+          cdpStringValue(index.name) !== undefined &&
           stableValueComplete(index.keyPath) &&
           typeof index.unique === "boolean" &&
           typeof index.multiEntry === "boolean",
@@ -358,8 +362,8 @@ const addCacheEntry = async (
   cache: CapturedCache,
   entry: Readonly<Record<string, unknown>>,
 ): Promise<void> => {
-  const requestURL = stringValue(entry.requestURL);
-  const requestMethod = stringValue(entry.requestMethod);
+  const requestURL = cdpStringValue(entry.requestURL);
+  const requestMethod = cdpStringValue(entry.requestMethod);
   if (requestURL === undefined || requestMethod === undefined) {
     run.state.complete = false;
     return;
@@ -370,8 +374,8 @@ const addCacheEntry = async (
   }
   const headerRecords = recordsValue(entry.requestHeaders);
   const requestHeaders = headerRecords.flatMap((header) => {
-    const name = stringValue(header.name);
-    const value = stringValue(header.value);
+    const name = cdpStringValue(header.name);
+    const value = cdpStringValue(header.value);
     return name === undefined || value === undefined ? [] : [{ name, value }];
   });
   if (
@@ -387,7 +391,7 @@ const addCacheEntry = async (
     { cacheId: cache.id, requestURL, requestHeaders },
     run.limitations,
   );
-  const body = stringValue(recordValue(recordValue(raw)?.response)?.body);
+  const body = cdpStringValue(recordValue(recordValue(raw)?.response)?.body);
   const decoded = body === undefined ? null : decodeBase64(body);
   const complete = decoded !== null;
   if (!complete) run.state.complete = false;

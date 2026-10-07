@@ -1,6 +1,10 @@
 import type { CdpEvent } from "./CdpConnection.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
-import { numberValue, recordValue, stringValue } from "./CdpCaptureValues.js";
+import {
+  numberValue,
+  recordValue,
+  cdpStringValue,
+} from "./CdpCaptureValues.js";
 
 export interface ElectronScriptDraft {
   readonly scriptId: string;
@@ -35,8 +39,8 @@ export const ingestElectronScriptEvent = (input: {
   }
   if (input.event.method !== "Debugger.scriptParsed") return;
   const value = recordValue(input.event.params);
-  const scriptId = stringValue(value?.scriptId);
-  const rawUrl = stringValue(value?.url);
+  const scriptId = cdpStringValue(value?.scriptId);
+  const rawUrl = cdpStringValue(value?.url);
   if (scriptId === undefined) {
     input.completeness.exclude("scripts", "invalid_protocol_value");
     return;
@@ -48,10 +52,10 @@ export const ingestElectronScriptEvent = (input: {
   input.scripts.push({
     scriptId,
     rawUrl,
-    hash: stringValue(value?.hash) ?? "",
+    hash: cdpStringValue(value?.hash) ?? "",
     length: nonnegativeInteger(value?.length),
     isModule: value?.isModule === true,
-    language: stringValue(value?.scriptLanguage) ?? null,
+    language: cdpStringValue(value?.scriptLanguage) ?? null,
     executionContextKey: executionContextKey(value?.executionContextId),
   });
 };
@@ -63,7 +67,7 @@ const retainExecutionContext = (
   const parameters = recordValue(event.params);
   const runtimeContext = recordValue(parameters?.context);
   const contextKey = executionContextKey(runtimeContext?.id);
-  const frameId = stringValue(recordValue(runtimeContext?.auxData)?.frameId);
+  const frameId = cdpStringValue(recordValue(runtimeContext?.auxData)?.frameId);
   if (contextKey === null || frameId === undefined) return;
   frames.set(contextKey, frameId);
 };

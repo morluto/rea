@@ -2,7 +2,7 @@ import type { WebPageInspection } from "../domain/browserObservation.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import {
   numberValue,
-  stringValue,
+  cdpStringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
 
@@ -42,7 +42,7 @@ export const safeResponseMetadata = (
     response: {
       request_id: requestId,
       url,
-      mime_type: boundedHeader(stringValue(response.mimeType)),
+      mime_type: boundedHeader(cdpStringValue(response.mimeType)),
       content_length: nonnegativeInteger(headers.get("content-length")),
       content_encoding: boundedHeader(headers.get("content-encoding")),
       csp,

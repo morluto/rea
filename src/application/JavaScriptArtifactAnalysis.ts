@@ -4,6 +4,7 @@ import { analyzeParsedJavaScriptStaticSource } from "../domain/javascriptStaticA
 import { analyzeParsedJavaScriptSemantics } from "../domain/javascriptSemanticAnalysis.js";
 import { parseJavaScriptSource } from "../domain/javascriptSourceParser.js";
 import { hasValidSourceMapContents } from "../domain/sourceMapContents.js";
+import { flattenSourceMapLeaves } from "../domain/sourceMapEnvelope.js";
 import type {
   JavaScriptSourceRange,
   JavaScriptSourcePoint,
@@ -300,20 +301,8 @@ const unavailableSourceMap = (
 const flattenSourceMaps = (
   root: unknown,
 ): Readonly<Record<string, unknown>>[] | undefined => {
-  if (!isRecord(root) || root.version !== 3) return undefined;
-  const maps: Readonly<Record<string, unknown>>[] = [];
-  const pending = [root];
-  while (pending.length > 0) {
-    const map = pending.pop();
-    if (map === undefined || map.version !== 3) return undefined;
-    if (Array.isArray(map.sections)) {
-      for (const section of map.sections) {
-        if (!isRecord(section) || !isRecord(section.map)) return undefined;
-        pending.push(section.map);
-      }
-    } else maps.push(map);
-  }
-  return maps;
+  const leaves = flattenSourceMapLeaves(root);
+  return leaves === undefined ? undefined : [...leaves];
 };
 
 const invalidSourceMap = (

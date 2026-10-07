@@ -14,7 +14,7 @@ import {
   isHttpUrl,
   numberValue,
   recordValue,
-  stringValue,
+  cdpStringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
 import { mainFrameUrl } from "./CdpCaptureDocuments.js";
@@ -218,7 +218,7 @@ class TimelineCapture {
     this.#add({
       type: "navigation_requested",
       params,
-      rawUrl: stringValue(params.url) ?? null,
+      rawUrl: cdpStringValue(params.url) ?? null,
       requestId: null,
       detail: reason,
     });
@@ -227,7 +227,7 @@ class TimelineCapture {
   #navigationCommitted(event: CdpEvent, params: UnknownRecord): void {
     const frame = recordValue(params.frame);
     if (!isMainFrameNavigation(event, this.mainFrameId)) return;
-    const rawUrl = stringValue(frame?.url);
+    const rawUrl = cdpStringValue(frame?.url);
     const destination = scopedUrl(rawUrl, this.allowedOrigins);
     this.#add({
       type: this.#pendingReload ? "same_origin_reload" : "navigation_committed",
@@ -247,7 +247,7 @@ class TimelineCapture {
 
   #sameDocument(event: CdpEvent, params: UnknownRecord): void {
     if (!isMainFrameNavigation(event, this.mainFrameId)) return;
-    const rawUrl = stringValue(params.url);
+    const rawUrl = cdpStringValue(params.url);
     const destination = scopedUrl(rawUrl, this.allowedOrigins);
     this.#add({
       type: "same_document_navigation",
@@ -265,21 +265,21 @@ class TimelineCapture {
   }
 
   #redirect(params: UnknownRecord): void {
-    const resourceType = stringValue(params.type);
+    const resourceType = cdpStringValue(params.type);
     if (resourceType !== undefined && resourceType !== "Document") return;
     if (
-      stringValue(params.frameId) !== this.mainFrameId ||
+      cdpStringValue(params.frameId) !== this.mainFrameId ||
       recordValue(params.redirectResponse) === undefined
     )
       return;
     const request = recordValue(params.request);
-    const rawUrl = stringValue(request?.url);
+    const rawUrl = cdpStringValue(request?.url);
     const destination = scopedUrl(rawUrl, this.allowedOrigins);
     this.#add({
       type: "redirect",
       params,
       rawUrl: rawUrl ?? null,
-      requestId: stringValue(params.requestId) ?? null,
+      requestId: cdpStringValue(params.requestId) ?? null,
       detail: null,
     });
     if (destination.scope !== "approved") {
@@ -289,19 +289,19 @@ class TimelineCapture {
   }
 
   #loadingFailed(params: UnknownRecord): void {
-    const frame = stringValue(params.frameId);
+    const frame = cdpStringValue(params.frameId);
     if (frame !== undefined && frame !== this.mainFrameId) return;
     this.#add({
       type: "load_failed",
       params,
       rawUrl: null,
-      requestId: stringValue(params.requestId) ?? null,
+      requestId: cdpStringValue(params.requestId) ?? null,
       detail: safeNetworkError(params.errorText),
     });
   }
 
   #lifecycle(params: UnknownRecord): void {
-    if (stringValue(params.frameId) !== this.mainFrameId) return;
+    if (cdpStringValue(params.frameId) !== this.mainFrameId) return;
     this.#add({
       type: "lifecycle",
       params,
@@ -344,7 +344,7 @@ const observationEventMatches = (
     return event.sessionId === sessionId;
   return (
     sessionId !== undefined &&
-    stringValue(recordValue(event.params)?.sessionId) === sessionId
+    cdpStringValue(recordValue(event.params)?.sessionId) === sessionId
   );
 };
 
@@ -405,7 +405,7 @@ const captureFinalUrl = async (
 };
 
 const frameId = (result: unknown): string | undefined =>
-  stringValue(
+  cdpStringValue(
     recordValue(recordValue(recordValue(result)?.frameTree)?.frame)?.id,
   );
 
@@ -423,17 +423,18 @@ const scopedUrl = (
     : { url: null, scope: "unsupported" };
 };
 
-const boundedId = (value: unknown): string | null => stringValue(value) ?? null;
+const boundedId = (value: unknown): string | null =>
+  cdpStringValue(value) ?? null;
 
 const safeDetail = (value: unknown): string | null => {
-  const detail = stringValue(value)?.toLowerCase();
+  const detail = cdpStringValue(value)?.toLowerCase();
   return detail !== undefined && /^[a-z0-9_.:-]{1,100}$/u.test(detail)
     ? detail
     : null;
 };
 
 const safeNetworkError = (value: unknown): string | null => {
-  const error = stringValue(value);
+  const error = cdpStringValue(value);
   return error !== undefined && /^net::ERR_[A-Z0-9_]{1,100}$/u.test(error)
     ? error
     : null;

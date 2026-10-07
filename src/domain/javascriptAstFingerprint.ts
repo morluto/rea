@@ -4,6 +4,7 @@ import * as t from "@babel/types";
 
 import { compareCodePoints } from "./canonicalOrdering.js";
 import { propertyName } from "./javascriptAstValues.js";
+import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
 
 /** Static CommonJS export names. */
 export interface StaticExports {
@@ -123,6 +124,3 @@ const memberPath = (node: t.Node | null | undefined): string => {
   }
   return "";
 };
-
-const stringValue = (node: t.Node | null | undefined): string | undefined =>
-  t.isStringLiteral(node) ? node.value : undefined;

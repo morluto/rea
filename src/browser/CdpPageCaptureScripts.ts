@@ -10,7 +10,7 @@ import {
   requiredRecord,
   sourceExcluded,
   sourceResult,
-  stringValue,
+  cdpStringValue,
 } from "./CdpCaptureValues.js";
 import type { CaptureContext } from "./CdpPageCapture.js";
 import type { WebSourceMapRequest } from "./WebSourceMapFetcher.js";
@@ -115,7 +115,7 @@ const captureScriptSource = async (
       context.signal,
     ),
   );
-  const content = stringValue(result.scriptSource) ?? "";
+  const content = cdpStringValue(result.scriptSource) ?? "";
   return sourceResult(content);
 };
 

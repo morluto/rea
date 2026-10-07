@@ -8,7 +8,7 @@ import {
   recordValue,
   recordsValue,
   requiredRecord,
-  stringValue,
+  cdpStringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
 import { exclusionReasonForUrl } from "./CdpCaptureEventHelpers.js";
@@ -38,7 +38,7 @@ export const captureFrames = (
     completeness?.exclude("frames", "invalid_protocol_value"),
   )) {
     const frame = recordValue(tree.frame);
-    const frameId = stringValue(frame?.id);
+    const frameId = cdpStringValue(frame?.id);
     const sanitized = allowedSanitizedUrl(frame?.url, allowedOrigins);
     if (frame === undefined || frameId === undefined) {
       completeness?.exclude("frames", "invalid_protocol_value");
@@ -47,14 +47,14 @@ export const captureFrames = (
     if (sanitized === undefined || sanitized.origin === null) {
       completeness?.exclude(
         "frames",
-        exclusionReasonForUrl(stringValue(frame.url)),
+        exclusionReasonForUrl(cdpStringValue(frame.url)),
       );
       continue;
     }
     if (maximum !== undefined && items.length >= maximum) continue;
     items.push({
       frame_id: frameId,
-      parent_frame_id: stringValue(frame.parentId) ?? null,
+      parent_frame_id: cdpStringValue(frame.parentId) ?? null,
       url: sanitized.url,
       origin: sanitized.origin,
     });
@@ -64,7 +64,7 @@ export const captureFrames = (
 
 /** Read the current main-frame URL from an untrusted Page.getFrameTree result. */
 export const mainFrameUrl = (result: unknown): string | undefined =>
-  stringValue(
+  cdpStringValue(
     recordValue(recordValue(requiredRecord(result).frameTree)?.frame)?.url,
   );
 
@@ -90,17 +90,17 @@ export const captureResources = (
       if (url === undefined || url.origin === null) {
         completeness?.exclude(
           "resources",
-          exclusionReasonForUrl(stringValue(resource.url)),
+          exclusionReasonForUrl(cdpStringValue(resource.url)),
         );
         continue;
       }
       const contentSize = numberValue(resource.contentSize);
       items.push({
-        rawUrl: stringValue(resource.url) ?? "",
+        rawUrl: cdpStringValue(resource.url) ?? "",
         url: url.url,
         origin: url.origin,
-        type: stringValue(resource.type) ?? "Other",
-        mime_type: stringValue(resource.mimeType) ?? "",
+        type: cdpStringValue(resource.type) ?? "Other",
+        mime_type: cdpStringValue(resource.mimeType) ?? "",
         content_size:
           contentSize === undefined ? null : Math.max(0, contentSize),
       });
@@ -149,7 +149,7 @@ export const captureDom = (
 } => {
   const root = requiredRecord(result);
   const strings = Array.isArray(root.strings)
-    ? root.strings.map((value) => stringValue(value) ?? "")
+    ? root.strings.map((value) => cdpStringValue(value) ?? "")
     : [];
   const nodes: WebPageInspection["dom"]["nodes"] = [];
   const urls: WebPageInspection["metadata"]["dom_urls"] = [];
@@ -239,14 +239,14 @@ export const captureAccessibility = (
   );
   const nodeIds = new Set(
     all.flatMap((node) => {
-      const nodeId = stringValue(node.nodeId);
+      const nodeId = cdpStringValue(node.nodeId);
       return nodeId === undefined ? [] : [nodeId];
     }),
   );
   let excludedFields = 0;
   const nodes = all.map((node) => {
     const captureText = (value: unknown): string | null => {
-      const raw = stringValue(recordValue(value)?.value);
+      const raw = cdpStringValue(recordValue(value)?.value);
       if (raw === undefined) return null;
       if (!options.includeText) {
         excludedFields += 1;
@@ -255,8 +255,8 @@ export const captureAccessibility = (
       return raw;
     };
     return {
-      node_id: stringValue(node.nodeId) ?? "",
-      parent_id: stringValue(node.parentId) ?? null,
+      node_id: cdpStringValue(node.nodeId) ?? "",
+      parent_id: cdpStringValue(node.parentId) ?? null,
       role: axText(node.role),
       name: captureText(node.name),
       description: captureText(node.description),
@@ -271,7 +271,7 @@ export const captureAccessibility = (
       (node) =>
         Array.isArray(node.childIds) &&
         node.childIds.some((childId) => {
-          const id = stringValue(childId);
+          const id = cdpStringValue(childId);
           return id !== undefined && !nodeIds.has(id);
         }),
     ),
@@ -325,7 +325,7 @@ const accessibilityStates = (
 ): WebPageInspection["accessibility"]["nodes"][number]["states"] => {
   const states = new Map<string, boolean | number | string>();
   for (const property of recordsValue(value)) {
-    const name = stringValue(property.name);
+    const name = cdpStringValue(property.name);
     if (name === undefined || !ACCESSIBILITY_STATE_NAMES.has(name)) continue;
     const raw = recordValue(property.value)?.value;
     const state =
@@ -344,7 +344,7 @@ const accessibilityStates = (
 };
 
 const axText = (value: unknown): string | null =>
-  stringValue(recordValue(value)?.value) ?? null;
+  cdpStringValue(recordValue(value)?.value) ?? null;
 
 const indexedString = (strings: readonly string[], index: unknown): string => {
   const integer = numberValue(index);

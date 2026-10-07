@@ -4,7 +4,11 @@ import type {
 } from "../domain/electronObservation.js";
 import type { CdpConnection } from "./CdpConnection.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
-import { recordValue, recordsValue, stringValue } from "./CdpCaptureValues.js";
+import {
+  recordValue,
+  recordsValue,
+  cdpStringValue,
+} from "./CdpCaptureValues.js";
 import type { CdpEndpointTarget } from "./CdpEndpoint.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
 import { authorizedElectronFile } from "./ElectronFileScope.js";
@@ -35,7 +39,7 @@ export const captureElectronWorkers = async (input: {
   }
   const workers: ElectronPageInspection["workers"] = [];
   for (const target of recordsValue(recordValue(result)?.targetInfos)) {
-    const type = stringValue(target.type) ?? "";
+    const type = cdpStringValue(target.type) ?? "";
     if (!type.includes("worker")) continue;
     const openerTargetId = boundedTargetField(target.openerId);
     const parentFrameId = boundedTargetField(target.parentFrameId);
@@ -46,7 +50,7 @@ export const captureElectronWorkers = async (input: {
       input.completeness.exclude("workers", "out_of_target_scope");
       continue;
     }
-    const path = await authorizedElectronFile(stringValue(target.url) ?? "");
+    const path = await authorizedElectronFile(cdpStringValue(target.url) ?? "");
     if (path === undefined) {
       input.completeness.exclude("workers", "out_of_target_scope");
       continue;
@@ -71,6 +75,6 @@ export const captureElectronWorkers = async (input: {
 };
 
 const boundedTargetField = (value: unknown): string | null => {
-  const field = stringValue(value);
+  const field = cdpStringValue(value);
   return field === undefined || field === "" ? null : field;
 };

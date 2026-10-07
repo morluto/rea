@@ -20,7 +20,7 @@ export const recordsValue = (value: unknown): readonly UnknownRecord[] =>
       })
     : [];
 
-export const stringValue = (value: unknown): string | undefined =>
+export const cdpStringValue = (value: unknown): string | undefined =>
   typeof value === "string" ? value : undefined;
 
 export const numberValue = (value: unknown): number | undefined =>
@@ -49,7 +49,7 @@ export const allowedSanitizedUrl = (
   value: unknown,
   allowedOrigins: ReadonlySet<string>,
 ): ReturnType<typeof sanitizeBrowserUrl> | undefined => {
-  const text = stringValue(value);
+  const text = cdpStringValue(value);
   if (text === undefined) return undefined;
   const sanitized = sanitizeBrowserUrl(text);
   return sanitized.origin !== null && allowedOrigins.has(sanitized.origin)

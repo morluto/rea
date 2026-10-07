@@ -1,7 +1,7 @@
 import { inferJsonShape, type JsonShape } from "../domain/jsonShape.js";
 import {
   recordValue,
-  stringValue,
+  cdpStringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
 import { decodeBase64, isJsonContentType } from "./CdpCaptureEventHelpers.js";
@@ -14,7 +14,7 @@ export const ingestResponseBodyShape = (
   value: unknown,
 ): void => {
   const result = recordValue(value);
-  const body = stringValue(result?.body);
+  const body = cdpStringValue(result?.body);
   if (body === undefined) {
     invalidResponseBodyShape(state, requestId);
     return;
@@ -37,7 +37,7 @@ export const requestBodyShape = (
 ): NetworkState["body_shapes"] => {
   if (!state.input.include_json_body_shapes)
     return { status: "not_approved", request: null, response: null };
-  const body = stringValue(request.postData);
+  const body = cdpStringValue(request.postData);
   if (!isJsonContentType(recordValue(request.headers)) || body === undefined)
     return { status: "unavailable", request: null, response: null };
   const inferred = inferBodyShape(body);

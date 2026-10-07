@@ -13,7 +13,7 @@ import {
   numberValue,
   recordValue,
   recordsValue,
-  stringValue,
+  cdpStringValue,
 } from "./CdpCaptureValues.js";
 
 /** Capture redacted storage metadata for an authorized page and its origin. */
@@ -108,8 +108,8 @@ const capturedCaches = (
   values: readonly Record<string, unknown>[],
 ): CapturedCache[] =>
   values.flatMap((cache) => {
-    const name = stringValue(cache.cacheName);
-    const id = stringValue(cache.cacheId);
+    const name = cdpStringValue(cache.cacheName);
+    const id = cdpStringValue(cache.cacheId);
     return name === undefined || id === undefined ? [] : [{ name, id }];
   });
 
@@ -130,8 +130,8 @@ const storageItems = async (
     return { items: [], complete: false };
   const items = entries.flatMap((entry) => {
     if (!Array.isArray(entry)) return [];
-    const key = stringValue(entry[0]);
-    const value = stringValue(entry[1]);
+    const key = cdpStringValue(entry[0]);
+    const value = cdpStringValue(entry[1]);
     return key === undefined || value === undefined ? [] : [{ key, value }];
   });
   return { items, complete: items.length === entries.length };
@@ -140,7 +140,7 @@ const storageItems = async (
 const stringArray = (value: unknown): readonly string[] =>
   Array.isArray(value)
     ? value.flatMap((item) => {
-        const text = stringValue(item);
+        const text = cdpStringValue(item);
         return text === undefined ? [] : [text];
       })
     : [];

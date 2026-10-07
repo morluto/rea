@@ -7,7 +7,7 @@ import {
   numberValue,
   recordValue,
   recordsValue,
-  stringValue,
+  cdpStringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
 import { requestBodyShape } from "./CdpCaptureEventBodyShapes.js";
@@ -30,7 +30,7 @@ export const handleExecutionContextCreated = (
 ): void => {
   const context = recordValue(params.context);
   const identifier = numberValue(context?.id);
-  const frameId = stringValue(recordValue(context?.auxData)?.frameId);
+  const frameId = cdpStringValue(recordValue(context?.auxData)?.frameId);
   if (
     identifier === undefined ||
     !Number.isSafeInteger(identifier) ||
@@ -53,8 +53,8 @@ export const handleScriptParsed = (
   state: CdpCaptureEventsState,
   params: UnknownRecord,
 ): void => {
-  const scriptId = stringValue(params.scriptId);
-  const rawUrl = stringValue(params.url) ?? "";
+  const scriptId = cdpStringValue(params.scriptId);
+  const rawUrl = cdpStringValue(params.url) ?? "";
   const sanitized = allowedSanitizedUrl(rawUrl, state.allowedOrigins);
   if (scriptId === undefined) {
     state.completeness.exclude("scripts", "invalid_protocol_value");
@@ -70,7 +70,7 @@ export const handleScriptParsed = (
     rawUrl,
     url: sanitized.url,
     origin: sanitized.origin,
-    hash: stringValue(params.hash) ?? "",
+    hash: cdpStringValue(params.hash) ?? "",
     length: Math.max(
       0,
       Math.min(
@@ -79,7 +79,7 @@ export const handleScriptParsed = (
       ),
     ),
     isModule: params.isModule === true,
-    language: stringValue(params.scriptLanguage) ?? null,
+    language: cdpStringValue(params.scriptLanguage) ?? null,
     sourceMapUrl: sourceMap.sanitized,
     sourceMapRawUrl: sourceMap.raw,
     executionContextKey: executionContextKey(params.executionContextId),
@@ -92,7 +92,7 @@ const sourceMapForScript = (
   scriptUrl: string,
   state: CdpCaptureEventsState,
 ): { readonly sanitized: string | null; readonly raw: string | null } => {
-  const declaredUrl = stringValue(value);
+  const declaredUrl = cdpStringValue(value);
   if (declaredUrl === undefined || declaredUrl === "")
     return { sanitized: null, raw: null };
   let rawUrl: string;
@@ -114,7 +114,7 @@ export const handleRequestWillBeSent = (
   state: CdpCaptureEventsState,
   params: UnknownRecord,
 ): void => {
-  const requestId = stringValue(params.requestId);
+  const requestId = cdpStringValue(params.requestId);
   const request = recordValue(params.request);
   if (requestId === undefined) {
     state.completeness.exclude("network_requests", "invalid_protocol_value");
@@ -129,14 +129,14 @@ export const handleRequestWillBeSent = (
   if (sanitized === undefined) {
     state.completeness.exclude(
       "network_requests",
-      exclusionReasonForUrl(stringValue(request.url)),
+      exclusionReasonForUrl(cdpStringValue(request.url)),
     );
     state.network.delete(requestId);
     return;
   }
   const initiator = recordValue(params.initiator);
   const initiatorFrame = initiatorLocation(initiator);
-  const rawInitiatorUrl = stringValue(initiatorFrame?.url);
+  const rawInitiatorUrl = cdpStringValue(initiatorFrame?.url);
   const initiatorUrl = allowedSanitizedUrl(
     rawInitiatorUrl,
     state.allowedOrigins,
@@ -150,13 +150,13 @@ export const handleRequestWillBeSent = (
     request_id: requestId,
     url: sanitized.url,
     origin: sanitized.origin ?? "",
-    method: stringValue(request.method) ?? "GET",
-    resource_type: stringValue(params.type) ?? null,
+    method: cdpStringValue(request.method) ?? "GET",
+    resource_type: cdpStringValue(params.type) ?? null,
     status: null,
     mime_type: null,
     encoded_data_length: null,
     initiator: {
-      type: stringValue(initiator?.type) ?? "other",
+      type: cdpStringValue(initiator?.type) ?? "other",
       url: initiatorUrl?.url ?? null,
       line: integerOrNull(initiatorFrame?.lineNumber),
       column: integerOrNull(initiatorFrame?.columnNumber),
@@ -169,7 +169,7 @@ export const handleResponseReceived = (
   state: CdpCaptureEventsState,
   params: UnknownRecord,
 ): void => {
-  const requestId = stringValue(params.requestId);
+  const requestId = cdpStringValue(params.requestId);
   if (requestId === undefined) {
     state.completeness.exclude("network_requests", "invalid_protocol_value");
     return;
@@ -183,7 +183,7 @@ export const handleResponseReceived = (
       "network_requests",
       response === undefined
         ? "invalid_protocol_value"
-        : exclusionReasonForUrl(stringValue(response.url)),
+        : exclusionReasonForUrl(cdpStringValue(response.url)),
     );
     state.network.delete(requestId);
     return;
@@ -191,7 +191,7 @@ export const handleResponseReceived = (
   state.network.set(requestId, {
     ...current,
     status: numberValue(response.status) ?? null,
-    mime_type: stringValue(response.mimeType) ?? null,
+    mime_type: cdpStringValue(response.mimeType) ?? null,
   });
   const metadata = safeResponseMetadata(
     requestId,
@@ -207,7 +207,7 @@ export const handleLoadingFinished = (
   state: CdpCaptureEventsState,
   params: UnknownRecord,
 ): void => {
-  const requestId = stringValue(params.requestId);
+  const requestId = cdpStringValue(params.requestId);
   if (requestId === undefined) return;
   const current = state.network.get(requestId);
   if (current === undefined) return;
@@ -233,16 +233,16 @@ export const handleConsoleAPICalled = (
   if (source === undefined) {
     state.completeness.exclude(
       "console_events",
-      exclusionReasonForUrl(stringValue(frame.url)),
+      exclusionReasonForUrl(cdpStringValue(frame.url)),
     );
     return;
   }
   const arguments_ = recordsValue(params.args);
   state.console.push({
-    type: stringValue(params.type) ?? "unknown",
+    type: cdpStringValue(params.type) ?? "unknown",
     timestamp: numberValue(params.timestamp) ?? 0,
     argument_types: arguments_.map(
-      (argument) => stringValue(argument.type) ?? "unknown",
+      (argument) => cdpStringValue(argument.type) ?? "unknown",
     ),
     url: source.url,
     line: integerOrNull(frame.lineNumber),
@@ -287,14 +287,14 @@ export const handleWebSocketFrame = (
   params: UnknownRecord,
   direction: "sent" | "received",
 ): void => {
-  const requestId = stringValue(params.requestId);
+  const requestId = cdpStringValue(params.requestId);
   if (
     requestId === undefined ||
     (!state.network.has(requestId) && !state.allowedWebSockets.has(requestId))
   )
     return;
   const response = recordValue(params.response);
-  const payload = stringValue(response?.payloadData) ?? "";
+  const payload = cdpStringValue(response?.payloadData) ?? "";
   const opcode = Math.max(0, Math.trunc(numberValue(response?.opcode) ?? 0));
   const decoded = opcode === 1 ? undefined : decodeBase64(payload);
   if (opcode !== 1 && decoded === undefined)
@@ -327,8 +327,8 @@ export const handleWebSocketCreated = (
   state: CdpCaptureEventsState,
   params: UnknownRecord,
 ): void => {
-  const requestId = stringValue(params.requestId);
-  const rawUrl = stringValue(params.url);
+  const requestId = cdpStringValue(params.requestId);
+  const rawUrl = cdpStringValue(params.url);
   if (requestId === undefined) {
     state.completeness.exclude(
       "websocket_connections",
@@ -378,8 +378,8 @@ export const handleFrameNavigated = (
     )
   )
     return;
-  const rawUrl = stringValue(frame?.url);
-  const loaderId = stringValue(frame?.loaderId);
+  const rawUrl = cdpStringValue(frame?.url);
+  const loaderId = cdpStringValue(frame?.loaderId);
   // `frameNavigated` re-fires for a document already reported (same URL and
   // loader). Treating that as a navigation aborted a valid capture with
   // `target_changed`, which is a false claim that the target moved.
