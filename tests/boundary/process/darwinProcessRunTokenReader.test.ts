@@ -1,17 +1,93 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { mkdtemp, rm, symlink } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { expect, it } from "vitest";
+import { _electron as electron } from "playwright-core";
+import { expect, it, vi } from "vitest";
 
-import { createSystemProcessOwnershipHost } from "../../../src/process/ProcessOwnershipObservation.js";
+import {
+  createSystemProcessOwnershipHost,
+  systemProcessOwnershipHost,
+} from "../../../src/process/ProcessOwnershipObservation.js";
 import { createDarwinProcessRunTokenReader } from "../../../src/process/DarwinProcessRunTokenReader.js";
 import { execFileOutput } from "../../../src/process/ExecFileOutput.js";
+import { normalizeCaptureFailure } from "../../../src/process/capture/ProcessHarness.js";
+import { PlaywrightElectronActiveProvider } from "../../../src/browser/PlaywrightElectronActiveProvider.js";
+import { electronActiveObservationInputSchema } from "../../../src/domain/javascript/electronActiveObservation.js";
 
 const execFileAsync = promisify(execFile);
 const onDarwin = process.platform === "darwin";
+
+const writeBlockingCompiler = async (directory: string) => {
+  const executable = join(directory, "fake-xcrun");
+  const statePath = join(directory, "compile-state.json");
+  const source = `#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
+const statePath = ${JSON.stringify(statePath)};
+const state = fs.existsSync(statePath)
+  ? JSON.parse(fs.readFileSync(statePath, "utf8"))
+  : { calls: 0 };
+state.calls += 1;
+const moduleIndex = process.argv.indexOf("-module-cache-path");
+state.root = path.dirname(process.argv[moduleIndex + 1]);
+const outputIndex = process.argv.indexOf("-o");
+state.output = process.argv[outputIndex + 1];
+fs.writeFileSync(statePath, JSON.stringify(state));
+if (state.calls === 1) {
+  setInterval(() => {}, 1000);
+} else {
+  fs.writeFileSync(state.output, "compiled");
+}
+`;
+  await writeFile(executable, source);
+  await chmod(executable, 0o755);
+  return { executable, statePath };
+};
+
+const waitForCompileState = async (statePath: string) => {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    try {
+      const parsed: unknown = JSON.parse(await readFile(statePath, "utf8"));
+      if (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        "calls" in parsed &&
+        typeof parsed.calls === "number" &&
+        "root" in parsed &&
+        typeof parsed.root === "string" &&
+        "output" in parsed &&
+        typeof parsed.output === "string"
+      )
+        return {
+          calls: parsed.calls,
+          root: parsed.root,
+          output: parsed.output,
+        };
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  throw new Error("fake compiler did not start");
+};
+
+type ElectronCaptureResult = Awaited<
+  ReturnType<PlaywrightElectronActiveProvider["capture"]>
+>;
+type ElectronCaptureOutcome =
+  | { readonly state: "result"; readonly value: ElectronCaptureResult }
+  | { readonly state: "rejected"; readonly cause: unknown };
 
 it("reports an actionable missing Swift compiler without installing it", async () => {
   const reader = createDarwinProcessRunTokenReader({
@@ -33,6 +109,104 @@ it("reports an actionable missing Swift compiler without installing it", async (
     await reader.close();
   }
 });
+
+it.skipIf(process.platform === "win32")(
+  "rethrows compile cancellation, removes its temporary root, and permits retry",
+  async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), "rea-process-token-abort-test-"),
+    );
+    const fakeCompiler = await writeBlockingCompiler(directory);
+    const reader = createDarwinProcessRunTokenReader({
+      xcrun: fakeCompiler.executable,
+    });
+    const controller = new AbortController();
+    const compilation = reader.prepare(controller.signal).then(
+      () => ({ state: "fulfilled" as const }),
+      (cause: unknown) => ({ state: "rejected" as const, cause }),
+    );
+    try {
+      const firstAttempt = await waitForCompileState(fakeCompiler.statePath);
+      controller.abort();
+      const outcome = await compilation;
+
+      expect(outcome.state).toBe("rejected");
+      if (outcome.state !== "rejected")
+        throw new Error(
+          "aborted native reader compilation unexpectedly succeeded",
+        );
+      expect(outcome.cause).toMatchObject({ name: "AbortError" });
+      expect(
+        normalizeCaptureFailure(outcome.cause, controller.signal),
+      ).toMatchObject({ reason: "cancelled", userCategory: "cancelled" });
+      await expect(access(firstAttempt.root)).rejects.toThrow();
+
+      await reader.prepare();
+      const retry = await waitForCompileState(fakeCompiler.statePath);
+      expect(retry).toMatchObject({ calls: 2 });
+      await expect(access(retry.output)).resolves.toBeUndefined();
+      await reader.close();
+      await expect(access(retry.root)).rejects.toThrow();
+    } finally {
+      if (!controller.signal.aborted) controller.abort();
+      await compilation;
+      await reader.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "maps cancellation during native preparation before Electron path resolution",
+  async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), "rea-electron-token-abort-test-"),
+    );
+    const fakeCompiler = await writeBlockingCompiler(directory);
+    const reader = createDarwinProcessRunTokenReader({
+      xcrun: fakeCompiler.executable,
+    });
+    const prepareSpy = vi
+      .spyOn(systemProcessOwnershipHost, "prepare")
+      .mockImplementation(async (signal) => {
+        await reader.prepare(signal);
+      });
+    const launchSpy = vi.spyOn(electron, "launch");
+    const controller = new AbortController();
+    let captureOutcome: Promise<ElectronCaptureOutcome> | undefined;
+    try {
+      const input = electronActiveObservationInputSchema.parse({
+        executable_path: "/missing/electron",
+        application_path: "/missing/application.js",
+      });
+      captureOutcome = new PlaywrightElectronActiveProvider()
+        .capture(input, { signal: controller.signal })
+        .then(
+          (value) => ({ state: "result" as const, value }),
+          (cause: unknown) => ({ state: "rejected" as const, cause }),
+        );
+      const compileState = await waitForCompileState(fakeCompiler.statePath);
+      controller.abort();
+      const outcome = await captureOutcome;
+
+      expect(outcome.state).toBe("result");
+      if (outcome.state !== "result") throw outcome.cause;
+      expect(outcome.value).toMatchObject({
+        ok: false,
+        error: { reason: "cancelled", userCategory: "cancelled" },
+      });
+      expect(launchSpy).not.toHaveBeenCalled();
+      await expect(access(compileState.root)).rejects.toThrow();
+    } finally {
+      if (!controller.signal.aborted) controller.abort();
+      if (captureOutcome !== undefined) await captureOutcome;
+      prepareSpy.mockRestore();
+      launchSpy.mockRestore();
+      await reader.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 it.skipIf(!onDarwin)(
   "parses exact NUL-delimited token records and rejects truncated argv",

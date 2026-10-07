@@ -113,6 +113,12 @@ export const createDarwinProcessRunTokenReader = (
           },
         );
       } catch (cause: unknown) {
+        if (
+          signal?.aborted === true &&
+          (cause === signal.reason ||
+            (cause instanceof Error && cause.name === "AbortError"))
+        )
+          throw cause;
         const code =
           cause instanceof Error && "code" in cause
             ? String(cause.code)

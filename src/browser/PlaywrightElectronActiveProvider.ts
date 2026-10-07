@@ -201,7 +201,13 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
       );
       outcome = ok(createResult(paths, input, actions, state));
     } catch (cause: unknown) {
-      outcome = err(providerError(cause));
+      outcome = err(
+        options.signal?.aborted === true &&
+          (cause === options.signal.reason ||
+            (cause instanceof Error && cause.name === "AbortError"))
+          ? new BrowserObservationError(OPERATION, "cancelled", { cause })
+          : providerError(cause),
+      );
     }
     if (application !== undefined) {
       if (ownership !== undefined)
