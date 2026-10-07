@@ -222,7 +222,7 @@ const parseKeyedArchive = (
       // in that order without the inversion the unprefixed fields use.
       const source = firstObjectReference(
         controlAction ? fields.destination : fields.source,
-        fields.NSSource,
+        archivedObjectReference(fields.NSSource),
         controlAction ? fields.to : fields.from,
         controlAction ? fields.target : fields.owner,
       );
@@ -234,7 +234,7 @@ const parseKeyedArchive = (
         source_id: source,
         destination_id: firstObjectReference(
           controlAction ? fields.source : fields.destination,
-          fields.NSDestination,
+          archivedObjectReference(fields.NSDestination),
           controlAction ? fields.from : fields.to,
           controlAction ? fields.owner : fields.target,
         ),
@@ -290,6 +290,18 @@ export const firstString = (...values: unknown[]): string | null => {
   for (const value of values)
     if (typeof value === "string" && value.length > 0) return value;
   return null;
+};
+
+/**
+ * The node identity of a resolved archive reference: its authored object ID,
+ * otherwise its archive UID, which is how the referenced object's node is keyed.
+ */
+const archivedObjectReference = (value: unknown): string | null => {
+  const item = record(value);
+  if (typeof item.archiveUID !== "number") return null;
+  return (
+    firstString(item.objectID, item["object-id"]) ?? String(item.archiveUID)
+  );
 };
 
 const firstObjectReference = (...values: unknown[]): string | null => {

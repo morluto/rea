@@ -325,7 +325,7 @@ describe("AppKit keyed archive connectors", () => {
       $objects: [
         "$null",
         { $class: { UID: 6 } },
-        { $class: { UID: 7 } },
+        { $class: { UID: 7 }, identifier: "unrelated-identifier" },
         {
           $class: { UID: 8 },
           NSSource: { UID: 1 },
