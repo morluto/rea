@@ -97,6 +97,53 @@ it.skipIf(!onDarwin)(
 );
 
 it.skipIf(!onDarwin)(
+  "retries a growing process table after ENOMEM and preserves other sysctl errors",
+  async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), "rea-process-snapshot-retry-test-"),
+    );
+    const executable = join(root, "snapshot-probe");
+    const core = fileURLToPath(
+      new URL(
+        "../../../bridge/process/ProcessRunTokenReader.swift",
+        import.meta.url,
+      ),
+    );
+    const fixture = fileURLToPath(
+      new URL(
+        "../../fixtures/processRunTokenSnapshotProbe.swift",
+        import.meta.url,
+      ),
+    );
+    try {
+      await execFileOutput(
+        "/usr/bin/xcrun",
+        [
+          "swiftc",
+          "-module-cache-path",
+          join(root, "modules"),
+          core,
+          fixture,
+          "-o",
+          executable,
+        ],
+        { timeout: 60_000 },
+      );
+      const { stdout } = await execFileAsync(executable, [], {
+        encoding: "utf8",
+        timeout: 10_000,
+      });
+      expect(JSON.parse(stdout)).toEqual({
+        preservedOtherErrno: true,
+        retriedAfterFreshSize: true,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+it.skipIf(!onDarwin)(
   "reads only the exact ownership key from live process environments",
   async () => {
     const host = createSystemProcessOwnershipHost("darwin");

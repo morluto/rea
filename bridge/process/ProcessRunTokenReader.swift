@@ -20,41 +20,70 @@ private struct ProcessMetadata {
   let pointerSize: Int
 }
 
-private struct ProcessSnapshot {
-  let metadata: [Int32: ProcessMetadata]
+struct ProcessSnapshot {
+  fileprivate let metadata: [Int32: ProcessMetadata]
   let failure: String?
 }
 
+typealias ProcessTableSysctlCall = (
+  _ mib: inout [Int32],
+  _ output: UnsafeMutableRawPointer?,
+  _ size: inout Int
+) -> Int32
+
 private func readProcessSnapshot() -> ProcessSnapshot {
-  var mib = [CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0]
-  var size = 0
-  guard sysctl(&mib, u_int(mib.count), nil, &size, nil, 0) == 0,
-        size >= MemoryLayout<kinfo_proc>.size,
-        size % MemoryLayout<kinfo_proc>.stride == 0 else {
-    return ProcessSnapshot(metadata: [:], failure: "process_table_failed_\(errno)")
+  readProcessSnapshot { mib, output, size in
+    sysctl(&mib, u_int(mib.count), output, &size, nil, 0)
   }
-  var processes = [kinfo_proc](repeating: kinfo_proc(), count: size / MemoryLayout<kinfo_proc>.stride)
-  let result = processes.withUnsafeMutableBufferPointer { buffer in
-    sysctl(&mib, u_int(mib.count), buffer.baseAddress, &size, nil, 0)
-  }
-  guard result == 0, size % MemoryLayout<kinfo_proc>.stride == 0 else {
-    return ProcessSnapshot(metadata: [:], failure: "process_table_failed_\(errno)")
-  }
-  let processCount = size / MemoryLayout<kinfo_proc>.stride
-  let metadata = Dictionary(
-    processes.prefix(processCount).map { process in
-      let start = process.kp_proc.p_starttime
-      return (
-        process.kp_proc.p_pid,
-        ProcessMetadata(
-          identity: "\(start.tv_sec):\(start.tv_usec)",
-          pointerSize: process.kp_proc.p_flag & P_LP64 != 0 ? 8 : 4
+}
+
+func readProcessSnapshot(
+  sysctlCall: ProcessTableSysctlCall
+) -> ProcessSnapshot {
+  for _ in 0..<3 {
+    var mib = [CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0]
+    var size = 0
+    guard sysctlCall(&mib, nil, &size) == 0 else {
+      let failure = errno
+      return ProcessSnapshot(metadata: [:], failure: "process_table_failed_\(failure)")
+    }
+    guard size >= MemoryLayout<kinfo_proc>.size,
+          size % MemoryLayout<kinfo_proc>.stride == 0 else {
+      return ProcessSnapshot(metadata: [:], failure: "process_table_failed_\(errno)")
+    }
+    var processes = [kinfo_proc](
+      repeating: kinfo_proc(),
+      count: size / MemoryLayout<kinfo_proc>.stride
+    )
+    let result = processes.withUnsafeMutableBufferPointer { buffer in
+      let output = buffer.baseAddress.map { UnsafeMutableRawPointer($0) }
+      return sysctlCall(&mib, output, &size)
+    }
+    guard result == 0 else {
+      let failure = errno
+      if failure == ENOMEM { continue }
+      return ProcessSnapshot(metadata: [:], failure: "process_table_failed_\(failure)")
+    }
+    guard size % MemoryLayout<kinfo_proc>.stride == 0 else {
+      return ProcessSnapshot(metadata: [:], failure: "process_table_failed_\(errno)")
+    }
+    let processCount = size / MemoryLayout<kinfo_proc>.stride
+    let metadata = Dictionary(
+      processes.prefix(processCount).map { process in
+        let start = process.kp_proc.p_starttime
+        return (
+          process.kp_proc.p_pid,
+          ProcessMetadata(
+            identity: "\(start.tv_sec):\(start.tv_usec)",
+            pointerSize: process.kp_proc.p_flag & P_LP64 != 0 ? 8 : 4
+          )
         )
-      )
-    },
-    uniquingKeysWith: { first, _ in first }
-  )
-  return ProcessSnapshot(metadata: metadata, failure: nil)
+      },
+      uniquingKeysWith: { first, _ in first }
+    )
+    return ProcessSnapshot(metadata: metadata, failure: nil)
+  }
+  return ProcessSnapshot(metadata: [:], failure: "process_table_failed_\(ENOMEM)")
 }
 
 func readProcessIdentities(pids: [Int32]) -> [ProcessIdentityObservation] {
