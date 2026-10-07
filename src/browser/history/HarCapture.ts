@@ -58,19 +58,41 @@ export const decodeHarCapture = (
       "/log/version",
     );
   const entries = raw.log.entries;
+  const recordsExcluded = ["log", "entries"].some((key) =>
+    sensitiveValues.some((literal) => key.includes(literal)),
+  );
   const container = projectHar(
     { ...raw, log: { ...raw.log, entries: null } },
     sensitiveValues,
     true,
   );
-  const records = entries.map((entry, ordinal): WebNetworkCaptureRecord => ({
-    ordinal,
-    location: { kind: "json-pointer", pointer: `/log/entries/${ordinal}` },
-    ...projectHar(entry, sensitiveValues, true),
-    limitations: [
-      "HAR text is producer-decoded Unicode. Original body bytes remain unknown unless content explicitly uses valid base64; declared sizes are preserved independently of retained bytes. mitmproxy 12.2.3 SaveHar may report null optional postData.text; that null is retained and omitted only from the upstream validation copy.",
-    ],
-  }));
+  const records = entries.map((entry, ordinal): WebNetworkCaptureRecord => {
+    // Validate each original record even when a structural ancestor excludes it.
+    const projected = projectHar(entry, sensitiveValues, true);
+    const projection: Projection = recordsExcluded
+      ? {
+          reported: null,
+          numeric_literals: [],
+          binary_fields: [],
+          redactions: [{ pointer: "", reason: "explicit-sensitive-value" }],
+        }
+      : projected;
+    return {
+      ordinal,
+      location: recordsExcluded
+        ? { kind: "unknown", reason: "explicit-sensitive-value" }
+        : { kind: "json-pointer", pointer: `/log/entries/${ordinal}` },
+      ...projection,
+      limitations: [
+        "HAR text is producer-decoded Unicode. Original body bytes remain unknown unless content explicitly uses valid base64; declared sizes are preserved independently of retained bytes. mitmproxy 12.2.3 SaveHar may report null optional postData.text; that null is retained and omitted only from the upstream validation copy.",
+        ...(recordsExcluded
+          ? [
+              "This record's payload and sidecars are excluded because its structural ancestor property was explicitly marked sensitive.",
+            ]
+          : []),
+      ],
+    };
+  });
   return {
     decoder: {
       id: HAR_CAPTURE_PROVIDER_IDENTITY.id,
@@ -80,7 +102,7 @@ export const decodeHarCapture = (
       reported: container.reported,
       numeric_literals: container.numeric_literals,
       redactions: container.redactions,
-      records_pointer: "/log/entries",
+      records_pointer: recordsExcluded ? null : "/log/entries",
     },
     total_records: records.length,
     records,

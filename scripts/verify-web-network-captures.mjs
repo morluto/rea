@@ -459,17 +459,20 @@ try {
   );
   cases++;
   const privatePath = join(runtime.path, "REDACTED.har");
-  await inspect(
-    "mcp",
-    {
-      capture_path: join(runtime.path, "producer.har"),
-      format: "har",
-      sensitive_values: ["secret"],
-      mysecret: true,
-    },
-    "invalid_input",
-  );
-  cases++;
+  for (const name of ["mysecret", "/ordinary/secret"]) {
+    const unknownArgument = await inspect(
+      "mcp",
+      {
+        capture_path: join(runtime.path, "producer.har"),
+        format: "har",
+        sensitive_values: ["secret"],
+        [name]: true,
+      },
+      "invalid_input",
+    );
+    assert.deepEqual(unknownArgument.details.issues[0].path, []);
+    cases++;
+  }
   await inspect("mcp", {
     capture_path: join(runtime.path, "flows.mitm"),
     format: "mitmproxy",
@@ -501,6 +504,28 @@ try {
     cases++;
   }
   const oversizedPath = join(runtime.path, "oversized-capture");
+  for (const mode of ["cli", "mcp"]) {
+    for (const literal of ["log", "entries"]) {
+      const hidden = await inspect(mode, {
+        capture_path: join(runtime.path, "producer.har"),
+        format: "har",
+        sensitive_values: [literal],
+      });
+      assert.equal(hidden.total_records, 2);
+      assert.equal(hidden.container.records_pointer, null);
+      for (const [ordinal, record] of hidden.records.entries()) {
+        assert.equal(record.ordinal, ordinal);
+        assert.deepEqual(record.location, {
+          kind: "unknown",
+          reason: "explicit-sensitive-value",
+        });
+        assert.equal(record.reported, null);
+        assert.deepEqual(record.binary_fields, []);
+        assert.deepEqual(record.numeric_literals, []);
+      }
+      cases++;
+    }
+  }
   await writeFile(oversizedPath, "");
   await truncate(oversizedPath, WEB_NETWORK_CAPTURE_LIMITS.inputBytes + 1);
   await copyFile(join(runtime.path, "producer.har"), privatePath);

@@ -112,3 +112,15 @@ it("coarsens ordinary sensitive issue-path segments to their real parent", () =>
   expect(result.issues[0]?.path).toEqual(["input"]);
   expect(JSON.stringify(projectAnalysisError(result))).not.toContain("secret");
 });
+
+it("does not reinterpret an unknown argument name as a JSON pointer", () => {
+  const input = new AnalysisInputError(
+    "inspect_web_network_capture",
+    undefined,
+    [{ path: ["/ordinary/secret"], reason: "unknown_argument" }],
+  );
+  const result = redactExplicitFailure(input, ["secret"]);
+  if (!(result instanceof AnalysisInputError))
+    throw new Error("Input error required");
+  expect(result.issues[0]?.path).toEqual([]);
+});

@@ -2,7 +2,13 @@ import { expect, it } from "vitest";
 import { historicalHar } from "../../../tests/fixtures/historicalHar.js";
 import { decodeHarCapture } from "./HarCapture.js";
 
-it.each([{ values: [] }, { values: ["response"] }, { values: ["content"] }])(
+it.each([
+  { values: [] },
+  { values: ["response"] },
+  { values: ["content"] },
+  { values: ["log"] },
+  { values: ["entries"] },
+])(
   "validates canonical base64 even when its parent property is sensitive: %j",
   ({ values }) => {
     const fixture = historicalHar();
@@ -30,6 +36,27 @@ it.each([{ values: [] }, { values: ["response"] }, { values: ["content"] }])(
     expect(() => decodeHarCapture(JSON.stringify(input), values)).toThrow(
       "not valid canonical base64",
     );
+  },
+);
+
+it.each(["log", "entries", "ntries"])(
+  "excludes extracted record payloads beneath the marked structural property %s",
+  (literal) => {
+    const decoded = decodeHarCapture(JSON.stringify(historicalHar()), [
+      literal,
+    ]);
+    expect(decoded.total_records).toBeGreaterThan(0);
+    expect(decoded.container.records_pointer).toBe(null);
+    for (const [ordinal, record] of decoded.records.entries()) {
+      expect(record).toMatchObject({
+        ordinal,
+        location: { kind: "unknown", reason: "explicit-sensitive-value" },
+        reported: null,
+        binary_fields: [],
+        numeric_literals: [],
+        redactions: [{ pointer: "", reason: "explicit-sensitive-value" }],
+      });
+    }
   },
 );
 

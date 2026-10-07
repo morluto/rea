@@ -38,12 +38,15 @@ export const redactExplicitFailure = (
 ): AnalysisError => {
   if (values.length === 0) return error;
   const text = (value: string): string => redactExplicitText(value, values);
-  const path = (parts: readonly (string | number)[]): (string | number)[] => {
+  const path = (
+    parts: readonly (string | number)[],
+    ordinaryNames: boolean,
+  ): (string | number)[] => {
     const retained: (string | number)[] = [];
     for (const part of parts) {
       if (typeof part !== "string") {
         retained.push(part);
-      } else if (part.startsWith("/")) {
+      } else if (!ordinaryNames && part.startsWith("/")) {
         const pointer = redactExplicitPointer(part, values);
         retained.push(pointer);
         if (pointer !== part) break;
@@ -88,7 +91,9 @@ export const redactExplicitFailure = (
       { cause: error },
       error.issues.map((issue) => ({
         ...issue,
-        path: path(issue.path),
+        // Unknown-argument paths contain literal field names, including names
+        // beginning with '/'; they are not producer JSON-pointer coordinates.
+        path: path(issue.path, issue.reason === "unknown_argument"),
         ...(issue.message === undefined
           ? {}
           : { message: text(issue.message) }),
