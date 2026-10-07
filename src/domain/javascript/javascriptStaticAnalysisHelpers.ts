@@ -73,19 +73,38 @@ export const chunkRuntime = (call: t.CallExpression): string | undefined => {
 };
 
 const findChunkRuntime = (node: t.Node): string | undefined => {
-  if (t.isIdentifier(node) && /(?:webpack|rspack)Chunk/iu.test(node.name))
-    return node.name;
-  if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
-    const property = semanticStaticPropertyName(node.property, node.computed);
-    if (/(?:webpack|rspack)Chunk/iu.test(property)) return property;
-    return t.isNode(node.object) ? findChunkRuntime(node.object) : undefined;
+  const pending: t.Node[] = [node];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current === undefined) continue;
+    if (
+      t.isIdentifier(current) &&
+      /(?:webpack|rspack)Chunk/iu.test(current.name)
+    )
+      return current.name;
+    if (
+      t.isMemberExpression(current) ||
+      t.isOptionalMemberExpression(current)
+    ) {
+      const property = semanticStaticPropertyName(
+        current.property,
+        current.computed,
+      );
+      if (/(?:webpack|rspack)Chunk/iu.test(property)) return property;
+      if (t.isNode(current.object)) pending.push(current.object);
+      continue;
+    }
+    if (t.isAssignmentExpression(current)) {
+      pending.push(current.right, current.left);
+      continue;
+    }
+    if (t.isLogicalExpression(current) || t.isBinaryExpression(current)) {
+      pending.push(current.right, current.left);
+      continue;
+    }
+    if (t.isParenthesizedExpression(current) || t.isTSAsExpression(current))
+      pending.push(current.expression);
   }
-  if (t.isAssignmentExpression(node))
-    return findChunkRuntime(node.left) ?? findChunkRuntime(node.right);
-  if (t.isLogicalExpression(node) || t.isBinaryExpression(node))
-    return findChunkRuntime(node.left) ?? findChunkRuntime(node.right);
-  if (t.isParenthesizedExpression(node) || t.isTSAsExpression(node))
-    return findChunkRuntime(node.expression);
   return undefined;
 };
 

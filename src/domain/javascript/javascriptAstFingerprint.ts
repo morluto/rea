@@ -119,14 +119,30 @@ const addExport = (output: Set<string>, name: string): void => {
 };
 
 const memberPath = (node: t.Node | null | undefined): string => {
-  if (node === undefined || node === null) return "";
-  if (t.isIdentifier(node) || t.isPrivateName(node))
-    return t.isIdentifier(node) ? node.name : "";
-  if (t.isThisExpression(node)) return "this";
-  if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
-    const object = t.isNode(node.object) ? memberPath(node.object) : "";
-    const property = propertyName(node.property);
-    return object === "" ? property : `${object}.${property}`;
+  const properties: string[] = [];
+  let current = node;
+  while (
+    current !== undefined &&
+    current !== null &&
+    (t.isMemberExpression(current) || t.isOptionalMemberExpression(current))
+  ) {
+    properties.push(propertyName(current.property));
+    current = t.isNode(current.object) ? current.object : undefined;
   }
-  return "";
+
+  const root =
+    current !== undefined && t.isIdentifier(current)
+      ? current.name
+      : current !== undefined && t.isThisExpression(current)
+        ? "this"
+        : "";
+  if (properties.length === 0) return root;
+
+  properties.reverse();
+  const path = root === "" ? [] : [root];
+  for (const property of properties) {
+    if (path.length === 0 && property === "") continue;
+    path.push(property);
+  }
+  return path.join(".");
 };
