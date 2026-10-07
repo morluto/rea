@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -69,6 +69,11 @@ export async function verifyBrowserSourceMap(
       join(root, "export"),
     );
     const manifest = exported.normalized_result;
+    const manifestBytes = await readFile(manifest.manifest.path);
+    const identity = {
+      sha256: sha(manifestBytes),
+      bytes: manifestBytes.length,
+    };
     const scriptIndex = manifest.scripts.findIndex(
       (script) => script.url === `${site.origin}/app.js?build=7`,
     );
@@ -78,36 +83,29 @@ export async function verifyBrowserSourceMap(
     );
     const mapPath = join(root, "app.js.map");
     await writeFile(mapPath, site.map);
-    const input = {
-      manifest_path: manifest.manifest.path,
-      script_index: scriptIndex,
-      source_map: {
-        path: mapPath,
-        url: `${site.origin}/maps/app.js.map?v=7#context`,
-      },
-      generated_position: site.position,
-    };
     const before = site.mapRequests();
-    const cliEvidence = await cli(
-      "trace-web-source-location",
-      input.manifest_path,
-      String(scriptIndex),
-      mapPath,
-      input.source_map.url,
-      String(site.position.line),
-      String(site.position.column),
-    );
-    const expected = assertPoint(cliEvidence, site, input, capture);
     await client.connect(transport);
-    const response = await client.callTool({
-      name: "trace_web_source_location",
-      arguments: input,
-    });
-    assert.notEqual(response.isError, true, mcpTextValue(response));
-    const mcpEvidence = parseEvidence(
-      JSON.parse(mcpTextValue(response)).evidence,
-    );
-    assert.deepEqual(assertPoint(mcpEvidence, site, input, capture), expected);
+    let expected;
+    for (const context of [
+      site.origin,
+      site.origin.replace("://", "://selected-user:selected-value@"),
+    ]) {
+      const input = {
+        manifest_path: manifest.manifest.path,
+        script_index: scriptIndex,
+        source_map: {
+          path: mapPath,
+          url: `${context}/maps/app.js.map?v=7#context`,
+        },
+        generated_position: site.position,
+      };
+      expected = await assertPublicPair(cli, client, {
+        site,
+        input,
+        capture,
+        identity,
+      });
+    }
     assert.equal(
       site.mapRequests(),
       before,
@@ -125,6 +123,8 @@ export async function verifyBrowserSourceMap(
       original_point: site.originalPosition,
       codec: expected.engine,
       runtime: expected.runtime,
+      selected_inert_userinfo_context_preserved: true,
+      public_point_cases: 4,
     };
   } finally {
     await client.close();
@@ -133,10 +133,13 @@ export async function verifyBrowserSourceMap(
     await rm(root, { recursive: true, force: true });
   }
 }
-function assertPoint(evidence, site, input, capture) {
+function assertPoint(evidence, { site, input, capture, identity }) {
   const result = webSourceLocationResultSchema.parse(
     evidence.normalized_result,
   );
+  assert.equal(result.manifest.sha256, identity.sha256);
+  assert.equal(result.manifest.bytes, identity.bytes);
+  assert.equal(result.source.bytes, Buffer.byteLength(site.generated));
   assert.equal(result.source.sha256, sha(site.generated));
   assert.equal(result.source_map.sha256, sha(site.map));
   assert.equal(result.source_map.url, input.source_map.url);
@@ -153,7 +156,7 @@ function assertPoint(evidence, site, input, capture) {
   });
   assert.equal(
     match.resolved_url,
-    `${site.origin}/src/fixture.ts?v=7#original`,
+    new URL("../src/fixture.ts?v=7#original", input.source_map.url).href,
   );
   assert.equal(match.content.state, "embedded");
   assert.equal(match.content.text, site.original);
@@ -163,3 +166,28 @@ function assertPoint(evidence, site, input, capture) {
   return result;
 }
 const sha = (text) => createHash("sha256").update(text).digest("hex");
+
+async function assertPublicPair(cli, client, oracle) {
+  const { input } = oracle;
+  const evidence = await cli(
+    "trace-web-source-location",
+    input.manifest_path,
+    String(input.script_index),
+    input.source_map.path,
+    input.source_map.url,
+    String(input.generated_position.line),
+    String(input.generated_position.column),
+  );
+  const expected = assertPoint(evidence, oracle);
+  const response = await client.callTool({
+    name: "trace_web_source_location",
+    arguments: input,
+  });
+  assert.notEqual(response.isError, true, mcpTextValue(response));
+  const mcpEvidence = parseEvidence(
+    JSON.parse(mcpTextValue(response)).evidence,
+  );
+  assert.deepEqual(assertPoint(mcpEvidence, oracle), expected);
+  assert.equal(evidence.parameters.source_map.url, input.source_map.url);
+  return expected;
+}

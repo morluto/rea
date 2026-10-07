@@ -39,13 +39,6 @@ it.each([
   { ...args, script_index: -1 },
   { ...args, source_map: { ...args.source_map, path: "relative.map" } },
   { ...args, source_map: { ...args.source_map, url: "relative.map" } },
-  {
-    ...args,
-    source_map: {
-      ...args.source_map,
-      url: "https://user:password@app.test/map",
-    },
-  },
   { ...args, generated_position: { line: 0, column: 0 } },
 ])(
   "rejects invalid selected context before acquiring artifacts: %j",
@@ -62,7 +55,11 @@ it.each([
     expect(projectAnalysisError(response.error).code).toBe("invalid_request");
   },
 );
-it.each(["file:///analysis/app.map", "webpack:///bundle/app.map"])(
+it.each([
+  "file:///analysis/app.map",
+  "webpack:///bundle/app.map",
+  "https://selected-user:selected-value@app.test/maps/app.map",
+])(
   "retains an absolute inert map context without fetching: %s",
   async (url) => {
     const fixture = webSourceLocationFixture();

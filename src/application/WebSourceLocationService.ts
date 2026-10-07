@@ -181,20 +181,11 @@ const admitContext = (
         path.split("."),
         "Expected an absolute filesystem path on this host.",
       );
-  try {
-    const context = new URL(input.source_map.url);
-    if (context.username !== "" || context.password !== "")
-      return invalid(
-        ["source_map", "url"],
-        "Source-map URL context must not contain username/password userinfo.",
-      );
-  } catch (cause: unknown) {
-    void cause;
+  if (!URL.canParse(input.source_map.url))
     return invalid(
       ["source_map", "url"],
       "Expected an absolute source-map URL context. Select its deployment context explicitly; no URL is fetched.",
     );
-  }
   return ok(null);
 };
 
