@@ -319,3 +319,97 @@ const signatureRunner = (outputs: {
     );
   },
 });
+
+it.each([
+  "/tmp/Load command 12/plugin.dylib",
+  "@rpath/plugin-Load command 34.dylib",
+])(
+  "keeps load-command-looking text inside native install names: %s",
+  (installName) => {
+    const parsed = parseOtoolLoadCommands(`Load command 0
+          cmd LC_ID_DYLIB
+      cmdsize 80
+         name ${installName} (offset 24)
+   time stamp 2 Thu Jan  1 00:00:02 1970
+      current version 3.2.1
+compatibility version 1.0.0
+Load command 1
+          cmd LC_UUID
+      cmdsize 24
+         uuid 01234567-89AB-CDEF-0123-456789ABCDEF
+`);
+    expect(parsed.commands.map(({ index, kind }) => ({ index, kind }))).toEqual(
+      [
+        { index: 0, kind: "LC_ID_DYLIB" },
+        { index: 1, kind: "LC_UUID" },
+      ],
+    );
+    expect(parsed.dependencies).toEqual([
+      {
+        path: installName,
+        kind: "LC_ID_DYLIB",
+        current_version: "3.2.1",
+        compatibility_version: "1.0.0",
+      },
+    ]);
+    expect(parsed.uuid).toBe("01234567-89AB-CDEF-0123-456789ABCDEF");
+  },
+);
+it.each(["weak-def", "absolute", "literal suffix"])(
+  "preserves an nm-proven export name ending in [%s]",
+  (suffix) => {
+    const name = `symbol [${suffix}]`;
+    expect(
+      parseDyldSymbols(
+        `offset symbol\n0x120 ${name}`,
+        "exports",
+        "0x1000",
+        new Set([name]),
+      ),
+    ).toEqual([
+      { name, address: "0x1120", weak: null, reexport: false, source: null },
+    ]);
+  },
+);
+
+it("keeps true weak annotations when nm establishes the unannotated name", () => {
+  expect(
+    parseDyldSymbols(
+      "0x120 _weak [weak-def]",
+      "exports",
+      null,
+      new Set(["_weak"]),
+    ),
+  ).toEqual([
+    {
+      name: "_weak",
+      address: "0x120",
+      weak: true,
+      reexport: false,
+      source: null,
+    },
+  ]);
+});
+
+it("leaves an ambiguous short and literal name to the caller's nm inventory", () => {
+  expect(
+    parseDyldSymbols(
+      "0x120 symbol [weak-def]",
+      "exports",
+      null,
+      new Set(["symbol", "symbol [weak-def]"]),
+    ),
+  ).toEqual([]);
+});
+
+it("retains annotation parsing without nm name evidence", () => {
+  expect(parseDyldSymbols("0x120 _weak [weak-def]", "exports")).toEqual([
+    {
+      name: "_weak",
+      address: "0x120",
+      weak: true,
+      reexport: false,
+      source: null,
+    },
+  ]);
+});

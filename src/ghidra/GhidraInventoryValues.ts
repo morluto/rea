@@ -9,7 +9,7 @@ import {
   functionBodySchema,
   functionBodyEntryAgrees,
 } from "../domain/hopperValues.js";
-import type { JsonValue } from "../domain/jsonValue.js";
+import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 /** Read-only direct inventory operations admitted by the Ghidra adapter. */
@@ -274,7 +274,7 @@ export const parseGhidraInventoryResult = (
 ): Result<JsonValue, AnalysisOutputError> => {
   const parsed = resultSchemas[operation].safeParse(value);
   return parsed.success
-    ? ok(parsed.data)
+    ? ok(jsonValueSchema.parse(parsed.data))
     : err(
         new AnalysisOutputError(
           operation,

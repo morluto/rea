@@ -1,7 +1,7 @@
 {
   "name": "rea-agents",
   "mcpName": "io.github.morluto/rea",
-  "version": "4.0.1",
+  "version": "4.1.0",
   "description": "Reverse engineer anything from your terminal or agent with one CLI and MCP server.",
   "license": "MIT",
   "repository": {
@@ -44,6 +44,7 @@
     "bridge/hopper_bridge.py",
     "bridge/native/ReaNativeUI.swift",
     "bridge/ghidra/ReaGhidraBridge.java",
+    "bridge/ghidra/ReaGhidraExtensions.java",
     "bridge/ghidra/ReaGhidraPrepareCom.java",
     "scripts/rea.mjs",
     "scripts/electron-active-hook.cjs",
@@ -122,6 +123,7 @@
     "verify:native-ui": "npm run build:cached && node scripts/verify-native-ui.mjs",
     "verify:keyed-archive": "npm run build:cached && node scripts/verify-keyed-archive.mjs",
     "verify:ghidra": "npm run build:cached && node scripts/verify-real-ghidra.mjs",
+    "verify:ida": "npm run build:cached && node scripts/verify-real-ida.mjs",
     "verify:ghidra:switch": "npm run build:cached && node scripts/verify-real-ghidra-switch.mjs",
     "verify:ghidra:dos": "npm run build:cached && node scripts/verify-real-ghidra-dos.mjs",
     "verify:ghidra:com": "npm run build:cached && node scripts/verify-real-ghidra-com.mjs",
@@ -130,6 +132,7 @@
     "verify:ghidra:cross-format": "npm run build:cached && node scripts/verify-real-ghidra.mjs --cross-format",
     "verify:ghidra:windows": "npm run build:cached && npm run build:ghidra-windows-fixture && node scripts/verify-real-ghidra-windows.mjs",
     "verify:browser": "npm run build:cached && node scripts/verify-real-browser.mjs",
+    "verify:browser:network": "npm run build:cached && node scripts/verify-browser-network.mjs",
     "verify:electron": "npm run build:cached && node scripts/verify-real-electron.mjs",
     "verify:inspector": "npm run build:cached && node scripts/verify-real-javascript-runtime-observation.mjs",
     "verify:javascript-runtime": "npm run build:cached && node scripts/verify-local-javascript-runtime.mjs",
@@ -168,7 +171,11 @@
     "verify:windows-native:artifact": "node scripts/verify-windows-native-artifact.mjs",
     "prepublishOnly": "npm run verify:windows-native:artifact",
     "verify:windows-native": "node scripts/verify-windows-native.mjs",
-    "verify:ghidra:windows:package": "node scripts/verify-packaged-ghidra-windows.mjs"
+    "verify:ghidra:windows:package": "node scripts/verify-packaged-ghidra-windows.mjs",
+    "build:ghidra:nativeaot": "node scripts/build-ghidra-nativeaot.mjs",
+    "build:fixtures:nativeaot": "node scripts/generate-nativeaot-fixtures.mjs",
+    "verify:ghidra:nativeaot": "npm run build:cached && node scripts/verify-real-ghidra-nativeaot.mjs",
+    "verify:browser:scripts": "npm run build:cached && node scripts/verify-browser-scripts.mjs"
   },
   "lint-staged": {
     "*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}": [

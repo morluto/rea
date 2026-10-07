@@ -25,8 +25,14 @@ export const parseConfig = (
   if (!secretPatterns.ok) return secretPatterns;
   return ok({
     analysisProvider: env.REA_ANALYSIS_PROVIDER,
+    ...(env.REA_IDA_MCP_CONFIG === undefined
+      ? {}
+      : { idaMcpConfigPath: env.REA_IDA_MCP_CONFIG }),
     ghidraInstallDir: env.GHIDRA_INSTALL_DIR,
     ghidraJavaHome: env.JAVA_HOME,
+    ...(env.REA_GHIDRA_NATIVEAOT_JAR === undefined
+      ? {}
+      : { ghidraNativeAotJar: env.REA_GHIDRA_NATIVEAOT_JAR }),
     ilspyCmdPath: env.REA_ILSPY_CMD_PATH,
     hopperLauncherPath: env.HOPPER_LAUNCHER_PATH ?? defaultHopperLauncherPath(),
     hopperTargetPath: env.HOPPER_TARGET_PATH,

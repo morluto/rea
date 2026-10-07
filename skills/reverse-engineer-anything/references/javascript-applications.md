@@ -44,7 +44,7 @@ When advertised by the connected server, application trace and compare tools
 accept complete inline Evidence or
 `{"kind":"retained-evidence","evidence_id":"ev_<64 lowercase hex characters>"}`
 for their application input (`application`, or `left`/`right`). This notation is
-a template: replace it with the actual returned ID. npm 4.0.1 accepts only full
+a template: replace it with the actual returned ID. Versions before 4.1.0 accept only full
 inline Evidence. Use the exact ID
 returned by the producer on the same MCP connection. Resolution does not run
 analysis or select a provider; findings remain inline. Native observation

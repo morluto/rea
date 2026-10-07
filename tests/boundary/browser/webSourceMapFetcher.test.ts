@@ -591,3 +591,70 @@ it("keeps bare original module specifiers unresolved", async () => {
       ?.resolved_source,
   ).toContain("/assets/actual.js");
 });
+
+describe("source-map original artifact language metadata", () => {
+  it.each([
+    ["main.ts", "text/typescript"],
+    ["main.tsx", "text/typescript"],
+    ["main.mts", "text/typescript"],
+    ["main.cts", "text/typescript"],
+    ["main.js", "text/javascript"],
+    ["main.mjs", "text/javascript"],
+    ["main.cjs", "text/javascript"],
+  ])("retains the source language for %s", async (filename, mediaType) => {
+    const text =
+      mediaType === "text/typescript"
+        ? "export const value: number = 1;"
+        : "export const value = 1;";
+    const server = createServer((_incoming, response) => {
+      response.setHeader("content-type", "application/json");
+      response.end(
+        JSON.stringify({
+          version: 3,
+          sources: [filename],
+          sourcesContent: [text],
+          names: [],
+          mappings: "AAAA",
+        }),
+      );
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      const address = server.address();
+      if (address === null || typeof address === "string")
+        throw new TypeError("Expected a TCP listener address");
+      const localOrigin = `http://127.0.0.1:${String(address.port)}`;
+      const url = `${localOrigin}/main.js.map`;
+      const result = await fetchWebSourceMaps(
+        [{ ...request, fetchUrl: url, declaredUrl: url }],
+        input({ allowed_origins: [localOrigin] }),
+        AbortSignal.timeout(2_000),
+      );
+      expect(result).toMatchObject({
+        status: "included",
+        items: [
+          {
+            original_sources: [
+              {
+                source: `${localOrigin}/${filename}`,
+                artifact: { media_type: mediaType, text },
+              },
+            ],
+            mappings: [{ source: `${localOrigin}/${filename}` }],
+          },
+        ],
+      });
+    } finally {
+      server.closeAllConnections();
+      if (server.listening)
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) =>
+            error === undefined ? resolve() : reject(error),
+          );
+        });
+    }
+  });
+});

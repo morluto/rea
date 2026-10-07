@@ -1,5 +1,9 @@
+import { createHash } from "node:crypto";
 // Fake-backed provider coverage; real Ghidra verification lives in
 // `npm run verify:ghidra` and its focused variants.
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { fixtureDosLoadImage } from "./GhidraLoadImage.fixture.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
@@ -687,4 +691,103 @@ const peTarget = (
   availableArchitectures: [architecture],
   executableRole: "application",
   managed: false,
+});
+
+describe("Ghidra extension failures", () => {
+  it.each(["unsupported", "failed", "malformed"] as const)(
+    "preserves %s recovery diagnostics and closes without restarting",
+    async (status) => {
+      const directory = await mkdtemp(
+        join(tmpdir(), "rea-provider-extension-"),
+      );
+      try {
+        const jar = join(directory, "addon.jar");
+        await writeFile(jar, Buffer.from([0x50, 0x4b, 3, 4]));
+        const config = parseConfig({
+          GHIDRA_INSTALL_DIR: INSTALL,
+          REA_GHIDRA_NATIVEAOT_JAR: jar,
+        });
+        if (!config.ok) throw config.error;
+        let starts = 0,
+          calls = 0,
+          closes = 0;
+        const ghidra = new GhidraProvider(
+          config.value,
+          silentLogger,
+          installationHost(),
+          () => ({
+            start: () => {
+              starts++;
+              return Promise.resolve(
+                ok({
+                  ...sessionInfo(),
+                  analysis_extensions: [
+                    {
+                      id: "nativeaot",
+                      sha256:
+                        status === "malformed"
+                          ? "0".repeat(64)
+                          : createHash("sha256")
+                              .update(Buffer.from([0x50, 0x4b, 3, 4]))
+                              .digest("hex"),
+                      status: status === "malformed" ? "failed" : status,
+                      reason:
+                        "directory-discovery: Unsupported layout at 0x401000",
+                      result: {
+                        id: "nativeaot",
+                        integration_api: 1,
+                        source_revision:
+                          "effeb734fc570c32650f88b159608979dc7b423e",
+                        source_revision_authority: "build-reported-unattested",
+                        status: status === "malformed" ? "failed" : status,
+                        reason:
+                          "directory-discovery: Unsupported layout at 0x401000",
+                        method_tables: 0,
+                        diagnostics: ["exact producer diagnostic"],
+                      },
+                    },
+                  ],
+                }),
+              );
+            },
+            callTool: () => {
+              calls++;
+              return Promise.resolve(ok(null));
+            },
+            close: () => {
+              closes++;
+              return Promise.resolve();
+            },
+          }),
+        );
+        const target = executableTarget("elf", "x86_64");
+        const resolved = await ghidra.resolveAnalysisProfile(target);
+        if (!resolved.ok || resolved.value.profile === null)
+          throw new Error("expected extension profile");
+        const client = ghidra.createClient(target, resolved.value.profile);
+        const failed = await client.execute("health", {});
+        expect(failed.ok).toBe(false);
+        if (!failed.ok) {
+          expect(failed.error._tag).toBe(
+            status === "unsupported"
+              ? "AnalysisCapabilityUnavailableError"
+              : "ProviderAdapterError",
+          );
+          expect(JSON.stringify(failed.error)).toContain(
+            status === "malformed"
+              ? "identity mismatch"
+              : "Unsupported layout at 0x401000",
+          );
+        }
+        expect(await client.execute("list_procedures", {})).toEqual(failed);
+        expect({ starts, calls, closes }).toEqual({
+          starts: 1,
+          calls: 0,
+          closes: 1,
+        });
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
 });

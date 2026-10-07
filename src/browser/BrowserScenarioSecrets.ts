@@ -13,6 +13,13 @@ import type { BrowserStorageValueFingerprint } from "../domain/browserScenarioCa
 
 const REDACTION_PREFIX = "[REDACTED:";
 
+const encodedSecretValues = (secret: string): ReadonlySet<string> =>
+  new Set([
+    secret,
+    encodeURIComponent(secret),
+    new URLSearchParams([["value", secret]]).toString().slice("value=".length),
+  ]);
+
 /** Resolved secret values kept only for one in-memory scenario session. */
 export class BrowserScenarioSecrets {
   private constructor(private readonly values: ReadonlyMap<string, string>) {}
@@ -62,6 +69,53 @@ export class BrowserScenarioSecrets {
     return output;
   }
 
+  /** Replace declared UTF-8, URI/form, and JSON-escaped secrets without decoding binary data. */
+  redactBytes(value: Buffer): Buffer {
+    const candidates = [...this.values]
+      .flatMap(([id, secret]) => {
+        if (secret === "") return [];
+        return [
+          ...new Set([
+            ...encodedSecretValues(secret),
+            JSON.stringify(secret).slice(1, -1),
+          ]),
+        ].map((text) => {
+          const needle = Buffer.from(text);
+          return {
+            id,
+            needle,
+            marker: Buffer.from(`${REDACTION_PREFIX}${id}]`),
+            index: value.indexOf(needle),
+          };
+        });
+      })
+      .sort(
+        (left, right) =>
+          right.needle.length - left.needle.length ||
+          (left.id < right.id ? -1 : left.id > right.id ? 1 : 0),
+      );
+    const parts: Buffer[] = [];
+    let offset = 0;
+    while (true) {
+      let next: (typeof candidates)[number] | undefined;
+      for (const candidate of candidates) {
+        if (candidate.index >= 0 && candidate.index < offset)
+          candidate.index = value.indexOf(candidate.needle, offset);
+        if (
+          candidate.index >= 0 &&
+          (next === undefined || candidate.index < next.index)
+        )
+          next = candidate;
+      }
+      if (next === undefined) break;
+      parts.push(value.subarray(offset, next.index), next.marker);
+      offset = next.index + next.needle.length;
+    }
+    if (parts.length === 0) return value;
+    parts.push(value.subarray(offset));
+    return Buffer.concat(parts);
+  }
+
   /** Remove only declared secret values from one URL and report that action. */
   sanitizeUrl(value: string): SanitizedBrowserUrl {
     let output = value;
@@ -73,14 +127,7 @@ export class BrowserScenarioSecrets {
     for (const [id, secret] of replacements) {
       if (secret === "") continue;
       const marker = `${REDACTION_PREFIX}${id}]`;
-      const searchParamsValue = new URLSearchParams([["value", secret]])
-        .toString()
-        .slice("value=".length);
-      for (const candidate of new Set([
-        secret,
-        encodeURIComponent(secret),
-        searchParamsValue,
-      ]))
+      for (const candidate of encodedSecretValues(secret))
         output = output.replaceAll(candidate, marker);
     }
     const sanitized = sanitizeBrowserUrl(output);

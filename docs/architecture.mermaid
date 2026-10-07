@@ -1,7 +1,7 @@
 graph TD
     subgraph "Entry Points"
-        CLI["src/cli.ts<br/>One-shot CLI adapter<br/>setup, diagnostics, analysis, decompilation"]
-        MAIN["src/main.ts<br/>MCP stdio server adapter<br/>config, session, process lifetime"]
+        CLI["src/cli.ts + src/cli/<br/>One-shot CLI adapter<br/>setup, diagnostics, analysis, decompilation"]
+        MAIN["src/main.ts + src/main/<br/>MCP stdio server adapter<br/>config, session, process lifetime"]
         DISPATCH["scripts/rea.mjs<br/>Executable dispatcher<br/>routes mcp / one-shot"]
     end
 
@@ -9,21 +9,23 @@ graph TD
         SERVER["src/server/<br/>MCP request translation<br/>createServer, tool registration, toolResult"]
         HOPPER_BRIDGE["bridge/hopper_bridge.py<br/>Runs inside Hopper<br/>adapts operations to Hopper Python API"]
         GHIDRA_BRIDGE["bridge/ghidra/ReaGhidraBridge.java<br/>Packaged HeadlessScript<br/>inventory, decompiler, references, CFG"]
-        INSTALL["Host installation adapters<br/>macOS: verified vendor DMG to ~/Applications<br/>Linux: verified vendor package + apt/dnf/pacman"]
+        INSTALL["src/cli/ + src/application/Setup*<br/>Host installation adapters<br/>macOS: verified vendor DMG to ~/Applications<br/>Linux: verified vendor package + apt/dnf/pacman"]
     end
 
     subgraph "Application Layer"
         APP["src/application/<br/>Shared CLI/MCP workflows<br/>enhanced analysis and investigations"]
         SESSION["SessionProviderRouter + BinarySession<br/>one immutable deep binding per target<br/>disjoint auxiliary routing"]
         REGISTRY["AnalysisProviderRegistry<br/>sorted deep candidates<br/>deterministic selection, no fallback"]
-        JS_RECON["JavaScript artifact reconstruction<br/>directory/ASAR reads<br/>AST-only bundle projection"]
+        JS_RECON["src/application/ + src/artifacts/<br/>JavaScript artifact reconstruction<br/>directory/ASAR reads<br/>AST-only bundle projection"]
     end
 
     subgraph "Provider Layers"
         HOPPER["src/hopper/<br/>Hopper launch & Unix-socket protocol<br/>BridgeLauncher, HopperClient, protocol"]
         GHIDRA["src/ghidra/<br/>Ghidra discovery, profile & function analysis<br/>snapshot, Unix/Windows transport, bounded lifecycle"]
+        IDA["src/ida/<br/>Upstream MCP contract adaptation<br/>live GUI binding or owned headless database"]
+        IDA_MCP["External ida-pro-mcp<br/>GUI proxy or database supervisor<br/>upstream installation and engine lifecycle"]
         AUX["src/artifacts/ + src/native/<br/>disjoint artifact and native capabilities"]
-        BROWSER["src/browser/<br/>Loopback CDP transport<br/>exact-origin passive observation"]
+        BROWSER["src/browser/<br/>CDP / Playwright capture<br/>captured script adapters and publication"]
         DOTNET["src/dotnet/<br/>Managed static metadata provider<br/>PE/CLI metadata inventory, members, IL"]
         FIRMWARE["src/firmware/<br/>Binwalk / Unblob adapters<br/>owned processes, report normalization, private extraction"]
         ANDROID["src/android/<br/>Static APK adapter<br/>owned SDK stdio, pinned headless JADX, normalization"]
@@ -46,7 +48,7 @@ graph TD
     end
 
     subgraph "Configuration"
-        CONFIG["src/config.ts<br/>Zod-validated env parsing<br/>provider settings and origins"]
+        CONFIG["src/config.ts + src/config/<br/>Zod-validated env parsing<br/>provider settings and origins"]
     end
 
     subgraph "Tests"
@@ -75,6 +77,10 @@ graph TD
     SESSION --> REGISTRY
     REGISTRY --> HOPPER
     REGISTRY --> GHIDRA
+    REGISTRY --> IDA
+    IDA --> IDA_MCP
+    IDA --> CONTRACTS
+    IDA --> DOMAIN
     SESSION --> AUX
     APP --> JS_RECON
     APP --> INSTALL
@@ -105,6 +111,7 @@ graph TD
     TESTS -.-> MAIN
     TESTS -.-> HOPPER
     TESTS -.-> GHIDRA
+    TESTS -.-> IDA
     TESTS -.-> PROCESS
     TESTS -.-> BROWSER
     TESTS -.-> EVALUATION

@@ -16,7 +16,7 @@ import {
 } from "./javascriptSemanticState.js";
 import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
 import { compareCodePoints } from "./canonicalOrdering.js";
-import { semanticStaticPropertyName } from "./javascriptAstValues.js";
+import { semanticStaticPropertyKey } from "./javascriptAstValues.js";
 import {
   semanticAmbiguousProvenance,
   semanticLocalProvenance,
@@ -173,8 +173,8 @@ const evaluateObject = (
       invalidateEarlierProperties();
       continue;
     }
-    const name = semanticStaticPropertyName(property.key, property.computed);
-    if (name === "" && !t.isStringLiteral(property.key, { value: "" })) {
+    const name = semanticStaticPropertyKey(property.key, property.computed);
+    if (name === null) {
       unknownProperties = true;
       if (omittedProperties !== null) omittedProperties += 1;
       invalidateEarlierProperties();
@@ -494,8 +494,8 @@ const mergeValues = (
 const memberKey = (
   node: t.MemberExpression | t.OptionalMemberExpression,
 ): string | number | undefined => {
-  const name = semanticStaticPropertyName(node.property, node.computed);
-  return name === "" ? undefined : name;
+  const name = semanticStaticPropertyKey(node.property, node.computed);
+  return name ?? undefined;
 };
 
 const nestedContext = (

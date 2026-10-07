@@ -158,6 +158,38 @@ describeBrowser("CdpBrowserProvider: sensitive data 1", () => {
   });
 });
 
+describeBrowser("CdpBrowserProvider: page cookie scope", () => {
+  it("uses the attached page URL for cookies and its origin for DOM storage", async () => {
+    const browser = await startFakeCdpBrowser();
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+        include_storage_keys: true,
+        include_storage_fingerprints: true,
+      }),
+    );
+    if (!result.ok) throw result.error;
+    expect(
+      browser.commands.find(({ method }) => method === "Network.getCookies")
+        ?.params,
+    ).toEqual({ urls: [`${browser.allowedOrigin}/app?token=frame-secret`] });
+    expect(
+      browser.commands.find(
+        ({ method }) => method === "DOMStorage.getDOMStorageItems",
+      )?.params,
+    ).toEqual({
+      storageId: {
+        securityOrigin: browser.allowedOrigin,
+        isLocalStorage: true,
+      },
+    });
+  });
+});
+
 describeBrowser("CdpBrowserProvider: complete storage fingerprints", () => {
   it("fingerprints cache bodies above the former byte ceiling", async () => {
     const body = "x".repeat(64 * 1_024 + 1);

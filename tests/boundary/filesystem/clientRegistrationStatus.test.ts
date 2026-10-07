@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -181,4 +181,59 @@ describe("commandcode registration status", () => {
       }),
     ]);
   });
+});
+
+describe("Node-wrapped registration policy", () => {
+  it.each([1, 30])(
+    "checks Codex startup timeout %d independently of launcher",
+    async (timeout) => {
+      const home = await createTestTempDirectory("rea-node-registration-");
+      await mkdir(join(home, ".codex"));
+      const entry = resolve("scripts/rea.mjs");
+      await writeFile(
+        join(home, ".codex/config.toml"),
+        `[mcp_servers.rea]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(entry)}, "mcp"]\nstartup_timeout_sec = ${String(timeout)}\n`,
+      );
+      const statuses = await readClientRegistrationStatuses(home, entry, {
+        environment: {},
+      });
+      expect(statuses).toEqual([
+        expect.objectContaining({
+          client: "codex",
+          state: timeout === 30 ? "aligned" : "stale",
+        }),
+      ]);
+    },
+  );
+
+  it.each([{ tools: ["binary_session"] }, { tools: ["*"] }])(
+    "checks Copilot tool selection $tools independently of launcher",
+    async ({ tools }) => {
+      const home = await createTestTempDirectory("rea-node-copilot-");
+      await mkdir(join(home, ".copilot"));
+      const entry = resolve("scripts/rea.mjs");
+      await writeFile(
+        join(home, ".copilot/mcp-config.json"),
+        JSON.stringify({
+          mcpServers: {
+            rea: {
+              type: "stdio",
+              command: process.execPath,
+              args: [entry, "mcp"],
+              tools,
+            },
+          },
+        }),
+      );
+      const statuses = await readClientRegistrationStatuses(home, entry, {
+        environment: {},
+      });
+      expect(statuses).toEqual([
+        expect.objectContaining({
+          client: "copilot_cli",
+          state: tools.includes("*") ? "aligned" : "stale",
+        }),
+      ]);
+    },
+  );
 });

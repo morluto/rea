@@ -1,16 +1,16 @@
 {
   "package": {
     "name": "rea-agents",
-    "version": "4.0.1",
+    "version": "4.1.0",
     "sdk": {
       "server": "2.3.1",
       "client": "2.3.1",
       "core": "2.3.1"
     },
-    "skill_version": "25"
+    "skill_version": "26"
   },
   "tools": {
-    "total": 125,
+    "total": 126,
     "families": [
       {
         "id": "direct",
@@ -179,13 +179,14 @@
       {
         "id": "application",
         "surface": "application-workflow",
-        "count": 7,
+        "count": 8,
         "tools": [
           "build_reconstruction_obligation_ledger",
           "compare_application_versions",
           "compare_javascript_export_shapes",
           "compare_source_to_bundle",
           "evaluate_reconstruction_coverage",
+          "export_web_scripts",
           "trace_application_feature",
           "trace_javascript_semantics"
         ]
@@ -301,6 +302,25 @@
         "set_current_document",
         "set_inline_comment",
         "unset_bookmark",
+        "xrefs"
+      ]
+    },
+    {
+      "id": "ida",
+      "name": "IDA Pro MCP adapter",
+      "version": "1",
+      "capabilities": [
+        "analyze_function",
+        "list_procedures",
+        "list_strings",
+        "procedure_address",
+        "procedure_assembly",
+        "procedure_callees",
+        "procedure_callers",
+        "procedure_pseudo_code",
+        "read_function_instructions",
+        "search_procedures",
+        "search_strings",
         "xrefs"
       ]
     },
@@ -432,6 +452,12 @@
       ]
     },
     {
+      "id": "rea-web-script-export",
+      "name": "REA captured script export",
+      "version": "1",
+      "capabilities": ["export_web_scripts"]
+    },
+    {
       "id": "unblob",
       "name": "Unblob",
       "version": "26.6.4",
@@ -513,7 +539,7 @@
     }
   ],
   "cli": {
-    "primary_count": 80,
+    "primary_count": 81,
     "commands": [
       "address-to-file-offset",
       "analyze",
@@ -543,6 +569,7 @@
       "evaluate-reconstruction-coverage",
       "evidence-export",
       "evidence-import",
+      "export-web-scripts",
       "extract-artifact",
       "extract-firmware",
       "function",
@@ -605,15 +632,15 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 80,
-      "mcp_tools": 125,
+      "cli_commands": 81,
+      "mcp_tools": 126,
       "mcp_prompts": 6
     },
     "digests": {
-      "tools_sha256": "45a8aea00dba2a8ad8563b4943cd177d07b14889bc9b823bc39b89b6ddb26d2c",
+      "tools_sha256": "569db1182f19869a3bdb22cf217bc75526f317b59635c8866d0e62741077cd52",
       "prompts_sha256": "ef2de8814390b340623c32001610aa2709d90bed51537b6e562ab3abf144ab4d",
-      "combined_sha256": "297aced29e7ce5e845c505d5f2e9e2dee42b7ed3e628f088f424fe8088c9e8dc",
-      "providers_sha256": "dfba0ee59f12c82cdfb5320e7e0d70a114e533b2cb88afd15db9b9a4a175c9b0"
+      "combined_sha256": "e21455dd7d64af94e0b07aff55ab82f03a37e46729ece51be38b50083d2d5b55",
+      "providers_sha256": "7949ddcf2eb5ba41b022bb3dfa1951ab96dbf5640285fa7fd5d35b0e4a5bdab3"
     }
   }
 }

@@ -18,7 +18,6 @@ import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import { range, sourceRangesEqual } from "./javascriptStaticAnalysisHelpers.js";
 import {
   assignedSemanticResultBindings,
-  containsSemanticNode,
   dataEffectMemberCallee,
   scalarAssignedResultBinding,
 } from "./javascriptSemanticDataEffectHelpers.js";
@@ -205,7 +204,10 @@ const ownershipAtAncestor = (
   context: PromiseOwnershipContext,
 ): PromiseOwnership | "boundary" | null => {
   const { candidate, candidateByNode, state, callables } = context;
-  if (t.isAwaitExpression(ancestor)) return emptyOwnership("awaited");
+  if (t.isAwaitExpression(ancestor))
+    return unwrapExpression(ancestor.argument) === candidate.node
+      ? emptyOwnership("awaited")
+      : "boundary";
   const outer = candidateByNode.get(ancestor);
   if (
     outer !== undefined &&
@@ -215,35 +217,55 @@ const ownershipAtAncestor = (
     return outer.kind === "chain"
       ? emptyOwnership("chained")
       : emptyOwnership("aggregated");
-  const assigned = assignedPromiseBinding(ancestor, state);
+  if (isUnmodeledCall(ancestor, outer)) return "boundary";
+  const assigned = assignedPromiseBinding(ancestor, candidate.node, state);
   if (assigned !== undefined)
     return {
       ownership: "assigned",
       ownerBindingId: assigned,
       returnSiteId: null,
     };
-  if (t.isReturnStatement(ancestor))
+  if (t.isReturnStatement(ancestor)) {
+    if (
+      ancestor.argument == null ||
+      unwrapExpression(ancestor.argument) !== candidate.node
+    )
+      return "boundary";
     return returnedPromiseOwnership(
       candidate.ownerCallableId,
       range(ancestor),
       callables,
     );
-  if (t.isExpressionStatement(ancestor)) return emptyOwnership("detached");
+  }
+  if (t.isExpressionStatement(ancestor))
+    return unwrapExpression(ancestor.expression) === candidate.node
+      ? emptyOwnership("detached")
+      : "boundary";
   const callableId = semanticCallableIdForNode(ancestor);
   if (callableId === null || callableId !== candidate.ownerCallableId)
     return null;
   return t.isArrowFunctionExpression(ancestor) &&
-    ancestor.body === candidate.node
+    unwrapExpression(ancestor.body) === candidate.node
     ? returnedPromiseOwnership(
         candidate.ownerCallableId,
-        range(candidate.node),
+        range(ancestor.body),
         callables,
       )
     : "boundary";
 };
 
+const isUnmodeledCall = (
+  node: t.Node,
+  candidate: PromiseCandidate | undefined,
+): boolean =>
+  candidate === undefined &&
+  (t.isCallExpression(node) ||
+    t.isOptionalCallExpression(node) ||
+    t.isNewExpression(node));
+
 const assignedPromiseBinding = (
   ancestor: t.Node,
+  candidate: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): string | null | undefined => {
   if (!t.isVariableDeclarator(ancestor) && !t.isAssignmentExpression(ancestor))
@@ -252,6 +274,7 @@ const assignedPromiseBinding = (
     ? ancestor.init
     : ancestor.right;
   if (source == null) return undefined;
+  if (unwrapExpression(source) !== candidate) return undefined;
   return scalarAssignedResultBinding(
     assignedSemanticResultBindings(source, [ancestor], state),
   );
@@ -277,7 +300,7 @@ const outerConsumesCandidate = (
   ) {
     const member = dataEffectMemberCallee(outer.node);
     return (
-      member !== null && containsSemanticNode(member.object, candidate.node)
+      member !== null && unwrapExpression(member.object) === candidate.node
     );
   }
   if (
@@ -285,7 +308,15 @@ const outerConsumesCandidate = (
     (t.isCallExpression(outer.node) || t.isOptionalCallExpression(outer.node))
   ) {
     const input = outer.node.arguments[0];
-    return t.isNode(input) && containsSemanticNode(input, candidate.node);
+    return (
+      t.isArrayExpression(input) &&
+      input.elements.some(
+        (element) =>
+          element !== null &&
+          !t.isSpreadElement(element) &&
+          unwrapExpression(element) === candidate.node,
+      )
+    );
   }
   return false;
 };

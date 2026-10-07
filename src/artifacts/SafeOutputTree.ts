@@ -43,12 +43,24 @@ export class SafeOutputTree {
     status: "not-required",
   };
 
-  private constructor(outputRoot: string) {
+  private constructor(
+    outputRoot: string,
+    private readonly platform: NodeJS.Platform,
+  ) {
     this.#outputRoot = outputRoot;
   }
 
-  /** Exclusively create the absent destination as this operation's owned tree. */
-  static async create(outputRoot: string): Promise<SafeOutputTree> {
+  /**
+   * Exclusively create the absent destination as this operation's owned tree.
+   *
+   * POSIX mode bits and directory `fchmod`/`fsync` have no Windows equivalent:
+   * `mkdir` already applies the requested mode, so the redundant handle
+   * `chmod` is skipped there to avoid an `EPERM` on the directory descriptor.
+   */
+  static async create(
+    outputRoot: string,
+    platform: NodeJS.Platform = process.platform,
+  ): Promise<SafeOutputTree> {
     if (!isAbsolute(outputRoot))
       throw new ArtifactReaderFailure(
         "path",
@@ -78,16 +90,18 @@ export class SafeOutputTree {
       throw cause;
     });
     try {
-      const stagingHandle = await open(
-        canonicalOutput,
-        constants.O_RDONLY | constants.O_DIRECTORY,
-      );
-      try {
-        await stagingHandle.chmod(0o700);
-      } finally {
-        await stagingHandle.close();
+      if (platform !== "win32") {
+        const stagingHandle = await open(
+          canonicalOutput,
+          constants.O_RDONLY | constants.O_DIRECTORY,
+        );
+        try {
+          await stagingHandle.chmod(0o700);
+        } finally {
+          await stagingHandle.close();
+        }
       }
-      return new SafeOutputTree(canonicalOutput);
+      return new SafeOutputTree(canonicalOutput, platform);
     } catch (cause: unknown) {
       await rm(canonicalOutput, { recursive: true, force: true });
       throw cause;
@@ -162,6 +176,11 @@ export class SafeOutputTree {
   /** Sync the owned output tree and prevent further writes through this instance. */
   async commit(): Promise<void> {
     this.#assertWritable();
+    // Windows has no directory fsync; file contents are already synced in write().
+    if (this.platform === "win32") {
+      this.#published = true;
+      return;
+    }
     const parent = await open(
       dirname(this.#outputRoot),
       constants.O_RDONLY | constants.O_DIRECTORY,

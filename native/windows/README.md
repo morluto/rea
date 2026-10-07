@@ -66,6 +66,11 @@ Windows failures retain their constraint, requested coordinate, Win32 code,
 and system message. Unsupported filesystems and reparse paths are distinct
 from OS access denial and missing packaged controls.
 
+Ordinary drive-absolute paths accept backslashes, forward slashes, or mixed
+separators. File identity retains the original requested spelling. Separator
+translation does not resolve dot components, repeated separators, or extend
+the supported device/UNC namespaces; existing admission checks still apply.
+
 The bearer-token descriptor remains under its immutable private lease until
 `runtime_close` on Windows; POSIX removes the descriptor after the bridge reads
 it. Job ownership guarantees process termination on owner death, not deletion

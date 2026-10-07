@@ -29,6 +29,19 @@ afterEach(async () => {
 });
 
 describe("native macOS provider discovery and inspection", () => {
+  it.each(["ordinary.fixture", "  spaced.fixture  ", " leading", "trailing "])(
+    "preserves the exact signing identifier %j reported by codesign",
+    (identifier) => {
+      const parsed = parseCodeSignature(
+        `Identifier=${identifier}\nTeamIdentifier=not set\nFormat=Mach-O thin (arm64)\n`,
+        false,
+      );
+      expect(parsed.identifier).toBe(identifier);
+      expect(parsed.team_identifier).toBeNull();
+      expect(parsed.format).toBe("Mach-O thin (arm64)");
+    },
+  );
+
   it("retries a failed native tool resolution and caches only success", async () => {
     let resolutions = 0;
     const runner = new XcrunCommandRunner((tool) => {

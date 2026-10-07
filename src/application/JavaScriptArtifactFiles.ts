@@ -14,6 +14,7 @@ import {
   type ArtifactReader,
 } from "../artifacts/ArtifactReader.js";
 import { streamChunkToBuffer } from "../artifacts/StreamBytes.js";
+import { hashReadable } from "./ArtifactInventory/hash.js";
 import type { ArtifactInventorySnapshot } from "./ArtifactInventory.js";
 
 /** Relevant file categories projected from the complete artifact inventory. */
@@ -89,6 +90,21 @@ export const readJavaScriptArtifactFiles = async (
   snapshot: ArtifactInventorySnapshot,
   signal?: AbortSignal,
 ): Promise<JavaScriptArtifactFileSet> => {
+  if (reader instanceof AsarArtifactReader) {
+    const root = snapshot.nodes.find(
+      ({ artifact_id }) => artifact_id === snapshot.manifest.root_artifact_id,
+    );
+    if (root === undefined)
+      throw new ArtifactReaderFailure(
+        "integrity",
+        "Root artifact node is missing",
+      );
+    await verifyEntryBytes(
+      reader.openContainer(signal),
+      { path: ".", sha256: root.sha256, bytes: root.size },
+      signal,
+    );
+  }
   const inventory = expectedInventory(snapshot);
   const expected = inventory.files;
   const context: ReadContext = {
@@ -156,6 +172,11 @@ const visitReader = async (
       context.registry.add(path, nestedAsar ? "directory" : entry.kind);
       if (nestedAsar) {
         const inventory = expectedContainer(path, context);
+        await verifyEntryBytes(
+          await frame.reader.open(entry, context.signal),
+          inventory,
+          context.signal,
+        );
         context.containers.push(inventory);
         const nested = new AsarArtifactReader(entry.adapterKey);
         stack.push({
@@ -214,8 +235,14 @@ const readText = async (
   context: ReadContext,
   input: ReadTextInput,
 ): Promise<JavaScriptArtifactFile["text"]> => {
-  if (input.expected.kind === "native-addon")
+  if (input.expected.kind === "native-addon") {
+    await verifyEntryBytes(
+      await input.reader.open(input.entry, context.signal),
+      input.expected,
+      context.signal,
+    );
     return { included: false, reason: "not-applicable" };
+  }
   const bytes = await readAll(
     await input.reader.open(input.entry, context.signal),
     context.signal,
@@ -237,6 +264,24 @@ const readText = async (
     void cause;
     context.invalidUtf8 += 1;
     return { included: false, reason: "invalid-utf8" };
+  }
+};
+
+const verifyEntryBytes = async (
+  stream: Readable,
+  expected: Pick<ExpectedFile, "path" | "sha256" | "bytes">,
+  signal?: AbortSignal,
+): Promise<void> => {
+  try {
+    const digest = await hashReadable(stream, signal);
+    if (digest.sha256 !== expected.sha256 || digest.bytes !== expected.bytes)
+      throw new ArtifactReaderFailure(
+        "integrity",
+        `Artifact entry changed after inventory: ${expected.path}`,
+      );
+  } catch (cause: unknown) {
+    abortIfNeeded(signal);
+    throw cause;
   }
 };
 

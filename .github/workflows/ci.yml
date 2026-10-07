@@ -274,6 +274,8 @@ jobs:
       - run: npm ci
       - run: npm run verify:keyed-archive
       - run: npm run verify:asset-catalog
+      - name: Native compiled NIB hierarchy regressions
+        run: npm run test:focused -- src/application/NibNativeHierarchy.test.ts
       - name: Real binary metadata and Interface Builder integration
         run: npm run verify:apple-dispatch && npm run verify:interface-builder
 
@@ -365,7 +367,11 @@ jobs:
         run: >-
           npx vitest run --coverage.enabled=false
           tests/boundary/filesystem/binaryTarget.test.ts
+          tests/boundary/filesystem/safeOutputTree.test.ts
+          tests/boundary/providers/native/artifactProvider.archiveSafety.test.ts
           tests/boundary/filesystem/setupUnavailableProvider.test.ts
+          tests/boundary/cli/referenceSourceImportStatus.test.ts
+          src/cliReferenceSourceImportStatus.test.ts
           tests/boundary/filesystem/asarInventoryFreshness.test.ts
           tests/composition/javascript-applications/javascriptArtifactReconstruction.test.ts
           tests/conformance/providers/ghidra/windowsCapabilities.test.ts

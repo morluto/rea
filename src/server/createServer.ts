@@ -14,6 +14,7 @@ import { registerApplicationTools } from "./registerApplicationTools.js";
 import { registerArtifactTools } from "./registerArtifactTools.js";
 import { registerBrowserScenarioTool } from "./registerBrowserScenarioTool.js";
 import { registerBrowserTools } from "./registerBrowserTools.js";
+import { registerWebScriptTool } from "./registerWebScriptTool.js";
 import { registerElectronTools } from "./registerElectronTools.js";
 import { registerEnhancedTools } from "./registerEnhancedTools.js";
 import { registerJavaScriptRuntimeObservationTools } from "./registerJavaScriptRuntimeObservationTools.js";
@@ -252,6 +253,7 @@ const registerObservationTools = ({
   recordEvidenceWithUnknown,
 }: ServerToolContext): void => {
   const common = { logger, recordEvidence };
+  registerWebScriptTool(server, common);
   registerBrowserTools(server, {
     ...common,
     browser: options.browserObservation,

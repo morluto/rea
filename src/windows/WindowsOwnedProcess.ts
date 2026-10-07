@@ -62,7 +62,9 @@ export class WindowsOwnedProcess extends EventEmitter {
       .filter((entry): entry is [string, string] => entry[1] !== undefined)
       .map(([key, value]) => `${key}=${value}`);
     const line = [
-      quoteWindowsProcessArgument(command),
+      // cmd.exe parses its own command line rather than the CRT argv rules;
+      // its executable token must match the native drive-path representation.
+      quoteWindowsProcessArgument(command.replaceAll("/", "\\")),
       ...arguments_.map((value) =>
         verbatim ? value : quoteWindowsProcessArgument(value),
       ),

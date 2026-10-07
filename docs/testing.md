@@ -47,7 +47,7 @@ The process-global Vitest configuration contract rejects new direct temporary-ro
 creation outside the workspace seam and its narrowly documented boundary/package
 exceptions.
 
-Real Hopper, Ghidra, browser, package, and managed-code claims belong to their
+Real Hopper, Ghidra, IDA, browser, package, and managed-code claims belong to their
 explicit `npm run verify:*` lanes. The reconstruction-readiness lane also
 checks deterministic rerun, tamper, and stale-input handling; those checks do
 not execute extracted JavaScript modules. When application runtime behavior is
@@ -84,6 +84,21 @@ regressions until a real fixture establishes equivalent coverage.
 8 MiB through the CLI and stdio MCP, with complete byte/digest parity and real PNG
 decoding. Its SDK client explicitly permits the larger inline JSON response;
 this lane does not establish large image-comparison request transport coverage.
+
+`verify:browser:network` is a focused real-browser lane for transaction identity,
+selected request/response bytes, binary and compressed responses, duplicate
+headers, credential and declared-secret redaction, redirects, streaming cutoff,
+CLI/MCP parity, and owned-profile cleanup. Set `REA_BROWSER_EXECUTABLE` to an
+installed Chrome-family browser. An optional script argument selects an already
+installed package's `scripts/rea.mjs` entry point for packaged-artifact checks.
+The complete `verify:browser` lane includes these same checks.
+
+`verify:browser:scripts` checks active script capture → exact-byte export →
+existing static JavaScript analysis through CLI and stdio MCP, including
+manifest readback, competing query variants, and resolved relative imports.
+It uses an installed browser and accepts an optional installed REA entrypoint.
+The complete `verify:browser` lane also exercises passive script export through
+both public adapters. See [website script export](website-script-export.md).
 
 The [test suite audit](test-suite-audit.md) records the pruning decisions,
 replacement evidence and remaining priorities.
@@ -164,6 +179,67 @@ Synthetic producer regressions run independently:
 ```sh
 npm run test:focused -- tests/boundary/android/jadxIntegration.test.ts tests/boundary/mcp/androidAnalysisMcp.test.ts
 ```
+
+## Optional NativeAOT Ghidra analysis
+
+This lane is separate from the default native lane. `build:fixtures:nativeaot`
+requires an existing .NET SDK 8.0.416, the platform NativeAOT compiler/linker and
+runtime pack 8.0.22. It builds benign sources into ignored `_reference/` and
+records independent symbol/directory/SHA oracles; it never executes the target.
+Linux also builds stripped, ordinary-native and small malformed/ambiguous/layout
+negative inputs. The optional Windows fixture workflow builds a PE on a Windows
+runner; analyzing that PE on Linux does not verify a Windows Ghidra host.
+
+Build the clean pinned upstream adapter with `build:ghidra:nativeaot`, then set
+`REA_GHIDRA_NATIVEAOT_JAR`. Run `verify:ghidra:nativeaot -- symbols`, `-- stripped`,
+`-- ordinary`, `-- unsupported`, `-- malformed`, `-- ambiguous`, and
+`-- loader-failure`, and `-- default-native` separately. The loader-failure mode source-builds
+a deliberately failing JDK 21 initializer and checks the actual loader cause and
+cleanup. The default-native mode verifies ordinary analysis with the optional
+extension disabled.
+The real MCP lane checks source identity, inline format discovery, metadata
+relationships/slots against independent compiler symbols, frozen strings,
+pseudocode and owned cleanup. Set `REA_NATIVEAOT_PROOF_CLI=1` for one equivalent
+CLI type inspection; this costs an additional full import. Select an unpacked
+installed package with `REA_NATIVEAOT_PROOF_PACKAGE_ROOT`, a fixture directory
+with `REA_NATIVEAOT_PROOF_FIXTURE_ROOT`, and optional evidence capture directory
+with `REA_NATIVEAOT_PROOF_CAPTURE_DIR` (absolute paths).
+
+Keep builds/imports sequential on small hosts; scope `GHIDRA_HEADLESS_MAXMEM`
+(e.g. `768M`) to this command and use CPU affinity if needed. REA does not install
+or upgrade Java, Ghidra, .NET or native toolchains. See
+[the supported layout and provenance](ghidra-nativeaot.md).
+
+## IDA MCP adapter
+
+`npm run verify:ida -- --target /absolute/path/to/program --procedure main`
+uses the existing `REA_IDA_MCP_CONFIG` registration. It installs no engine,
+Python package, or compiler. The target must already be open in the GUI for
+the legacy attached profile; the database-supervisor headless profile opens
+a digest-verified private copy. A caller-supplied fixture keeps prerequisites
+limited to the selected engine and host. `tests/conformance/ida/inventory.c`
+provides an optional small native fixture source with an exported
+`rea_fixture_add` function.
+
+The lane invokes the production CLI dispatcher and connects the pinned MCP
+client SDK to the production REA server. It verifies function Evidence and
+CLI/MCP parity, inventory/search, pseudocode, instructions, xrefs, malformed
+input, original-input preservation, and lifecycle cleanup. For headless
+analysis it confirms that the owned database IDs disappear from upstream
+discovery and private workspaces are removed. For attached analysis it confirms
+the existing GUI target remains reachable with the same input identity.
+`--package-root` selects an installed/extracted REA artifact. `--report` writes
+private local observations with mode `0600`; the console summary contains no
+target paths or upstream output.
+
+Adapter and composition tests cover producer parsing, pagination, canonical
+entries, external callees, target switches, cancellation draining, snapshot
+replay exclusion, ownership failures, and incomplete cleanup. They do not
+establish real IDA operation. The initial real workflows cover legacy upstream
+1.4.0 on a Windows GUI and the modern supervisor at upstream commit
+`c133c3853faa111a9b00ee615c013b720d0c4acd` with Windows x64 IDA 9.3.
+Linux/macOS headless, modern attached GUI tools, other engine versions and
+architectures remain unverified; see the [provider guide](ida-provider.md).
 
 ## DOS Ghidra analysis
 

@@ -2,6 +2,7 @@ import type { ExecutableFormatHint } from "../domain/dosCom.js";
 import { parseConfig } from "../config.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { EnhancedTools } from "./EnhancedTools.js";
+import { executeFunctionAnalysisEvidence } from "./FunctionAnalysisEvidence.js";
 import { createBinarySession, createManagedBinarySession } from "./runtime.js";
 import { silentLogger, type Logger } from "../logger.js";
 import { createEvidence } from "../domain/evidence.js";
@@ -201,7 +202,7 @@ const runAnalysis = async (
     const evidenceProfile = analysisProfileForEvidence(session, tool);
     const bindingProfile = session.analysisProfile();
     if (
-      tool !== "trace_native_ui_action" &&
+      canReplayDirectTool(session, tool) &&
       snapshot !== undefined &&
       evidenceProfile !== undefined &&
       bindingProfile !== undefined
@@ -245,6 +246,12 @@ const runAnalysis = async (
   }
 };
 
+const canReplayDirectTool = (
+  session: ReturnType<typeof createBinarySession>,
+  tool: Parameters<typeof runAnalysis>[1],
+): boolean =>
+  tool !== "trace_native_ui_action" && session.allowsSnapshotReplay(tool);
+
 const executeAnalysisTool = async (input: {
   readonly session: ReturnType<typeof createBinarySession>;
   readonly openedTarget: BinaryTarget;
@@ -258,9 +265,19 @@ const executeAnalysisTool = async (input: {
   readonly evidenceProfile: AnalysisProfileCommitment | undefined;
 }): Promise<{ readonly output: JsonValue; readonly evidence?: Evidence }> => {
   const { session, tool, signal, evidenceProfile } = input;
+  if (tool === "analyze_function") {
+    const result = await executeFunctionAnalysisEvidence(
+      session,
+      input.arguments,
+      input.openedTarget,
+      { signal },
+    );
+    return result.ok
+      ? { output: result.value, evidence: result.value }
+      : { output: cliError(result.error) };
+  }
   if (
     tool === "binary_overview" ||
-    tool === "analyze_function" ||
     tool === "inspect_native_api" ||
     tool === "inspect_native_dispatch_metadata" ||
     tool === "trace_feature" ||
@@ -273,22 +290,16 @@ const executeAnalysisTool = async (input: {
       signal,
     );
     if (!result.ok) return { output: cliError(result.error) };
-    const evidence = createEvidence(
-      input.openedTarget,
-      tool === "analyze_function"
-        ? session.providerIdentity(tool)
-        : REA_WORKFLOW_PROVIDER,
-      {
-        operation: tool,
-        parameters: input.arguments,
-        result: result.value,
-        ...(evidenceProfile === undefined
-          ? {}
-          : { analysisProfile: evidenceProfile }),
-        confidence: "derived",
-        limitations: ["Derived by an REA composed workflow."],
-      },
-    );
+    const evidence = createEvidence(input.openedTarget, REA_WORKFLOW_PROVIDER, {
+      operation: tool,
+      parameters: input.arguments,
+      result: result.value,
+      ...(evidenceProfile === undefined
+        ? {}
+        : { analysisProfile: evidenceProfile }),
+      confidence: "derived",
+      limitations: ["Derived by an REA composed workflow."],
+    });
     return { output: evidence, evidence };
   }
   const result = await session.execute(tool, input.arguments, { signal });

@@ -43,10 +43,14 @@ const capabilityFeatures = (value: unknown): ClientFeatureAvailability => {
   const capabilities = isRecord(value) ? value : {};
   const elicitation = isRecord(capabilities.elicitation)
     ? capabilities.elicitation
-    : {};
+    : undefined;
   return {
-    elicitation_form: elicitation.form !== undefined,
-    elicitation_url: elicitation.url !== undefined,
+    // A declared capability without modes retains the protocol's form-only
+    // compatibility rule; a missing capability still grants no support.
+    elicitation_form:
+      elicitation !== undefined &&
+      (elicitation.form !== undefined || elicitation.url === undefined),
+    elicitation_url: elicitation?.url !== undefined,
     roots: capabilities.roots !== undefined,
     sampling: capabilities.sampling !== undefined,
   };

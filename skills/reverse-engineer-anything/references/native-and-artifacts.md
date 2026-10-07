@@ -37,6 +37,31 @@ assembly. Keep managed/native boundaries and unavailable reconstruction facts
 explicit. A bring-your-own reconstruction oracle is separate from the canonical
 parser and must not become an implicit setup dependency.
 
+### .NET NativeAOT
+
+NativeAOT binaries contain native machine code, so ordinary CIL decompilers
+cannot recover the original method bodies. When managed metadata/CIL is absent,
+classify that as a native-analysis route rather than claiming source recovery.
+Open the native image with the selected deep provider and inspect functions,
+strings, calls, and references; describe decompiler output as pseudocode and
+inference.
+
+NativeAOT images can be PE/COFF, ELF, or Mach-O executables and shared
+libraries. Use file bytes and loader metadata rather than suffixes to identify
+them. For packaged apps, inventory/extract with REA's artifact tools and retain
+the exact contained image identity. PDB, ELF debug, or dSYM sidecars are
+additional evidence only when the provider accepts and matches them.
+
+For deeper type recovery, the optional third-party
+[Ghidra NativeAOT analyzer](https://github.com/Washi1337/ghidra-nativeaot)
+rehydrates ReadyToRun metadata and can recover method tables, type relationships,
+frozen objects, and strings. This is a Ghidra extension with its own install and
+interactive workflow; it is not currently part of REA's managed parser or
+headless Ghidra bridge. Treat its annotations as analysis evidence, retain the
+binary identity, and do not present recovered types as original source. Header
+discovery may require a symbol or analyst identification of the ReadyToRun
+header, depending on the binary and analyzer version.
+
 ## Packages and extraction
 
 Use `inspect_artifact` for application bundles, archives, ZIP/APK/IPA/MSIX/AppX,

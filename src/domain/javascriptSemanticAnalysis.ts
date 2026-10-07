@@ -12,7 +12,7 @@ import {
   collectSemanticReferences,
   immutableSemanticBindings,
   immutableSemanticScopes,
-  semanticStaticPropertyName,
+  semanticStaticPropertyKey,
 } from "./javascriptSemanticProjection.js";
 import type {
   JavaScriptSemanticAnalysisState,
@@ -312,7 +312,9 @@ const nestedScope = (
   if (kind === undefined) return undefined;
   const scope: JavaScriptSemanticScopeState = {
     scopeId: semanticScopeId(kind, switchOwner ?? node),
-    parentScopeId: parentScope.scopeId,
+    parentScopeId:
+      functionNameScope(node, parentScope, state)?.scopeId ??
+      parentScope.scopeId,
     kind,
     location: range(switchOwner ?? node),
     bindingsComplete: true,
@@ -320,6 +322,37 @@ const nestedScope = (
   };
   state.scopes.push(scope);
   state.scopesById.set(scope.scopeId, scope);
+  return scope;
+};
+
+const functionNameScope = (
+  node: t.Node,
+  parentScope: JavaScriptSemanticScopeState,
+  state: JavaScriptSemanticAnalysisState,
+): JavaScriptSemanticScopeState | undefined => {
+  if (!t.isFunctionExpression(node) || !t.isIdentifier(node.id))
+    return undefined;
+  // A named expression has a private name environment outside its parameters
+  // and body. Parameters and local declarations may shadow that name.
+  const scope: JavaScriptSemanticScopeState = {
+    scopeId: `${semanticScopeId("block", node)}:function-name`,
+    parentScopeId: parentScope.scopeId,
+    kind: "block",
+    location: range(node),
+    bindingsComplete: true,
+    bindings: new Map(),
+  };
+  state.scopes.push(scope);
+  state.scopesById.set(scope.scopeId, scope);
+  addBinding({
+    state,
+    scope,
+    name: node.id.name,
+    kind: "function",
+    mutable: false,
+    definitionNode: node.id,
+    initializer: node,
+  });
   return scope;
 };
 
@@ -379,16 +412,6 @@ const bindFunctionLocals = (
   scope: JavaScriptSemanticScopeState,
   state: JavaScriptSemanticAnalysisState,
 ): void => {
-  if (t.isFunctionExpression(node) && t.isIdentifier(node.id))
-    addBinding({
-      state,
-      scope,
-      name: node.id.name,
-      kind: "function",
-      mutable: false,
-      definitionNode: node.id,
-      initializer: node,
-    });
   for (const parameter of node.params)
     bindPattern({
       pattern: t.isTSParameterProperty(parameter)
@@ -460,14 +483,11 @@ const bindPattern = (input: BindPatternInput): void => {
           projection: [],
         });
       else {
-        const name = semanticStaticPropertyName(
-          property.key,
-          property.computed,
-        );
+        const name = semanticStaticPropertyKey(property.key, property.computed);
         bindPattern({
           ...input,
           pattern: property.value,
-          projection: [...projection, name === "" ? null : name],
+          projection: [...projection, name],
         });
       }
     }

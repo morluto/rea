@@ -19,6 +19,10 @@ import {
 } from "../process/ProviderProcess.js";
 import { ghidraJavaEnvironment } from "./GhidraInstallation.js";
 import type { GhidraTransportKind } from "./GhidraTransport.js";
+import {
+  snapshotGhidraExtensions,
+  type GhidraExtension,
+} from "./extensions/GhidraExtensions.js";
 
 /** Private paths and identity material for one headless Ghidra import. */
 export interface GhidraLaunchSession {
@@ -66,6 +70,7 @@ export interface GhidraHeadlessLauncherOptions {
   /** Select the admitted 16-bit real-mode MZ import instead of auto-detection. */
   readonly dosMz?: true;
   readonly dosCom?: true;
+  readonly analysisExtensions?: readonly GhidraExtension[];
 }
 
 /** Launch Ghidra without copying scripts into or modifying its installation. */
@@ -83,6 +88,10 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
     let started: SpawnedOwnedProviderProcess | undefined;
     try {
       await createGhidraRuntimeDirectories(paths, platform);
+      const extensions = await snapshotGhidraExtensions(
+        this.options.analysisExtensions ?? [],
+        session.runtimeRoot,
+      );
       await writeGhidraRuntimeFile(
         paths.descriptorPath,
         `${JSON.stringify({
@@ -93,6 +102,9 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           target_sha256: session.targetSha256,
           provider_version: session.providerVersion,
           profile_digest: session.profileDigest,
+          ...(extensions.length === 0
+            ? {}
+            : { analysis_extensions: extensions }),
         })}\n`,
         platform,
       );
@@ -129,7 +141,12 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         expectedCommand: null,
         windowsVerbatimArguments: platform === "win32",
         platform,
-        env: ghidraLaunchEnvironment(paths, this.options.javaHome, platform),
+        env: ghidraLaunchEnvironment(
+          paths,
+          this.options.javaHome,
+          platform,
+          command.command,
+        ),
       });
       await writeGhidraRuntimeFile(
         paths.ownershipPath,
@@ -305,10 +322,15 @@ export const ghidraHeadlessArguments = (
   "-scriptPath",
   dirname(options.bridgeScriptPath),
   ...(options.dosCom === true
-    ? ["-preScript", "ReaGhidraPrepareCom.java"]
+    ? [
+        "-preScript",
+        join(dirname(options.bridgeScriptPath), "ReaGhidraPrepareCom.java"),
+      ]
     : []),
   "-postScript",
-  basename(options.bridgeScriptPath),
+  // Ghidra checks the caller's cwd before scriptPath for a basename. Select
+  // the packaged source explicitly so unrelated entries cannot shadow it.
+  options.bridgeScriptPath,
   options.descriptorPath,
 ];
 
@@ -370,6 +392,7 @@ const ghidraLaunchEnvironment = (
   paths: ReturnType<typeof ghidraRuntimePaths>,
   javaHome: string | undefined,
   platform: NodeJS.Platform,
+  executable: string,
 ): NodeJS.ProcessEnv => {
   return {
     ...ghidraJavaEnvironment(javaHome, process.env, platform),
@@ -378,6 +401,9 @@ const ghidraLaunchEnvironment = (
     TMPDIR: paths.tempRoot,
     ...(platform === "win32"
       ? {
+          // Batch FOR /F launches another command interpreter through ComSpec.
+          // Use the same executable with the spelling consumed by cmd.exe.
+          ComSpec: executable.replaceAll("/", "\\"),
           USERPROFILE: paths.homeRoot,
           APPDATA: paths.configRoot,
           LOCALAPPDATA: paths.cacheRoot,

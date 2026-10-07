@@ -1,5 +1,7 @@
+import { execFile } from "node:child_process";
 import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { promisify } from "node:util";
 
 import { describe, expect, it } from "vitest";
 
@@ -161,6 +163,58 @@ describe("binary target I/O", () => {
       architecture: "x86_64",
     });
   });
+});
+
+describe("app executable filename fidelity", () => {
+  it.each([" leading", "trailing ", " both "])(
+    "preserves executable filename whitespace in an XML plist: %j",
+    async (name) => {
+      const directory = await createTestTempDirectory("rea-app-name-");
+      const app = join(directory, "Whitespace.app");
+      const contents = join(app, "Contents");
+      const executable = join(contents, "MacOS", name);
+      await mkdir(join(contents, "MacOS"), { recursive: true });
+      await writeFile(
+        join(contents, "Info.plist"),
+        `<plist><dict><key>CFBundleExecutable</key><string>${name}</string></dict></plist>`,
+      );
+      await writeFile(executable, thinMach(0xfeedfacf, 0x0100000c));
+      const result = await parseBinaryTarget(app, directory, "arm64");
+      expect(result.ok && result.value).toMatchObject({
+        path: await realpath(executable),
+        format: "mach-o",
+      });
+    },
+  );
+
+  it.skipIf(process.platform !== "darwin")(
+    "preserves executable filename whitespace from native binary plists",
+    async () => {
+      const directory = await createTestTempDirectory("rea-app-binary-name-");
+      for (const name of ["Ordinary", " App ", "Tab\t"]) {
+        const app = join(directory, `${name}.app`);
+        const contents = join(app, "Contents");
+        const executable = join(contents, "MacOS", name);
+        const plist = join(contents, "Info.plist");
+        await mkdir(join(contents, "MacOS"), { recursive: true });
+        await writeFile(
+          plist,
+          `<plist><dict><key>CFBundleExecutable</key><string>${name}</string></dict></plist>`,
+        );
+        await promisify(execFile)("/usr/bin/plutil", [
+          "-convert",
+          "binary1",
+          plist,
+        ]);
+        await writeFile(executable, thinMach(0xfeedfacf, 0x0100000c));
+        const result = await parseBinaryTarget(app, directory, "arm64");
+        expect(result.ok && result.value).toMatchObject({
+          path: await realpath(executable),
+          format: "mach-o",
+        });
+      }
+    },
+  );
 });
 
 describe("DOS binary target I/O", () => {

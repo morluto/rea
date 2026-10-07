@@ -500,3 +500,51 @@ describeBrowser("CdpBrowserProvider: document script 4", () => {
     expect(result.value.storage.content_fingerprints).toEqual([]);
   });
 });
+
+describeBrowser("CdpBrowserProvider: WebMCP registration owners", () => {
+  it.each(["retain", "remove-second"] as const)(
+    "keeps same-URL frame owners separate: %s",
+    async (mode) => {
+      const browser = await startFakeCdpBrowser({
+        webMcpSameUrlRegistrations: mode,
+      });
+      trackBrowser(browser);
+      const result = await new CdpBrowserProvider().discoverWebMcpTools(
+        discoverWebMcpToolsInputSchema.parse({
+          cdp_endpoint: browser.endpoint,
+          allowed_origins: [browser.allowedOrigin],
+          target_id: "allowed-page",
+          observation_ms: 0,
+        }),
+      );
+      if (!result.ok) throw result.error;
+      const tools = result.value.tools.items;
+      expect(tools).toHaveLength(mode === "retain" ? 2 : 1);
+      expect(result.value.tools.total).toBe(tools.length);
+      expect(tools).toContainEqual(
+        expect.objectContaining({
+          name: "read_item",
+          frame_id: "webmcp-frame-0",
+          description: "First owner updated",
+        }),
+      );
+      if (mode === "retain") {
+        expect(tools).toContainEqual(
+          expect.objectContaining({
+            name: "read_item",
+            frame_id: "webmcp-frame-1",
+            description: "Second owner",
+          }),
+        );
+        expect(new Set(tools.map((tool) => tool.tool_key)).size).toBe(2);
+        expect(new Set(tools.map((tool) => tool.frame_url)).size).toBe(1);
+      }
+      expect(browser.commands.map(({ method }) => method)).not.toContain(
+        "WebMCP.invokeTool",
+      );
+      expect(browser.commands.map(({ method }) => method)).not.toContain(
+        "Runtime.evaluate",
+      );
+    },
+  );
+});

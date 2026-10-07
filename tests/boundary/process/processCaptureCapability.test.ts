@@ -54,7 +54,29 @@ describe("process capture capability diagnostics", () => {
 
   it("keeps the ownership limitation separate from native PTY support", () => {
     expect(processCaptureOwnershipUnavailableReason("win32")).toContain(
-      "process-tree ownership",
+      "Windows PTY process capture",
+    );
+  });
+
+  it("explains Windows capture admission before loading or spawning a PTY", async () => {
+    let loaded = false;
+    const capability = await probeProcessCaptureCapability({
+      platform: "win32",
+      loadPty: async () => {
+        loaded = true;
+        throw new Error("Windows admission must precede PTY loading");
+      },
+    });
+    expect(loaded).toBe(false);
+    expect(capability).toMatchObject({
+      available: false,
+      reason: expect.stringContaining("does not yet verify descendant cleanup"),
+    });
+    if (capability.available)
+      throw new Error("expected Windows capture refusal");
+    expect(capability.reason).toContain("WSL for Linux commands");
+    expect(capability.reason).toContain(
+      "Reinstalling the PTY backend does not enable native Windows capture",
     );
   });
 });

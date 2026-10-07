@@ -163,6 +163,8 @@ export const importReferenceSource = async (
   if (!readResult.ok) {
     const error = readResult.error;
     if (error.code === "cancelled") return err(cancelled());
+    if (error.code === "unsupported")
+      return err(failure("unsupported", error.message));
     return err(failure("io", error.message));
   }
 

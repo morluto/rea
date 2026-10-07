@@ -67,7 +67,7 @@ describe("reference source import error projection", () => {
     ).toEqual([malformed, unexpected]);
   });
 
-  it("projects entry failures without low-level reader diagnostics", () => {
+  it("retains entry failure diagnostics alongside recovery guidance", () => {
     for (const [kind, code] of [
       ["directory", "io"],
       ["symlink", "io"],
@@ -80,11 +80,12 @@ describe("reference source import error projection", () => {
         path: "safe/path",
         kind,
         code,
-        message: "SECRET internal diagnostic /private/path",
+        message: "Observed entry failure at /owned/fixture/path",
       });
-      expect(message).not.toContain("SECRET");
-      expect(message).not.toContain("/private/path");
-      expect(message).toMatch(/Check|try again|when ready|smaller|supported/u);
+      expect(message).toContain(
+        "Observed entry failure at /owned/fixture/path",
+      );
+      expect(message).toMatch(/Check|try again|when ready|Exclude/u);
     }
   });
 
@@ -92,6 +93,7 @@ describe("reference source import error projection", () => {
     const expectedCategories = {
       cancelled: "cancelled",
       "invalid-root": "invalid_input",
+      unsupported: "unsupported_host",
       io: "execution_failure",
       parse: "execution_failure",
     } as const;
@@ -104,7 +106,9 @@ describe("reference source import error projection", () => {
       expect(projected.category).toBe(category);
       expect(projected.message).not.toContain("SECRET");
       expect(projected.message).not.toContain("/private/path");
-      expect(projected.message).toMatch(/try again|when ready|Check that/u);
+      expect(projected.message).toMatch(
+        /try again|when ready|Check that|REA on Linux/u,
+      );
     }
   });
 });

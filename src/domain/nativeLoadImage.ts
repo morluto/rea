@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { nativeMetadataRecoverySummarySchema } from "./nativeMetadataRecovery.js";
 import { jsonValueSchema } from "./jsonValue.js";
 
 const integer = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
@@ -8,6 +9,7 @@ const address = z.string().min(1);
 
 /** Measured provider image, without exporting the complete executable bytes. */
 export const nativeLoadImageObservationSchema = z.strictObject({
+  metadata_recovery: z.array(nativeMetadataRecoverySummarySchema).optional(),
   executable_format: z.string().min(1),
   language_id: z.string().min(1),
   compiler_spec_id: z.string().min(1),

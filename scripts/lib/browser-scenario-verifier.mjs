@@ -204,11 +204,20 @@ export function assertScenarioCapture(capture) {
     throw new Error(
       "Scenario event URL did not report declared-secret redaction",
     );
+  const unfinished = capture.events.items.filter(
+    ({ kind }) => kind === "request-unfinished",
+  );
+  // This fixture polls continuously. A request crossing the capture cutoff
+  // makes later activity unknown even when no response body was selected.
+  const expectedMissing = unfinished.length === 0 ? [] : ["events"];
   if (
     capture.events.items.length === 0 ||
-    capture.completeness.equality_eligible !== true
+    capture.completeness.equality_eligible !== (unfinished.length === 0) ||
+    JSON.stringify(capture.completeness.missing_sections) !==
+      JSON.stringify(expectedMissing) ||
+    capture.completeness.truncated_sections.length !== 0
   )
     throw new Error(
-      "Scenario launch did not produce complete runtime evidence",
+      `Scenario launch completeness disagrees with its capture cutoff: ${JSON.stringify({ completeness: capture.completeness, unfinished })}`,
     );
 }

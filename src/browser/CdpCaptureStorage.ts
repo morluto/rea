@@ -16,7 +16,7 @@ import {
   stringValue,
 } from "./CdpCaptureValues.js";
 
-/** Capture redacted storage metadata for one authorized origin. */
+/** Capture redacted storage metadata for an authorized page and its origin. */
 export const captureStorage = async (
   context: {
     readonly connection: CdpConnection;
@@ -24,11 +24,12 @@ export const captureStorage = async (
     readonly input: InspectWebPageInput;
     readonly signal?: AbortSignal;
   },
-  origin: string,
+  pageUrl: string,
   limitations: string[],
 ): Promise<{
   readonly value: WebPageInspection["storage"];
 }> => {
+  const origin = new URL(pageUrl).origin;
   const quota = recordValue(
     await optionalCdpCommand(
       context,
@@ -67,6 +68,7 @@ export const captureStorage = async (
     ? await captureStorageFingerprints({
         context,
         origin,
+        cookieUrl: pageUrl,
         local,
         session,
         indexedDbNames: indexed,

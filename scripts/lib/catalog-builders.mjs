@@ -64,7 +64,10 @@ export const toolFamilyCatalog = (sources) => {
     {
       id: "application",
       surface: "application-workflow",
-      contracts: sources.applicationContracts.APPLICATION_TOOL_CONTRACTS,
+      contracts: [
+        ...sources.applicationContracts.APPLICATION_TOOL_CONTRACTS,
+        ...sources.webScriptContracts.WEB_SCRIPT_TOOL_CONTRACTS,
+      ],
     },
     {
       id: "session",
@@ -105,6 +108,10 @@ export const providerCatalog = (sources) => {
     {
       identity: sources.ghidraProvider.GHIDRA_PROVIDER_IDENTITY,
       contracts: sources.ghidraProvider.GHIDRA_PROVIDER_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.idaProvider.IDA_PROVIDER_IDENTITY,
+      contracts: sources.idaProvider.IDA_PROVIDER_TOOL_CONTRACTS,
     },
     {
       identity: sources.nativeProvider.NATIVE_MACOS_PROVIDER_IDENTITY,
@@ -179,6 +186,10 @@ export const providerCatalog = (sources) => {
       identity:
         sources.artifactProviders.JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER,
       contracts: sources.applicationContracts.APPLICATION_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.artifactProviders.WEB_SCRIPT_EXPORT_PROVIDER,
+      contracts: sources.webScriptContracts.WEB_SCRIPT_TOOL_CONTRACTS,
     },
   ]
     .map(({ identity, contracts }) => ({

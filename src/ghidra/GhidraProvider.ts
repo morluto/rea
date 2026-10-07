@@ -1,3 +1,4 @@
+import { ghidraExtensionFailure } from "./extensions/GhidraExtensionFailures.js";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -14,6 +15,7 @@ import {
 } from "../application/AnalysisProvider.js";
 import type { AppConfig } from "../config.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
+import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import {
   jsonObjectSchema,
@@ -60,6 +62,13 @@ import {
 import { GhidraHeadlessLauncher } from "./GhidraLauncher.js";
 import { resolveGhidraAnalysisProfile } from "./GhidraAnalysisProfile.js";
 import type { GhidraSessionError } from "./GhidraSessionError.js";
+import type { GhidraSessionInfo } from "./GhidraSessionValues.js";
+import {
+  ghidraExtensionSchema,
+  resolveGhidraExtensions,
+  validateGhidraExtensionProfile,
+  ghidraExtensionLimitations,
+} from "./extensions/GhidraExtensions.js";
 import {
   CAPABILITIES,
   windowsP0Capabilities,
@@ -188,16 +197,33 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     };
   }
 
-  resolveAnalysisProfile(
+  async resolveAnalysisProfile(
     target: BinaryTarget,
     options?: AnalysisProfileResolutionOptions,
   ) {
-    return resolveGhidraAnalysisProfile(
+    const installation = this.#inspectInstallation();
+    const resolved = await resolveGhidraAnalysisProfile(
       target,
       GHIDRA_PROVIDER_IDENTITY,
-      this.#inspectInstallation(),
+      installation,
       options?.signal,
     );
+    if (!resolved.ok || resolved.value.profile === null) return resolved;
+    const extensions = await resolveGhidraExtensions(
+      this.config,
+      target,
+      installation.platform,
+      options?.signal,
+    );
+    if (!extensions.ok) return extensions;
+    if (extensions.value.length === 0) return resolved;
+    return ok({
+      ...resolved.value,
+      profile: createAnalysisProfile(resolved.value.profile.provider, {
+        ...resolved.value.profile.parameters,
+        analysis_extensions: jsonValueSchema.parse(extensions.value),
+      }),
+    });
   }
 
   createClient(
@@ -213,6 +239,36 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     );
     if (!prerequisites.ok) return unavailableClient(prerequisites.error);
     const committedProfile = prerequisites.value.profile;
+    const extensionProfile = ghidraExtensionSchema
+      .array()
+      .safeParse(committedProfile.parameters.analysis_extensions ?? []);
+    if (
+      !extensionProfile.success ||
+      (this.config.ghidraNativeAotJar !== undefined &&
+        extensionProfile.data.length === 0)
+    )
+      return unavailableClient(
+        new ProviderAdapterError("ghidra", "open_binary", {
+          diagnostics: {
+            reason:
+              "Resolve the configured Ghidra extensions into an analysis profile before opening the session.",
+          },
+        }),
+      );
+    const extensions = extensionProfile.data;
+    const invalidProfile = validateGhidraExtensionProfile(
+      extensions,
+      this.config,
+      target,
+      installation.platform,
+    );
+    if (invalidProfile !== null)
+      return unavailableClient(
+        new ProviderAdapterError("ghidra", "open_binary", {
+          diagnostics: { reason: invalidProfile },
+        }),
+      );
+    let extensionFailure: AnalysisError | undefined;
     const targetLimitations =
       target.format === "dos-mz"
         ? [
@@ -241,6 +297,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         ...(target.format === "dos-mz" ? { dosMz: true } : {}),
         ...(target.format === "dos-com" ? { dosCom: true } : {}),
         platform: installation.platform,
+        ...(extensions.length === 0 ? {} : { analysisExtensions: extensions }),
       }),
       targetPath:
         installation.platform === "win32"
@@ -262,8 +319,22 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       ...(context === undefined ? {} : { runId: context.runId }),
       logger: this.logger.child({ layer: "ghidra-bridge" }),
     });
+    const checkExtensions = async (
+      operation: AnalysisOperation,
+      info: GhidraSessionInfo,
+    ): Promise<AnalysisError | undefined> => {
+      extensionFailure = ghidraExtensionFailure(
+        extensions,
+        info.analysis_extensions ?? [],
+        operation,
+      );
+      if (extensionFailure === undefined) return undefined;
+      await client.close();
+      return extensionFailure;
+    };
     return {
       execute: async (operation, parameters, options) => {
+        if (extensionFailure !== undefined) return err(extensionFailure);
         if (
           operation !== "health" &&
           !isGhidraInventoryOperation(operation) &&
@@ -280,6 +351,8 @@ export class GhidraProvider implements AnalysisProviderCandidate {
           const started = await client.start(options?.signal);
           if (!started.ok)
             return err(projectSessionError(operation, started.error));
+          const failed = await checkExtensions(operation, started.value);
+          if (failed !== undefined) return err(failed);
           return ok(
             createAnalysisExecution(started.value, committedProfile.provider, {
               analysisProfile: committedProfile,
@@ -287,6 +360,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
                 ...healthLimitations,
                 ...providerLimitations,
                 ...targetLimitations,
+                ...ghidraExtensionLimitations(extensions),
               ],
             }),
           );
@@ -295,6 +369,13 @@ export class GhidraProvider implements AnalysisProviderCandidate {
           ? parseGhidraFunctionInput(operation, parameters)
           : parseGhidraInventoryInput(operation, parameters);
         if (!input.ok) return input;
+        if (extensions.length > 0) {
+          const started = await client.start(options?.signal);
+          if (!started.ok)
+            return err(projectSessionError(operation, started.error));
+          const failed = await checkExtensions(operation, started.value);
+          if (failed !== undefined) return err(failed);
+        }
         const called = await client.callTool(
           operation,
           input.value,
@@ -358,6 +439,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
               ...limitationsFor(operation),
               ...providerLimitations,
               ...targetLimitations,
+              ...ghidraExtensionLimitations(extensions),
             ],
           }),
         );

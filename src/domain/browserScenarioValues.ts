@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { browserNetworkContentSelectionSchema } from "./browserNetworkEvidence.js";
+
 import {
   browserEndpointSchema,
   browserOriginSchema,
@@ -294,8 +296,18 @@ export const browserScenarioCaptureSchema = z
         ]),
       )
       .default([]),
+    network: browserNetworkContentSelectionSchema,
   })
-  .default({ after_each_step: [], at_end: ["url"], events: [] })
+  .default({
+    after_each_step: [],
+    at_end: ["url"],
+    events: [],
+    network: {
+      request_body: false,
+      response_body: false,
+      header_values: false,
+    },
+  })
   .describe(
     "Optional retained artifacts and event families. Defaults to only a final sanitized URL; request screenshots, DOM, accessibility, history, storage, and event capture explicitly.",
   );

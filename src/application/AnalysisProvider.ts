@@ -159,6 +159,8 @@ type CapabilityAvailability =
     };
 
 export type CapabilityDescriptor = CapabilityAvailability & {
+  /** Live external state must be re-observed, including after snapshot import. */
+  readonly cachePolicy?: "snapshot" | "live";
   readonly provider: ProviderIdentity;
   readonly operation: Exclude<AnalysisOperation, "health">;
   readonly effects: CapabilityEffects;

@@ -2,9 +2,9 @@
 
 [English](README.md) · [简体中文](README_zh.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · **العربية**
 
-# REA: هندسة أي شيء عكسيًا
+# REA: اعكس هندسة أي شيء
 
-### استقصِ سلوك التطبيقات والملفات التنفيذية الأصلية باستخدام وكيلك.
+### وسيط MCP واحد للهندسة العكسية عبر الملفات التنفيذية والتطبيقات وسلوك وقت التشغيل.
 
 **اعثر على ميزة تعجبك. افهم آلية عملها. ابنها بالطريقة التي تريدها.**
 
@@ -15,7 +15,7 @@
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 [![Discord](https://img.shields.io/discord/1556595354999332884?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/GkcryMnJDM)
 
-<a href="https://trendshift.io/repositories/82054?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/82054/weekly?language=TypeScript" alt="morluto/rea | Trendshift" width="250" height="55" /></a>
+<a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
 
 [البدء السريع](#البدء-السريع) · [حالة الدعم](#حالة-الدعم) · [من الملف التنفيذي إلى السلوك](#من-الملف-التنفيذي-إلى-السلوك) · [منصة أدوات التحقيق](#منصة-أدوات-التحقيق) · [خطة العمل](#خطة-العمل) · [كيف يعمل؟](#كيف-يعمل)
 
@@ -47,7 +47,7 @@
 
 يوفر REA أدوات لتحليل الملفات التنفيذية الأصلية وتطبيقات JavaScript وElectron وتجميعات .NET والمواقع. يمكنك استخدامها من وكيلك أو من الطرفية. يعمل التحليل محليًا، وتتضمن النتائج الأدلة والقيود.
 
-يضبط Setup إعدادات الوكيل ويربطه بتثبيت موجود من Hopper أو Ghidra. ويمكنه تثبيت Hopper بعد موافقتك.
+يضبط Setup إعدادات الوكيل ويربطه بتثبيت موجود من Hopper أو Ghidra، ويثبّت سير عمل REA الموجّه. ويمكنه تثبيت Hopper بعد موافقتك. ولا يحتاج التحليل الثابت لتطبيقات JavaScript إلى أي محرك.
 
 ## اطلب من وكيلك مباشرة
 
@@ -69,14 +69,14 @@
 
 ## لماذا REA؟
 
-|                      |                                                                                       |
-| -------------------- | ------------------------------------------------------------------------------------- |
-| **مصمم للوكلاء**      | اسأل عما يفعله تطبيق مترجم ودع الوكيل يجمع الأدلة بدلًا من التخمين.                      |
-| **CLI وMCP**         | استخدم قدرات الهندسة العكسية نفسها من الطرفية أو وكيل البرمجة.                        |
-| **يتولى التعقيد**    | يدير REA إعداد الأدوات وفتح التطبيق واستمرار الاستقصاء والتنظيف بعد الانتهاء.            |
-| **سير عمل كامل**     | انتقل من النظرة الأولى إلى الشيفرة شبه المصدرية وعلاقات الاستدعاء والأنواع وأدلة التنفيذ. |
-| **محلي حسب التصميم** | يجري التحليل على جهازك المدعوم ولا يرفع REA الملف التنفيذي إلى خدمة تحليل مستضافة.     |
-| **يحافظ على السياق** | استقصِ عدة ملفات تنفيذية من دون بدء التحليل من جديد عند كل سؤال.                       |
+|                          |                                                                              |
+| ------------------------ | ---------------------------------------------------------------------------- |
+| **مصمم للوكلاء**          | اسأل عما يفعله التطبيق ودع الوكيل يفحصه بدلًا من التخمين.                      |
+| **CLI وMCP**             | استخدم قدرات الهندسة العكسية نفسها من الطرفية أو الوكيل.                     |
+| **إعداد موجّه**           | اضبط وكيلك، واربط أداة تحليل موجودة، أو ثبّت Hopper بموافقتك.                 |
+| **من الفهم إلى الشيفرة** | افهم الميزة ثم ابنِ نسختك الخاصة في جلسة البرمجة نفسها.                       |
+| **محلي حسب التصميم**     | يجري التحليل على مضيفك المحلي المدعوم، ولا يرفع REA التطبيق إلى خدمة مستضافة. |
+| **يحافظ على السياق**     | استقصِ عدة تطبيقات دون بدء التحليل من جديد عند كل سؤال.                       |
 
 ## البدء السريع
 
@@ -98,28 +98,23 @@ npx rea-agents setup
 
 يمكن تشغيل Hopper في الوضع التجريبي. إذا ظهرت رسالة عند التشغيل الأول، فاختر التجربة أو أدخل ترخيصًا موجودًا.
 
-### Skill instructions and a first CLI result
+### مهارة مساعد البرمجة (اختياري)
+
+أضف المهارة إلى مساعد البرمجة للحصول على سياق أغنى:
 
 ```bash
 npx skills add morluto/rea --skill reverse-engineer-anything
 ```
 
-This installs instructions, not MCP registration or analysis engines. Follow the
-[conditional connection guide](skills/reverse-engineer-anything/SKILL.md#connect-only-when-needed).
-`npx rea-agents setup` installs a matching skill and registers selected clients
-only after showing the plan and receiving approval. Restart/reconnect after
-registration, then verify REA tools in the active session. Repository skills can
-be ahead of the [released package](docs/installation.md#released-package-and-main).
+توفر المهارة سير عمل التحقيق في REA. نفّذ الإعداد أعلاه لربط REA بالوكيل وضبط أدوات التحليل. يثبّت الإعداد افتراضيًا مهارة مطابقة للإصدار؛ وهذا الأمر يثبّت نسخة المستودع.
 
-For your extracted JavaScript/Electron tree or ASAR, no MCP setup or native
-engine is required:
+لشجرة JavaScript/Electron المستخرجة أو ملف ASAR، لا يلزم إعداد MCP ولا محرك أصلي:
 
 ```bash
 npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
 ```
 
-Replace the path with your target; Windows paths such as `"D:/apps/example"`
-are supported by this static workflow. Native analysis requires its own engine.
+استبدل المسار بهدفك (مثل `"D:/apps/example"` على Windows). يدعم سير العمل الثابت هذه المسارات، بينما يتطلب التحليل الأصلي محركه الخاص.
 
 ### تثبيت أمر rea
 
@@ -150,7 +145,7 @@ rea setup
 
 يستطيع Setup التحقق من التثبيت وحفظ المسارات؛ ولا يثبت أو يحدّث Ghidra أو Java أو Node.js أو npm أو Homebrew.
 
-Repository main includes experimental Windows x64 Ghidra P0 for native, non-managed, non-DLL x86-64 PE applications on fixed local NTFS. The native controls are implemented; npm 4.0.1 does not contain them. See the [release boundary](docs/installation.md#released-package-and-main) and [Windows Ghidra P0](docs/windows-ghidra-p0.md).
+يتضمن فرع main والحزمة npm 4.1.0 دعمًا تجريبيًا لـ Windows x64 Ghidra P0 لتطبيقات PE الأصلية x86-64 (غير المُدارة وغير DLL) على NTFS محلي، مع ضوابط Job Object وقوائم DACL الخاصة وقبول المسارات المجمّعة. تحقق من [حد الإصدار](docs/installation.md#released-package-and-main) قبل توقع ذلك من حزمة npm أقدم. راجع [دليل Windows Ghidra P0](docs/windows-ghidra-p0.md) للمتطلبات والنطاق الموثق.
 
 ### تشخيص المشكلات
 
@@ -166,21 +161,12 @@ Repository main includes experimental Windows x64 Ghidra P0 for native, non-mana
 
 ## حالة الدعم
 
-The current repository capabilities and platform requirements are described in
-[the English support guide](README.md#current-status). Main can be ahead of the
-[npm release](docs/installation.md#released-package-and-main).
+تُوصف قدرات المستودع الحالية ومتطلبات الأنظمة في [دليل الدعم الإنجليزي](README.md#current-status). قد يسبق فرع main [إصدار npm](docs/installation.md#released-package-and-main).
 
-- Ghidra provides 25 read-only operations on Linux x64, macOS x64/arm64, and the
-  experimental Windows x64 P0 boundary. Linux/macOS additionally supports atomic
-  session function annotations. Windows P0 is read-only; Ghidra has no GUI controls.
-- Static Android inspection has separate bring-your-own JADX/Java prerequisites;
-  real-provider verification covers Linux. See [Android analysis](docs/android-analysis.md).
-- Browser, Electron, and process requests specify their target, actions, and
-  lifecycle directly. They require the host's actual access, without separate
-  REA permission grants. Setup configuration writes and Hopper installation
-  still require approval of their exact plan.
-- `rea capabilities` describes binary-session operations rather than every
-  application/runtime tool. Consult the full MCP tool list and relevant guide.
+- يوفر Ghidra 25 عملية للقراءة فقط على Linux x64 وmacOS x64/arm64 وحدود Windows x64 P0 التجريبية. يدعم Linux/macOS أيضًا تعليقات الدوال الذرية على مستوى الجلسة. نظام Windows P0 للقراءة فقط، ولا يوفر Ghidra أي تحكم في الواجهة.
+- يتطلب الفحص الثابت لنظام Android تجهيز JADX/Java بشكل منفصل؛ ويغطي التحقق بالموفر الحقيقي نظام Linux. راجع [تحليل Android](docs/android-analysis.md).
+- تحدد طلبات المتصفح وElectron والعمليات هدفها وإجراءاتها ودورة حياتها مباشرة، وتعتمد على وصول المضيف الفعلي دون منح أذونات منفصلة من REA. ما زالت كتابة إعدادات Setup وتثبيت Hopper تتطلب الموافقة على خطتها الدقيقة.
+- يصف `rea capabilities` عمليات جلسة الملف التنفيذي لا كل أدوات التطبيقات ووقت التشغيل. راجع قائمة أدوات MCP الكاملة والدليل ذا الصلة.
 
 ## استقصاء كامل بطلب واحد
 
@@ -225,20 +211,20 @@ The current repository capabilities and platform requirements are described in
 
 ## منصة أدوات التحقيق
 
-| عائلة الأدوات          | العدد | الاستخدام                                                                               |
-| --------------------- | ----: | -------------------------------------------------------------------------------------- |
-| فحص الملفات التنفيذية |    41 | الدوال والشيفرة شبه المصدرية والتعليمات والسلاسل والرموز والمراجع والتعليقات            |
-| التحليل المركب        |    14 | النظرة العامة وتحليل الدوال وفك الترجمة الدفعي ومخطط الاستدعاء وفحص Swift وObjC         |
-| أدوات macOS الأصلية    |     7 | بيانات Mach-O والتوقيعات وplist والمعماريات واستعادة أسماء Swift                       |
-| الملفات والحزم        |     5 | فحص الدلائل والحزم وInterface Builder وموارد Apple والاستخراج                            |
-| .NET PE/CLI           |     7 | هوية التجميع والبيانات الوصفية وCIL والاستدعاءات الأصلية والمقارنة واستيراد إعادة البناء |
-| البرامج الثابتة       |     2 | فحص مناطق البرامج الثابتة واستخراجها الصريح على Linux                                  |
-| Android APK           |     5 | بيانات الحزمة وmanifest والبحث عن الأصناف والأعضاء وفك ترجمة الأساليب والمراجع الثابتة    |
-| مراقبة المتصفح        |     9 | الصفحات والبرامج النصية وخرائط المصدر وWebMCP والصور ومقارنة الالتقاط                   |
-| تحليل Electron        |     5 | مراقبة الصفحات وبنية التطبيق وربط النتائج الثابتة بنتائج التشغيل                       |
-| وقت تشغيل JavaScript  |     2 | الاتصال بهدف Node/Electron Inspector موجود لمراقبة البرامج وسياقات التنفيذ              |
-| سير عمل التطبيقات     |     7 | تتبع الميزات ومقارنة الإصدارات وبنية قيم الإرجاع والتحقق من إعادة الإنشاء                 |
-| جلسة الملف التنفيذي   |    21 | تبديل الأهداف وحفظ الأدلة ومقارنة العمليات والدوال وتسجيل الأسئلة غير المحسومة            |
+| عائلة الأدوات         | العدد | الاستخدام                                                                                                                                                 |
+| -------------------- | ----: | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| الفحص الأصلي          |    41 | الدوال والشيفرة شبه المصدرية والتعليمات والسلاسل والرموز والاستدعاءات والمراجع والتعليقات وقراءة البايتات ومواضع الملفات                                   |
+| سير عمل التحقيق      |    14 | نظرات عامة على التطبيقات وملفات الدوال وواجهات API الأصلية والتوزيع وفك الترجمة الدفعي وتتبع الميزات ومسارات الاستدعاء ومخططاته واكتشاف Swift وObjective-C |
+| أدوات macOS الأصلية   |     7 | بيانات Mach-O والتوقيعات وplist والمعماريات واستعادة أسماء Swift دون تشغيل Hopper                                                                        |
+| مخطط المخرجات        |     5 | جرد الدلائل والحزم وملفات Interface Builder المترجمة وكتالوجات موارد Apple والاستخراج                                                                      |
+| PE/CLI المُدار        |     7 | هوية تجميعات .NET وبياناتها الوصفية وتعليمات CIL والاعتماديات الأصلية واستيراد إعادة البناء ومقارنة الإصدارات                                               |
+| البرامج الثابتة      |     2 | فحص مناطق البرامج الثابتة على Linux واستخراجها الصريح                                                                                                    |
+| Android APK          |     5 | بيانات الحزمة وmanifest والبحث عن الأصناف وقوائم الأعضاء وفك ترجمة الأساليب والمراجع الثابتة                                                                |
+| مراقبة المتصفح       |     9 | بنية الصفحات وبيانات الشبكة والبرامج النصية وخرائط المصدر واكتشاف WebMCP والصور ومقارنة الالتقاط                                                          |
+| تحليل Electron       |     5 | مراقبة العارضين وخريطة التطبيق الثابتة والمواءمة بين نتائج الثبات والتشغيل                                                                               |
+| وقت تشغيل JavaScript |     2 | اكتشاف أهداف Node/Electron Inspector ومواضع البرامج وأحداث سياقات التنفيذ                                                                                |
+| سير عمل التطبيقات    |     8 | تصدير النصوص البرمجية الملتقطة، تتبع الميزات عبر الطبقات ومقارنة الإصدارات ومواءمة المصدر التاريخي ومقارنة أشكال القيم المعادة والتحقق من إعادة الإنشاء    |
+| مساحة العمل والملاحظة |    21 | الجلسات وحزم الأدلة وسياق التنقل ومقارنة العمليات والمخرجات والدوال وتسجيل الأسئلة غير المحسومة                                                            |
 
 ## خطة العمل
 
@@ -255,7 +241,7 @@ The current repository capabilities and platform requirements are described in
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@4.0.1", "mcp"]
+      "args": ["-y", "rea-agents@4.1.0", "mcp"]
     }
   }
 }
@@ -299,8 +285,9 @@ npx -y rea-agents@latest compare /absolute/path/to/left-evidence.json /absolute/
 
 ## الأمان والخصوصية
 
-- يبقى تحليل الملف التنفيذي محليًا بين REA ومزوّد التحليل المختار.
+- يبقى التحليل محليًا بين REA وموفر التحليل المختار عبر مقابس محلية خاصة، ومع IDA عبر تسجيل MCP المحلي المضبوط.
 - لا يرفع REA الأهداف إلى خدمة مستضافة.
+- تعمل أدوات التحليل والأهداف المطلقة بصلاحيات المستخدم نفسه؛ وما زال التقاط واجهة النظام على macOS يعتمد على الوصول إلى تسهيلات الاستخدام وتسجيل الشاشة. ولا ينفّذ التحليل الثابت للـ JavaScript الوحدات المستخرجة.
 - تستخدم جلسات Ghidra مشروعًا مؤقتًا معزولًا ولا تفتح مشاريع Ghidra التي يملكها المستخدم أو تعدّلها.
 - راجع الملفات التنفيذية غير الموثوقة واعزلها كما تفعل مع أي مدخل أصلي قد يكون ضارًا.
 - أبلغ عن الثغرات وفق [سياسة الأمان](SECURITY.md)، وليس عبر قضية عامة.
@@ -324,7 +311,7 @@ npx -y rea-agents@latest compare /absolute/path/to/left-evidence.json /absolute/
 <details>
 <summary><strong>هل يعمل REA على Linux أو Windows؟</strong></summary>
 
-يدعم REA نظام macOS 12+ وUbuntu 24.04+ وFedora 41+ وArch Linux بنواة 64 بت. يعمل تحليل Ghidra للقراءة فقط على Linux x64 وmacOS x64/arm64 مع Ghidra 12.1.4 وJDK 21 الكامل. تحليل Ghidra على Windows غير متاح بسبب الضوابط الأصلية غير المنفذة؛ راجع [Windows Ghidra P0](docs/windows-ghidra-p0.md).
+يدعم REA نظام macOS 12+ وUbuntu 24.04+ وFedora 41+ وArch Linux بنواة 64 بت. يعمل تحليل Ghidra للقراءة فقط على Linux x64 وmacOS x64/arm64 مع Ghidra 12.1.4 وJDK 21 الكامل، إضافة إلى حد Windows x64 P0 التجريبي لتطبيقات PE الأصلية x86-64 على NTFS محلي؛ راجع [دليل Windows Ghidra P0](docs/windows-ghidra-p0.md) للنطاق الموثق.
 
 </details>
 

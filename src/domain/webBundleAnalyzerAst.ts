@@ -11,7 +11,11 @@ export const calleeName = (callee: t.Node): string => {
     const object = t.isExpression(callee.object)
       ? calleeName(callee.object)
       : "";
-    const property = propertyName(callee.property);
+    const property = semanticStaticPropertyName(
+      callee.property,
+      callee.computed,
+    );
+    if (property === "") return "";
     return object === "" ? property : `${object}.${property}`;
   }
   return "";
@@ -20,12 +24,6 @@ export const calleeName = (callee: t.Node): string => {
 export const stringArgument = (
   value: t.Node | null | undefined,
 ): string | undefined => (t.isStringLiteral(value) ? value.value : undefined);
-
-export const propertyName = (value: t.Node): string => {
-  if (t.isIdentifier(value)) return value.name;
-  if (t.isStringLiteral(value)) return value.value;
-  return "";
-};
 
 export const objectValue = (
   object: t.ObjectExpression,

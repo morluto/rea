@@ -170,6 +170,8 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
         ownsContext: scenario.browser.mode === "launch",
         enabled: new Set(scenario.capture.events),
         secrets,
+        network: scenario.capture.network,
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
       const session = new PlaywrightScenarioSession(opened, {
         mode: scenario.browser.mode,
@@ -263,7 +265,11 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
         ? ("terminated-owned-process" as const)
         : ("disconnected-external" as const);
     this.closed = true;
-    await closePlaywrightScenarioBrowser(this.opened, this.signal);
+    try {
+      await this.eventCapture.finish();
+    } finally {
+      await closePlaywrightScenarioBrowser(this.opened, this.signal);
+    }
     return this.mode === "launch"
       ? ("terminated-owned-process" as const)
       : ("disconnected-external" as const);

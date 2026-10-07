@@ -68,13 +68,12 @@ selects the npm release, and persistent MCP registrations are pinned to the
 version that performed setup. Installing newer instructions does not update a
 running server or its registration.
 
-The release checked on **2026-10-06** was **4.0.1** (116 MCP tools). That artifact
-has static JavaScript inspection and full inline Evidence workflows, but does
-not include main's Windows native control bundle, Android/JADX or firmware
-tools, Ghidra function annotation workflow, or retained application-Evidence
+The release checked on **2026-10-06** was **4.1.0** (125 MCP tools). That artifact
+includes main's Windows native control bundle, Android/JADX and firmware
+tools, Ghidra function annotation workflow, and retained application-Evidence
 references.
-Main's catalog describes those additions; a source build or a subsequent
-release containing them is required. Package startup alone does not verify a
+Main's catalog describes the current code; a source build or a subsequent
+release containing later changes is required for anything newer. Package startup alone does not verify a
 provider's real platform workflow.
 
 To check the published version, run `npm view rea-agents dist-tags.latest`.
@@ -399,7 +398,7 @@ For a client that requires manual configuration, use:
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@4.0.1", "mcp"]
+      "args": ["-y", "rea-agents@4.1.0", "mcp"]
     }
   }
 }

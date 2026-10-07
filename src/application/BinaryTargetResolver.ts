@@ -271,7 +271,7 @@ const parseXmlPlistExecutable = (plist: string): string => {
     );
   if (match?.[1] === undefined)
     throw new Error("CFBundleExecutable is missing");
-  return decodeXml(match[1].trim());
+  return decodeXml(match[1]);
 };
 
 const readBinaryPlistExecutable = async (plistPath: string): Promise<string> =>
@@ -280,11 +280,12 @@ const readBinaryPlistExecutable = async (plistPath: string): Promise<string> =>
       "-extract",
       "CFBundleExecutable",
       "raw",
+      "-n",
       "-o",
       "-",
       plistPath,
     ])
-  ).stdout.trim();
+  ).stdout;
 
 const isSafeExecutableName = (name: string): boolean =>
   name.length > 0 &&

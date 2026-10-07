@@ -174,7 +174,7 @@ in `application`, or `left`/`right` for comparisons. `RETURNED_ID` is a template
 not a literal valid ID. Native Evidence arrays still use complete records.
 References are scoped to one connection; `close_binary` clears them. Export a
 bundle before closing and import it on another connection, or supply the full
-inline Evidence there. npm 4.0.1 accepts full inline Evidence only; installing
+inline Evidence there. Versions before 4.1.0 accept full inline Evidence only; installing
 newer skill instructions does not change that schema. See
 [MCP Evidence inputs](mcp-contracts.md#retained-application-evidence-inputs).
 

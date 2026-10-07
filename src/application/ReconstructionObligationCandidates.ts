@@ -78,7 +78,13 @@ const deriveApplicationCandidates = (
     const source = parseApplicationGraphEvidence(evidence);
     for (const node of source.graph.nodes) {
       const candidatePolicy = applicationObligationPolicy(node.kind);
-      if (candidatePolicy === undefined) continue;
+      if (candidatePolicy === undefined) {
+        if (node.kind === "unknown")
+          limitations.add(
+            `Application graph ${source.graph.graph_id} contains unresolved node ${node.node_id}; reconstruction obligations remain unknown.`,
+          );
+        continue;
+      }
       const reference = node.observations.map((observation) =>
         graphReference(
           evidence,

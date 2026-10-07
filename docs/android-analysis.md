@@ -5,7 +5,7 @@ kept as an unmodified, commit-pinned Git submodule; see
 [upstream provenance](../third_party/README.md). CLI and MCP use the same
 application workflow and return artifact-bound Evidence inline.
 
-This family is present on repository main and absent from npm 4.0.1. Check the
+This family is present on repository main and in npm 4.1.0. Check the
 [released package boundary](installation.md#released-package-and-main) and the
 connected server's tool list before selecting it.
 

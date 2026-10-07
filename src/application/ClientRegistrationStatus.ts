@@ -134,13 +134,6 @@ const registrationAligned = (
   if (!isOwnedClientRegistrationCommand(command, currentCommandPath))
     return false;
   if (
-    command.length === 3 &&
-    command[2] === "mcp" &&
-    resolve(command[0] ?? "") === resolve(process.execPath) &&
-    resolve(command[1] ?? "") === currentCommandPath
-  )
-    return true;
-  if (
     client.name === "codex" &&
     registration.startup_timeout_sec !==
       MCP_STARTUP_POLICY.codexStartupTimeoutSeconds
@@ -155,6 +148,13 @@ const registrationAligned = (
     return false;
   if (client.format === "commandcode" && registration.transport !== "stdio")
     return false;
+  if (
+    command.length === 3 &&
+    command[2] === "mcp" &&
+    resolve(command[0] ?? "") === resolve(process.execPath) &&
+    resolve(command[1] ?? "") === currentCommandPath
+  )
+    return true;
   if (
     command.length === 4 &&
     command[0] === "npx" &&

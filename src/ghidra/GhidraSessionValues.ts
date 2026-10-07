@@ -4,6 +4,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryValues.js";
 import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionValues.js";
+import { ghidraExtensionResultSchema } from "./extensions/GhidraExtensions.js";
 
 /** Exact methods proved by the bridge handshake after auto-analysis. */
 export const GHIDRA_SESSION_CAPABILITIES = [
@@ -29,6 +30,7 @@ const sessionInfoSchema = z
     read_only: z.boolean(),
     analysis_complete: z.boolean(),
     analysis_timed_out: z.boolean(),
+    analysis_extensions: z.array(ghidraExtensionResultSchema).optional(),
     capabilities: z.array(capabilitySchema),
     target: z
       .object({

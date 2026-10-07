@@ -1,5 +1,7 @@
 import * as t from "@babel/types";
 
+import { semanticBuiltinNamespacePath } from "./javascriptSemanticProvenance.js";
+
 import type {
   JavaScriptSemanticCallable,
   JavaScriptSemanticChildProcessInteraction,
@@ -305,7 +307,8 @@ const childProcessNamespace = (
 ): boolean =>
   binding?.directOrigins.some(
     ({ specifier, importedPath }) =>
-      childProcessModule(specifier) && importedPath.length === 0,
+      childProcessModule(specifier) &&
+      semanticBuiltinNamespacePath(importedPath),
   ) ?? false;
 
 const childProcessModule = (specifier: string): boolean =>

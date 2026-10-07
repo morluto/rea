@@ -51,7 +51,7 @@ export const safeResponseMetadata = (
         coop: policyToken(headers.get("cross-origin-opener-policy")),
         coep: policyToken(headers.get("cross-origin-embedder-policy")),
         corp: policyToken(headers.get("cross-origin-resource-policy")),
-        referrer_policy: policyToken(headers.get("referrer-policy")),
+        referrer_policy: referrerPolicy(headers.get("referrer-policy")),
         x_content_type_options: policyToken(
           headers.get("x-content-type-options"),
         ),
@@ -213,16 +213,30 @@ const parseLinks = (
   return links;
 };
 
-const splitLinkHeader = (value: string): string[] => {
+const splitLinkHeader = (
+  value: string,
+  delimiter: "," | ";" = ",",
+): string[] => {
   const entries: string[] = [];
   let start = 0;
   let quoted = false;
+  let escaped = false;
+  let target = false;
   for (let index = 0; index < value.length; index += 1) {
     const character = value[index];
-    if (character === '"' && value[index - 1] !== "\\") quoted = !quoted;
-    if (character !== "," || quoted) continue;
-    entries.push(value.slice(start, index));
-    start = index + 1;
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') quoted = false;
+      continue;
+    }
+    if (character === '"' && !target) quoted = true;
+    else if (delimiter === "," && character === "<") target = true;
+    else if (delimiter === "," && character === ">") target = false;
+    else if (character === delimiter && !target) {
+      entries.push(value.slice(start, index));
+      start = index + 1;
+    }
   }
   entries.push(value.slice(start));
   return entries;
@@ -230,7 +244,7 @@ const splitLinkHeader = (value: string): string[] => {
 
 const linkParameters = (value: string): ReadonlyMap<string, string> => {
   const parameters = new Map<string, string>();
-  for (const raw of value.split(";").slice(1)) {
+  for (const raw of splitLinkHeader(value, ";").slice(1)) {
     const separator = raw.indexOf("=");
     const name = (separator < 0 ? raw : raw.slice(0, separator))
       .trim()
@@ -301,6 +315,27 @@ const agentHint = (
 
 const isAgentRel = (value: string): boolean =>
   ["mcp", "model-context", "ai-plugin", "service-desc"].includes(value);
+
+const referrerPolicies = new Set([
+  "no-referrer",
+  "no-referrer-when-downgrade",
+  "same-origin",
+  "origin",
+  "strict-origin",
+  "origin-when-cross-origin",
+  "strict-origin-when-cross-origin",
+  "unsafe-url",
+]);
+
+const referrerPolicy = (value: string | undefined): string | null => {
+  let policy: string | null = null;
+  for (const raw of (value ?? "").split(",")) {
+    const token = raw.trim().toLowerCase();
+    if (!/^[a-z-]*$/u.test(token)) return null;
+    if (referrerPolicies.has(token)) policy = token;
+  }
+  return policy;
+};
 
 const policyToken = (value: string | undefined): string | null => {
   const token = (value ?? "").trim().toLowerCase();

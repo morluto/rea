@@ -25,7 +25,10 @@ import {
   range,
   stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
-import { semanticStaticPropertyName } from "./javascriptAstValues.js";
+import {
+  semanticStaticPropertyKey,
+  semanticStaticPropertyName,
+} from "./javascriptAstValues.js";
 
 interface CollectCallableInput {
   readonly node: t.Node;
@@ -202,7 +205,10 @@ const semanticModuleOrigin = (
       };
 };
 
-export { semanticStaticPropertyName } from "./javascriptAstValues.js";
+export {
+  semanticStaticPropertyKey,
+  semanticStaticPropertyName,
+} from "./javascriptAstValues.js";
 
 const callableKind = (
   node: t.Node,
@@ -635,5 +641,4 @@ const commonJsExportName = (
 /** Exact member key, or null when a computed key commits no name. */
 const memberKey = (
   node: t.MemberExpression | t.OptionalMemberExpression,
-): string | null =>
-  semanticStaticPropertyName(node.property, node.computed) || null;
+): string | null => semanticStaticPropertyKey(node.property, node.computed);

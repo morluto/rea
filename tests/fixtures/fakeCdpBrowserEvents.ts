@@ -22,6 +22,13 @@ const emitWebMcpEvents = (
   port: number,
   options: FakeOptions,
 ): void => {
+  if (
+    command.method === "WebMCP.enable" &&
+    options.webMcpSameUrlRegistrations !== undefined
+  ) {
+    emitSameUrlWebMcpRegistrations(socket, command, options);
+    return;
+  }
   if (command.method === "WebMCP.enable" && options.webMcpTools === true) {
     const inputSchemaProperties =
       options.webMcpSchemaPropertyCount === undefined
@@ -158,6 +165,44 @@ const emitWebMcpEvents = (
         },
       });
   }
+};
+
+const emitSameUrlWebMcpRegistrations = (
+  socket: WebSocket,
+  command: FakeCdpCommand,
+  options: FakeOptions,
+): void => {
+  event(socket, "WebMCP.toolsAdded", command.sessionId, {
+    tools: [
+      {
+        name: "read_item",
+        description: "First owner",
+        frameId: "webmcp-frame-0",
+      },
+    ],
+  });
+  event(socket, "WebMCP.toolsAdded", command.sessionId, {
+    tools: [
+      {
+        name: "read_item",
+        description: "First owner updated",
+        frameId: "webmcp-frame-0",
+      },
+    ],
+  });
+  event(socket, "WebMCP.toolsAdded", command.sessionId, {
+    tools: [
+      {
+        name: "read_item",
+        description: "Second owner",
+        frameId: "webmcp-frame-1",
+      },
+    ],
+  });
+  if (options.webMcpSameUrlRegistrations === "remove-second")
+    event(socket, "WebMCP.toolsRemoved", command.sessionId, {
+      tools: [{ name: "read_item", frameId: "webmcp-frame-1" }],
+    });
 };
 
 const emitSessionTimeline = (

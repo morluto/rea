@@ -8,6 +8,7 @@ import {
   captured,
   eventEvidenceState,
   eventsFor,
+  networkContentCoverageReason,
   screenshotProjection,
   type CaptureState,
 } from "./browserScenarioDiffEvidence.js";
@@ -340,6 +341,10 @@ const compareStepArtifacts = (
       ),
       beforeState: eventEvidenceState(input.beforeCapture, input.beforeStep),
       afterState: eventEvidenceState(input.afterCapture, input.afterStep),
+      incomparableReason: networkContentCoverageReason(
+        input.beforeCapture,
+        input.afterCapture,
+      ),
     }),
   ];
 };
@@ -354,6 +359,7 @@ interface CompareCapturedValuesInput<Value> {
   readonly project?: (value: Value) => unknown;
   readonly beforeState?: BrowserScenarioEvidenceState;
   readonly afterState?: BrowserScenarioEvidenceState;
+  readonly incomparableReason?: string | undefined;
 }
 
 const compareCapturedValues = <Value>(
@@ -386,7 +392,8 @@ const compareCapturedValues = <Value>(
     beforeState !== "captured" ||
     afterState !== "captured" ||
     before.state !== "captured" ||
-    after.state !== "captured"
+    after.state !== "captured" ||
+    input.incomparableReason !== undefined
   )
     return {
       artifact,
@@ -398,7 +405,9 @@ const compareCapturedValues = <Value>(
         after_state: afterState,
         before_sha256: beforeSha256,
         after_sha256: afterSha256,
-        reason: `Artifact coverage is not comparable (${beforeState} before, ${afterState} after).`,
+        reason:
+          input.incomparableReason ??
+          `Artifact coverage is not comparable (${beforeState} before, ${afterState} after).`,
       },
     };
   if (beforeSha256 === null || afterSha256 === null)

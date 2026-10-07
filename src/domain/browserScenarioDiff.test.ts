@@ -12,6 +12,147 @@ import {
   type BrowserScenarioCapture,
 } from "./browserScenarioCapture.js";
 
+const networkCapture = (sourceSequence: number, receiptStep: number) => {
+  const base = scenarioCapture({});
+  const events = [
+    {
+      sequence: sourceSequence,
+      step_index: 0,
+      kind: "request",
+      method: "POST",
+      url: {
+        url: "https://app.example.test/api",
+        origin: "https://app.example.test",
+        query_parameter_names: [],
+        redacted: false,
+      },
+      resource_type: "fetch",
+      transaction_id: "request-1",
+      header_names: [],
+      status: null,
+      failure: null,
+    },
+    {
+      sequence: sourceSequence + 1,
+      step_index: receiptStep,
+      kind: "network-content",
+      transaction_id: "request-1",
+      phase: "request",
+      source_event_sequence: sourceSequence,
+      headers: { state: "not_requested" },
+      body: {
+        state: "captured",
+        representation: "browser-exposed-request-bytes",
+        encoding: "base64",
+        content: "eA==",
+        bytes: 1,
+        sha256: createHash("sha256").update("x").digest("hex"),
+        media_type: null,
+        redacted: false,
+      },
+    },
+  ];
+  return browserScenarioCaptureSchema.parse({
+    ...base,
+    scenario: {
+      ...base.scenario,
+      network_content: {
+        request_body: true,
+        response_body: false,
+        header_values: false,
+      },
+    },
+    events: { items: events, retained: 2, dropped: 0 },
+  });
+};
+
+it("normalizes network content anchors and attributes late content to its source step", () => {
+  const before = networkCapture(3, 0);
+  const after = networkCapture(90, 1);
+  expect(
+    compareBrowserScenarios(
+      compareBrowserScenariosInputSchema.parse({
+        before_scenario: before,
+        after_scenario: after,
+      }),
+    ).overall_status,
+  ).toBe("unchanged");
+  const content = after.events.items[1];
+  if (content?.kind !== "network-content")
+    throw new Error("Expected content fixture");
+  for (const mutation of [
+    { transaction_id: "another-request" },
+    { source_event_sequence: 91 },
+    { phase: "response" },
+  ])
+    expect(
+      browserScenarioCaptureSchema.safeParse({
+        ...after,
+        events: {
+          ...after.events,
+          items: [after.events.items[0], { ...content, ...mutation }],
+        },
+      }).success,
+    ).toBe(false);
+});
+
+it("reports content-selection mismatch as unknown instead of a website change", () => {
+  const withBody = networkCapture(1, 0);
+  const metadataOnly = browserScenarioCaptureSchema.parse({
+    ...withBody,
+    scenario: {
+      ...withBody.scenario,
+      network_content: {
+        request_body: false,
+        response_body: false,
+        header_values: false,
+      },
+    },
+    events: {
+      ...withBody.events,
+      items: withBody.events.items.filter(
+        (event) => event.kind !== "network-content",
+      ),
+      retained: 1,
+    },
+  });
+  const compared = compareBrowserScenarios(
+    compareBrowserScenariosInputSchema.parse({
+      before_scenario: metadataOnly,
+      after_scenario: withBody,
+    }),
+  );
+  expect(compared.overall_status).toBe("unknown");
+  expect(compared.steps.flatMap((step) => step.artifact_diffs)).toContainEqual(
+    expect.objectContaining({
+      artifact: "events",
+      status: "unknown",
+      reason: expect.stringContaining("content selections differ"),
+    }),
+  );
+  const legacy = browserScenarioCaptureSchema.parse({
+    ...metadataOnly,
+    scenario: { ...metadataOnly.scenario, network_content: undefined },
+  });
+  expect(legacy.scenario.network_content).toBeUndefined();
+  const legacyComparison = compareBrowserScenarios(
+    compareBrowserScenariosInputSchema.parse({
+      before_scenario: legacy,
+      after_scenario: metadataOnly,
+    }),
+  );
+  expect(legacyComparison.overall_status).toBe("unknown");
+  expect(
+    legacyComparison.steps.flatMap((step) => step.artifact_diffs),
+  ).toContainEqual(
+    expect.objectContaining({
+      artifact: "events",
+      status: "unknown",
+      reason: expect.stringContaining("unknown in a legacy capture"),
+    }),
+  );
+});
+
 describe("browser scenario comparison", () => {
   it("records canonical literal normalization and ignores declared volatile fields", () => {
     const before = scenarioCapture({

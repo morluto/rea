@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import * as t from "@babel/types";
 
@@ -184,8 +185,7 @@ const staticCallPath = (
       ? stringValue(node.arguments[0])
       : undefined;
   if (name === "fileURLToPath" || name.endsWith(".fileURLToPath")) {
-    const argument = argumentNode(node.arguments[0]);
-    return argument === undefined ? undefined : staticPathAt(argument);
+    return staticFileUrlPath(argumentNode(node.arguments[0]));
   }
   if (
     (name === "dirname" || name.endsWith(".dirname")) &&
@@ -206,6 +206,59 @@ const staticCallPath = (
   }
   return parts.length === 0 ? undefined : posix.join(...parts);
 };
+
+const staticFileUrlPath = (
+  argument: t.Node | undefined,
+): string | undefined => {
+  if (argument === undefined) return undefined;
+  return isSourceFileUrl(argument)
+    ? sourceRelativeFileUrlPath(argument)
+    : staticPathAt(argument);
+};
+
+/** Project a known source-relative URL through the actual file URL decoder. */
+const sourceRelativeFileUrlPath = (node: t.Node): string | undefined => {
+  if (!isSourceFileUrl(node)) return undefined;
+  const value = stringValue(node.arguments[0]);
+  if (
+    value === undefined ||
+    (value.split(/[?#]/u, 1)[0] ?? "") === "" ||
+    value !== value.trim() ||
+    value.includes("\\") ||
+    [...value].some((character) => character.charCodeAt(0) < 32) ||
+    /^[a-z][a-z0-9+.-]*:/iu.test(value) ||
+    value.startsWith("//") ||
+    /%(?:2e|2f|5c)/iu.test(value.split(/[?#]/u, 1)[0] ?? "")
+  )
+    return undefined;
+  // A sufficiently deep inert anchor preserves any leading parent segments
+  // without using this host's cwd or inventing the application's directory.
+  const directory = `/${"source/".repeat(value.split("/").length + 1)}`;
+  try {
+    const resolved = new URL(value, `file://${directory}entry.js`);
+    const path = fileURLToPath(resolved, { windows: false });
+    if (value.startsWith("/")) return path;
+    const relative = posix.relative(directory, path) || ".";
+    // Keep the established explicit source-directory observation spelling.
+    return value.startsWith("./") &&
+      relative !== "." &&
+      !relative.startsWith("../")
+      ? `./${relative}`
+      : relative;
+  } catch (cause: unknown) {
+    // Malformed escapes and non-file URL forms remain unknown.
+    void cause;
+    return undefined;
+  }
+};
+
+const isSourceFileUrl = (
+  node: t.Node,
+): node is t.CallExpression | t.NewExpression =>
+  (t.isCallExpression(node) || t.isNewExpression(node)) &&
+  (calleeName(node.callee) === "URL" ||
+    calleeName(node.callee).endsWith(".URL")) &&
+  isFileIdentity(argumentNode(node.arguments[1]));
 
 const staticResolvedPath = (
   node: t.CallExpression | t.NewExpression,

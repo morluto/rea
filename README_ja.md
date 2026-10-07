@@ -15,7 +15,7 @@
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 [![Discord](https://img.shields.io/discord/1556595354999332884?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/GkcryMnJDM)
 
-<a href="https://trendshift.io/repositories/82054?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/82054/weekly?language=TypeScript" alt="morluto/rea | Trendshift" width="250" height="55" /></a>
+<a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
 
 [クイックスタート](#クイックスタート) · [現在の対応状況](#現在の対応状況) · [バイナリから動作へ](#バイナリから動作へ) · [調査ツールカタログ](#調査ツールカタログ) · [ロードマップ](#ロードマップ) · [仕組み](#仕組み)
 
@@ -69,14 +69,14 @@ REA は調査をバイナリ上の根拠に結び付けます。元のソース�
 
 ## REA を選ぶ理由
 
-|                        |                                                                                                      |
-| ---------------------- | ---------------------------------------------------------------------------------------------------- |
-| **エージェント向け**   | コンパイル済みアプリについて質問し、推測ではなく根拠を集めさせることができます。                     |
-| **CLI と MCP**         | ターミナルとコーディングエージェントから同じリバースエンジニアリング機能を使えます。                 |
-| **複雑さを処理**       | ツール設定、アプリの読み込み、調査の維持、終了後のクリーンアップを REA が担います。                  |
-| **一連の調査に対応**   | 最初の概要から疑似コード、呼び出し関係、型、実装の手掛かりまで掘り下げられます。                     |
-| **ローカルで解析**     | 解析は対応するローカルホストで実行され、REA がバイナリをホスト型解析サービスへ送ることはありません。 |
-| **コンテキストを維持** | 質問ごとに解析を最初からやり直さず、複数のバイナリを続けて調査できます。                             |
+|                            |                                                                                                      |
+| -------------------------- | ---------------------------------------------------------------------------------------------------- |
+| **エージェント向け**       | アプリの動作について質問し、推測ではなくエージェントに調査させることができます。                     |
+| **CLI と MCP**             | ターミナルとエージェントから同じリバースエンジニアリング機能を使えます。                             |
+| **ガイド付きセットアップ** | エージェントの設定、既存の解析ツールへの接続、承認後の Hopper インストールに対応します。             |
+| **洞察からコードへ**       | 機能を理解したら、同じコーディングセッションで自分のプロダクト向けに実装できます。                   |
+| **ローカルで解析**         | 解析は対応するローカルホストで実行され、REA がバイナリをホスト型解析サービスへ送ることはありません。 |
+| **コンテキストを維持**     | 質問ごとに解析を最初からやり直さず、複数のアプリを続けて調査できます。                               |
 
 ## クイックスタート
 
@@ -98,28 +98,23 @@ Setup は最初に連携するエージェントを複数選択できるよう�
 
 Hopper はデモモードで使えます。初回起動の画面ではデモを選択するか、既存のライセンスを入力してください。
 
-### Skill instructions and a first CLI result
+### AI コーディングアシスタント向けスキル（任意）
+
+AI コーディングアシスタントにスキルを追加すると、より豊富なコンテキストが得られます：
 
 ```bash
 npx skills add morluto/rea --skill reverse-engineer-anything
 ```
 
-This installs instructions, not MCP registration or analysis engines. Follow the
-[conditional connection guide](skills/reverse-engineer-anything/SKILL.md#connect-only-when-needed).
-`npx rea-agents setup` installs a matching skill and registers selected clients
-only after showing the plan and receiving approval. Restart/reconnect after
-registration, then verify REA tools in the active session. Repository skills can
-be ahead of the [released package](docs/installation.md#released-package-and-main).
+このスキルは REA の調査ワークフローを提供します。上記の setup を実行して REA をエージェントに接続し、解析ツールを設定してください。Setup は既定でバージョンに合ったスキルをインストールします。このコマンドではリポジトリ版のスキルをインストールします。
 
-For your extracted JavaScript/Electron tree or ASAR, no MCP setup or native
-engine is required:
+展開済みの JavaScript/Electron アプリのツリーや ASAR であれば、MCP の設定もネイティブエンジンも不要です：
 
 ```bash
 npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
 ```
 
-Replace the path with your target; Windows paths such as `"D:/apps/example"`
-are supported by this static workflow. Native analysis requires its own engine.
+パスを調査対象に置き換えてください（Windows では `"D:/apps/example"` のようなパス）。この静的ワークフローではそのようなパスも扱えます。ネイティブ解析には専用のエンジン設定が必要です。
 
 ### rea コマンドをインストール
 
@@ -150,7 +145,7 @@ Ghidra は Linux x64 と macOS x64/arm64 に対応します。Ghidra 12.1.4 と�
 
 Setup はインストールを確認し、パスを保存できます。Ghidra、Java、Node.js、npm、Homebrew のインストールや更新は行いません。
 
-Repository main includes experimental Windows x64 Ghidra P0 for native, non-managed, non-DLL x86-64 PE applications on fixed local NTFS. The native controls are implemented; npm 4.0.1 does not contain them. See the [release boundary](docs/installation.md#released-package-and-main) and [Windows Ghidra P0](docs/windows-ghidra-p0.md).
+リポジトリの main と npm 4.1.0 には、ローカル NTFS 上のネイティブ x86-64 PE アプリケーション（非マネージド、非 DLL 向け）を対象とする実験的な Windows x64 Ghidra P0 対応が含まれています。Job Object、プライベート DACL、パス許可の各制御が同梱されています。古い npm パッケージに期待する前に[リリース境界](docs/installation.md#released-package-and-main)を確認してください。前提条件と検証済みの範囲は [Windows Ghidra P0](docs/windows-ghidra-p0.md) を参照してください。
 
 ### トラブルシューティング
 
@@ -166,21 +161,12 @@ Linux の既定ランチャーは `/opt/hopper/bin/Hopper` です。別の場所
 
 ## 現在の対応状況
 
-The current repository capabilities and platform requirements are described in
-[the English support guide](README.md#current-status). Main can be ahead of the
-[npm release](docs/installation.md#released-package-and-main).
+リポジトリの現在の機能とプラットフォーム要件は[英語の対応状況ガイド](README.md#current-status)で説明しています。main は [npm リリース](docs/installation.md#released-package-and-main)より先行する場合があります。
 
-- Ghidra provides 25 read-only operations on Linux x64, macOS x64/arm64, and the
-  experimental Windows x64 P0 boundary. Linux/macOS additionally supports atomic
-  session function annotations. Windows P0 is read-only; Ghidra has no GUI controls.
-- Static Android inspection has separate bring-your-own JADX/Java prerequisites;
-  real-provider verification covers Linux. See [Android analysis](docs/android-analysis.md).
-- Browser, Electron, and process requests specify their target, actions, and
-  lifecycle directly. They require the host's actual access, without separate
-  REA permission grants. Setup configuration writes and Hopper installation
-  still require approval of their exact plan.
-- `rea capabilities` describes binary-session operations rather than every
-  application/runtime tool. Consult the full MCP tool list and relevant guide.
+- Ghidra は Linux x64、macOS x64/arm64、実験的な Windows x64 P0 境界で 25 件の読み取り専用操作を提供します。Linux/macOS ではアトミックなセッション内関数注釈にも対応します。Windows P0 は読み取り専用であり、Ghidra に GUI 操作はありません。
+- 静的な Android 検査には持ち込みの JADX/Java が別途必要です。実プロバイダー検証は Linux を対象とします。詳しくは[Android 解析](docs/android-analysis.md)を参照してください。
+- ブラウザー、Electron、プロセスの各リクエストは対象・操作・ライフサイクルを直接指定し、ホストの実際のアクセスに依存します。REA 側の個別の許可付与は不要です。Setup による設定書き込みと Hopper のインストールは、引き続き正確な計画の承認が必要です。
+- `rea capabilities` はバイナリセッション操作の説明であり、すべてのアプリ／ランタイムツールの目録ではありません。接続済み MCP ツール一覧と関連ガイドを参照してください。
 
 ## ひとつのプロンプトで調査を完結
 
@@ -214,20 +200,20 @@ REA は手順 1〜5 のバイナリ解析を処理し、手順 6 はエージェ
 
 ## 調査ツールカタログ
 
-| ツール分類           |  数 | 用途                                                                            |
-| -------------------- | --: | ------------------------------------------------------------------------------- |
-| バイナリ検査         |  41 | 関数、疑似コード、アセンブリ、文字列、シンボル、参照、注釈                      |
-| 組み合わせた解析     |  14 | 概要、関数解析、一括逆コンパイル、呼び出しグラフ、Swift と ObjC                 |
-| macOS ネイティブ     |   7 | Mach-O メタデータ、署名、plist、アーキテクチャ、Swift 名の復元                  |
-| ファイルとパッケージ |   5 | ディレクトリとパッケージ、Interface Builder、Apple リソース、抽出               |
-| .NET PE/CLI          |   7 | アセンブリ識別、メタデータ、CIL、ネイティブ呼び出し、比較、再構築の取り込み     |
-| ファームウェア       |   2 | Linux の領域検査と明示的な展開                                                  |
-| Android APK          |   5 | パッケージと manifest、クラス検索、メンバー一覧、メソッド逆コンパイル、静的参照 |
-| ブラウザー観察       |   9 | ページ、スクリプト、ソースマップ、WebMCP、スクリーンショット、比較              |
-| Electron 解析        |   5 | ページ観察、アプリ構造、静的・実行時結果の対応付け                              |
-| JavaScript 実行時    |   2 | 既存の Node/Electron Inspector に接続し、スクリプトと実行コンテキストを観察     |
-| アプリのワークフロー |   7 | 機能追跡、バージョン比較、戻り値構造の比較、再実装の検証                        |
-| バイナリセッション   |  21 | 対象切り替え、根拠の保存、プロセス・関数比較、未解決事項の記録                  |
+| ツール分類           |  数 | 用途                                                                                                                                         |
+| -------------------- | --: | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| ネイティブ検査       |  41 | 関数、疑似コード、アセンブリ、文字列、シンボル、呼び出し、参照、注釈、バイト読み取り、ファイルオフセット                                     |
+| 調査ワークフロー     |  14 | アプリ概要、関数ドシエ、ネイティブ API とディスパッチ、一括逆コンパイル、機能トレース、コールパス、コールグラフ、Swift と Objective-C の検出 |
+| macOS ネイティブ     |   7 | Hopper を起動せずに扱える Mach-O メタデータ、署名、plist、アーキテクチャ、Swift 名の復元                                                     |
+| 成果物グラフ         |   5 | ディレクトリとパッケージの目録、コンパイル済み Interface Builder ファイル、Apple アセットカタログ、抽出                                      |
+| マネージド PE/CLI    |   7 | .NET の識別、メタデータ、CIL 命令、ネイティブ依存関係、再構築インポート、ビルド比較                                                          |
+| ファームウェア       |   2 | Linux ファームウェア領域の検査と明示的な展開                                                                                                 |
+| Android APK          |   5 | パッケージと manifest の宣言、クラス検索、メンバー一覧、メソッド逆コンパイル、静的参照                                                       |
+| ブラウザー観察       |   9 | ページ構成、ネットワークメタデータ、スクリプト、ソースマップ、WebMCP 検出、スクリーンショット、キャプチャ比較                                |
+| Electron 解析        |   5 | レンダラー観察、静的アプリマッピング、静的／実行時結果の対応付け                                                                             |
+| JavaScript 実行時    |   2 | Node/Electron Inspector 対象の検出、スクリプト位置、実行コンテキストイベント                                                                 |
+| アプリワークフロー   |   8 | 取得した Web スクリプトのエクスポート、層をまたぐ機能トレース、ビルド比較、履歴ソース対応、静的戻り値形状の比較、再実装検証                  |
+| ワークスペースと観察 |  21 | セッション、証跡バンドル、ナビゲーション文脈、プロセス・成果物・関数比較、未解決事項の記録                                                   |
 
 ## ロードマップ
 
@@ -244,7 +230,7 @@ Setup は Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI、Windsurf�
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@4.0.1", "mcp"]
+      "args": ["-y", "rea-agents@4.1.0", "mcp"]
     }
   }
 }

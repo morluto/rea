@@ -1,5 +1,7 @@
 import * as t from "@babel/types";
 
+import { semanticBuiltinNamespacePath } from "./javascriptSemanticProvenance.js";
+
 import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
 import {
   resolveSemanticBindingState,
@@ -8,7 +10,10 @@ import {
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
-import { semanticStaticPropertyName } from "./javascriptAstValues.js";
+import {
+  semanticStaticPropertyKey,
+  semanticStaticPropertyName,
+} from "./javascriptAstValues.js";
 
 export interface SemanticProjectedBinding {
   readonly bindingId: string;
@@ -96,12 +101,11 @@ const projectedPatternBindings = (
             property.value,
             [
               ...path,
-              semanticStaticPropertyName(property.key, property.computed) ||
-                null,
+              semanticStaticPropertyKey(property.key, property.computed),
             ],
             partial ||
-              semanticStaticPropertyName(property.key, property.computed) ===
-                "",
+              semanticStaticPropertyKey(property.key, property.computed) ===
+                null,
           );
       }
     } else if (t.isArrayPattern(current)) {
@@ -155,7 +159,8 @@ export const builtinDataEffectMethod = (
   );
   const namespace = binding?.directOrigins.some(
     ({ specifier, importedPath }) =>
-      specifiers.includes(specifier) && importedPath.length === 0,
+      specifiers.includes(specifier) &&
+      semanticBuiltinNamespacePath(importedPath),
   );
   return namespace
     ? semanticStaticPropertyName(callee.property, callee.computed)

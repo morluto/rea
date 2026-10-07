@@ -90,6 +90,51 @@ coverage, and route while retaining the outer bundle commitment.
 | Obfuscated assembly   | Same positive byte observations as its underlying deployment form            | Meaning inferred only from names                                                          |
 | Malformed/unsupported | Exact admitted regions and failure locations                                 | Completeness, successfully skipped rows, or semantics beyond the admitted parser boundary |
 
+### NativeAOT metadata recovery
+
+NativeAOT removes the ordinary CIL method bodies, so a CIL decompiler cannot
+reconstruct those bodies as C# source. The executable remains a native target
+for Hopper or Ghidra, where decompilation produces pseudocode and analyst
+inference. This is a different route from ordinary managed member inspection.
+
+NativeAOT is not limited to Windows `.exe` files. The native image can be PE,
+ELF, or Mach-O, and NativeAOT can also publish shared libraries (PE DLL, ELF
+`.so`, or Mach-O `.dylib`) with explicitly exported entry points. Identify the
+image from its bytes and loader metadata, not its filename extension. When the
+image is inside an application bundle, inventory or extract the bundle first
+and carry the component identity into native analysis. Matching PDB, ELF debug,
+or dSYM sidecars can add symbol evidence when the selected provider supports
+them; verify their identity and keep them separate from observations made from
+the executable itself. [Microsoft's NativeAOT overview](https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/)
+lists supported OS/architecture targets and deployment limitations, while its
+[native library guide](https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/libraries)
+describes exported shared-library entry points.
+
+The [Ghidra NativeAOT analyzer](https://github.com/Washi1337/ghidra-nativeaot)
+is a useful optional companion for recovering ReadyToRun metadata. It
+rehydrates the `DEHYDRATED_DATA` section and annotates method tables, type
+relationships, vtable slots, frozen objects, and strings. It does not recover
+original C# method bodies. It is a separate Ghidra extension and interactive
+metadata browser; REA does not currently install or invoke it through its
+headless bridge. Its README describes ReadyToRun header discovery, including
+symbol-based and heuristic paths, so a missed header or unsupported binary
+should remain an explicit limitation rather than a failed claim about the
+binary's contents.
+
+The upstream analyzer currently gates its own analysis to x86-64. NativeAOT's
+broader platform matrix does not establish REA coverage: PE/COFF, ELF, Mach-O,
+shared libraries, target architectures, and runtime metadata versions each need
+their own provider verification. REA's experimental Windows Ghidra boundary is
+limited to admitted native x86-64 PE applications, so it does not currently
+establish coverage for PE DLLs. Mobile NativeAOT targets should remain
+experimental until REA has a matching provider and package-level verification.
+
+For REA's native analysis, preserve the same artifact path and digest used by
+`inspect_managed_artifact`, and report recovered type data as provider
+observations. Linking those types to native function addresses requires verified
+provider evidence; names or vtable similarity alone do not prove that a native
+function implements a specific managed method.
+
 ## Evidence record shape
 
 Every planned operation returns a provider result and Evidence with four

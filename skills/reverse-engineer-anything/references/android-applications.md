@@ -1,7 +1,7 @@
 # Android application artifacts
 
-Use the connected server's advertised Android tools. Repository main includes
-this family; npm 4.0.1 does not. A skill installation alone cannot add it to an
+Use the connected server's advertised Android tools. Repository main and npm
+4.1.0 include this family. A skill installation alone cannot add it to an
 older server.
 
 Start with `inspect_android_package` on the caller's APK path for package

@@ -191,6 +191,87 @@ describe("application workflow CLI parity", () => {
   }, 20_000);
 });
 
+describe("rest parameter semantic trace CLI", () => {
+  it("traces each ordinary rest argument to its parameter through public application Evidence", async () => {
+    const root = await createTestTempDirectory("rea-rest-arguments-cli-");
+    await writeFile(
+      join(root, "app.js"),
+      "function collect(first, ...rest) { return rest; } collect('first', 'second', 'third');",
+    );
+    const application = await runCli([
+      "analyze-javascript-application",
+      root,
+      "--json",
+    ]);
+    const analyzed = await analyzeJavaScriptApplication({ input_path: root });
+    if (!analyzed.ok) throw analyzed.error;
+    const graph = javascriptApplicationAnalysisResultSchema.parse(
+      analyzed.value.normalized_result,
+    ).semantic_graph;
+    for (const index of [1, 2]) {
+      const argument = graph.nodes.find(
+        ({ kind, label }) =>
+          kind === "expression" && label === `argument ${String(index)}`,
+      );
+      if (argument === undefined) throw new Error("Missing argument node");
+      const traced = await runCli([
+        "trace-javascript-semantics",
+        JSON.stringify({
+          application,
+          query: {
+            seed: { kind: "semantic-node", node_id: argument.node_id },
+            direction: "forward-influence",
+            allowed_relations: ["argument-to-parameter"],
+            expected: { role: "sink", classes: ["parameter"] },
+          },
+        }),
+        "--json",
+      ]);
+      expect(traced).toMatchObject({
+        normalized_result: {
+          status: "found",
+          nodes: expect.arrayContaining([
+            expect.objectContaining({ kind: "parameter", label: "rest" }),
+          ]),
+        },
+      });
+    }
+  }, 20_000);
+});
+
+describe("empty property key application CLI", () => {
+  it.each(["const root = routes[''];", "const {'': root} = routes;"])(
+    "analyzes a root-route dictionary with %s",
+    async (read) => {
+      const root = await createTestTempDirectory("rea-empty-key-cli-");
+      await writeFile(
+        join(root, "app.js"),
+        `const routes = {'': 'HOME'}; ${read}`,
+      );
+      const evidence = await runCli([
+        "analyze-javascript-application",
+        root,
+        "--json",
+      ]);
+      expect(evidence).toMatchObject({
+        operation: "analyze_javascript_application",
+        normalized_result: {
+          semantic_graph: {
+            nodes: expect.arrayContaining([
+              expect.objectContaining({
+                kind: "property-slot",
+                label: '""',
+                properties: expect.objectContaining({ name: "" }),
+              }),
+            ]),
+          },
+        },
+      });
+    },
+    20_000,
+  );
+});
+
 describe("application workflow CLI input", () => {
   it("rejects Evidence ID-only workflow inputs", async () => {
     const result = await runCli([

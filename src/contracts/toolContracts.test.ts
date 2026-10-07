@@ -78,6 +78,7 @@ const PUBLISHED_TOOL_NAME_FLOOR = [
   "evaluate_reconstruction_coverage",
   "export_evidence_bundle",
   "extract_artifact",
+  "export_web_scripts",
   "find_changed_behavior",
   "find_xrefs_to_name",
   "get_call_graph",

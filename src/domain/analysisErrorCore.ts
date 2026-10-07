@@ -52,13 +52,19 @@ export class AnalysisOutputError extends AnalysisError {
 /** Selected provider cannot execute a declared analysis operation. */
 export class AnalysisCapabilityUnavailableError extends AnalysisError {
   readonly _tag = "AnalysisCapabilityUnavailableError";
+  override readonly userMessage: string | undefined;
 
   constructor(
     readonly providerId: string,
     readonly operation: string,
     readonly reason: string,
+    options?: ErrorOptions & { readonly userMessage?: string },
   ) {
-    super(`Provider ${providerId} cannot execute ${operation}: ${reason}`);
+    super(
+      `Provider ${providerId} cannot execute ${operation}: ${reason}`,
+      options,
+    );
+    this.userMessage = options?.userMessage;
   }
 }
 

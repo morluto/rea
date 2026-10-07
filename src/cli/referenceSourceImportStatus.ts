@@ -4,7 +4,12 @@ import { isCliOperationFailure } from "../cliLogging.js";
 
 const referenceSourceImportFailureSchema = z.strictObject({
   error: z.literal("Import failed"),
-  category: z.enum(["cancelled", "invalid_input", "execution_failure"]),
+  category: z.enum([
+    "cancelled",
+    "invalid_input",
+    "unsupported_host",
+    "execution_failure",
+  ]),
   message: z.string().min(1),
 });
 

@@ -37,7 +37,7 @@ export const resultFor = (
     case "IndexedDB.requestDatabase":
       return indexedDbDatabaseResult(command);
     case "IndexedDB.requestData":
-      return indexedDbDataResult();
+      return indexedDbDataResult(options);
     case "CacheStorage.requestCacheNames":
       return cacheStorageResult(options);
     case "CacheStorage.requestEntries":
@@ -66,7 +66,9 @@ const frameTreeResult = (
         ? ":"
         : (options.electronFileUrl ?? options.attachedFrameUrl),
     options.extraCollections === true,
-    options.webMcpFrameCount,
+    options.webMcpSameUrlRegistrations === undefined
+      ? options.webMcpFrameCount
+      : "same-url",
   );
 
 const resourceTreeResult = (port: number, options: FakeOptions) =>
@@ -154,16 +156,33 @@ const indexedDbDatabaseResult = (command: FakeCdpCommand) => ({
   },
 });
 
-const indexedDbDataResult = () => ({
+const indexedDbDataResult = (options: FakeOptions) => ({
   objectStoreDataEntries: [
     {
-      key: { type: "string", value: "row-1" },
-      primaryKey: { type: "string", value: "row-1" },
+      key: indexedDbKey(options),
+      primaryKey: indexedDbKey(options),
       value: { type: "string", value: "indexed-db-secret" },
     },
   ],
   hasMore: false,
 });
+
+const indexedDbKey = (options: FakeOptions) =>
+  options.indexedDbDateKeys === true
+    ? {
+        type: "object",
+        subtype: "date",
+        className: "Date",
+        description: "Thu Jan 01 1970 00:00:00 GMT+0000",
+        objectId: "owned-date-key",
+        preview: {
+          type: "object",
+          subtype: "date",
+          overflow: false,
+          properties: [],
+        },
+      }
+    : { type: "string", value: "row-1" };
 
 const cacheStorageResult = (options: FakeOptions) => ({
   caches: [
@@ -219,7 +238,7 @@ const frameTree = (
   port: number,
   overrideUrl?: string,
   extraCollections = false,
-  webMcpFrameCount = 0,
+  webMcpFrameCount: number | "same-url" = 0,
 ): Readonly<Record<string, unknown>> => ({
   frameTree: {
     frame: {
@@ -242,14 +261,17 @@ const frameTree = (
             },
           ]
         : []),
-      ...Array.from({ length: webMcpFrameCount }, (_value, index) => ({
-        frame: {
-          id: `webmcp-frame-${String(index)}`,
-          parentId: "frame-main",
-          loaderId: `loader-webmcp-${String(index)}`,
-          url: `http://127.0.0.1:${String(port)}/webmcp-frame/${String(index)}`,
-        },
-      })),
+      ...Array.from(
+        { length: webMcpFrameCount === "same-url" ? 2 : webMcpFrameCount },
+        (_value, index) => ({
+          frame: {
+            id: `webmcp-frame-${String(index)}`,
+            parentId: "frame-main",
+            loaderId: `loader-webmcp-${String(index)}`,
+            url: `http://127.0.0.1:${String(port)}/webmcp-frame/${webMcpFrameCount === "same-url" ? "shared" : String(index)}`,
+          },
+        }),
+      ),
       {
         frame: {
           id: "frame-private",

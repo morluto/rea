@@ -410,7 +410,7 @@ const normalizeTool = (
   const description = stringValue(value.description) ?? "";
   const annotations = recordValue(value.annotations);
   return {
-    tool_key: toolKey(frame.url, name),
+    tool_key: toolKey(frame.url, frameId, name),
     name,
     description,
     frame_id: frameId,
@@ -497,8 +497,8 @@ const buildWebMcpResult = (options: WebMcpResultOptions): WebMcpDiscovery => {
   };
 };
 
-const toolKey = (frameUrl: string, name: string): string =>
-  `webmcp_${createHash("sha256").update(`${frameUrl}\0${name}`).digest("hex")}`;
+const toolKey = (frameUrl: string, frameId: string, name: string): string =>
+  `webmcp_${createHash("sha256").update(`${frameUrl}\0${frameId}\0${name}`).digest("hex")}`;
 
 const booleanOrNull = (value: unknown): boolean | null =>
   typeof value === "boolean" ? value : null;

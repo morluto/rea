@@ -227,7 +227,11 @@ const providerErrorDetails = (
   error: AnalysisError,
 ): Readonly<Record<string, JsonValue>> | undefined => {
   if (error instanceof AnalysisCapabilityUnavailableError)
-    return { provider_id: error.providerId, operation: error.operation };
+    return {
+      provider_id: error.providerId,
+      operation: error.operation,
+      reason: error.reason,
+    };
   if (error instanceof ProviderSelectionError)
     return {
       operation: error.operation,

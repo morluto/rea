@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { access, realpath } from "node:fs/promises";
+import { access, realpath, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { isAbsolute } from "node:path";
 import {
@@ -55,7 +55,19 @@ export const resolveFirmwareCommand = async (
       `${variable} is unavailable: ${cause instanceof Error ? cause.message : String(cause)}`,
     );
   });
-  await access(command, constants.X_OK);
+  let sha256: string;
+  try {
+    await access(command, constants.R_OK | constants.X_OK);
+    if (!(await stat(command)).isFile())
+      throw new TypeError("Configured path is not a regular file");
+    sha256 = await hashFirmwareFile(command);
+  } catch (cause: unknown) {
+    throw new AnalysisCapabilityUnavailableError(
+      engine,
+      operation,
+      `${variable} is not a readable executable regular file: ${command}: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+  }
   const limiter =
     environment.REA_FIRMWARE_PRLIMIT_COMMAND ?? "/usr/bin/prlimit";
   if (!isAbsolute(limiter))
@@ -64,14 +76,18 @@ export const resolveFirmwareCommand = async (
       operation,
       "REA_FIRMWARE_PRLIMIT_COMMAND must be absolute",
     );
-  await access(limiter, constants.X_OK).catch(() => {
+  try {
+    await access(limiter, constants.X_OK);
+    if (!(await stat(limiter)).isFile())
+      throw new TypeError("Configured path is not a regular file");
+  } catch (cause: unknown) {
     throw new AnalysisCapabilityUnavailableError(
       engine,
       operation,
-      `Resource limiter unavailable: ${limiter}; provide util-linux prlimit`,
+      `Resource limiter is not an executable regular file: ${limiter}: ${cause instanceof Error ? cause.message : String(cause)}; provide util-linux prlimit`,
     );
-  });
-  return { command, limiter, sha256: await hashFirmwareFile(command) };
+  }
+  return { command, limiter, sha256 };
 };
 
 /** Execute one bounded provider command and verify its owned descendants have stopped. */

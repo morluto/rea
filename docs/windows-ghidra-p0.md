@@ -1,8 +1,8 @@
 # Windows Ghidra P0
 
-This guide describes repository main. npm 4.0.1 does not include the Windows
+This guide describes repository main. npm 4.1.0 includes the Windows
 native bundle; check the [release boundary](installation.md#released-package-and-main)
-before applying these instructions to a published package.
+before applying these instructions to an older published package.
 
 Status: experimental Windows x64 support for the read-only P0 boundary. Windows
 package builds bundle native process, filesystem, and DACL controls. REA
@@ -31,6 +31,10 @@ uses its separate execution-free provider.
 REA does not install or upgrade Ghidra, Java, Python, npm, Node.js, Hopper, or a
 compiler. The adapter uses the packaged Java `HeadlessScript`; Python and
 PyGhidra are not prerequisites. Users do not build the native addon.
+
+REA selects its packaged bridge scripts by explicit path. Same-named files or
+directories in the caller's working directory do not select a different
+script or require users to clean that directory before analysis.
 
 ## Configuration
 

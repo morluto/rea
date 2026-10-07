@@ -13,6 +13,23 @@ export type LipoArchitecture = z.infer<typeof architectureSchema>;
 
 /** Parse `lipo -detailed_info` into deterministic slice metadata. */
 export const parseLipoArchitectures = (output: string): LipoArchitecture[] => {
+  // lipo echoes a thin file's pathname verbatim, including embedded newlines.
+  // Match its final architecture field before splitting records into lines.
+  const thinArchitecture =
+    /(?:^|\r?\n)Non-fat file:[\s\S]* is architecture: ([^\s]+)\s*$/u.exec(
+      output,
+    )?.[1];
+  if (thinArchitecture !== undefined)
+    return [
+      architectureSchema.parse({
+        name: thinArchitecture,
+        cpu_type: null,
+        cpu_subtype: null,
+        file_offset: null,
+        size: null,
+        alignment: null,
+      }),
+    ];
   const architectures: LipoArchitecture[] = [];
   let current: Record<string, string> | undefined;
   const flush = (): void => {

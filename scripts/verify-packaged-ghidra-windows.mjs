@@ -108,14 +108,26 @@ try {
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const runtimeParent = join(workspace, "runtime with spaces");
 await mkdir(runtimeParent);
+const callerDirectory = join(workspace, "caller cwd with spaces");
+const scriptCollisions = ["ReaGhidraBridge.java", "ReaGhidraPrepareCom.java"];
+await mkdir(callerDirectory);
+for (const name of scriptCollisions) await mkdir(join(callerDirectory, name));
 const environment = {
-  ...process.env,
+  ...Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([name]) => name.toLowerCase() !== "comspec",
+    ),
+  ),
+  ComSpec: (
+    process.env.ComSpec ??
+    join(process.env.SystemRoot ?? "C:\\Windows", "System32", "cmd.exe")
+  ).replaceAll("\\", "/"),
   REA_ANALYSIS_PROVIDER: "ghidra",
   REA_LOG_LEVEL: "error",
   GHIDRA_HEADLESS_MAXMEM: "512m",
   NODE_OPTIONS: "--max-old-space-size=512",
-  TEMP: runtimeParent,
-  TMP: runtimeParent,
+  TEMP: runtimeParent.replaceAll("\\", "/"),
+  TMP: runtimeParent.replaceAll("\\", "/"),
   HOME: workspace,
   USERPROFILE: workspace,
   APPDATA: join(workspace, "appdata"),
@@ -150,6 +162,7 @@ try {
     (
       await exec(process.execPath, [entry, "providers", "--json"], {
         env: environment,
+        cwd: callerDirectory,
         timeout: 30_000,
       })
     ).stdout,
@@ -159,7 +172,12 @@ try {
   const inspected = await exec(
     process.execPath,
     [entry, "inspect", target, "--provider", "ghidra", "--format", "json"],
-    { env: environment, timeout: 360_000, maxBuffer: 8 * 1024 * 1024 },
+    {
+      env: environment,
+      cwd: callerDirectory,
+      timeout: 360_000,
+      maxBuffer: 8 * 1024 * 1024,
+    },
   );
   const inspection = JSON.parse(inspected.stdout);
   assert.ok(inspection.error === undefined);
@@ -169,6 +187,7 @@ try {
     command: process.execPath,
     args: [entry, "mcp"],
     env: environment,
+    cwd: callerDirectory,
     stderr: "pipe",
   });
   const client = new Client({
@@ -282,6 +301,10 @@ try {
     token,
     "Analysis changed caller token authority.",
   );
+  assert.deepEqual((await readdir(callerDirectory)).sort(), scriptCollisions);
+  for (const name of scriptCollisions)
+    assert.deepEqual(await readdir(join(callerDirectory, name)), []);
+  report.callerScriptCollisionsPreserved = true;
   report.runtimeCleanup = true;
   report.ok = true;
   if (process.argv[4] !== undefined)

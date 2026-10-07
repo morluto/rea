@@ -116,7 +116,7 @@ export const semanticPropertySlot = (
         kind: "property-slot",
         roleKey: `property:${objectBindingId}:${name}`,
         location: null,
-        label: name,
+        label: name === "" ? '""' : name,
         functionNodeId:
           context.bindingNodes.get(objectBindingId)?.function_node_id ?? null,
         properties: {
