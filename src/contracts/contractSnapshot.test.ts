@@ -4,7 +4,7 @@ import { z } from "zod";
 import { ENHANCED_TOOL_CONTRACTS } from "./enhancedToolContracts.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "./officialToolContracts.js";
 import { SESSION_TOOL_CONTRACTS } from "./sessionToolContracts.js";
-import { NATIVE_TOOL_CONTRACTS } from "./nativeToolContracts.js";
+import { NATIVE_TOOL_CONTRACTS } from "./native/nativeToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "./artifactToolContracts.js";
 import { FIRMWARE_TOOL_CONTRACTS } from "./firmware/firmwareToolContracts.js";
 import { ANDROID_TOOL_CONTRACTS } from "./android/androidToolContracts.js";
@@ -15,6 +15,7 @@ import { BROWSER_SCENARIO_TOOL_CONTRACTS } from "./browserScenarioToolContracts.
 import { ELECTRON_TOOL_CONTRACTS } from "./javascript/electronToolContracts.js";
 import { JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS } from "./javascript/javascriptRuntimeObservationToolContracts.js";
 import { APPLICATION_TOOL_CONTRACTS } from "./applicationToolContracts.js";
+import { WEB_RUNTIME_TOOL_CONTRACTS } from "./webRuntimeToolContracts.js";
 import { WEB_SCRIPT_TOOL_CONTRACTS } from "./webScriptToolContracts.js";
 import { JAVASCRIPT_RECOVERY_TOOL_CONTRACTS } from "./javascript/javascriptRecoveryToolContracts.js";
 import { TOOL_EFFECTS } from "./toolEffects.js";
@@ -78,6 +79,7 @@ describe("tool contract surface", () => {
       ...JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS,
       ...APPLICATION_TOOL_CONTRACTS,
       ...WEB_SCRIPT_TOOL_CONTRACTS,
+      ...WEB_RUNTIME_TOOL_CONTRACTS,
       ...JAVASCRIPT_RECOVERY_TOOL_CONTRACTS,
       ...SESSION_TOOL_CONTRACTS,
     ].map(({ name }) => name);

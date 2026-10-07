@@ -1,4 +1,4 @@
-import type { ObjcSwiftMetadata } from "../domain/objcSwiftMetadata.js";
+import type { ObjcSwiftMetadata } from "../domain/native/objcSwiftMetadata.js";
 import type { PointerFixups } from "./AppleMachoFixups.js";
 
 const describeFixups = (fixups: PointerFixups): string => {

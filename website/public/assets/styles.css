@@ -766,9 +766,7 @@ pre code {
   margin-left: 0.4em;
   vertical-align: -0.12em;
   background: #9bbfe5;
-}
-.agent-terminal.is-visible .terminal-cursor {
-  animation: terminal-blink 1s step-end 6;
+  animation: terminal-blink 1s step-end infinite;
 }
 @keyframes terminal-blink {
   50% {
@@ -839,6 +837,75 @@ pre code {
   background: #edf2f8;
   color: var(--ink);
   font-size: 0.9rem;
+}
+.notion-bridge-flow {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.th04-flow {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.th04-overview {
+  margin-bottom: 3.2rem;
+}
+.th04-ring-figure img {
+  min-width: 680px;
+}
+.th04-preview img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.notion-channel {
+  color: var(--accent);
+  background: #edf2f8;
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.notion-clipboard-grid,
+.notion-table-example {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+.notion-clipboard-grid .code-block,
+.notion-table-example .code-block {
+  min-width: 0;
+  margin: 0;
+}
+.notion-clipboard-grid pre,
+.notion-table-example pre {
+  padding: 1rem;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.notion-mini-flow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1.8rem;
+  margin: 1.3rem 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.8rem;
+}
+.notion-mini-flow li {
+  position: relative;
+  margin: 0;
+}
+.notion-mini-flow li:not(:last-child)::after {
+  content: "→";
+  position: absolute;
+  right: -1.3rem;
+  color: #8191a2;
+}
+.case-preview {
+  margin: 0;
+}
+.case-preview pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.8rem;
 }
 .workflow-figure figcaption {
   margin-top: 1rem;
@@ -940,7 +1007,9 @@ pre code {
   .rea-query-pair {
     grid-template-columns: 1fr;
   }
-  .flow-steps {
+  .flow-steps,
+  .notion-bridge-flow,
+  .th04-flow {
     grid-template-columns: 1fr;
     gap: 2rem;
   }
@@ -1048,6 +1117,20 @@ pre code {
   .workflow-figure {
     padding: 1rem;
   }
+  .notion-clipboard-grid,
+  .notion-table-example {
+    grid-template-columns: 1fr;
+  }
+  .notion-mini-flow {
+    display: grid;
+    gap: 1.5rem;
+  }
+  .notion-mini-flow li:not(:last-child)::after {
+    content: "↓";
+    right: auto;
+    left: 0.4rem;
+    bottom: -1.4rem;
+  }
   .step-selector {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -1061,7 +1144,7 @@ pre code {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .agent-terminal.is-visible .terminal-cursor {
+  .terminal-cursor {
     animation: none;
   }
 }

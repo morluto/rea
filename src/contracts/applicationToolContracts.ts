@@ -23,7 +23,7 @@ import {
 import {
   appleApplicationProjectionInputSchema,
   appleApplicationProjectionResultSchema,
-} from "../domain/appleApplication.js";
+} from "../domain/apple/appleApplication.js";
 import type { ToolContract } from "./toolContracts.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import { evidenceResultOf } from "./toolOutputSchemas.js";

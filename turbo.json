@@ -111,6 +111,8 @@
         "scripts/lib/*.mjs",
         "scripts/verify/managed/*.mjs",
         "scripts/fixtures/managed/*.mjs",
+        "scripts/verify/apple/*.mjs",
+        "scripts/fixtures/apple/*.mjs",
         "src/generated*.ts",
         "src/contracts/**/*.ts",
         "docs/**",

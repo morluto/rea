@@ -8,6 +8,40 @@ import { describe, expect, it } from "vitest";
 import { inspectModuleBoundaries } from "../../scripts/lib/module-boundaries.mjs";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
+describe("binary production construction ownership", () => {
+  it.each([
+    "hopper/HopperProvider.js",
+    "ghidra/GhidraProvider.js",
+    "ida/IdaProvider.js",
+    "artifacts/ArtifactProvider.js",
+    "dotnet/ManagedStaticProvider.js",
+    "native/NativeMacOSProvider.js",
+  ])("keeps %s in production composition", (provider) => {
+    const source = `import { Provider } from "../${provider}";`;
+    for (const file of ["src/application/runtime.ts", "src/server/probe.ts"])
+      expect(
+        inspectModuleBoundaries(file, source, process.cwd()),
+      ).toMatchObject([{ boundary: "provider-construction" }]);
+    expect(
+      inspectModuleBoundaries(
+        "src/composition/binary.ts",
+        source,
+        process.cwd(),
+      ),
+    ).toEqual([]);
+  });
+
+  it("rejects the former runtime composition exception", () => {
+    expect(
+      inspectModuleBoundaries(
+        "src/application/runtime.ts",
+        'export { createBinarySession } from "../composition/binary.js";',
+        process.cwd(),
+      ),
+    ).toMatchObject([{ boundary: "application-composition" }]);
+  });
+});
+
 const execute = promisify(execFile);
 const verifier = resolve("scripts/verify-module-boundaries.mjs");
 
@@ -93,7 +127,7 @@ describe("incremental module import boundaries", () => {
       "../../android/JadxProvider.js",
       false,
     ],
-    ["src/application/runtime.ts", "../android/JadxProvider.js", true],
+    ["src/application/runtime.ts", "../android/JadxProvider.js", false],
     [
       "src/application/android/runtime.ts",
       "../../android/JadxProvider.js",
@@ -270,5 +304,24 @@ describe("test lane import boundaries", () => {
     if (result.error !== undefined) throw result.error;
     expect(result.status).toBe(allowed ? 0 : 1);
     if (!allowed) expect(result.stdout).toContain("no-restricted-imports");
+  });
+});
+
+describe("Apple artifact producer ownership", () => {
+  it.each([
+    ["../../application/Workflow.js", false],
+    ["../../composition/android.js", false],
+    ["../../cli.js", false],
+    ["../../domain/apple/plistValue.js", true],
+    ["../DirectoryArtifactReader.js", true],
+  ])("checks the producer dependency %s", (dependency, allowed) => {
+    const violations = inspectModuleBoundaries(
+      "src/artifacts/apple/probe.ts",
+      `import type { Value } from ${JSON.stringify(dependency)};`,
+      process.cwd(),
+    );
+
+    expect(violations.length === 0).toBe(allowed);
+    if (!allowed) expect(violations[0]?.boundary).toBe("artifact-acquisition");
   });
 });

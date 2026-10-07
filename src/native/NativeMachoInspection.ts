@@ -4,7 +4,7 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   inspectMachoSchema,
   type NativeCommandInvocation,
-} from "../domain/nativeInspection.js";
+} from "../domain/native/nativeInspection.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { NativeCommandCapture } from "./CommandRunner.js";

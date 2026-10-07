@@ -5,7 +5,7 @@ import type { JsonValue } from "../../domain/jsonValue.js";
 import {
   projectPlistValue,
   type ProjectedPlistValue,
-} from "../../domain/plistValue.js";
+} from "../../domain/apple/plistValue.js";
 import {
   omitPrototypeKeys,
   omittedPrototypeKeysLimitation,

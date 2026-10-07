@@ -22,7 +22,7 @@
           ><span class="brand-caption">Reverse Engineer Anything</span></a
         >
         <nav class="navigation" aria-label="Main navigation">
-          <a href="../../showcase/dx-ball/">DX-Ball</a
+          <a href="../../showcase/">Showcases</a
           ><a class="nav-start" href="../../get-started/">Get started</a
           ><a href="../">Guides</a
           ><a href="https://github.com/morluto/rea">GitHub</a>
@@ -203,42 +203,53 @@
           <section class="article-section" id="try">
             <h2>Analyze the example yourself</h2>
             <p>
-              Save these six files together in a folder named
-              <code>notes-example</code>. Static analysis needs Node.js and npm;
-              you can inspect the code without installing or launching Electron.
+              Download the example and unzip it. The archive contains the
+              complete <code>notes-example</code> folder. Analyze it with
+              Node.js and npm; Electron is not needed for this example.
             </p>
-            <ul class="example-files">
-              <li>
-                <a href="../../examples/notes-electron/package.json" download
-                  >package.json</a
-                >
-              </li>
-              <li>
-                <a href="../../examples/notes-electron/main.js" download
-                  >main.js</a
-                >
-              </li>
-              <li>
-                <a href="../../examples/notes-electron/preload.js" download
-                  >preload.js</a
-                >
-              </li>
-              <li>
-                <a href="../../examples/notes-electron/renderer.js" download
-                  >renderer.js</a
-                >
-              </li>
-              <li>
-                <a href="../../examples/notes-electron/csv.js" download
-                  >csv.js</a
-                >
-              </li>
-              <li>
-                <a href="../../examples/notes-electron/index.html" download
-                  >index.html</a
-                >
-              </li>
-            </ul>
+            <p>
+              <a
+                class="button"
+                href="../../examples/notes-example.zip"
+                download="notes-example.zip"
+                >Download example ZIP</a
+              >
+            </p>
+            <details class="evidence-details">
+              <summary>Browse the six source files</summary>
+              <ul class="example-files">
+                <li>
+                  <a href="../../examples/notes-electron/package.json" download
+                    >package.json</a
+                  >
+                </li>
+                <li>
+                  <a href="../../examples/notes-electron/main.js" download
+                    >main.js</a
+                  >
+                </li>
+                <li>
+                  <a href="../../examples/notes-electron/preload.js" download
+                    >preload.js</a
+                  >
+                </li>
+                <li>
+                  <a href="../../examples/notes-electron/renderer.js" download
+                    >renderer.js</a
+                  >
+                </li>
+                <li>
+                  <a href="../../examples/notes-electron/csv.js" download
+                    >csv.js</a
+                  >
+                </li>
+                <li>
+                  <a href="../../examples/notes-electron/index.html" download
+                    >index.html</a
+                  >
+                </li>
+              </ul>
+            </details>
             <div class="code-block">
               <div class="code-header">
                 <span>Static application analysis</span
@@ -255,7 +266,7 @@
   /absolute/path/to/notes-example --json</code></pre>
             </div>
             <p>
-              Replace the path with the folder you saved. Look for
+              Replace the path with the folder you unzipped. Look for
               <code>normalized_result.summary.ipc</code> and the source
               locations in <code>normalized_result.graph</code>. The example has
               one channel and one paired invocation.
@@ -281,6 +292,12 @@
               runtime observations give you another way to investigate them.
             </p>
             <ul class="reading-list">
+              <li>
+                <a href="../../showcase/notion/"
+                  >Follow Notion's clipboard bridge</a
+                >
+                <span>Apply the same approach to a packaged Electron app.</span>
+              </li>
               <li>
                 <a href="../browser/">Observe a browser export</a
                 ><span

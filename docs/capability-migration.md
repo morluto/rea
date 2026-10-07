@@ -6,17 +6,17 @@ there is no new universal provider interface or fixed module manifest.
 
 ## Ownership to preserve
 
-| Responsibility                                | Current owner                            | Migration direction                                            |
-| --------------------------------------------- | ---------------------------------------- | -------------------------------------------------------------- |
-| Analyst semantics and Evidence representation | domain                                   | Keep pure and provider-neutral                                 |
-| Named public input/output contracts           | contracts                                | Keep exact CLI/MCP meaning and complete discovery              |
-| Producer parsing and external tool protocols  | provider adapters                        | Keep behind the relevant typed port                            |
-| Shared analyst workflows                      | application                              | Share between CLI and MCP                                      |
-| Concrete provider construction                | binary runtime, composition, MCP startup | Consolidate one capability at a time in production composition |
-| Investigation Evidence and Unknowns           | InvestigationRecords/EvidenceLedger      | Consume narrow read/write/atomic record ports                  |
-| Target/profile snapshots and invalidation     | BinarySessionRecords/BinarySession       | Keep binary-owned                                              |
-| Subprocess ownership and host primitives      | process/windows                          | Reuse; preserve cancellation and cleanup                       |
-| Public translation                            | CLI/MCP adapters                         | Delegate to shared workflows and named contracts               |
+| Responsibility                                | Current owner                       | Migration direction                                   |
+| --------------------------------------------- | ----------------------------------- | ----------------------------------------------------- |
+| Analyst semantics and Evidence representation | domain                              | Keep pure and provider-neutral                        |
+| Named public input/output contracts           | contracts                           | Keep exact CLI/MCP meaning and complete discovery     |
+| Producer parsing and external tool protocols  | provider adapters                   | Keep behind the relevant typed port                   |
+| Shared analyst workflows                      | application                         | Share between CLI and MCP                             |
+| Concrete provider construction                | composition, MCP startup            | Keep fresh typed factories at the production boundary |
+| Investigation Evidence and Unknowns           | InvestigationRecords/EvidenceLedger | Consume narrow read/write/atomic record ports         |
+| Target/profile snapshots and invalidation     | BinarySessionRecords/BinarySession  | Keep binary-owned                                     |
+| Subprocess ownership and host primitives      | process/windows                     | Reuse; preserve cancellation and cleanup              |
+| Public translation                            | CLI/MCP adapters                    | Delegate to shared workflows and named contracts      |
 
 Retain exact Evidence IDs, provenance, detached reads, atomic Evidence/Unknown
 mutations and optimistic revisions. Preserve current close and failed-cleanup
@@ -69,8 +69,8 @@ paths removed during a move. Pass exact source paths for a focused check.
 
 Pure source and its tests keep inward dependencies. Application/server provider
 construction guards cover the migrated deep, Android, firmware, JavaScript recovery and observation
-implementations. The existing binary runtime is an exact temporary composition
-exception; shared browser capture/export helpers remain admitted while their
+implementations. Application workflows cannot import composition, including the
+former binary runtime entrypoint; shared browser capture/export helpers remain admitted while their
 ownership is reviewed. Test lane restrictions still use Oxlint. Producer-dependent
 browser and managed comparison tests live in boundary lanes with their original
 fixtures and assertions. This is a development guard, not runtime authorization.
@@ -104,8 +104,8 @@ inside the provider. The existing launcher seams remain available to boundary
 fixtures, which now exercise the production factories.
 
 Application workflows and MCP registration must not import these concrete
-providers. Composition may import their implementations. Binary composition is
-still at its existing entrypoint while its direct-analysis callers are investigated.
+providers. Composition may import their implementations. Binary composition also
+uses this outer boundary after its direct-analysis callers were migrated.
 This concrete pilot does not introduce a shared provider interface or module
 manifest.
 
@@ -329,10 +329,9 @@ records still have their separate owner in `src/application/investigation/`.
 
 `AnalysisProvider.ts` stays shared because its identity/execution types also serve
 nonbinary ports. `BinaryTargetResolver.ts` stays shared because Android, firmware,
-managed and artifact workflows use its target parsing. The existing `runtime.ts`
-remains the exact temporary production wiring entrypoint while direct-analysis
-callers are migrated deliberately; application workflows gain no outward
-composition dependency.
+managed and artifact workflows use its target parsing. Production wiring lives
+in `src/composition/binary.ts`; application workflows gain no outward composition
+dependency.
 
 The three colocated application tests move with their owner. Composition cases
 remain in `tests/composition/analysis-sessions/`; filesystem and SDK cases retain
@@ -356,3 +355,73 @@ repository-root default. Both point to `_reference/firmware-integration/generate
 when invoked through the documented npm commands. Optional ext4/Ghidra lanes keep
 their own prerequisites. Source-fixture generation and synthetic producer tests
 do not establish real Binwalk/Unblob analysis or another host's execution support.
+
+## Apple artifact capability ownership
+
+`src/domain/apple/` owns Apple application anatomy/projection, asset catalog
+facts, Interface Builder graphs, keyed archive semantics and plist values.
+`src/application/apple/AppleApplicationService.ts` retains the shared workflow
+that projects authenticated IPA/macOS inventory Evidence.
+
+`src/artifacts/apple/` owns the actual producer boundary: directory acquisition,
+assetutil invocation, plist/NIB decoding, encoded view-parent interpretation and
+keyed archive inspection. These helpers are used by ArtifactProvider, retain
+its existing typed analysis boundary, injected assetutil seam and original reader
+cleanup, and do not require a new port for each helper. Producer code no longer
+lives in the application layer. Guards reject application/composition/caller
+imports from this owner while admitting pure facts and shared artifact readers.
+Adapter-source tests retain their assertions in the existing forked adapter lane.
+
+`scripts/verify/apple/` groups archive, asset catalog, Interface Builder,
+Objective-C/Swift dispatch and macOS bundle verification. The macOS bundle fixture
+builder lives in `scripts/fixtures/apple/`; NIB byte fixtures stay beside their
+artifact decoder. Existing format-specific conformance sources and goldens keep
+their locations, and relocated verifiers resolve them against their own file
+URLs. Public npm entrypoints and CLI/MCP contracts stay stable; generated-document
+cache inputs include the relocated runtime scripts and fixture builder.
+
+Portable decoder and injected producer tests establish their format/boundary
+claims. Actual Swift/Xcode, assetutil, native NIB, bundle signing and DMG lifecycle
+claims require the real Apple lane. Native binary API/value-flow semantics and
+shared cross-domain contract aggregates keep their separate owners.
+
+## Binary production composition closure
+
+`src/composition/binary.ts` is the shared production owner for deep candidate
+construction, lazy auxiliary composition and the managed-only session factory.
+It preserves the existing constructor bodies, selection policy and fresh session
+per invocation. Factory registration acquires no engine or target.
+
+`DirectAnalysis` and `DirectAnalysisStatus` receive these two existing factories
+through `DirectAnalysisDependencies`. They retain configuration parsing, selected
+status environment, cancellation, snapshot replay/binding, Evidence projection
+and finally-close. The dependency uses the existing BinarySession type, including
+its replay policy; it adds no universal backend or lifecycle contract.
+
+`src/composition/directAnalysis.ts` binds the production factories for CLI and
+one-shot managed MCP callers. Binding creates no session and stores no retained
+analysis state. MCP startup constructs its connection session through the same
+binary factory. Source and compiled fixtures use these entrypoints. The former
+application runtime path is removed, and the source guard no longer admits its
+outward provider/composition imports.
+
+## Native analyst capability ownership
+
+`src/domain/native/` owns portable native inspection, instruction/data types,
+load-image facts, API boundaries, annotations, metadata recovery, UI observation
+semantics and value/investigation graphs. `src/application/native/` owns shared
+API projection, call routes, dispatch inspection and UI/value tracing. Its tests
+keep the existing service lane. `src/contracts/native/` owns the named native
+adapter contracts; shared official/enhanced aggregates remain at their owners.
+
+Producer interpretation, external commands and host UI lifecycle remain in
+`src/native/`, Hopper, Ghidra and IDA. The shared function dossier still lives in
+`domain/hopperValues.ts`: its historical name does not make its meaning exclusive
+to Hopper. This move retains existing typed ports, exact result schemas,
+observed/derived/unknown distinctions, profiles and Evidence links.
+
+Source and compiled verifier imports follow the new owners. Host UI and real
+native-value verifier locations are retained until their own proof lanes migrate;
+interactive macOS UI success and real dependency tracing require their respective
+host/engine workflows. Portable source fixtures and injected call-route tests
+establish their narrower boundaries, without expanding provider/platform support.

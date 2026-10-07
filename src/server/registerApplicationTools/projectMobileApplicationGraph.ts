@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import { projectAndroidApplicationEvidence } from "../../application/android/AndroidApplicationService.js";
-import { projectAppleApplicationEvidence } from "../../application/AppleApplicationService.js";
+import { projectAppleApplicationEvidence } from "../../application/apple/AppleApplicationService.js";
 import {
   APPLICATION_TOOL_CONTRACTS,
   applicationToolContract,

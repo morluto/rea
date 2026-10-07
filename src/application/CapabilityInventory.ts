@@ -189,6 +189,12 @@ export const buildCapabilityInventory = (
 };
 
 const availabilityFor = (context: AvailabilityContext): Availability => {
+  // These built-in workflows accept a caller-selected endpoint; they do not load the optional passive provider.
+  if (
+    context.name === "observe_web_execution" ||
+    context.name === "inspect_web_event_listeners"
+  )
+    return { reason: "available", remediation: null };
   if (context.name === "get_navigation_context")
     return navigationContextAvailability(context.descriptors);
   const javascriptApplication = javascriptApplicationAvailability(context);

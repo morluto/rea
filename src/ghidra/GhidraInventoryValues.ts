@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { nativeLoadImageObservationSchema } from "../domain/nativeLoadImage.js";
+import { nativeLoadImageObservationSchema } from "../domain/native/nativeLoadImage.js";
 
 import {
   AnalysisInputError,

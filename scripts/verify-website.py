@@ -6,6 +6,7 @@ import re
 import sys
 from urllib.parse import unquote, urlsplit
 import xml.etree.ElementTree as ET
+from zipfile import BadZipFile, ZipFile
 
 
 class HtmlReferences(HTMLParser):
@@ -89,15 +90,39 @@ def check_publisher(root):
     return []
 
 
+def check_example_archive(site):
+    """Verify the downloadable ZIP contains the current six source files."""
+    source = site / "examples/notes-electron"
+    expected = {
+        f"notes-example/{name}": source / name
+        for name in ("package.json", "main.js", "preload.js", "renderer.js", "csv.js", "index.html")
+    }
+    path = site / "examples/notes-example.zip"
+    if not path.is_file():
+        return ["Notes example ZIP is missing; run python3 scripts/prepare-website.py."]
+    try:
+        with ZipFile(path) as archive:
+            if sorted(archive.namelist()) != sorted(expected):
+                return ["Notes example ZIP must contain exactly the six files in notes-example/."]
+            return [
+                f"Notes example ZIP has stale source: {name}"
+                for name, original in expected.items()
+                if archive.read(name) != original.read_bytes()
+            ]
+    except (BadZipFile, RuntimeError) as error:
+        return [f"Notes example ZIP cannot be read: {error}"]
+
+
 def main():
     """Run the same checks locally, on website PRs and before publishing."""
     root = Path(__file__).resolve().parent.parent
     pages, references, errors = check_site(root / "website/public")
+    errors.extend(check_example_archive(root / "website/public"))
     errors.extend(check_publisher(root))
     if errors:
         print("Website checks failed:\n" + "\n".join(errors), file=sys.stderr)
         return 1
-    print(f"Verified {pages} HTML pages, {references} local references and SVG XML.")
+    print(f"Verified {pages} HTML pages, {references} local references, SVG XML and the example ZIP.")
     print("website-pages.yml is the sole GitHub Pages publisher.")
     return 0
 

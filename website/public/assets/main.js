@@ -5,8 +5,13 @@ function initializeCopyButtons() {
       if (target === null) return;
 
       const status = document.getElementById("copy-status");
+      const content = target.textContent.trim();
+      const text =
+        target.closest(".terminal-prompt") === null
+          ? content
+          : content.replace(/\s+/g, " ");
       try {
-        await navigator.clipboard.writeText(target.textContent.trim());
+        await navigator.clipboard.writeText(text);
         button.textContent = "Copied";
         if (status !== null) status.textContent = "Code copied to clipboard.";
       } catch {
@@ -55,22 +60,3 @@ function initializeStepComparisons() {
 }
 
 initializeStepComparisons();
-
-function initializeAgentTerminals() {
-  if (!("IntersectionObserver" in window)) return;
-  const observer = new IntersectionObserver(
-    (entries) => {
-      entries.forEach((entry) => {
-        if (!entry.isIntersecting) return;
-        entry.target.classList.add("is-visible");
-        observer.unobserve(entry.target);
-      });
-    },
-    { threshold: 0.25 },
-  );
-  document.querySelectorAll(".agent-terminal").forEach((terminal) => {
-    observer.observe(terminal);
-  });
-}
-
-initializeAgentTerminals();

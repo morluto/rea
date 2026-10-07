@@ -46,6 +46,7 @@ export const toolFamilyCatalog = (sources) => {
       surface: "browser-provider",
       contracts: [
         ...sources.browserContracts.BROWSER_TOOL_CONTRACTS,
+        ...sources.webRuntimeContracts.WEB_RUNTIME_TOOL_CONTRACTS,
         ...sources.browserScenarioContracts.BROWSER_SCENARIO_TOOL_CONTRACTS,
       ],
     },
@@ -171,7 +172,10 @@ export const providerCatalog = (sources) => {
     },
     {
       identity: sources.browserProvider.CDP_BROWSER_PROVIDER_IDENTITY,
-      contracts: sources.browserContracts.BROWSER_TOOL_CONTRACTS,
+      contracts: [
+        ...sources.browserContracts.BROWSER_TOOL_CONTRACTS,
+        ...sources.webRuntimeContracts.WEB_RUNTIME_TOOL_CONTRACTS,
+      ],
     },
     {
       identity:

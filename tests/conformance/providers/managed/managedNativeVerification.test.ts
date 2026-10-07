@@ -9,7 +9,7 @@ import {
   verifyManagedNativeBoundaries,
 } from "../../../../src/domain/managed/managedNativeVerification.js";
 import { managedNativeBoundaryInspectionSchema } from "../../../../src/domain/managed/managedArtifact.js";
-import { inspectMachoSchema } from "../../../../src/domain/nativeInspection.js";
+import { inspectMachoSchema } from "../../../../src/domain/native/nativeInspection.js";
 
 const exampleInput = () =>
   managedNativeVerificationInputSchema.parse(

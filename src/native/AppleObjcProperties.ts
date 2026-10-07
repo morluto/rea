@@ -1,6 +1,6 @@
 import type { z } from "zod";
 
-import type { objcPropertySchema } from "../domain/objcSwiftMetadata.js";
+import type { objcPropertySchema } from "../domain/native/objcSwiftMetadata.js";
 
 type ObjcProperty = z.infer<typeof objcPropertySchema>;
 

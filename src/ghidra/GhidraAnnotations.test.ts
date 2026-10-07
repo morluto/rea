@@ -1,6 +1,6 @@
 import { functionDossierSchema } from "../domain/hopperValues.js";
 import { describe, expect, it } from "vitest";
-import { nativeFunctionAnnotationsInputSchema } from "../domain/nativeFunctionAnnotations.js";
+import { nativeFunctionAnnotationsInputSchema } from "../domain/native/nativeFunctionAnnotations.js";
 import { ghidraFunctionDossier } from "../domain/ghidraValues.fixture.js";
 import {
   parseGhidraFunctionInput,
