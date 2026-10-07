@@ -517,7 +517,13 @@ napi_value filesystemCall(napi_env env, const std::wstring& operation, const std
     auto file = runtimeDirectory(root, path.substr(0, path.find_last_of(L'\\')));
     file->path = path;
     file->requestedPath = path;
-    file->handles.push_back(openComponent(path, GENERIC_READ, false));
+    // Retained output handles have write and DELETE access, so this read open
+    // must share both to pass Windows' symmetric share check. Those retained
+    // handles still omit FILE_SHARE_WRITE and FILE_SHARE_DELETE, blocking
+    // competing writes and delete opens.
+    file->handles.push_back(openComponent(path, GENERIC_READ, false,
+                                          FILE_SHARE_READ | FILE_SHARE_WRITE |
+                                              FILE_SHARE_DELETE));
     verifyPrivate(file->get(), path, false);
     auto result = identity(env, file->get(), path);
     set(env, result, "handle", wrap(env, std::move(file)));

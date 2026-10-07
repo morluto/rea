@@ -264,6 +264,43 @@ try {
     native.call("runtime_snapshot_cancel", [runtime.handle]);
     await assert.rejects(cancelled, /cancelled/u);
     assert.equal(await exists(join(runtime.path, "cancelled.bin")), false);
+    const readbackRuntime = WindowsPrivateRuntime.create(
+      workspace.replaceAll("\\", "/"),
+      "readback-",
+    );
+    try {
+      readbackRuntime.writeFile("written.txt", "runtime-write-readback");
+      assert.equal(
+        readbackRuntime.readFile("written.txt"),
+        "runtime-write-readback",
+      );
+      const readbackSnapshot = await readbackRuntime.snapshot(
+        source,
+        "snapshot.bin",
+      );
+      assert.equal(
+        readbackSnapshot.sha256,
+        createHash("sha256")
+          .update(await readFile(source))
+          .digest("hex"),
+      );
+      assert.equal(
+        readbackRuntime.readFile("snapshot.bin"),
+        await readFile(source, "utf8"),
+      );
+      await assert.rejects(
+        writeFile(
+          join(readbackRuntime.observation.path, "written.txt"),
+          "replace",
+        ),
+      );
+      report.controls = {
+        ...report.controls,
+        completedRuntimeFileReadback: true,
+      };
+    } finally {
+      await readbackRuntime.close();
+    }
     report.controls = {
       ...report.controls,
       protectedDaclReadback: true,
