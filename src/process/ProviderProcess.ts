@@ -30,6 +30,8 @@ export interface OwnedProviderProcessSpawnOptions {
   readonly hostEnvironment?: NodeJS.ProcessEnv;
   /** Opt into a writable protocol stream; other providers retain ignored stdin. */
   readonly stdin?: "pipe";
+  /** Cancels native ownership preparation before provider process creation. */
+  readonly signal?: AbortSignal;
 }
 
 /** Spawned process paired with the identity proof required for group cleanup. */
@@ -133,7 +135,9 @@ export type ProviderProcessStopResult =
 export const spawnOwnedProviderProcess = async (
   options: OwnedProviderProcessSpawnOptions,
 ): Promise<SpawnedOwnedProviderProcess> => {
-  await prepareProcessOwnershipInspection();
+  options.signal?.throwIfAborted();
+  await prepareProcessOwnershipInspection(options.signal);
+  options.signal?.throwIfAborted();
   const platform = options.platform ?? process.platform;
   const hostEnvironment = options.hostEnvironment ?? process.env;
   const environment = {
