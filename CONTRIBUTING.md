@@ -120,32 +120,14 @@ Describe the behavior change and verification performed in the pull request. Nev
 
 ## Maintainer release checklist
 
-Run `npm run check:pr`, the isolated package verifier, package dry run, and two-target real-Hopper verifier described above. Build a local tarball and exercise the executable through the package boundary:
+Use the [checkpoint release guide](docs/releasing.md). Releases start from an
+explicit `release/VERSION` branch cut at a recorded commit. Manually prepare
+the bot PR, wait for its exact-head CI and review, merge into that frozen
+branch, and manually publish through the official Release workflow. Main
+pushes do not update release PRs or publish packages. Both publishers build
+the exact SHA tagged by Release Please.
 
-```bash
-npm pack
-```
-
-Use the exact filename printed by `npm pack` to run the packaged executable:
-
-```bash
-npm exec --yes --package ./rea-agents-VERSION.tgz -- rea --help
-```
-
-Replace `VERSION` with the packed version; do not use a tarball from an earlier
-build.
-
-Publish the public package:
-
-```bash
-npm publish --access public
-```
-
-After npm registry propagation, verify the published CLI and connect the client SDK version pinned in `package.json` to the published server to confirm the canonical tool catalog:
-
-```bash
-npx -y rea-agents@latest --help
-npx -y rea-agents@latest doctor
-npx -y rea-agents@latest setup --yes --all-detected
-npx -y rea-agents@latest mcp
-```
+Keep new implementation commits on main for the next release. The workflow
+owns packaged-artifact verification, npm publication, the published CLI/MCP
+canary, and MCP Registry publication. Sync release metadata back to main after
+publication; see the guide for partial-publication recovery and verification.
