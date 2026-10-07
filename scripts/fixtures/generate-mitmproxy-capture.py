@@ -73,6 +73,26 @@ class Generator:
         har["log"]["entries"][0]["_markers"] = markers
         har["log"]["entries"][0]["_private_properties"] = {"private-property/~": {"number": 123, "text": "private-property"}, "kept": 7}
         (root / "producer.har").write_text(json.dumps(har))
+        har_text = json.dumps(har)
+        for name, members in [
+            ("equal-number", '"_duplicate": 1, "_duplicate": 1'),
+            ("equal-null", '"_duplicate": null, "_duplicate": null'),
+            ("equal-object", '"_duplicate": {"value": 1}, "_duplicate": {"value": 1}'),
+            ("escaped-key", '"_duplicate": 1, "\\u005fduplicate": 1'),
+        ]:
+            duplicate = har_text.replace('"cache": {}', '"cache": {}, ' + members, 1)
+            assert duplicate != har_text
+            (root / ("duplicate-" + name + ".har")).write_text(duplicate)
+        duplicate = har_text.replace('"version": "1.2"', '"version": "1.2", "version": "1.2"', 1)
+        assert duplicate != har_text
+        (root / "duplicate-core.har").write_text(duplicate)
+        prototype = json.loads(har_text)
+        prototype["_extension"] = {"__proto__": {"preserved": 7}, "constructor": "ordinary"}
+        (root / "prototype.har").write_text(json.dumps(prototype))
+        prototype_native = first.get_state()
+        prototype_native["metadata"]["__proto__"] = {"preserved": 7}
+        with (root / "prototype.mitm").open("wb") as handle:
+            tnetstring.dump(prototype_native, handle)
         invalid_har = json.loads(json.dumps(har))
         invalid_har["log"]["entries"][0]["response"]["content"].update({"encoding": "base64", "text": "AR=="})
         (root / "invalid-private-parent.har").write_text(json.dumps(invalid_har))

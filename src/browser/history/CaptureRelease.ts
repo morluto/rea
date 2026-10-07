@@ -2,7 +2,7 @@
 export const HAR_CAPTURE_PROVIDER_IDENTITY = {
   id: "har-schema/lossless-json",
   name: "REA HAR capture adapter",
-  version: "har-schema@2.0.0;lossless-json@4.3.1",
+  version: "har-schema@2.0.0;jsonc-parser@3.3.1;lossless-json@4.3.1",
 } as const;
 
 /** Native executable profile verified with unchanged mitmproxy raw-state decoding. */

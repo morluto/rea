@@ -28,9 +28,13 @@ entry does not hide a malformed entry elsewhere.
 ## Formats and upstream profiles
 
 HAR uses unchanged `har-schema@2.0.0` draft-06 schemas, `ajv@8.20.0`,
-`ajv-formats@3.0.1`, and `lossless-json@4.3.1`, pinned in the npm lockfile.
+`ajv-formats@3.0.1`, `jsonc-parser@3.3.1` JSON visitor, and
+`lossless-json@4.3.1` numeric representations, pinned in the npm lockfile.
 Only the HAR 1.2 profile is supported. Unknown extensions remain reported
-evidence. Duplicate object keys are rejected rather than silently overwritten.
+evidence. Duplicate object keys, including equal values and escaped spellings,
+are rejected before materialization. A `__proto__` member returns an explicit
+unsupported-boundary error in both formats: the current shared JSON schema
+cannot preserve this member. Original capture files remain unchanged.
 The observed mitmproxy 12.2.3 `SaveHar` profile can emit `postData.text: null`
 for a missing request body. REA preserves that reported null, omitting the
 optional field only from its validation copy for this exact producer profile;
@@ -84,13 +88,14 @@ repeat CLI `--sensitive-value`. These declarations are never persisted in
 Evidence parameters; the count is retained. Explicit text/UTF-8 byte matches
 exclude the entire field with a reported `null` rather than substitute a text
 marker or rewrite payload bytes. This prevents replacement markers from
-reintroducing declared literals. The file digest still
-identifies the original artifact. A sensitive property name excludes that
+reintroducing declared literals. The file digest identifies the original artifact
+unless it matches an explicit declaration; in that case `artifact.sha256` and
+Evidence `subject` are null with an explanation. A sensitive property name excludes that
 entire property and its sidecars; a `scope: "property-name"` redaction points
 to its actual parent. No substitute property name or child pointer is invented.
 Omitted subtrees are still validated, including canonical HAR base64. Explicitly sensitive artifact
 paths are empty in Evidence and omitted from locations, while the original
-SHA-256 and size remain available. Failure messages, diagnostics and cleanup
+SHA-256 and size remain available unless the digest itself is explicitly excluded. Failure messages, diagnostics and cleanup
 resources follow the same explicit declarations without changing error types;
 sensitive issue pointers identify a real ancestor instead of a fabricated
 coordinate. Header/cookie authentication values and known

@@ -272,7 +272,7 @@
     {
       "id": "har-schema/lossless-json",
       "name": "REA HAR capture adapter",
-      "version": "har-schema@2.0.0;lossless-json@4.3.1",
+      "version": "har-schema@2.0.0;jsonc-parser@3.3.1;lossless-json@4.3.1",
       "capabilities": ["inspect_web_network_capture"]
     },
     {
@@ -689,10 +689,10 @@
       "mcp_prompts": 6
     },
     "digests": {
-      "tools_sha256": "6050d9660929d6d640fb1d63b11138f53012b0078c342f8262557ad9f375a0d8",
+      "tools_sha256": "d6f2493e9ad693a762f1bd3daf9b6736571f2a190b2a41986e045bf6ff48af89",
       "prompts_sha256": "ef2de8814390b340623c32001610aa2709d90bed51537b6e562ab3abf144ab4d",
-      "combined_sha256": "551188bf698a99bb662d314e0f39da4498b147d8cf518b7ea1c1310d35ba3f08",
-      "providers_sha256": "ad36e4a93b39a38bf25f0500885d2f71523d5e858d731e04c37e7fd03f380ff0"
+      "combined_sha256": "e41a84b460b65f3a8d0d33498d958d249a1de81a9660c18580a0e3ab5d6941e1",
+      "providers_sha256": "e601cdceb5981ee04d6f431492f961f8867b1faa4f08ca0ecd29be2a239bc467"
     }
   }
 }

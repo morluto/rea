@@ -7,7 +7,8 @@ records provenance rather than vendoring a second parser implementation.
 | Upstream | Fixed profile | Use |
 | --- | --- | --- |
 | [har-schema](https://github.com/ahmadnassri/har-schema) | npm 2.0.0, ISC | HAR 1.2 draft-06 schemas |
-| [lossless-json](https://github.com/josdejong/lossless-json) | npm 4.3.1 | Original JSON numeric lexemes and duplicate-key rejection |
+| [jsonc-parser](https://github.com/microsoft/node-jsonc-parser) | npm 3.3.1, MIT | Strict JSON visitor; member sequence, duplicate detection and prototype-safe materialization |
+| [lossless-json](https://github.com/josdejong/lossless-json) | npm 4.3.1 | Original JSON numeric lexemes and safe-number classification |
 | [AJV](https://github.com/ajv-validator/ajv) | npm 8.20.0 | Upstream schema validation |
 | [ajv-formats](https://github.com/ajv-validator/ajv-formats) | npm 3.0.1 | Upstream URI, timestamp and address formats |
 | [mitmproxy](https://github.com/mitmproxy/mitmproxy) | v12.2.3, commit `6c09d56e4c29a92f5ad01b03199977584b8ea14f`, MIT | Unchanged native `mitmproxy.io.tnetstring.load`; upstream `FlowWriter` / `SaveHar` for ephemeral verification fixtures |
@@ -28,3 +29,8 @@ upstream conversion defaults are not imported into native states.
 The observed `SaveHar` 12.2.3 optional `postData.text: null` quirk is admitted
 only in a validation copy for that declared producer profile, with the original
 null retained. The upstream schemas themselves remain unchanged.
+
+The strict JSON visitor supplies member events before object materialization;
+REA rejects all duplicate names and retains original numeric token spelling.
+The shared JSON schema currently drops `__proto__` members, so both adapters
+report that representation as unsupported instead of returning incomplete data.

@@ -133,6 +133,8 @@ def project_record(state, secrets):
             for key, item in value.items():
                 if not isinstance(key, str):
                     raise CaptureFailure("format", "Native record has a non-string dictionary key.", path)
+                if key == "__proto__":
+                    raise CaptureFailure("unsupported", "Native object contains a __proto__ member that the current JSON schema boundary cannot preserve.", path)
                 if any(secret in key for secret in secrets):
                     # Validate the omitted subtree too, then discard all of its
                     # coordinates rather than inventing a replacement identity.

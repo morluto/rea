@@ -137,6 +137,40 @@ it("excludes a declared literal introduced by stripping transport URL userinfo",
   expect(result.records[0]?.reported).toMatchObject({ request: { url: null } });
 });
 
+it.each([
+  '"_duplicate":1,"_duplicate":1',
+  '"_duplicate":null,"_duplicate":null',
+  '"_duplicate":{"value":1},"_duplicate":{"value":1}',
+  '"_duplicate":1,"\\u005fduplicate":1',
+])(
+  "rejects equal-valued duplicate JSON members before projection: %s",
+  (members) => {
+    const text = JSON.stringify(historicalHar()).replace(
+      '"cache":{}',
+      `"cache":{},${members}`,
+    );
+    expect(() => decodeHarCapture(text, [])).toThrow("duplicate");
+  },
+);
+
+it("rejects identical duplicate core fields before schema validation", () => {
+  const text = JSON.stringify(historicalHar()).replace(
+    '"version":"1.2"',
+    '"version":"1.2","version":"1.2"',
+  );
+  expect(() => decodeHarCapture(text, [])).toThrow("duplicate");
+});
+
+it("reports an unsupported JSON schema boundary instead of dropping a producer property", () => {
+  const text = JSON.stringify(historicalHar()).replace(
+    '"cache":{}',
+    '"cache":{},"_extension":{"__proto__":{"preserved":7},"constructor":"ordinary"}',
+  );
+  expect(() => decodeHarCapture(text, [])).toThrow(
+    "JSON schema boundary cannot preserve",
+  );
+});
+
 it("preserves Unicode, offsets, sizes, duplicate URLs and opaque extensions without inventing bytes", () => {
   const fixture = historicalHar();
   const first = fixture.log.entries[0];

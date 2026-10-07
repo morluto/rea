@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { isSafeNumber, LosslessNumber, parse } from "lossless-json";
+import { isSafeNumber, LosslessNumber } from "lossless-json";
+import { parseHarJson } from "./HarJson.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import {
   WEB_NETWORK_CAPTURE_LIMITS,
@@ -29,20 +30,7 @@ export const decodeHarCapture = (
   text: string,
   sensitiveValues: readonly string[],
 ): DecodedCapture => {
-  let raw: unknown;
-  try {
-    raw = parse(text);
-  } catch (cause: unknown) {
-    if (cause instanceof RangeError)
-      throw new CaptureFormatError(
-        "input-limit",
-        "HAR exceeds the decoder's recursion budget.",
-      );
-    throw new CaptureFormatError(
-      "format",
-      "HAR is malformed JSON or contains duplicate object keys.",
-    );
-  }
+  const raw = parseHarJson(text);
   const validation = projectHar(raw, [], false);
   createHarValidator()(validation.reported);
   if (

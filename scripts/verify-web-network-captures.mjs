@@ -234,6 +234,44 @@ try {
       }
     }
   }
+  for (const name of [
+    "equal-number",
+    "equal-null",
+    "equal-object",
+    "escaped-key",
+    "core",
+  ]) {
+    const path = join(runtime.path, `duplicate-${name}.har`);
+    const original = await readFile(path);
+    for (const mode of ["cli", "mcp"]) {
+      await inspect(
+        mode,
+        { capture_path: path, format: "har" },
+        "invalid_input",
+      );
+      assert.deepEqual(await readFile(path), original);
+      cases++;
+    }
+  }
+  for (const format of ["har", "mitmproxy"]) {
+    const path = join(
+      runtime.path,
+      format === "har" ? "prototype.har" : "prototype.mitm",
+    );
+    const original = await readFile(path);
+    for (const mode of ["cli", "mcp"]) {
+      const error = await inspect(
+        mode,
+        { capture_path: path, format },
+        "capability_unavailable",
+      );
+      assert.ok(
+        JSON.stringify(error).includes("JSON schema boundary cannot preserve"),
+      );
+      assert.deepEqual(await readFile(path), original);
+      cases++;
+    }
+  }
   for (const format of ["har", "mitmproxy"]) {
     const path = join(runtime.path, `malformed-${format}`);
     await writeFile(path, format === "har" ? "{invalid-json" : "999999999999:");
