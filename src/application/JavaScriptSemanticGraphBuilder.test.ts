@@ -1,6 +1,9 @@
 import { expect, it } from "vitest";
 
-import { buildJavaScriptSemanticGraph } from "./JavaScriptSemanticGraphBuilder.js";
+import {
+  buildJavaScriptSemanticGraph,
+  SEMANTIC_GRAPH_NODE_CEILING,
+} from "./JavaScriptSemanticGraphBuilder.js";
 import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "./JavaScriptArtifactFiles.js";
 import { queryJavaScriptSemanticGraph } from "../domain/javascriptSemanticQuery.js";
@@ -417,4 +420,32 @@ it.each([
   });
   expect(query.relations).toContainEqual(relation);
   expect(query.nodes.map(({ node_id }) => node_id)).toContain(promise?.node_id);
+});
+
+it("bounds semantic node projection and reports the ceiling in coverage", () => {
+  // A bundled vendor library can emit tens of thousands of semantic nodes on its
+  // own (measured: 135,286 from one minified editor bundle). Without a ceiling the
+  // projection exhausts the heap and the result cannot be serialized. The bound
+  // must be reported through coverage rather than dropping data silently.
+  const statements = Array.from(
+    { length: 4_000 },
+    (_, index) =>
+      `const value${index} = { a: ${index}, b: [${index}, ${index + 1}] };`,
+  ).join("\n");
+  const graph = graphFor(statements);
+
+  expect(graph.nodes.length).toBeLessThanOrEqual(SEMANTIC_GRAPH_NODE_CEILING);
+  expect(graph.coverage.truncated).toBe(true);
+  expect(graph.coverage.status).toBe("partial");
+  expect(
+    graph.coverage.limits.some(
+      ({ name }) => name === "semantic_graph_node_ceiling",
+    ),
+  ).toBe(true);
+});
+
+it("leaves a small application complete and untruncated", () => {
+  const graph = graphFor("const answer = 40 + 2;");
+  expect(graph.coverage.truncated).toBe(false);
+  expect(graph.coverage.limits).toEqual([]);
 });
