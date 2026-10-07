@@ -111,6 +111,7 @@ export const webNetworkCaptureSchema = z.strictObject({
   format: z.enum(["har", "mitmproxy"]),
   decoder: z.strictObject({
     id: z.string().min(1),
+    name: z.string().min(1),
     version: z.string().min(1),
   }),
   container: z.strictObject({

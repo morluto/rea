@@ -158,11 +158,7 @@ export class WebNetworkCaptureService {
           sha256: value.artifact.sha256,
           format: "file",
         },
-        {
-          id: value.decoder.id,
-          name: "REA offline web network capture adapter",
-          version: value.decoder.version,
-        },
+        value.decoder,
         {
           operation: OPERATION,
           parameters,

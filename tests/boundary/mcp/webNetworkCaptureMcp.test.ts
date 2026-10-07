@@ -15,7 +15,7 @@ it("publishes valid SDK schemas and retains historical inline Evidence with the 
         ok({
           artifact: { path: "/capture.har", sha256: "a".repeat(64), bytes: 10 },
           format: "har",
-          decoder: { id: "test-capture-port", version: "1" },
+          decoder: { id: "test-capture-port", name: "test port", version: "1" },
           container: {
             reported: { creator: "fixture" },
             numeric_literals: [],

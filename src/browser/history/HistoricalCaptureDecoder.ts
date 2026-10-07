@@ -179,6 +179,7 @@ export class HistoricalCaptureDecoder {
       }
       if (
         reply.value.decoder.id !== adapter.identity.id ||
+        reply.value.decoder.name !== adapter.identity.name ||
         reply.value.decoder.version !== adapter.identity.version
       )
         throw new AnalysisOutputError(

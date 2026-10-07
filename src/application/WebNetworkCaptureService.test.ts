@@ -50,7 +50,7 @@ it("keeps observed artifact identity when the entire sensitive path is excluded"
 });
 
 const fixture = (): WebNetworkCapture => ({
-  decoder: { id: "test-historical-port", version: "1" },
+  decoder: { id: "test-historical-port", name: "test port", version: "1" },
   container: {
     reported: null,
     numeric_literals: [],
@@ -132,6 +132,7 @@ it("keeps explicitly sensitive values out of Evidence parameters and preserves h
   });
   expect(JSON.stringify(result.value)).not.toContain("explicit-private-value");
   expect(result.value.authority).toBe("historical-reference");
+  expect(result.value.provider).toEqual(fixture().decoder);
 });
 
 it.each(["har", "ha"])(

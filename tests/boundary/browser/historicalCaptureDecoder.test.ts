@@ -17,7 +17,46 @@ import {
   WEB_NETWORK_CAPTURE_LIMITS,
 } from "../../../src/domain/webNetworkCapture.js";
 import { historicalHar } from "../../fixtures/historicalHar.js";
+import { decodeHarCapture } from "../../../src/browser/history/HarCapture.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+
+it.each([true, false])(
+  "binds decoder replies to the complete selected provider identity (matching name: %s)",
+  async (matching) => {
+    const root = await mkdtemp(join(tmpdir(), "rea-capture-identity-"));
+    onTestFinished(() => rm(root, { recursive: true, force: true }));
+    const path = join(root, "capture.har");
+    const text = JSON.stringify(historicalHar());
+    await writeFile(path, text);
+    const decoder = new HistoricalCaptureDecoder(
+      [
+        {
+          format: "har",
+          identity: HAR_CAPTURE_PROVIDER_IDENTITY,
+          command: async (_, runtimePath) => {
+            const value = decodeHarCapture(text, []);
+            if (!matching) value.decoder.name = "different adapter";
+            await writeFile(
+              join(runtimePath, "reply.json"),
+              JSON.stringify({ ok: true, value }),
+            );
+            return { command: process.execPath, arguments: ["-e", ""] };
+          },
+        },
+      ],
+      process.env,
+    );
+    const result = await decoder.inspect(
+      inspectWebNetworkCaptureInputSchema.parse({
+        capture_path: path,
+        format: "har",
+      }),
+    );
+    expect(result.ok).toBe(matching);
+    if (!result.ok) expect(result.error._tag).toBe("AnalysisOutputError");
+    else expect(result.value.decoder).toEqual(HAR_CAPTURE_PROVIDER_IDENTITY);
+  },
+);
 
 it("classifies an oversized selected capture before creating an owned decoder", async () => {
   const root = await mkdtemp(join(tmpdir(), "rea-historical-limit-"));

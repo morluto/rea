@@ -94,10 +94,7 @@ export const decodeHarCapture = (
     };
   });
   return {
-    decoder: {
-      id: HAR_CAPTURE_PROVIDER_IDENTITY.id,
-      version: HAR_CAPTURE_PROVIDER_IDENTITY.version,
-    },
+    decoder: { ...HAR_CAPTURE_PROVIDER_IDENTITY },
     container: {
       reported: container.reported,
       numeric_literals: container.numeric_literals,
@@ -136,6 +133,7 @@ const projectHar = (
     )
       return redactor.credential(pointer);
     if (item instanceof LosslessNumber) {
+      if (redact && redactor.text(item.value, pointer) === null) return null;
       numeric_literals.push({
         pointer,
         producer_type: "json-number",

@@ -111,6 +111,9 @@ def project_record(state, secrets):
             return value
         if isinstance(value, (int, float)):
             literal = repr(value)
+            if any(secret in literal for secret in secrets):
+                redactions.append({"pointer": path, "reason": "explicit-sensitive-value"})
+                return None
             numbers.append({"pointer": path, "producer_type": "integer" if isinstance(value, int) else "float", "literal": literal})
             return value if (abs(value) <= 9007199254740991 if isinstance(value, int) else math.isfinite(value)) else None
         if isinstance(value, (list, tuple)):
@@ -162,7 +165,7 @@ def decode(request):
             if not isinstance(state, dict):
                 raise CaptureFailure("format", "Native flow record must be a dictionary at byte offset " + str(start) + ".")
             records.append({"ordinal": len(records), "location": {"kind": "byte-range", "offset": start, "bytes": handle.tell() - start}, **project_record(state, request["sensitive_values"]), "limitations": ["Fields are original native states without FlowReader migration. Binary fields contain exact producer bytes; reported UTF-8 strings for those fields are derived display views. Unknown flow/version extensions are retained without interpretation."]})
-    return {"decoder": {"id": "mitmproxy-native-tnetstring", "version": PROFILE}, "container": {"reported": None, "numeric_literals": [], "redactions": [], "records_pointer": None}, "total_records": len(records), "records": records}
+    return {"decoder": {"id": "mitmproxy-native-tnetstring", "name": "REA offline native mitmproxy adapter", "version": PROFILE}, "container": {"reported": None, "numeric_literals": [], "redactions": [], "records_pointer": None}, "total_records": len(records), "records": records}
 
 
 def failure_reply(error):

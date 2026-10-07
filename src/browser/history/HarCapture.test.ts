@@ -166,6 +166,34 @@ it("preserves Unicode, offsets, sizes, duplicate URLs and opaque extensions with
   });
 });
 
+it.each(["9007199254740993", "4740993", "99"])(
+  "excludes explicitly sensitive numeric lexemes and their reported values: %s",
+  (literal) => {
+    const text = JSON.stringify(historicalHar()).replace(
+      '"cache":{}',
+      '"cache":{},"_big":9007199254740993',
+    );
+    const result = decodeHarCapture(text, [literal]);
+    for (const record of result.records) {
+      expect(
+        record.numeric_literals.every(
+          (number) => !number.literal.includes(literal),
+        ),
+      ).toBe(true);
+    }
+    const pointer = literal === "99" ? "/response/bodySize" : "/_big";
+    expect(result.records[0]?.redactions).toContainEqual({
+      pointer,
+      reason: "explicit-sensitive-value",
+    });
+    if (literal === "99")
+      expect(result.records[0]?.reported).toMatchObject({
+        response: { bodySize: null },
+      });
+    else expect(result.records[0]?.reported).toMatchObject({ _big: null });
+  },
+);
+
 it("keeps unsafe extension numeric lexemes and rejects unsafe mandatory schema numbers", () => {
   const text = JSON.stringify(historicalHar());
   const result = decodeHarCapture(

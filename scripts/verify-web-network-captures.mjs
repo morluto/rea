@@ -511,6 +511,40 @@ try {
     assert.equal(body.content_base64, literal === "\ufffd" ? null : "77+9");
     cases++;
   }
+  const numericHar = (
+    await readFile(join(runtime.path, "producer.har"), "utf8")
+  ).replace('"cache": {}', '"cache": {}, "_big": 9007199254740993');
+  const numericPath = join(runtime.path, "numeric.har");
+  await writeFile(numericPath, numericHar);
+  assert.ok(numericHar.includes('"_big": 9007199254740993'));
+  for (const mode of ["cli", "mcp"]) {
+    for (const format of ["har", "mitmproxy"]) {
+      for (const literal of ["9007199254740993", "4740993"]) {
+        const value = await inspect(mode, {
+          capture_path:
+            format === "har" ? numericPath : join(runtime.path, "flows.mitm"),
+          format,
+          sensitive_values: [literal],
+        });
+        assert.ok(!JSON.stringify(value).includes(literal));
+        const first = value.records[0];
+        const pointer = format === "har" ? "/_big" : "/metadata/big_integer";
+        assert.ok(
+          first.redactions.some(
+            (redaction) =>
+              redaction.pointer === pointer &&
+              redaction.reason === "explicit-sensitive-value",
+          ),
+        );
+        assert.ok(
+          first.numeric_literals.every(
+            (number) => !number.literal.includes(literal),
+          ),
+        );
+        cases++;
+      }
+    }
+  }
   for (const mode of ["cli", "mcp"]) {
     for (const format of ["har", "mitmproxy"]) {
       await inspect(mode, {
@@ -798,6 +832,17 @@ function assertSensitiveLimitations(evidence, literals) {
           "Declared literal retained in Evidence parameter",
         );
   const result = evidence.normalized_result;
+  assert.deepEqual(
+    evidence.provider,
+    result.decoder,
+    "Evidence provider tuple changed",
+  );
+  assert.equal(
+    result.decoder.name,
+    result.format === "har"
+      ? "REA HAR capture adapter"
+      : "REA offline native mitmproxy adapter",
+  );
   const texts = [
     evidence.limitations,
     result.limitations,
