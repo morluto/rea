@@ -37,13 +37,17 @@ export interface NativeDmgHost {
     arguments_: readonly string[],
     signal?: AbortSignal,
     options?: { readonly timeoutMs: number },
-  ): Promise<{ readonly stdout: string; readonly exitCode: number }>;
+  ): Promise<{
+    readonly stdout: string;
+    readonly stderr?: string;
+    readonly exitCode: number;
+  }>;
 }
 
 const systemHost: NativeDmgHost = {
   async run(arguments_, signal, options) {
     try {
-      const { stdout } = await execFileOutput(
+      const { stdout, stderr } = await execFileOutput(
         "/usr/bin/hdiutil",
         [...arguments_],
         {
@@ -51,13 +55,15 @@ const systemHost: NativeDmgHost = {
           ...(signal === undefined ? {} : { signal }),
         },
       );
-      return { stdout, exitCode: 0 };
+      return { stdout, stderr, exitCode: 0 };
     } catch (cause: unknown) {
       if (cause instanceof Error && cause.name === "AbortError")
         throw new ArtifactReaderFailure("cancelled", "DMG operation cancelled");
-      throw new ArtifactReaderFailure("format", "hdiutil rejected the DMG", {
-        cause,
-      });
+      throw new ArtifactReaderFailure(
+        commandFailureReason(cause),
+        `hdiutil ${arguments_[0] ?? "operation"} failed: ${describeCommandFailure(cause, arguments_)}`,
+        { cause },
+      );
     }
   },
 };
@@ -254,9 +260,52 @@ const runChecked = async (
   if (result.exitCode !== 0)
     throw new ArtifactReaderFailure(
       "unavailable",
-      `hdiutil ${arguments_[0] ?? "operation"} failed with a non-zero exit code`,
+      `hdiutil ${arguments_[0] ?? "operation"} failed: ${describeCommandFailure(
+        {
+          command: "/usr/bin/hdiutil",
+          exitCode: result.exitCode,
+          stdout: result.stdout,
+          ...(result.stderr === undefined ? {} : { stderr: result.stderr }),
+        },
+        arguments_,
+      )}`,
     );
   return { stdout: result.stdout, exitCode: 0 };
+};
+
+const describeCommandFailure = (
+  cause: unknown,
+  arguments_: readonly string[],
+): string => {
+  const fields: Record<string, string | number | readonly string[]> = {
+    command: "/usr/bin/hdiutil",
+    arguments: [...arguments_],
+  };
+  if (typeof cause === "object" && cause !== null) {
+    for (const key of [
+      "code",
+      "exitCode",
+      "errno",
+      "syscall",
+      "stdout",
+      "stderr",
+    ] as const) {
+      const value = Reflect.get(cause, key);
+      if (typeof value === "string" || typeof value === "number")
+        fields[key] = value;
+    }
+  }
+  if (cause instanceof ArtifactReaderFailure) fields.message = cause.message;
+  else if (cause instanceof Error) fields.message = cause.message;
+  return JSON.stringify(fields);
+};
+
+const commandFailureReason = (
+  cause: unknown,
+): ArtifactReaderFailure["reason"] => {
+  if (typeof cause !== "object" || cause === null || !("code" in cause))
+    return "unavailable";
+  return typeof cause.code === "number" ? "unavailable" : "io";
 };
 
 const command = (

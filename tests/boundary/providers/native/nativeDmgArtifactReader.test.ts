@@ -53,9 +53,19 @@ describe("native DMG artifact reader", () => {
   it("rejects non-zero results and surfaces detach failure during attach cleanup", async () => {
     await expect(
       NativeDmgArtifactReader.create("/tmp/image.dmg", undefined, {
-        run: () => Promise.resolve({ stdout: "", exitCode: 1 }),
+        run: () =>
+          Promise.resolve({
+            stdout: "verify output",
+            stderr: "hdiutil: verification failed",
+            exitCode: 1,
+          }),
       }),
-    ).rejects.toThrow("non-zero exit code");
+    ).rejects.toMatchObject({
+      reason: "unavailable",
+      message: expect.stringMatching(
+        /"arguments":\["verify","\/tmp\/image\.dmg"\].*"exitCode":1.*"stderr":"hdiutil: verification failed"/u,
+      ),
+    });
 
     const host: NativeDmgHost = {
       run(arguments_) {
