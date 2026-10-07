@@ -6,6 +6,12 @@ coverage and unknowns. The CLI and MCP use the same application workflows.
 
 ## Static inspection
 
+`inspect_macho` retains otool segment `file_offset` values relative to the
+selected Mach-O slice. Its evidence file-offset ranges address the original
+input file and include the observed lipo slice offset for universal binaries.
+If that offset is unavailable, segment evidence locations are omitted with an
+explicit limitation; architecture inventory locations remain available.
+
 - `inspect_asset_catalog` / `rea inspect-asset-catalog <app>` reads compiled
   `Assets.car` metadata through macOS `assetutil --info`. Catalog digests, raw
   rendition fields, pagination and exact UI resource-name matches are returned.

@@ -111,3 +111,99 @@ it.each([
     ).toBe(true);
   },
 );
+
+it("projects universal segment evidence into the selected slice's container offsets", async () => {
+  const client = new NativeMacOSProvider(
+    new NativeFixtureRunner(),
+    "darwin",
+  ).createClient(nativeMachoTarget("/owned/universal"));
+  const result = await client.execute("inspect_macho", {});
+  if (!result.ok) throw result.error;
+  expect(result.value.locations).toContainEqual({
+    kind: "file-offset-range",
+    start: 32768,
+    end: 40960,
+  });
+  expect(result.value.locations).not.toContainEqual({
+    kind: "file-offset-range",
+    start: 0,
+    end: 8192,
+  });
+  // The normalized tool field remains slice-relative; only evidence is projected.
+  expect(
+    inspectMachoSchema.parse(result.value.result).segments.items[0]
+      ?.file_offset,
+  ).toBe(0);
+});
+
+it.each([
+  {
+    description: "thin",
+    lipo: "Non-fat file: /owned/input is architecture: arm64\n",
+    offset: 0,
+  },
+  {
+    description: "one-slice FAT",
+    lipo: "architecture arm64\n offset 16384\n size 8192\n align 2^14 (16384)\n",
+    offset: 16384,
+  },
+])(
+  "keeps $description segment evidence in the input file's coordinate system",
+  async ({ lipo, offset }) => {
+    const base = nativeMachoTarget("/owned/input");
+    if (base.kind !== "executable")
+      throw new Error("Expected executable fixture");
+    const target = { ...base, availableArchitectures: ["arm64"] as const };
+    const result = await new NativeMacOSProvider(
+      new NativeFixtureRunner({ lipo }),
+      "darwin",
+    )
+      .createClient(target)
+      .execute("inspect_macho", {});
+    if (!result.ok) throw result.error;
+    expect(result.value.locations).toContainEqual({
+      kind: "file-offset-range",
+      start: offset,
+      end: offset + 8192,
+    });
+    if (offset > 0)
+      expect(result.value.locations).not.toContainEqual({
+        kind: "file-offset-range",
+        start: 0,
+        end: 8192,
+      });
+  },
+);
+
+it.each([
+  {
+    lipo: "architecture x86_64\n offset 16384\n size 8192\narchitecture arm64\n size 8192\n",
+    availableArchitectures: ["x86_64", "arm64"] as const,
+  },
+  {
+    lipo: "architecture arm64\n size 8192\n",
+    availableArchitectures: ["arm64"] as const,
+  },
+])(
+  "does not invent a container offset when the selected slice has no observed offset ($availableArchitectures)",
+  async ({ lipo, availableArchitectures }) => {
+    const base = nativeMachoTarget("/owned/universal");
+    if (base.kind !== "executable")
+      throw new Error("Expected executable fixture");
+    const result = await new NativeMacOSProvider(
+      new NativeFixtureRunner({ lipo }),
+      "darwin",
+    )
+      .createClient({ ...base, availableArchitectures })
+      .execute("inspect_macho", {});
+    if (!result.ok) throw result.error;
+    expect(result.value.locations).not.toContainEqual({
+      kind: "file-offset-range",
+      start: 0,
+      end: 8192,
+    });
+    expect(result.value.limitations).toContain(
+      "Segment evidence file offsets are unavailable because the selected Mach-O slice's container offset was not observed.",
+    );
+  },
+);
