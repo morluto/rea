@@ -79,6 +79,12 @@ else
   version="${BASH_REMATCH[1]}"
 fi
 
+# npm's exact-version resolver cleans build metadata from the requested version,
+# so it may install the base release and make the post-install identity check fail.
+if [[ "$version" =~ \+ ]]; then
+  fail "npm cannot install an exact version with build metadata. Pass a version without build metadata, then retry."
+fi
+
 prefix_args=()
 if [[ "$platform" == "Linux" ]]; then
   prefix_args=(--prefix "$HOME/.local")
