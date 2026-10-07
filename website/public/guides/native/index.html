@@ -34,10 +34,10 @@
         <p class="breadcrumb">
           <a href="../../">Home</a> / <a href="../">Guides</a> / Native analysis
         </p>
-        <h1>Recover a calculation.<br />Follow the evidence.</h1>
+        <h1>Recover DX-Ball's<br />sound-pan calculation.</h1>
         <p class="lede">
-          Use DX-Ball’s sound panning to see how an agent moves from a binary to
-          an explanation and a checked C function.
+          Inspect the original instructions, identify the input and constants,
+          then check the recovered C.
         </p>
       </div>
       <div class="article-layout">
@@ -46,18 +46,17 @@
           <ul>
             <li><a href="#example">The example</a></li>
             <li><a href="#ask">Ask your agent</a></li>
-            <li><a href="#follow">Follow the evidence</a></li>
+            <li><a href="#follow">Read the REA results</a></li>
             <li><a href="#result">Recover and check</a></li>
             <li><a href="#try">Use your own binary</a></li>
           </ul>
         </nav>
         <article class="article" aria-label="Native analysis">
           <section class="article-section" id="example">
-            <h2>A position becomes a sound</h2>
+            <h2>Calculate left/right sound panning</h2>
             <p>
               In DX-Ball, a brick hit supplies a horizontal screen position. The
-              sound code turns it into a left/right panning value. We want to
-              recover that calculation from the executable.
+              sound code turns it into a left/right panning value.
             </p>
             <p>
               The starting function, <code>0x00406400</code>, has a short
@@ -138,14 +137,9 @@
               Example prompt. Give your agent the path to your local DX-Ball
               1.07 executable.
             </p>
-            <p>
-              You can start with a feature name. Your agent uses REA to locate
-              relevant functions, then follows the evidence with more focused
-              queries.
-            </p>
           </section>
           <section class="article-section" id="follow">
-            <h2>Follow what REA returns</h2>
+            <h2>Read the REA results</h2>
             <h3>Read the input</h3>
             <div class="code-block">
               <div class="code-header">

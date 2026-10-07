@@ -689,7 +689,7 @@ pre code {
 }
 .provider {
   display: grid;
-  grid-template-columns: 105px 1fr;
+  grid-template-columns: 105px minmax(0, 1fr);
   gap: 1.3rem;
   padding-block: 1.2rem;
   border-top: 1px solid var(--line);
@@ -1107,7 +1107,7 @@ pre code {
     gap: 1rem;
   }
   .provider {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 0.25rem;
   }
   .guide-entry {

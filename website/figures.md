@@ -1,5 +1,9 @@
 # REA website figures
 
+Use [style-guide.md](style-guide.md#make-figures-explain-a-relationship) when adding
+or revising a figure. The prompts below are historical layout references; use
+the current SVG source for published labels.
+
 The published diagrams are SVG source assets:
 
 - `public/assets/figures/rea-investigation-flow.svg` — 1774 × 887 viewBox.

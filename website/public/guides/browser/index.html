@@ -49,7 +49,7 @@
             <li><a href="#prepare">Open the browser</a></li>
             <li><a href="#ask">Ask your agent</a></li>
             <li><a href="#capture">Capture from CLI</a></li>
-            <li><a href="#result">Read and follow</a></li>
+            <li><a href="#result">Read the request and script</a></li>
           </ul>
         </nav>
         <article class="article" aria-label="Browser observation">
@@ -62,12 +62,8 @@
               <code>notes.json</code>, formats the two notes as CSV, and starts
               a download.
             </p>
-            <p>
-              We want to see which request the click makes, then use the script
-              to understand how the response becomes a file.
-            </p>
             <figure class="workflow-figure">
-              <p class="figure-title">One action, captured while it happens</p>
+              <p class="figure-title">From the click to the CSV download</p>
               <ol class="flow-steps">
                 <li>
                   <span class="flow-label">01 · You</span
@@ -99,16 +95,15 @@
                 <code>GET notes.json → 200 → notes[] → CSV</code>
               </p>
               <figcaption>
-                The request and response metadata come from the capture. CSV
-                construction is explained by reading the script.
+                Start the capture before clicking Export notes.
               </figcaption>
             </figure>
           </section>
           <section class="article-section" id="prepare">
-            <h2>Open an observable browser</h2>
+            <h2>Open Chrome with remote debugging</h2>
             <p>
-              Start a Chrome-family browser with a dedicated profile and a local
-              debugging port. On Linux, for this site's local preview:
+              Open the hosted Notes example with a separate browser profile and
+              a local debugging port. On Linux:
             </p>
             <div class="code-block">
               <div class="code-header">
@@ -125,12 +120,12 @@
               <pre><code id="browser-start">google-chrome \
   --remote-debugging-port=9222 \
   --user-data-dir=/tmp/rea-notes-browser \
-  http://127.0.0.1:4173/examples/notes-web/</code></pre>
+  https://morluto.github.io/rea/examples/notes-web/</code></pre>
             </div>
             <p>
               Use your installed browser's executable path on macOS or Windows.
-              The page URL should point to your local preview or
-              <a href="../../examples/notes-web/">the hosted Notes example</a>.
+              You can replace the page URL with another page you want to
+              inspect.
             </p>
             <p>
               REA connects to this existing browser. You keep control of the
@@ -225,7 +220,7 @@
             </p>
           </section>
           <section class="article-section" id="result">
-            <h2>Read the result, then follow the code</h2>
+            <h2>Read the request and export script</h2>
             <div class="evidence-table-wrap">
               <table class="evidence-table">
                 <caption>
@@ -260,6 +255,10 @@
                 </tbody>
               </table>
             </div>
+            <p class="caption">
+              The hosted example's request path includes the site's
+              <code>/rea/</code> prefix.
+            </p>
             <div class="code-block">
               <div class="code-header">
                 <span>Read the loaded scripts</span
