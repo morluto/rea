@@ -100,7 +100,9 @@ const registerCaptureDiff = (
             invalidJsonIssue("before"),
           ]);
         if (!after.ok)
-          return inputError("compare_web_captures", [invalidJsonIssue("after")]);
+          return inputError("compare_web_captures", [
+            invalidJsonIssue("after"),
+          ]);
         if (!normalization.ok)
           return inputError("compare_web_captures", [
             invalidJsonIssue("normalization"),
