@@ -411,4 +411,43 @@ describe("Ghidra extension recovery coverage", () => {
       ),
     ).not.toBeNull();
   });
+  it.each(["not_applicable", "unsupported", "failed"] as const)(
+    "rejects contradictory %s reports without discarding discovery context",
+    async (status) => {
+      const { extension } = await artifact();
+      const unavailable = result(extension.sha256);
+      const report = {
+        ...unavailable,
+        status,
+        result: {
+          ...unavailable.result,
+          status,
+          header_address: "0x401000",
+          discovery: "signature-heuristic",
+          format_major: 9,
+          format_minor: 1,
+        },
+      } satisfies GhidraExtensionResult;
+      expect(validateGhidraExtensionResults([extension], [report])).toBeNull();
+      expect(
+        validateGhidraExtensionResults(
+          [extension],
+          [{ ...report, result: { ...report.result, method_tables: 1 } }],
+        ),
+      ).not.toBeNull();
+      for (const reason of [null, "", " "] as const)
+        expect(
+          validateGhidraExtensionResults(
+            [extension],
+            [
+              {
+                ...report,
+                reason,
+                result: { ...report.result, reason },
+              },
+            ],
+          ),
+        ).not.toBeNull();
+    },
+  );
 });
