@@ -8,6 +8,7 @@ import {
 import { canonicalDigest, canonicalJson } from "./comparisonSemantics.js";
 import { parseEvidence, type Evidence } from "./evidence.js";
 import { artifactInspectionResultSchema } from "./artifactInspection.js";
+import { err, ok, type Result } from "./result.js";
 
 /** Complete or partially assembled inventory used by comparison workflows. */
 export interface InventorySet {
@@ -20,7 +21,7 @@ export interface InventorySet {
   readonly complete: boolean;
 }
 
-interface ParsedInventorySet {
+export interface ParsedInventorySet {
   readonly evidence: readonly Evidence[];
   readonly inventory: InventorySet;
 }
@@ -85,14 +86,36 @@ const validateInventoryPage = (inventory: ArtifactInventoryResult): void => {
       throw new TypeError("Artifact node ID is not content-addressed");
 };
 
+/** Empty-inventory failure, distinct from malformed/unsupported/unavailable taxonomy codes. */
+export interface InventoryAssemblyEmpty {
+  readonly code: "empty";
+  readonly message: string;
+}
+
+/**
+ * Result-returning seam for the empty-pages leaf. Other assembly failures
+ * still throw TypeError (migration in progress); parseArtifactInventoryEvidence
+ * keeps its throwing contract until callers switch.
+ */
+export const tryAssembleInventorySet = (
+  pages: readonly {
+    readonly evidence: Evidence;
+    readonly inventory: ArtifactInventoryResult;
+  }[],
+): Result<ParsedInventorySet, InventoryAssemblyEmpty> =>
+  pages.length === 0
+    ? err({
+        code: "empty",
+        message: "Artifact inventory requires Evidence pages",
+      })
+    : ok(assembleInventorySet(pages));
+
 const assembleInventorySet = (
   pages: readonly {
     readonly evidence: Evidence;
     readonly inventory: ArtifactInventoryResult;
   }[],
 ): ParsedInventorySet => {
-  if (pages.length === 0)
-    throw new TypeError("Artifact inventory requires Evidence pages");
   const first = pages[0];
   if (first === undefined)
     throw new TypeError("Artifact inventory requires Evidence pages");
