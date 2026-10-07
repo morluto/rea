@@ -9,6 +9,7 @@ import type {
   ProcessGroupObservation,
   ProcessLineageObservation,
   ProcessOwnershipHost,
+  ProcessIdentityObservation,
   ProcessOwnershipBaseline,
   ProcessTableEntry,
 } from "./ProcessOwnership.js";
@@ -146,6 +147,22 @@ export const parseProcessEnvironment = (
       }),
   );
 
+/** Read Linux stat field 22, tolerating spaces and closing parentheses in comm. */
+export const parseLinuxProcessStartTime = (
+  value: string,
+): string | undefined => {
+  const commandEnd = value.lastIndexOf(")");
+  if (commandEnd < 0) return undefined;
+  const fields = value
+    .slice(commandEnd + 1)
+    .trim()
+    .split(/\s+/u);
+  const startTime = fields[19];
+  return startTime !== undefined && /^\d+$/u.test(startTime)
+    ? startTime
+    : undefined;
+};
+
 /** Create the operating-system process inspector for an explicit host context. */
 export const createSystemProcessOwnershipHost = (
   platform: NodeJS.Platform = process.platform,
@@ -172,8 +189,39 @@ export const createSystemProcessOwnershipHost = (
         command: match[5] ?? "",
       }));
   };
-  const processIdentities = async (processes: readonly ProcessTableEntry[]) => {
-    if (darwinTokens === undefined || processes.length === 0) return new Map();
+  const processIdentities: NonNullable<
+    ProcessOwnershipHost["processIdentities"]
+  > = async (processes) => {
+    if (processes.length === 0) return new Map();
+    if (platform === "linux")
+      return new Map<number, ProcessIdentityObservation>(
+        await Promise.all(
+          processes.map(async ({ pid }) => {
+            try {
+              const stat = await readFile(`/proc/${String(pid)}/stat`, "utf8");
+              const identity = parseLinuxProcessStartTime(stat);
+              return [
+                pid,
+                identity === undefined
+                  ? ({
+                      state: "unavailable",
+                      reason: "malformed_proc_stat",
+                    } as const)
+                  : ({
+                      state: "readable",
+                      identity: `linux-starttime:${identity}`,
+                    } as const),
+              ] as const;
+            } catch (cause: unknown) {
+              return [
+                pid,
+                { state: "unavailable", reason: errorMessage(cause) } as const,
+              ] as const;
+            }
+          }),
+        ),
+      );
+    if (darwinTokens === undefined) return new Map();
     try {
       return await darwinTokens.identities(processes);
     } catch (cause: unknown) {
@@ -187,7 +235,7 @@ export const createSystemProcessOwnershipHost = (
     }
   };
   const captureBaseline = async (): Promise<ProcessOwnershipBaseline> => {
-    if (darwinTokens === undefined) return [];
+    if (platform !== "linux" && darwinTokens === undefined) return [];
     const processes = liveProcesses(await listProcesses());
     let identities = await processIdentities(processes);
     const unreadable = processes.filter(
@@ -208,7 +256,7 @@ export const createSystemProcessOwnershipHost = (
       );
       if (stillUnresolved.length > 0)
         throw new Error(
-          `macOS process identity snapshot is unavailable for ${String(stillUnresolved.length)} live processes`,
+          `process identity snapshot is unavailable for ${String(stillUnresolved.length)} live processes`,
         );
     }
     return processes.map(({ pid }) => {
@@ -276,13 +324,16 @@ export const createSystemProcessOwnershipHost = (
         );
       }
     },
-    ...(darwinTokens === undefined
+    ...(platform !== "linux" && darwinTokens === undefined
       ? {}
-      : { processIdentities, captureBaseline }),
+      : {
+          processIdentities,
+          captureBaseline,
+          ...(darwinTokens === undefined ? {} : { close: darwinTokens.close }),
+        }),
     signalGroup(processGroupId, signal) {
       process.kill(-processGroupId, signal);
     },
-    ...(darwinTokens === undefined ? {} : { close: darwinTokens.close }),
   };
 };
 

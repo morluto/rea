@@ -620,11 +620,6 @@ export type PartialProcessCaptureObservation = z.infer<
   typeof partialProcessCaptureObservationSchema
 >;
 
-export const parsePartialProcessCaptureObservation = (
-  input: unknown,
-): PartialProcessCaptureObservation =>
-  partialProcessCaptureObservationSchema.parse(input);
-
 /** Exact serialized shape plus all process-capture semantic invariants. */
 export const processCaptureSchema = processCaptureShapeSchema
   .superRefine((capture, context) => {

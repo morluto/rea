@@ -534,6 +534,33 @@ const processOwnershipFailures = async (
       });
     }
   }
+  if (
+    failures.length === 0 &&
+    expectedIdentities.size > 0 &&
+    host.processIdentities !== undefined
+  ) {
+    const expectedMembers = members.filter(({ pid }) =>
+      expectedIdentities.has(pid),
+    );
+    const observed = await host.processIdentities(expectedMembers);
+    for (const member of expectedMembers) {
+      const expected = expectedIdentities.get(member.pid);
+      const current = observed.get(member.pid);
+      if (
+        expected !== null &&
+        current?.state === "readable" &&
+        current.identity === expected
+      )
+        continue;
+      if (await processIsGone(host, member.pid)) continue;
+      failures.push({
+        pid: member.pid,
+        reason: "process-identity-unavailable",
+        diagnostic:
+          "process identity changed or became unavailable during token validation",
+      });
+    }
+  }
   return failures;
 };
 
@@ -550,9 +577,8 @@ const scanTokenOwnedProcesses = async (
   captureBaseline?: ProcessOwnershipBaseline,
 ): Promise<TokenOwnedProcessScan> => {
   let candidates = processes;
-  let candidateIdentities:
-    | ReadonlyMap<number, ProcessIdentityObservation>
-    | undefined;
+  let candidateIdentities: ReadonlyMap<number, ProcessIdentityObservation> =
+    new Map();
   if (host.processIdentities !== undefined) {
     const current = await host.processIdentities(processes);
     candidateIdentities = current;
@@ -572,11 +598,27 @@ const scanTokenOwnedProcesses = async (
       });
     }
   }
+  const failures: ProcessOwnershipValidationFailure[] = [];
+  if (captureBaseline !== undefined && host.processIdentities !== undefined) {
+    const stableCandidates: ProcessTableEntry[] = [];
+    for (const process of candidates) {
+      if (candidateIdentities.get(process.pid)?.state === "readable") {
+        stableCandidates.push(process);
+        continue;
+      }
+      if (!(await processIsGone(host, process.pid)))
+        failures.push({
+          pid: process.pid,
+          reason: "process-identity-unavailable",
+          diagnostic: "process identity was unavailable during token scan",
+        });
+    }
+    candidates = stableCandidates;
+  }
   let bulkTokens: ReadonlyMap<number, ProcessRunTokenObservation> | undefined;
   if (host.runTokens !== undefined)
     bulkTokens = await host.runTokens(candidates);
   const owned: ProcessTableEntry[] = [];
-  const failures: ProcessOwnershipValidationFailure[] = [];
   const ownedIdentities = new Map<number, string | null>();
   for (const process of candidates) {
     const bulkToken = bulkTokens?.get(process.pid);
@@ -584,7 +626,7 @@ const scanTokenOwnedProcesses = async (
       if (bulkToken.state === "readable") {
         if (bulkToken.runId === runId) {
           owned.push(process);
-          const identity = candidateIdentities?.get(process.pid);
+          const identity = candidateIdentities.get(process.pid);
           ownedIdentities.set(
             process.pid,
             identity?.state === "readable" ? identity.identity : null,
@@ -601,8 +643,14 @@ const scanTokenOwnedProcesses = async (
       continue;
     }
     try {
-      if ((await host.environment(process.pid)).REA_PROCESS_RUN_ID === runId)
+      if ((await host.environment(process.pid)).REA_PROCESS_RUN_ID === runId) {
         owned.push(process);
+        const identity = candidateIdentities.get(process.pid);
+        ownedIdentities.set(
+          process.pid,
+          identity?.state === "readable" ? identity.identity : null,
+        );
+      }
     } catch (cause: unknown) {
       try {
         const live = liveProcesses(await host.listProcesses());
@@ -622,29 +670,28 @@ const scanTokenOwnedProcesses = async (
       });
     }
   }
-  if (owned.length > 0 && host.processIdentities !== undefined) {
-    const afterRead = await host.processIdentities(owned);
+  if (candidates.length > 0 && host.processIdentities !== undefined) {
+    const afterRead = await host.processIdentities(candidates);
     const stillOwned: ProcessTableEntry[] = [];
-    for (const process of owned) {
-      const expected = ownedIdentities.get(process.pid);
+    const ownedPids = new Set(owned.map(({ pid }) => pid));
+    for (const process of candidates) {
+      const before = candidateIdentities.get(process.pid);
       const current = afterRead.get(process.pid);
       if (
-        expected === null ||
-        current?.state !== "readable" ||
-        current.identity !== expected
+        before?.state === "readable" &&
+        current?.state === "readable" &&
+        current.identity === before.identity
       ) {
-        if (
-          current?.state !== "readable" &&
-          (await processIsGone(host, process.pid))
-        )
-          continue;
-        failures.push({
-          pid: process.pid,
-          reason: "process-identity-unavailable",
-          diagnostic:
-            "process identity changed or became unavailable during token validation",
-        });
-      } else stillOwned.push(process);
+        if (ownedPids.has(process.pid)) stillOwned.push(process);
+        continue;
+      }
+      if (await processIsGone(host, process.pid)) continue;
+      failures.push({
+        pid: process.pid,
+        reason: "process-identity-unavailable",
+        diagnostic:
+          "process identity changed or became unavailable during token validation",
+      });
     }
     return { owned: stillOwned, failures, identities: ownedIdentities };
   }
