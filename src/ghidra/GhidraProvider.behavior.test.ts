@@ -13,7 +13,7 @@ import type { BinaryTarget } from "../domain/binaryTarget.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import {
   GHIDRA_PROVIDER_IDENTITY,
-  GHIDRA_PROVIDER_TOOL_CONTRACTS,
+  GHIDRA_OPERATIONS,
   GhidraProvider,
   type GhidraProviderClientFactory,
 } from "./GhidraProvider.js";
@@ -140,9 +140,9 @@ describe("Ghidra provider", () => {
     const ghidra = provider(host);
 
     expect(ghidra.identity()).toEqual(GHIDRA_PROVIDER_IDENTITY);
-    expect(ghidra.capabilities().map(({ operation }) => operation)).toEqual(
-      GHIDRA_PROVIDER_TOOL_CONTRACTS.map(({ name }) => name),
-    );
+    expect(ghidra.capabilities().map(({ operation }) => operation)).toEqual([
+      ...GHIDRA_OPERATIONS,
+    ]);
     expect(ghidra.capabilities()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

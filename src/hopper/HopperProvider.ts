@@ -18,7 +18,6 @@ import type { BinaryTarget } from "../domain/binaryTarget.js";
 import type { Logger } from "../logger.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import { err } from "../domain/result.js";
-import { GENERATED_MCP_TOOL_CATALOG } from "../generatedMcpToolCatalog.js";
 import { HopperApplicationLauncher } from "./BridgeLauncher.js";
 import {
   hopperLoaderArgsForTarget,
@@ -26,63 +25,17 @@ import {
 } from "./HopperAnalysisProfile.js";
 import { HopperClient } from "./HopperClient.js";
 
-/** Public identity committed by every Hopper-backed observation. */
-export const HOPPER_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({
-  id: "hopper",
-  name: "Hopper Disassembler",
-  version: null,
-});
+import {
+  CAPABILITIES,
+  HOPPER_PROVIDER_IDENTITY,
+} from "./HopperProviderCapabilities.js";
+
+export {
+  HOPPER_PROVIDER_IDENTITY,
+  HOPPER_OPERATIONS,
+} from "./HopperProviderCapabilities.js";
+
 const IDENTITY = HOPPER_PROVIDER_IDENTITY;
-const MUTATING_OPERATIONS = new Set([
-  "set_address_name",
-  "set_addresses_names",
-  "set_bookmark",
-  "set_comment",
-  "set_inline_comment",
-  "unset_bookmark",
-]);
-
-/** Tool contracts implemented directly by the Hopper adapter. */
-export const HOPPER_PROVIDER_TOOL_CONTRACTS = Object.freeze([
-  ...GENERATED_MCP_TOOL_CATALOG.filter(
-    ({ kind, name }) =>
-      kind === "official-proxy" &&
-      name !== "annotate_native_function" &&
-      name !== "inspect_native_load_image" &&
-      name !== "inspect_native_data_type" &&
-      name !== "inspect_native_instruction" &&
-      name !== "resolve_native_call_targets",
-  ),
-  ...GENERATED_MCP_TOOL_CATALOG.filter(
-    ({ name }) => name === "analyze_function",
-  ),
-]);
-
-const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
-  HOPPER_PROVIDER_TOOL_CONTRACTS.map((contract) => {
-    const operation = contract.analysisOperation;
-    if (operation === null)
-      throw new TypeError(`Missing analysis operation for ${contract.name}`);
-    return Object.freeze({
-      provider: IDENTITY,
-      operation,
-      available: true,
-      reason: null,
-      effects: Object.freeze({
-        mutatesArtifact: MUTATING_OPERATIONS.has(contract.name),
-        launchesProcess: true,
-        mayShowUi: true,
-        mayAccessNetwork: false,
-        mayWriteFilesystem: MUTATING_OPERATIONS.has(contract.name),
-        changesPermissions: false,
-        requiresRoot: false,
-      }),
-      limitations: Object.freeze([
-        "Results depend on Hopper's completed static analysis.",
-      ]),
-    });
-  }),
-);
 
 /** Concrete analysis provider backed by REA's private Hopper bridge. */
 export class HopperProvider implements AnalysisProviderCandidate {

@@ -225,6 +225,27 @@ explicit downloader and fixed manifest belong to `scripts/fixtures/android/`.
 JADX CLI/MCP parity requires the fixed APK and existing audited JAR; synthetic
 protocol/cancellation success does not establish that engine or an unverified host.
 
+## Deep-provider source declarations
+
+Hopper, Ghidra and IDA declare their implemented analyst operations in their
+own `*ProviderCapabilities.ts` modules. Hopper's inventory is typed against the
+existing direct-operation contracts; Ghidra reuses its inventory/function adapter
+operations; IDA retains its read-only operation family. Frozen operation arrays
+feed the existing capability builders without importing generated catalog data.
+
+The catalog generator reads these source declarations and joins operation names
+to canonical `TOOL_CONTRACTS`. A missing contract identifies the declaring provider
+and operation. Public schemas and descriptions remain owned by contracts; the
+declarations describe implementation coverage. Provider adapters must not consume
+the generated MCP catalog that is derived from them. The resolved module guard
+checks this edge while admitting canonical source contracts, generated package
+metadata and the existing application snapshot-cache consumer.
+
+Exact provider effects and lifecycle differences remain in their adapters:
+Hopper's GUI and mutation effects, Ghidra's experimental Windows authority and
+mutation restrictions, and IDA's attached/headless effects and live observations.
+This source increment introduces no common provider lifecycle or new interface.
+
 ## Binary application ownership
 
 `src/application/binary/` owns the active session, deep-provider registry and

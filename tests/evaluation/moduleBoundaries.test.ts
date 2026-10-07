@@ -65,6 +65,18 @@ describe("incremental module import boundaries", () => {
     ["src/domain/probe.test.ts", "../dotnet/ManagedMemberInspector.js", false],
     ["src/server/probe.ts", "../composition/android.js", true],
     ["src/application/probe.ts", "../browser/CdpCaptureValues.js", true],
+    ["src/hopper/probe.ts", "../generatedMcpToolCatalog.js", false],
+    ["src/ghidra/probe.ts", "../generatedMcpToolCatalog.ts", false],
+    ["src/ida/probe.ts", "../generatedMcpToolCatalog.js", false],
+    ["src/artifacts/probe.ts", "../generatedMcpToolCatalog.js", false],
+    ["src/browser/probe.ts", "../generatedMcpToolCatalog.js", false],
+    ["src/ghidra/probe.ts", "../generatedPackageMetadata.js", true],
+    ["src/hopper/probe.ts", "../contracts/officialToolContracts.js", true],
+    [
+      "src/application/binary/probe.ts",
+      "../../generatedMcpToolCatalog.js",
+      true,
+    ],
   ])("checks %s importing %s", async (file, dependency, allowed) => {
     const temporary = await createTestTempDirectory("rea-module-boundary-");
     const fixture = join(temporary, file);

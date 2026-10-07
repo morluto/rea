@@ -2,10 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { parseConfig } from "../config.js";
 import { silentLogger } from "../logger.js";
-import {
-  HopperProvider,
-  HOPPER_PROVIDER_TOOL_CONTRACTS,
-} from "./HopperProvider.js";
+import { HopperProvider, HOPPER_OPERATIONS } from "./HopperProvider.js";
 
 describe("Hopper provider capabilities", () => {
   it("declines DOS MZ targets with a provider-specific support reason", () => {
@@ -35,9 +32,9 @@ describe("Hopper provider capabilities", () => {
     const provider = new HopperProvider(config.value, silentLogger);
     const capabilities = provider.capabilities();
     const published = structuredClone(capabilities);
-    expect(capabilities.map(({ operation }) => operation)).toEqual(
-      HOPPER_PROVIDER_TOOL_CONTRACTS.map(({ name }) => name),
-    );
+    expect(capabilities.map(({ operation }) => operation)).toEqual([
+      ...HOPPER_OPERATIONS,
+    ]);
     expect(new Set(capabilities.map(({ operation }) => operation)).size).toBe(
       capabilities.length,
     );

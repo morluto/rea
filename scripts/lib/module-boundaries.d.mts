@@ -7,7 +7,8 @@ export interface ModuleBoundaryViolation {
   readonly boundary:
     | "pure-layer"
     | "application-composition"
-    | "provider-construction";
+    | "provider-construction"
+    | "provider-generated-catalog";
 }
 
 /** Check resolved source ownership, including type imports and reexports. */

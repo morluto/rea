@@ -96,6 +96,21 @@ export const toolFamilyCatalog = (sources) => {
 
 /** Build provider identities with their sorted capability names. */
 export const providerCatalog = (sources) => {
+  const contractsByName = new Map(
+    sources.toolContracts.TOOL_CONTRACTS.map((contract) => [
+      contract.name,
+      contract,
+    ]),
+  );
+  const declaredContracts = (providerId, operations) =>
+    operations.map((operation) => {
+      const contract = contractsByName.get(operation);
+      if (contract === undefined)
+        throw new TypeError(
+          `Provider ${providerId} declares an unknown analyst operation: ${operation}`,
+        );
+      return contract;
+    });
   const {
     applicationContracts,
     reconciliationContracts,
@@ -105,15 +120,21 @@ export const providerCatalog = (sources) => {
   return [
     {
       identity: sources.hopperProvider.HOPPER_PROVIDER_IDENTITY,
-      contracts: sources.hopperProvider.HOPPER_PROVIDER_TOOL_CONTRACTS,
+      contracts: declaredContracts(
+        "hopper",
+        sources.hopperProvider.HOPPER_OPERATIONS,
+      ),
     },
     {
       identity: sources.ghidraProvider.GHIDRA_PROVIDER_IDENTITY,
-      contracts: sources.ghidraProvider.GHIDRA_PROVIDER_TOOL_CONTRACTS,
+      contracts: declaredContracts(
+        "ghidra",
+        sources.ghidraProvider.GHIDRA_OPERATIONS,
+      ),
     },
     {
       identity: sources.idaProvider.IDA_PROVIDER_IDENTITY,
-      contracts: sources.idaProvider.IDA_PROVIDER_TOOL_CONTRACTS,
+      contracts: declaredContracts("ida", sources.idaProvider.IDA_OPERATIONS),
     },
     {
       identity: sources.nativeProvider.NATIVE_MACOS_PROVIDER_IDENTITY,

@@ -34,7 +34,7 @@ import {
   CAPABILITIES,
   windowsP0Capabilities,
   GHIDRA_PROVIDER_IDENTITY,
-  GHIDRA_PROVIDER_TOOL_CONTRACTS,
+  GHIDRA_OPERATIONS,
 } from "./GhidraProviderCapabilities.js";
 import {
   createGhidraProviderClient,
@@ -46,7 +46,7 @@ import {
   windowsNativeCapabilities,
 } from "../process/WindowsAuthority.js";
 
-export { GHIDRA_PROVIDER_IDENTITY, GHIDRA_PROVIDER_TOOL_CONTRACTS };
+export { GHIDRA_PROVIDER_IDENTITY, GHIDRA_OPERATIONS };
 export type { GhidraProviderClientFactory };
 
 const SUPPORTED_ARCHITECTURES = new Set(["x86", "x86_64", "arm", "arm64"]);

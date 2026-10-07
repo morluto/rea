@@ -1,6 +1,6 @@
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
-import { HOPPER_PROVIDER_TOOL_CONTRACTS } from "../../../../src/hopper/HopperProvider.js";
+import { HOPPER_OPERATIONS } from "../../../../src/hopper/HopperProvider.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 import type { HopperDiagnostic } from "../../../../src/hopper/HopperDiagnostics.js";
 import { providerCleanupFailure } from "../../../../src/hopper/HopperDiagnostics.js";
@@ -74,11 +74,9 @@ describe("HopperClient protocol", () => {
   it("routes every established operation through the authenticated bridge", async () => {
     const client = await startClient();
     const results = await Promise.all(
-      HOPPER_PROVIDER_TOOL_CONTRACTS.map(({ name }) =>
-        client.callTool(name, {}),
-      ),
+      HOPPER_OPERATIONS.map((name) => client.callTool(name, {})),
     );
-    expect(results).toHaveLength(HOPPER_PROVIDER_TOOL_CONTRACTS.length);
+    expect(results).toHaveLength(HOPPER_OPERATIONS.length);
     expect(results.every((result) => result.ok)).toBe(true);
   });
 

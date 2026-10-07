@@ -13,6 +13,13 @@ const MIGRATED_PROVIDER_ROOTS = new Set([
   "inspector",
   "javascript",
 ]);
+const PROVIDER_ROOTS = new Set([
+  ...MIGRATED_PROVIDER_ROOTS,
+  "artifacts",
+  "browser",
+  "dotnet",
+  "native",
+]);
 
 const repositoryPath = (root, path) =>
   relative(root, path).replaceAll("\\", "/");
@@ -53,6 +60,11 @@ const failedBoundary = (file, target) => {
   if (!file.startsWith("src/") || !target.startsWith("src/")) return undefined;
   const layer = file.split("/")[1];
   const targetLayer = target.split("/")[1];
+  if (
+    PROVIDER_ROOTS.has(layer) &&
+    /^src\/generatedMcpToolCatalog\.(?:js|ts)$/u.test(target)
+  )
+    return "provider-generated-catalog";
   if (PURE_LAYERS.has(layer)) {
     if (
       (/^src\/[^/]+\//u.test(target) && !PURE_LAYERS.has(targetLayer)) ||

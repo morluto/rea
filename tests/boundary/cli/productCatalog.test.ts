@@ -34,11 +34,11 @@ import { JADX_PROVIDER_IDENTITY } from "../../../src/android/JadxRelease.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import {
   HOPPER_PROVIDER_IDENTITY,
-  HOPPER_PROVIDER_TOOL_CONTRACTS,
+  HOPPER_OPERATIONS,
 } from "../../../src/hopper/HopperProvider.js";
 import {
   GHIDRA_PROVIDER_IDENTITY,
-  GHIDRA_PROVIDER_TOOL_CONTRACTS,
+  GHIDRA_OPERATIONS,
 } from "../../../src/ghidra/GhidraProvider.js";
 import { NATIVE_MACOS_PROVIDER_IDENTITY } from "../../../src/native/NativeMacOSProvider.js";
 import { IDA_PROVIDER_IDENTITY } from "../../../src/ida/IdaProvider.js";
@@ -130,11 +130,11 @@ describe("canonical product catalog", () => {
     expect(
       catalog.providers.find(({ id }) => id === HOPPER_PROVIDER_IDENTITY.id)
         ?.capabilities,
-    ).toEqual(HOPPER_PROVIDER_TOOL_CONTRACTS.map(({ name }) => name).sort());
+    ).toEqual([...HOPPER_OPERATIONS].sort());
     expect(
       catalog.providers.find(({ id }) => id === GHIDRA_PROVIDER_IDENTITY.id)
         ?.capabilities,
-    ).toEqual(GHIDRA_PROVIDER_TOOL_CONTRACTS.map(({ name }) => name).sort());
+    ).toEqual([...GHIDRA_OPERATIONS].sort());
     expect(
       catalog.providers.find(
         ({ id }) => id === CDP_ELECTRON_PROVIDER_IDENTITY.id,
