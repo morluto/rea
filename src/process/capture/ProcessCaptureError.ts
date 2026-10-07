@@ -7,7 +7,7 @@ interface ProcessCaptureErrorOptions extends ErrorOptions {
   readonly cleanupResources?: readonly string[];
 }
 
-/** Typed failure produced by controlled process capture. */
+/** Typed application failure produced by controlled process capture. */
 export class ProcessCaptureError extends AnalysisError {
   readonly _tag = "ProcessCaptureError";
 

@@ -6,8 +6,19 @@ export const digestCanonicalValue = (
   context = "Comparison",
 ): string => {
   const hash = createHash("sha256");
-  const encoded = emitCanonical(value, (part) => hash.update(part), new Set());
+  // Batch small emitted parts to cut hash.update crossings.
+  // Flush cuts only at part boundaries, so the hashed byte stream is unchanged.
+  let buffered = "";
+  const emit = (part: string): void => {
+    buffered += part;
+    if (buffered.length >= 8192) {
+      hash.update(buffered);
+      buffered = "";
+    }
+  };
+  const encoded = emitCanonical(value, emit, new Set());
   if (!encoded) throw new TypeError(`${context} could not canonicalize data`);
+  if (buffered) hash.update(buffered);
   return hash.digest("hex");
 };
 

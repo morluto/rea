@@ -2,8 +2,45 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { projectInputIssues } from "./inputIssueProjection.js";
+import { processScenarioSchema } from "./process/processScenario.js";
 
 describe("input issue projection", () => {
+  it("preserves static regex guidance without echoing the rejected value", () => {
+    const schema = z.object({
+      value: z.string().regex(/^[^\0]*$/u, "Values cannot contain NUL"),
+    });
+    const input = { value: "private\0value" };
+    const parsed = schema.safeParse(input);
+    if (parsed.success) throw new Error("expected invalid input");
+
+    expect(projectInputIssues(parsed.error.issues, input)).toEqual([
+      {
+        path: ["value"],
+        reason: "invalid_format",
+        expected: "regex",
+        message: "Values cannot contain NUL",
+      },
+    ]);
+  });
+
+  it("projects reserved process environment key constraints at the key path", () => {
+    const input = {
+      executable: "/usr/bin/true",
+      environment: { REA_PROCESS_RUN_ID: "caller-value" },
+    };
+    const parsed = processScenarioSchema.safeParse(input);
+    if (parsed.success) throw new Error("expected invalid input");
+
+    expect(projectInputIssues(parsed.error.issues, input)).toEqual([
+      {
+        path: ["environment", "REA_PROCESS_RUN_ID"],
+        reason: "invalid_format",
+        expected: "regex",
+        message: "REA_PROCESS_RUN_ID is reserved by the process adapter",
+      },
+    ]);
+  });
+
   it("preserves schema-authored custom correction guidance", () => {
     const schema = z
       .object({ left: z.string().optional(), right: z.string().optional() })

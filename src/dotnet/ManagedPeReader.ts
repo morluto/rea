@@ -41,6 +41,7 @@ export interface ManagedPeLayout {
   readonly cliDirectoryPresent: boolean;
   readonly cliIssue: ManagedParseIssue | null;
   rvaToOffset(rva: number, size: number, scope: string): number;
+  rvaAvailableBytes(rva: number, scope: string): number;
 }
 
 interface RvaMapping {
@@ -355,5 +356,22 @@ export const readManagedPeLayout = (bytes: Buffer): ManagedPeLayout => {
     cliIssue,
     rvaToOffset: (rva, size, scope) =>
       mapRva({ bytes, sections, rva, size, scope }),
+    rvaAvailableBytes: (rva, scope) => {
+      mapRva({ bytes, sections, rva, size: 1, scope });
+      for (const section of sections) {
+        if (rva < section.virtualAddress) continue;
+        const within = rva - section.virtualAddress;
+        if (within < section.rawSize)
+          return Math.min(
+            section.rawSize - within,
+            bytes.length - section.rawOffset - within,
+          );
+      }
+      throw managedFailure(
+        "invalid-directory",
+        scope,
+        `${scope} RVA is not covered by file-backed PE section data`,
+      );
+    },
   };
 };

@@ -14,6 +14,12 @@ const environmentName = z
         ? `${reservedRunIdEnvironmentName} is reserved by the process adapter`
         : "Environment names cannot contain '=' or NUL",
   });
+const childProcessString = z
+  .string()
+  .regex(
+    /^[^\0]*$/u,
+    "Values passed to operating-system APIs cannot contain NUL",
+  );
 export const normalizationSchema = z.object({
   paths: z.boolean(),
   pids: z.boolean(),
@@ -86,11 +92,13 @@ export const processComparisonContract = (
  */
 export const processScenarioSchema = z
   .object({
-    executable: z.string().min(1),
-    arguments: z.array(z.string()).default([]),
-    working_directory: z.string().default("."),
-    environment: z.record(environmentName, z.string()).default({}),
-    filesystem_observation_paths: z.array(z.string().min(1)).default([]),
+    executable: childProcessString.min(1),
+    arguments: z.array(childProcessString).default([]),
+    working_directory: childProcessString.default("."),
+    environment: z.record(environmentName, childProcessString).default({}),
+    filesystem_observation_paths: z
+      .array(childProcessString.min(1))
+      .default([]),
     terminal: z
       .object({
         columns: z.number().int().min(1).max(65_535).default(80),

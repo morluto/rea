@@ -14,6 +14,7 @@ import {
 import { electronActiveObservationInputSchema } from "../domain/javascript/electronActiveObservation.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "../logger.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -58,7 +59,12 @@ const registerElectronActiveCommand = (
         const parsed = electronActiveObservationInputSchema.safeParse(
           input.value,
         );
-        if (!parsed.success) return inputError("capture_electron_scenario");
+        if (!parsed.success)
+          return inputError(
+            "capture_electron_scenario",
+            parsed.error.issues,
+            input.value,
+          );
         const { createElectronScenarioProvider } =
           await import("../composition/electronScenario.js");
         const result = await captureElectronScenario(
@@ -186,8 +192,18 @@ const electronObservationContext = async () => {
   return { provider: createElectronObservationProvider() };
 };
 
-const inputError = (operation: string): JsonValue =>
-  cliError(new AnalysisInputError(operation));
+const inputError = (
+  operation: string,
+  issues?: Parameters<typeof projectInputIssues>[0],
+  input?: unknown,
+): JsonValue =>
+  cliError(
+    new AnalysisInputError(
+      operation,
+      undefined,
+      issues === undefined ? [] : projectInputIssues(issues, input),
+    ),
+  );
 
 const cliError = (
   error: Parameters<typeof projectAnalysisError>[0],

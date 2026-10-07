@@ -1,4 +1,5 @@
 import type { ManagedPeLayout } from "./ManagedPeReader.js";
+import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
 import {
   createDeclaringTypeLookup,
@@ -17,6 +18,7 @@ import {
   metadataToken,
   metadataRowCursor,
   metadataCodedToken,
+  metadataCodedTokenInvalidReason,
   readMetadataBlob,
   readMetadataString,
 } from "./ManagedMetadataHeaps.js";
@@ -71,9 +73,11 @@ export const parseMemberRefs = (
 ): {
   readonly refs: readonly ManagedMemberRef[];
   readonly core: ReadonlyMap<string, MemberRefCore>;
+  readonly issues: readonly ManagedParseIssue[];
 } => {
   const refs: ManagedMemberRef[] = [];
   const core = new Map<string, MemberRefCore>();
+  const issues: ManagedParseIssue[] = [];
   const table = layout.table(10);
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
     const cursor = metadataRowCursor(bytes, layout, 10, row);
@@ -93,16 +97,37 @@ export const parseMemberRefs = (
       layout.blob.size,
     );
     const token = metadataToken(10, row);
+    const parentReason = metadataCodedTokenInvalidReason(
+      parentRaw,
+      3,
+      [2, 1, 26, 6, 27],
+      layout.rowCounts,
+    );
+    if (parentReason !== null || parentRaw === 0)
+      issues.push({
+        code: "invalid-row",
+        scope: `metadata.MemberRef:${token}`,
+        offset: cursor.start,
+        detail:
+          parentReason === null
+            ? "MemberRef parent coded index 0x0 is null, but the Class column must reference a row"
+            : `MemberRef parent coded index 0x${parentRaw.toString(16)} is invalid: ${parentReason}`,
+      });
     refs.push({
       token,
       row_offset: cursor.start,
-      parent_token: metadataCodedToken(parentRaw, 3, [2, 1, 26, 6, 27]),
+      parent_token: metadataCodedToken(
+        parentRaw,
+        3,
+        [2, 1, 26, 6, 27],
+        layout.rowCounts,
+      ),
       name,
       signature: signature(sig),
     });
     core.set(token, { token, name });
   }
-  return { refs, core };
+  return { refs, core, issues };
 };
 
 interface ParseMethodsInput {

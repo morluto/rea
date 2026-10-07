@@ -15,8 +15,6 @@ export const parseCliJsonInput = async (
 > => {
   const inline = parseJson(value);
   if (inline !== undefined) return { ok: true, value: inline };
-  if (["{", "["].includes(value.trimStart()[0] ?? ""))
-    return { ok: false, error: inputError(operation) };
   try {
     // Read raw bytes so invalid UTF-8 is rejected by parseJson instead of
     // being silently replaced by lossy "utf8" decoding.
@@ -25,9 +23,24 @@ export const parseCliJsonInput = async (
       ? jsonFileError(value, operation, "invalid-json")
       : { ok: true, value: parsed };
   } catch (cause: unknown) {
+    if (
+      ["{", "["].includes(value.trimStart()[0] ?? "") &&
+      cannotBeAnExistingFile(cause) &&
+      !hasExplicitJsonFileExtension(value)
+    )
+      return { ok: false, error: inputError(operation) };
     return jsonFileError(value, operation, "read-failed", cause);
   }
 };
+
+const cannotBeAnExistingFile = (cause: unknown): boolean =>
+  typeof cause === "object" &&
+  cause !== null &&
+  "code" in cause &&
+  (cause.code === "ENOENT" || cause.code === "ENAMETOOLONG");
+
+const hasExplicitJsonFileExtension = (value: string): boolean =>
+  value.toLowerCase().endsWith(".json");
 
 const parseJson = (value: string | Uint8Array): unknown => {
   let text: string;

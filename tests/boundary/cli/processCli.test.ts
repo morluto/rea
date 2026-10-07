@@ -120,8 +120,17 @@ describe("process CLI errors", () => {
     const root = await fixture();
     const malformed = join(root, "malformed.json");
     const invalid = join(root, "invalid.json");
+    const invalidUtf8 = join(root, "invalid-utf8.json");
     await writeFile(malformed, "not-json");
     await writeFile(invalid, "{}");
+    await writeFile(
+      invalidUtf8,
+      Buffer.concat([
+        Buffer.from('{"executable":"'),
+        Buffer.from([0xff]),
+        Buffer.from('"}'),
+      ]),
+    );
 
     expect(
       await captureProcessScenarioFile(join(root, "missing.json")),
@@ -132,6 +141,12 @@ describe("process CLI errors", () => {
         "Process input file could not be read. Check that the path exists and is readable.",
     });
     expect(await captureProcessScenarioFile(malformed)).toEqual({
+      error: "Process command failed",
+      category: "invalid_input",
+      message:
+        "Process input file is not valid JSON. Repair the file, then try again.",
+    });
+    expect(await captureProcessScenarioFile(invalidUtf8)).toEqual({
       error: "Process command failed",
       category: "invalid_input",
       message:
@@ -153,6 +168,66 @@ describe("process CLI errors", () => {
     });
   });
 
+  it("rejects NUL arguments before process launch", async () => {
+    const root = await fixture();
+    const scenario = join(root, "nul-argument.json");
+    await writeFile(
+      scenario,
+      JSON.stringify({ executable: process.execPath, arguments: ["\0"] }),
+    );
+
+    expect(await captureProcessScenarioFile(scenario)).toMatchObject({
+      error: "Process command failed",
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        operation: "capture_process_scenario",
+        issues: [
+          {
+            path: ["arguments", 0],
+            reason: "invalid_format",
+            expected: "regex",
+            message:
+              "Values passed to operating-system APIs cannot contain NUL",
+          },
+        ],
+      },
+    });
+  });
+});
+
+describe("process CLI environment key diagnostics", () => {
+  it("reports the reserved process environment key constraint", async () => {
+    const root = await fixture();
+    const scenario = join(root, "reserved-environment.json");
+    await writeFile(
+      scenario,
+      JSON.stringify({
+        executable: process.execPath,
+        environment: { REA_PROCESS_RUN_ID: "caller-value" },
+      }),
+    );
+
+    expect(await captureProcessScenarioFile(scenario)).toMatchObject({
+      error: "Process command failed",
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        operation: "capture_process_scenario",
+        issues: [
+          {
+            path: ["environment", "REA_PROCESS_RUN_ID"],
+            reason: "invalid_format",
+            expected: "regex",
+            message: "REA_PROCESS_RUN_ID is reserved by the process adapter",
+          },
+        ],
+      },
+    });
+  });
+});
+
+describe("process CLI evidence validation", () => {
   it("captures the minimal executable-and-arguments scenario", async () => {
     const root = await fixture();
     const scenario = join(root, "scenario.json");

@@ -230,3 +230,63 @@ it(
   "advertises and enforces the process-owned environment key constraint",
   advertiseAndEnforceProcessEnvironmentKeyConstraint,
 );
+
+describe("MCP process input JSON Schema", () => {
+  it("advertises process strings without weakening terminal input", async () => {
+    const server = new McpServer({
+      name: "process-schema-validation",
+      version: "0",
+    });
+    const client = new Client({
+      name: "process-schema-validation",
+      version: "0",
+    });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    for (const contract of TOOL_CONTRACTS)
+      server.registerTool(
+        contract.name,
+        toolRegistrationOptions(contract),
+        async () => ({ content: [] }),
+      );
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const processContract = TOOL_CONTRACTS.find(
+        ({ name }) => name === "capture_process_scenario",
+      );
+      const processTool = (await client.listTools()).tools.find(
+        ({ name }) => name === "capture_process_scenario",
+      );
+      if (processContract === undefined || processTool === undefined)
+        throw new Error("Process scenario tool was not advertised");
+      const validate = new Ajv2020({
+        strict: false,
+        validateFormats: false,
+      }).compile(processTool.inputSchema);
+      const base = { executable: "/usr/bin/true" };
+      for (const input of [
+        { ...base, executable: "/usr/bin/true\0" },
+        { ...base, arguments: ["\0"] },
+        { ...base, working_directory: "/tmp\0" },
+        { ...base, environment: { KEY: "value\0" } },
+        { ...base, filesystem_observation_paths: ["/tmp\0"] },
+      ]) {
+        expect(processContract.inputSchema.safeParse(input).success).toBe(
+          false,
+        );
+        expect(validate(input)).toBe(false);
+      }
+      const terminalInput = {
+        ...base,
+        events: [{ type: "input", at_ms: 0, data: "\0" }],
+      };
+      expect(processContract.inputSchema.safeParse(terminalInput).success).toBe(
+        true,
+      );
+      expect(validate(terminalInput)).toBe(true);
+    } finally {
+      await Promise.allSettled([client.close(), server.close()]);
+    }
+  });
+});

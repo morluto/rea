@@ -1,5 +1,7 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it as test, onTestFinished } from "vitest";
+import { z } from "zod";
 import { access } from "node:fs/promises";
 import { ANDROID_TOOL_CONTRACTS } from "../../../src/contracts/android/androidToolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -92,8 +94,15 @@ it("publishes and executes all APK contracts with inline Evidence and no active 
   await server.connect(serverTransport);
   await client.connect(clientTransport);
   const advertised = await client.listTools();
+  const wireTools = new Map(advertised.tools.map((tool) => [tool.name, tool]));
   for (const contract of ANDROID_TOOL_CONTRACTS) {
-    const wire = advertised.tools.find((tool) => tool.name === contract.name);
+    const wire = wireTools.get(contract.name);
+    if (wire === undefined || wire.outputSchema === undefined)
+      throw new Error(`Missing advertised output schema for ${contract.name}`);
+    const validateOutput = new Ajv2020({
+      strict: false,
+      validateFormats: false,
+    }).compile(z.record(z.string(), z.unknown()).parse(wire.outputSchema));
     expect(wire?.annotations).toMatchObject(contract.annotations);
     expect(contract.effects).toMatchObject({
       mutatesTarget: false,
@@ -120,6 +129,7 @@ it("publishes and executes all APK contracts with inline Evidence and no active 
       arguments: input,
     });
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    expect(validateOutput(response.structuredContent)).toBe(true);
     const result = contract.outputSchema.parse(response.structuredContent);
     const evidence = parseEvidence(result.evidence);
     expect(result.result).toEqual(evidence.normalized_result);
