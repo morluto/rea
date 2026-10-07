@@ -27,6 +27,31 @@ function schemaErrors(tools: readonly ToolSchemas[]): string[] {
   );
 }
 
+function findRecursiveRefs(tools: readonly ToolSchemas[]): string[] {
+  return tools.flatMap((tool) =>
+    ["inputSchema", "outputSchema"].flatMap((kind) => {
+      const schema =
+        kind === "inputSchema" ? tool.inputSchema : tool.outputSchema;
+      if (schema === undefined) return [];
+      const defs = (schema as Record<string, unknown>).$defs;
+      if (typeof defs !== "object" || defs === null || Array.isArray(defs))
+        return [];
+      return Object.entries(defs as Record<string, unknown>)
+        .filter(([name, def]) => containsRef(def, name))
+        .map(([name]) => `${tool.name}.${kind}: #/$defs/${name}`);
+    }),
+  );
+}
+
+function containsRef(node: unknown, target: string): boolean {
+  if (Array.isArray(node))
+    return node.some((entry) => containsRef(entry, target));
+  if (typeof node !== "object" || node === null) return false;
+  const record = node as Record<string, unknown>;
+  if (record.$ref === `#/$defs/${target}`) return true;
+  return Object.values(record).some((child) => containsRef(child, target));
+}
+
 describe("MCP JSON Schema validity", () => {
   it("preserves empty-array validation in the advertised representation", () => {
     const schema = z.toJSONSchema(emptyArraySchema);
@@ -152,5 +177,28 @@ describe("MCP JSON Schema validity", () => {
 
   it("ships valid input and output schemas in the generated catalog", () => {
     expect(schemaErrors(GENERATED_MCP_TOOL_CATALOG)).toEqual([]);
+  });
+
+  it("advertises no recursive $refs (strict clients reject cycles)", async () => {
+    const server = new McpServer({ name: "schema-recursion", version: "0" });
+    const client = new Client({ name: "schema-recursion", version: "0" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    for (const contract of TOOL_CONTRACTS)
+      server.registerTool(
+        contract.name,
+        toolRegistrationOptions(contract),
+        async () => ({
+          content: [],
+        }),
+      );
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const { tools } = await client.listTools();
+      expect(findRecursiveRefs(tools)).toEqual([]);
+    } finally {
+      await Promise.allSettled([client.close(), server.close()]);
+    }
   });
 });
