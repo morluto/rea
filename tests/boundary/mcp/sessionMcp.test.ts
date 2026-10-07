@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
@@ -17,6 +18,7 @@ import type {
 import { probeProcessCaptureCapability } from "../../../src/application/ProcessHarness.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
@@ -249,6 +251,21 @@ describe("process residuals over MCP", () => {
       },
     });
     expect(captured.isError, text(captured)).not.toBe(true);
+    const contract = toolContract("capture_process_scenario");
+    const wire = (await mcp.listTools()).tools.find(
+      ({ name }) => name === contract.name,
+    );
+    if (wire?.outputSchema === undefined)
+      throw new Error("Missing process capture output schema");
+    expect(
+      new Ajv2020({ strict: false, validateFormats: false }).validate(
+        z.record(z.string(), z.unknown()).parse(wire.outputSchema),
+        captured.structuredContent,
+      ),
+    ).toBe(true);
+    expect(
+      contract.outputSchema.safeParse(captured.structuredContent).success,
+    ).toBe(true);
     const listedUnknowns = await mcp.callTool({
       name: "list_unknowns",
       arguments: {},

@@ -113,9 +113,61 @@ describe("compiled CLI JSON input failure status", () => {
           XDG_CACHE_HOME: root,
         },
       });
-      expect(result.json).toMatchObject({
+      expect(JSON.parse(result.stdout.trim())).toMatchObject({
         code: "invalid_request",
         input_path: "",
+        input_reason: "read-failed",
+      });
+      expect(result.exitCode).toBe(1);
+    },
+  );
+
+  cliTest(
+    "classifies an overlong malformed inline value before dispatch",
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-cli-json-overlong-");
+      const input = `[${"x".repeat(3_000)}`;
+      const result = await cli.run({
+        arguments: ["compare-javascript-export-shapes", input, "--json"],
+        environment: {
+          HOME: root,
+          XDG_CONFIG_HOME: root,
+          XDG_CACHE_HOME: root,
+        },
+      });
+
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        category: "invalid_input",
+        details: {
+          operation: "compare-javascript-export-shapes",
+          issues: [{ path: [], reason: "invalid_format", expected: "JSON" }],
+        },
+      });
+      expect(result.json).not.toHaveProperty("input_path");
+      expect(result.stdout).not.toContain("read-failed");
+      expect(result.stderr).toBe("");
+      expect(result.exitCode).toBe(1);
+    },
+  );
+
+  cliTest(
+    "preserves explicit overlong JSON path diagnostics",
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-cli-json-overlong-path-");
+      const input = `[${"x".repeat(3_000)}.json`;
+      const result = await cli.run({
+        arguments: ["compare-javascript-export-shapes", input, "--json"],
+        environment: {
+          HOME: root,
+          XDG_CONFIG_HOME: root,
+          XDG_CACHE_HOME: root,
+        },
+      });
+
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        input_path: input,
         input_reason: "read-failed",
       });
       expect(result.exitCode).toBe(1);
@@ -154,6 +206,81 @@ describe("compiled JSON parser and logger success seam", () => {
           { env: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root } },
         );
         expect(result.stdout).toBe(`${json}\n`);
+        expect(result.stderr).toBe("");
+        expect(result.exitCode).toBe(0);
+      },
+    );
+});
+
+describe("compiled CLI parser with relative brace and bracket paths", () => {
+  for (const filename of ["[input].json", "{capture}.json"])
+    cliTest(
+      `reads the selected relative file ${filename}`,
+      async ({ processes }) => {
+        const root = await createTestTempDirectory("rea-cli-json-path-");
+        const value = { selected: filename };
+        await writeFile(join(root, filename), JSON.stringify(value));
+        const moduleUrl = new URL(
+          "../../../dist/cliJsonInput.js",
+          import.meta.url,
+        ).href;
+        const result = await processes.run(
+          process.execPath,
+          [
+            "--input-type=module",
+            "-e",
+            `import { parseCliJsonInput } from ${JSON.stringify(moduleUrl)};
+           console.log(JSON.stringify(await parseCliJsonInput(process.argv[1], "test-input")));`,
+            filename,
+          ],
+          {
+            cwd: root,
+            env: {
+              HOME: root,
+              XDG_CONFIG_HOME: root,
+              XDG_CACHE_HOME: root,
+            },
+          },
+        );
+
+        expect(result.stdout).toBe(`${JSON.stringify({ ok: true, value })}\n`);
+        expect(result.stderr).toBe("");
+        expect(result.exitCode).toBe(0);
+      },
+    );
+
+  for (const filename of ["[missing].json", "{missing}.json"])
+    cliTest(
+      `keeps missing relative path diagnostics for ${filename}`,
+      async ({ processes }) => {
+        const root = await createTestTempDirectory("rea-cli-json-missing-");
+        const moduleUrl = new URL(
+          "../../../dist/cliJsonInput.js",
+          import.meta.url,
+        ).href;
+        const result = await processes.run(
+          process.execPath,
+          [
+            "--input-type=module",
+            "-e",
+            `import { parseCliJsonInput } from ${JSON.stringify(moduleUrl)};
+           console.log(JSON.stringify(await parseCliJsonInput(process.argv[1], "test-input")));`,
+            filename,
+          ],
+          {
+            cwd: root,
+            env: {
+              HOME: root,
+              XDG_CONFIG_HOME: root,
+              XDG_CACHE_HOME: root,
+            },
+          },
+        );
+
+        expect(JSON.parse(result.stdout.trim())).toMatchObject({
+          ok: false,
+          error: { input_path: filename, input_reason: "read-failed" },
+        });
         expect(result.stderr).toBe("");
         expect(result.exitCode).toBe(0);
       },

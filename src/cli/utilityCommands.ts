@@ -1,5 +1,4 @@
 import { z } from "incur";
-import { jsonValueSchema } from "../domain/jsonValue.js";
 
 import {
   runCapabilityStatus,
@@ -10,6 +9,10 @@ import { importReferenceSource } from "../application/ReferenceSourceImport.js";
 import { projectReferenceSourceImportError } from "../application/ReferenceSourceImportTypes.js";
 import { parseConfig } from "../config.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import { projectInputIssues } from "../domain/inputIssueProjection.js";
+import { safeParseJson } from "../domain/safeJson.js";
+import { nativeUiScenarioInputSchema } from "../domain/native/nativeUiObservation.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { logCliCommand } from "../cliLogging.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -67,32 +70,58 @@ export const registerUtilityCommands = (
         maxNodes: "max-nodes",
       },
       run: ({ args, options }) =>
-        logCliCommand(logger, command, () =>
-          runProviderAnalysis(
-            args.path,
-            operation,
-            {
-              pid: options.pid,
-              window_id: options.windowId,
-              screenshot: options.screenshot,
-              accessibility: options.accessibility,
-              max_nodes: options.maxNodes,
-              ...(operation === "capture_native_ui_scenario"
-                ? {
-                    steps:
-                      options.steps === undefined
-                        ? []
-                        : jsonValueSchema.parse(JSON.parse(options.steps)),
-                  }
-                : {}),
-            },
-            logger,
-          ),
-        ),
+        logCliCommand(logger, command, async () => {
+          const parameters = {
+            pid: options.pid,
+            window_id: options.windowId,
+            screenshot: options.screenshot,
+            accessibility: options.accessibility,
+            max_nodes: options.maxNodes,
+          };
+          if (operation === "capture_native_ui_scenario") {
+            const decoded =
+              options.steps === undefined
+                ? { ok: true as const, value: undefined }
+                : safeParseJson(options.steps);
+            if (!decoded.ok)
+              return invalidNativeUiScenarioInput(operation, [
+                { path: ["steps"], reason: "invalid_format", expected: "JSON" },
+              ]);
+            const parsed = nativeUiScenarioInputSchema.safeParse({
+              ...parameters,
+              steps: decoded.value,
+            });
+            if (!parsed.success)
+              return invalidNativeUiScenarioInput(
+                operation,
+                projectInputIssues(parsed.error.issues, {
+                  ...parameters,
+                  ...(options.steps === undefined
+                    ? {}
+                    : { steps: decoded.value }),
+                }),
+              );
+            return runProviderAnalysis(
+              args.path,
+              operation,
+              parsed.data,
+              logger,
+            );
+          }
+          return runProviderAnalysis(args.path, operation, parameters, logger);
+        }),
     });
   }
   registerReferenceSourceCommand(cli, logger, environment);
 };
+
+const invalidNativeUiScenarioInput = (
+  operation: string,
+  issues: ConstructorParameters<typeof AnalysisInputError>[2],
+) => ({
+  error: "Application workflow failed",
+  ...projectAnalysisError(new AnalysisInputError(operation, undefined, issues)),
+});
 
 const registerCapabilityCommands = (cli: CliInstance, logger: Logger): void => {
   for (const command of [

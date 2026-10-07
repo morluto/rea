@@ -60,10 +60,26 @@ export const nativeUiScenarioInputSchema = z.strictObject({
 const nativeUiScreenshotSchema = z
   .strictObject({
     mime_type: z.literal("image/png"),
-    base64: z.string().min(4),
-    sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-    width: z.number().int().positive(),
-    height: z.number().int().positive(),
+    base64: z
+      .string()
+      .min(4)
+      .describe(
+        "Canonical base64 encoding of PNG bytes; the decoded bytes must have a PNG signature and IHDR chunk.",
+      ),
+    sha256: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/u)
+      .describe("SHA-256 digest of the decoded PNG bytes."),
+    width: z
+      .number()
+      .int()
+      .positive()
+      .describe("Must equal the width encoded in the PNG IHDR chunk."),
+    height: z
+      .number()
+      .int()
+      .positive()
+      .describe("Must equal the height encoded in the PNG IHDR chunk."),
   })
   .superRefine((screenshot, context) => {
     const bytes = decodeCanonicalBase64(screenshot.base64);

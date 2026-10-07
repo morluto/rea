@@ -375,16 +375,18 @@ const processCaptureShapeSchema: z.ZodType<UnverifiedProcessCapture> =
   });
 
 /** Exact serialized shape plus all process-capture semantic invariants. */
-export const processCaptureSchema = processCaptureShapeSchema.superRefine(
-  (capture, context) => {
+export const processCaptureSchema = processCaptureShapeSchema
+  .superRefine((capture, context) => {
     for (const issue of collectProcessCaptureIssues(capture))
       context.addIssue({
         code: "custom",
         path: issue.path.split("."),
         message: issue.message,
       });
-  },
-);
+  })
+  .describe(
+    "The capture must preserve its canonical scenario, comparison, and normalization SHA-256 commitments; ordered capture timestamps and contiguous sequence numbers; before and final filesystem snapshots with truncation propagated; and exit-code consistency with deadline termination. When parsing older input without an event journal, REA supplies an empty journal; empty journals are valid. A non-empty journal must reference every captured observation exactly once with unique in-range references. These cross-field invariants are checked by REA after capture.",
+  );
 
 export { parseProcessCapture } from "./processCaptureParsing.js";
 export type { ProcessCapture } from "./processCaptureParsing.js";

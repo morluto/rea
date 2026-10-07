@@ -61,6 +61,24 @@ describe("direct process scenarios", () => {
     ).toBe(true);
   });
 
+  it("rejects NUL in strings passed to child-process APIs", () => {
+    const nul = "\0";
+    for (const input of [
+      { executable: `node${nul}` },
+      { executable: "node", arguments: [nul] },
+      { executable: "node", working_directory: `.${nul}` },
+      { executable: "node", environment: { KEY: nul } },
+      { executable: "node", filesystem_observation_paths: [nul] },
+    ])
+      expect(processScenarioSchema.safeParse(input).success).toBe(false);
+    expect(
+      processScenarioSchema.safeParse({
+        executable: "node",
+        events: [{ type: "input", at_ms: 0, data: nul }],
+      }).success,
+    ).toBe(true);
+  });
+
   it("keeps bounded capture controls and ordered scheduled interaction", () => {
     const scenario = processScenarioSchema.parse({
       executable: "node",
