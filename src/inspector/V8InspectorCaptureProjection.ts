@@ -38,6 +38,14 @@ interface FinalizeCaptureInput {
   readonly runtime: JavaScriptRuntimeTargetList["runtime"];
   readonly target: AuthorizedV8InspectorTarget;
   readonly state: CaptureState;
+  readonly authorizeLocation?: typeof authorizeRuntimeLocation;
+}
+
+const LOCATION_AUTHORIZATION_WORKERS = 8;
+
+interface AuthorizedLocationGroup {
+  readonly drafts: readonly ScriptDraft[];
+  readonly decision: Awaited<ReturnType<typeof authorizeRuntimeLocation>>;
 }
 
 /** Canonically authorize, deduplicate, and sort one bounded raw capture. */
@@ -46,20 +54,61 @@ export const finalizeInspectorCapture = async ({
   runtime,
   target,
   state,
+  authorizeLocation = authorizeRuntimeLocation,
 }: FinalizeCaptureInput): Promise<JavaScriptRuntimeObservation> => {
   const exclusions = createInspectorExclusionCounts();
   const scripts = new Map<
     string,
     JavaScriptRuntimeObservation["scripts"]["items"][number]
   >();
+  const draftsByUrl = new Map<string, ScriptDraft[]>();
   for (const draft of state.scripts) {
-    const decision = await authorizeRuntimeLocation(draft.rawUrl);
-    if (!decision.allowed) {
-      exclusions[inspectorExclusionKey(decision.reason)] += 1;
-      continue;
+    const drafts = draftsByUrl.get(draft.rawUrl) ?? [];
+    drafts.push(draft);
+    draftsByUrl.set(draft.rawUrl, drafts);
+  }
+  const groups = [...draftsByUrl];
+  const authorizedGroups: AuthorizedLocationGroup[] = new Array(groups.length);
+  let nextGroup = 0;
+  let stopScheduling = false;
+  const worker = async (): Promise<void> => {
+    try {
+      for (;;) {
+        if (stopScheduling) return;
+        const index = nextGroup;
+        nextGroup += 1;
+        const group = groups[index];
+        if (group === undefined) return;
+        const [rawUrl, drafts] = group;
+        authorizedGroups[index] = {
+          drafts,
+          decision: await authorizeLocation(rawUrl),
+        };
+      }
+    } catch (cause: unknown) {
+      stopScheduling = true;
+      throw cause;
     }
-    const script = scriptFromDraft(draft, decision.location);
-    scripts.set(script.script_key, script);
+  };
+  const workerResults = await Promise.allSettled(
+    Array.from(
+      { length: Math.min(LOCATION_AUTHORIZATION_WORKERS, groups.length) },
+      worker,
+    ),
+  );
+  const failedWorker = workerResults.find(
+    (result) => result.status === "rejected",
+  );
+  if (failedWorker?.status === "rejected") throw failedWorker.reason;
+  for (const { drafts, decision } of authorizedGroups) {
+    for (const draft of drafts) {
+      if (!decision.allowed) {
+        exclusions[inspectorExclusionKey(decision.reason)] += 1;
+        continue;
+      }
+      const script = scriptFromDraft(draft, decision.location);
+      scripts.set(script.script_key, script);
+    }
   }
   const items = [...scripts.values()].sort((left, right) =>
     left.script_key < right.script_key

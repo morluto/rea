@@ -246,6 +246,112 @@ describe("function collection collation ties", () => {
   });
 });
 
+describe("function comparison ordering controls", () => {
+  const composed = { address: "0x2000", name: "caf\u00e9" };
+  const decomposed = { address: "0x3000", name: "cafe\u0301" };
+
+  it("preserves duplicate Unicode collections and nullable endpoints", () => {
+    const controlled = (base: "0x1000" | "0x2000", reverse: boolean) => {
+      const endpoint = base === "0x1000" ? "0x1010" : "0x2010";
+      const edges = [
+        {
+          source_address: base,
+          target_address: endpoint,
+          source_procedure: null,
+          target_procedure: { address: endpoint, name: "caf\u00e9" },
+          kind: {
+            available: true,
+            provenance: "provider-reference-manager",
+            type: "UNCONDITIONAL_CALL",
+            flow: true,
+            call: true,
+            jump: false,
+            data: false,
+            read: false,
+            write: false,
+            indirect: false,
+            computed: false,
+            conditional: false,
+            terminal: false,
+            primary: true,
+            operand_index: 0,
+            external: false,
+          },
+        },
+        {
+          source_address: base,
+          target_address: endpoint,
+          source_procedure: { address: base, name: "dispatch" },
+          target_procedure: null,
+          kind: {
+            available: true,
+            provenance: "provider-reference-manager",
+            type: "READ",
+            flow: false,
+            call: false,
+            jump: false,
+            data: true,
+            read: true,
+            write: false,
+            indirect: false,
+            computed: false,
+            conditional: false,
+            terminal: false,
+            primary: true,
+            operand_index: 1,
+            external: false,
+          },
+        },
+      ];
+      const strings = [
+        { address: endpoint, source_address: base, value: "caf\u00e9" },
+        { address: endpoint, source_address: base, value: "cafe\u0301" },
+        { address: endpoint, source_address: base, value: "cafe\u0301" },
+      ];
+      return functionDossierSchema.parse({
+        ...dossier("return 0;", base),
+        callees: [composed, decomposed, composed],
+        incoming_references: reverse ? [...edges].reverse() : edges,
+        outgoing_references: reverse ? [...edges].reverse() : edges,
+        referenced_strings: reverse ? [...strings].reverse() : strings,
+        referenced_names: reverse ? [...strings].reverse() : strings,
+      });
+    };
+    const makeEvidence = (digit: string, result: unknown): Evidence =>
+      createEvidence(
+        {
+          path: `/tmp/function-${digit}`,
+          sha256: digit.repeat(64),
+          format: "mach-o",
+        },
+        { id: "rea-workflow", name: "REA workflow", version: "1" },
+        {
+          operation: "analyze_function",
+          parameters: enhancedInputSchemas.analyze_function.parse({
+            procedure: "dispatch",
+          }),
+          result: jsonValueSchema.parse(result),
+          confidence: "derived",
+          authority: "shipped-artifact",
+        },
+      );
+    const left = controlled("0x1000", false);
+    const right = controlled("0x2000", true);
+    const { native_api: _nativeApi, ...rightWithoutNativeApi } = right;
+
+    const comparison = compareFunctions(
+      makeEvidence("d", left),
+      makeEvidence("e", rightWithoutNativeApi),
+    );
+
+    expect(comparison.status).toBe("unchanged");
+    for (const dimension of ["calls", "references", "strings_names"] as const)
+      expect(
+        comparison.dimensions.find((item) => item.dimension === dimension),
+      ).toMatchObject({ status: "unchanged" });
+  });
+});
+
 describe("function comparison CFG address normalization", () => {
   it("matches CFG successors by numeric address", () => {
     const make = (base: "0x1000" | "0x2000") =>

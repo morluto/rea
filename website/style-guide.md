@@ -154,6 +154,10 @@ cursor animation and reduced-motion behavior. Label an example prompt as an
 example; a real recorded result belongs in an evidence block. Copy buttons
 should copy only the intended text, without the prompt symbol or cursor.
 
+Include the shared `↑ Top` link on reading pages, with `id="top"` on the body.
+Keep its 44px minimum touch height, safe-area spacing and keyboard focus return.
+Use the shared script for visibility and reduced-motion behavior.
+
 Use `minmax(0, 1fr)` for grid tracks that contain long commands or nested panels.
 Allow code blocks to scroll within their own area. Check expanded details as
 well as the default page. Document-level horizontal scrolling usually means a

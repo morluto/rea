@@ -23,4 +23,13 @@ describe("execFileOutput", () => {
       ),
     ).rejects.toMatchObject({ code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" });
   });
+
+  it("retains both captured streams on a failed child process", async () => {
+    await expect(
+      execFileOutput(process.execPath, [
+        "-e",
+        'process.stdout.write("out"); process.stderr.write("err"); process.exitCode = 7;',
+      ]),
+    ).rejects.toMatchObject({ code: 7, stdout: "out", stderr: "err" });
+  });
 });

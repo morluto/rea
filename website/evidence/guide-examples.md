@@ -71,6 +71,10 @@ Full local outputs and the browser verification harness are under
 
 ## Example source digests
 
+These digests identify the files used for the recorded analyses. The browser
+page later gained the site's shared `↑ Top` navigation; its `export.js` and
+`notes.json` retain the versions below.
+
 | File                                   | SHA-256                                                            |
 | -------------------------------------- | ------------------------------------------------------------------ |
 | `examples/notes-electron/csv.js`       | `6875aeecc1d3e6c1ff5b888a199c26b377d812d5b10e5fb4025e192a206b0018` |

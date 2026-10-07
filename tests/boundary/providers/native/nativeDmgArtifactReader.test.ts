@@ -1,9 +1,12 @@
-import { mkdir, realpath, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { build } from "plist";
 import { describe, expect, it } from "vitest";
 
+import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import { execFileOutput } from "../../../../src/process/ExecFileOutput.js";
+import { ArtifactReaderFailure } from "../../../../src/artifacts/ArtifactReader.js";
 import {
   NativeDmgArtifactReader,
   type NativeDmgHost,
@@ -53,9 +56,19 @@ describe("native DMG artifact reader", () => {
   it("rejects non-zero results and surfaces detach failure during attach cleanup", async () => {
     await expect(
       NativeDmgArtifactReader.create("/tmp/image.dmg", undefined, {
-        run: () => Promise.resolve({ stdout: "", exitCode: 1 }),
+        run: () =>
+          Promise.resolve({
+            stdout: "verify output",
+            stderr: "hdiutil: verify failed - image not recognized",
+            exitCode: 1,
+          }),
       }),
-    ).rejects.toThrow("non-zero exit code");
+    ).rejects.toMatchObject({
+      reason: "format",
+      message: expect.stringMatching(
+        /"arguments":\["verify","\/tmp\/image\.dmg"\].*"exitCode":1.*"stderr":"hdiutil: verify failed - image not recognized"/u,
+      ),
+    });
 
     const host: NativeDmgHost = {
       run(arguments_) {
@@ -89,6 +102,231 @@ describe("native DMG artifact reader", () => {
       NativeDmgArtifactReader.create("/tmp/image.dmg", undefined, host),
     ).rejects.toThrow("cleanup could not detach every device");
   });
+});
+
+describe("native DMG command failure diagnostics", () => {
+  it("keeps unknown attach failures unavailable with command evidence", async () => {
+    await expect(
+      NativeDmgArtifactReader.create("/tmp/image.dmg", undefined, {
+        run(arguments_) {
+          if (arguments_[0] === "verify")
+            return Promise.resolve({ stdout: "", exitCode: 0 });
+          return Promise.resolve({
+            stdout: "attach output",
+            stderr: "attach failed for an unknown reason",
+            exitCode: 2,
+          });
+        },
+      }),
+    ).rejects.toMatchObject({
+      reason: "unavailable",
+      message: expect.stringMatching(
+        /"arguments":\["attach".*"exitCode":2.*"stderr":"attach failed for an unknown reason"/u,
+      ),
+    });
+  });
+
+  it("keeps unrecognized numeric verify failures unknown and maps the observed I/O diagnostic", async () => {
+    const unknown = await NativeDmgArtifactReader.create(
+      "/tmp/image.dmg",
+      undefined,
+      {
+        run: () =>
+          Promise.resolve({
+            stdout: "verify stdout",
+            stderr: "hdiutil: verify failed - an unrecognized system failure",
+            exitCode: 1,
+          }),
+      },
+    ).catch((cause: unknown) => cause);
+    expect(unknown).toBeInstanceOf(ArtifactReaderFailure);
+    if (!(unknown instanceof ArtifactReaderFailure)) return;
+    expect(unknown.reason).toBe("unavailable");
+    expect(unknown.message).toContain("do not establish the failure cause");
+    expect(unknown.message).toContain('"exitCode":1');
+    expect(unknown.message).toContain('"stdout":"verify stdout"');
+    expect(unknown.message).toContain("an unrecognized system failure");
+
+    await expect(
+      NativeDmgArtifactReader.create("/tmp/image.dmg", undefined, {
+        run: () =>
+          Promise.resolve({
+            stdout: "",
+            stderr: "hdiutil: verify failed - Input/output error\n",
+            exitCode: 1,
+          }),
+      }),
+    ).rejects.toMatchObject({
+      reason: "io",
+      message: expect.stringContaining("Input/output error"),
+    });
+
+    await expect(
+      NativeDmgArtifactReader.create("/tmp/image.dmg", undefined, {
+        run: () =>
+          Promise.resolve({
+            stdout: "checksum output",
+            stderr: "hdiutil: verify failed - image data corrupted\n",
+            exitCode: 1,
+          }),
+      }),
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      message: expect.stringContaining("image data corrupted"),
+    });
+  });
+
+  it("distinguishes child launch and host permission failures", async () => {
+    await expect(
+      NativeDmgArtifactReader.create("/tmp/image.dmg", undefined, {
+        run: () =>
+          Promise.reject(
+            Object.assign(new Error("could not launch hdiutil"), {
+              code: "ENOENT",
+              syscall: "spawn /usr/bin/hdiutil",
+            }),
+          ),
+      }),
+    ).rejects.toMatchObject({
+      reason: "unavailable",
+      message: expect.stringContaining('"code":"ENOENT"'),
+    });
+
+    await expect(
+      NativeDmgArtifactReader.create("/tmp/image.dmg", undefined, {
+        run: () =>
+          Promise.reject(
+            Object.assign(new Error("permission denied"), {
+              code: "EACCES",
+              syscall: "spawn /usr/bin/hdiutil",
+            }),
+          ),
+      }),
+    ).rejects.toMatchObject({
+      reason: "io",
+      message: expect.stringContaining('"code":"EACCES"'),
+    });
+  });
+});
+
+describe("native DMG real verification diagnostics", () => {
+  it.skipIf(process.platform !== "darwin")(
+    "classifies a real hdiutil verify refusal as a format failure with captured output",
+    async () => {
+      const root = await createTestTempDirectory("rea-invalid-dmg-");
+      const path = join(root, "invalid.dmg");
+      await writeFile(path, "This is not a disk image.\n");
+      const failure = await NativeDmgArtifactReader.create(path).catch(
+        (cause: unknown) => cause,
+      );
+      expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+      if (!(failure instanceof ArtifactReaderFailure)) return;
+      expect(failure.reason).toBe("format");
+      expect(failure.message).toContain('"command":"/usr/bin/hdiutil"');
+      expect(failure.message).toContain('"arguments":["verify"');
+      expect(failure.message).toContain('"exitCode":1');
+      expect(failure.message).toContain('"stdout":""');
+      expect(failure.message).toContain('"stderr":"');
+    },
+  );
+
+  it.skipIf(process.platform !== "darwin")(
+    "classifies real hdiutil target access failures as I/O, separately from malformed images",
+    async () => {
+      const root = await createTestTempDirectory("rea-dmg-target-errors-");
+      const missingPath = join(root, "missing.dmg");
+      const unreadablePath = join(root, "unreadable.dmg");
+      await writeFile(unreadablePath, "not a disk image\n");
+      await chmod(unreadablePath, 0);
+      try {
+        for (const [path, expectedDiagnostic] of [
+          [missingPath, "No such file or directory"],
+          [unreadablePath, "Permission denied"],
+        ] as const) {
+          const failure = await NativeDmgArtifactReader.create(path).catch(
+            (cause: unknown) => cause,
+          );
+          expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+          if (!(failure instanceof ArtifactReaderFailure)) continue;
+          expect(failure.reason).toBe("io");
+          expect(failure.message).toContain('"command":"/usr/bin/hdiutil"');
+          expect(failure.message).toContain('"arguments":["verify"');
+          expect(failure.message).toContain('"exitCode":1');
+          expect(failure.message).toContain('"stdout":""');
+          expect(failure.message).toContain(expectedDiagnostic);
+          expect(failure.cause).toBeInstanceOf(Error);
+          if (!(failure.cause instanceof Error)) continue;
+          expect(Reflect.get(failure.cause, "code")).toBe(1);
+          expect(Reflect.get(failure.cause, "stderr")).toContain(
+            expectedDiagnostic,
+          );
+        }
+      } finally {
+        await chmod(unreadablePath, 0o600);
+      }
+    },
+  );
+
+  it.skipIf(process.platform !== "darwin")(
+    "classifies a checksum mismatch in an hdiutil-created DMG as an integrity failure",
+    async () => {
+      const root = await createTestTempDirectory(
+        "rea-dmg-checksum-corruption-",
+      );
+      const source = join(root, "source");
+      await mkdir(source);
+      await writeFile(join(source, "payload.bin"), Buffer.alloc(65_536, 0x5a));
+      const imagePath = join(root, "fixture.dmg");
+      await execFileOutput("/usr/bin/hdiutil", [
+        "create",
+        "-quiet",
+        "-srcfolder",
+        source,
+        "-volname",
+        "Fixture",
+        "-format",
+        "UDRO",
+        imagePath,
+      ]);
+      const valid = await execFileOutput("/usr/bin/hdiutil", [
+        "verify",
+        imagePath,
+      ]);
+      expect(valid.stderr).toContain("is VALID");
+
+      const image = await readFile(imagePath);
+      const footer = image.subarray(-512);
+      expect(footer.subarray(0, 4).toString("ascii")).toBe("koly");
+      const dataForkOffset = Number(footer.readBigUInt64BE(24));
+      const dataForkLength = Number(footer.readBigUInt64BE(32));
+      expect(dataForkLength).toBeGreaterThan(4096);
+      const corruptionOffset = dataForkOffset + 4096;
+      expect(corruptionOffset).toBeLessThan(dataForkOffset + dataForkLength);
+      const originalByte = image[corruptionOffset];
+      if (originalByte === undefined)
+        throw new Error("expected a byte in the generated image data fork");
+      image[corruptionOffset] = originalByte ^ 0x01;
+      await writeFile(imagePath, image);
+
+      const failure = await NativeDmgArtifactReader.create(imagePath).catch(
+        (cause: unknown) => cause,
+      );
+      expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+      if (!(failure instanceof ArtifactReaderFailure)) return;
+      expect(failure.reason).toBe("integrity");
+      expect(failure.message).toContain('"command":"/usr/bin/hdiutil"');
+      expect(failure.message).toContain('"arguments":["verify"');
+      expect(failure.message).toContain('"exitCode":1');
+      expect(failure.message).toContain("calculated CRC32");
+      expect(failure.message).toContain("expected   CRC32");
+      expect(failure.message).toContain("verify failed - invalid checksum");
+      expect(failure.cause).toBeInstanceOf(Error);
+      if (!(failure.cause instanceof Error)) return;
+      expect(Reflect.get(failure.cause, "code")).toBe(1);
+      expect(Reflect.get(failure.cause, "stderr")).toContain("is INVALID");
+    },
+    60_000,
+  );
 });
 
 it("owns the canonical mount root and detaches each observed whole image once", async () => {
