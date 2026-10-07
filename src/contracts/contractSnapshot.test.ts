@@ -16,6 +16,7 @@ import { ELECTRON_TOOL_CONTRACTS } from "./electronToolContracts.js";
 import { JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS } from "./javascriptRuntimeObservationToolContracts.js";
 import { APPLICATION_TOOL_CONTRACTS } from "./applicationToolContracts.js";
 import { WEB_SCRIPT_TOOL_CONTRACTS } from "./webScriptToolContracts.js";
+import { JAVASCRIPT_RECOVERY_TOOL_CONTRACTS } from "./javascriptRecoveryToolContracts.js";
 import { TOOL_EFFECTS } from "./toolEffects.js";
 import { toolContract } from "./toolContracts.js";
 const contractJsonSchema = (schema: z.ZodType) =>
@@ -77,6 +78,7 @@ describe("tool contract surface", () => {
       ...JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS,
       ...APPLICATION_TOOL_CONTRACTS,
       ...WEB_SCRIPT_TOOL_CONTRACTS,
+      ...JAVASCRIPT_RECOVERY_TOOL_CONTRACTS,
       ...SESSION_TOOL_CONTRACTS,
     ].map(({ name }) => name);
     expect(Object.keys(TOOL_EFFECTS).sort()).toEqual(names.sort());

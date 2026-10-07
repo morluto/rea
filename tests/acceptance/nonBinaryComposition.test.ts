@@ -5,6 +5,7 @@ import { expect, onTestFinished } from "vitest";
 
 import { createAndroidAnalysisProvider } from "../../src/composition/android.js";
 import { createFirmwareAnalysisProvider } from "../../src/composition/firmware.js";
+import { createJavaScriptRecoveryProvider } from "../../src/composition/javascriptRecovery.js";
 import { createServer } from "../../src/server/createServer.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { writeOrderedZip } from "../fixtures/artifactEntryOrder.js";
@@ -18,6 +19,7 @@ const connect = async (environment: NodeJS.ProcessEnv) => {
   const server = createServer(session, session, {
     androidAnalysis: createAndroidAnalysisProvider(environment),
     firmwareAnalysis: createFirmwareAnalysisProvider(environment),
+    javascriptRecovery: createJavaScriptRecoveryProvider(environment),
   });
   const client = new Client({ name: "composition-parity", version: "1" });
   onTestFinished(async () => {
@@ -83,6 +85,41 @@ cliTest.skipIf(process.platform !== "linux")(
     expect(response.structuredContent).toEqual({ error: cliResult.json });
     expect(JSON.stringify(response.structuredContent)).toContain(
       "REA_BINWALK_COMMAND",
+    );
+  },
+);
+
+cliTest(
+  "preserves optional JavaScript recovery configuration through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-recovery-composition-");
+    const path = join(root, "bundle.js");
+    await writeFile(path, "globalThis.fixture = 1;");
+    const environment = {
+      REA_LOG_LEVEL: "silent",
+      REA_WAKARU_COMMAND: "relative-unavailable-tool",
+    };
+    const cliResult = await cli.run({
+      arguments: [
+        "recover-javascript-sources",
+        path,
+        join(root, "output"),
+        "--json",
+      ],
+      environment,
+      timeoutMs: 10000,
+    });
+    expect(cliResult.exitCode).toBe(1);
+    expect(cliResult.json).toMatchObject({ code: "capability_unavailable" });
+    const client = await connect(environment);
+    const response = await client.callTool({
+      name: "recover_javascript_sources",
+      arguments: { path, output_directory: join(root, "output") },
+    });
+    expect(response.isError).toBe(true);
+    expect(response.structuredContent).toEqual({ error: cliResult.json });
+    expect(JSON.stringify(response.structuredContent)).toContain(
+      "REA_WAKARU_COMMAND",
     );
   },
 );

@@ -1,0 +1,69 @@
+name: Real JavaScript recovery
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/real-javascript-recovery.yml"
+      - "src/javascript/recovery/**"
+      - "src/domain/javascript*.ts"
+      - "src/application/JavaScriptRecovery*.ts"
+      - "src/composition/javascriptRecovery.ts"
+      - "src/contracts/javascriptRecoveryToolContracts.ts"
+      - "src/cli/javascriptRecoveryCommands.ts"
+      - "src/cli/javascriptApplicationAnalysis.ts"
+      - "src/server/registerJavaScriptRecoveryTool.ts"
+      - "src/server/createServer.ts"
+      - "src/server/sessionAvailabilityPolicy.ts"
+      - "src/application/CapabilityInventory.ts"
+      - "src/cli.ts"
+      - "src/cliCommandNames.ts"
+      - "src/contracts/toolContracts.ts"
+      - "src/contracts/toolEffects.ts"
+      - "scripts/rea.mjs"
+      - "src/process/**"
+      - "src/artifacts/SafeOutputTree.ts"
+      - "scripts/verify-javascript-recovery.mjs"
+      - "scripts/lib/javascript-recovery-*.mjs"
+      - "scripts/fixtures/javascript-recovery/**"
+      - "third_party/wakaru"
+      - "package.json"
+      - "package-lock.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: javascript-recovery-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  HUSKY: "0"
+  NODE_OPTIONS: "--max-old-space-size=768"
+  RAYON_NUM_THREADS: "1"
+
+jobs:
+  real-javascript-recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Fetch pinned Wakaru release into the job workspace
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/rea-wakaru"
+          curl --fail --location --retry 3 https://github.com/pionxzh/wakaru/releases/download/v1.13.0/wakaru-linux-x64.tar.gz -o "$RUNNER_TEMP/rea-wakaru/release.tar.gz"
+          tar -xzf "$RUNNER_TEMP/rea-wakaru/release.tar.gz" -C "$RUNNER_TEMP/rea-wakaru" wakaru
+          printf '%s  %s\n' e8c7ca052974604197389f6ace7464e4dd24dce64e2730971521bd6606ec9c9e "$RUNNER_TEMP/rea-wakaru/wakaru" | sha256sum --check
+      - name: Install isolated fixture compilers
+        run: npm install --prefix "$RUNNER_TEMP/rea-fixture-compilers" --ignore-scripts --no-audit --no-fund esbuild@0.25.10 webpack@5.101.3
+      - run: npm run build:cached
+      - run: npm run verify:javascript:recovery
+        env:
+          REA_WAKARU_COMMAND: ${{ runner.temp }}/rea-wakaru/wakaru
+          REA_JAVASCRIPT_FIXTURE_TOOLS: ${{ runner.temp }}/rea-fixture-compilers

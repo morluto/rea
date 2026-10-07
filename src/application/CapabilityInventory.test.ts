@@ -333,3 +333,25 @@ describe("capability inventory: caller guidance", () => {
     });
   });
 });
+
+describe("optional JavaScript recovery availability", () => {
+  it("keeps optional recovery target-free and does not disable other static workflows", () => {
+    expect(entry("recover_javascript_sources", status())).toMatchObject({
+      available: false,
+      reason: "provider_missing",
+      remediation: expect.stringContaining("REA_WAKARU_COMMAND"),
+    });
+    expect(
+      entry("recover_javascript_sources", status(), {
+        processCaptureEnabled: true,
+        javascriptRecoveryEnabled: true,
+      }),
+    ).toMatchObject({
+      available: true,
+      surface: "application",
+    });
+    expect(entry("analyze_javascript_application", status())).toMatchObject({
+      available: true,
+    });
+  });
+});

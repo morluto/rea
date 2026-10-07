@@ -7,6 +7,7 @@ on:
       - "scripts/verify-real-browser.mjs"
       - "scripts/verify-browser-network.mjs"
       - "scripts/verify-browser-scripts.mjs"
+      - "scripts/verify-browser-dom-destinations.mjs"
       - "scripts/lib/browser-*.mjs"
       - "scripts/fixtures/browser-network-site.mjs"
       - "scripts/fixtures/browser-script-site.mjs"

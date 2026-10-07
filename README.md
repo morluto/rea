@@ -396,7 +396,7 @@ See [native investigation](docs/native-investigation.md) for keyed archives, ins
 | Browser observation       |     9 | page structure, network metadata, scripts, source maps, WebMCP discovery, screenshots, and capture comparisons                                                      |
 | Electron analysis         |     5 | renderer observation, static app mapping, and static/runtime reconciliation                                                                                         |
 | JavaScript runtime        |     2 | Node/Electron Inspector target discovery, script locations, and execution-context events                                                                            |
-| Application workflows     |     8 | captured website script export; cross-layer feature traces, build comparisons, historical source mapping, static return-shape comparison, and reconstruction checks |
+| Application workflows     |     9 | captured website script export; cross-layer feature traces, build comparisons, historical source mapping, static return-shape comparison, and reconstruction checks |
 | Workspace and observation |    21 | sessions, evidence bundles, navigation context, process/artifact/function comparisons, and open-question tracking                                                   |
 
 The public interface describes what the agent is trying to learn. Providers decide how to answer. macOS utilities handle common semantic inspection without launching Hopper; Hopper handles deeper native analysis; the process harness records direct behavioral captures.
@@ -417,6 +417,11 @@ Static Android APK inspection is verified on Linux with headless JADX; see [Andr
   and tracing tools. Source URLs, frame or transaction references, competing
   versions, and missing-source states remain inline. See
   [captured website scripts](docs/website-script-export.md).
+  Recover readable modules from selected local bundles with
+  `recover_javascript_sources` / `rea recover-javascript-sources`, then pass
+  the returned `analysis_input` to static analysis. This optional Linux x64
+  adapter requires caller-supplied Wakaru 1.13.0; see
+  [JavaScript source recovery](docs/javascript-recovery.md).
 
 - **Electron and Node runtime observation:** Inspect selected Electron pages or attach to a Node/Electron V8 Inspector target. Inspector observation records script locations and execution-context events; it does not infer imports, IPC activity, or which modules executed. See [runtime observation](docs/javascript-runtime-observation.md).
 - **.NET assemblies:** Inspect metadata and CIL instructions, compare builds, and check declared native dependencies without loading or running the assembly. Imported decompiler output is labeled as analyst inference. See [managed-code analysis](docs/managed-code-analysis.md).

@@ -10,7 +10,7 @@
     "skill_version": "26"
   },
   "tools": {
-    "total": 126,
+    "total": 127,
     "families": [
       {
         "id": "direct",
@@ -179,7 +179,7 @@
       {
         "id": "application",
         "surface": "application-workflow",
-        "count": 8,
+        "count": 9,
         "tools": [
           "build_reconstruction_obligation_ledger",
           "compare_application_versions",
@@ -187,6 +187,7 @@
           "compare_source_to_bundle",
           "evaluate_reconstruction_coverage",
           "export_web_scripts",
+          "recover_javascript_sources",
           "trace_application_feature",
           "trace_javascript_semantics"
         ]
@@ -462,6 +463,12 @@
       "name": "Unblob",
       "version": "26.6.4",
       "capabilities": ["extract_firmware"]
+    },
+    {
+      "id": "wakaru",
+      "name": "Wakaru",
+      "version": "1.13.0",
+      "capabilities": ["recover_javascript_sources"]
     }
   ],
   "setup_clients": [
@@ -539,7 +546,7 @@
     }
   ],
   "cli": {
-    "primary_count": 81,
+    "primary_count": 82,
     "commands": [
       "address-to-file-offset",
       "analyze",
@@ -608,6 +615,7 @@
       "providers",
       "read-bytes",
       "reconcile-javascript-runtime",
+      "recover-javascript-sources",
       "resolve-native-call-targets",
       "search",
       "search-android-classes",
@@ -632,15 +640,15 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 81,
-      "mcp_tools": 126,
+      "cli_commands": 82,
+      "mcp_tools": 127,
       "mcp_prompts": 6
     },
     "digests": {
-      "tools_sha256": "3d17936cd393a494987f7f52a133f23f9b582718d57719b2e06c678a7c5ca20a",
+      "tools_sha256": "1f1acf182aa87964404e65f3acb00c44f1c392373c5a8a6f40c250da8b94c274",
       "prompts_sha256": "ef2de8814390b340623c32001610aa2709d90bed51537b6e562ab3abf144ab4d",
-      "combined_sha256": "de30f3145fb936a97fcb7bcc58ed9f20a974bae59b239dbf24664c145eff4275",
-      "providers_sha256": "7949ddcf2eb5ba41b022bb3dfa1951ab96dbf5640285fa7fd5d35b0e4a5bdab3"
+      "combined_sha256": "0efbf17dddbdf52f84d4ca1f9a3e007a0d77c2623be62ce0a69844d617bf16da",
+      "providers_sha256": "0bccfa9588376a90350d18abded999db7e1d0e4424a61a21d03d392a1c5418fe"
     }
   }
 }

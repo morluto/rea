@@ -221,6 +221,12 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     idempotent: false,
   }),
   reconcile_javascript_runtime: evidence,
+  recover_javascript_sources: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    launchesProcess: true,
+    idempotent: false,
+  }),
   trace_application_feature: evidence,
   trace_javascript_semantics: evidence,
   compare_application_versions: evidence,

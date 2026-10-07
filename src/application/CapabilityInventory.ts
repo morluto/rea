@@ -36,6 +36,7 @@ export type AvailabilityPolicy = {
   readonly firmwareInspectionEnabled?: boolean;
   readonly firmwareExtractionEnabled?: boolean;
   readonly androidAnalysisEnabled?: boolean;
+  readonly javascriptRecoveryEnabled?: boolean;
   readonly browserObservationEnabled?: boolean;
   readonly browserScenarioEnabled?: boolean;
   readonly electronObservationEnabled?: boolean;
@@ -236,6 +237,14 @@ const workflowAvailabilityFor = ({
   kind,
   policy,
 }: AvailabilityContext): Availability | null => {
+  if (name === "recover_javascript_sources")
+    return policy.javascriptRecoveryEnabled === true
+      ? { reason: "available", remediation: null }
+      : {
+          reason: "provider_missing",
+          remediation:
+            "On Linux x64, provide an absolute REA_WAKARU_COMMAND for Wakaru 1.13.0 and util-linux prlimit. No binary target is required.",
+        };
   if (kind === "firmware-provider") {
     const enabled =
       name === "inspect_firmware_regions"

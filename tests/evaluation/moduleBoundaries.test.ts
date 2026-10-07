@@ -19,6 +19,13 @@ describe("incremental module import boundaries", () => {
     ["src/server/probe.ts", "../browser/CdpBrowserProvider.js", false],
     ["src/application/probe.ts", "../browser/V8InspectorProvider.js", false],
     ["src/composition/probe.ts", "../browser/CdpBrowserProvider.js", true],
+    [
+      "src/application/probe.ts",
+      "../javascript/recovery/WakaruProvider.js",
+      false,
+    ],
+    ["src/domain/probe.ts", "../javascript/recovery/WakaruReport.js", false],
+    ["src/server/probe.ts", "../javascript/recovery/WakaruProvider.js", false],
     ["src/domain/probe.ts", "./result.js", true],
     ["src/contracts/probe.ts", "../domain/result.js", true],
     ["src/application/probe.ts", "../domain/result.js", true],

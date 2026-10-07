@@ -177,7 +177,8 @@
     "build:fixtures:nativeaot": "node scripts/generate-nativeaot-fixtures.mjs",
     "verify:ghidra:nativeaot": "npm run build:cached && node scripts/verify-real-ghidra-nativeaot.mjs",
     "verify:browser:scripts": "npm run build:cached && node scripts/verify-browser-scripts.mjs",
-    "verify:test-discovery": "node scripts/verify-test-discovery.mjs"
+    "verify:test-discovery": "node scripts/verify-test-discovery.mjs",
+    "verify:javascript:recovery": "node scripts/verify-javascript-recovery.mjs"
   },
   "lint-staged": {
     "*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}": [

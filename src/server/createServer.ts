@@ -16,6 +16,10 @@ import { registerArtifactTools } from "./registerArtifactTools.js";
 import { registerBrowserScenarioTool } from "./registerBrowserScenarioTool.js";
 import { registerBrowserTools } from "./registerBrowserTools.js";
 import { registerWebScriptTool } from "./registerWebScriptTool.js";
+import { registerJavaScriptRecoveryTool } from "./registerJavaScriptRecoveryTool.js";
+import { JavaScriptRecoveryService } from "../application/JavaScriptRecoveryService.js";
+import type { JavaScriptRecoveryPort } from "../application/JavaScriptRecoveryPort.js";
+import { createJavaScriptRecoveryProvider } from "../composition/javascriptRecovery.js";
 import { registerElectronTools } from "./registerElectronTools.js";
 import { registerEnhancedTools } from "./registerEnhancedTools.js";
 import { registerJavaScriptRuntimeObservationTools } from "./registerJavaScriptRuntimeObservationTools.js";
@@ -45,6 +49,7 @@ const ACTIVE_TARGET_INSTRUCTIONS =
 export interface CreateServerOptions {
   readonly logger?: Logger;
   readonly firmwareAnalysis?: FirmwareAnalysisPort;
+  readonly javascriptRecovery?: JavaScriptRecoveryPort;
   readonly androidAnalysis?: AndroidAnalysisPort;
   readonly browserObservation?: BrowserObservationPort;
   readonly browserScenarioCapture?: BrowserScenarioCapturePort;
@@ -77,6 +82,11 @@ const installSessionToolAvailability = (
         ((process.platform === "linux" || process.platform === "darwin") &&
           isAbsolute(process.env.REA_JADX_MCP_JAR ?? "")),
       browserObservationEnabled: options.browserObservation !== undefined,
+      javascriptRecoveryEnabled:
+        options.javascriptRecovery !== undefined ||
+        (process.platform === "linux" &&
+          process.arch === "x64" &&
+          isAbsolute(process.env.REA_WAKARU_COMMAND ?? "")),
       browserScenarioEnabled: options.browserScenarioCapture !== undefined,
       electronObservationEnabled: options.electronObservation !== undefined,
       electronAutomationEnabled:
@@ -155,6 +165,14 @@ export const createServer = (
     recordEvidence,
   );
   registerObservationTools(toolContext);
+  registerJavaScriptRecoveryTool(
+    server,
+    new JavaScriptRecoveryService(
+      options.javascriptRecovery ?? createJavaScriptRecoveryProvider(),
+    ),
+    toolLogger,
+    recordEvidence,
+  );
   registerGuidedPrompts(server, analysis, session);
   if (session !== undefined) {
     registerSessionTools(server, session, toolLogger, {

@@ -10,3 +10,6 @@
 [submodule "third_party/ghidra-nativeaot"]
 	path = third_party/ghidra-nativeaot
 	url = https://github.com/Washi1337/ghidra-nativeaot.git
+[submodule "third_party/wakaru"]
+	path = third_party/wakaru
+	url = https://github.com/pionxzh/wakaru.git

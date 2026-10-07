@@ -52,7 +52,8 @@
                   "**/ida/**",
                   "**/android/**",
                   "**/firmware/**",
-                  "**/browser/*Provider.*"
+                  "**/browser/*Provider.*",
+                  "**/javascript/**"
                 ],
                 "message": "Provider imports belong behind typed ports or in production composition."
               }
@@ -81,6 +82,7 @@
                   "**/browser/**",
                   "**/dotnet/**",
                   "**/firmware/**",
+                  "**/javascript/**",
                   "**/ghidra/**",
                   "**/hopper/**",
                   "**/ida/**",
@@ -113,6 +115,7 @@
                   "**/android/**",
                   "**/firmware/**",
                   "**/browser/*Provider.*",
+                  "**/javascript/**",
                   "**/composition/**"
                 ],
                 "message": "Application workflows use typed ports; production construction belongs in composition."
@@ -157,7 +160,8 @@
                   "**/main.*",
                   "**/composition/**",
                   "**/android/**",
-                  "**/firmware/**"
+                  "**/firmware/**",
+                  "**/javascript/**"
                 ],
                 "message": "Domain tests may import only their owning domain and inward dependencies."
               }
