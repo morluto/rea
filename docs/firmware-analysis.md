@@ -1,7 +1,10 @@
 # Firmware analysis
 
-REA integrates **Binwalk 3.1.0** for region inspection and **Unblob 26.6.4** for
-explicit extraction. This first firmware milestone is verified on Linux x64.
+REA accepts **Binwalk 3.1.x** for region inspection and **Unblob 26.6.x** for
+explicit extraction. The report parsers are verified with Binwalk 3.1.0 and
+Unblob 26.6.4. Another build on those lines is accepted, the observed version
+is reported, and a limitation records that the parser was not verified against
+that build. This first firmware milestone is verified on Linux x64.
 No device, root privilege, mount, emulation or execution of extracted programs
 is needed. Arbitrary firmware bytes do not pass native executable admission;
 select a returned ELF separately for supported Ghidra analysis.
@@ -16,7 +19,8 @@ export REA_UNBLOB_COMMAND=/absolute/path/to/unblob
 ```
 
 REA does not install these tools, their dependencies or system packages. It
-checks the actual tool version when executing a request. Inspection and
+checks the tool's `--version` banner when executing a request. Binwalk must
+print `binwalk <version>` and Unblob must print the version alone. Inspection and
 extraction have independent prerequisites; one does not require the other.
 Both require util-linux `prlimit`, normally `/usr/bin/prlimit`; override its
 absolute path with `REA_FIRMWARE_PRLIMIT_COMMAND` if needed.
@@ -34,7 +38,7 @@ git submodule update --init third_party/binwalk third_party/unblob
 ```
 
 Normal REA builds and npm packages do not include or build these sources or
-engine binaries. See [upstream provenance](../third_party/README.md).
+engine binaries. See [upstream provenance](https://github.com/morluto/rea/blob/main/third_party/README.md).
 
 ## CLI and MCP
 
@@ -161,7 +165,7 @@ Additional lanes are explicit, so the base lane stays small:
 REA_FIRMWARE_VERIFY_EXT4=1 npm run fixtures:firmware
 REA_FIRMWARE_VERIFY_EXT4=1 npm run verify:firmware
 
-# Existing Ghidra 12.1.4 and Java required.
+# Existing Ghidra 12.1.x and its declared JDK required.
 REA_FIRMWARE_VERIFY_GHIDRA=1 npm run verify:firmware
 ```
 

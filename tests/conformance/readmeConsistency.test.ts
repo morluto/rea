@@ -45,6 +45,7 @@ describe("localized README product facts", () => {
       expect(content).toContain("Ubuntu 24.04");
       expect(content).toContain("Fedora 41");
       expect(content).toContain("Arch Linux");
+      expect(content).toContain("CachyOS");
       for (const client of SUPPORTED_CLIENT_DEFINITIONS)
         expect(content).toContain(client.displayName);
       expect(content).toContain("MCP-tool_catalog");

@@ -2,6 +2,14 @@ import { createServer } from "node:net";
 
 const [socketPath, token, runId, shutdownMode = "acknowledge"] =
   process.argv.slice(2);
+const heldReplies = new Map();
+if (process.send !== undefined)
+  process.on("message", (message) => {
+    const reply = heldReplies.get(message?.release);
+    if (reply === undefined) return;
+    heldReplies.delete(message.release);
+    reply();
+  });
 const shutdownResult = () => ({
   shutdown: true,
   analysis_stopped: true,
@@ -115,7 +123,7 @@ const sendEchoWithProgress = (send, request) => {
       message: "Hopper bridge started request",
     },
   });
-  setTimeout(() => {
+  const reply = () => {
     send({
       id: request.id,
       event: {
@@ -128,7 +136,10 @@ const sendEchoWithProgress = (send, request) => {
       },
     });
     send({ id: request.id, result: request.params ?? {} });
-  }, request.params?.delay ?? 0);
+  };
+  if (typeof request.params?.gate === "string")
+    heldReplies.set(request.id, reply);
+  else setTimeout(reply, request.params?.delay ?? 0);
 };
 
 const server = createServer((socket) => {
@@ -147,6 +158,11 @@ const server = createServer((socket) => {
     let newline = buffer.indexOf("\n");
     while (newline >= 0) {
       const request = JSON.parse(buffer.slice(0, newline));
+      process.send?.({
+        id: request.id,
+        method: request.method,
+        params: request.params,
+      });
       const bridgeEventMessages = bridgeEventFixtureMessages(request);
       buffer = buffer.slice(newline + 1);
       if (request.token !== token) {
@@ -168,8 +184,7 @@ const server = createServer((socket) => {
         request.method === "shutdown_document"
       ) {
         send({ id: request.id, result: shutdownResult() });
-        if (shutdownMode !== "cleanup-required")
-          setTimeout(() => server.close(), 2);
+        if (shutdownMode !== "cleanup-required") setTimeout(closeServer, 2);
       } else if (request.method === "hang") {
         // Deliberately leave the request pending.
       } else if (request.method === "exit") {
@@ -212,5 +227,10 @@ const server = createServer((socket) => {
   });
 });
 
+const closeServer = () =>
+  server.close(() => {
+    if (process.connected) process.disconnect();
+  });
+
 server.listen(socketPath);
-process.on("SIGTERM", () => server.close());
+process.on("SIGTERM", closeServer);

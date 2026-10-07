@@ -17,6 +17,8 @@
 
 <a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
 
+**[Website](https://morluto.github.io/rea/) · [Guides](https://morluto.github.io/rea/guides/) · [Showcases](https://morluto.github.io/rea/showcase/)**
+
 [Quick start](#quick-start) · [Current status](#current-status) · [Investigation model](#the-investigation-model) · [Tool catalog](#tool-catalog-for-investigation) · [Roadmap](#roadmap) · [How it works](#how-it-works)
 
 <code>npx rea-agents setup</code>
@@ -95,6 +97,40 @@ MCP setup, Hopper, Ghidra, or executing the application. For a native app, confi
 its engine first, then use `analyze` with that app's path. Run `doctor` when you
 need diagnosis; it is not a prerequisite for each analysis.
 
+### Check readiness for the task at hand
+
+`rea doctor` without options is an audit of the whole integration. It checks
+every detected agent registration, the installed skill, and every optional
+analysis engine, so it can report `healthy: false` while your current task works.
+Choose a readiness scope for the work you are doing:
+
+| Task                                | Readiness check                                                                              |
+| ----------------------------------- | -------------------------------------------------------------------------------------------- |
+| Static JavaScript/Electron analysis | None. Run `analyze-javascript-application` directly.                                         |
+| Troubleshoot one analysis engine    | `rea doctor --provider ghidra --json` (or `hopper`, `ida`)                                   |
+| Check one agent's MCP registration  | `rea doctor --client codex --json` (see [client IDs](docs/installation.md#supported-agents)) |
+| Check the installed skill           | `rea doctor --skill --json`                                                                  |
+
+A scoped report has `scope.mode: "explicit"`. Only `scope_checks` determine
+`healthy` and the exit status. Everything else is listed in
+`informational_checks`; you don't need to fix it for this task. For example, a
+missing engine you are not using needs no repair. `environment_healthy` still
+summarizes the full audit. `--target` adds a target check, but without a scope
+option the report remains audit-wide.
+
+When more than one installed engine supports a native target, REA does not pick
+one: opening the target fails with `code: "capability_unavailable"`,
+`details.selection_reason: "ambiguous"`, and the providers in
+`details.candidate_ids`. Choose one once: pass `--provider` on
+the CLI or `provider_id` on `open_binary`, or set `REA_ANALYSIS_PROVIDER` as a
+standing preference. An explicit selector overrides the environment variable.
+The session keeps that choice and never falls back to another engine.
+Recovery depends on `details.selection_reason`. For `ambiguous`, choose one of
+the candidates. For `provider_unavailable`, the engine you selected needs repair,
+so run `rea doctor --provider <id> --json` and follow its remediation. Neither
+reason means you have to install every engine. See
+[Choosing a deep-analysis provider](#choosing-a-deep-analysis-provider).
+
 ### Install the rea command
 
 Install the command-line interface:
@@ -121,7 +157,7 @@ external-tool prerequisites depend on the selected workflow; the native
 provider guides describe their supported platforms.
 
 - macOS 12 or newer
-- Ubuntu 24.04+, Fedora 41+, or 64-bit Arch Linux
+- Ubuntu 24.04+, Fedora 41+, 64-bit Arch Linux, or CachyOS
 - Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+
 - npm; REA does not require or install a particular npm version
 
@@ -129,7 +165,7 @@ Deep native binary analysis requires [Hopper](https://www.hopperapp.com/), [Ghid
 
 Firmware region inspection and explicit extraction use caller-supplied Binwalk and Unblob on Linux. See [Firmware analysis](docs/firmware-analysis.md) for setup, provenance, resource limits and native handoff.
 
-Static APK analysis uses a separately supplied headless JADX JAR and Java, with no emulator or APK execution. See [Android analysis](docs/android-analysis.md) for setup, CLI/MCP operations, coverage and public test fixtures.
+Static APK analysis uses a separately supplied headless JADX JAR and a full JDK, with no emulator or APK execution. See [Android analysis](docs/android-analysis.md) for setup, CLI/MCP operations, coverage and public test fixtures. Authenticated IPA and macOS `.app`, ZIP, or DMG inventory Evidence can be projected into bundle anatomy, such as XPC services, app extensions, login items, privileged helpers, and launchd plists, with [Apple application analysis](docs/apple-application-analysis.md).
 
 Repository main and npm 4.1.0 include experimental Windows x64 Ghidra support for native x86-64 PE applications on local NTFS, with bundled Job Object, private-DACL, and path-admission controls. Check the [release boundary](docs/installation.md#released-package-and-main) before expecting this from an older npm package. See [Windows Ghidra P0](docs/windows-ghidra-p0.md) for prerequisites and verified scope.
 
@@ -147,7 +183,7 @@ On macOS, setup can install Hopper in `~/Applications` after approval. It verifi
 
 On supported Linux distributions, setup can install Hopper and its demo-session dependencies through your system package manager. You may see a system authorization prompt. Demo sessions use a private virtual display, leaving your desktop alone. See [Hopper installation](docs/installation.md#hopper) for download verification and platform details.
 
-The normal Linux launcher is `/opt/hopper/bin/Hopper`. If Hopper was installed elsewhere:
+REA prefers an executable `/opt/hopper/bin/Hopper` on Linux. If it is unavailable, REA automatically checks `~/.local/share/rea/hopper/bin/Hopper`. If Hopper was installed elsewhere:
 
 ```bash
 export HOPPER_LAUNCHER_PATH=/absolute/path/to/Hopper
@@ -157,16 +193,16 @@ rea doctor --json
 If doctor reports a missing analysis engine even though the file exists, inspect shared-library resolution with:
 
 ```bash
-ldd /opt/hopper/bin/Hopper | grep 'not found'
+ldd /absolute/path/to/Hopper | grep 'not found'
 ```
 
 Install the missing packages and rerun `rea setup`. The Linux demo needs Xvfb, Python 3, X11, and XTEST; approved setup installs these dependencies. If you use the curl installer, add `~/.local/bin` to your shell `PATH` when needed.
 
-REA defaults `HOPPER_LAUNCHER_PATH` to `/Applications/Hopper Disassembler.app/Contents/MacOS/hopper` on macOS and `/opt/hopper/bin/Hopper` on Linux. Explicit configuration always takes precedence.
+REA uses `/Applications/Hopper Disassembler.app/Contents/MacOS/hopper` by default on macOS. On Linux it prefers executable `/opt/hopper/bin/Hopper`, then executable `~/.local/share/rea/hopper/bin/Hopper`, and keeps `/opt/hopper/bin/Hopper` as the diagnostic fallback if neither exists. Explicit `HOPPER_LAUNCHER_PATH` configuration always takes precedence.
 
 ### Ghidra analysis provider
 
-Already use Ghidra? REA can connect it to your agent on Linux x64 or macOS x64/arm64. It requires **Ghidra 12.1.4** and a **64-bit JDK 21**. On macOS, your Ghidra installation must also include the native decompiler for your architecture.
+Already use Ghidra? REA can connect it to your agent on Linux x64 or macOS x64/arm64. It accepts **Ghidra 12.1.x** and the **64-bit full JDK** that installation declares (`application.java.min` through `application.java.max`). Current 12.1 releases require JDK 21 or newer and set no maximum. The bridge is verified with Ghidra 12.1.4 and JDK 21. On macOS, your Ghidra installation must also include the native decompiler for your architecture.
 
 Set the installation paths, then run setup:
 
@@ -335,6 +371,21 @@ REA gives the agent a clear path from that request to working code:
 
 REA handles the app analysis in steps 1 through 5. The agent performs step 6 with its normal file-editing and test tools, using what it learned about the app.
 
+## Showcase
+
+### DX-Ball: game reconstruction (in progress)
+
+[DX-Ball](https://github.com/N0zoM1z0/dx-ball) follows the journey from a classic
+Windows game's executable to maintainable C. Using REA's Ghidra provider, the
+project traces functions, game state and dependencies, then checks reconstructed
+behavior with original-x86 differential tests and pinned-compiler replay.
+
+A [sound-pan investigation](https://github.com/N0zoM1z0/dx-ball/blob/main/docs/GAMEPLAY_OWNER.md)
+turns incomplete pseudocode into a C implementation that passes 3,205 original-x86
+cases and reproduces all 63 compiled function bytes. Follow its
+[REA workflow](https://github.com/N0zoM1z0/dx-ball/blob/main/docs/REA.md)
+from binary evidence to reconstruction.
+
 ## What agents can do
 
 - Investigate a feature you like and build a version tailored to your own product.
@@ -350,20 +401,20 @@ See [native investigation](docs/native-investigation.md) for keyed archives, ins
 
 ## Tool catalog for investigation
 
-| Tool family               | Count | Examples                                                                                                                                                            |
-| ------------------------- | ----: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Native inspection         |    41 | functions, pseudocode, assembly, strings, symbols, calls, references, annotations, byte reads, and file offsets                                                     |
-| Investigation workflows   |    14 | app overviews, function dossiers, native APIs and dispatch, batch decompilation, feature traces, call paths, call graphs, Swift and Objective-C discovery           |
-| Native macOS utilities    |     7 | Mach-O metadata, code signatures, plists, architectures, and Swift demangling without launching Hopper                                                              |
-| Artifact graph            |     5 | directory and package inventories, compiled Interface Builder files, Apple asset catalogs, and extraction                                                           |
-| Managed PE/CLI            |     7 | .NET identity, metadata, CIL instructions, native dependencies, reconstruction imports, and build comparisons                                                       |
-| Firmware                  |     2 | Linux firmware region inspection and explicit extraction                                                                                                            |
-| Android APK               |     5 | package and manifest declarations, class search, member inventories, method decompilation, and incoming static references                                           |
-| Browser observation       |     9 | page structure, network metadata, scripts, source maps, WebMCP discovery, screenshots, and capture comparisons                                                      |
-| Electron analysis         |     5 | renderer observation, static app mapping, and static/runtime reconciliation                                                                                         |
-| JavaScript runtime        |     2 | Node/Electron Inspector target discovery, script locations, and execution-context events                                                                            |
-| Application workflows     |     8 | captured website script export; cross-layer feature traces, build comparisons, historical source mapping, static return-shape comparison, and reconstruction checks |
-| Workspace and observation |    21 | sessions, evidence bundles, navigation context, process/artifact/function comparisons, and open-question tracking                                                   |
+| Tool family               | Count | Examples                                                                                                                                                                                                 |
+| ------------------------- | ----: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Native inspection         |    41 | functions, pseudocode, assembly, strings, symbols, calls, references, annotations, byte reads, and file offsets                                                                                          |
+| Investigation workflows   |    14 | app overviews, function dossiers, native APIs and dispatch, batch decompilation, feature traces, call paths, call graphs, Swift and Objective-C discovery                                                |
+| Native macOS utilities    |     7 | Mach-O metadata, code signatures, plists, architectures, and Swift demangling without launching Hopper                                                                                                   |
+| Artifact graph            |     5 | directory and package inventories, compiled Interface Builder files, Apple asset catalogs, and extraction                                                                                                |
+| Managed PE/CLI            |     7 | .NET identity, metadata, CIL instructions, native dependencies, reconstruction imports, and build comparisons                                                                                            |
+| Firmware                  |     2 | Linux firmware region inspection and explicit extraction                                                                                                                                                 |
+| Android APK               |     5 | package and manifest declarations, class search, member inventories, method decompilation, and incoming static references                                                                                |
+| Browser observation       |    11 | page structure, network metadata, scripts, source maps, WebMCP discovery, screenshots, and capture comparisons                                                                                           |
+| Electron analysis         |     5 | renderer observation, static app mapping, and static/runtime reconciliation                                                                                                                              |
+| JavaScript runtime        |     2 | Node/Electron Inspector target discovery, script locations, and execution-context events                                                                                                                 |
+| Application workflows     |    13 | captured website script export; Android/Apple inventory projections; cross-layer feature traces, build comparisons, historical source mapping, static return-shape comparison, and reconstruction checks |
+| Workspace and observation |    21 | sessions, evidence bundles, navigation context, process/artifact/function comparisons, and open-question tracking                                                                                        |
 
 The public interface describes what the agent is trying to learn. Providers decide how to answer. macOS utilities handle common semantic inspection without launching Hopper; Hopper handles deeper native analysis; the process harness records direct behavioral captures.
 
@@ -371,7 +422,7 @@ The public interface describes what the agent is trying to learn. Providers deci
 
 REA supports native application, JavaScript, Electron, .NET, and browser investigation on macOS and Linux. Individual tools have platform and runtime prerequisites. `rea capabilities` and `rea providers` describe the binary-session providers and auxiliary operations; they are not an inventory of every browser, Android, or application workflow. Use the connected MCP tool list and `binary_session` tool availability for the full MCP surface, and the relevant guide for each tool's prerequisites. Repository main can be ahead of [the npm release](docs/installation.md#released-package-and-main).
 
-Static Android APK inspection is verified on Linux with headless JADX; see [Android analysis](docs/android-analysis.md) for its separate prerequisites and coverage.
+Static Android APK inspection supports Linux and macOS; the current metadata bridge is verified on macOS arm64 with headless JADX; see [Android analysis](docs/android-analysis.md) for its separate prerequisites and coverage.
 
 - **Native binaries:** Open Mach-O, ELF, PE, and Mac `.app` targets through a selected deep provider. Hopper and Ghidra cover broad inventory and function analysis; the IDA adapter supplies its documented read-only function/string operations. Hopper also accepts `.hop` databases and supports annotations.
 - **Packages and resources:** Inspect directories, ZIP, APK, IPA, ASAR, plists, compiled Interface Builder files, and Apple asset catalogs. Artifact requests name the input and requested extraction or traversal directly; macOS DMG traversal also requires the host's native mounting support.
@@ -383,6 +434,24 @@ Static Android APK inspection is verified on Linux with headless JADX; see [Andr
   and tracing tools. Source URLs, frame or transaction references, competing
   versions, and missing-source states remain inline. See
   [captured website scripts](docs/website-script-export.md).
+  Inspect a selected node's listener sources or observe an externally triggered
+  execution window with `inspect_web_event_listeners` / `observe_web_execution`.
+  Precise coverage resets counters and affects optimized execution; see
+  [website runtime attribution](docs/web-runtime.md).
+  Trace one exported script's native imports with `trace_web_module_imports` /
+  `rea trace-web-module-imports`, preserving query/fragment identity and optional
+  import-map context. Requires caller-supplied Chromium via
+  `REA_BROWSER_EXECUTABLE`; see [module relationships](docs/website-module-trace.md).
+
+- **Source locations:** Trace one retained website script point through a selected
+  local source map with `rea trace-web-source-location`. See
+  [captured website source locations](docs/web-source-location.md) for byte
+  identities, embedded original content and coverage limits.
+  Recover readable modules from selected local bundles with
+  `recover_javascript_sources` / `rea recover-javascript-sources`, then pass
+  the returned `analysis_input` to static analysis. This optional Linux x64
+  adapter requires caller-supplied Wakaru 1.13.0; see
+  [JavaScript source recovery](docs/javascript-recovery.md).
 
 - **Electron and Node runtime observation:** Inspect selected Electron pages or attach to a Node/Electron V8 Inspector target. Inspector observation records script locations and execution-context events; it does not infer imports, IPC activity, or which modules executed. See [runtime observation](docs/javascript-runtime-observation.md).
 - **.NET assemblies:** Inspect metadata and CIL instructions, compare builds, and check declared native dependencies without loading or running the assembly. Imported decompiler output is labeled as analyst inference. See [managed-code analysis](docs/managed-code-analysis.md).
@@ -742,3 +811,17 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and contribution ch
 ## License
 
 [MIT](LICENSE)
+
+## Star history
+
+<a href="https://www.star-history.com/?repos=morluto%2Frea&amp;type=date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=morluto/rea&amp;type=date&amp;theme=dark&amp;legend=top-left" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=morluto/rea&amp;type=date" />
+    <img alt="REA GitHub star history" src="https://api.star-history.com/chart?repos=morluto/rea&amp;type=date" />
+  </picture>
+</a>
+
+## Disclaimer
+
+REA provides tools for lawful reverse-engineering research, analysis, and reconstruction. You are responsible for obtaining any required authorization and complying with applicable laws. The project does not endorse illegal or unauthorized use.

@@ -11,9 +11,9 @@ import {
   JAVASCRIPT_FEATURE_TRACE_FULL_EVIDENCE_EXAMPLE,
   JAVASCRIPT_VERSION_COMPARISON_FULL_EVIDENCE_EXAMPLE,
   SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE,
-} from "../../../src/contracts/javascriptApplicationWorkflowExamples.js";
-import { analyzeJavaScriptApplication } from "../../../src/application/JavaScriptApplicationService.js";
-import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascriptApplicationAnalysis.js";
+} from "../../../src/contracts/javascript/javascriptApplicationWorkflowExamples.js";
+import { analyzeJavaScriptApplication } from "../../../src/application/javascript/JavaScriptApplicationService.js";
+import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 
 const execute = promisify(execFile);
 const temporary: string[] = [];

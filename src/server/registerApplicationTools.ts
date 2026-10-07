@@ -7,6 +7,7 @@ import { registerCompareSourceToBundleTool } from "./registerApplicationTools/co
 import { registerCompareJavaScriptExportShapesTool } from "./registerApplicationTools/compareExportShapes.js";
 import { registerCoverageTools } from "./registerApplicationTools/coverage.js";
 import { registerReconstructionObligationLedgerTool } from "./registerApplicationTools/obligationLedger.js";
+import { registerProjectMobileApplicationGraphTools } from "./registerApplicationTools/projectMobileApplicationGraph.js";
 import type { ApplicationToolRegistration } from "./registerApplicationTools/types.js";
 
 export type { ApplicationToolRegistration };
@@ -23,4 +24,5 @@ export const registerApplicationTools = (
   registerCompareJavaScriptExportShapesTool(server, options);
   registerReconstructionObligationLedgerTool(server, options);
   registerCoverageTools(server, options);
+  registerProjectMobileApplicationGraphTools(server, options);
 };

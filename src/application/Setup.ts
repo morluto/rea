@@ -42,8 +42,15 @@ export const runSetup = async (
     );
   const unsupported = await hostRemediation(host, false);
   if (unsupported !== undefined) return fail(unsupported);
-  let hopperPath = await host.hopperPath();
-  let providerEnvironment = await initialProviderEnvironment(host, hopperPath);
+  const initialState = await host.initialSetupState?.(options.readinessScope);
+  let hopperPath =
+    initialState === undefined
+      ? await host.hopperPath()
+      : initialState.hopperPath;
+  let providerEnvironment =
+    initialState === undefined
+      ? await initialProviderEnvironment(host, hopperPath)
+      : initialState.providerEnvironment;
   const discovery = await discoverSetupState({
     host,
     providerEnvironment,
@@ -51,6 +58,9 @@ export const runSetup = async (
     proposeHopper:
       options.proposeHopper ?? (confirm !== undefined && !options.structured),
     doctorScope: options.readinessScope,
+    ...(initialState === undefined
+      ? {}
+      : { initialDoctor: initialState.doctor }),
   });
   clientStates = discovery.clientStates;
   const clientSelectionAllowed =

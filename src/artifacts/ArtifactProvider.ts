@@ -7,12 +7,12 @@ import {
   type ProviderIdentity,
   type ExecutionOptions,
 } from "../application/AnalysisProvider.js";
-import { inspectBundleKeyedArchive } from "./KeyedArchiveReader.js";
+import { inspectBundleKeyedArchive } from "./apple/KeyedArchiveReader.js";
 import { basename, dirname } from "node:path";
 import { inventoryArtifact } from "../application/ArtifactInventory.js";
 import { extractArtifact } from "../application/ArtifactExtraction.js";
-import { analyzeInterfaceBuilderBundle } from "../application/InterfaceBuilderAnalysis.js";
-import { analyzeAppleAssetCatalogs } from "../application/AppleAssetCatalogAnalysis.js";
+import { analyzeInterfaceBuilderBundle } from "./apple/InterfaceBuilderAnalysis.js";
+import { analyzeAppleAssetCatalogs } from "./apple/AppleAssetCatalogAnalysis.js";
 import {
   ARTIFACT_ANALYSIS_OPERATIONS,
   artifactInventoryInputSchema,
@@ -24,57 +24,23 @@ import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { interfaceBuilderLimitsSchema } from "../domain/interfaceBuilderGraph.js";
+import { interfaceBuilderLimitsSchema } from "../domain/apple/interfaceBuilderGraph.js";
 import { err, ok } from "../domain/result.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
-import { ARTIFACT_GRAPH_PROVIDER } from "../application/InvestigationProviders.js";
+import {
+  ARTIFACT_PROVIDER_IDENTITY as IDENTITY,
+  artifactCapabilities,
+} from "./ArtifactProviderMetadata.js";
 import { createEvidence } from "../domain/evidence.js";
 import { createArtifactInspection } from "../domain/artifactInspection.js";
 import { resolveArtifactIntegrityPolicy } from "../application/ArtifactInventory/policy.js";
-
-const IDENTITY: ProviderIdentity = Object.freeze(ARTIFACT_GRAPH_PROVIDER);
 
 /** Read-only inventory and exclusively owned extraction provider. */
 export class ArtifactProvider implements AnalysisProvider {
   readonly #capabilities: readonly CapabilityDescriptor[];
 
   constructor(platform: NodeJS.Platform = process.platform) {
-    this.#capabilities = Object.freeze(
-      ARTIFACT_ANALYSIS_OPERATIONS.map((operation) => {
-        const common = {
-          provider: IDENTITY,
-          operation,
-          effects: Object.freeze({
-            mutatesArtifact: false,
-            launchesProcess:
-              operation !== "decode_interface_builder" &&
-              operation !== "inspect_keyed_archive",
-            mayShowUi: false,
-            mayAccessNetwork: false,
-            mayWriteFilesystem:
-              operation === "extract_artifact" ||
-              operation === "inspect_artifact" ||
-              operation === "inventory_artifact",
-            changesPermissions: false,
-            requiresRoot: false,
-          }),
-          limitations: Object.freeze([
-            "DMG child inventory automatically uses a read-only native macOS mount; PKG remains root-hash-only.",
-            "ASAR files discovered in filesystem-backed inventories are expanded without bulk extraction; other nested containers remain recorded only.",
-          ]),
-        };
-        return Object.freeze(
-          operation === "inspect_asset_catalog" && platform !== "darwin"
-            ? {
-                ...common,
-                available: false as const,
-                availabilityCode: "unsupported_host" as const,
-                reason: "Apple asset catalogs require macOS assetutil.",
-              }
-            : { ...common, available: true as const, reason: null },
-        );
-      }),
-    );
+    this.#capabilities = artifactCapabilities(platform);
   }
 
   identity(): ProviderIdentity {
@@ -343,7 +309,12 @@ const translateFailure = (
   cause: unknown,
 ): AnalysisError => {
   if (cause instanceof ArtifactReaderFailure)
-    return new ArtifactOperationError(operation, cause.reason, cause.details);
+    return new ArtifactOperationError(
+      operation,
+      cause.reason,
+      cause.details,
+      cause.message,
+    );
   return new ArtifactOperationError(operation, "io");
 };
 

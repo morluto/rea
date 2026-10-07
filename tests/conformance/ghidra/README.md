@@ -14,9 +14,10 @@ binaries and Ghidra projects are never committed.
 
 `scripts/verify-real-ghidra.mjs` uses `cc`, `clang`, and `lld-link` by default;
 `REA_CC`, `REA_CLANG`, and `REA_LLD_LINK` can select alternate commands. The
-verifier requires an exact bring-your-own Ghidra 12.1.4 installation through
+verifier requires the verified bring-your-own Ghidra 12.1.4 installation through
 `GHIDRA_INSTALL_DIR` and validates header classification before starting the
-provider.
+provider. Provider admission accepts the rest of the 12.1.x line; this lane does
+not.
 
 Conformance compares semantic facts: provider/profile identity, function
 classification, resolved call edges, typed references, strings/xrefs, and CFG

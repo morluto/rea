@@ -29,12 +29,12 @@ same bytes could therefore disagree because of language, compiler, loader,
 analyzer, or provider-version differences while appearing target-compatible.
 
 The decision addressed the earlier representations of
-[`CompositeProvider`](../../src/application/CompositeProvider.ts),
-[runtime composition](../../src/application/runtime.ts),
-[`BinarySession`](../../src/application/BinarySession.ts),
-[`BinaryTarget`](../../src/domain/binaryTarget.ts),
-[analysis snapshot](../../src/domain/analysisSnapshot.ts), and
-[session lifecycle inputs](../../src/contracts/sessionLifecycleInputs.ts).
+[`CompositeProvider`](https://github.com/morluto/rea/blob/main/src/application/binary/CompositeProvider.ts),
+[runtime composition](https://github.com/morluto/rea/blob/main/src/composition/binary.ts),
+[`BinarySession`](https://github.com/morluto/rea/blob/main/src/application/binary/BinarySession.ts),
+[`BinaryTarget`](https://github.com/morluto/rea/blob/main/src/domain/binaryTarget.ts),
+[analysis snapshot](https://github.com/morluto/rea/blob/main/src/domain/analysisSnapshot.ts), and
+[session lifecycle inputs](https://github.com/morluto/rea/blob/main/src/contracts/sessionLifecycleInputs.ts).
 
 The next deep provider must not weaken the existing product invariants:
 

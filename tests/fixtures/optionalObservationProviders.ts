@@ -1,9 +1,7 @@
 import type { BrowserObservationPort } from "../../src/application/BrowserObservationPort.js";
-import type { JavaScriptRuntimeObservationPort } from "../../src/application/JavaScriptRuntimeObservationPort.js";
-import {
-  CDP_BROWSER_PROVIDER_IDENTITY,
-  V8_INSPECTOR_PROVIDER_IDENTITY,
-} from "../../src/browser/providerIdentities.js";
+import type { JavaScriptRuntimeObservationPort } from "../../src/application/javascript/JavaScriptRuntimeObservationPort.js";
+import { CDP_BROWSER_PROVIDER_IDENTITY } from "../../src/browser/providerIdentities.js";
+import { V8_INSPECTOR_PROVIDER_IDENTITY } from "../../src/inspector/providerIdentity.js";
 import { createBrowserScenarioProvider } from "../../src/composition/browserScenario.js";
 import { createElectronObservationProvider } from "../../src/composition/electronObservation.js";
 import { createElectronScenarioProvider } from "../../src/composition/electronScenario.js";

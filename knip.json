@@ -2,7 +2,11 @@
   "$schema": "./node_modules/knip/schema.json",
   "entry": ["src/main.ts", "src/cli.ts", "src/contracts/errorSchemas.ts"],
   "project": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.mjs"],
-  "ignoreDependencies": ["electron"],
+  "vitepress": {
+    "entry": ["docs/.vitepress/config.ts"]
+  },
+  "ignoreBinaries": ["mkfifo"],
+  "ignoreDependencies": ["electron", "esbuild", "webpack"],
   "ignoreExportsUsedInFile": true,
   "rules": {
     "files": "error",

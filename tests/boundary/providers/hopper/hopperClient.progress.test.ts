@@ -1,75 +1,14 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { describe, expect, it, vi } from "vitest";
 
-import { afterEach, describe, expect, it } from "vitest";
-
-import { ok } from "../../../../src/domain/result.js";
-import type {
-  BridgeLauncher,
-  BridgeSession,
-} from "../../../../src/hopper/BridgeLauncher.js";
-import { HopperClient } from "../../../../src/hopper/HopperClient.js";
-
-const fixturePath = fileURLToPath(
-  new URL("../../../fixtures/fakeHopper.mjs", import.meta.url),
-);
-
-class FixtureLauncher implements BridgeLauncher {
-  socketPaths: string[] = [];
-  directories: string[] = [];
-  runIds: string[] = [];
-  processes: ChildProcess[] = [];
-
-  constructor(readonly tokenOverride?: string) {}
-
-  launch(session: BridgeSession) {
-    this.socketPaths.push(session.socketPath);
-    this.directories.push(session.directory);
-    this.runIds.push(session.runId);
-    const child = spawn(
-      process.execPath,
-      [
-        fixturePath,
-        session.socketPath,
-        this.tokenOverride ?? session.token,
-        session.runId,
-      ],
-      {
-        stdio: ["ignore", "ignore", "pipe"],
-      },
-    );
-    this.processes.push(child);
-    return Promise.resolve(
-      ok({
-        process: child,
-        ownsProcessLifetime: true as const,
-        shutdownMode: "bridge-request" as const,
-      }),
-    );
-  }
-}
-
-const clients: HopperClient[] = [];
-const startClient = async () => {
-  const client = new HopperClient({
-    launcher: new FixtureLauncher(),
-    startupTimeoutMs: 1_000,
-  });
-  clients.push(client);
-  await expect(client.start()).resolves.toEqual({
-    ok: true,
-    value: { name: "REA Hopper bridge", version: "1.0.0" },
-  });
-  return client;
-};
-
-afterEach(async () => {
-  await Promise.all(clients.splice(0).map((client) => client.close()));
-});
+import {
+  HopperFixtureLauncher,
+  startHopperFixtureClient as startClient,
+} from "./hopperClient.fixture.js";
 
 describe("HopperClient progress", () => {
   it("forwards correlated Python progress before the terminal response", async () => {
-    const client = await startClient();
+    const launcher = new HopperFixtureLauncher();
+    const client = await startClient(launcher);
     const updates: Array<{
       readonly phase: string;
       readonly completed: number;
@@ -77,7 +16,7 @@ describe("HopperClient progress", () => {
     }> = [];
     const pending = client.callTool(
       "echo",
-      { value: "progress" },
+      { value: "progress", gate: "progress" },
       {
         progress: {
           report: (update) => {
@@ -87,9 +26,20 @@ describe("HopperClient progress", () => {
         },
       },
     );
+    const request = await launcher.waitForRequest("echo", "progress");
+    await vi.waitFor(() =>
+      expect(updates).toContainEqual(
+        expect.objectContaining({ phase: "hopper_bridge", completed: 0 }),
+      ),
+    );
+    expect(updates.some(({ terminal }) => terminal === true)).toBe(false);
+    await launcher.release(request);
     const result = await pending;
 
-    expect(result).toEqual({ ok: true, value: { value: "progress" } });
+    expect(result).toEqual({
+      ok: true,
+      value: { value: "progress", gate: "progress" },
+    });
     expect(updates).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -136,17 +86,22 @@ describe("HopperClient progress", () => {
   });
 
   it("cancels and ignores late responses without corrupting the session", async () => {
-    const client = await startClient();
+    const launcher = new HopperFixtureLauncher();
+    const client = await startClient(launcher);
     const controller = new AbortController();
-    const pending = client.callTool("hang", {}, { signal: controller.signal });
+    const pending = client.callTool(
+      "echo",
+      { gate: "late-reply" },
+      { signal: controller.signal },
+    );
+    const request = await launcher.waitForRequest("echo", "late-reply");
     controller.abort();
     const cancelled = await pending;
     expect(cancelled.ok).toBe(false);
     if (!cancelled.ok)
       expect(cancelled.error._tag).toBe("HopperCancelledError");
 
-    const waited = await client.callTool("echo", { delay: 30 });
-    expect(waited).toMatchObject({ ok: true });
+    await launcher.release(request);
     await expect(client.callTool("echo", { value: "alive" })).resolves.toEqual({
       ok: true,
       value: { value: "alive" },
@@ -154,12 +109,13 @@ describe("HopperClient progress", () => {
   });
 
   it("retains cancelled bridge activity until the reply releases the queue", async () => {
-    const client = await startClient();
+    const launcher = new HopperFixtureLauncher();
+    const client = await startClient(launcher);
     const progress: string[] = [];
     const controller = new AbortController();
     const pending = client.callTool(
       "echo",
-      { delay: 60 },
+      { gate: "cancel-active" },
       {
         signal: controller.signal,
         progress: {
@@ -170,7 +126,7 @@ describe("HopperClient progress", () => {
         },
       },
     );
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    const request = await launcher.waitForRequest("echo", "cancel-active");
     controller.abort();
     const result = await pending;
 
@@ -187,8 +143,8 @@ describe("HopperClient progress", () => {
         expect.stringContaining("started on Hopper's serial bridge"),
       ]),
     );
-    await new Promise((resolve) => setTimeout(resolve, 70));
-    expect(client.requestActivity()).toBeNull();
+    await launcher.release(request);
+    await vi.waitFor(() => expect(client.requestActivity()).toBeNull());
     await expect(client.callTool("echo", { alive: true })).resolves.toEqual({
       ok: true,
       value: { alive: true },

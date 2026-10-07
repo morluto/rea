@@ -2,7 +2,7 @@ import { resolveApplicationEvidenceRequest } from "../../application/EvidenceInp
 import { recordSessionEvidenceSources } from "../sessionEvidence.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 
-import { traceJavaScriptSemanticsEvidenceValidated } from "../../application/JavaScriptSemanticTraceService.js";
+import { traceJavaScriptSemanticsEvidenceValidated } from "../../application/javascript/JavaScriptSemanticTraceService.js";
 import { applicationToolContract } from "../../contracts/applicationToolContracts.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";

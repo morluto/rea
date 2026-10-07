@@ -1,5 +1,9 @@
 /** Canonical names used by every one-shot CLI command registration. */
 export const CLI_COMMANDS = Object.freeze({
+  observeWebExecution: "observe-web-execution",
+  inspectWebEventListeners: "inspect-web-event-listeners",
+  traceWebSourceLocation: "trace-web-source-location",
+  traceWebModuleImports: "trace-web-module-imports",
   analyze: "analyze",
   inspect: "inspect",
   decompile: "decompile",
@@ -61,6 +65,7 @@ export const CLI_COMMANDS = Object.freeze({
   inspectWebPage: "inspect-web-page",
   analyzeWebBundle: "analyze-web-bundle",
   exportWebScripts: "export-web-scripts",
+  recoverJavaScriptSources: "recover-javascript-sources",
   observeWebSession: "observe-web-session",
   discoverWebMcpTools: "discover-webmcp-tools",
   compareWebCaptures: "compare-web-captures",
@@ -81,6 +86,8 @@ export const CLI_COMMANDS = Object.freeze({
   compareJavaScriptExportShapes: "compare-javascript-export-shapes",
   buildReconstructionObligationLedger: "build-reconstruction-obligation-ledger",
   evaluateReconstructionCoverage: "evaluate-reconstruction-coverage",
+  projectAndroidApplicationGraph: "project-android-application-graph",
+  projectAppleApplicationGraph: "project-apple-application-graph",
 });
 
 /** Ordered primary CLI inventory; aliases are intentionally excluded. */

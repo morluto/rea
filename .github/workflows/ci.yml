@@ -102,6 +102,8 @@ jobs:
         with:
           name: rea-dist
           path: dist
+      - name: Generate source catalog from downloaded build
+        run: node scripts/generate-mcp-tool-catalog.mjs
       - run: npm run test:ci:shard:run -- --shard=${{ matrix.shard }}
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
@@ -239,20 +241,46 @@ jobs:
           if-no-files-found: error
 
   package-e2e:
-    name: Package/install integration (${{ matrix.os }})
+    name: Native package baseline (${{ matrix.platform }} ${{ matrix.architecture }})
     needs: [changes, windows-native-build]
     if: github.event_name == 'push' || needs.changes.outputs.package == 'true'
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
-        os: [ubuntu-latest, macos-14]
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            architecture: x64
+          - os: ubuntu-24.04-arm
+            platform: linux
+            architecture: arm64
+          - os: macos-15
+            platform: darwin
+            architecture: arm64
+          - os: macos-15-intel
+            platform: darwin
+            architecture: x64
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      NODE_OPTIONS: "--max-old-space-size=1024"
+      UV_THREADPOOL_SIZE: "2"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
           cache: npm
+      - name: Verify native runtime identity
+        env:
+          EXPECTED_CI_PLATFORM: ${{ matrix.platform }}
+          EXPECTED_CI_ARCHITECTURE: ${{ matrix.architecture }}
+        run: >-
+          node -e "const assert = require('node:assert/strict');
+          assert.equal(process.platform, process.env.EXPECTED_CI_PLATFORM);
+          assert.equal(process.arch, process.env.EXPECTED_CI_ARCHITECTURE);
+          console.log(JSON.stringify({ platform: process.platform, architecture: process.arch, node: process.version }));"
       - run: npm ci
       - uses: actions/download-artifact@v4
         with:
@@ -260,12 +288,15 @@ jobs:
           path: native/windows/build/
       - run: npm run verify:windows-native:artifact
       - run: npm run verify:package
+      - name: Verify real Node Inspector discovery and observation
+        if: matrix.platform == 'darwin'
+        run: npm run verify:inspector
 
   apple-artifacts:
     name: Real Apple artifact CLI/MCP E2E
     needs: changes
     if: github.event_name == 'push' || needs.changes.outputs.code == 'true'
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -276,12 +307,17 @@ jobs:
       - run: npm ci
       - run: npm run verify:keyed-archive
       - run: npm run verify:asset-catalog
+      - run: npm run verify:macos-bundle
       - name: Native compiled NIB hierarchy regressions
-        run: npm run test:focused -- src/application/NibNativeHierarchy.test.ts
+        run: npm run test:focused -- tests/boundary/filesystem/nibNativeHierarchy.test.ts tests/boundary/filesystem/interfaceBuilderBundle.test.ts
       - name: Real binary metadata and Interface Builder integration
         run: npm run verify:apple-dispatch && npm run verify:interface-builder
       - name: Native plist CLI selection regressions
-        run: npm run test:focused -- tests/boundary/cli/nativePlistCli.test.ts
+        run: npm run test:focused -- tests/boundary/cli/nativePlistCli.test.ts tests/boundary/cli/nativePlistPrototypeKeyCli.test.ts tests/boundary/cli/nativePlistSelectionFailureCli.test.ts
+      - name: Native Swift demangling CLI and MCP regressions
+        run: npm run test:focused -- tests/boundary/cli/nativeDemangleCli.test.ts tests/boundary/mcp/nativeDemangleMcp.test.ts
+      - name: Process filesystem snapshot descriptor regressions
+        run: npm run test:focused -- src/process/capture/FilesystemSnapshot.test.ts
 
   reconstruction-readiness:
     name: Reconstruction readiness
@@ -318,16 +354,38 @@ jobs:
     if: github.event_name == 'push' || needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            architecture: x64
+          - os: ubuntu-24.04-arm
+            platform: linux
+            architecture: arm64
+          - os: windows-latest
+            platform: win32
+            architecture: x64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
+    env:
+      NODE_OPTIONS: "--max-old-space-size=1024"
+      UV_THREADPOOL_SIZE: "2"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
           cache: npm
+      - name: Verify native runtime identity
+        env:
+          EXPECTED_CI_PLATFORM: ${{ matrix.platform }}
+          EXPECTED_CI_ARCHITECTURE: ${{ matrix.architecture }}
+        run: >-
+          node -e "const assert = require('node:assert/strict');
+          assert.equal(process.platform, process.env.EXPECTED_CI_PLATFORM);
+          assert.equal(process.arch, process.env.EXPECTED_CI_ARCHITECTURE);
+          console.log(JSON.stringify({ platform: process.platform, architecture: process.arch, node: process.version }));"
       - run: npm ci
       - name: Verify real Node Inspector discovery and observation
         run: npm run verify:inspector

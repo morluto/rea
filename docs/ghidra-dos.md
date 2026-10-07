@@ -2,9 +2,9 @@
 
 REA can analyze DOS MZ executables and explicitly selected COM images through the bring-your-own Ghidra adapter.
 The Linux x64 verification lane exercises actual 16-bit disassembly and
-decompilation through the CLI and stdio MCP. It requires the same Ghidra
-12.1.4 and 64-bit JDK 21 installation as other Ghidra sessions; no DOS emulator
-or cross-compiler is required.
+decompilation through the CLI and stdio MCP. Provider admission accepts Ghidra
+12.1.x and that installation's declared JDK range. The verification lane uses
+Ghidra 12.1.4 and JDK 21; no DOS emulator or cross-compiler is required.
 
 ## Open and inspect
 

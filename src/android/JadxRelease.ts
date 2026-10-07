@@ -6,6 +6,15 @@ export const JADX_RELEASE = Object.freeze({
   url: "https://github.com/1013503897/jadx-headless-mcp/releases/download/v0.7.1/jadx-headless-mcp-0.7.1-all.jar",
 });
 
+/** Identity of REA's metadata bridge, distinct from the producing engine. */
+export const JADX_BRIDGE_IDENTITY = Object.freeze({
+  name: "rea-jadx-bridge",
+  version: "1",
+});
+
+/** Remediation when `REA_JADX_MCP_JAR` is missing or not an absolute path. */
+export const JADX_JAR_CONFIGURATION_REMEDIATION = `Set REA_JADX_MCP_JAR to the absolute path of a caller-supplied jadx-headless-mcp ${JADX_RELEASE.version} JAR. REA does not download or install it.`;
+
 /** Producing engine identity used by Evidence and the generated product catalog. */
 export const JADX_PROVIDER_IDENTITY = Object.freeze({
   id: "jadx",
@@ -17,5 +26,6 @@ export const JADX_PROVIDER_IDENTITY = Object.freeze({
 export const JADX_LIMITATIONS = [
   "Static decompiler observations do not establish runtime behavior; the APK is never executed.",
   "Method signatures use provider display types; exact DEX descriptors and instruction offsets are unavailable. Overload indices are local to this engine and artifact.",
+  "Class inventories use parsed metadata before code generation, including synthetic members that may be omitted from decompiled source. Source positions remain unknown.",
   "Manifest summary fields are extracted by the upstream engine; decoded XML is retained for verification. APK signatures, split APKs, native libraries and Android runtime capture are not verified by this provider.",
 ] as const;

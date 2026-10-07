@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 
 import { AnalysisInputError } from "./domain/analysisErrorCore.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
@@ -15,8 +16,6 @@ export const parseCliJsonInput = async (
 > => {
   const inline = parseJson(value);
   if (inline !== undefined) return { ok: true, value: inline };
-  if (["{", "["].includes(value.trimStart()[0] ?? ""))
-    return { ok: false, error: inputError(operation) };
   try {
     // Read raw bytes so invalid UTF-8 is rejected by parseJson instead of
     // being silently replaced by lossy "utf8" decoding.
@@ -25,9 +24,58 @@ export const parseCliJsonInput = async (
       ? jsonFileError(value, operation, "invalid-json")
       : { ok: true, value: parsed };
   } catch (cause: unknown) {
+    if (
+      ["{", "["].includes(value.trimStart()[0] ?? "") &&
+      cannotBeAnExistingFile(cause) &&
+      !hasExplicitJsonFileExtension(value)
+    )
+      return { ok: false, error: inputError(operation) };
     return jsonFileError(value, operation, "read-failed", cause);
   }
 };
+
+/**
+ * Resolve named string fields of CLI-supplied JSON against the operator
+ * working directory. Each entry is a key path from the document root; only
+ * fields holding strings are resolved, everything else passes through
+ * untouched. Shared MCP contracts reject relative paths, so CLI workflows
+ * resolve operator-relative values before validation.
+ */
+export const resolveCliJsonPaths = (
+  value: unknown,
+  paths: ReadonlyArray<ReadonlyArray<string>>,
+): unknown => {
+  let resolved = value;
+  for (const keys of paths) resolved = resolveJsonPath(resolved, keys);
+  return resolved;
+};
+
+const resolveJsonPath = (
+  value: unknown,
+  keys: ReadonlyArray<string>,
+): unknown => {
+  const [head, ...tail] = keys;
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return value;
+  const entries = Object.entries(value).map(
+    ([key, entry]: readonly [string, unknown]): readonly [string, unknown] => {
+      if (key !== head) return [key, entry];
+      if (tail.length === 0)
+        return [key, typeof entry === "string" ? resolve(entry) : entry];
+      return [key, resolveJsonPath(entry, tail)];
+    },
+  );
+  return Object.fromEntries(entries);
+};
+
+const cannotBeAnExistingFile = (cause: unknown): boolean =>
+  typeof cause === "object" &&
+  cause !== null &&
+  "code" in cause &&
+  (cause.code === "ENOENT" || cause.code === "ENAMETOOLONG");
+
+const hasExplicitJsonFileExtension = (value: string): boolean =>
+  value.toLowerCase().endsWith(".json");
 
 const parseJson = (value: string | Uint8Array): unknown => {
   let text: string;

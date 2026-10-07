@@ -16,7 +16,7 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
-import type { FirmwareRequest } from "../domain/firmwareAnalysis.js";
+import type { FirmwareRequest } from "../domain/firmware/firmwareAnalysis.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { FIRMWARE_LIMITS } from "./FirmwareRelease.js";
 

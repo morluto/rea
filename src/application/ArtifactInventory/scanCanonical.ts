@@ -23,7 +23,7 @@ import {
 } from "../ArtifactGraphConstruction.js";
 import { canonicalDigest } from "../../domain/comparisonSemantics.js";
 import { classifyRoot } from "./classify.js";
-import { hashReadable, type HashResult } from "./hash.js";
+import { hashReadable, type HashResult } from "../../artifacts/ArtifactHash.js";
 import { createReader, inventoryLimitations } from "./reader.js";
 import {
   scanReader,

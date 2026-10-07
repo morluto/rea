@@ -5,15 +5,18 @@ import { OFFICIAL_TOOL_CONTRACTS } from "./officialToolContracts.js";
 import { SESSION_TOOL_CONTRACTS } from "./sessionToolContracts.js";
 import { TOOL_CONTRACTS } from "./toolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "./artifactToolContracts.js";
-import { MANAGED_TOOL_CONTRACTS } from "./managedToolContracts.js";
-import { FIRMWARE_TOOL_CONTRACTS } from "./firmwareToolContracts.js";
-import { ANDROID_TOOL_CONTRACTS } from "./androidToolContracts.js";
-import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "./managedWorkflowToolContracts.js";
-import { NATIVE_TOOL_CONTRACTS } from "./nativeToolContracts.js";
+import { MANAGED_TOOL_CONTRACTS } from "./managed/managedToolContracts.js";
+import { FIRMWARE_TOOL_CONTRACTS } from "./firmware/firmwareToolContracts.js";
+import { ANDROID_TOOL_CONTRACTS } from "./android/androidToolContracts.js";
+import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "./managed/managedWorkflowToolContracts.js";
+import { NATIVE_TOOL_CONTRACTS } from "./native/nativeToolContracts.js";
 import { BROWSER_PROVIDER_TOOL_CONTRACTS } from "./browserProviderToolContracts.js";
-import { ELECTRON_TOOL_CONTRACTS } from "./electronToolContracts.js";
-import { JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS } from "./javascriptRuntimeObservationToolContracts.js";
+import { ELECTRON_TOOL_CONTRACTS } from "./javascript/electronToolContracts.js";
+import { JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS } from "./javascript/javascriptRuntimeObservationToolContracts.js";
 import { APPLICATION_TOOL_CONTRACTS } from "./applicationToolContracts.js";
+import { JAVASCRIPT_RECOVERY_TOOL_CONTRACTS } from "./javascript/javascriptRecoveryToolContracts.js";
+import { WEB_SCRIPT_TOOL_CONTRACTS } from "./webScriptToolContracts.js";
+import { WEB_RUNTIME_TOOL_CONTRACTS } from "./webRuntimeToolContracts.js";
 
 const GROUPS = {
   official: OFFICIAL_TOOL_CONTRACTS,
@@ -28,6 +31,9 @@ const GROUPS = {
   electron: ELECTRON_TOOL_CONTRACTS,
   javascript_runtime_observation: JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS,
   application: APPLICATION_TOOL_CONTRACTS,
+  javascript_recovery: JAVASCRIPT_RECOVERY_TOOL_CONTRACTS,
+  web_script_export: WEB_SCRIPT_TOOL_CONTRACTS,
+  web_runtime: WEB_RUNTIME_TOOL_CONTRACTS,
   session: SESSION_TOOL_CONTRACTS,
 } as const;
 
@@ -79,6 +85,10 @@ const PUBLISHED_TOOL_NAME_FLOOR = [
   "export_evidence_bundle",
   "extract_artifact",
   "export_web_scripts",
+  "trace_web_module_imports",
+  "trace_web_source_location",
+  "observe_web_execution",
+  "inspect_web_event_listeners",
   "find_changed_behavior",
   "find_xrefs_to_name",
   "get_call_graph",
@@ -133,6 +143,8 @@ const PUBLISHED_TOOL_NAME_FLOOR = [
   "procedure_info",
   "procedure_pseudo_code",
   "procedure_references",
+  "project_android_application_graph",
+  "project_apple_application_graph",
   "project_managed_application_graph",
   "read_bytes",
   "read_function_instructions",

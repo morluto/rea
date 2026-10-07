@@ -7,6 +7,7 @@ export interface GhidraResponseBufferOptions {
 export class GhidraResponseBuffer {
   readonly #options: GhidraResponseBufferOptions;
   #buffer = "";
+  #fragments: string[] = [];
 
   constructor(options: GhidraResponseBufferOptions) {
     this.#options = options;
@@ -14,7 +15,10 @@ export class GhidraResponseBuffer {
 
   /** Consume one decoded socket chunk. */
   push(chunk: string): void {
-    this.#buffer += chunk;
+    this.#fragments.push(chunk);
+    if (!chunk.includes("\n")) return;
+    this.#buffer += this.#fragments.join("");
+    this.#fragments = [];
     let newline = this.#buffer.indexOf("\n");
     while (newline >= 0) {
       const encodedLine = this.#buffer.slice(0, newline);
@@ -28,5 +32,6 @@ export class GhidraResponseBuffer {
   /** Drop any incomplete line when a session closes. */
   reset(): void {
     this.#buffer = "";
+    this.#fragments = [];
   }
 }

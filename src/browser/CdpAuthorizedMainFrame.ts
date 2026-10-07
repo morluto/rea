@@ -13,7 +13,7 @@ interface AuthorizedMainFrameOptions {
   readonly sessionId: string | undefined;
   readonly signal: AbortSignal | undefined;
   readonly allowedOrigins: ReadonlySet<string>;
-  readonly delayOperation: BrowserObservationOperation;
+  readonly operation: BrowserObservationOperation;
 }
 
 /** Wait for the attached target's main frame to enter its approved origin. */
@@ -22,7 +22,7 @@ export const authorizedMainFrame = async ({
   sessionId,
   signal,
   allowedOrigins,
-  delayOperation,
+  operation,
 }: AuthorizedMainFrameOptions): Promise<unknown> => {
   for (let attempt = 0; attempt < 80; attempt += 1) {
     const result = await connection.send(
@@ -34,11 +34,8 @@ export const authorizedMainFrame = async ({
     const url = mainFrameUrl(result);
     if (allowedSanitizedUrl(url, allowedOrigins) !== undefined) return result;
     if (isHttpUrl(url))
-      throw new BrowserObservationError(
-        "inspect_web_page",
-        "target_not_allowed",
-      );
-    await delayWithCancellation(25, delayOperation, signal);
+      throw new BrowserObservationError(operation, "target_not_allowed");
+    await delayWithCancellation(25, operation, signal);
   }
-  throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
+  throw new BrowserObservationError(operation, "target_not_allowed");
 };

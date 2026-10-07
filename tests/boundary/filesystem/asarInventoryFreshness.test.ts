@@ -110,6 +110,32 @@ describe("ASAR path boundary", () => {
 });
 
 describe("ASAR inventory freshness", () => {
+  it("preserves missing-container I/O as an I/O failure instead of malformed format", async () => {
+    const root = await createTestTempDirectory("rea-asar-missing-");
+    const reader = new AsarArtifactReader(join(root, "missing.asar"));
+
+    await expect(
+      reader.entries()[Symbol.asyncIterator]().next(),
+    ).rejects.toMatchObject({
+      reason: "io",
+      message: expect.stringContaining("ENOENT"),
+    });
+  });
+
+  it("preserves an ASAR path replaced by a directory as a filesystem failure", async () => {
+    const fixture = await archiveFixture();
+    await rm(fixture.archive);
+    await mkdir(fixture.archive);
+    const reader = new AsarArtifactReader(fixture.archive);
+
+    await expect(
+      reader.entries()[Symbol.asyncIterator]().next(),
+    ).rejects.toMatchObject({
+      reason: "io",
+      message: expect.stringContaining("EISDIR"),
+    });
+  });
+
   it.each(["archive", "bundle"] as const)(
     "refreshes a replaced archive when inventorying a %s target",
     async (target) => {

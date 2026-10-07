@@ -111,28 +111,57 @@ export const evidenceBundleForTarget = (
   const recordsById = new Map(
     bundle.records.map((record) => [record.evidence_id, record]),
   );
-  let unknowns = bundle.unknowns.filter(
+  const candidates = bundle.unknowns.filter(
     ({ scope_digest: scopeDigest }) => scopeDigest === sha256,
   );
-  let changed = true;
-  while (changed) {
-    const ids = new Set(unknowns.map(({ unknown_id: id }) => id));
-    const retained = unknowns.filter(
-      (unknown) =>
-        unknown.relationships.every(({ unknown_id: id }) => ids.has(id)) &&
-        referencedEvidenceIds(unknown).every((id) => {
-          const record = recordsById.get(id);
-          return (
-            record?.subject?.digest.sha256 === sha256 ||
-            (unknown.mutation_evidence_ids.includes(id) &&
-              record?.subject === null &&
-              record.predicate_type === "rea.residual-unknown-mutation")
-          );
-        }),
+  const retained = new Set<ResidualUnknown>();
+  const revisionsById = new Map<string, number>();
+  const dependents = new Map<string, Set<ResidualUnknown>>();
+  for (const unknown of candidates) {
+    const mutationEvidenceIds = new Set(unknown.mutation_evidence_ids);
+    const evidenceAvailable = referencedEvidenceIds(unknown).every((id) => {
+      const record = recordsById.get(id);
+      return (
+        record?.subject?.digest.sha256 === sha256 ||
+        (mutationEvidenceIds.has(id) &&
+          record?.subject === null &&
+          record.predicate_type === "rea.residual-unknown-mutation")
+      );
+    });
+    if (!evidenceAvailable) continue;
+    retained.add(unknown);
+    revisionsById.set(
+      unknown.unknown_id,
+      (revisionsById.get(unknown.unknown_id) ?? 0) + 1,
     );
-    changed = retained.length !== unknowns.length;
-    unknowns = retained;
+    for (const relatedId of new Set(
+      unknown.relationships.map(({ unknown_id: id }) => id),
+    )) {
+      const references =
+        dependents.get(relatedId) ?? new Set<ResidualUnknown>();
+      references.add(unknown);
+      dependents.set(relatedId, references);
+    }
   }
+  const pending: ResidualUnknown[] = [];
+  for (const unknown of retained)
+    if (
+      unknown.relationships.some(({ unknown_id: id }) => !revisionsById.has(id))
+    )
+      pending.push(unknown);
+  for (let index = 0; index < pending.length; index += 1) {
+    const unknown = pending[index];
+    if (unknown === undefined || !retained.delete(unknown)) continue;
+    const remaining = (revisionsById.get(unknown.unknown_id) ?? 1) - 1;
+    if (remaining > 0) {
+      revisionsById.set(unknown.unknown_id, remaining);
+      continue;
+    }
+    revisionsById.delete(unknown.unknown_id);
+    for (const dependent of dependents.get(unknown.unknown_id) ?? [])
+      pending.push(dependent);
+  }
+  const unknowns = candidates.filter((unknown) => retained.has(unknown));
   const mutationIds = new Set(
     unknowns.flatMap(({ mutation_evidence_ids: ids }) => ids),
   );
@@ -285,26 +314,28 @@ export const validateResidualUnknownAddition = (
       );
   if (unknown.resolution?.disposition === "verified")
     validateVerifiedResolution(unknown, evidenceById);
-  for (const relationship of unknown.relationships)
+  // In a valid graph, no existing node can point to an absent ID. Since the
+  // schema rejects self-relations, a new node's outgoing edges cannot close a
+  // cycle; keep graph traversal for revisions of existing nodes only.
+  if (current !== undefined) {
+    const dependencies = unknown.relationships
+      .filter((relationship) => relationship.type === "depends-on")
+      .map(({ unknown_id }) => unknown_id);
     if (
-      relationship.type === "depends-on" &&
-      reachesUnknown(
-        relationship.unknown_id,
-        unknown.unknown_id,
-        currentHeads,
-        unknown,
-      )
+      dependencies.length > 0 &&
+      reachesUnknown(dependencies, unknown.unknown_id, currentHeads, unknown)
     )
       throw new TypeError("Residual unknown dependency graph contains a cycle");
+  }
 };
 
 const reachesUnknown = (
-  start: string,
+  starts: readonly string[],
   goal: string,
   currentHeads: ReadonlyMap<string, ResidualUnknown>,
   candidate: ResidualUnknown,
 ): boolean => {
-  const pending = [start];
+  const pending = [...starts];
   const visited = new Set<string>();
   while (pending.length > 0) {
     const id = pending.pop();
@@ -356,20 +387,56 @@ const rejectDependencyCycles = (
 ): void => {
   const visited = new Set<string>();
   const active = new Set<string>();
-  const visit = (id: string): void => {
-    if (active.has(id))
-      throw new TypeError("Residual unknown dependency graph contains a cycle");
-    if (visited.has(id)) return;
-    active.add(id);
-    const unknown = unknownById.get(id);
-    if (unknown === undefined)
+  const pending: {
+    readonly id: string;
+    readonly relationships: ResidualUnknown["relationships"];
+    nextRelationship: number;
+  }[] = [];
+  for (const root of unknownById.keys()) {
+    if (visited.has(root)) continue;
+    const rootUnknown = unknownById.get(root);
+    if (rootUnknown === undefined)
       throw new TypeError("Residual unknown dependency graph is inconsistent");
-    for (const relationship of unknown.relationships)
-      if (relationship.type === "depends-on") visit(relationship.unknown_id);
-    active.delete(id);
-    visited.add(id);
-  };
-  for (const id of unknownById.keys()) visit(id);
+    active.add(root);
+    pending.push({
+      id: root,
+      relationships: rootUnknown.relationships,
+      nextRelationship: 0,
+    });
+    while (pending.length > 0) {
+      const frame = pending[pending.length - 1];
+      if (frame === undefined) break;
+      let descended = false;
+      while (frame.nextRelationship < frame.relationships.length) {
+        const relationship = frame.relationships[frame.nextRelationship];
+        frame.nextRelationship += 1;
+        if (relationship?.type !== "depends-on") continue;
+        const dependency = relationship.unknown_id;
+        if (active.has(dependency))
+          throw new TypeError(
+            "Residual unknown dependency graph contains a cycle",
+          );
+        if (visited.has(dependency)) continue;
+        const unknown = unknownById.get(dependency);
+        if (unknown === undefined)
+          throw new TypeError(
+            "Residual unknown dependency graph is inconsistent",
+          );
+        active.add(dependency);
+        pending.push({
+          id: dependency,
+          relationships: unknown.relationships,
+          nextRelationship: 0,
+        });
+        descended = true;
+        break;
+      }
+      if (descended) continue;
+      pending.pop();
+      active.delete(frame.id);
+      visited.add(frame.id);
+    }
+  }
 };
 
 /** Encode a validated bundle as byte-stable RFC 8785 canonical JSON. */

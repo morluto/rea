@@ -100,6 +100,29 @@ describe("Codex agent release evaluation", () => {
         .repeatedCallCount,
     ).toBe(1);
   });
+
+  it("counts identical arguments with reversed Unicode key insertion order", () => {
+    const call = (id: string, arguments_: Record<string, number>) => ({
+      type: "item.completed",
+      item: {
+        id,
+        type: "mcp_tool_call",
+        server: "rea",
+        tool: "inspect_artifact",
+        arguments: arguments_,
+      },
+    });
+
+    expect(
+      evaluateCodexEvents(
+        [
+          call("item-1", { "e\u0301": 1, "\u00e9": 2 }),
+          call("item-2", { "\u00e9": 2, "e\u0301": 1 }),
+        ],
+        "inspect_artifact",
+      ).repeatedCallCount,
+    ).toBe(1);
+  });
 });
 
 describe("Codex agent completion evaluation", () => {

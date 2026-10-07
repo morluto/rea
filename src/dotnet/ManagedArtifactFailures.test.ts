@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
+import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
+import { inspectManagedNativeBoundariesBytes } from "./ManagedNativeBoundaryInspector.js";
 import {
   buildManagedPeFixture,
   buildNativePeFixture,
@@ -42,5 +44,38 @@ describe("managed artifact failure classification", () => {
     expect(unsupportedTable.coverage.issues).toEqual([
       expect.objectContaining({ code: "invalid-tables" }),
     ]);
+  });
+
+  it("keeps malformed reference and attribute issues across inventory callers", () => {
+    const bytes = buildManagedPeFixture({
+      references: [
+        "System.Runtime",
+        "System.Runtime",
+        "UnityEngine.CoreModule",
+      ],
+      malformedAssemblyReferenceRows: [3],
+      malformedCustomAttributeRows: [1],
+    });
+    const target = managedPeFixtureTarget(bytes);
+    const artifact = inspectManagedArtifactBytes(bytes, target);
+    const members = inspectManagedMembersBytes(bytes, target);
+    const boundaries = inspectManagedNativeBoundariesBytes(bytes, target);
+    const issueCodes = ["invalid-heap-index", "invalid-row"];
+
+    expect(artifact.references.map(({ name }) => name)).toEqual([
+      "System.Runtime",
+      "System.Runtime",
+    ]);
+    expect(artifact.coverage.issues.map(({ code }) => code)).toEqual(
+      issueCodes,
+    );
+    expect(members.coverage.issues.map(({ code }) => code)).toEqual(issueCodes);
+    expect(boundaries.coverage).toMatchObject({
+      state: "partial",
+      issues: [
+        expect.objectContaining({ code: "invalid-heap-index" }),
+        expect.objectContaining({ code: "invalid-row" }),
+      ],
+    });
   });
 });

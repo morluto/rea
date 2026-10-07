@@ -46,6 +46,7 @@ export const toolFamilyCatalog = (sources) => {
       surface: "browser-provider",
       contracts: [
         ...sources.browserContracts.BROWSER_TOOL_CONTRACTS,
+        ...sources.webRuntimeContracts.WEB_RUNTIME_TOOL_CONTRACTS,
         ...sources.browserScenarioContracts.BROWSER_SCENARIO_TOOL_CONTRACTS,
       ],
     },
@@ -67,6 +68,8 @@ export const toolFamilyCatalog = (sources) => {
       contracts: [
         ...sources.applicationContracts.APPLICATION_TOOL_CONTRACTS,
         ...sources.webScriptContracts.WEB_SCRIPT_TOOL_CONTRACTS,
+        ...sources.javascriptRecoveryContracts
+          .JAVASCRIPT_RECOVERY_TOOL_CONTRACTS,
       ],
     },
     {
@@ -94,6 +97,21 @@ export const toolFamilyCatalog = (sources) => {
 
 /** Build provider identities with their sorted capability names. */
 export const providerCatalog = (sources) => {
+  const contractsByName = new Map(
+    sources.toolContracts.TOOL_CONTRACTS.map((contract) => [
+      contract.name,
+      contract,
+    ]),
+  );
+  const declaredContracts = (providerId, operations) =>
+    operations.map((operation) => {
+      const contract = contractsByName.get(operation);
+      if (contract === undefined)
+        throw new TypeError(
+          `Provider ${providerId} declares an unknown analyst operation: ${operation}`,
+        );
+      return contract;
+    });
   const {
     applicationContracts,
     reconciliationContracts,
@@ -103,15 +121,21 @@ export const providerCatalog = (sources) => {
   return [
     {
       identity: sources.hopperProvider.HOPPER_PROVIDER_IDENTITY,
-      contracts: sources.hopperProvider.HOPPER_PROVIDER_TOOL_CONTRACTS,
+      contracts: declaredContracts(
+        "hopper",
+        sources.hopperProvider.HOPPER_OPERATIONS,
+      ),
     },
     {
       identity: sources.ghidraProvider.GHIDRA_PROVIDER_IDENTITY,
-      contracts: sources.ghidraProvider.GHIDRA_PROVIDER_TOOL_CONTRACTS,
+      contracts: declaredContracts(
+        "ghidra",
+        sources.ghidraProvider.GHIDRA_OPERATIONS,
+      ),
     },
     {
       identity: sources.idaProvider.IDA_PROVIDER_IDENTITY,
-      contracts: sources.idaProvider.IDA_PROVIDER_TOOL_CONTRACTS,
+      contracts: declaredContracts("ida", sources.idaProvider.IDA_OPERATIONS),
     },
     {
       identity: sources.nativeProvider.NATIVE_MACOS_PROVIDER_IDENTITY,
@@ -148,7 +172,10 @@ export const providerCatalog = (sources) => {
     },
     {
       identity: sources.browserProvider.CDP_BROWSER_PROVIDER_IDENTITY,
-      contracts: sources.browserContracts.BROWSER_TOOL_CONTRACTS,
+      contracts: [
+        ...sources.browserContracts.BROWSER_TOOL_CONTRACTS,
+        ...sources.webRuntimeContracts.WEB_RUNTIME_TOOL_CONTRACTS,
+      ],
     },
     {
       identity:
@@ -185,11 +212,32 @@ export const providerCatalog = (sources) => {
     {
       identity:
         sources.artifactProviders.JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER,
-      contracts: sources.applicationContracts.APPLICATION_TOOL_CONTRACTS,
+      contracts: sources.applicationContracts.APPLICATION_TOOL_CONTRACTS.filter(
+        ({ name }) =>
+          name !== "project_android_application_graph" &&
+          name !== "project_apple_application_graph",
+      ),
+    },
+    {
+      identity: sources.artifactProviders.ANDROID_APPLICATION_PROVIDER,
+      contracts: sources.applicationContracts.APPLICATION_TOOL_CONTRACTS.filter(
+        ({ name }) => name === "project_android_application_graph",
+      ),
+    },
+    {
+      identity: sources.artifactProviders.APPLE_APPLICATION_PROVIDER,
+      contracts: sources.applicationContracts.APPLICATION_TOOL_CONTRACTS.filter(
+        ({ name }) => name === "project_apple_application_graph",
+      ),
     },
     {
       identity: sources.artifactProviders.WEB_SCRIPT_EXPORT_PROVIDER,
       contracts: sources.webScriptContracts.WEB_SCRIPT_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.javascriptRecoveryProvider.WAKARU_PROVIDER_IDENTITY,
+      contracts:
+        sources.javascriptRecoveryContracts.JAVASCRIPT_RECOVERY_TOOL_CONTRACTS,
     },
   ]
     .map(({ identity, contracts }) => ({

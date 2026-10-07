@@ -27,9 +27,9 @@ import {
   discoverObjcClasses,
   discoverObjcProtocols,
 } from "../domain/symbolAnalysis.js";
-import { inspectNativeDispatch } from "./NativeDispatchMetadataInspection.js";
-import { traceNativeValues } from "./NativeValueTrace.js";
-import { traceNativeUiAction } from "./NativeUiActionTrace.js";
+import { inspectNativeDispatch } from "./native/NativeDispatchMetadataInspection.js";
+import { traceNativeValues } from "./native/NativeValueTrace.js";
+import { traceNativeUiAction } from "./native/NativeUiActionTrace.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 
 import {
@@ -39,7 +39,7 @@ import {
 } from "./EnhancedToolTypes.js";
 import { traceCallPath } from "./CallPathTracing.js";
 import { traceLiteralFeature } from "./EnhancedLiteralTracing.js";
-import { projectNativeApiInspection } from "./NativeApiInspection.js";
+import { projectNativeApiInspection } from "./native/NativeApiInspection.js";
 export type { ValidatedEnhancedCall } from "./EnhancedToolTypes.js";
 
 /**

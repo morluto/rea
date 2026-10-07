@@ -15,9 +15,24 @@ const projectIssue = (
   const path = issue.path.flatMap((part) =>
     typeof part === "string" || typeof part === "number" ? [part] : [],
   );
+  // Branch issue paths are relative to the union; branches often agree.
   if (issue.code === "invalid_union")
-    return issue.errors.flatMap((branch) =>
-      branch.flatMap((branchIssue) => projectIssue(branchIssue, input)),
+    return uniqueIssues(
+      issue.errors.flatMap((branch) =>
+        branch.flatMap((branchIssue) =>
+          projectIssue(
+            { ...branchIssue, path: [...issue.path, ...branchIssue.path] },
+            input,
+          ),
+        ),
+      ),
+    );
+  if (issue.code === "invalid_key")
+    return issue.issues.flatMap((keyIssue) =>
+      projectIssue(
+        { ...keyIssue, path: [...issue.path, ...keyIssue.path] },
+        input,
+      ),
     );
   if (issue.code === "unrecognized_keys")
     return issue.keys.map((key) => ({
@@ -40,7 +55,16 @@ const projectIssue = (
   if (issue.code === "too_big")
     return [boundedIssue(path, "maximum", numericBound(issue.maximum))];
   if (issue.code === "invalid_format")
-    return [{ path, reason: "invalid_format", expected: issue.format }];
+    return [
+      {
+        path,
+        reason: "invalid_format",
+        expected: issue.format,
+        ...(issue.format === "regex" && issue.message.length > 0
+          ? { message: issue.message }
+          : {}),
+      },
+    ];
   if (issue.code === "invalid_value")
     return [
       {
@@ -57,6 +81,12 @@ const projectIssue = (
     },
   ];
 };
+
+const uniqueIssues = (
+  issues: readonly AnalysisInputIssue[],
+): AnalysisInputIssue[] => [
+  ...new Map(issues.map((issue) => [JSON.stringify(issue), issue])).values(),
+];
 
 const valueAtPath = (
   input: unknown,

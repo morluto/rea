@@ -1,0 +1,54 @@
+name: Real website runtime attribution
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/real-web-runtime.yml"
+      - "scripts/verify-browser-runtime.mjs"
+      - "scripts/lib/browser-runtime-*.mjs"
+      - "src/process/ProviderProcess.ts"
+      - "src/process/ProcessOwnership*.ts"
+      - "scripts/fixtures/browser-runtime-site.mjs"
+      - "src/browser/execution/**"
+      - "src/browser/CdpConnection.ts"
+      - "src/browser/CdpEndpoint.ts"
+      - "src/browser/CdpTarget*.ts"
+      - "src/browser/CdpCaptureValues.ts"
+      - "src/browser/CdpAuthorized*.ts"
+      - "src/domain/webRuntime.ts"
+      - "src/domain/webExecution.ts"
+      - "src/domain/webEventListeners.ts"
+      - "src/domain/browserObservationError*.ts"
+      - "src/application/WebRuntime*.ts"
+      - "src/composition/webRuntime.ts"
+      - "src/contracts/webRuntimeToolContracts.ts"
+      - "src/contracts/toolEffects.ts"
+      - "src/server/registerWebRuntimeTools.ts"
+      - "src/server/createServer.ts"
+      - "src/cli/webRuntimeCommands.ts"
+      - "src/cli/commandCancellation.ts"
+      - "src/cli.ts"
+      - "package.json"
+      - "package-lock.json"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: real-web-runtime-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+env:
+  HUSKY: "0"
+jobs:
+  real-web-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run verify:browser:runtime
+        env:
+          REA_BROWSER_EXECUTABLE: /usr/bin/google-chrome
+          REA_BROWSER_NO_SANDBOX: "true"

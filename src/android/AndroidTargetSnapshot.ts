@@ -2,8 +2,11 @@ import { constants, createReadStream } from "node:fs";
 import { chmod, copyFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
-import type { AndroidOperation } from "../domain/androidAnalysis.js";
+import {
+  AnalysisInputError,
+  AnalysisCapabilityUnavailableError,
+} from "../domain/analysisErrorCore.js";
+import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 
 /** Stream a local file digest without retaining the APK or JAR in memory. */
 export const hashAndroidFile = async (path: string): Promise<string> => {
@@ -37,10 +40,18 @@ export const snapshotAndroidTarget = async (
 /** Fingerprint the actual immutable engine bytes executed for this observation. */
 export const snapshotAndroidEngine = async (
   source: string,
+  sha256: string,
   root: string,
+  operation: AndroidOperation,
 ): Promise<{ path: string; sha256: string }> => {
   const path = join(root, "engine.jar");
   await copyFile(source, path, constants.COPYFILE_EXCL);
   await chmod(path, 0o400);
-  return { path, sha256: await hashAndroidFile(path) };
+  if ((await hashAndroidFile(path)) !== sha256)
+    throw new AnalysisCapabilityUnavailableError(
+      "jadx",
+      operation,
+      "REA_JADX_MCP_JAR bytes changed during admission; retry with a stable engine file.",
+    );
+  return { path, sha256 };
 };

@@ -11,12 +11,12 @@ import type {
   UpdateUnknownInput,
 } from "../../domain/residualUnknown.js";
 import type { Result } from "../../domain/result.js";
-import { EvidenceLedger, type EvidenceImportDelta } from "../EvidenceLedger.js";
+import { EvidenceLedger, type EvidenceImportDelta } from "./EvidenceLedger.js";
 import {
   UNKNOWN_REGISTRY_PROVIDER,
   unknownEvidenceLinks,
   unknownMutationEvidence,
-} from "../UnknownEvidence.js";
+} from "./UnknownEvidence.js";
 import type {
   EvidenceReader,
   EvidenceWriter,

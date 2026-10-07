@@ -108,6 +108,57 @@ describe("browser CLI parity", () => {
           alignment: { status: "aligned", aligned_steps: 2 },
         },
       });
+      const intentionalPolicy = await runCli(
+        [
+          "compare-web-captures",
+          JSON.stringify(scenarioCapture),
+          JSON.stringify(scenarioCapture),
+          "--normalization-json",
+          JSON.stringify({
+            rules: [
+              {
+                rule_id: "domain",
+                artifacts: ["url"],
+                match: "app.example.test",
+                replacement: "normalized.test",
+              },
+            ],
+          }),
+          "--json",
+        ],
+        process.env,
+      );
+      expect(intentionalPolicy).toMatchObject({
+        normalized_result: {
+          normalization: { rules: [{ rule_id: "domain" }] },
+        },
+      });
+
+      const malformedPolicy = await runCli(
+        [
+          "compare-web-captures",
+          JSON.stringify(scenarioCapture),
+          JSON.stringify(scenarioCapture),
+          "--normalization-json",
+          "{invalid-policy",
+          "--json",
+        ],
+        process.env,
+      );
+      expect(malformedPolicy).toMatchObject({
+        error: "Browser observation failed",
+        code: "invalid_request",
+        details: {
+          operation: "compare_web_captures",
+          issues: [
+            {
+              path: ["normalization"],
+              reason: "invalid_format",
+              expected: "JSON",
+            },
+          ],
+        },
+      });
     },
     INTEGRATION_TEST_TIMEOUT_MS,
   );

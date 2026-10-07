@@ -1,4 +1,7 @@
-import { parseClientConfiguration } from "./ClientConfigurationDocument.js";
+import {
+  effectiveClientServer,
+  parseClientConfiguration,
+} from "./ClientConfigurationDocument.js";
 import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -85,8 +88,10 @@ export const readClientRegistrationStatuses = async (
       continue;
     try {
       const content = await readFile(client.configPath, "utf8");
-      const { servers } = parseClientConfiguration(content, client.format);
-      const raw = servers[PRODUCT_IDENTITY.mcpServerKey];
+      const raw = effectiveClientServer(
+        parseClientConfiguration(content, client.format),
+        PRODUCT_IDENTITY.mcpServerKey,
+      );
       if (raw === undefined) {
         statuses.push(
           unavailableStatus(client.name, client.configPath, "missing"),

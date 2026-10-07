@@ -5,7 +5,7 @@ import { access, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import pino from "pino";
 import type { Logger } from "../../../../src/logger.js";
 
@@ -20,6 +20,7 @@ import type {
 } from "../../../../src/ghidra/GhidraLauncher.js";
 import type { GhidraTransportKind } from "../../../../src/ghidra/GhidraTransport.js";
 import { GHIDRA_SESSION_CAPABILITIES } from "../../../../src/ghidra/GhidraSessionValues.js";
+import { waitForExit as waitForChildExit } from "../../../support/process/processFixture.js";
 
 const fixturePath = fileURLToPath(
   new URL("../../../fixtures/fakeGhidra.mjs", import.meta.url),
@@ -50,10 +51,15 @@ type FixtureMode =
   | "exit";
 
 class FixtureLauncher implements GhidraLauncher {
+  #notifyStarted: ((child: ChildProcess) => void) | undefined;
+  readonly started = new Promise<ChildProcess>((resolve) => {
+    this.#notifyStarted = resolve;
+  });
   readonly runtimeRoots: string[] = [];
   readonly endpointPaths: string[] = [];
   readonly tokens: string[] = [];
   readonly processes: ChildProcess[] = [];
+  readonly requests: string[] = [];
 
   constructor(readonly mode: FixtureMode = "success") {}
 
@@ -64,7 +70,7 @@ class FixtureLauncher implements GhidraLauncher {
     const projectRoot = join(session.runtimeRoot, "project");
     await mkdir(projectRoot, { recursive: true });
     const process_ = spawn(process.execPath, [fixturePath], {
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
       env: {
         ...process.env,
         REA_GHIDRA_FIXTURE_CONFIG: JSON.stringify({
@@ -79,7 +85,17 @@ class FixtureLauncher implements GhidraLauncher {
         }),
       },
     });
+    process_.on("message", (value: unknown) => {
+      if (
+        typeof value === "object" &&
+        value !== null &&
+        "method" in value &&
+        typeof value.method === "string"
+      )
+        this.requests.push(value.method);
+    });
     this.processes.push(process_);
+    process_.once("spawn", () => this.#notifyStarted?.(process_));
     return ok({
       process: process_,
       ownsProcessLifetime: true,
@@ -120,6 +136,7 @@ const clientFor = (
 };
 
 afterEach(async () => {
+  vi.useRealTimers();
   await Promise.all(clients.splice(0).map((client) => client.close()));
 });
 
@@ -246,10 +263,15 @@ describe("GhidraClient", () => {
 
 describe("GhidraClient startup lifecycle", () => {
   it("applies one startup deadline and removes the private runtime", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     const launcher = new FixtureLauncher("silent");
     const client = clientFor(launcher, { startupTimeoutMs: 30 });
 
-    const result = await client.start();
+    const pending = client.start();
+    const child = await launcher.started;
+    await vi.advanceTimersByTimeAsync(30);
+    const result = await vi.waitFor(() => pending, { timeout: 10_000 });
+    vi.useRealTimers();
 
     expect(result).toMatchObject({
       ok: false,
@@ -259,7 +281,7 @@ describe("GhidraClient startup lifecycle", () => {
       code: "ENOENT",
     });
     await client.close();
-    await expect(waitForExit(launcher.processes[0])).resolves.toBe(true);
+    await expect(waitForExit(child)).resolves.toBe(true);
   });
 
   it("cancels startup promptly and leaves no project or process", async () => {
@@ -267,7 +289,8 @@ describe("GhidraClient startup lifecycle", () => {
     const client = clientFor(launcher, { startupTimeoutMs: 10_000 });
     const controller = new AbortController();
     const pending = client.start(controller.signal);
-    setTimeout(() => controller.abort(), 10);
+    const process_ = await launcher.started;
+    controller.abort();
 
     const result = await pending;
 
@@ -276,9 +299,7 @@ describe("GhidraClient startup lifecycle", () => {
       code: "ENOENT",
     });
     await client.close();
-    const process_ = launcher.processes[0];
-    if (process_ !== undefined)
-      await expect(waitForExit(process_)).resolves.toBe(true);
+    await expect(waitForExit(process_)).resolves.toBe(true);
   });
 });
 
@@ -305,7 +326,9 @@ describe("GhidraClient established requests", () => {
       { document: null, procedure: "fixture_main" },
       { signal: activeController.signal },
     );
-    await wait(5);
+    await vi.waitFor(() =>
+      expect(launcher.requests).toContain("procedure_pseudo_code"),
+    );
     const queuedController = new AbortController();
     const queued = client.callTool(
       "procedure_info",
@@ -322,7 +345,7 @@ describe("GhidraClient established requests", () => {
       document: null,
       procedure: "fixture_main",
     });
-    await wait(5);
+    expect(launcher.requests).not.toContain("procedure_info");
     const process_ = launcher.processes[0];
     activeController.abort();
     await expect(active).resolves.toMatchObject({
@@ -404,14 +427,8 @@ const exited = (process_: ChildProcess | undefined): boolean =>
 const waitForExit = async (
   process_: ChildProcess | undefined,
 ): Promise<boolean> => {
-  for (let attempt = 0; attempt < 1_000 && !exited(process_); attempt += 1) {
-    await wait(10);
-  }
-  return exited(process_);
+  return process_ !== undefined && waitForChildExit(process_, 10_000);
 };
-
-const wait = (milliseconds: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 describe("GhidraClient rejected requests", () => {
   it("redacts authentication after failed startup cleanup and retry", async () => {

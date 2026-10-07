@@ -6,7 +6,7 @@ import {
   nativeUiScenarioInputSchema,
   nativeUiSnapshotSchema,
   nativeUiResultSchema,
-} from "../domain/nativeUiObservation.js";
+} from "../domain/native/nativeUiObservation.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -16,6 +16,10 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { createNativeUiHelperRuntime } from "./NativeUiHelperRuntime.js";
+import {
+  NATIVE_UI_OUTPUT_BUDGET_BYTES,
+  NATIVE_UI_OUTPUT_WEIGHT,
+} from "./NativeUiOutputBudget.js";
 
 const helper = fileURLToPath(
   new URL("../../bridge/native/ReaNativeUI.swift", import.meta.url),
@@ -135,8 +139,10 @@ const observeWithHelper = async (
           ),
         );
       launchTime = response.result.window.launch_time;
-      outputBytes += 2 * Buffer.byteLength(JSON.stringify(response.result));
-      if (outputBytes > 64 * 1024 * 1024)
+      outputBytes +=
+        NATIVE_UI_OUTPUT_WEIGHT *
+        Buffer.byteLength(JSON.stringify(response.result));
+      if (outputBytes > NATIVE_UI_OUTPUT_BUDGET_BYTES)
         return err(
           new AnalysisCapabilityUnavailableError(
             "native-macos",
@@ -153,7 +159,8 @@ const observeWithHelper = async (
               cause,
               diagnostics: {
                 helper_path: helper,
-                reason:
+                reason: cause instanceof Error ? cause.message : String(cause),
+                remediation:
                   "Native helper failed, timed out, or returned malformed capture data; install compatible Xcode command-line tools and inspect local OS permissions",
               },
             }),

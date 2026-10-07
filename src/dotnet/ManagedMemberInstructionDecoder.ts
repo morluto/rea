@@ -9,6 +9,14 @@ const opcode = (
 ): { readonly name: string; readonly operand: string } | undefined =>
   OPCODES.get(code);
 
+const PREFIX_OPCODES = new Set([
+  "unaligned.",
+  "volatile.",
+  "tail.",
+  "constrained.",
+  "readonly.",
+]);
+
 const OPCODES = new Map<
   number,
   { readonly name: string; readonly operand: string }
@@ -379,12 +387,15 @@ export const decodeInstructions = (
   il: Buffer,
 ): {
   readonly parsed: readonly ParsedInstruction[];
+  readonly instructionStarts: readonly number[];
   readonly count: number;
   readonly truncated: number;
   readonly issue: string | null;
 } => {
   const parsed: ParsedInstruction[] = [];
+  const instructionStarts: number[] = [];
   let offset = 0;
+  let prefixStart: number | null = null;
   let issue: string | null = null;
   try {
     while (offset < il.length) {
@@ -403,6 +414,12 @@ export const decodeInstructions = (
         break;
       }
       offset = operand.next;
+      if (PREFIX_OPCODES.has(descriptor.name)) {
+        prefixStart ??= start;
+      } else {
+        instructionStarts.push(prefixStart ?? start);
+        prefixStart = null;
+      }
       parsed.push({
         offset: start,
         opcode: descriptor.name,
@@ -415,7 +432,7 @@ export const decodeInstructions = (
       cause instanceof Error ? cause.message : "Instruction decode failed";
   }
   const truncated = offset < il.length && issue === null ? 1 : 0;
-  return { parsed, count: parsed.length, truncated, issue };
+  return { parsed, instructionStarts, count: parsed.length, truncated, issue };
 };
 
 export const parseExceptionRegions = (
@@ -435,12 +452,14 @@ export const parseExceptionRegions = (
     )
       return malformedExceptionRegions(
         "Exception section header leaves artifact",
+        regions,
       );
 
     const kind = bytes.readUInt8(sectionOffset);
     if ((kind & 0x3f) !== 1)
       return malformedExceptionRegions(
         `Unsupported method data section kind ${String(kind & 0x3f)}`,
+        regions,
       );
     const fat = (kind & 0x40) !== 0;
     const size = fat
@@ -456,10 +475,12 @@ export const parseExceptionRegions = (
     )
       return malformedExceptionRegions(
         "Exception section size leaves artifact",
+        regions,
       );
     if ((size - 4) % clauseSize !== 0)
       return malformedExceptionRegions(
         "Exception section size does not contain whole clauses",
+        regions,
       );
     if (
       !fat &&
@@ -467,6 +488,7 @@ export const parseExceptionRegions = (
     )
       return malformedExceptionRegions(
         "Small exception section reserved bytes are nonzero",
+        regions,
       );
 
     const count = (size - 4) / clauseSize;
@@ -478,24 +500,21 @@ export const parseExceptionRegions = (
   return { status: "complete", regions };
 };
 
-interface ExceptionRegionParseSuccess {
-  readonly status: "complete";
-  readonly regions: ManagedExceptionRegion[];
-}
-
-interface ExceptionRegionParseFailure {
-  readonly status: "malformed";
-  readonly regions: [];
-  readonly issue: string;
-}
-
-type ExceptionRegionParseResult =
-  | ExceptionRegionParseSuccess
-  | ExceptionRegionParseFailure;
+export type ExceptionRegionParseResult =
+  | {
+      readonly status: "complete";
+      readonly regions: ManagedExceptionRegion[];
+    }
+  | {
+      readonly status: "malformed";
+      readonly regions: ManagedExceptionRegion[];
+      readonly issue: string;
+    };
 
 const malformedExceptionRegions = (
   issue: string,
-): ExceptionRegionParseFailure => ({ status: "malformed", regions: [], issue });
+  regions: ManagedExceptionRegion[] = [],
+): ExceptionRegionParseResult => ({ status: "malformed", regions, issue });
 
 const readExceptionClauses = (
   bytes: Buffer,

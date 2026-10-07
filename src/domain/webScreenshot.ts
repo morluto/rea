@@ -7,6 +7,7 @@ import {
   browserAllowedOriginsSchema,
   browserEndpointSchema,
 } from "./browserObservation.js";
+import { browserVersionSchema } from "./browserObservationSchemas.js";
 
 /** Self-verifying inline PNG artifact for CLI/MCP parity. */
 export const webScreenshotArtifactSchema = z
@@ -40,14 +41,6 @@ export const captureWebScreenshotInputSchema = z.strictObject({
 export type CaptureWebScreenshotInput = z.infer<
   typeof captureWebScreenshotInputSchema
 >;
-
-const browserVersionSchema = z.object({
-  product: z.string(),
-  protocol_version: z.string(),
-  revision: z.string(),
-  user_agent: z.string(),
-  js_version: z.string(),
-});
 
 /** Screenshot observation with embedded immutable artifact bytes. */
 export const webScreenshotSchema = z.object({

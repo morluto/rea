@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>JavaScript &amp; Electron — REA</title>
+    <meta
+      name="description"
+      content="Trace a Notes CSV export through a renderer API, preload and IPC handler with REA. Includes downloadable example files and a verified analysis result."
+    />
+    <meta name="theme-color" content="#ffffff" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../assets/styles.css" />
+    <script src="../../assets/main.js" defer></script>
+  </head>
+  <body id="top">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="../../" aria-label="REA home"
+          ><span class="brand-name">REA</span
+          ><span class="brand-caption">Reverse Engineer Anything</span></a
+        >
+        <nav class="navigation" aria-label="Main navigation">
+          <a href="../../showcase/">Showcases</a
+          ><a class="nav-start" href="../../get-started/">Get started</a
+          ><a href="../">Guides</a
+          ><a href="https://github.com/morluto/rea">GitHub</a>
+        </nav>
+      </div>
+    </header>
+    <main id="main" class="container">
+      <div class="page-heading">
+        <p class="breadcrumb">
+          <a href="../../">Home</a> / <a href="../">Guides</a> / JavaScript
+          &amp; Electron
+        </p>
+        <h1>Trace an Electron<br />CSV export.</h1>
+        <p class="lede">
+          Follow a button click from the page API, through Electron IPC, to the
+          CSV file writer.
+        </p>
+      </div>
+      <div class="article-layout">
+        <nav class="contents" aria-label="On this page">
+          <p>In this guide</p>
+          <ul>
+            <li><a href="#example">The example</a></li>
+            <li><a href="#ask">Ask your agent</a></li>
+            <li><a href="#follow">Trace the export code</a></li>
+            <li><a href="#try">Try the example</a></li>
+            <li><a href="#next">Inspect the CSV writer</a></li>
+          </ul>
+        </nav>
+        <article class="article" aria-label="JavaScript &amp; Electron">
+          <section class="article-section" id="example">
+            <h2>Where does “Export notes” go?</h2>
+            <p>
+              This guide uses a small Electron app. Clicking
+              <strong>Export notes</strong> calls an API in the page, crosses
+              into the main process, and writes a CSV. The behavior is spread
+              across several files.
+            </p>
+            <figure class="workflow-figure">
+              <p class="figure-title">
+                The CSV export across Electron processes
+              </p>
+              <ol class="flow-steps">
+                <li>
+                  <span class="flow-label">Renderer → preload</span
+                  ><span class="flow-node"><code>notes.exportCsv()</code></span
+                  ><span class="flow-note"
+                    ><code>renderer.js</code> calls the API exposed by
+                    <code>preload.js</code>.</span
+                  >
+                </li>
+                <li>
+                  <span class="flow-label">Between processes</span
+                  ><span class="flow-node"><code>notes:export</code></span
+                  ><span class="flow-note"
+                    >The preload invokes an IPC channel: a named message to the
+                    main process.</span
+                  >
+                </li>
+                <li>
+                  <span class="flow-label">Main process</span
+                  ><span class="flow-node">An export handler</span
+                  ><span class="flow-note"
+                    ><code>main.js</code> handles that channel and calls the CSV
+                    writer.</span
+                  >
+                </li>
+              </ol>
+              <p class="flow-result">
+                <code>csv.js</code> formats the notes →
+                <code>main.js</code> writes <code>downloads/notes.csv</code>.
+              </p>
+              <figcaption>
+                REA matches the literal IPC call to its handler and identifies
+                the exposed API. The path is inferred from code; a runtime
+                capture can check what executes.
+              </figcaption>
+            </figure>
+          </section>
+          <section class="article-section" id="ask">
+            <h2>Ask about the CSV export</h2>
+            <p>
+              <a href="../../get-started/#agent">Connect your agent to REA</a>
+              and give it the app directory or ASAR file:
+            </p>
+            <div class="agent-terminal">
+              <div class="terminal-header">
+                <span class="terminal-title"
+                  ><span class="terminal-dots" aria-hidden="true"
+                    ><i></i><i></i><i></i></span
+                  >Your coding agent</span
+                ><button
+                  class="copy-button"
+                  type="button"
+                  data-copy="javascript-prompt"
+                  aria-label="Copy example prompt"
+                >
+                  Copy
+                </button>
+              </div>
+              <p class="terminal-prompt">
+                <span class="prompt-symbol" aria-hidden="true">›</span
+                ><span id="javascript-prompt"
+                  >Use REA to find what happens when I export notes in this app.
+                  Where is the CSV created?</span
+                ><span class="terminal-cursor" aria-hidden="true"></span>
+              </p>
+            </div>
+            <p class="caption">
+              Example prompt. Include the absolute path to the application
+              folder or <code>app.asar</code>.
+            </p>
+            <p>
+              REA reads the application files and builds a map of entrypoints,
+              modules and process boundaries. Your agent uses that map to narrow
+              the investigation to the export feature.
+            </p>
+          </section>
+          <section class="article-section" id="follow">
+            <h2>Trace the export code</h2>
+            <h3>The page calls a small API</h3>
+            <div class="code-block">
+              <div class="code-header">
+                <span>renderer.js · example source</span>
+              </div>
+              <pre><code>document.querySelector(&quot;#export&quot;).addEventListener(&quot;click&quot;, async () =&gt; {
+  const destination = await window.notes.exportCsv();
+  document.querySelector(&quot;#status&quot;).textContent = `Saved to ${destination}`;
+});</code></pre>
+            </div>
+            <p>
+              The page knows the method name. The implementation lives in the
+              preload, which exposes it to the renderer.
+            </p>
+            <div class="code-block">
+              <div class="code-header">
+                <span>preload.js · example source</span>
+              </div>
+              <pre><code>contextBridge.exposeInMainWorld(&quot;notes&quot;, {
+  exportCsv: () =&gt; ipcRenderer.invoke(&quot;notes:export&quot;),
+});</code></pre>
+            </div>
+            <p>
+              REA records <code>notes.exportCsv</code> and the literal channel
+              <code>notes:export</code>. It pairs that invocation with the
+              single matching handler in the main process.
+            </p>
+            <div class="code-block">
+              <div class="code-header">
+                <span>main.js · example source</span>
+              </div>
+              <pre><code>ipcMain.handle(&quot;notes:export&quot;, () =&gt; {
+  const destination = path.join(app.getPath(&quot;downloads&quot;), &quot;notes.csv&quot;);
+  writeFileSync(destination, toCsv(notes), &quot;utf8&quot;);
+  return destination;
+});</code></pre>
+            </div>
+            <p>
+              Reading the handler answers the original question:
+              <code>csv.js</code> formats the notes, and the main process writes
+              <code>notes.csv</code> into the user's Downloads folder.
+            </p>
+            <div class="code-block">
+              <div class="code-header">
+                <span>REA result · summary.ipc excerpt</span>
+              </div>
+              <pre><code>{
+  &quot;literal_channels&quot;: 1,
+  &quot;renderer_transmissions&quot;: 1,
+  &quot;main_handlers&quot;: 1,
+  &quot;paired_renderer_transmissions&quot;: 1,
+  &quot;ambiguous_renderer_transmissions&quot;: 0
+}</code></pre>
+            </div>
+            <p class="caption">
+              Recorded by REA 4.1.0 on the downloadable example below. Source
+              locations accompany the API, channel and handler findings.
+            </p>
+          </section>
+          <section class="article-section" id="try">
+            <h2>Analyze the example yourself</h2>
+            <p>
+              Download the example and unzip it. The archive contains the
+              complete <code>notes-example</code> folder. Analyze it with
+              Node.js and npm; Electron is not needed for this example.
+            </p>
+            <p>
+              <a
+                class="button"
+                href="../../examples/notes-example.zip"
+                download="notes-example.zip"
+                >Download example ZIP</a
+              >
+            </p>
+            <details class="evidence-details">
+              <summary>Browse the six source files</summary>
+              <ul class="example-files">
+                <li>
+                  <a href="../../examples/notes-electron/package.json" download
+                    >package.json</a
+                  >
+                </li>
+                <li>
+                  <a href="../../examples/notes-electron/main.js" download
+                    >main.js</a
+                  >
+                </li>
+                <li>
+                  <a href="../../examples/notes-electron/preload.js" download
+                    >preload.js</a
+                  >
+                </li>
+                <li>
+                  <a href="../../examples/notes-electron/renderer.js" download
+                    >renderer.js</a
+                  >
+                </li>
+                <li>
+                  <a href="../../examples/notes-electron/csv.js" download
+                    >csv.js</a
+                  >
+                </li>
+                <li>
+                  <a href="../../examples/notes-electron/index.html" download
+                    >index.html</a
+                  >
+                </li>
+              </ul>
+            </details>
+            <div class="code-block">
+              <div class="code-header">
+                <span>Static application analysis</span
+                ><button
+                  class="copy-button"
+                  type="button"
+                  data-copy="javascript-command"
+                  aria-label="Copy static application analysis"
+                >
+                  Copy
+                </button>
+              </div>
+              <pre><code id="javascript-command">npx -y rea-agents@latest analyze-javascript-application \
+  /absolute/path/to/notes-example --json</code></pre>
+            </div>
+            <p>
+              Replace the path with the folder you unzipped. You should find one
+              IPC channel and one matching handler in
+              <code>normalized_result.summary.ipc</code>. Source locations are
+              in <code>normalized_result.graph</code>.
+            </p>
+            <p>
+              For your own app, use the same command with its directory or ASAR
+              path. An agent can follow a literal string, API name or IPC
+              channel with REA's feature tracing tools.
+            </p>
+          </section>
+          <section class="article-section" id="next">
+            <h2>Inspect the CSV writer</h2>
+            <blockquote class="prompt">
+              <p>
+                Follow <code>notes:export</code> to its handler. Which inputs
+                reach the CSV writer, and what happens if writing the file
+                fails?
+              </p>
+            </blockquote>
+            <p>
+              Use the source locations to inspect those details. Computed
+              channel names and ambiguous handlers can remain unresolved;
+              runtime observations give you another way to investigate them.
+            </p>
+            <ul class="reading-list">
+              <li>
+                <a href="../../showcase/notion/"
+                  >Follow Notion's clipboard bridge</a
+                >
+                <span>Apply the same approach to a packaged Electron app.</span>
+              </li>
+              <li>
+                <a href="../browser/">Observe a browser export</a
+                ><span
+                  >Capture a real click and see which request it makes.</span
+                >
+              </li>
+              <li>
+                <a href="../native/">Follow a native function</a
+                ><span
+                  >Continue into a binary when a feature depends on native
+                  code.</span
+                >
+              </li>
+            </ul>
+          </section>
+        </article>
+      </div>
+    </main>
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <p>REA · Reverse Engineer Anything</p>
+        <div class="footer-links">
+          <a href="https://github.com/morluto/rea">Source</a
+          ><a href="https://github.com/morluto/rea/blob/main/LICENSE"
+            >MIT license</a
+          ><a href="https://discord.gg/GkcryMnJDM">Community</a>
+        </div>
+      </div>
+    </footer>
+    <p class="sr-only" id="copy-status" role="status" aria-live="polite"></p>
+    <a class="back-to-top" href="#top" aria-label="Back to top">
+      <span aria-hidden="true">↑</span> Top
+    </a>
+  </body>
+</html>

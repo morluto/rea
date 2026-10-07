@@ -1,6 +1,6 @@
 import { functionDossierSchema } from "../domain/hopperValues.js";
 import { describe, expect, it } from "vitest";
-import { nativeFunctionAnnotationsInputSchema } from "../domain/nativeFunctionAnnotations.js";
+import { nativeFunctionAnnotationsInputSchema } from "../domain/native/nativeFunctionAnnotations.js";
 import { ghidraFunctionDossier } from "../domain/ghidraValues.fixture.js";
 import {
   parseGhidraFunctionInput,
@@ -10,7 +10,7 @@ import {
   CAPABILITIES,
   windowsP0Capabilities,
 } from "./GhidraProviderCapabilities.js";
-import { HOPPER_PROVIDER_TOOL_CONTRACTS } from "../hopper/HopperProvider.js";
+import { HOPPER_OPERATIONS } from "../hopper/HopperProvider.js";
 
 const result = () => {
   const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
@@ -105,10 +105,6 @@ describe("Ghidra function annotations", () => {
         (c) => c.operation === "annotate_native_function",
       ),
     ).toMatchObject({ available: false });
-    expect(
-      HOPPER_PROVIDER_TOOL_CONTRACTS.some(
-        (c) => c.name === "annotate_native_function",
-      ),
-    ).toBe(false);
+    expect(HOPPER_OPERATIONS).not.toContain("annotate_native_function");
   });
 });

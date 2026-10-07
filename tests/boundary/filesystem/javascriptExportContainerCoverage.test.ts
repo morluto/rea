@@ -2,14 +2,14 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { parseApplicationGraphEvidence } from "../../../src/application/JavaScriptApplicationEvidenceGraph.js";
-import { analyzeJavaScriptApplication } from "../../../src/application/JavaScriptApplicationService.js";
-import { compareJavaScriptExportShapesEvidence } from "../../../src/application/JavaScriptApplicationWorkflowService.js";
+import { parseApplicationGraphEvidence } from "../../../src/application/javascript/JavaScriptApplicationEvidenceGraph.js";
+import { analyzeJavaScriptApplication } from "../../../src/application/javascript/JavaScriptApplicationService.js";
+import { compareJavaScriptExportShapesEvidence } from "../../../src/application/javascript/JavaScriptApplicationWorkflowService.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import {
   javaScriptExportShapeComparisonResultSchema,
   projectedExportReturnShapesSchema,
-} from "../../../src/domain/javascriptExportShapeComparisonSchemas.js";
+} from "../../../src/domain/javascript/javascriptExportShapeComparisonSchemas.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
 

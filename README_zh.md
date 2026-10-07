@@ -17,6 +17,8 @@
 
 <a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
 
+**[网站（英文）](https://morluto.github.io/rea/) · [使用指南](https://morluto.github.io/rea/guides/) · [DX-Ball 案例](https://morluto.github.io/rea/showcase/dx-ball/)**
+
 [快速开始](#快速开始) · [当前状态](#当前状态) · [从二进制到行为](#从二进制到行为) · [调查工具目录](#调查工具目录) · [路线图](#路线图) · [工作原理](#工作原理)
 
 <table aria-label="REA community">
@@ -136,12 +138,12 @@ rea setup
 ### 系统要求
 
 - macOS 12 或更高版本
-- Ubuntu 24.04+、Fedora 41+ 或 64 位 Arch Linux
+- Ubuntu 24.04+、Fedora 41+、64 位 Arch Linux 或 CachyOS
 - Node.js 22.x (>=22.19)、24.x (>=24.11) 或 26+，以及 npm
 
 原生二进制分析需要 Hopper 或 Ghidra。Hopper 是独立软件；演示模式有厂商规定的限制，不要求购买许可证。
 
-Ghidra 支持 Linux x64 和 macOS x64/arm64。单独安装 Ghidra 12.1.4 和完整的 64 位 JDK 21，然后配置 REA 使用它们。macOS 还需要对应架构的原生反编译器。
+Ghidra 支持 Linux x64 和 macOS x64/arm64。单独安装 Ghidra 12.1.x，以及该安装在 `application.java.min` 到 `application.java.max` 中声明的完整 64 位 JDK，然后配置 REA 使用它们。当前 12.1 发行版要求 JDK 21 或更新版本，并且不设置上限。桥接在 Ghidra 12.1.4 和 JDK 21 上完成验证。macOS 还需要对应架构的原生反编译器。
 
 Setup 可以验证安装并保存路径，不会安装或升级 Ghidra、Java、Node.js、npm 或 Homebrew。
 
@@ -151,7 +153,7 @@ Setup 可以验证安装并保存路径，不会安装或升级 Ghidra、Java、
 
 运行 `npx -y rea-agents@latest doctor`，检查主机、依赖、分析工具和智能体配置。该命令不会修改文件。添加 `--json` 可获取结构化诊断。
 
-Linux 上的默认 Hopper 启动器为 `/opt/hopper/bin/Hopper`。其他路径可通过 `HOPPER_LAUNCHER_PATH` 指定。如果文件存在但仍报告缺少分析引擎，运行 `ldd /opt/hopper/bin/Hopper | grep 'not found'` 检查缺少的系统库。安装详情见 [Hopper 指南](docs/installation.md#hopper)。
+Linux 上 REA 会优先使用可执行的 `/opt/hopper/bin/Hopper`；如果不可用，则自动检查 `~/.local/share/rea/hopper/bin/Hopper`。其他路径可通过 `HOPPER_LAUNCHER_PATH` 指定。如果文件存在但仍报告缺少分析引擎，请对实际 Hopper 路径运行 `ldd /absolute/path/to/Hopper | grep 'not found'` 检查缺少的系统库。安装详情见 [Hopper 指南](docs/installation.md#hopper)。
 
 ### 更新与卸载
 
@@ -209,10 +211,10 @@ REA 负责第 1–5 步中的二进制分析。第 6 步由智能体使用其常
 | 托管 PE/CLI       |    7 | .NET 程序集身份、元数据、CIL 指令、原生依赖声明、重建导入与构建比较                                    |
 | 固件              |    2 | Linux 固件区域检查与显式提取                                                                           |
 | Android APK       |    5 | 包与 manifest 声明、类搜索、成员清单、方法反编译与静态引用                                             |
-| 浏览器观察        |    9 | 页面结构、网络元数据、脚本、来源映射、WebMCP 发现、截图与捕获比较                                      |
+| 浏览器观察        |   11 | 页面结构、网络元数据、脚本、来源映射、WebMCP 发现、截图与捕获比较                                      |
 | Electron 分析     |    5 | 渲染进程观察、静态应用映射、静态/运行时结果关联                                                        |
 | JavaScript 运行时 |    2 | Node/Electron Inspector 目标发现、脚本位置与执行上下文事件                                             |
-| 应用工作流        |    8 | 捕获的网站脚本导出、跨层功能追踪、构建比较、历史源码映射、静态返回结构比较与重建验证                   |
+| 应用工作流        |   13 | 捕获的网站脚本导出、跨层功能追踪、构建比较、历史源码映射、静态返回结构比较与重建验证                   |
 | 工作区与观察      |   21 | 会话、证据包、导航上下文、进程/产物/函数比较与待解决问题跟踪                                           |
 
 ## 路线图

@@ -40,5 +40,43 @@ it("accepts a verified explicit java binary and canonicalizes the JAR", async ()
       { REA_JADX_MCP_JAR: jar, JAVA_HOME: javaHome },
       "inspect_android_package",
     ),
-  ).resolves.toEqual({ jar: await realpath(jar), java });
+  ).resolves.toEqual({ jar: await realpath(jar), java, jvmArguments: [] });
+});
+
+it("configures heap and visible processors independently without forcing either", async () => {
+  const root = await createTestTempDirectory("rea-jadx-config-");
+  const jar = join(root, "engine.jar");
+  await writeFile(jar, "fixture jar");
+  const configuration = await resolveJadxConfiguration(
+    {
+      REA_JADX_MCP_JAR: jar,
+      REA_JADX_HEAP_MIB: "8192",
+      REA_JADX_ACTIVE_PROCESSOR_COUNT: "4",
+    },
+    "inspect_android_package",
+  );
+  expect(configuration.jvmArguments).toEqual([
+    "-Xmx8192m",
+    "-XX:ActiveProcessorCount=4",
+  ]);
+  await expect(
+    resolveJadxConfiguration(
+      { REA_JADX_MCP_JAR: jar, REA_JADX_ACTIVE_PROCESSOR_COUNT: "2147483648" },
+      "inspect_android_package",
+    ),
+  ).rejects.toMatchObject({
+    _tag: "AnalysisCapabilityUnavailableError",
+    reason: expect.stringContaining("32-bit"),
+  });
+  for (const name of ["REA_JADX_HEAP_MIB", "REA_JADX_ACTIVE_PROCESSOR_COUNT"])
+    for (const value of ["", "0", "-1", "1.5", "8g", " 4", "9007199254740992"])
+      await expect(
+        resolveJadxConfiguration(
+          { REA_JADX_MCP_JAR: jar, [name]: value },
+          "inspect_android_package",
+        ),
+      ).rejects.toMatchObject({
+        _tag: "AnalysisCapabilityUnavailableError",
+        reason: expect.stringContaining(name),
+      });
 });

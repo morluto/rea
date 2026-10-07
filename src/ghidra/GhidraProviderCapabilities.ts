@@ -6,7 +6,6 @@ import {
   hasWindowsNativeAuthority,
   windowsNativeAuthorityUnavailableReason,
 } from "../process/WindowsAuthority.js";
-import { GENERATED_MCP_TOOL_CATALOG } from "../generatedMcpToolCatalog.js";
 import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionValues.js";
 import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryValues.js";
 
@@ -17,25 +16,11 @@ export const GHIDRA_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({
   version: null,
 });
 
-const providerContractByName = new Map(
-  GENERATED_MCP_TOOL_CATALOG.filter(
-    ({ kind }) => kind === "official-proxy" || kind === "enhanced",
-  ).map((contract) => [contract.name, contract]),
-);
-
-/** Provider-neutral contracts implemented by the Ghidra adapter. */
-export const GHIDRA_PROVIDER_TOOL_CONTRACTS = Object.freeze(
-  [...GHIDRA_INVENTORY_OPERATIONS, ...GHIDRA_FUNCTION_OPERATIONS].map(
-    (operation) => {
-      const contract = providerContractByName.get(operation);
-      if (contract === undefined)
-        throw new TypeError(
-          `Missing provider-neutral contract for ${operation}`,
-        );
-      return contract;
-    },
-  ),
-);
+/** Analyst operations implemented by the Ghidra inventory and function adapters. */
+export const GHIDRA_OPERATIONS = Object.freeze([
+  ...GHIDRA_INVENTORY_OPERATIONS,
+  ...GHIDRA_FUNCTION_OPERATIONS,
+]);
 
 /** Health limitations shared by every Ghidra-backed capability. */
 export const healthLimitations = Object.freeze([
@@ -157,10 +142,7 @@ export const limitationsFor = (operation: string): readonly string[] => {
 
 /** Provider-neutral capabilities advertised by every non-Windows Ghidra session. */
 export const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
-  GHIDRA_PROVIDER_TOOL_CONTRACTS.map((contract) => {
-    const operation = contract.analysisOperation;
-    if (operation === null)
-      throw new TypeError(`Missing analysis operation for ${contract.name}`);
+  GHIDRA_OPERATIONS.map((operation) => {
     return Object.freeze({
       provider: GHIDRA_PROVIDER_IDENTITY,
       operation,
@@ -175,7 +157,7 @@ export const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
         changesPermissions: false,
         requiresRoot: false,
       }),
-      limitations: Object.freeze(limitationsFor(contract.name)),
+      limitations: Object.freeze(limitationsFor(operation)),
     });
   }),
 );

@@ -1,10 +1,11 @@
 import { z } from "incur";
-import { AndroidAnalysisService } from "../application/AndroidAnalysisService.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
 import { createAndroidAnalysisProvider } from "../composition/android.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import type { AndroidOperation } from "../domain/androidAnalysis.js";
+import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 import type { Logger } from "../logger.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
@@ -15,13 +16,19 @@ export const registerAndroidCommands = (
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
 ): void => {
-  const service = new AndroidAnalysisService(
-    createAndroidAnalysisProvider(environment),
-  );
+  const provider = createAndroidAnalysisProvider(environment);
+  const service = new AndroidAnalysisService(provider);
   const execute = (name: string, operation: AndroidOperation, input: unknown) =>
     withCommandCancellation((signal) =>
       logCliCommand(logger, name, async () => {
         const result = await service.execute(operation, input, { signal });
+        try {
+          await provider.close();
+        } catch (cause) {
+          if (cause instanceof AnalysisError)
+            return projectAnalysisError(cause);
+          throw cause;
+        }
         return result.ok ? result.value : projectAnalysisError(result.error);
       }),
     );

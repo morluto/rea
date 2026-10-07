@@ -41,6 +41,25 @@ const sessionEvidence = effects({ mutatesSession: true });
 
 /** Explicit effect audit for every public tool. */
 export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
+  observe_web_execution: effects({
+    mutatesTarget: true,
+    mutatesSession: true,
+    accessesNetwork: true,
+    mayDiscardData: true,
+    idempotent: false,
+  }),
+  inspect_web_event_listeners: browserEvidence,
+  trace_web_source_location: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    launchesProcess: true,
+  }),
+  trace_web_module_imports: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+  }),
   inspect_firmware_regions: effects({
     mutatesSession: true,
     launchesProcess: true,
@@ -221,6 +240,12 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     idempotent: false,
   }),
   reconcile_javascript_runtime: evidence,
+  recover_javascript_sources: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    launchesProcess: true,
+    idempotent: false,
+  }),
   trace_application_feature: evidence,
   trace_javascript_semantics: evidence,
   compare_application_versions: evidence,
@@ -228,6 +253,8 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   compare_javascript_export_shapes: evidence,
   build_reconstruction_obligation_ledger: evidence,
   evaluate_reconstruction_coverage: effects(),
+  project_android_application_graph: evidence,
+  project_apple_application_graph: evidence,
   open_binary: effects({ mutatesSession: true, launchesProcess: true }),
   close_binary: effects({
     mutatesSession: true,

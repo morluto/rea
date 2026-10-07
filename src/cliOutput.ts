@@ -6,6 +6,7 @@ const UNSUPPORTED_OUTPUT_COMBINATION_MESSAGE =
   "Token windows cannot preserve structured output. Remove --token-limit/--token-offset and use --filter-output or command pagination.";
 
 type StructuredOutputFormat = "json" | "jsonl" | "yaml";
+const INCUR_OUTPUT_FORMATS = new Set(["toon", "json", "yaml", "md", "jsonl"]);
 
 export type CliOutputArgumentValidation =
   | { readonly ok: true }
@@ -18,6 +19,13 @@ export type CliOutputArgumentValidation =
 
 type JsonRecord = Record<string, unknown>;
 
+interface ParsedCliOutputArguments {
+  readonly filterOutput: boolean;
+  readonly format: string;
+  readonly parseError: boolean;
+  readonly tokenWindow: boolean;
+}
+
 const isRecord = (value: unknown): value is JsonRecord =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -28,41 +36,61 @@ const validationError = (value: JsonRecord): JsonRecord | undefined => {
   return undefined;
 };
 
-/** Reject text-window controls that would corrupt a structured document. */
-export const validateCliOutputArguments = (
+const parseCliOutputArguments = (
   arguments_: readonly string[],
-): CliOutputArgumentValidation => {
+): ParsedCliOutputArguments => {
   let format: string = "toon";
+  let filterOutput = false;
   let tokenWindow = false;
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index];
-    // Incur scans builtins across `--` and accepts only the spaced --format form.
-    // Mirror its effective format so malformed requests still emit complete JSON.
+    // Incur scans builtins across `--` and accepts only spaced value forms.
+    // Mirror those effective values at the executable output boundary.
     if (argument === "--json") {
       format = "json";
       continue;
     }
     if (argument === "--format") {
       const value = arguments_[index + 1];
-      if (value !== undefined) {
+      if (value) {
+        // Incur stops parsing at an invalid format before applying any later
+        // output controls. Let it report that malformed flag itself.
+        if (!INCUR_OUTPUT_FORMATS.has(value))
+          return { filterOutput, format, parseError: true, tokenWindow: false };
         format = value;
         index += 1;
       }
       continue;
     }
+    if (argument === "--filter-output") {
+      if (arguments_[index + 1]) {
+        filterOutput = true;
+        index += 1;
+      }
+      continue;
+    }
     if (argument === "--token-limit" || argument === "--token-offset") {
-      if (arguments_[index + 1] !== undefined) {
+      const value = arguments_[index + 1];
+      if (value) {
+        const numericValue = Number(value);
+        if (!Number.isFinite(numericValue) || value.trim() === "")
+          return { filterOutput, format, parseError: true, tokenWindow: false };
         tokenWindow = true;
         index += 1;
       }
       continue;
     }
-    if (
-      argument?.startsWith("--token-limit=") ||
-      argument?.startsWith("--token-offset=")
-    )
-      tokenWindow = true;
   }
+  return { filterOutput, format, parseError: false, tokenWindow };
+};
+
+/** Reject text-window controls that would corrupt a structured document. */
+export const validateCliOutputArguments = (
+  arguments_: readonly string[],
+): CliOutputArgumentValidation => {
+  const { format, parseError, tokenWindow } =
+    parseCliOutputArguments(arguments_);
+  if (parseError) return { ok: true };
   if (
     tokenWindow &&
     (format === "json" || format === "jsonl" || format === "yaml")
@@ -74,6 +102,21 @@ export const validateCliOutputArguments = (
       message: UNSUPPORTED_OUTPUT_COMBINATION_MESSAGE,
     };
   return { ok: true };
+};
+
+/** Preserve a complete document when Incur filters the entire result away. */
+export const renderEmptyFilteredCliOutput = (
+  arguments_: readonly string[],
+): string | undefined => {
+  const { filterOutput, format, parseError } =
+    parseCliOutputArguments(arguments_);
+  if (parseError) return undefined;
+  if (
+    filterOutput &&
+    (format === "json" || format === "jsonl" || format === "yaml")
+  )
+    return "{}\n";
+  return undefined;
 };
 
 /** Render one complete structured error before command execution. */

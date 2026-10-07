@@ -216,6 +216,7 @@ const artifactStateErrorDetails = (
       operation: error.operation,
       reason: error.reason,
       ...(error.reason === "limit" ? { truncated: true } : {}),
+      ...(error.detail === undefined ? {} : { detail: error.detail }),
     };
   if (error instanceof UnknownRegistryError) return { reason: error.reason };
   if (error instanceof EvidenceFileError)

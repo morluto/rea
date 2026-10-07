@@ -15,6 +15,12 @@ const environment = () => ({
 
 /** Execute the compiled CLI with production providers and no test adapters. */
 export async function artifactCli(command, target, arguments_ = []) {
+  return (await artifactCliEvidence(command, target, arguments_))
+    .normalized_result;
+}
+
+/** Execute the compiled CLI and return its complete Evidence record. */
+export async function artifactCliEvidence(command, target, arguments_ = []) {
   const { stdout } = await promisify(execFile)(
     process.execPath,
     [
@@ -29,7 +35,7 @@ export async function artifactCli(command, target, arguments_ = []) {
   const evidence = JSON.parse(stdout);
   assert.equal(evidence.error, undefined, stdout);
   assert.ok(evidence.normalized_result, "CLI omitted normalized result");
-  return evidence.normalized_result;
+  return evidence;
 }
 
 /** Run a real stdio MCP subprocess, owning and closing its transport. */

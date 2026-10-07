@@ -1,9 +1,9 @@
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
-import { AndroidAnalysisService } from "../application/AndroidAnalysisService.js";
+import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { ToolContract } from "../contracts/toolContractTypes.js";
-import type { AndroidOperation } from "../domain/androidAnalysis.js";
+import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";

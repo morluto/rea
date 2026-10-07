@@ -1,7 +1,7 @@
 import * as t from "@babel/types";
 
 import { sanitizeBrowserUrl } from "./browserObservation.js";
-import { semanticStaticPropertyName } from "./javascriptAstValues.js";
+import { semanticStaticPropertyName } from "./javascript/javascriptAstValues.js";
 
 /** Pick the endpoint argument for common network-call patterns. */
 

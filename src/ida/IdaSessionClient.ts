@@ -95,6 +95,7 @@ export class IdaSessionClient implements AnalysisClient {
   #startup: Promise<void> | undefined;
   #closed = false;
   #closing = false;
+  #closePromise: Promise<Result<null, AnalysisError>> | undefined;
   #workspace: IdaWorkspace | undefined;
   #database: string | undefined;
   #openAttempted = false;
@@ -385,6 +386,16 @@ export class IdaSessionClient implements AnalysisClient {
   }
 
   async closeWithOutcome(): Promise<Result<null, AnalysisError>> {
+    if (this.#closePromise !== undefined) return this.#closePromise;
+    const closing = this.#closeOnce();
+    const shared = closing.finally(() => {
+      if (this.#closePromise === shared) this.#closePromise = undefined;
+    });
+    this.#closePromise = shared;
+    return shared;
+  }
+
+  async #closeOnce(): Promise<Result<null, AnalysisError>> {
     this.#closing = true;
     await this.#tail;
     if (this.#closed) return ok(null);

@@ -30,8 +30,8 @@ explicit limitation; architecture inventory locations remain available.
   connections and controller/class names. `verify:interface-builder` compiles
   a source-owned AppKit XIB with `ibtool`. Storyboards require an installed
   iOS platform; unsupported archive forms remain explicit.
-- `inspect_native_dispatch_metadata` / `rea inspect-native-dispatch-metadata
-  <app-or-binary>` prefers a validated macOS Mach-O byte reader. It decodes
+- `inspect_native_dispatch_metadata` /
+  `rea inspect-native-dispatch-metadata <app-or-binary>` prefers a validated macOS Mach-O byte reader. It decodes
   64-bit little-endian Objective-C class/metaclass records, superclass pointers,
   absolute/relative method entries, ivar offsets/sizes/alignment and protocol
   declarations. It also decodes simple Swift conformances, static synchronous
@@ -39,9 +39,20 @@ explicit limitation; architecture inventory locations remain available.
   vtable descriptors. Records include exact virtual addresses/file offsets and
   artifact evidence. Vtable indexes are metadata word offsets; witness indexes
   start after the conformance header. Names unavailable in metadata remain null.
-  Chained fixups, external bindings, authenticated pointers, categories,
-  properties, generic/resilient/async/coroutine tables and inherited overrides
-  have explicit unsupported or partial coverage. Other providers retain the
+  Pointers are decoded through the image's fixups:
+  - `LC_DYLD_CHAINED_FIXUPS` rebases and binds, including the authenticated
+    arm64e formats;
+  - legacy `LC_DYLD_INFO` bind opcodes.
+
+  So an external superclass resolves from its `_OBJC_CLASS_$_` bind (for
+  example `NSObject`). The `pointer_fixups` coverage facet names the mechanism.
+  Class properties, with parsed attributes, and `__objc_catlist` categories are
+  also decoded. Categories record the extended class, local or external, plus
+  their methods, protocols and properties; category methods appear as
+  implementations with a `category`. Swift field-offset globals that are only
+  initialized at runtime stay unresolved. Generic, resilient, async and
+  coroutine tables, and inherited overrides, have explicit unsupported or
+  partial coverage. Other providers retain the
   existing symbol-based inventory with its narrower coverage.
 
 ## Native instruction, call and type primitives
@@ -150,7 +161,7 @@ actions may change application data or trigger network activity.
 
 ## Provider and verification boundaries
 
-Install Ghidra 12.1.4 and a full 64-bit JDK 21 separately, then configure REA to
+Install a Ghidra 12.1.x release and the 64-bit full JDK it declares, then configure REA to
 use them. Ghidra analysis supports Linux x64 and macOS x64/arm64; macOS requires
 the matching native decompiler. Experimental Windows x64 P0 admits native
 x86-64 PE applications on local NTFS using bundled Job Object ownership,
@@ -165,8 +176,10 @@ GUI authority, and REA never falls back automatically to Hopper.
   instruction/call facts, value dependencies and process/project cleanup.
 - `npm run verify:ghidra:aarch64-jump-table`: optimized ELF and byte/halfword
   relative tables, plus ARM64 Mach-O on an ARM64 macOS host.
-- `npm run verify:apple-dispatch`: source-built Objective-C protocols/classes and
-  Swift conformances/vtables, repeated after stripping local symbols.
+- `npm run verify:apple-dispatch`: source-built Objective-C protocols, classes,
+  properties and categories, and Swift conformances and vtables. Each is linked
+  with legacy `LC_DYLD_INFO` and with chained fixups (and as arm64e on Apple
+  silicon), then repeated after stripping local symbols.
 - `npm run verify:native-ui`: one source-owned fixture window, successful
   selected-window capture and actions, changed-target rejection, and cleanup.
   Missing OS permissions fail this lane.

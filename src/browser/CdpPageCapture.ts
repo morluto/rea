@@ -107,7 +107,7 @@ const captureAuthorizedPage = async (
     sessionId: context.sessionId,
     signal: context.signal,
     allowedOrigins,
-    delayOperation: context.operation,
+    operation: context.operation,
   });
   const attachedUrl = mainFrameUrl(frameResult) ?? "";
   const frameCapture = captureFrames(
@@ -154,7 +154,7 @@ const captureAuthorizedPage = async (
     sessionId: context.sessionId,
     signal: context.signal,
     allowedOrigins,
-    delayOperation: context.operation,
+    operation: context.operation,
   });
   const completedUrl = mainFrameUrl(completedFrameResult) ?? "";
   if (state.events.originViolation)
@@ -212,7 +212,7 @@ const authorizeObservationWindow = async (
     sessionId: context.sessionId,
     signal: context.signal,
     allowedOrigins,
-    delayOperation: context.operation,
+    operation: context.operation,
   });
   const mainFrame = captureFrames(initialFrameResult, allowedOrigins).items[0];
   if (mainFrame === undefined)

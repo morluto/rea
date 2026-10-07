@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { webPageInspectionSchema } from "./browserObservation.js";
+import { analyzeJavaScriptStaticSource } from "./javascript/javascriptStaticAnalysis.js";
 import { analyzeCapturedWebBundle } from "./webBundleAnalyzer.js";
 import { webBundleAnalysisSchema } from "./webBundleAnalysis.js";
 import { createWebTextArtifact } from "./webContentArtifact.js";
@@ -174,6 +175,98 @@ describe("web bundle static-analysis parity", () => {
     );
   });
 
+  it("reads open endpoints only from XMLHttpRequest method and URL pairs", () => {
+    const result = analyzeCapturedWebBundle(
+      inspection(`
+        xhr.open("GET", "/xhr-get");
+        xhr.open("post", "https://xhr.example.test/submit");
+        dav.open("PROPFIND", "/dav/");
+        fs.open("/tmp/data.txt", "r", done);
+        window.open("https://help.example.test/", "_blank");
+        xhr.open(method, "/dynamic-method");
+        fs.open(path, "r", done);
+        window.open(url, "_blank");
+        window.open(url, "/preview");
+        globalThis.open(url, "./frame");
+        document.open("text/html", "/replace");
+        parent.open("GET", "/parent-xhr");
+        self.open("post", "/self-xhr");
+        xhr.open(method, "api/relative");
+        fs.open(path, "w+", done);
+        popup.open(url, "_TOP");
+      `),
+    );
+    expect(
+      result.observations.endpoints.map(({ value }) => value).sort(),
+    ).toEqual([
+      "/dav/",
+      "/dynamic-method",
+      "/parent-xhr",
+      "/self-xhr",
+      "/xhr-get",
+      "api/relative",
+      "https://xhr.example.test/submit",
+    ]);
+  });
+
+  it("reads storage open versions as storage rather than endpoints in both analyzers", () => {
+    const source = `
+      indexedDB.open(databaseName, "2");
+      window.indexedDB.open(databaseName, "/v3");
+      indexedDB.open("APP", "4");
+      indexedDB.open("GET", "/storage-named-xhr");
+    `;
+    expect(
+      analyzeCapturedWebBundle(inspection(source)).observations.endpoints.map(
+        ({ value }) => value,
+      ),
+    ).toEqual(["/storage-named-xhr"]);
+    const analysis = analyzeJavaScriptStaticSource(source);
+    expect(analysis.endpoints.map(({ value }) => value)).toEqual([
+      "/storage-named-xhr",
+    ]);
+    expect(analysis.storage.map(({ kind }) => kind)).toEqual([
+      "indexed-db",
+      "indexed-db",
+      "indexed-db",
+      "indexed-db",
+    ]);
+  });
+
+  it("keeps HTTP-method-named reads of provable keyed collections out of endpoints", () => {
+    const result = analyzeCapturedWebBundle(
+      inspection(`
+        axios.get("https://api.example.test/users");
+        api.get("users");
+        client.delete("cache-key");
+        new Map().get("map-key");
+        new URLSearchParams(location.search).get("q");
+        new Headers(init).delete("x-trace");
+        new FormData(form).get("file");
+        response.headers.get("content-type");
+        request?.headers.delete("cookie");
+        new URL(location.href).searchParams.get("page");
+        api.headers.post("/v1/headers");
+        api.searchParams.request("/search");
+        new Headers().get("/users");
+        api.headers.get("https://api.example.test/headers");
+        api.searchParams.delete("../search");
+      `),
+    );
+    expect(
+      result.observations.endpoints.map(({ value }) => value).sort(),
+    ).toEqual([
+      "../search",
+      "/search",
+      "/users",
+      "/v1/headers",
+      "cache-key",
+      "https://api.example.test/headers",
+      "https://api.example.test/users",
+      "users",
+    ]);
+  });
+
   it("recognizes loadURL endpoints like static analysis", () => {
     const result = analyzeCapturedWebBundle(
       inspection('window.win.loadURL("https://embedded.test/app");'),
@@ -205,6 +298,32 @@ describe("web bundle artifact metadata", () => {
         },
       }).capture.source_artifacts[0]?.media_type,
     ).toBe(mediaType);
+  });
+});
+
+describe("deep captured web bundle syntax", () => {
+  it("retains evidence after a parser-admitted deep property chain", () => {
+    const source = `const value = root${".next".repeat(12_000)};\nimport "./last.js";\nfetch("/after");`;
+    const result = analyzeCapturedWebBundle(inspection(source));
+    expect(result.completeness).toMatchObject({
+      status: "complete",
+      parsed_scripts: 1,
+      parse_failures: 0,
+    });
+    expect(result.observations.chunks.edges).toContainEqual(
+      expect.objectContaining({
+        kind: "static_import",
+        specifier: "./last.js",
+        resolved_url: `${origin}/assets/last.js`,
+        location: expect.objectContaining({ line: 2, column: 0 }),
+      }),
+    );
+    expect(result.observations.endpoints).toContainEqual(
+      expect.objectContaining({
+        value: "/after",
+        location: expect.objectContaining({ line: 3, column: 0 }),
+      }),
+    );
   });
 });
 

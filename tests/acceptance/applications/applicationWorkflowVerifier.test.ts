@@ -29,7 +29,7 @@ describe("local application workflow verifier", () => {
     const { stdout } = await execute(
       process.execPath,
       [
-        "scripts/verify-local-application-workflows.mjs",
+        "scripts/verify/javascript/application-workflows.mjs",
         "--left",
         fixtures.left,
         "--right",
@@ -78,7 +78,7 @@ describe("local application workflow verifier", () => {
     const { stdout } = await execute(
       process.execPath,
       [
-        "scripts/verify-local-application-workflows.mjs",
+        "scripts/verify/javascript/application-workflows.mjs",
         "--left",
         left,
         "--right",

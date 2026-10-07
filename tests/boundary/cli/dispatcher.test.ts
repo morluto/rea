@@ -27,7 +27,7 @@ describe("executable dispatcher", () => {
         ),
         workspace.write(
           "dist/cliOutput.js",
-          "export const sanitizeCliOutput = (output) => output; export const validateCliOutputArguments = () => ({ ok: true }); export const renderCliOutputArgumentError = () => '';\n",
+          "export const sanitizeCliOutput = (output) => output; export const validateCliOutputArguments = () => ({ ok: true }); export const renderCliOutputArgumentError = () => ''; export const renderEmptyFilteredCliOutput = () => undefined;\n",
         ),
         workspace.write(
           "dist/mcpDoctor.js",

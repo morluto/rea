@@ -10,7 +10,7 @@ import {
   recordUnknownInputSchema,
   updateUnknownInputSchema,
 } from "../../domain/residualUnknown.js";
-import { unknownMutationEvidence } from "../UnknownEvidence.js";
+import { unknownMutationEvidence } from "./UnknownEvidence.js";
 import { InvestigationRecords } from "./InvestigationRecords.js";
 
 const unknownInput = (question: string) =>
@@ -133,11 +133,21 @@ describe("investigation record ownership", () => {
     ).toBe(true);
     expect(records.mergeEvidenceBundle(bundle)).toEqual({
       ok: true,
-      value: { recordsAdded: 0, unknownsAdded: 1, changed: true },
+      value: {
+        recordsAdded: 0,
+        unknownsAdded: 1,
+        changed: true,
+        metadataChanged: false,
+      },
     });
     expect(records.mergeEvidenceBundle(bundle)).toEqual({
       ok: true,
-      value: { recordsAdded: 0, unknownsAdded: 0, changed: false },
+      value: {
+        recordsAdded: 0,
+        unknownsAdded: 0,
+        changed: false,
+        metadataChanged: false,
+      },
     });
     records.clear();
     expect(records.exportEvidenceBundle()).toEqual(createEvidenceBundle([]));

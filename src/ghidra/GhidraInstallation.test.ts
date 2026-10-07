@@ -60,7 +60,7 @@ describe("Ghidra installation inspection", () => {
     });
   });
 
-  it("accepts only the exact Linux x64 Ghidra and JDK commitment", () => {
+  it("accepts the verified Linux x64 Ghidra release and JDK", () => {
     expect(
       inspectGhidraInstallation(
         { installDir: INSTALL, platform: "linux", architecture: "x64" },
@@ -73,6 +73,40 @@ describe("Ghidra installation inspection", () => {
       javaVersion: "21.0.11",
     });
   });
+
+  it.each([
+    ["12.1.2", "27", 27],
+    ["12.1.2-2.1", "27", 27],
+    ["12.1.0", "21.0.2", 21],
+    [SUPPORTED_GHIDRA_VERSION, "25.0.1", 25],
+  ])(
+    "accepts Ghidra %s with JDK %s on the verified release line",
+    (providerVersion, javaVersion, major) => {
+      const result = inspectGhidraInstallation(
+        { installDir: INSTALL, platform: "linux", architecture: "x64" },
+        host({
+          readText: () =>
+            `application.version=${providerVersion}\napplication.java.min=21\napplication.java.max=\n`,
+          probeJava: () => ({
+            ...JAVA,
+            version: javaVersion,
+            major,
+          }),
+        }),
+      );
+      expect(result.status).toBe("available");
+      expect(result).toMatchObject({ providerVersion, javaVersion });
+      expect(
+        result.checks.find(({ name }) => name === "version"),
+      ).toMatchObject({
+        status: "passed",
+        detail:
+          providerVersion === SUPPORTED_GHIDRA_VERSION
+            ? SUPPORTED_GHIDRA_VERSION
+            : expect.stringContaining("verified build"),
+      });
+    },
+  );
 
   it.each(["x64", "arm64"] as const)(
     "accepts macOS %s with matching native tools",
@@ -245,5 +279,86 @@ describe("Ghidra installation rejection diagnostics", () => {
       name: failed,
       code,
     });
+  });
+});
+
+describe("Ghidra release line and JDK bounds", () => {
+  it.each([
+    {
+      name: "JDK above the installation maximum",
+      readText: () =>
+        "application.version=12.1.4\napplication.java.min=21\napplication.java.max=25\n",
+      probeJava: () => ({ ...JAVA, major: 27, version: "27" }),
+      failed: "java",
+      code: "unsupported_version",
+    },
+    {
+      name: "unreadable Java minimum",
+      readText: () =>
+        "application.version=12.1.4\napplication.java.min=latest\n",
+      probeJava: () => JAVA,
+      failed: "java",
+      code: "version_unresolved",
+    },
+    {
+      name: "unparseable Ghidra version",
+      readText: () => "application.version=latest\n",
+      probeJava: () => JAVA,
+      failed: "version",
+      code: "version_unresolved",
+    },
+    {
+      name: "different Ghidra line",
+      readText: () => "application.version=12.2.0\n",
+      probeJava: () => JAVA,
+      failed: "version",
+      code: "unsupported_version",
+    },
+  ])("distinguishes $name", ({ readText, probeJava, failed, code }) => {
+    const result = inspectGhidraInstallation(
+      { installDir: INSTALL, platform: "linux", architecture: "x64" },
+      host({ readText, probeJava }),
+    );
+    expect(result.status).toBe("unavailable");
+    expect(
+      result.checks.find(({ status }) => status === "failed"),
+    ).toMatchObject({ name: failed, code });
+  });
+
+  it("names the accepted Ghidra line and JDK range in failure remediation", () => {
+    const result = inspectGhidraInstallation(
+      {
+        installDir: INSTALL,
+        javaHome: "/usr/lib/jvm/java-17-openjdk",
+        platform: "linux",
+        architecture: "x64",
+      },
+      host({
+        readText: () =>
+          "application.version=12.0.4\napplication.java.min=21\napplication.java.max=\n",
+        probeJava: () => ({ ...JAVA, major: 17, version: "17.0.20.1" }),
+      }),
+    );
+    expect(result.status).toBe("unavailable");
+    if (result.status !== "unavailable") return;
+    expect(result.rejection.reason).toContain("12.1.x");
+    expect(result.rejection.reason).toContain(SUPPORTED_GHIDRA_VERSION);
+    expect(result.checks.find(({ name }) => name === "java")).toMatchObject({
+      status: "failed",
+      remediation: expect.stringContaining("JDK 21 or newer"),
+    });
+  });
+
+  it("honors an installation that declares a lower Java minimum", () => {
+    expect(
+      inspectGhidraInstallation(
+        { installDir: INSTALL, platform: "linux", architecture: "x64" },
+        host({
+          readText: () =>
+            `application.version=${SUPPORTED_GHIDRA_VERSION}\napplication.java.min=17\n`,
+          probeJava: () => ({ ...JAVA, major: 17, version: "17.0.20.1" }),
+        }),
+      ),
+    ).toMatchObject({ status: "available", javaVersion: "17.0.20.1" });
   });
 });

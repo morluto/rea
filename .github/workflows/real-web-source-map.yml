@@ -1,0 +1,50 @@
+name: Real website source-map verification
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/real-web-source-map.yml"
+      - "scripts/verify-browser-source-maps.mjs"
+      - "scripts/lib/browser-source-map-e2e.mjs"
+      - "scripts/fixtures/browser-source-map-site.mjs"
+      - "src/javascript/sourceMaps/**"
+      - "src/browser/assets/**"
+      - "src/domain/webSource*.ts"
+      - "src/domain/webScript*.ts"
+      - "src/application/WebSourceLocation*.ts"
+      - "src/application/ValidateSelectedWebScript.ts"
+      - "src/composition/webSourceLocations.ts"
+      - "src/server/registerWebSourceLocationTool.ts"
+      - "src/server/createServer.ts"
+      - "src/contracts/webScriptToolContracts.ts"
+      - "src/process/**"
+      - "src/cli/webSourceLocationCommands.ts"
+      - "src/cli.ts"
+      - "src/artifacts/readStableArtifact.ts"
+      - "package.json"
+      - "package-lock.json"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: real-web-source-map-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+env:
+  HUSKY: "0"
+jobs:
+  real-web-source-map:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Install the pinned compiler into an isolated fixture directory
+        run: npm install --prefix "$RUNNER_TEMP/rea-web-source-map-compiler" --no-audit --no-fund --package-lock=false esbuild@0.25.10
+      - run: npm run verify:browser:source-maps
+        env:
+          REA_BROWSER_EXECUTABLE: /usr/bin/google-chrome
+          REA_BROWSER_NO_SANDBOX: "true"
+          REA_WEB_SOURCE_MAP_COMPILER: ${{ runner.temp }}/rea-web-source-map-compiler/node_modules/esbuild/lib/main.js

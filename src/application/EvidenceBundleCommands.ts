@@ -5,7 +5,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { compareBundles } from "../domain/bundleComparison.js";
-import { EvidenceLedger } from "./EvidenceLedger.js";
+import { EvidenceLedger } from "./investigation/EvidenceLedger.js";
 import {
   readEvidenceBundle,
   writeEvidenceBundle,

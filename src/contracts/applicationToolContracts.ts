@@ -1,21 +1,29 @@
-import { applicationVersionComparisonResultSchema } from "../domain/javascriptApplicationVersionComparisonSchemas.js";
-import { applicationFeatureTraceResultSchema } from "../domain/javascriptFeatureTraceSchemas.js";
-import { javaScriptSemanticTraceResultSchema } from "../domain/javascriptSemanticTraceSchemas.js";
-import { javaScriptExportShapeComparisonResultSchema } from "../domain/javascriptExportShapeComparisonSchemas.js";
-import { sourceToBundleComparisonResultSchema } from "../domain/sourceToBundleComparisonSchemas.js";
+import { applicationVersionComparisonResultSchema } from "../domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
+import { applicationFeatureTraceResultSchema } from "../domain/javascript/javascriptFeatureTraceSchemas.js";
+import { javaScriptSemanticTraceResultSchema } from "../domain/javascript/javascriptSemanticTraceSchemas.js";
+import { javaScriptExportShapeComparisonResultSchema } from "../domain/javascript/javascriptExportShapeComparisonSchemas.js";
+import { sourceToBundleComparisonResultSchema } from "../domain/javascript/sourceToBundleComparisonSchemas.js";
 import {
   compareApplicationVersionsRequestSchema,
   compareJavaScriptExportShapesRequestSchema,
   compareSourceToBundleRequestSchema,
   traceApplicationFeatureRequestSchema,
   traceJavaScriptSemanticsRequestSchema,
-} from "./applicationWorkflowInputContracts.js";
+} from "./javascript/applicationWorkflowInputContracts.js";
 import { reconstructionCoverageEvaluationInputSchema } from "../domain/reconstructionCoverageInput.js";
 import { reconstructionClosureResultSchema } from "../domain/reconstructionCoverage.js";
 import {
   reconstructionObligationLedgerInputSchema,
   reconstructionObligationLedgerSchema,
 } from "../domain/reconstructionObligationLedgerSchemas.js";
+import {
+  androidApplicationProjectionInputSchema,
+  androidApplicationProjectionResultSchema,
+} from "../domain/android/androidApplication.js";
+import {
+  appleApplicationProjectionInputSchema,
+  appleApplicationProjectionResultSchema,
+} from "../domain/apple/appleApplication.js";
 import type { ToolContract } from "./toolContracts.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import { evidenceResultOf } from "./toolOutputSchemas.js";
@@ -24,7 +32,12 @@ import {
   JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE,
   JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
   SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE,
-} from "./javascriptApplicationWorkflowExamples.js";
+} from "./javascript/javascriptApplicationWorkflowExamples.js";
+import {
+  ANDROID_APPLICATION_GRAPH_EXAMPLE,
+  APPLE_APPLICATION_GRAPH_EXAMPLE,
+  MACOS_APPLICATION_GRAPH_EXAMPLE,
+} from "./mobileApplicationGraphExamples.js";
 
 const traceOutputSchema = evidenceResultOf(applicationFeatureTraceResultSchema);
 const semanticTraceOutputSchema = evidenceResultOf(
@@ -246,6 +259,42 @@ export const APPLICATION_TOOL_CONTRACTS = [
       },
     ],
   },
+  {
+    name: "project_android_application_graph",
+    ...toolContractMetadata("project_android_application_graph"),
+    description:
+      "Project authenticated APK inventory_artifact Evidence into an execution-free Android application inventory. Reports exact component paths and hashes, runtime-family hints, and path-based bridge hypotheses without decoding DEX, executing the APK, or claiming observed runtime calls.",
+    kind: "application",
+    inputSchema: androidApplicationProjectionInputSchema,
+    outputSchema: evidenceResultOf(androidApplicationProjectionResultSchema),
+    examples: [
+      {
+        title:
+          "Project APK inventory Evidence into an Android application graph",
+        input: ANDROID_APPLICATION_GRAPH_EXAMPLE,
+      },
+    ],
+  },
+  {
+    name: "project_apple_application_graph",
+    ...toolContractMetadata("project_apple_application_graph"),
+    description:
+      "Project authenticated IPA, macOS .app directory, ZIP, or DMG inventory Evidence into an execution-free Apple application inventory. Reports application roots, nested bundles with path-convention roles (app extensions, XPC services, login items, privileged helpers, system extensions, frameworks), launchd plists, exact component paths and hashes, runtime-family hints, and path-based bridge hypotheses without parsing plist/CMS semantics or claiming observed runtime calls.",
+    kind: "application",
+    inputSchema: appleApplicationProjectionInputSchema,
+    outputSchema: evidenceResultOf(appleApplicationProjectionResultSchema),
+    examples: [
+      {
+        title: "Project IPA inventory Evidence into an Apple application graph",
+        input: APPLE_APPLICATION_GRAPH_EXAMPLE,
+      },
+      {
+        title:
+          "Project a macOS .app directory inventory into its bundle anatomy",
+        input: MACOS_APPLICATION_GRAPH_EXAMPLE,
+      },
+    ],
+  },
 ] as const satisfies readonly ToolContract[];
 
 /** Resolve one named application contract without relying on array position. */
@@ -270,6 +319,12 @@ export function applicationToolContract(
 export function applicationToolContract(
   name: "evaluate_reconstruction_coverage",
 ): (typeof APPLICATION_TOOL_CONTRACTS)[6];
+export function applicationToolContract(
+  name: "project_android_application_graph",
+): (typeof APPLICATION_TOOL_CONTRACTS)[7];
+export function applicationToolContract(
+  name: "project_apple_application_graph",
+): (typeof APPLICATION_TOOL_CONTRACTS)[8];
 export function applicationToolContract(
   name: (typeof APPLICATION_TOOL_CONTRACTS)[number]["name"],
 ): (typeof APPLICATION_TOOL_CONTRACTS)[number] {

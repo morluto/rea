@@ -1,8 +1,8 @@
 import { recordSessionEvidenceSources } from "../sessionEvidence.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 
-import { verifyManagedNativeBoundariesEvidence } from "../../application/ManagedNativeVerificationService.js";
-import { managedNativeVerificationResultSchema } from "../../domain/managedNativeVerification.js";
+import { verifyManagedNativeBoundariesEvidence } from "../../application/managed/ManagedNativeVerificationService.js";
+import { managedNativeVerificationResultSchema } from "../../domain/managed/managedNativeVerification.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { toCallToolResult } from "../toolResult.js";

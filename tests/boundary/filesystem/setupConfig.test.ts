@@ -11,24 +11,28 @@ import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 const pinnedPackage = PRODUCT_IDENTITY.registrationPackageSpecifier;
 
 describe("JSON client configuration transaction", () => {
-  it("rejects a symlink target not owned by the current user", async () => {
-    if (typeof process.getuid !== "function") return;
-    const currentUid = process.getuid();
-    let statCalls = 0;
-    expect(
-      await resolveClientConfigTransactionPath("/config", {
-        lstat: () => {
-          statCalls += 1;
-          return Promise.resolve({
-            uid: statCalls === 1 ? currentUid : currentUid + 1,
-            isFile: () => statCalls > 1,
-            isSymbolicLink: () => statCalls === 1,
-          });
-        },
-        realpath: () => Promise.resolve("/target"),
-      }),
-    ).toBeUndefined();
-  });
+  it.skipIf(typeof process.getuid !== "function")(
+    "rejects a symlink target not owned by the current user",
+    async () => {
+      const currentUid = process.getuid?.();
+      if (currentUid === undefined)
+        throw new Error("UID support is required by this test");
+      let statCalls = 0;
+      expect(
+        await resolveClientConfigTransactionPath("/config", {
+          lstat: () => {
+            statCalls += 1;
+            return Promise.resolve({
+              uid: statCalls === 1 ? currentUid : currentUid + 1,
+              isFile: () => statCalls > 1,
+              isSymbolicLink: () => statCalls === 1,
+            });
+          },
+          realpath: () => Promise.resolve("/target"),
+        }),
+      ).toBeUndefined();
+    },
+  );
 
   it("preserves existing keys, creates a backup, and reads back the MCP entry", async () => {
     const directory = await createTestTempDirectory("rea-setup-");

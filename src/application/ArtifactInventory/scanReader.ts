@@ -22,7 +22,7 @@ import {
   STRICT_INTEGRITY_POLICY,
   type ArtifactIntegrityPolicy,
 } from "./types.js";
-import { hashReadable } from "./hash.js";
+import { hashReadable } from "../../artifacts/ArtifactHash.js";
 
 export interface PendingIntegrityContradiction {
   readonly logicalPath: string;

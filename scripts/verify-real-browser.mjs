@@ -37,6 +37,7 @@ import { verifyLargeScreenshotE2e } from "./lib/browser-screenshot-e2e.mjs";
 import { verifyPopupEventCoverage } from "./lib/browser-popup-e2e.mjs";
 import { verifyBrowserNetworkEvidence } from "./lib/browser-network-e2e.mjs";
 import { verifyBrowserScriptExport } from "./lib/browser-script-export-e2e.mjs";
+import { verifyBrowserModules } from "./lib/browser-module-e2e.mjs";
 import { verifyBrowserDomDestinations } from "./lib/browser-dom-destinations-e2e.mjs";
 
 const REAL_BROWSER_STARTUP_TIMEOUT_MS = 60_000;
@@ -336,6 +337,7 @@ try {
     cdp_endpoint: endpoint,
     target_id: target,
   });
+  const moduleTrace = await verifyBrowserModules(executable);
   process.stdout.write(
     `${JSON.stringify({
       verifier_run: await completeVerifierRun(verifierRun),
@@ -357,6 +359,7 @@ try {
       popupEvents,
       networkEvidence,
       scriptExport,
+      moduleTrace,
       domDestinations,
       browserScenarioCli: true,
       browserScenarioAttachCleanup: "disconnected-external",
@@ -413,9 +416,16 @@ async function verifyPageScopedTransport(provider, proxy, origin) {
       target_id: target,
       observation_ms: 5_000,
     }),
+    {
+      progress: {
+        report(event) {
+          if (event.phase === "browser_observation" && event.completed === 1)
+            proxy.disconnectClients();
+          return Promise.resolve();
+        },
+      },
+    },
   );
-  await delay(100);
-  proxy.disconnectClients();
   const disconnected = await disconnectedPromise;
   if (
     !disconnected.ok ||

@@ -2,10 +2,10 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptApplication } from "../../../src/application/JavaScriptApplicationService.js";
-import { parseApplicationGraphEvidence } from "../../../src/application/JavaScriptApplicationEvidenceGraph.js";
+import { analyzeJavaScriptApplication } from "../../../src/application/javascript/JavaScriptApplicationService.js";
+import { parseApplicationGraphEvidence } from "../../../src/application/javascript/JavaScriptApplicationEvidenceGraph.js";
 import { importReferenceSource } from "../../../src/application/ReferenceSourceImport.js";
-import { compareSourceToBundle } from "../../../src/domain/sourceToBundleComparison.js";
+import { compareSourceToBundle } from "../../../src/domain/javascript/sourceToBundleComparison.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it("keeps literal hash characters in historical/current filesystem paths", async () => {

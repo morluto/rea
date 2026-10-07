@@ -11,7 +11,7 @@
                 <rect key="frame" x="120" y="400" width="150" height="44"/>
                 <title key="title" string="Build"/>
                 <connections>
-                  <action selector="buildTapped:" destination="vc1" id="action1"/>
+                  <action selector="buildTapped:" target="vc1" id="action1"/>
                 </connections>
               </button>
             </subviews>

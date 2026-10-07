@@ -1,9 +1,9 @@
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
-import type { FirmwareAnalysisService } from "../application/FirmwareAnalysisService.js";
+import type { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { ToolContract } from "../contracts/toolContractTypes.js";
-import type { FirmwareOperation } from "../domain/firmwareAnalysis.js";
+import type { FirmwareOperation } from "../domain/firmware/firmwareAnalysis.js";
 import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";

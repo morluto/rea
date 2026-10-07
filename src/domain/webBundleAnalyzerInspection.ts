@@ -4,12 +4,13 @@ import * as t from "@babel/types";
 import { sanitizeEndpointCandidate } from "./browserObservation.js";
 import type { WebPageInspection } from "./browserObservation.js";
 import type { WebBundleAnalysis } from "./webBundleAnalysis.js";
-import { semanticStaticPropertyName } from "./javascriptAstValues.js";
+import { traverseJavaScriptAst } from "./javascript/javascriptSemanticTraversal.js";
+import { semanticStaticPropertyName } from "./javascript/javascriptAstValues.js";
 import {
   calleeName,
   endpointArgument,
   stringValue,
-} from "./javascriptStaticAnalysisHelpers.js";
+} from "./javascript/javascriptStaticAnalysisHelpers.js";
 import {
   location,
   locationFields,
@@ -61,10 +62,11 @@ export const analyzeScript = (
   }
   accumulator.parsedScripts += 1;
   detectVendorFingerprints(script, accumulator);
-  t.traverseFast(file, (node) => {
-    accumulator.visitedNodes += 1;
-    inspectNode(script, node, accumulator);
-    return undefined;
+  traverseJavaScriptAst(file, {
+    enter: (node) => {
+      accumulator.visitedNodes += 1;
+      inspectNode(script, node, accumulator);
+    },
   });
 };
 
@@ -147,7 +149,7 @@ const inspectCall = (
       accumulator,
     });
   }
-  const endpoint = endpointArgument(name, node.arguments);
+  const endpoint = endpointArgument(name, node.arguments, node.callee);
   if (endpoint !== undefined)
     addFinding({
       collection: accumulator.endpoints,

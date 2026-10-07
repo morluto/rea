@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   installLinuxHopper,
+  linuxHopperLauncherDigestSupported,
   linuxHopperInstallDisclosure,
   linuxPackageManagerCommands,
   linuxSharedLibrariesAvailable,
@@ -58,6 +59,7 @@ describe("Linux Hopper host classification", () => {
     ['ID=ubuntu\nVERSION_ID="24.04"\n', "deb"],
     ["ID=fedora\nVERSION_ID=41\n", "rpm"],
     ["ID=arch\n", "arch"],
+    ["ID=cachyos\nID_LIKE=arch\n", "arch"],
   ] as const)("accepts an official Hopper distribution", (document, family) => {
     expect(parseLinuxDistribution(document)).toMatchObject({
       packageFamily: family,
@@ -87,12 +89,28 @@ describe("Linux Hopper host classification", () => {
     'ID=ubuntu\nVERSION_ID="22.04"\n',
     "ID=fedora\nVERSION_ID=40\n",
     'ID=debian\nVERSION_ID="13"\nID_LIKE=debian\n',
+    "ID=manjaro\nID_LIKE=arch\n",
+    "ID=garuda\nID_LIKE=arch\n",
   ])("rejects unsupported vendor/version combinations", (document) => {
     expect(parseLinuxDistribution(document).supported).toBe(false);
   });
 });
 
 describe("Linux Hopper installation", () => {
+  it.each([
+    [
+      "Debian and Arch",
+      "0294ced141cc373468ee22d8343e7dac41980cb05a937994ca81c9f09afe7ded",
+    ],
+    ["RPM", "1339f9e58377442b0c6fcb0dfc3cec20d593cc557408521fad9a00dbc6b8da13"],
+  ])("accepts the pinned %s launcher build", (_, digest) => {
+    expect(linuxHopperLauncherDigestSupported(digest)).toBe(true);
+  });
+
+  it("rejects an unverified launcher build", () => {
+    expect(linuxHopperLauncherDigestSupported("0".repeat(64))).toBe(false);
+  });
+
   it("discloses the exact download, integrity evidence, and privileged command", () => {
     expect(linuxHopperInstallDisclosure("deb", false)).toEqual({
       downloadUrl:

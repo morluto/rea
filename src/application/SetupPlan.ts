@@ -16,6 +16,7 @@ import type {
 } from "./SetupTypes.js";
 import type { SetupClient } from "./SupportedClients.js";
 import type { DoctorScope } from "./Doctor.js";
+import type { DoctorReport } from "./Doctor.js";
 
 /** Read-only setup facts shared by client selection and preflight. */
 export interface SetupDiscovery {
@@ -36,8 +37,10 @@ export const discoverSetupState = async (input: {
   readonly forceHopperInstall: boolean;
   readonly proposeHopper: boolean;
   readonly doctorScope: DoctorScope | undefined;
+  readonly initialDoctor?: DoctorReport;
 }): Promise<SetupDiscovery> => {
-  const initialDoctor = await input.host.doctor(input.doctorScope);
+  const initialDoctor =
+    input.initialDoctor ?? (await input.host.doctor(input.doctorScope));
   const linuxHopperRepairNeeded = initialDoctor.checks.some(
     ({ name, ok, detail }) =>
       !ok &&

@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
-import { runProviderAnalysis } from "../../../../src/application/DirectAnalysis.js";
+import { runProviderAnalysis } from "../../../../src/composition/directAnalysis.js";
 import {
   ArtifactPathRegistry,
   normalizeArtifactPath,
@@ -96,7 +96,7 @@ describe("artifact archive safety", () => {
     expect(unsafePathError).toBeInstanceOf(ArtifactReaderFailure);
     expect(unsafePathError).toMatchObject({
       reason: "path",
-      message: "Artifact path is not normalized",
+      message: 'Artifact path is not normalized: "../escape"',
     });
     const registry = new ArtifactPathRegistry();
     registry.add("A.js", "file");
@@ -109,7 +109,7 @@ describe("artifact archive safety", () => {
     expect(collisionError).toBeInstanceOf(ArtifactReaderFailure);
     expect(collisionError).toMatchObject({
       reason: "path",
-      message: "Artifact path collision: a.js",
+      message: "Artifact path collision: a.js differs only in case from A.js",
     });
 
     for (const [filePath, childPath] of [

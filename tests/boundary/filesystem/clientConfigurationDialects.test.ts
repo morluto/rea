@@ -191,6 +191,184 @@ describe("additional client configuration dialects", () => {
   });
 });
 
+const parseOpenCode = (text: string): Record<string, unknown> => {
+  const errors: ParseError[] = [];
+  const document = parseJsonc(text, errors, {
+    allowTrailingComma: true,
+  }) as Record<string, unknown>;
+  expect(errors).toEqual([]);
+  return document;
+};
+
+const openCodeClient = async (prefix: string) => {
+  const home = await createTestTempDirectory(prefix);
+  const client = getClients(home).find(({ name }) => name === "opencode");
+  if (client === undefined) throw new Error("missing OpenCode client");
+  await mkdir(client.markerPath ?? home, { recursive: true });
+  return { home, client };
+};
+
+const legacyEntry = JSON.stringify({ type: "local", command, enabled: true });
+
+describe("OpenCode V2 native server table", () => {
+  it("registers in mcp.servers, replaces REA's V1 entry, and uninstalls", async () => {
+    const { home, client } = await openCodeClient("rea-opencode-v2-");
+    await writeFile(
+      client.configPath,
+      `{
+  "mcp": {
+    // Default timeouts are not a server.
+    "timeout": { "catalog": 30000 },
+    "servers": {
+      // An independently managed server.
+      "other": { "type": "local", "command": ["node", "other.js"] },
+    },
+    "rea": ${legacyEntry},
+  },
+}\n`,
+    );
+
+    expect(
+      (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("configured");
+    expect(await configureClientConfiguration(client, {}, command)).toEqual({
+      status: "unchanged",
+    });
+    const text = await readFile(client.configPath, "utf8");
+    expect(text).toContain("// Default timeouts are not a server.");
+    expect(text).toContain("// An independently managed server.");
+    expect(parseOpenCode(text).mcp).toEqual({
+      timeout: { catalog: 30000 },
+      servers: {
+        other: { type: "local", command: ["node", "other.js"] },
+        rea: { type: "local", command: [...command] },
+      },
+    });
+    expect(await readClientRegistrationStatuses(home)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          client: "opencode",
+          state: "aligned",
+          command,
+        }),
+      ]),
+    );
+
+    expect((await systemUninstallHost(home).removeClient(client)).status).toBe(
+      "removed",
+    );
+    expect(
+      parseOpenCode(await readFile(client.configPath, "utf8")).mcp,
+    ).toEqual({
+      timeout: { catalog: 30000 },
+      servers: { other: { type: "local", command: ["node", "other.js"] } },
+    });
+  });
+
+  it("updates and removes REA's entry after OpenCode migrates it to mcp.servers", async () => {
+    const { home, client } = await openCodeClient("rea-opencode-migrated-");
+    const stale = ["npx", "-y", `${PRODUCT_IDENTITY.packageName}@3.2.0`, "mcp"];
+    await writeFile(
+      client.configPath,
+      `${JSON.stringify({ mcp: { servers: { rea: { type: "local", command: stale } } } })}\n`,
+    );
+
+    expect(await readClientRegistrationStatuses(home)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ client: "opencode", command: stale }),
+      ]),
+    );
+    expect(
+      (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("configured");
+    expect(
+      parseOpenCode(await readFile(client.configPath, "utf8")).mcp,
+    ).toEqual({
+      servers: { rea: { type: "local", command: [...command] } },
+    });
+    expect((await systemUninstallHost(home).removeClient(client)).status).toBe(
+      "removed",
+    );
+    expect(
+      parseOpenCode(await readFile(client.configPath, "utf8")).mcp,
+    ).toEqual({
+      servers: {},
+    });
+  });
+
+  it("reports and removes a V1 entry that OpenCode still loads beside mcp.servers", async () => {
+    const { home, client } = await openCodeClient("rea-opencode-mixed-");
+    await writeFile(
+      client.configPath,
+      `{ "mcp": { "servers": {}, "rea": ${legacyEntry} } }\n`,
+    );
+
+    expect(await readClientRegistrationStatuses(home)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          client: "opencode",
+          state: "aligned",
+          command,
+        }),
+      ]),
+    );
+    expect((await systemUninstallHost(home).removeClient(client)).status).toBe(
+      "removed",
+    );
+    expect(
+      parseOpenCode(await readFile(client.configPath, "utf8")).mcp,
+    ).toEqual({
+      servers: {},
+    });
+  });
+
+  it("treats a V2 table holding a server named type as native", async () => {
+    const { home, client } = await openCodeClient("rea-opencode-type-server-");
+    const typeServer = { type: "local", command: ["node", "type.js"] };
+    await writeFile(
+      client.configPath,
+      `${JSON.stringify({ mcp: { servers: { type: typeServer, rea: { type: "local", command } } } })}\n`,
+    );
+
+    expect(await readClientRegistrationStatuses(home)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          client: "opencode",
+          state: "aligned",
+          command,
+        }),
+      ]),
+    );
+    expect((await systemUninstallHost(home).removeClient(client)).status).toBe(
+      "removed",
+    );
+    expect(
+      parseOpenCode(await readFile(client.configPath, "utf8")).mcp,
+    ).toEqual({
+      servers: { type: typeServer },
+    });
+  });
+
+  it("keeps a V1 server named servers in the V1 table", async () => {
+    const { client } = await openCodeClient("rea-opencode-v1-servers-");
+    const servers = { type: "local", command: ["node", "servers.js"] };
+    await writeFile(
+      client.configPath,
+      `${JSON.stringify({ mcp: { servers } })}\n`,
+    );
+
+    expect(
+      (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("configured");
+    expect(
+      parseOpenCode(await readFile(client.configPath, "utf8")).mcp,
+    ).toEqual({
+      servers,
+      rea: { type: "local", command: [...command], enabled: true },
+    });
+  });
+});
+
 describe("platform-aware client config paths", () => {
   it.each([
     [

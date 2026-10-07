@@ -5,11 +5,22 @@ import { posix, win32 } from "node:path";
 
 import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import {
+  ghidraApplicationProperties,
+  ghidraJavaMajorAccepted,
+  ghidraJavaRangeLabel,
+  ghidraJavaRequirement,
+  ghidraReleaseAccepted,
+  ghidraReleaseCompatibility,
+  ghidraReleaseLine,
+  ghidraVersionDetail,
+  SUPPORTED_GHIDRA_JAVA_MAJOR,
+  SUPPORTED_GHIDRA_VERSION,
+  type GhidraApplicationProperties,
+  type GhidraJavaRequirement,
+} from "./GhidraInstallationPolicy.js";
 
-/** Exact Ghidra build whose Java bridge contract this REA release supports. */
-export const SUPPORTED_GHIDRA_VERSION = "12.1.4";
-/** Exact JDK major documented by the supported Ghidra release. */
-export const SUPPORTED_GHIDRA_JAVA_MAJOR = 21;
+export { SUPPORTED_GHIDRA_JAVA_MAJOR, SUPPORTED_GHIDRA_VERSION };
 
 /** Caller-owned paths and host coordinates used for one installation probe. */
 export interface GhidraInstallationOptions {
@@ -110,7 +121,7 @@ interface GhidraInstallationCoordinates {
   readonly applicationPropertiesPath: string | null;
   readonly analyzeHeadlessPath: string | null;
   readonly nativeDecompilerPath: string | null;
-  readonly properties: Readonly<{ providerVersion: string | null }> | undefined;
+  readonly properties: GhidraApplicationProperties | undefined;
   readonly javaCommand: string;
   readonly java: GhidraJavaObservation | undefined;
 }
@@ -269,7 +280,7 @@ const installationCoordinates = (
     properties:
       properties === undefined
         ? undefined
-        : { providerVersion: propertyValue(properties, "application.version") },
+        : ghidraApplicationProperties(properties),
     javaCommand,
     java: host.probeJava(
       javaCommand,
@@ -290,8 +301,7 @@ const installationChecks = ({
     passed: coordinates.installDir !== null,
     code: "not_configured",
     detail: coordinates.installDir ?? "GHIDRA_INSTALL_DIR is not set",
-    remediation:
-      "Set GHIDRA_INSTALL_DIR to an extracted Ghidra 12.1.4 release directory.",
+    remediation: `Set GHIDRA_INSTALL_DIR to an extracted Ghidra ${ghidraReleaseLine()} release directory.`,
   }),
   installationCheck({
     name: "platform",
@@ -323,18 +333,7 @@ const installationChecks = ({
     remediation:
       "Point GHIDRA_INSTALL_DIR at the root of an extracted official Ghidra release.",
   }),
-  installationCheck({
-    name: "version",
-    passed:
-      coordinates.properties?.providerVersion === SUPPORTED_GHIDRA_VERSION,
-    code:
-      coordinates.properties?.providerVersion === null ||
-      coordinates.properties?.providerVersion === undefined
-        ? "version_unresolved"
-        : "unsupported_version",
-    detail: coordinates.properties?.providerVersion ?? "unknown",
-    remediation: `Install Ghidra ${SUPPORTED_GHIDRA_VERSION}, or update REA for a different Ghidra build.`,
-  }),
+  versionCheck(coordinates.properties),
   installationCheck({
     name: "headless",
     passed:
@@ -357,7 +356,12 @@ const installationChecks = ({
     remediation:
       "REA does not build native tools. Build Ghidra's native components for this macOS architecture or provide an installation containing Ghidra/Features/Decompiler/os/<platform>/decompile.",
   }),
-  javaCheck(coordinates.java, coordinates.javaCommand, javaHome),
+  javaCheck(
+    coordinates.java,
+    coordinates.javaCommand,
+    javaHome,
+    coordinates.properties,
+  ),
 ];
 
 /** Project an installation probe into caller-visible, secret-free diagnostics. */
@@ -428,40 +432,65 @@ const installationCheck = (options: {
         remediation: options.remediation,
       };
 
+const versionCheck = (
+  properties: GhidraApplicationProperties | undefined,
+): GhidraInstallationCheck => {
+  const raw = properties?.providerVersion;
+  return installationCheck({
+    name: "version",
+    passed: ghidraReleaseAccepted(raw),
+    code:
+      ghidraReleaseCompatibility(raw).status === "unsupported"
+        ? "unsupported_version"
+        : "version_unresolved",
+    detail: ghidraVersionDetail(raw),
+    remediation: `Install a Ghidra ${ghidraReleaseLine()} release (verified with ${SUPPORTED_GHIDRA_VERSION}), or update REA for another Ghidra line.`,
+  });
+};
+
 const javaCheck = (
   observation: GhidraJavaObservation | undefined,
   command: string,
   configuredHome: string | undefined,
+  properties: GhidraApplicationProperties | undefined,
 ): GhidraInstallationCheck => {
+  const requirement = ghidraJavaRequirement(properties);
+  const range = ghidraJavaRangeLabel(requirement);
   const supported =
     observation !== undefined &&
-    observation.major === SUPPORTED_GHIDRA_JAVA_MAJOR &&
+    ghidraJavaMajorAccepted(observation.major, requirement) &&
     observation.bits === 64 &&
     observation.runtime === "jdk";
   const detail =
     observation === undefined
-      ? command
-      : `${observation.version}; ${String(observation.bits)}-bit; ${observation.runtime === "jdk" ? "JDK" : "runtime only"}; ${observation.home}`;
+      ? requirement.unresolved === null
+        ? command
+        : `${command}; ${requirement.unresolved}`
+      : `${observation.version}; ${String(observation.bits)}-bit; ${observation.runtime === "jdk" ? "JDK" : "runtime only"}; ${observation.home}; accepted ${range}`;
   return installationCheck({
     name: "java",
     passed: supported,
-    code: observation === undefined ? "runtime_missing" : "unsupported_version",
+    code:
+      requirement.unresolved !== null
+        ? "version_unresolved"
+        : observation === undefined
+          ? "runtime_missing"
+          : "unsupported_version",
     detail,
-    remediation:
-      configuredHome === undefined
-        ? "Install a 64-bit JDK 21 or set JAVA_HOME before starting REA."
-        : "Update JAVA_HOME to the root of a 64-bit JDK 21 installation.",
+    remediation: javaRemediation(requirement, configuredHome, range),
   });
 };
 
-const propertyValue = (content: string, name: string): string | null => {
-  for (const line of content.split(/\r?\n/u)) {
-    const separator = line.indexOf("=");
-    if (separator < 0 || line.slice(0, separator).trim() !== name) continue;
-    const value = line.slice(separator + 1).trim();
-    return value.length === 0 ? null : value;
-  }
-  return null;
+const javaRemediation = (
+  requirement: GhidraJavaRequirement,
+  configuredHome: string | undefined,
+  range: string,
+): string => {
+  if (requirement.unresolved !== null)
+    return `The Ghidra installation's Java bounds could not be read (${requirement.unresolved}). Install a 64-bit full JDK inside the declared application.java.min and application.java.max.`;
+  return configuredHome === undefined
+    ? `Install ${range}, or set JAVA_HOME before starting REA.`
+    : `Update JAVA_HOME to the root of ${range} installation.`;
 };
 
 const systemGhidraInstallationHost = (): GhidraInstallationHost => ({

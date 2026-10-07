@@ -3,12 +3,12 @@ import { fileURLToPath } from "node:url";
 import { access, rm, writeFile } from "node:fs/promises";
 import { expect, onTestFinished } from "vitest";
 import { createFirmwareAnalysisProvider } from "../../../src/composition/firmware.js";
-import { FirmwareAnalysisService } from "../../../src/application/FirmwareAnalysisService.js";
+import { FirmwareAnalysisService } from "../../../src/application/firmware/FirmwareAnalysisService.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { createTestTempDirectory } from "../temporaryDirectory.js";
 
 /** Exercise real subprocess ownership with synthetic pinned producer representations. */
-export const firmwareFixture = async (mode = "normal") => {
+export const firmwareFixture = async (mode = "normal", banner?: string) => {
   const root = await createTestTempDirectory("rea-firmware-test-");
   const path = join(root, "input.bin");
   await writeFile(path, Buffer.from("fixture-input-data"));
@@ -43,6 +43,9 @@ export const firmwareFixture = async (mode = "normal") => {
           ...options.env,
           REA_FIRMWARE_FIXTURE_MODE: mode,
           REA_FIRMWARE_FIXTURE_ENGINE: engine,
+          ...(banner === undefined
+            ? {}
+            : { REA_FIRMWARE_FIXTURE_VERSION: banner }),
         },
       });
       launches.push({

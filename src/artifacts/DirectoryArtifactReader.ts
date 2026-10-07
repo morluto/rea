@@ -13,34 +13,48 @@ import {
 export class DirectoryArtifactReader implements ArtifactReader {
   readonly format = "directory" as const;
   readonly #rootPromise: Promise<string>;
+  readonly #rootPath: string;
 
   constructor(root: string) {
+    this.#rootPath = root;
     this.#rootPromise = realpath(root);
   }
 
   async *entries(signal?: AbortSignal): AsyncIterable<ArtifactEntry> {
-    const root = await this.#rootPromise;
+    const root = await this.#rootPromise.catch((cause: unknown) => {
+      throw directoryIoFailure("resolve artifact root", this.#rootPath, cause);
+    });
     const pending = [root];
     while (pending.length > 0) {
       abortIfNeeded(signal);
       const directory = pending.pop();
       if (directory === undefined) break;
-      await assertContainedDirectory(root, directory);
+      await withDirectoryIoContext("inspect directory", directory, () =>
+        assertContainedDirectory(root, directory),
+      );
       const children: string[] = [];
-      const handle = await opendir(directory);
+      const handle = await opendir(directory).catch((cause: unknown) => {
+        throw directoryIoFailure("open directory", directory, cause);
+      });
       try {
         for await (const child of handle) children.push(child.name);
+      } catch (cause: unknown) {
+        throw directoryIoFailure("read directory", directory, cause);
       } finally {
         // best-effort cleanup: directory-handle close must not mask traversal.
         await handle.close().catch(() => undefined);
       }
-      await assertContainedDirectory(root, directory);
+      await withDirectoryIoContext("inspect directory", directory, () =>
+        assertContainedDirectory(root, directory),
+      );
       children.sort((left, right) => left.localeCompare(right, "en"));
       const directories: string[] = [];
       for (const name of children) {
         abortIfNeeded(signal);
         const absolute = join(directory, name);
-        const metadata = await lstat(absolute);
+        const metadata = await lstat(absolute).catch((cause: unknown) => {
+          throw directoryIoFailure("inspect entry", absolute, cause);
+        });
         const path = relative(root, absolute).split(sep).join("/");
         const kind = metadata.isSymbolicLink()
           ? "symlink"
@@ -85,10 +99,18 @@ export class DirectoryArtifactReader implements ArtifactReader {
       );
     const handle = await open(
       entry.adapterKey,
-      constants.O_RDONLY | constants.O_NOFOLLOW,
-    );
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    ).catch((cause: unknown) => {
+      throw directoryIoFailure("open entry", entry.adapterKey, cause);
+    });
     try {
-      const observed = await handle.stat();
+      const observed = await handle.stat().catch((cause: unknown) => {
+        throw directoryIoFailure(
+          "inspect opened entry",
+          entry.adapterKey,
+          cause,
+        );
+      });
       if (
         !observed.isFile() ||
         entry.sourceIdentity === undefined ||
@@ -116,6 +138,38 @@ export class DirectoryArtifactReader implements ArtifactReader {
     return [];
   }
 }
+
+const directoryIoFailure = (
+  operation: string,
+  path: string,
+  cause: unknown,
+): ArtifactReaderFailure => {
+  if (cause instanceof ArtifactReaderFailure) return cause;
+  const code =
+    typeof cause === "object" &&
+    cause !== null &&
+    "code" in cause &&
+    typeof cause.code === "string"
+      ? ` (${cause.code})`
+      : "";
+  return new ArtifactReaderFailure(
+    "io",
+    `Could not ${operation} at ${path}${code}`,
+    { cause },
+  );
+};
+
+const withDirectoryIoContext = async <T>(
+  operation: string,
+  path: string,
+  action: () => Promise<T>,
+): Promise<T> => {
+  try {
+    return await action();
+  } catch (cause: unknown) {
+    throw directoryIoFailure(operation, path, cause);
+  }
+};
 
 const abortIfNeeded = (signal?: AbortSignal): void => {
   if (signal?.aborted === true)

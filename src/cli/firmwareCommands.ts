@@ -1,10 +1,11 @@
 import { z } from "incur";
-import { FirmwareAnalysisService } from "../application/FirmwareAnalysisService.js";
+import { resolve } from "node:path";
+import { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
 import { createFirmwareAnalysisProvider } from "../composition/firmware.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import type { FirmwareOperation } from "../domain/firmwareAnalysis.js";
+import type { FirmwareOperation } from "../domain/firmware/firmwareAnalysis.js";
 import type { Logger } from "../logger.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
@@ -38,7 +39,8 @@ export const registerFirmwareCommands = (
       execute(
         CLI_COMMANDS.inspectFirmwareRegions,
         "inspect_firmware_regions",
-        args,
+        // CLI paths are operator-relative; resolve before shared validation.
+        { path: resolve(args.path) },
       ),
   });
   cli.command(CLI_COMMANDS.extractFirmware, {
@@ -81,8 +83,8 @@ export const registerFirmwareCommands = (
     }),
     run: ({ args, options }) =>
       execute(CLI_COMMANDS.extractFirmware, "extract_firmware", {
-        path: args.path,
-        output_directory: args.outputDirectory,
+        path: resolve(args.path),
+        output_directory: resolve(args.outputDirectory),
         ...(options.offset === undefined && options.length === undefined
           ? {}
           : { range: { offset: options.offset, length: options.length } }),

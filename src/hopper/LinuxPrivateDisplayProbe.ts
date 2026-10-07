@@ -123,7 +123,7 @@ export const runLinuxPrivateDisplayProbe: LinuxPrivateDisplayProbeRunner =
       cleanup: () => cleanupOwnedProcessGroup(started.ownership),
     };
     const supervisor = new ProviderProcessSupervisor(launch);
-    const outcome = await waitForProbeExit(
+    const outcome = await waitForProbeOutputClose(
       supervisor,
       options.timeoutMs,
       options.signal,
@@ -300,7 +300,7 @@ const emptyProcessResult = (
   cleanupIncomplete: false,
 });
 
-const waitForProbeExit = async (
+const waitForProbeOutputClose = async (
   supervisor: ProviderProcessSupervisor,
   timeoutMs: number,
   signal: AbortSignal | undefined,
@@ -316,8 +316,8 @@ const waitForProbeExit = async (
   try {
     return await Promise.race([
       supervisor
-        .waitForExit(Math.max(1, timeoutMs))
-        .then((exited): "exit" | "timeout" => (exited ? "exit" : "timeout")),
+        .waitForOutputClose(Math.max(1, timeoutMs))
+        .then((closed): "exit" | "timeout" => (closed ? "exit" : "timeout")),
       aborted,
     ]);
   } finally {

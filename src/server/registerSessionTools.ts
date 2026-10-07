@@ -5,16 +5,16 @@ import {
   getNavigationContext,
   inspectAddressContext,
 } from "../application/AnalysisContextQueries.js";
-import { readAnalysisSnapshot } from "../application/AnalysisSnapshotFiles.js";
-import type { BinarySessionPort } from "../application/BinarySession.js";
-import { createProcessCaptureEvidence } from "../application/ProcessEvidence.js";
-import { captureProcessScenario } from "../application/ProcessHarness.js";
+import { readAnalysisSnapshot } from "../application/binary/AnalysisSnapshotFiles.js";
+import type { BinarySessionPort } from "../application/binary/BinarySession.js";
+import { createProcessCaptureEvidence } from "../application/process/ProcessEvidence.js";
+import { captureProcessScenario } from "../process/capture/ProcessHarness.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
 import { UnknownRegistryError } from "../domain/unknownRegistryError.js";
 import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
-import type { ProcessCapture } from "../domain/processCapture.js";
+import type { ProcessCapture } from "../domain/process/processCapture.js";
 import { ok, type Result } from "../domain/result.js";
 import type { Logger } from "../logger.js";
 import { mcpProgressReporter } from "./mcpProgress.js";

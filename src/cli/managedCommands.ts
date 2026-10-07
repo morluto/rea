@@ -1,9 +1,9 @@
 import { z } from "incur";
 
-import { compareManagedMemberPaths } from "../application/ManagedMemberComparisonService.js";
-import { verifyManagedNativeBoundariesEvidence } from "../application/ManagedNativeVerificationService.js";
-import { importManagedReconstructionEvidence } from "../application/ManagedReconstructionService.js";
-import { runProviderAnalysis } from "../application/DirectAnalysis.js";
+import { compareManagedMemberPaths } from "../application/managed/ManagedMemberComparisonService.js";
+import { verifyManagedNativeBoundariesEvidence } from "../application/managed/ManagedNativeVerificationService.js";
+import { importManagedReconstructionEvidence } from "../application/managed/ManagedReconstructionService.js";
+import { runProviderAnalysis } from "../composition/directAnalysis.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";

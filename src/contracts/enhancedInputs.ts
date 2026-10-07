@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { nativeValueTraceInputSchema } from "../domain/nativeValueTrace.js";
+import { nativeValueTraceInputSchema } from "../domain/native/nativeValueTrace.js";
 const traceLiteralInputSchema = z.strictObject({
   query: z.string().min(1),
   case_sensitive: z.boolean().default(false),

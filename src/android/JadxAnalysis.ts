@@ -1,6 +1,6 @@
 import type { z } from "zod";
-import type { AndroidRequest } from "../domain/androidAnalysis.js";
-import { androidResultSchemas } from "../domain/androidAnalysis.js";
+import type { AndroidRequest } from "../domain/android/androidAnalysis.js";
+import { androidResultSchemas } from "../domain/android/androidAnalysis.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
@@ -16,6 +16,7 @@ import {
   jadxXrefsSchema,
   normalizeJadxText,
 } from "./JadxProtocol.js";
+import { JADX_RELEASE } from "./JadxRelease.js";
 
 /** The adapter consumes tool payloads, never provider RPC details outside this layer. */
 export interface JadxToolPort {
@@ -136,19 +137,20 @@ const searchClasses = async (
   engine: Engine,
 ): Promise<JsonValue> => {
   const classes: string[] = [];
+  const pageSize = 4096;
   let total: number | undefined;
   do {
     const page = jadxClassPageSchema.parse(
       await tools.json("list_classes", {
         offset: classes.length,
-        limit: 200,
+        limit: pageSize,
       }),
     );
     if (
       (total !== undefined && total !== page.total) ||
       page.offset !== classes.length ||
-      page.limit !== 200 ||
-      page.items.length > 200
+      page.limit !== pageSize ||
+      page.items.length > pageSize
     )
       throw new AnalysisOutputError(
         request.operation,
@@ -246,7 +248,7 @@ const inspectMethod = async (
     throw new AnalysisCapabilityUnavailableError(
       "jadx",
       request.operation,
-      `JADX 0.7.1 smali fallback joins all same-name overloads for ${summary.full_name}.${request.input.method_name}; it cannot establish source for only overload ${index}.`,
+      `JADX ${JADX_RELEASE.version} smali fallback joins all same-name overloads for ${summary.full_name}.${request.input.method_name}; it cannot establish source for only overload ${index}.`,
     );
   return androidResultSchemas.inspect_android_method.parse({
     engine,
@@ -306,7 +308,7 @@ const traceReferences = async (
     throw new AnalysisCapabilityUnavailableError(
       "jadx",
       request.operation,
-      `JADX 0.7.1 references select the first same-name method; ${summary.full_name}.${methodName} has ${candidates.length} overloads. No unambiguous reference result is available.`,
+      `References require a unique method name; ${summary.full_name}.${methodName} has ${candidates.length} overloads. No unambiguous reference result is available.`,
     );
   const expectedTarget =
     methodName === undefined

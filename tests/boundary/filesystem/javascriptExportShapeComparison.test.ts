@@ -5,14 +5,14 @@ import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { analyzeJavaScriptApplication } from "../../../src/application/JavaScriptApplicationService.js";
-import { parseApplicationGraphEvidence } from "../../../src/application/JavaScriptApplicationEvidenceGraph.js";
-import { compareJavaScriptExportShapes } from "../../../src/domain/javascriptExportShapeComparison.js";
-import { javaScriptExportShapeComparisonResultSchema } from "../../../src/domain/javascriptExportShapeComparisonSchemas.js";
+import { analyzeJavaScriptApplication } from "../../../src/application/javascript/JavaScriptApplicationService.js";
+import { parseApplicationGraphEvidence } from "../../../src/application/javascript/JavaScriptApplicationEvidenceGraph.js";
+import { compareJavaScriptExportShapes } from "../../../src/domain/javascript/javascriptExportShapeComparison.js";
+import { javaScriptExportShapeComparisonResultSchema } from "../../../src/domain/javascript/javascriptExportShapeComparisonSchemas.js";
 import {
   createJavaScriptApplicationGraph,
   createJavaScriptApplicationNode,
-} from "../../../src/domain/javascriptApplicationGraph.js";
+} from "../../../src/domain/javascript/javascriptApplicationGraph.js";
 
 describe("JavaScript export return-shape comparison", () => {
   it("reports exactly the heading depth addition from source-owned parser fixtures", async () => {

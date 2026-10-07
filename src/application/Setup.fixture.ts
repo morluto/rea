@@ -52,6 +52,11 @@ export class FakeSetupHost implements SetupHost {
   linuxDistribution = (): Promise<LinuxDistribution | undefined> =>
     Promise.resolve(this.distribution);
   hopperPath = (): Promise<string | undefined> => Promise.resolve(this.hopper);
+  initialSetupState = async (scope?: DoctorScope) => ({
+    ...(this.hopper === undefined ? {} : { hopperPath: this.hopper }),
+    providerEnvironment: await this.providerEnvironment(),
+    doctor: await this.doctor(scope),
+  });
   providerEnvironment = (): Promise<SetupProviderEnvironment> =>
     Promise.resolve({
       ...(this.hopper === undefined

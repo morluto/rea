@@ -5,6 +5,7 @@ import {
   browserAllowedOriginsSchema,
   browserEndpointSchema,
 } from "./browserObservation.js";
+import { browserVersionSchema } from "./browserObservationSchemas.js";
 import { jsonShapeSchema } from "./jsonShape.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 
@@ -18,14 +19,6 @@ export const discoverWebMcpToolsInputSchema = z.strictObject({
 export type DiscoverWebMcpToolsInput = z.infer<
   typeof discoverWebMcpToolsInputSchema
 >;
-
-const browserVersionSchema = z.object({
-  product: z.string(),
-  protocol_version: z.string(),
-  revision: z.string(),
-  user_agent: z.string(),
-  js_version: z.string(),
-});
 
 const webMcpToolSchema = z.object({
   tool_key: prefixedDigestSchema("webmcp"),

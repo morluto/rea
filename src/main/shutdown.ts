@@ -1,12 +1,13 @@
 import type { StdioServerHandle } from "@modelcontextprotocol/server/stdio";
 
-import type { BinarySession } from "../application/BinarySession.js";
+import type { BinarySession } from "../application/binary/BinarySession.js";
 import type { Logger } from "../logger.js";
 import type { RuntimeDependencies } from "./types.js";
 import { MCP_SHUTDOWN_FAILED } from "./messages.js";
 
 export const createShutdown = (input: {
   readonly handle: StdioServerHandle;
+  readonly closeAndroid?: () => Promise<void>;
   readonly session: BinarySession;
   readonly unregisterReload: () => void;
   readonly dependencies: RuntimeDependencies;
@@ -23,8 +24,13 @@ export const createShutdown = (input: {
     shutdownPromise ??= (async () => {
       unregisterReload();
       unregisterShutdown();
-      await handle.close();
-      await session.close({ retainProviderDocuments: true });
+      const results = await Promise.allSettled([
+        handle.close(),
+        input.closeAndroid?.(),
+        session.close({ retainProviderDocuments: true }),
+      ]);
+      for (const result of results)
+        if (result.status === "rejected") throw result.reason;
     })();
     return shutdownPromise;
   };

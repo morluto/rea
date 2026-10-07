@@ -19,12 +19,14 @@ export const openCdpTargetSession = async (
   target: CdpEndpointTarget,
   operation: BrowserObservationOperation,
   signal?: AbortSignal,
+  limits?: { readonly maxPayloadBytes: number },
 ): Promise<CdpTargetSession> => {
   const webSocket = cdpTargetWebSocket(discovery, target, operation);
   const connection = await CdpConnection.connect(
     webSocket.url,
     operation,
     signal,
+    limits,
   );
   if (webSocket.scope === "page") return { connection, sessionId: undefined };
   try {

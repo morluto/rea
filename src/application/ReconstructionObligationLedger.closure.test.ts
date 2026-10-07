@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { PROCESS_PROVIDER } from "./ProcessEvidence.js";
+import { PROCESS_PROVIDER } from "./process/ProcessEvidence.js";
 import {
   buildReconstructionObligationLedgerEvidenceValidated,
   resolveReconstructionObligationLedgerRequest,
 } from "./ReconstructionObligationLedgerService.js";
-import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../domain/processCapture.fixture.js";
+import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../domain/process/processCapture.fixture.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import { processCaptureSchema } from "../domain/processCapture.js";
+import { processCaptureSchema } from "../domain/process/processCapture.js";
 import {
   reconstructionObligationLedgerSchema,
   type ReconstructionObligationLedgerInput,

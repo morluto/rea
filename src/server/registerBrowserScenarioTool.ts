@@ -8,7 +8,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { BrowserScenarioCapturePort } from "../application/BrowserScenarioCapturePort.js";
 import { captureBrowserScenario } from "../application/BrowserScenarioCaptureService.js";
-import { BROWSER_SCENARIO_TOOL_CONTRACTS } from "../contracts/browserScenarioToolContracts.js";
+import { toolContract } from "../contracts/toolContracts.js";
 import { browserScenarioSchema } from "../domain/browserScenario.js";
 import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
@@ -27,7 +27,7 @@ export const registerBrowserScenarioTool = (
   server: McpServer,
   options: BrowserScenarioToolRegistration,
 ): void => {
-  const [contract] = BROWSER_SCENARIO_TOOL_CONTRACTS;
+  const contract = toolContract("capture_browser_scenario");
   server.registerTool(
     contract.name,
     toolRegistrationOptions(contract),

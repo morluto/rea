@@ -391,11 +391,12 @@ describeBrowser("CdpBrowserProvider: lifecycle failures 4", () => {
     );
     if (!committed.ok) throw committed.error;
     expect(committed.value.target.origin).toBe(transitioning.allowedOrigin);
-    expect(
-      transitioning.commands.filter(
-        ({ method }) => method === "Page.getFrameTree",
-      ),
-    ).toHaveLength(5);
+    expect(committed.value.frames).toContainEqual(
+      expect.objectContaining({
+        frame_id: "frame-main",
+        origin: transitioning.allowedOrigin,
+      }),
+    );
 
     const navigated = await startFakeCdpBrowser({
       attachedFrameUrl: "https://unapproved.example.test/after-attach",

@@ -33,7 +33,7 @@ describe("native macOS provider discovery and inspection", () => {
     "preserves the exact signing identifier %j reported by codesign",
     (identifier) => {
       const parsed = parseCodeSignature(
-        `Identifier=${identifier}\nTeamIdentifier=not set\nFormat=Mach-O thin (arm64)\n`,
+        `Identifier=${identifier}\nFormat=Mach-O thin (arm64)\nTeamIdentifier=not set\n`,
         false,
       );
       expect(parsed.identifier).toBe(identifier);
@@ -41,6 +41,32 @@ describe("native macOS provider discovery and inspection", () => {
       expect(parsed.format).toBe("Mach-O thin (arm64)");
     },
   );
+
+  it("separates echoed path and identifier text from signature fields", () => {
+    const path = "/apps/x\nAuthority=Forged\nIdentifier=forged";
+    const identifier = "x\nFormat=forged\nAuthority=Forged-5555";
+    const parsed = parseCodeSignature(
+      [
+        `Executable=${path}`,
+        `Identifier=${identifier}`,
+        "Format=Mach-O thin (arm64)",
+        "CodeDirectory v=20400 size=342 flags=0x2(adhoc) hashes=2+2",
+        "CDHash=6aee90e6",
+        "Signature=adhoc",
+        "TeamIdentifier=not set",
+        "",
+      ].join("\r\n"),
+      false,
+      ["/elsewhere", path],
+    );
+    expect(parsed).toMatchObject({
+      identifier,
+      format: "Mach-O thin (arm64)",
+      authorities: [],
+      cdhashes: ["6aee90e6"],
+      team_identifier: null,
+    });
+  });
 
   it("retries a failed native tool resolution and caches only success", async () => {
     let resolutions = 0;
@@ -249,6 +275,64 @@ describe("native macOS provider inspection", () => {
         { input: "plain_symbol", status: "unchanged" },
       ],
     });
+  });
+});
+
+describe("native plist defaults for iOS-style bundles", () => {
+  it("defaults to the Info.plist the bundle program was resolved from", async () => {
+    directory = await createTestTempDirectory("rea-native-flat-");
+    const app = join(directory, "Flat.app");
+    const executable = join(app, "Flat");
+    await mkdir(app, { recursive: true });
+    await writeFile(executable, "fixture");
+    await writeFile(join(app, "Info.plist"), "fixture");
+    const client = new NativeMacOSProvider(
+      new FixtureRunner(),
+      "darwin",
+    ).createClient({
+      ...machoTarget(executable, app),
+      bundleInfoPlist: join(app, "Info.plist"),
+    });
+
+    const plist = await client.execute("inspect_plist", {});
+    expect(plist.ok && plist.value.result).toMatchObject({
+      source_path: join(app, "Info.plist"),
+    });
+  });
+});
+
+/** Emit entitlements whose dictionary also holds a legal `__proto__` key. */
+class PrototypeEntitlementsRunner extends FixtureRunner {
+  override async run(tool: string, arguments_: readonly string[]) {
+    const result = await super.run(tool, arguments_);
+    if (!result.ok || !arguments_.includes("--entitlements")) return result;
+    const stdout =
+      '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>com.apple.security.app-sandbox</key><true/><key>__proto__</key><dict><key>com.apple.security.get-task-allow</key><true/></dict></dict></plist>';
+    return ok({
+      ...result.value,
+      stdout,
+      stdoutBytes: Buffer.byteLength(stdout),
+    });
+  }
+}
+
+describe("native signature entitlements", () => {
+  it("reports entitlement entries keyed __proto__ that the result omits", async () => {
+    const client = new NativeMacOSProvider(
+      new PrototypeEntitlementsRunner(),
+      "darwin",
+    ).createClient(machoTarget("/private/fixture"));
+
+    const signature = await client.execute("inspect_signature", {});
+
+    expect(signature.ok).toBe(true);
+    if (!signature.ok) return;
+    expect(signature.value.result).toMatchObject({
+      entitlements: { "com.apple.security.app-sandbox": true },
+    });
+    expect(signature.value.limitations).toContain(
+      "Entitlements: 1 dictionary entry keyed __proto__ was omitted because REA results cannot represent that key.",
+    );
   });
 });
 

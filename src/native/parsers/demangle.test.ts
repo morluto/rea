@@ -10,11 +10,20 @@ it.each(["ordinary name ", "ordinary\t", " "])(
   },
 );
 
+it.each(["carriage\r", "\r", "mid\rdle"])(
+  "keeps carriage returns that belong to the symbol: %j",
+  (input) => {
+    expect(parseDemangledSymbols([input], `${input}\n`)).toEqual([
+      { input, output: input, status: "unchanged" },
+    ]);
+  },
+);
+
 it("removes only the line terminator and preserves mixed output ordering", () => {
   expect(
     parseDemangledSymbols(
       ["$s4main5helloyyF", "plain "],
-      "main.hello() -> ()\r\nplain \r\n",
+      "main.hello() -> ()\nplain \n",
     ),
   ).toEqual([
     {

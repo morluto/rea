@@ -111,6 +111,37 @@ describe("native UI screenshot validation", () => {
     );
     expect(result.ok).toBe(true);
   });
+
+  it("preserves an unknown AX child count and its truncation gap", async () => {
+    const partial = {
+      ...snapshot,
+      nodes: [
+        {
+          path: [],
+          role: "AXWindow",
+          title: "Fixture",
+          value: null,
+          actions: [],
+          children_count: null,
+        },
+      ],
+      truncated: true,
+      gaps: ["AX child count unavailable at path []: AXError -25204"],
+    };
+    const result = await observeNativeUi(
+      target,
+      "observe_native_ui",
+      { ...scope, accessibility: true },
+      { invoke: async () => ({ ok: true, result: partial }) },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok)
+      expect(result.value.initial).toMatchObject({
+        truncated: true,
+        gaps: ["AX child count unavailable at path []: AXError -25204"],
+        nodes: [{ children_count: null }],
+      });
+  });
 });
 
 describe("native UI capture selection and budgets", () => {
@@ -205,6 +236,27 @@ describe("native UI capture selection and budgets", () => {
         outcome: "cancelled",
       });
   });
+  it("reports aggregate output exhaustion after individually valid captures", async () => {
+    const largeSnapshot = {
+      ...snapshot,
+      window: { ...snapshot.window, title: "x".repeat(17 * 1024 * 1024) },
+    };
+    const result = await observeNativeUi(
+      target,
+      "capture_native_ui_scenario",
+      {
+        ...scope,
+        steps: [{ kind: "wait", milliseconds: 0 }],
+      },
+      { invoke: async () => ({ ok: true, result: largeSnapshot }) },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok)
+      expect(result.value.steps[0]).toMatchObject({
+        outcome: "failed",
+        reason: expect.stringContaining("64 MiB output budget"),
+      });
+  });
 });
 
 describe("native UI target and cancellation failures", () => {
@@ -222,6 +274,24 @@ describe("native UI target and cancellation failures", () => {
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.message).toContain(code);
+  });
+  it("preserves the underlying helper failure reason in diagnostics", async () => {
+    const result = await observeNativeUi(target, "observe_native_ui", scope, {
+      invoke: async () => {
+        throw new Error(
+          "Native helper returned invalid JSON: Unexpected token",
+        );
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      diagnostics: {
+        reason: "Native helper returned invalid JSON: Unexpected token",
+        remediation:
+          "Native helper failed, timed out, or returned malformed capture data; install compatible Xcode command-line tools and inspect local OS permissions",
+      },
+    });
   });
   it("stops on a failed action and returns ordered before/capture-gap evidence", async () => {
     const calls: Readonly<Record<string, unknown>>[] = [];

@@ -4,9 +4,9 @@ import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
   compareProcessCaptures,
   parseProcessCapture,
-} from "../domain/processCapture.js";
+} from "../domain/process/processCapture.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "./functionComparisonExample.js";
-import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "./processCaptureExample.js";
+import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "./process/processCaptureExample.js";
 
 const comparison = compareFunctions(
   FUNCTION_COMPARISON_EXAMPLE.left,

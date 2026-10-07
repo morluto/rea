@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
-import type { BinarySessionPort } from "../application/BinarySession.js";
+import type { BinarySessionPort } from "../application/binary/BinarySession.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import {
@@ -13,7 +13,7 @@ import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
   compareProcessCaptures,
   parseProcessCapture,
-} from "../domain/processCapture.js";
+} from "../domain/process/processCapture.js";
 import type { RecordUnknownInput } from "../domain/residualUnknown.js";
 import { err } from "../domain/result.js";
 import { recordDerivedEvidence } from "./recordDerivedEvidence.js";

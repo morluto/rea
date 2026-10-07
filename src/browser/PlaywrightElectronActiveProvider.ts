@@ -9,12 +9,12 @@ import type {
   ExecutionOptions,
   ProviderIdentity,
 } from "../application/AnalysisProvider.js";
-import type { ElectronActiveObservationPort } from "../application/ElectronActiveObservationPort.js";
+import type { ElectronActiveObservationPort } from "../application/javascript/ElectronActiveObservationPort.js";
 import {
   electronActiveObservationResultSchema,
   type ElectronActiveObservationInput,
   type ElectronActiveObservationResult,
-} from "../domain/electronActiveObservation.js";
+} from "../domain/javascript/electronActiveObservation.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";

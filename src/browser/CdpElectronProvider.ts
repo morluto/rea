@@ -2,7 +2,7 @@ import type {
   ExecutionOptions,
   ProviderIdentity,
 } from "../application/AnalysisProvider.js";
-import type { ElectronObservationPort } from "../application/ElectronObservationPort.js";
+import type { ElectronObservationPort } from "../application/javascript/ElectronObservationPort.js";
 import {
   electronPageInspectionSchema,
   electronTargetListSchema,
@@ -10,7 +10,7 @@ import {
   type ElectronTargetList,
   type InspectElectronPageInput,
   type ListElectronTargetsInput,
-} from "../domain/electronObservation.js";
+} from "../domain/javascript/electronObservation.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";

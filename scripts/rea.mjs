@@ -41,6 +41,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   const { createCli } = await import("../dist/cli.js");
   const {
     renderCliOutputArgumentError,
+    renderEmptyFilteredCliOutput,
     sanitizeCliOutput,
     validateCliOutputArguments,
   } = await import("../dist/cliOutput.js");
@@ -49,9 +50,16 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
     process.stdout.write(renderCliOutputArgumentError(outputArguments));
     process.exitCode = 1;
   } else {
+    let wroteOutput = false;
     await createCli().serve(args, {
-      stdout: (output) => process.stdout.write(sanitizeCliOutput(output)),
+      stdout: (output) => {
+        const sanitized = sanitizeCliOutput(output);
+        if (sanitized.length > 0) wroteOutput = true;
+        process.stdout.write(sanitized);
+      },
     });
+    if (!wroteOutput)
+      process.stdout.write(renderEmptyFilteredCliOutput(args) ?? "");
   }
 }
 

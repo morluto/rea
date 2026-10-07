@@ -1,7 +1,7 @@
-import { readFile, rm } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -11,15 +11,7 @@ import {
 } from "../../../src/mcpDoctor.js";
 import { CATALOG_IDENTITY } from "../../../src/catalogIdentity.js";
 
-const temporary: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(
-    temporary
-      .splice(0)
-      .map((path) => rm(path, { recursive: true, force: true })),
-  );
-});
+afterEach(() => vi.useRealTimers());
 
 describe("production MCP doctor", () => {
   it("connects to the production stdio child and verifies the canonical catalog", async () => {
@@ -78,17 +70,30 @@ describe("production MCP doctor", () => {
 
   it("kills a child that misses the absolute startup deadline", async () => {
     const root = await createTestTempDirectory("rea-mcp-doctor-");
-    temporary.push(root);
     const pidPath = join(root, "pid");
-    const result = await runProductionMcpDoctor({
+    // Keep filesystem/process I/O real. Advance only the deadline timers,
+    // after the fixture proves it started and published its PID.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const pending = runProductionMcpDoctor({
       command: process.execPath,
       args: [resolve("tests/fixtures/mcpDoctorHang.mjs")],
       cwd: process.cwd(),
       environment: { ...process.env, REA_MCP_DOCTOR_PID_PATH: pidPath },
-      deadlineMs: 250,
+      deadlineMs: 60_000,
     });
+    const pid = await vi.waitFor(
+      async () => {
+        const value = Number.parseInt(await readFile(pidPath, "utf8"), 10);
+        expect(Number.isSafeInteger(value) && value > 0).toBe(true);
+        return value;
+      },
+      { timeout: 10_000 },
+    );
+    await vi.advanceTimersByTimeAsync(60_000);
+    const result = await vi.waitFor(() => pending, { timeout: 10_000 });
+    vi.useRealTimers();
     expect(result.healthy).toBe(false);
-    const pid = Number.parseInt(await readFile(pidPath, "utf8"), 10);
+    expect(result.checks[0]?.detail).toMatch(/deadline|abort|timed/iu);
     await expect(waitForExit(pid)).resolves.toBeUndefined();
   }, 10_000);
 });
@@ -98,11 +103,7 @@ const waitForExit = async (pid: number): Promise<void> => {
     try {
       process.kill(pid, 0);
     } catch (cause: unknown) {
-      if (
-        cause instanceof Error &&
-        "code" in cause &&
-        (cause as NodeJS.ErrnoException).code === "ESRCH"
-      )
+      if (cause instanceof Error && "code" in cause && cause.code === "ESRCH")
         return;
       throw cause;
     }

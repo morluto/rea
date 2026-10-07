@@ -3,11 +3,12 @@ import {
   managedNativeBoundaryInspectionSchema,
   type ManagedNativeBoundaryInspection,
   type ManagedParseIssue,
-} from "../domain/managedArtifact.js";
+} from "../domain/managed/managedArtifact.js";
 import { type ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
 import {
   metadataRowCursor,
   metadataCodedToken,
+  metadataCodedTokenInvalidReason,
   metadataToken,
   readMetadataString,
 } from "./ManagedMetadataHeaps.js";
@@ -127,6 +128,7 @@ interface ParseImplMapsContext {
   readonly heapExtent: number;
   readonly modules: readonly ModuleRef[];
   readonly members: ReadonlyMap<string, MemberCore>;
+  readonly issues: ManagedParseIssue[];
 }
 
 export const parseImplMaps = ({
@@ -135,6 +137,7 @@ export const parseImplMaps = ({
   heapExtent,
   modules,
   members,
+  issues,
 }: ParseImplMapsContext): readonly NativeImport[] => {
   const moduleNames = new Map(modules.map((module) => [module.token, module]));
   const imports: NativeImport[] = [];
@@ -142,10 +145,31 @@ export const parseImplMaps = ({
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
     const cursor = metadataRowCursor(bytes, layout, 28, row);
     const mappingFlags = cursor.readUInt16();
-    const memberToken = metadataCodedToken(
-      cursor.readIndex(layout.codedIndexSize("MemberForwarded")),
+    const memberForwardedOffset = cursor.offset;
+    const memberForwardedRaw = cursor.readIndex(
+      layout.codedIndexSize("MemberForwarded"),
+    );
+    const memberForwardedReason = metadataCodedTokenInvalidReason(
+      memberForwardedRaw,
       1,
       [4, 6],
+      layout.rowCounts,
+    );
+    if (memberForwardedReason !== null || memberForwardedRaw === 0)
+      issues.push({
+        code: "invalid-row",
+        scope: `metadata.ImplMap:${metadataToken(28, row)}`,
+        offset: memberForwardedOffset,
+        detail:
+          memberForwardedReason === null
+            ? "ImplMap MemberForwarded coded index 0x0 is null, but the column must reference a Field or MethodDef row"
+            : `ImplMap MemberForwarded coded index 0x${memberForwardedRaw.toString(16)} is invalid: ${memberForwardedReason}`,
+      });
+    const memberToken = metadataCodedToken(
+      memberForwardedRaw,
+      1,
+      [4, 6],
+      layout.rowCounts,
     );
     const importName = readMetadataString(
       bytes,
@@ -320,19 +344,21 @@ const boundaryKind = (
   return "mixed-or-unknown";
 };
 
+/** CLI header facets of a PE without an admitted CLI header. */
+export const NO_CLI_NATIVE: ManagedNativeBoundaryInspection["cli_native"] = {
+  il_only: false,
+  requires_32bit: false,
+  strong_name_signed: false,
+  native_entry_point: false,
+  ready_to_run_signature: false,
+  managed_native_header_rva: 0,
+  managed_native_header_size: 0,
+};
+
 export const cliNative = (
   pe: ManagedPeLayout,
 ): ManagedNativeBoundaryInspection["cli_native"] => {
-  if (pe.cli === null)
-    return {
-      il_only: false,
-      requires_32bit: false,
-      strong_name_signed: false,
-      native_entry_point: false,
-      ready_to_run_signature: false,
-      managed_native_header_rva: 0,
-      managed_native_header_size: 0,
-    };
+  if (pe.cli === null) return NO_CLI_NATIVE;
   return {
     il_only: (pe.cli.flags & 0x0000_0001) !== 0,
     requires_32bit: (pe.cli.flags & 0x0000_0002) !== 0,
@@ -343,6 +369,22 @@ export const cliNative = (
     managed_native_header_size: pe.cli.managedNativeHeader.size,
   };
 };
+
+/** Summarize declaration counts with the native facets of the CLI header. */
+export const nativeBoundarySummary = (
+  native: ManagedNativeBoundaryInspection["cli_native"],
+  counts: Pick<
+    ManagedNativeBoundaryInspection["summary"],
+    "module_ref_count" | "pinvoke_import_count" | "native_implementation_count"
+  >,
+): ManagedNativeBoundaryInspection["summary"] => ({
+  ...counts,
+  ready_to_run: native.ready_to_run_signature,
+  mixed_mode_or_native_header:
+    native.managed_native_header_rva !== 0 ||
+    native.managed_native_header_size !== 0 ||
+    native.native_entry_point,
+});
 
 interface BoundaryInspectionContext {
   readonly target: BinaryTarget;
@@ -390,16 +432,11 @@ export const buildNativeBoundaryInspection = ({
     module_refs: moduleRefs,
     pinvoke_imports: imports,
     native_implementations: implementations,
-    summary: {
+    summary: nativeBoundarySummary(native, {
       module_ref_count: moduleRefs.length,
       pinvoke_import_count: imports.length,
       native_implementation_count: implementations.length,
-      ready_to_run: native.ready_to_run_signature,
-      mixed_mode_or_native_header:
-        native.managed_native_header_rva !== 0 ||
-        native.managed_native_header_size !== 0 ||
-        native.native_entry_point,
-    },
+    }),
     coverage: {
       state: issues.length === 0 ? "complete" : "partial",
       issues,

@@ -13,6 +13,8 @@ export class ArtifactOperationError extends AnalysisError {
       | "inspect_asset_catalog"
       | "inspect_keyed_archive"
       | "export_web_scripts"
+      | "trace_web_module_imports"
+      | "trace_web_source_location"
       | "analyze_javascript_application",
     readonly reason:
       | "cancelled"
@@ -28,6 +30,8 @@ export class ArtifactOperationError extends AnalysisError {
       calculatedSha256: string | null;
       unpacked: boolean;
     }>,
+    /** The specific constraint that failed, such as the colliding path. */
+    readonly detail?: string,
   ) {
     super(
       artifactDetails === undefined

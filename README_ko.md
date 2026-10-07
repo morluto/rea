@@ -17,6 +17,8 @@
 
 <a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
 
+**[웹사이트(영문)](https://morluto.github.io/rea/) · [가이드](https://morluto.github.io/rea/guides/) · [DX-Ball 사례](https://morluto.github.io/rea/showcase/dx-ball/)**
+
 [빠른 시작](#빠른-시작) · [현재 지원 범위](#현재-지원-범위) · [바이너리에서 동작까지](#바이너리에서-동작까지) · [조사 도구 카탈로그](#조사-도구-카탈로그) · [로드맵](#로드맵) · [작동 방식](#작동-방식)
 
 <table aria-label="REA community">
@@ -137,12 +139,12 @@ rea setup
 ### 요구 사항
 
 - macOS 12 이상
-- Ubuntu 24.04+, Fedora 41+ 또는 64비트 Arch Linux
+- Ubuntu 24.04+, Fedora 41+, 64비트 Arch Linux 또는 CachyOS
 - Node.js 22.x (>=22.19), 24.x (>=24.11) 또는 26+와 npm
 
 네이티브 바이너리 분석에는 Hopper 또는 Ghidra가 필요합니다. Hopper는 별도 소프트웨어입니다. 데모에는 공급업체의 제한이 있지만 유료 라이선스가 필수는 아닙니다.
 
-Ghidra는 Linux x64와 macOS x64/arm64를 지원합니다. Ghidra 12.1.4와 완전한 64비트 JDK 21을 별도로 설치한 뒤 REA가 사용하도록 설정하세요. macOS에서는 호스트 아키텍처에 맞는 네이티브 디컴파일러도 필요합니다.
+Ghidra는 Linux x64와 macOS x64/arm64를 지원합니다. Ghidra 12.1.x와 그 설치본이 선언한 완전한 64비트 JDK(`application.java.min`부터 `application.java.max`까지)를 별도로 설치한 뒤 REA가 사용하도록 설정하세요. 현재 12.1 릴리스는 JDK 21 이상을 요구하고 상한은 없습니다. 브리지는 Ghidra 12.1.4와 JDK 21에서 검증됩니다. macOS에서는 호스트 아키텍처에 맞는 네이티브 디컴파일러도 필요합니다.
 
 Setup은 설치를 확인하고 경로를 저장할 수 있습니다. Ghidra, Java, Node.js, npm, Homebrew를 설치하거나 업데이트하지 않습니다.
 
@@ -152,7 +154,7 @@ Setup은 설치를 확인하고 경로를 저장할 수 있습니다. Ghidra, Ja
 
 `npx -y rea-agents@latest doctor`는 호스트, 의존성, 분석 도구, 에이전트 설정을 변경 없이 확인합니다. 구조화된 진단에는 `--json`을 추가하세요.
 
-Linux의 기본 Hopper 실행 파일은 `/opt/hopper/bin/Hopper`입니다. 다른 위치에는 `HOPPER_LAUNCHER_PATH`를 설정하세요. 파일이 있는데도 분석 엔진이 없다고 하면 `ldd /opt/hopper/bin/Hopper | grep 'not found'`로 누락된 라이브러리를 확인하세요. 자세한 내용은 [Hopper 안내](docs/installation.md#hopper)를 참고하세요.
+Linux에서는 실행 가능한 `/opt/hopper/bin/Hopper`를 우선 사용하고, 사용할 수 없으면 `~/.local/share/rea/hopper/bin/Hopper`를 자동으로 확인합니다. 다른 위치에는 `HOPPER_LAUNCHER_PATH`를 설정하세요. 파일이 있는데도 분석 엔진이 없다고 하면 실제 Hopper 경로에 대해 `ldd /absolute/path/to/Hopper | grep 'not found'`를 실행해 누락된 라이브러리를 확인하세요. 자세한 내용은 [Hopper 안내](docs/installation.md#hopper)를 참고하세요.
 
 ### 업데이트와 제거
 
@@ -210,10 +212,10 @@ REA는 1–5단계의 바이너리 분석을 처리합니다. 6단계는 에이�
 | 관리 PE/CLI       |   7 | .NET 식별, 메타데이터, CIL 명령어, 네이티브 종속성, 재구성 가져오기, 빌드 비교                                            |
 | 펌웨어            |   2 | Linux 펌웨어 영역 검사 및 명시적 추출                                                                                     |
 | Android APK       |   5 | 패키지와 manifest 선언, 클래스 검색, 멤버 목록, 메서드 디컴파일, 정적 참조                                                |
-| 브라우저 관찰     |   9 | 페이지 구조, 네트워크 메타데이터, 스크립트, 소스 맵, WebMCP 탐색, 스크린샷, 캡처 비교                                     |
+| 브라우저 관찰     |  11 | 페이지 구조, 네트워크 메타데이터, 스크립트, 소스 맵, WebMCP 탐색, 스크린샷, 캡처 비교                                     |
 | Electron 분석     |   5 | 렌더러 관찰, 정적 앱 매핑, 정적·런타임 결과 연결                                                                          |
 | JavaScript 런타임 |   2 | Node/Electron Inspector 대상 탐색, 스크립트 위치, 실행 컨텍스트 이벤트                                                    |
-| 앱 워크플로       |   8 | 캡처한 웹 스크립트 내보내기, 계층 간 기능 추적, 빌드 비교, 히스토리 소스 매핑, 정적 반환 구조 비교, 재구현 검증           |
+| 앱 워크플로       |  13 | 캡처한 웹 스크립트 내보내기, 계층 간 기능 추적, 빌드 비교, 히스토리 소스 매핑, 정적 반환 구조 비교, 재구현 검증           |
 | 작업 공간과 관찰  |  21 | 세션, 근거 번들, 탐색 컨텍스트, 프로세스·아티팩트·함수 비교, 미해결 항목 기록                                             |
 
 ## 로드맵

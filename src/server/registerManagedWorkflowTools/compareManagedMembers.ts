@@ -1,8 +1,8 @@
 import { recordSessionEvidenceSources } from "../sessionEvidence.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 
-import { compareManagedMembersEvidenceValidated } from "../../application/ManagedMemberComparisonService.js";
-import { managedMemberComparisonResultSchema } from "../../domain/managedMemberComparison.js";
+import { compareManagedMembersEvidenceValidated } from "../../application/managed/ManagedMemberComparisonService.js";
+import { managedMemberComparisonResultSchema } from "../../domain/managed/managedMemberComparison.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { toCallToolResult } from "../toolResult.js";

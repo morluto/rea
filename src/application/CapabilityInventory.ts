@@ -14,7 +14,7 @@ import {
 } from "../contracts/toolOutputSchemaPrimitives.js";
 import type { ToolKind } from "../contracts/toolContractTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { GENERATED_MCP_TOOL_CATALOG } from "../generatedMcpToolCatalog.js";
+import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
 import {
   clientRequirementsFor,
   NO_CLIENT_FEATURES,
@@ -36,6 +36,8 @@ export type AvailabilityPolicy = {
   readonly firmwareInspectionEnabled?: boolean;
   readonly firmwareExtractionEnabled?: boolean;
   readonly androidAnalysisEnabled?: boolean;
+  readonly javascriptRecoveryEnabled?: boolean;
+  readonly webModuleResolutionEnabled?: boolean;
   readonly browserObservationEnabled?: boolean;
   readonly browserScenarioEnabled?: boolean;
   readonly electronObservationEnabled?: boolean;
@@ -131,7 +133,7 @@ export const buildCapabilityInventory = (
   const descriptors = new Map<string, ProviderDescriptor>(
     status.capabilities.map((descriptor) => [descriptor.operation, descriptor]),
   );
-  return GENERATED_MCP_TOOL_CATALOG.map((contract): ToolAvailability => {
+  return TOOL_CONTRACTS.map((contract): ToolAvailability => {
     const availability = availabilityFor({
       name: contract.name,
       kind: contract.kind,
@@ -187,6 +189,12 @@ export const buildCapabilityInventory = (
 };
 
 const availabilityFor = (context: AvailabilityContext): Availability => {
+  // These built-in workflows accept a caller-selected endpoint; they do not load the optional passive provider.
+  if (
+    context.name === "observe_web_execution" ||
+    context.name === "inspect_web_event_listeners"
+  )
+    return { reason: "available", remediation: null };
   if (context.name === "get_navigation_context")
     return navigationContextAvailability(context.descriptors);
   const javascriptApplication = javascriptApplicationAvailability(context);
@@ -236,6 +244,42 @@ const workflowAvailabilityFor = ({
   kind,
   policy,
 }: AvailabilityContext): Availability | null => {
+  if (name === "trace_web_module_imports")
+    return {
+      reason: "available",
+      remediation: null,
+      defaultModeAvailable: policy.webModuleResolutionEnabled === true,
+      modes: [
+        {
+          name: "sources-without-literal-imports",
+          available: true,
+          missing_operations: [],
+          remediation: null,
+        },
+        policy.webModuleResolutionEnabled === true
+          ? {
+              name: "native-literal-resolution",
+              available: true,
+              missing_operations: [],
+              remediation: null,
+            }
+          : {
+              name: "native-literal-resolution",
+              available: false,
+              missing_operations: ["native-module-resolver"],
+              remediation:
+                "Provide an absolute REA_BROWSER_EXECUTABLE supporting import.meta.resolve; no binary target is required.",
+            },
+      ],
+    };
+  if (name === "recover_javascript_sources")
+    return policy.javascriptRecoveryEnabled === true
+      ? { reason: "available", remediation: null }
+      : {
+          reason: "provider_missing",
+          remediation:
+            "On Linux x64, provide an absolute REA_WAKARU_COMMAND for Wakaru 1.13.0 and util-linux prlimit. No binary target is required.",
+        };
   if (kind === "firmware-provider") {
     const enabled =
       name === "inspect_firmware_regions"
@@ -246,7 +290,7 @@ const workflowAvailabilityFor = ({
       : {
           reason: "provider_missing",
           remediation:
-            "On Linux, provide an absolute REA_BINWALK_COMMAND (Binwalk 3.1.0) or REA_UNBLOB_COMMAND (Unblob 26.6.4) path and util-linux prlimit. Extraction also requires the selected format’s external extractor.",
+            "On Linux, provide an absolute REA_BINWALK_COMMAND (Binwalk 3.1.x, verified with 3.1.0) or REA_UNBLOB_COMMAND (Unblob 26.6.x, verified with 26.6.4) path and util-linux prlimit. Extraction also requires the selected format’s external extractor.",
         };
   }
   if (kind === "android-provider")

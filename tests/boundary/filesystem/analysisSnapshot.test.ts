@@ -9,7 +9,7 @@ import { createAnalysisExecution } from "../../../src/application/AnalysisProvid
 import {
   readAnalysisSnapshot,
   writeAnalysisSnapshot,
-} from "../../../src/application/AnalysisSnapshotFiles.js";
+} from "../../../src/application/binary/AnalysisSnapshotFiles.js";
 import {
   createAnalysisSnapshotEntry,
   parseAnalysisSnapshot,

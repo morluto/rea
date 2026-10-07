@@ -6,7 +6,7 @@ import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type {
   ElectronActiveObservationInput,
   ElectronActiveObservationResult,
-} from "../domain/electronActiveObservation.js";
+} from "../domain/javascript/electronActiveObservation.js";
 
 const OPERATION = "capture_electron_scenario" as const;
 

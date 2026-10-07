@@ -2,14 +2,14 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import type { BinarySession } from "../../../src/application/BinarySession.js";
+import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { createServer } from "../../../src/server/createServer.js";
 import {
   JAVASCRIPT_FEATURE_TRACE_FULL_EVIDENCE_EXAMPLE,
   JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
   JAVASCRIPT_VERSION_COMPARISON_FULL_EVIDENCE_EXAMPLE,
   SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE,
-} from "../../../src/contracts/javascriptApplicationWorkflowExamples.js";
+} from "../../../src/contracts/javascript/javascriptApplicationWorkflowExamples.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 

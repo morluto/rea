@@ -58,6 +58,7 @@ import {
 } from "./CdpTargetSession.js";
 import { capturePage, type CapturedPage } from "./CdpPageCapture.js";
 import { fetchWebSourceMaps } from "./WebSourceMapFetcher.js";
+import { authorizeCdpTarget } from "./CdpAuthorizedTarget.js";
 import { observeCdpSession } from "./CdpObservationSession.js";
 import { discoverWebMcp } from "./CdpWebMcpDiscovery.js";
 import { captureCdpScreenshot } from "./CdpScreenshot.js";
@@ -417,20 +418,7 @@ const authorizeTarget = (
   discovery: CdpEndpointDiscovery,
   input: Pick<InspectWebPageInput, "target_id" | "allowed_origins">,
 ): CdpEndpointTarget => {
-  const target = discovery.targets.find(
-    (candidate) => candidate.id === input.target_id,
-  );
-  if (target === undefined)
-    throw new BrowserObservationError("inspect_web_page", "target_not_found");
-  const origin = sanitizeBrowserUrl(target.url).origin;
-  if (
-    target.type !== "page" ||
-    origin === null ||
-    (input.allowed_origins.length > 0 &&
-      !input.allowed_origins.includes(origin))
-  )
-    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
-  return target;
+  return authorizeCdpTarget(discovery, input, "inspect_web_page").target;
 };
 
 const scopeToTargetOrigin = <T extends { allowed_origins: readonly string[] }>(

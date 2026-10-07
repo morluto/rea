@@ -1,4 +1,4 @@
-import { writeAnalysisSnapshot } from "../application/AnalysisSnapshotFiles.js";
+import { writeAnalysisSnapshot } from "../application/binary/AnalysisSnapshotFiles.js";
 import { ok } from "../domain/result.js";
 import {
   reportLifecycleEnd,

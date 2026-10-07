@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { fetchWebSourceMaps } from "../../../src/browser/WebSourceMapFetcher.js";
 import { analyzeWebBundleInputSchema } from "../../../src/domain/webBundleAnalysis.js";
 
@@ -34,6 +34,12 @@ describe("source-map discarded HTTP response ownership", () => {
           notifyClosed?.();
         });
       });
+      const closeServer = async (): Promise<void> => {
+        server.closeAllConnections();
+        if (server.listening)
+          await new Promise<void>((resolve) => server.close(() => resolve()));
+      };
+      onTestFinished(closeServer);
       try {
         await new Promise<void>((resolve) =>
           server.listen(0, "127.0.0.1", resolve),
@@ -62,22 +68,10 @@ describe("source-map discarded HTTP response ownership", () => {
         expect(result.items[0]?.status).toBe(
           status === 302 ? "included" : "fetch_failed",
         );
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        try {
-          await Promise.race([
-            closed,
-            new Promise<void>((resolve) => {
-              timer = setTimeout(resolve, 500);
-            }),
-          ]);
-          expect(didClose).toBe(true);
-        } finally {
-          clearTimeout(timer);
-        }
+        await closed;
+        expect(didClose).toBe(true);
       } finally {
-        server.closeAllConnections();
-        if (server.listening)
-          await new Promise<void>((resolve) => server.close(() => resolve()));
+        await closeServer();
       }
     },
   );

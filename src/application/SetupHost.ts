@@ -3,7 +3,10 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
-import { supportsNodeVersion } from "../domain/runtimeVersion.js";
+import {
+  SUPPORTED_NODE_VERSION_PROSE,
+  supportsNodeVersion,
+} from "../domain/runtimeVersion.js";
 import { runDoctor, systemDoctorHost, type DoctorHost } from "./Doctor.js";
 import { installLinuxHopper, readLinuxDistribution } from "./LinuxHopper.js";
 import { installMacHopper } from "./MacHopper.js";
@@ -19,7 +22,12 @@ import {
 } from "./SetupClientConfiguration.js";
 import { setupInstallFailure } from "./SetupInstallFailure.js";
 import { providerRegistrationEnvironment } from "./SetupRegistrationEnvironment.js";
-import type { SetupHost, SetupProviderEnvironment } from "./SetupTypes.js";
+import type {
+  SetupHost,
+  SetupInitialState,
+  SetupProviderEnvironment,
+} from "./SetupTypes.js";
+import type { DoctorScope } from "./Doctor.js";
 
 /** Resolve the executable and arguments used in a managed MCP registration. */
 export const setupRegistrationCommand = (
@@ -63,7 +71,7 @@ export const hostRemediation = async (
   installHopper: boolean,
 ): Promise<string | undefined> => {
   if (!supportsNodeVersion(host.nodeVersion))
-    return "Install Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+ and rerun setup.";
+    return `Install ${SUPPORTED_NODE_VERSION_PROSE} and rerun setup.`;
   if (!installHopper) return undefined;
   if (host.platform !== "darwin" && host.platform !== "linux")
     return "REA supports Hopper on macOS and selected 64-bit Linux distributions.";
@@ -74,7 +82,7 @@ export const hostRemediation = async (
       : undefined;
   }
   if ((await host.linuxDistribution())?.supported === true) return undefined;
-  return "Automated Hopper setup supports Ubuntu 24.04+, Fedora 41+, and 64-bit Arch Linux; configure an existing supported provider instead.";
+  return "Automated Hopper setup supports Ubuntu 24.04+, Fedora 41+, 64-bit Arch Linux, and CachyOS; configure an existing supported provider instead.";
 };
 
 /** Production setup effects for Hopper, agent configuration, and the canonical skill directory. */
@@ -88,6 +96,25 @@ export const systemSetupHost = (
     macosVersion: () => doctorHost.macosVersion(),
     linuxDistribution: readLinuxDistribution,
     hopperPath: async () => (await runDoctor(undefined, doctorHost)).hopperPath,
+    initialSetupState: async (
+      scope?: DoctorScope,
+    ): Promise<SetupInitialState> => {
+      const diagnosis = await runDoctor(undefined, doctorHost, scope);
+      return {
+        ...(diagnosis.hopperPath === undefined
+          ? {}
+          : { hopperPath: diagnosis.hopperPath }),
+        providerEnvironment: {
+          ...providerRegistrationEnvironment(
+            diagnosis.providerInspections ?? [],
+          ),
+          ...(diagnosis.hopperPath === undefined
+            ? {}
+            : { HOPPER_LAUNCHER_PATH: diagnosis.hopperPath }),
+        },
+        doctor: diagnosis,
+      };
+    },
     providerEnvironment: async () => {
       const diagnosis = await runDoctor(undefined, doctorHost);
       return {

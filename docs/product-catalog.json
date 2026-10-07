@@ -7,10 +7,10 @@
       "client": "2.3.1",
       "core": "2.3.1"
     },
-    "skill_version": "26"
+    "skill_version": "27"
   },
   "tools": {
-    "total": 126,
+    "total": 133,
     "families": [
       {
         "id": "direct",
@@ -142,7 +142,7 @@
       {
         "id": "browser",
         "surface": "browser-provider",
-        "count": 9,
+        "count": 11,
         "tools": [
           "analyze_web_bundle",
           "capture_browser_scenario",
@@ -150,8 +150,10 @@
           "compare_web_captures",
           "compare_web_screenshots",
           "discover_webmcp_tools",
+          "inspect_web_event_listeners",
           "inspect_web_page",
           "list_browser_targets",
+          "observe_web_execution",
           "observe_web_session"
         ]
       },
@@ -179,7 +181,7 @@
       {
         "id": "application",
         "surface": "application-workflow",
-        "count": 8,
+        "count": 13,
         "tools": [
           "build_reconstruction_obligation_ledger",
           "compare_application_versions",
@@ -187,8 +189,13 @@
           "compare_source_to_bundle",
           "evaluate_reconstruction_coverage",
           "export_web_scripts",
+          "project_android_application_graph",
+          "project_apple_application_graph",
+          "recover_javascript_sources",
           "trace_application_feature",
-          "trace_javascript_semantics"
+          "trace_javascript_semantics",
+          "trace_web_module_imports",
+          "trace_web_source_location"
         ]
       },
       {
@@ -351,6 +358,18 @@
       ]
     },
     {
+      "id": "rea-android-application",
+      "name": "REA Android application workflows",
+      "version": "1",
+      "capabilities": ["project_android_application_graph"]
+    },
+    {
+      "id": "rea-apple-application",
+      "name": "REA Apple application workflows",
+      "version": "1",
+      "capabilities": ["project_apple_application_graph"]
+    },
+    {
       "id": "rea-artifact-graph",
       "name": "REA safe artifact graph provider",
       "version": "1",
@@ -372,8 +391,10 @@
         "compare_web_captures",
         "compare_web_screenshots",
         "discover_webmcp_tools",
+        "inspect_web_event_listeners",
         "inspect_web_page",
         "list_browser_targets",
+        "observe_web_execution",
         "observe_web_session"
       ]
     },
@@ -455,13 +476,23 @@
       "id": "rea-web-script-export",
       "name": "REA captured script export",
       "version": "1",
-      "capabilities": ["export_web_scripts"]
+      "capabilities": [
+        "export_web_scripts",
+        "trace_web_module_imports",
+        "trace_web_source_location"
+      ]
     },
     {
       "id": "unblob",
       "name": "Unblob",
       "version": "26.6.4",
       "capabilities": ["extract_firmware"]
+    },
+    {
+      "id": "wakaru",
+      "name": "Wakaru",
+      "version": "1.13.0",
+      "capabilities": ["recover_javascript_sources"]
     }
   ],
   "setup_clients": [
@@ -539,7 +570,7 @@
     }
   ],
   "cli": {
-    "primary_count": 81,
+    "primary_count": 88,
     "commands": [
       "address-to-file-offset",
       "analyze",
@@ -595,6 +626,7 @@
       "inspect-native-load-image",
       "inspect-plist",
       "inspect-signature",
+      "inspect-web-event-listeners",
       "inspect-web-page",
       "instructions",
       "list-architectures",
@@ -603,11 +635,15 @@
       "list-javascript-runtime-targets",
       "observe-javascript-runtime",
       "observe-native-ui",
+      "observe-web-execution",
       "observe-web-session",
+      "project-android-application-graph",
+      "project-apple-application-graph",
       "project-managed-application-graph",
       "providers",
       "read-bytes",
       "reconcile-javascript-runtime",
+      "recover-javascript-sources",
       "resolve-native-call-targets",
       "search",
       "search-android-classes",
@@ -618,6 +654,8 @@
       "trace-javascript-semantics",
       "trace-native-ui-action",
       "trace-native-values",
+      "trace-web-module-imports",
+      "trace-web-source-location",
       "uninstall",
       "update",
       "verify-managed-native-boundaries",
@@ -632,15 +670,15 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 81,
-      "mcp_tools": 126,
+      "cli_commands": 88,
+      "mcp_tools": 133,
       "mcp_prompts": 6
     },
     "digests": {
-      "tools_sha256": "569db1182f19869a3bdb22cf217bc75526f317b59635c8866d0e62741077cd52",
+      "tools_sha256": "c77a3b4740fc2e78172e1d6757b1915d2b638185d8e87d2f1885bb41ce538813",
       "prompts_sha256": "ef2de8814390b340623c32001610aa2709d90bed51537b6e562ab3abf144ab4d",
-      "combined_sha256": "e21455dd7d64af94e0b07aff55ab82f03a37e46729ece51be38b50083d2d5b55",
-      "providers_sha256": "7949ddcf2eb5ba41b022bb3dfa1951ab96dbf5640285fa7fd5d35b0e4a5bdab3"
+      "combined_sha256": "e652c2ec4cde078a23735789c1d01cb1b9d316c9af7708e86f2c5c31b37b0e51",
+      "providers_sha256": "aea15f517c822d80918ccaba57a4fa06557f484cf27b8acbaed4e1a660fac896"
     }
   }
 }

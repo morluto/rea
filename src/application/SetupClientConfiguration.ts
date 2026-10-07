@@ -1,9 +1,13 @@
 import {
   clientRegistrationEntry,
   clientConfigurationValuesEqual,
+  clientServerPath,
+  legacyClientServerPath,
   parseClientConfiguration,
   serializeClientConfiguration,
+  withClientServers,
   type ClientConfigurationDocument,
+  type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
 import { constants as fsConstants } from "node:fs";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -82,20 +86,13 @@ const configureClientDocument = async (
     void cause;
     return { status: "failed", reason: "readback" };
   }
-  const { document, servers, serversKey } = parsed;
   const desired = clientConfigurationDesired(
     client,
     environment,
     command,
-    format,
+    parsed.dialect,
   );
-  if (
-    clientConfigurationValuesEqual(
-      servers[PRODUCT_IDENTITY.mcpServerKey],
-      desired,
-    )
-  )
-    return { status: "unchanged" };
+  if (registrationCurrent(parsed, desired)) return { status: "unchanged" };
   const backupPath =
     original === undefined ? undefined : `${client.configPath}.rea.backup`;
   if (
@@ -103,20 +100,25 @@ const configureClientDocument = async (
     !(await preserveConfigBackup(transactionPath, backupPath))
   )
     return { status: "failed", reason: "backup" };
-  document[serversKey] = {
-    ...servers,
-    [PRODUCT_IDENTITY.mcpServerKey]: desired,
-  };
+  // A native OpenCode V2 entry replaces REA's legacy V1 entry, which would
+  // otherwise conflict with it.
+  const legacyPath = legacyClientServerPath(
+    parsed,
+    PRODUCT_IDENTITY.mcpServerKey,
+  );
+  const document = withClientServers(
+    parsed,
+    { ...parsed.servers, [PRODUCT_IDENTITY.mcpServerKey]: desired },
+    PRODUCT_IDENTITY.mcpServerKey,
+  );
   try {
     await mkdir(dirname(client.configPath), { recursive: true });
     await writeFileAtomic(
       transactionPath,
-      serializeClientConfiguration(
-        document,
-        format,
-        original,
-        PRODUCT_IDENTITY.mcpServerKey,
-      ),
+      serializeClientConfiguration(document, format, original, [
+        clientServerPath(parsed, PRODUCT_IDENTITY.mcpServerKey),
+        ...(legacyPath === undefined ? [] : [legacyPath]),
+      ]),
       {
         encoding: "utf8",
         mode: 0o600,
@@ -132,12 +134,7 @@ const configureClientDocument = async (
       await readFile(transactionPath, "utf8"),
       format,
     );
-    if (
-      !clientConfigurationValuesEqual(
-        readback.servers[PRODUCT_IDENTITY.mcpServerKey],
-        desired,
-      )
-    ) {
+    if (!registrationCurrent(readback, desired)) {
       await restoreConfig(transactionPath, original);
       return { status: "failed", reason: "readback" };
     }
@@ -159,18 +156,17 @@ export const clientConfigurationAligned = async (
   providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
 ): Promise<boolean> => {
-  const desired = clientConfigurationDesired(
-    client,
-    providerEnvironment,
-    command,
-    client.format,
-  );
   try {
     const original = await readFile(client.configPath, "utf8");
-    const { servers } = parseClientConfiguration(original, client.format);
-    return clientConfigurationValuesEqual(
-      servers[PRODUCT_IDENTITY.mcpServerKey],
-      desired,
+    const parsed = parseClientConfiguration(original, client.format);
+    return registrationCurrent(
+      parsed,
+      clientConfigurationDesired(
+        client,
+        providerEnvironment,
+        command,
+        parsed.dialect,
+      ),
     );
   } catch (cause: unknown) {
     // Unreadable configuration is treated as not aligned so setup repairs it.
@@ -206,20 +202,15 @@ export const inspectClientConfiguration = async (
         "The configuration file could not be read. Check its permissions before rerunning setup.",
     };
   }
-  const desired = clientConfigurationDesired(
-    client,
-    providerEnvironment,
-    command,
-    client.format,
-  );
   try {
-    const { servers } = parseClientConfiguration(original, client.format);
-    if (
-      clientConfigurationValuesEqual(
-        servers[PRODUCT_IDENTITY.mcpServerKey],
-        desired,
-      )
-    )
+    const parsed = parseClientConfiguration(original, client.format);
+    const desired = clientConfigurationDesired(
+      client,
+      providerEnvironment,
+      command,
+      parsed.dialect,
+    );
+    if (registrationCurrent(parsed, desired))
       return { status: "already_current" };
   } catch (cause: unknown) {
     // Malformed configuration is reported with the invalid remediation.
@@ -263,11 +254,21 @@ const restoreConfig = async (
   }
 };
 
+/** Whether REA's entry matches and no conflicting legacy entry remains. */
+const registrationCurrent = (
+  parsed: ClientConfigurationDocument,
+  desired: unknown,
+): boolean =>
+  clientConfigurationValuesEqual(
+    parsed.servers[PRODUCT_IDENTITY.mcpServerKey],
+    desired,
+  ) && !Object.hasOwn(parsed.legacyServers, PRODUCT_IDENTITY.mcpServerKey);
+
 const clientConfigurationDesired = (
   client: SetupClient,
   providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
-  format: NonNullable<SetupClient["format"]> | undefined,
+  format: ClientRegistrationDialect | undefined,
 ) => {
   const environment = Object.fromEntries(
     Object.entries(providerEnvironment).sort(([left], [right]) =>

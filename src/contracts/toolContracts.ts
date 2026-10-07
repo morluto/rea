@@ -1,14 +1,16 @@
-import { NATIVE_TOOL_CONTRACTS } from "./nativeToolContracts.js";
+import { NATIVE_TOOL_CONTRACTS } from "./native/nativeToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "./artifactToolContracts.js";
-import { MANAGED_TOOL_CONTRACTS } from "./managedToolContracts.js";
-import { FIRMWARE_TOOL_CONTRACTS } from "./firmwareToolContracts.js";
-import { ANDROID_TOOL_CONTRACTS } from "./androidToolContracts.js";
-import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "./managedWorkflowToolContracts.js";
+import { MANAGED_TOOL_CONTRACTS } from "./managed/managedToolContracts.js";
+import { FIRMWARE_TOOL_CONTRACTS } from "./firmware/firmwareToolContracts.js";
+import { ANDROID_TOOL_CONTRACTS } from "./android/androidToolContracts.js";
+import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "./managed/managedWorkflowToolContracts.js";
 import { BROWSER_PROVIDER_TOOL_CONTRACTS } from "./browserProviderToolContracts.js";
-import { ELECTRON_TOOL_CONTRACTS } from "./electronToolContracts.js";
-import { JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS } from "./javascriptRuntimeObservationToolContracts.js";
+import { ELECTRON_TOOL_CONTRACTS } from "./javascript/electronToolContracts.js";
+import { JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS } from "./javascript/javascriptRuntimeObservationToolContracts.js";
 import { APPLICATION_TOOL_CONTRACTS } from "./applicationToolContracts.js";
 import { WEB_SCRIPT_TOOL_CONTRACTS } from "./webScriptToolContracts.js";
+import { WEB_RUNTIME_TOOL_CONTRACTS } from "./webRuntimeToolContracts.js";
+import { JAVASCRIPT_RECOVERY_TOOL_CONTRACTS } from "./javascript/javascriptRecoveryToolContracts.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "./officialToolContracts.js";
 import { ENHANCED_TOOL_CONTRACTS } from "./enhancedToolContracts.js";
 import { SESSION_TOOL_CONTRACTS } from "./sessionToolContracts.js";
@@ -30,6 +32,8 @@ export const TOOL_CONTRACTS = [
   ...JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS,
   ...APPLICATION_TOOL_CONTRACTS,
   ...WEB_SCRIPT_TOOL_CONTRACTS,
+  ...WEB_RUNTIME_TOOL_CONTRACTS,
+  ...JAVASCRIPT_RECOVERY_TOOL_CONTRACTS,
   ...SESSION_TOOL_CONTRACTS,
 ] as const;
 

@@ -1,10 +1,11 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileOutput } from "../process/ExecFileOutput.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import type { NativeUiHelper } from "./NativeUiObservation.js";
+import { NATIVE_UI_HELPER_MAX_BUFFER } from "./NativeUiOutputBudget.js";
 
 /** Lazily compile one owned helper per observation/scenario and remove its compiler cache. */
 export const createNativeUiHelperRuntime = () => {
@@ -14,6 +15,13 @@ export const createNativeUiHelperRuntime = () => {
     if (executable === undefined) {
       root = await mkdtemp(join(tmpdir(), "rea-native-ui-"));
       const output = join(root, "observer");
+      const main = join(root, "main.swift");
+      await symlink(
+        fileURLToPath(
+          new URL("../../bridge/native/ReaNativeUI.swift", import.meta.url),
+        ),
+        main,
+      );
       await execFileOutput(
         "/usr/bin/xcrun",
         [
@@ -21,8 +29,12 @@ export const createNativeUiHelperRuntime = () => {
           "-module-cache-path",
           join(root, "modules"),
           fileURLToPath(
-            new URL("../../bridge/native/ReaNativeUI.swift", import.meta.url),
+            new URL(
+              "../../bridge/native/NativeUIChildren.swift",
+              import.meta.url,
+            ),
           ),
+          main,
           "-o",
           output,
         ],
@@ -39,7 +51,7 @@ export const createNativeUiHelperRuntime = () => {
       [JSON.stringify(parameters)],
       {
         timeout: 30_000,
-        maxBuffer: 16 * 1024 * 1024,
+        maxBuffer: NATIVE_UI_HELPER_MAX_BUFFER,
         ...(signal === undefined ? {} : { signal }),
       },
     );

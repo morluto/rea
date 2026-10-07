@@ -6,11 +6,11 @@ import { describe, expect, it } from "vitest";
 
 import { createCli } from "./cli.js";
 import { createSystemDoctorHost } from "./doctorRuntime.js";
-import { captureProcessScenarioFile } from "./application/ProcessCli.js";
-import { runCapabilityStatus } from "./application/DirectAnalysisStatus.js";
-import { probeProcessCaptureCapability } from "./application/ProcessHarness.js";
+import { captureProcessScenarioFile } from "./application/process/ProcessCli.js";
+import { runCapabilityStatus } from "./composition/directAnalysis.js";
+import { probeProcessCaptureCapability } from "./process/capture/ProcessHarness.js";
 import { parseEvidence } from "./domain/evidence.js";
-import { parseProcessCapture } from "./domain/processCapture.js";
+import { parseProcessCapture } from "./domain/process/processCapture.js";
 
 describe("the CLI takes its environment as an input", () => {
   it("builds from an explicitly supplied environment", () => {

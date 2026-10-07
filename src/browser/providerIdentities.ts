@@ -29,10 +29,3 @@ export const PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY: ProviderIdentity =
     name: "REA Playwright active Electron observation provider",
     version: "1",
   });
-
-/** Identity available without loading the V8InspectorProvider implementation. */
-export const V8_INSPECTOR_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({
-  id: "rea-v8-inspector",
-  name: "REA passive Node/Electron V8 Inspector provider",
-  version: "1",
-});

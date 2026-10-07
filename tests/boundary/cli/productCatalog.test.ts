@@ -8,6 +8,8 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { SUPPORTED_CLIENT_DEFINITIONS } from "../../../src/application/SupportedClients.js";
 import {
+  ANDROID_APPLICATION_PROVIDER,
+  APPLE_APPLICATION_PROVIDER,
   ARTIFACT_GRAPH_PROVIDER,
   JAVASCRIPT_APPLICATION_PROVIDER,
   JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER,
@@ -20,22 +22,23 @@ import { CDP_BROWSER_PROVIDER_IDENTITY } from "../../../src/browser/CdpBrowserPr
 import { CDP_ELECTRON_PROVIDER_IDENTITY } from "../../../src/browser/CdpElectronProvider.js";
 import { PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY } from "../../../src/browser/PlaywrightElectronActiveProvider.js";
 import { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "../../../src/browser/PlaywrightBrowserScenarioProvider.js";
-import { V8_INSPECTOR_PROVIDER_IDENTITY } from "../../../src/browser/V8InspectorProvider.js";
+import { V8_INSPECTOR_PROVIDER_IDENTITY } from "../../../src/inspector/V8InspectorProvider.js";
 import { CLI_COMMAND_NAMES } from "../../../src/cliCommandNames.js";
 import { createCli } from "../../../src/cli.js";
 import {
   BINWALK_PROVIDER_IDENTITY,
   UNBLOB_PROVIDER_IDENTITY,
 } from "../../../src/firmware/FirmwareRelease.js";
+import { WAKARU_PROVIDER_IDENTITY } from "../../../src/javascript/recovery/WakaruRelease.js";
 import { JADX_PROVIDER_IDENTITY } from "../../../src/android/JadxRelease.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import {
   HOPPER_PROVIDER_IDENTITY,
-  HOPPER_PROVIDER_TOOL_CONTRACTS,
+  HOPPER_OPERATIONS,
 } from "../../../src/hopper/HopperProvider.js";
 import {
   GHIDRA_PROVIDER_IDENTITY,
-  GHIDRA_PROVIDER_TOOL_CONTRACTS,
+  GHIDRA_OPERATIONS,
 } from "../../../src/ghidra/GhidraProvider.js";
 import { NATIVE_MACOS_PROVIDER_IDENTITY } from "../../../src/native/NativeMacOSProvider.js";
 import { IDA_PROVIDER_IDENTITY } from "../../../src/ida/IdaProvider.js";
@@ -102,10 +105,13 @@ describe("canonical product catalog", () => {
         JADX_PROVIDER_IDENTITY,
         BINWALK_PROVIDER_IDENTITY,
         UNBLOB_PROVIDER_IDENTITY,
+        WAKARU_PROVIDER_IDENTITY,
         GHIDRA_PROVIDER_IDENTITY,
         IDA_PROVIDER_IDENTITY,
         NATIVE_MACOS_PROVIDER_IDENTITY,
         ARTIFACT_GRAPH_PROVIDER,
+        ANDROID_APPLICATION_PROVIDER,
+        APPLE_APPLICATION_PROVIDER,
         MANAGED_STATIC_PROVIDER,
         MANAGED_WORKFLOW_PROVIDER,
         CDP_BROWSER_PROVIDER_IDENTITY,
@@ -124,11 +130,11 @@ describe("canonical product catalog", () => {
     expect(
       catalog.providers.find(({ id }) => id === HOPPER_PROVIDER_IDENTITY.id)
         ?.capabilities,
-    ).toEqual(HOPPER_PROVIDER_TOOL_CONTRACTS.map(({ name }) => name).sort());
+    ).toEqual([...HOPPER_OPERATIONS].sort());
     expect(
       catalog.providers.find(({ id }) => id === GHIDRA_PROVIDER_IDENTITY.id)
         ?.capabilities,
-    ).toEqual(GHIDRA_PROVIDER_TOOL_CONTRACTS.map(({ name }) => name).sort());
+    ).toEqual([...GHIDRA_OPERATIONS].sort());
     expect(
       catalog.providers.find(
         ({ id }) => id === CDP_ELECTRON_PROVIDER_IDENTITY.id,
@@ -162,6 +168,14 @@ describe("canonical product catalog", () => {
       "trace_application_feature",
       "trace_javascript_semantics",
     ]);
+    expect(
+      catalog.providers.find(({ id }) => id === ANDROID_APPLICATION_PROVIDER.id)
+        ?.capabilities,
+    ).toEqual(["project_android_application_graph"]);
+    expect(
+      catalog.providers.find(({ id }) => id === APPLE_APPLICATION_PROVIDER.id)
+        ?.capabilities,
+    ).toEqual(["project_apple_application_graph"]);
     expect(
       catalog.providers.find(({ id }) => id === MANAGED_WORKFLOW_PROVIDER.id)
         ?.capabilities,

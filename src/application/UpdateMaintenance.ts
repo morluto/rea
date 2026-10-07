@@ -5,7 +5,10 @@ import { z } from "zod";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { isOwnedClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import { readClientRegistrationStatuses } from "./ClientRegistrationStatus.js";
-import { parseClientConfiguration } from "./ClientConfigurationDocument.js";
+import {
+  effectiveClientServer,
+  parseClientConfiguration,
+} from "./ClientConfigurationDocument.js";
 import { supportedClients } from "./SupportedClients.js";
 import type { SetupAction } from "./SetupTypes.js";
 import type { Result } from "../domain/result.js";
@@ -60,7 +63,7 @@ export const existingMaintenanceScope = async (
       continue;
     const client = supported.find(({ name }) => name === registration.client);
     if (client === undefined) continue;
-    const { servers } = parseClientConfiguration(
+    const parsed = parseClientConfiguration(
       await readFile(client.configPath, "utf8"),
       client.format,
     );
@@ -69,7 +72,7 @@ export const existingMaintenanceScope = async (
         enabled: z.boolean().optional(),
         disabled: z.boolean().optional(),
       })
-      .parse(servers[PRODUCT_IDENTITY.mcpServerKey]);
+      .parse(effectiveClientServer(parsed, PRODUCT_IDENTITY.mcpServerKey));
     if (enabled.enabled !== false && enabled.disabled !== true)
       clients.push(client.name);
   }

@@ -3,7 +3,7 @@ import { Cli, z } from "incur";
 import {
   listJavaScriptRuntimeTargets,
   observeJavaScriptRuntime,
-} from "./application/JavaScriptRuntimeObservationService.js";
+} from "./application/javascript/JavaScriptRuntimeObservationService.js";
 import { createJavaScriptRuntimeObservationProvider } from "./composition/javascriptRuntimeObservation.js";
 import { CLI_COMMANDS } from "./cliCommandNames.js";
 import { logCliCommand } from "./cliLogging.js";
@@ -11,7 +11,7 @@ import {
   javascriptRuntimeKindSchema,
   listJavaScriptRuntimeTargetsInputSchema,
   observeJavaScriptRuntimeInputSchema,
-} from "./domain/javascriptRuntimeObservation.js";
+} from "./domain/javascript/javascriptRuntimeObservation.js";
 import { AnalysisInputError } from "./domain/analysisErrorCore.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import type { JsonValue } from "./domain/jsonValue.js";

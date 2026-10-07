@@ -4,12 +4,13 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   inspectMachoSchema,
   type NativeCommandInvocation,
-} from "../domain/nativeInspection.js";
+} from "../domain/native/nativeInspection.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { NativeCommandCapture } from "./CommandRunner.js";
 import { parseDyldSymbols } from "./parsers/dyldInfo.js";
 import { parseLipoArchitectures } from "./parsers/lipo.js";
+import { withoutEchoedPathHeader } from "./parsers/echoedPath.js";
 import { parseOtoolLoadCommands } from "./parsers/otool.js";
 
 interface NativeMachoObservation {
@@ -128,15 +129,18 @@ const normalizeMacho = (
 ) => {
   const byTool = captureLookup(captures);
   const architectures = parseLipoArchitectures(byTool("lipo").stdout);
-  const load = parseOtoolLoadCommands(byTool("otool").stdout);
-  const imports = parseDyldSymbols(byTool("dyld_info", 0).stdout, "imports");
+  const load = parseOtoolLoadCommands(sliceOutput(byTool("otool")));
+  const imports = parseDyldSymbols(
+    sliceOutput(byTool("dyld_info", 0)),
+    "imports",
+  );
   const imageBase =
     load.segments.find(
       (segment) => segment.file_offset === 0 && (segment.file_size ?? 0) > 0,
     )?.vm_address ?? null;
   const nmExports = parseNmExports(byTool("nm").stdout);
   const dyldExports = parseDyldSymbols(
-    byTool("dyld_info", 1).stdout,
+    sliceOutput(byTool("dyld_info", 1)),
     "exports",
     imageBase,
     new Set(nmExports.map(({ name }) => name)),
@@ -166,7 +170,7 @@ const normalizeMacho = (
     ...additionalLimitations,
     ...(threadEntrypoint ? [threadEntrypointLimitation] : []),
     ...(imageBase === null &&
-    /^\s*offset\s+symbol\s*$/mu.test(byTool("dyld_info", 1).stdout)
+    /^\s*offset\s+symbol\s*$/mu.test(sliceOutput(byTool("dyld_info", 1)))
       ? [
           "Export virtual addresses are unavailable because no file-backed image base was observed.",
         ]
@@ -205,6 +209,10 @@ const normalizeMacho = (
     limitations,
   });
 };
+
+/** Slice output without the echoed operand path, which can contain any text. */
+const sliceOutput = (capture: NativeCommandCapture): string =>
+  withoutEchoedPathHeader(capture.stdout, capture.arguments.at(-1));
 
 const captureLookup =
   (captures: readonly NativeCommandCapture[]) =>

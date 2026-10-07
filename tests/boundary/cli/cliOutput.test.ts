@@ -8,6 +8,7 @@ import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
 import {
   renderCliOutputArgumentError,
+  renderEmptyFilteredCliOutput,
   sanitizeCliOutput,
   validateCliOutputArguments,
 } from "../../../src/cliOutput.js";
@@ -56,7 +57,9 @@ describe("CLI output argument and sanitization boundary", () => {
       validateCliOutputArguments(["providers", "--token-count", "--json"]),
     ).toEqual({ ok: true });
   });
+});
 
+describe("CLI output valued-flag parsing", () => {
   workspaceCliTest(
     "preserves complete JSON errors when native builtin flags follow unusual arguments",
     async ({ cli }) => {
@@ -91,6 +94,70 @@ describe("CLI output argument and sanitization boundary", () => {
     CLI_INTEGRATION_TIMEOUT_MS,
   );
 
+  workspaceCliTest(
+    "does not treat empty or equals-style output values as active builtins",
+    async ({ cli }) => {
+      for (const arguments_ of [
+        ["capabilities", "--json", "--format", ""],
+        ["capabilities", "--json", "--filter-output", ""],
+        ["capabilities", "--json", "--token-limit", ""],
+        ["capabilities", "--json", "--token-limit=5"],
+      ]) {
+        const result = await cli.run({ arguments: arguments_ });
+        expect(result.exitCode).toBe(1);
+        expect(result.json).toBeDefined();
+        expect(result.stdout).not.toContain("[truncated:");
+        expect(JSON.stringify(result.json)).not.toContain(
+          "UNSUPPORTED_OUTPUT_COMBINATION",
+        );
+      }
+      const validTokenWindow = await cli.run({
+        arguments: ["capabilities", "--json", "--token-limit", "5"],
+      });
+      expect(validTokenWindow.exitCode).toBe(1);
+      expect(validTokenWindow.json).toMatchObject({
+        ok: false,
+        error: { code: "UNSUPPORTED_OUTPUT_COMBINATION" },
+      });
+      const emptyFormatWithTokenWindow = await cli.run({
+        arguments: [
+          "capabilities",
+          "--json",
+          "--format",
+          "",
+          "--token-limit",
+          "5",
+        ],
+      });
+      expect(emptyFormatWithTokenWindow.exitCode).toBe(1);
+      expect(emptyFormatWithTokenWindow.stdout).not.toContain("[truncated:");
+      expect(emptyFormatWithTokenWindow.json).toMatchObject({
+        ok: false,
+        error: { code: "UNSUPPORTED_OUTPUT_COMBINATION" },
+      });
+
+      for (const arguments_ of [
+        ["capabilities", "--json", "--token-limit", "not-a-number"],
+        [
+          "capabilities",
+          "--format",
+          "unsupported-format",
+          "--json",
+          "--token-limit",
+          "5",
+        ],
+      ]) {
+        const result = await cli.run({ arguments: arguments_ });
+        expect(result.exitCode).toBe(1);
+        expect(result.stdout).not.toContain("UNSUPPORTED_OUTPUT_COMBINATION");
+        expect(result.stdout).not.toContain("[truncated:");
+      }
+    },
+    CLI_INTEGRATION_TIMEOUT_MS,
+  );
+});
+
+describe("CLI output argument and sanitization boundary", () => {
   it("preserves normal output and sanitizes text and JSON validation errors", () => {
     expect(sanitizeCliOutput("result: ok\n")).toBe("result: ok\n");
     expect(sanitizeCliOutput("result: VALIDATION_ERROR\n")).toBe(
@@ -140,9 +207,85 @@ describe("CLI output argument and sanitization boundary", () => {
       meta: { command: "analyze" },
     });
   });
+
+  it("renders an explicit empty projection for structured filtered output", () => {
+    for (const format of ["json", "jsonl", "yaml"])
+      expect(
+        renderEmptyFilteredCliOutput([
+          "providers",
+          "--format",
+          format,
+          "--filter-output",
+          "missing",
+        ]),
+      ).toBe("{}\n");
+    expect(
+      renderEmptyFilteredCliOutput(["providers", "--filter-output", "missing"]),
+    ).toBeUndefined();
+    expect(
+      renderEmptyFilteredCliOutput(["providers", "--format", "json"]),
+    ).toBeUndefined();
+  });
 });
 
 describe("compiled CLI output boundary", () => {
+  workspaceCliTest(
+    "emits valid JSON when an output filter misses the top-level result",
+    async ({ cli }) => {
+      const result = await cli.run({
+        arguments: [
+          "analyze-javascript-application",
+          "tests/conformance/readiness/javascript-cli",
+          "--format",
+          "json",
+          "--filter-output",
+          "summary",
+        ],
+      });
+      expect(result).toMatchObject({
+        exitCode: 0,
+        stdout: "{}\n",
+        stderr: "",
+        json: {},
+      });
+      const nested = await cli.run({
+        arguments: [
+          "analyze-javascript-application",
+          "tests/conformance/readiness/javascript-cli",
+          "--format",
+          "json",
+          "--filter-output",
+          "normalized_result.not_a_field",
+        ],
+      });
+      expect(nested).toMatchObject({
+        exitCode: 0,
+        stderr: "",
+        json: { normalized_result: {} },
+      });
+      const selected = await cli.run({
+        arguments: [
+          "analyze-javascript-application",
+          "tests/conformance/readiness/javascript-cli",
+          "--format",
+          "json",
+          "--filter-output",
+          "normalized_result.summary",
+        ],
+      });
+      expect(selected).toMatchObject({
+        exitCode: 0,
+        stderr: "",
+        json: {
+          normalized_result: {
+            summary: expect.objectContaining({ browser_windows: 0 }),
+          },
+        },
+      });
+    },
+    CLI_INTEGRATION_TIMEOUT_MS,
+  );
+
   workspaceCliTest(
     "sanitizes a real missing-argument dispatcher failure",
     async ({ cli }) => {

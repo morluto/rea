@@ -1,10 +1,10 @@
 import { expect, it } from "vitest";
 
-import { parseProcessScenario } from "../../../src/domain/processScenario.js";
+import { parseProcessScenario } from "../../../src/domain/process/processScenario.js";
 import {
   createRunManifest,
   observeSettlement,
-} from "../../../src/application/ProcessCaptureLifecycle.js";
+} from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 
 it("uses one selected host identity for manifest and settlement", async () => {
   const scenario = parseProcessScenario({

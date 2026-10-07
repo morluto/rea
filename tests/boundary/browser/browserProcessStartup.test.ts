@@ -1,29 +1,23 @@
-import { spawn } from "node:child_process";
-import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import {
+  processTest as it,
+  waitForExit,
+} from "../../support/process/processFixture.js";
 
 import {
   BrowserStartupError,
   waitForBrowserDevtoolsPort,
 } from "../../../src/browser/BrowserProcessStartup.js";
 
-const roots: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
-  );
-});
-
 describe("browser process startup", () => {
-  it("returns a delayed valid DevToolsActivePort", async () => {
+  it("returns a delayed valid DevToolsActivePort", async ({ processes }) => {
     const root = await temporaryRoot();
     const portPath = join(root, "DevToolsActivePort");
-    const child = spawn(process.execPath, [
+    const child = processes.spawn(process.execPath, [
       "-e",
       `setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(portPath)}, "43117\\n/browser"), 20); setTimeout(() => {}, 1000)`,
     ]);
@@ -40,12 +34,15 @@ describe("browser process startup", () => {
       ).resolves.toBe(43_117);
     } finally {
       child.kill("SIGKILL");
+      expect(await waitForExit(child, 5_000)).toBe(true);
     }
   });
 
-  it("classifies signal termination instead of timing out", async () => {
+  it("classifies signal termination instead of timing out", async ({
+    processes,
+  }) => {
     const root = await temporaryRoot();
-    const child = spawn(process.execPath, [
+    const child = processes.spawn(process.execPath, [
       "-e",
       "process.kill(process.pid, 'SIGTERM')",
     ]);
@@ -68,9 +65,12 @@ describe("browser process startup", () => {
     });
   });
 
-  it("reports bounded timeout diagnostics", async () => {
+  it("reports bounded timeout diagnostics", async ({ processes }) => {
     const root = await temporaryRoot();
-    const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 1000)"]);
+    const child = processes.spawn(process.execPath, [
+      "-e",
+      "setTimeout(() => {}, 1000)",
+    ]);
     try {
       const failure = await waitForBrowserDevtoolsPort({
         child,
@@ -90,12 +90,11 @@ describe("browser process startup", () => {
       expect(String(failure)).toContain("stderr=<empty>");
     } finally {
       child.kill("SIGKILL");
+      expect(await waitForExit(child, 5_000)).toBe(true);
     }
   });
 });
 
 const temporaryRoot = async (): Promise<string> => {
-  const root = await createTestTempDirectory("rea-browser-startup-");
-  roots.push(root);
-  return root;
+  return createTestTempDirectory("rea-browser-startup-");
 };

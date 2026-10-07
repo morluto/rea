@@ -20,14 +20,17 @@ const source = resolve(
 const install = process.env.GHIDRA_INSTALL_DIR;
 if (!install)
   throw new Error(
-    "NativeAOT build lane requires existing GHIDRA_INSTALL_DIR (Ghidra 12.1.4).",
+    "NativeAOT build lane requires existing GHIDRA_INSTALL_DIR (Ghidra 12.1.x).",
   );
 const properties = await readFile(
   join(install, "Ghidra/application.properties"),
   "utf8",
 );
-if (!/^application.version=12\.1\.4\s*$/m.test(properties))
-  throw new Error("NativeAOT build lane requires Ghidra 12.1.4.");
+const ghidraVersion = propertyValue(properties, "application.version");
+if (!ghidraReleaseLineAccepted(ghidraVersion))
+  throw new Error(
+    `NativeAOT build lane accepts Ghidra 12.1.x (verified with 12.1.4). Observed application.version=${ghidraVersion ?? "missing"}.`,
+  );
 const output = resolve(
   process.env.REA_NATIVEAOT_BUILD_ROOT ??
     join(root, "_reference/nativeaot-integration/extension"),
@@ -47,9 +50,11 @@ const run = (command, args) => {
   return result.stdout.trim();
 };
 const javac = java ? join(java, "javac") : "javac";
-if (!/^javac 21(?:\.|$)/u.test(run(javac, ["-version"])))
+const javacBanner = capture(javac, ["-version"]);
+const javacMajor = Number(/^javac (\d+)/mu.exec(javacBanner)?.[1]);
+if (!Number.isInteger(javacMajor) || javacMajor < 21)
   throw new Error(
-    "NativeAOT build lane requires an existing JDK 21 javac; REA does not install or upgrade Java.",
+    `NativeAOT build lane requires javac 21 or newer and compiles with --release 21. Observed: ${javacBanner || "no version"}. REA does not install or upgrade Java.`,
   );
 const revision = run("git", ["-C", source, "rev-parse", "HEAD"]);
 if (
@@ -93,6 +98,8 @@ try {
   run(javac, [
     "-J-Xmx512m",
     "-J-XX:ActiveProcessorCount=1",
+    "--release",
+    "21",
     `@${join(output, "javac.args")}`,
   ]);
   await writeFile(
@@ -119,7 +126,7 @@ try {
         jar,
         sha256,
         upstream_revision: revision,
-        ghidra_version: "12.1.4",
+        ghidra_version: ghidraVersion,
         integration_api: 1,
       },
       null,
@@ -131,10 +138,41 @@ try {
       jar,
       sha256,
       upstream_revision: revision,
-      ghidra_version: "12.1.4",
+      ghidra_version: ghidraVersion,
       integration_api: 1,
     }),
   );
 } finally {
   await rm(classes, { recursive: true, force: true });
+}
+
+/** Read one application.properties value. Empty and missing values stay unknown. */
+function propertyValue(content, name) {
+  for (const line of content.split(/\r?\n/u)) {
+    const separator = line.indexOf("=");
+    if (separator < 0 || line.slice(0, separator).trim() !== name) continue;
+    const value = line.slice(separator + 1).trim();
+    return value.length === 0 ? null : value;
+  }
+  return null;
+}
+
+/** Same 12.1 line as GhidraInstallationPolicy, including a distro suffix. */
+function ghidraReleaseLineAccepted(raw) {
+  const match = /^(\d+)\.(\d+)(?:\.(\d+))?([-+].*)?$/u.exec(raw ?? "");
+  return match !== null && Number(match[1]) === 12 && Number(match[2]) === 1;
+}
+
+function capture(command, args) {
+  const result = spawnSync(command, args, {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 120_000,
+    maxBuffer: 4 * 1024 * 1024,
+  });
+  if (result.error || result.status !== 0)
+    throw new Error(
+      `NativeAOT build prerequisite/action ${command} failed: ${result.error?.message ?? ""}\n${result.stdout ?? ""}${result.stderr ?? ""}`,
+    );
+  return `${result.stdout ?? ""}\n${result.stderr ?? ""}`.trim();
 }

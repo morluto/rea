@@ -1,4 +1,4 @@
-import type { BinarySessionPort } from "../../application/BinarySession.js";
+import type { BinarySessionPort } from "../../application/binary/BinarySession.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import { type AnalysisError } from "../../domain/analysisErrorBase.js";

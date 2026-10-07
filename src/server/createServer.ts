@@ -2,12 +2,12 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { isAbsolute } from "node:path";
 
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
-import type { BinarySessionPort } from "../application/BinarySession.js";
+import type { BinarySessionPort } from "../application/binary/BinarySession.js";
 import type { BrowserObservationPort } from "../application/BrowserObservationPort.js";
 import type { BrowserScenarioCapturePort } from "../application/BrowserScenarioCapturePort.js";
-import type { ElectronActiveObservationPort } from "../application/ElectronActiveObservationPort.js";
-import type { ElectronObservationPort } from "../application/ElectronObservationPort.js";
-import type { JavaScriptRuntimeObservationPort } from "../application/JavaScriptRuntimeObservationPort.js";
+import type { ElectronActiveObservationPort } from "../application/javascript/ElectronActiveObservationPort.js";
+import type { ElectronObservationPort } from "../application/javascript/ElectronObservationPort.js";
+import type { JavaScriptRuntimeObservationPort } from "../application/javascript/JavaScriptRuntimeObservationPort.js";
 import type { OptionalProviderLoadFailures } from "../application/OptionalObservationProviders.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { silentLogger, type Logger } from "../logger.js";
@@ -16,17 +16,30 @@ import { registerArtifactTools } from "./registerArtifactTools.js";
 import { registerBrowserScenarioTool } from "./registerBrowserScenarioTool.js";
 import { registerBrowserTools } from "./registerBrowserTools.js";
 import { registerWebScriptTool } from "./registerWebScriptTool.js";
+import { registerWebModuleTool } from "./registerWebModuleTool.js";
+import type { WebModuleTraceService } from "../application/WebModuleTraceService.js";
+import { createWebModuleTraceService } from "../composition/webModules.js";
+import { createWebSourceLocationService } from "../composition/webSourceLocations.js";
+import { registerWebSourceLocationTool } from "./registerWebSourceLocationTool.js";
+import type { WebSourceLocationService } from "../application/WebSourceLocationService.js";
+import type { WebRuntimeService } from "../application/WebRuntimeService.js";
+import { createWebRuntimeService } from "../composition/webRuntime.js";
+import { registerWebRuntimeTools } from "./registerWebRuntimeTools.js";
+import { registerJavaScriptRecoveryTool } from "./registerJavaScriptRecoveryTool.js";
+import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
+import type { JavaScriptRecoveryPort } from "../application/javascript/JavaScriptRecoveryPort.js";
+import { createJavaScriptRecoveryProvider } from "../composition/javascriptRecovery.js";
 import { registerElectronTools } from "./registerElectronTools.js";
 import { registerEnhancedTools } from "./registerEnhancedTools.js";
 import { registerJavaScriptRuntimeObservationTools } from "./registerJavaScriptRuntimeObservationTools.js";
 import { registerManagedTools } from "./registerManagedTools.js";
 import { registerFirmwareTools } from "./registerFirmwareTools.js";
-import { FirmwareAnalysisService } from "../application/FirmwareAnalysisService.js";
-import type { FirmwareAnalysisPort } from "../application/FirmwareAnalysisPort.js";
+import { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
+import type { FirmwareAnalysisPort } from "../application/firmware/FirmwareAnalysisPort.js";
 import { createFirmwareAnalysisProvider } from "../composition/firmware.js";
 import { registerAndroidTools } from "./registerAndroidTools.js";
-import { AndroidAnalysisService } from "../application/AndroidAnalysisService.js";
-import type { AndroidAnalysisPort } from "../application/AndroidAnalysisPort.js";
+import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
+import type { AndroidAnalysisPort } from "../application/android/AndroidAnalysisPort.js";
 import { createAndroidAnalysisProvider } from "../composition/android.js";
 import { registerManagedWorkflowTools } from "./registerManagedWorkflowTools.js";
 import { registerNativeTools } from "./registerNativeTools.js";
@@ -45,6 +58,10 @@ const ACTIVE_TARGET_INSTRUCTIONS =
 export interface CreateServerOptions {
   readonly logger?: Logger;
   readonly firmwareAnalysis?: FirmwareAnalysisPort;
+  readonly javascriptRecovery?: JavaScriptRecoveryPort;
+  readonly webModuleTrace?: WebModuleTraceService;
+  readonly webSourceLocation?: WebSourceLocationService;
+  readonly webRuntime?: WebRuntimeService;
   readonly androidAnalysis?: AndroidAnalysisPort;
   readonly browserObservation?: BrowserObservationPort;
   readonly browserScenarioCapture?: BrowserScenarioCapturePort;
@@ -64,6 +81,9 @@ const installSessionToolAvailability = (
   const policy = sessionAvailabilityPolicy(options.availabilityPolicy, {
     optionalProviderLoadFailures: options.optionalProviderLoadFailures,
     optionalFeatures: {
+      webModuleResolutionEnabled:
+        options.webModuleTrace !== undefined ||
+        isAbsolute(process.env.REA_BROWSER_EXECUTABLE ?? ""),
       firmwareInspectionEnabled:
         options.firmwareAnalysis !== undefined ||
         (process.platform === "linux" &&
@@ -77,6 +97,11 @@ const installSessionToolAvailability = (
         ((process.platform === "linux" || process.platform === "darwin") &&
           isAbsolute(process.env.REA_JADX_MCP_JAR ?? "")),
       browserObservationEnabled: options.browserObservation !== undefined,
+      javascriptRecoveryEnabled:
+        options.javascriptRecovery !== undefined ||
+        (process.platform === "linux" &&
+          process.arch === "x64" &&
+          isAbsolute(process.env.REA_WAKARU_COMMAND ?? "")),
       browserScenarioEnabled: options.browserScenarioCapture !== undefined,
       electronObservationEnabled: options.electronObservation !== undefined,
       electronAutomationEnabled:
@@ -138,11 +163,26 @@ export const createServer = (
     recordEvidenceWithUnknown,
   };
   registerBinaryAnalysisTools(toolContext);
+  const android = options.androidAnalysis ?? createAndroidAnalysisProvider();
+  const previousOnclose = server.server.onclose;
+  server.server.onclose = () => {
+    previousOnclose?.();
+    void android.close().catch((cause: unknown) => {
+      logger.error(
+        { error: cause instanceof Error ? cause.message : String(cause) },
+        "Android provider cleanup failed",
+      );
+    });
+  };
+  const closeServer = server.close.bind(server);
+  server.close = async () => {
+    const results = await Promise.allSettled([closeServer(), android.close()]);
+    for (const result of results)
+      if (result.status === "rejected") throw result.reason;
+  };
   registerAndroidTools(
     server,
-    new AndroidAnalysisService(
-      options.androidAnalysis ?? createAndroidAnalysisProvider(),
-    ),
+    new AndroidAnalysisService(android),
     toolLogger,
     recordEvidence,
   );
@@ -155,6 +195,32 @@ export const createServer = (
     recordEvidence,
   );
   registerObservationTools(toolContext);
+  registerWebModuleTool(
+    server,
+    options.webModuleTrace ?? createWebModuleTraceService(),
+    toolLogger,
+    recordEvidence,
+  );
+  registerWebSourceLocationTool(
+    server,
+    options.webSourceLocation ?? createWebSourceLocationService(),
+    toolLogger,
+    recordEvidence,
+  );
+  registerWebRuntimeTools(
+    server,
+    options.webRuntime ?? createWebRuntimeService(),
+    toolLogger,
+    recordEvidence,
+  );
+  registerJavaScriptRecoveryTool(
+    server,
+    new JavaScriptRecoveryService(
+      options.javascriptRecovery ?? createJavaScriptRecoveryProvider(),
+    ),
+    toolLogger,
+    recordEvidence,
+  );
   registerGuidedPrompts(server, analysis, session);
   if (session !== undefined) {
     registerSessionTools(server, session, toolLogger, {

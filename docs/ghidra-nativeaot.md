@@ -7,7 +7,10 @@ source notices are retained. No upstream source or algorithms are rewritten.
 
 The initial tested layout is .NET runtime **8.0.22**, NativeAOT RTR **9.1**,
 x86-64 ELF and native Windows PE **targets analyzed on Linux x64**, using
-Ghidra **12.1.4** and JDK **21**. Other layouts/architectures/hosts are unsupported.
+Ghidra **12.1.4** and JDK **21**. The build accepts any Ghidra 12.1.x release and
+javac 21 or newer, and it compiles with `--release 21`. Real verification of
+this layout remains the Ghidra 12.1.4 and JDK 21 pair. Other NativeAOT layouts,
+architectures, and hosts are unsupported.
 Windows Ghidra P0 has no database mutation authority. A PE/CLI or ReadyToRun
 assembly should use `inspect_managed_artifact`; it is not NativeAOT.
 

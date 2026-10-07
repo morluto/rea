@@ -5,6 +5,7 @@ import {
   browserEndpointSchema,
 } from "./browserObservation.js";
 import { browserCompletenessSchema } from "./browserCompleteness.js";
+import { browserVersionSchema } from "./browserObservationSchemas.js";
 
 /** Input for a navigation-aware browser observation window. */
 export const observeWebSessionInputSchema = z.strictObject({
@@ -42,13 +43,7 @@ const timelineEventSchema = z.object({
 
 /** Navigation-aware session result for external user actions. */
 export const webObservationSessionSchema = z.object({
-  browser: z.object({
-    product: z.string(),
-    protocol_version: z.string(),
-    revision: z.string(),
-    user_agent: z.string(),
-    js_version: z.string(),
-  }),
+  browser: browserVersionSchema,
   target: z.object({
     target_id: z.string(),
     initial_url: z.string(),

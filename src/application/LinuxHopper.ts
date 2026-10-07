@@ -11,8 +11,10 @@ import { execFileOutput } from "../process/ExecFileOutput.js";
 const execFileAsync = promisify(execFile);
 const DOWNLOAD_PREFIX = "https://www.hopperapp.com:443/downloader/public/";
 const MAX_PACKAGE_BYTES = 100_000_000;
-const SUPPORTED_HOPPER_SHA256 =
-  "0294ced141cc373468ee22d8343e7dac41980cb05a937994ca81c9f09afe7ded";
+const SUPPORTED_HOPPER_SHA256 = new Set([
+  "0294ced141cc373468ee22d8343e7dac41980cb05a937994ca81c9f09afe7ded",
+  "1339f9e58377442b0c6fcb0dfc3cec20d593cc557408521fad9a00dbc6b8da13",
+]);
 interface LinuxHopperRelease {
   readonly filename: string;
   readonly file_length: string;
@@ -148,6 +150,7 @@ export const parseLinuxDistribution = (text: string): LinuxDistribution => {
   const supported =
     packageFamily !== undefined &&
     (id === "arch" ||
+      id === "cachyos" ||
       (id === "ubuntu" && versionAtLeast(versionId, 24)) ||
       (id === "fedora" && versionAtLeast(versionId, 41)));
   const identity = {
@@ -262,13 +265,17 @@ export const linuxHopperBinarySupported = async (
   try {
     const hash = createHash("sha256");
     for await (const chunk of createReadStream(path)) hash.update(chunk);
-    return hash.digest("hex") === SUPPORTED_HOPPER_SHA256;
+    return linuxHopperLauncherDigestSupported(hash.digest("hex"));
   } catch (cause: unknown) {
     // best-effort cleanup: optional build probing; unreadable means unsupported.
     void cause;
     return false;
   }
 };
+
+/** Match a launcher extracted from one of the pinned official Linux packages. */
+export const linuxHopperLauncherDigestSupported = (digest: string): boolean =>
+  SUPPORTED_HOPPER_SHA256.has(digest);
 
 /** Interpret ldd output conservatively so a present but broken launcher is unhealthy. */
 export const linuxSharedLibrariesAvailable = (output: string): boolean =>

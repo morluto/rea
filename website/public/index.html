@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>REA — Reverse Engineer Anything</title>
+    <meta
+      name="description"
+      content="Inspect apps, binaries and runtime behavior with your coding agent or terminal. REA connects local analysis tools through CLI and MCP."
+    />
+    <meta name="theme-color" content="#ffffff" />
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="assets/styles.css" />
+    <script src="assets/main.js" defer></script>
+  </head>
+  <body id="top">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="./" aria-label="REA home"
+          ><span class="brand-name">REA</span
+          ><span class="brand-caption">Reverse Engineer Anything</span></a
+        >
+        <nav class="navigation" aria-label="Main navigation">
+          <a href="showcase/">Showcases</a>
+          <a class="nav-start" href="get-started/">Get started</a>
+          <a href="guides/">Guides</a>
+          <a href="https://github.com/morluto/rea">GitHub</a>
+        </nav>
+      </div>
+    </header>
+    <main id="main">
+      <section class="container hero">
+        <p class="eyebrow">Software analysis · CLI &amp; MCP</p>
+        <h1>Find out how<br />software works.</h1>
+        <p class="lede">
+          Use REA with your coding agent to inspect binaries, trace application
+          code and observe runtime behavior.
+        </p>
+        <div class="actions">
+          <a class="button" href="get-started/">Get started</a>
+          <a class="text-link" href="showcase/">Explore the case studies</a>
+        </div>
+        <div class="hero-command">
+          <div class="agent-terminal">
+            <div class="terminal-header">
+              <span class="terminal-title"
+                ><span class="terminal-dots" aria-hidden="true"
+                  ><i></i><i></i><i></i></span
+                >Your coding agent</span
+              >
+              <button
+                class="copy-button"
+                type="button"
+                data-copy="home-install-prompt"
+                aria-label="Copy REA installation prompt"
+              >
+                Copy
+              </button>
+            </div>
+            <p class="terminal-prompt">
+              <span class="prompt-symbol" aria-hidden="true">›</span
+              ><span id="home-install-prompt"
+                >Install REA and connect it to this coding agent using npx
+                rea-agents@latest setup. Show me the setup plan for approval,
+                then verify the installation.</span
+              ><span class="terminal-cursor" aria-hidden="true"></span>
+            </p>
+          </div>
+          <p class="caption">Or run this command in your terminal:</p>
+          <div class="code-block code-inline">
+            <code id="setup-command">npx rea-agents@latest setup</code>
+            <button
+              class="copy-button"
+              type="button"
+              data-copy="setup-command"
+              aria-label="Copy setup command"
+            >
+              Copy
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container">
+          <div class="section-heading">
+            <h2>What REA can analyze</h2>
+            <p>
+              Choose a guide for your binary, JavaScript app or browser session.
+            </p>
+          </div>
+          <div class="workflows">
+            <div>
+              <h3>Native binaries</h3>
+              <p>
+                Inspect functions, strings, references and call relationships in
+                executables and libraries.
+              </p>
+              <a href="guides/native/">Native analysis guide</a>
+            </div>
+            <div>
+              <h3>JavaScript &amp; Electron</h3>
+              <p>
+                Map modules, routes, IPC and native dependencies from an
+                application folder or ASAR archive.
+              </p>
+              <a href="guides/javascript/">Application workflows</a>
+            </div>
+            <div>
+              <h3>Browser &amp; runtime activity</h3>
+              <p>
+                Capture selected browser or process activity, then compare the
+                results across runs.
+              </p>
+              <a href="guides/browser/">Browser observation guide</a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" aria-label="How an investigation works">
+        <div class="container">
+          <figure class="explanatory-figure">
+            <div
+              class="figure-viewport"
+              tabindex="0"
+              role="region"
+              aria-label="REA investigation flow; scroll horizontally on smaller screens"
+            >
+              <img
+                src="assets/figures/rea-investigation-flow.svg"
+                width="1774"
+                height="887"
+                alt="Ask a question about a local app, binary or browser. Your agent uses REA through CLI or MCP to inspect and trace with analysis tools. REA returns code, references and unknowns. Your agent uses the evidence to explain, implement and test, and can ask follow-up questions."
+                decoding="async"
+              />
+            </div>
+            <figcaption>
+              REA connects your agent to analysis tools. The findings guide the
+              next question, explanation or implementation.
+              <a href="assets/figures/rea-investigation-flow.svg"
+                >Open figure</a
+              >
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container feature-case">
+          <div>
+            <p class="eyebrow">Case study · Native</p>
+            <h2>Rebuilding DX-Ball</h2>
+            <p>
+              DX-Ball is a 1996 Windows game. The project is reconstructing it
+              in C, using REA to inspect the executable and independent tests to
+              check the recovered behavior.
+            </p>
+            <p>
+              To recover a sound-pan calculation, the agent used REA to inspect
+              the instructions, follow a caller and read the constants. Those
+              findings led to a C function checked against the original behavior
+              and all 63 compiled bytes.
+            </p>
+            <p>
+              <a class="text-link" href="showcase/dx-ball/"
+                >Follow the investigation</a
+              >
+            </p>
+            <p class="case-note">
+              Work so far covers boards, resources, brick hits, animations,
+              particles and bonus production. The playable game is still in
+              progress.
+            </p>
+          </div>
+          <dl class="stats case-stats">
+            <div>
+              <dt>55</dt>
+              <dd>functions in maintained C</dd>
+            </div>
+            <div>
+              <dt>45,380</dt>
+              <dd>original-x86 differential cases</dd>
+            </div>
+            <div>
+              <dt>33</dt>
+              <dd>complete functions with matching compiled bytes</dd>
+            </div>
+          </dl>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container feature-case">
+          <div>
+            <p class="eyebrow">Case study · Electron</p>
+            <h2>Notion's Electron clipboard</h2>
+            <p>
+              A copy operation crosses from the page to Electron's main process.
+              Inspect Notion's packaged JavaScript with REA, then follow one
+              channel through the wrappers to the system clipboard.
+            </p>
+            <p>
+              Short code excerpts show each handoff. A second figure explains
+              how an HTML marker connects ordinary clipboard text to Notion's
+              structured block data.
+            </p>
+            <a class="text-link" href="showcase/notion/"
+              >Follow the clipboard bridge</a
+            >
+          </div>
+          <figure class="workflow-figure case-preview">
+            <p class="figure-title">Clipboard IPC channel</p>
+            <div class="code-block">
+              <div class="code-header"><span>Preload · send</span></div>
+              <pre><code>invokerInMain(
+  <span class="notion-channel">"notion:clipboard:write"</span>
+)</code></pre>
+            </div>
+            <div class="code-block">
+              <div class="code-header"><span>Main process · receive</span></div>
+              <pre><code>addListener(
+  <span class="notion-channel">"notion:clipboard:write"</span>,
+  handler
+)</code></pre>
+            </div>
+            <figcaption>
+              Matching names give the investigation a path to follow.
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container feature-case">
+          <div>
+            <p class="eyebrow">Case study · PC-98 DOS</p>
+            <h2>TH04's aimed bullet rings</h2>
+            <p>
+              Inspect a 16-bit DOS function with REA. Follow its angle
+              calculation from original instructions to readable C++, then see
+              how adding the player's direction turns a ring of bullets.
+            </p>
+            <a class="text-link" href="showcase/th04/"
+              >See the bullet calculation</a
+            >
+          </div>
+          <figure class="workflow-figure case-preview th04-preview">
+            <p class="figure-title">Fixed and aimed rings</p>
+            <img
+              src="assets/figures/th04-bullet-ring.svg"
+              width="1000"
+              height="520"
+              alt="TH04's fixed and aimed 16-bullet rings side by side. The first bullet is highlighted in blue; adding the player direction rotates every bullet while preserving the spacing."
+              loading="lazy"
+              decoding="async"
+            />
+            <figcaption>
+              Adding the player's direction rotates every bullet by the same
+              angle.
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container start-row">
+          <div>
+            <h2>What would you like to understand?</h2>
+            <p>
+              Connect REA to your coding agent, or run your first analysis from
+              the terminal.
+            </p>
+          </div>
+          <a class="button" href="get-started/">Get started</a>
+        </div>
+      </section>
+    </main>
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <p>REA · Reverse Engineer Anything</p>
+        <div class="footer-links">
+          <a href="https://github.com/morluto/rea">Source</a
+          ><a href="https://github.com/morluto/rea/blob/main/LICENSE"
+            >MIT license</a
+          ><a href="https://discord.gg/GkcryMnJDM">Community</a>
+        </div>
+      </div>
+    </footer>
+    <p class="sr-only" id="copy-status" role="status" aria-live="polite"></p>
+    <a class="back-to-top" href="#top" aria-label="Back to top">
+      <span aria-hidden="true">↑</span> Top
+    </a>
+  </body>
+</html>

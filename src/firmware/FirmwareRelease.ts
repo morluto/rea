@@ -12,7 +12,7 @@ export const FIRMWARE_RELEASES = {
   },
 } as const;
 
-/** Catalog identities; Evidence uses the version observed from the executed tool. */
+/** Catalog identity for the verified Binwalk release. Evidence replaces version with the observed banner. */
 export const BINWALK_PROVIDER_IDENTITY = {
   id: "binwalk",
   name: "Binwalk",

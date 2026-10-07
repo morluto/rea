@@ -15,8 +15,8 @@ import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { parseEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
-import { processCaptureSchema } from "../../../src/domain/processCapture.js";
-import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/contracts/processCaptureExample.js";
+import { processCaptureSchema } from "../../../src/domain/process/processCapture.js";
+import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/contracts/process/processCaptureExample.js";
 import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { PROCESS_PROVIDER } from "../../../src/server/sessionToolPolicies.js";
 

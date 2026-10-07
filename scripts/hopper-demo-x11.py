@@ -20,11 +20,14 @@ import time
 # Keep this digest aligned with LinuxHopper.ts and rerun real-Hopper verification
 # before accepting another vendor build.
 SUPPORTED_HOPPER_SHA256 = {
-    "0294ced141cc373468ee22d8343e7dac41980cb05a937994ca81c9f09afe7ded"
+    "0294ced141cc373468ee22d8343e7dac41980cb05a937994ca81c9f09afe7ded",
+    "1339f9e58377442b0c6fcb0dfc3cec20d593cc557408521fad9a00dbc6b8da13",
 }
 EXPECTED_SCREEN = (1280, 1024)
-EXPECTED_DIALOG = (189, 370, 901, 284)
-DEMO_CLICK = (305, 632)
+DIALOG_TITLES = {"Registration", "Registration — Hopper Disassembler"}
+HOPPER_WINDOW_TITLE = "Hopper Disassembler"
+DEMO_CLICK_LEFT = 116
+DEMO_CLICK_BOTTOM = 22
 PRIVATE_DISPLAY_UNAVAILABLE = 70
 X11_AUTHORIZATION_FAILED = 71
 UNSUPPORTED_HOPPER_BUILD = 72
@@ -196,6 +199,47 @@ def windows(x11: ctypes.CDLL, display: int, root: int) -> list[tuple[int, int, i
     return found
 
 
+def window_title(x11: ctypes.CDLL, display: int, window: int) -> str | None:
+    title = ctypes.c_char_p()
+    if not x11.XFetchName(display, window, ctypes.byref(title)) or not title.value:
+        return None
+    try:
+        return title.value.decode("utf-8", "replace")
+    finally:
+        x11.XFree(ctypes.cast(title, ctypes.c_void_p))
+
+
+def window_transient_for(
+    x11: ctypes.CDLL, display: int, window: int
+) -> int | None:
+    parent = ctypes.c_ulong()
+    if not x11.XGetTransientForHint(display, window, ctypes.byref(parent)):
+        return None
+    return int(parent.value)
+
+
+def find_demo_dialog(
+    x11: ctypes.CDLL,
+    display: int,
+    observed: list[tuple[int, int, int, int, int]],
+) -> tuple[int, int, int, int, int] | None:
+    for candidate in observed:
+        window = candidate[0]
+        if window_title(x11, display, window) not in DIALOG_TITLES:
+            continue
+        parent = window_transient_for(x11, display, window)
+        if parent is None:
+            continue
+        if window_title(x11, display, parent) == HOPPER_WINDOW_TITLE:
+            return candidate
+    return None
+
+
+def demo_click(dialog: tuple[int, int, int, int, int]) -> tuple[int, int]:
+    _window, x, y, _width, height = dialog
+    return x + DEMO_CLICK_LEFT, y + height - DEMO_CLICK_BOTTOM
+
+
 def configure_x11(x11: ctypes.CDLL, xtst: ctypes.CDLL) -> None:
     window_pointer = ctypes.POINTER(ctypes.c_ulong)
     x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
@@ -212,6 +256,18 @@ def configure_x11(x11: ctypes.CDLL, xtst: ctypes.CDLL) -> None:
         ctypes.POINTER(XWindowAttributes),
     ]
     x11.XGetWindowAttributes.restype = ctypes.c_int
+    x11.XFetchName.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_ulong,
+        ctypes.POINTER(ctypes.c_char_p),
+    ]
+    x11.XFetchName.restype = ctypes.c_int
+    x11.XGetTransientForHint.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_ulong,
+        ctypes.POINTER(ctypes.c_ulong),
+    ]
+    x11.XGetTransientForHint.restype = ctypes.c_int
     x11.XQueryTree.argtypes = [
         ctypes.c_void_p,
         ctypes.c_ulong,
@@ -644,6 +700,7 @@ def run_launch(args: argparse.Namespace) -> int:
 
         deadline = time.monotonic() + 10
         observed: list[tuple[int, int, int, int, int]] = []
+        dialog: tuple[int, int, int, int, int] | None = None
         while time.monotonic() < deadline:
             if socket.exists():
                 x11.XCloseDisplay(display)
@@ -659,7 +716,8 @@ def run_launch(args: argparse.Namespace) -> int:
                     "owned Hopper process exited",
                 )
             observed = windows(x11, display, root)
-            if any(window[1:] == EXPECTED_DIALOG for window in observed):
+            dialog = find_demo_dialog(x11, display, observed)
+            if dialog is not None:
                 break
             time.sleep(0.1)
         else:
@@ -675,8 +733,10 @@ def run_launch(args: argparse.Namespace) -> int:
                 "expected Hopper demo dialog not found",
             )
 
+        assert dialog is not None
+        click_x, click_y = demo_click(dialog)
         input_results = (
-            xtst.XTestFakeMotionEvent(display, -1, DEMO_CLICK[0], DEMO_CLICK[1], 0),
+            xtst.XTestFakeMotionEvent(display, -1, click_x, click_y, 0),
             xtst.XTestFakeButtonEvent(display, 1, True, 0),
             xtst.XTestFakeButtonEvent(display, 1, False, 0),
         )
@@ -695,9 +755,8 @@ def run_launch(args: argparse.Namespace) -> int:
     finally:
         if display is not None:
             x11.XCloseDisplay(display)
-        if child is not None and child.poll() is None:
-            child.terminate()
-            child.wait()
+        if child is not None:
+            stop_process(child)
         stop_process(xvfb)
         capture.close()
 

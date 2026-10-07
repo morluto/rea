@@ -4,10 +4,11 @@ import { z } from "zod";
 import { captureBrowserScenario } from "./application/BrowserScenarioCaptureService.js";
 import { createBrowserScenarioProvider } from "./composition/browserScenario.js";
 import { CLI_COMMANDS } from "./cliCommandNames.js";
-import { parseCliJsonInput } from "./cliJsonInput.js";
+import { parseCliJsonInput, resolveCliJsonPaths } from "./cliJsonInput.js";
 import { logCliCommand } from "./cliLogging.js";
 import { AnalysisInputError } from "./domain/analysisErrorCore.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
+import { projectInputIssues } from "./domain/inputIssueProjection.js";
 import { browserScenarioSchema } from "./domain/browserScenario.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 import type { Logger } from "./logger.js";
@@ -31,9 +32,17 @@ export const registerBrowserScenarioCommands = (
       logCliCommand(logger, CLI_COMMANDS.captureBrowserScenario, async () => {
         const input = await parseCliJsonInput(args.inputJson, OPERATION);
         if (!input.ok) return input.error;
-        const scenario = browserScenarioSchema.safeParse(input.value);
+        const scenario = browserScenarioSchema.safeParse(
+          resolveCliJsonPaths(input.value, [["browser", "executable_path"]]),
+        );
         if (!scenario.success)
-          return cliError(new AnalysisInputError(OPERATION));
+          return cliError(
+            new AnalysisInputError(
+              OPERATION,
+              { cause: scenario.error },
+              projectInputIssues(scenario.error.issues, input.value),
+            ),
+          );
         const result = await captureBrowserScenario(
           createBrowserScenarioProvider(),
           scenario.data,

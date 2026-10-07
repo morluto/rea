@@ -3,7 +3,7 @@ import {
   managedMemberInspectionSchema,
   type ManagedMemberInspection,
   type ManagedParseIssue,
-} from "../domain/managedArtifact.js";
+} from "../domain/managed/managedArtifact.js";
 import {
   readManagedPeLayout,
   type ManagedPeLayout,
@@ -116,9 +116,11 @@ export const inspectManagedMembersBytes = (
     const { layout, inventory } = readMemberInventory(bytes, pe);
     issues.push(...inventory.issues);
     const ranges = typeRanges(bytes, layout);
-    const types = parseTypes(bytes, layout, ranges);
+    const parsedTypes = parseTypes(bytes, layout, ranges);
+    issues.push(...parsedTypes.issues);
     const fields = parseFields(bytes, layout, ranges);
     const memberRefs = parseMemberRefs(bytes, layout);
+    issues.push(...memberRefs.issues);
     const methods = parseMethods({
       bytes,
       layout,
@@ -150,7 +152,7 @@ export const inspectManagedMembersBytes = (
         requires_artifact_sha256: target.sha256,
         requires_mvid: inventory.module?.mvid ?? null,
       },
-      types,
+      types: parsedTypes.types,
       fields: fields.fields,
       methods: methods.methods,
       member_refs: memberRefs.refs,

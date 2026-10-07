@@ -1,13 +1,15 @@
 import { reconstructionCoverageEvaluationInputSchema } from "../domain/reconstructionCoverageInput.js";
 import { Cli, z } from "incur";
 
+import { projectAndroidApplicationEvidence } from "../application/android/AndroidApplicationService.js";
+import { projectAppleApplicationEvidence } from "../application/apple/AppleApplicationService.js";
 import {
   compareApplicationVersionsEvidenceValidated,
   compareJavaScriptExportShapesEvidenceValidated,
   compareSourceToBundleEvidenceValidated,
   traceApplicationFeatureEvidenceValidated,
-} from "../application/JavaScriptApplicationWorkflowService.js";
-import { traceJavaScriptSemanticsEvidenceValidated } from "../application/JavaScriptSemanticTraceService.js";
+} from "../application/javascript/JavaScriptApplicationWorkflowService.js";
+import { traceJavaScriptSemanticsEvidenceValidated } from "../application/javascript/JavaScriptSemanticTraceService.js";
 import { evaluateReconstructionCoverage } from "../application/ReconstructionCoverageService.js";
 import { buildReconstructionObligationLedgerEvidenceValidated } from "../application/ReconstructionObligationLedgerService.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -16,13 +18,15 @@ import { logCliCommand } from "../cliLogging.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { type AnalysisError } from "../domain/analysisErrorBase.js";
+import { androidApplicationProjectionInputSchema } from "../domain/android/androidApplication.js";
+import { appleApplicationProjectionInputSchema } from "../domain/apple/appleApplication.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "../logger.js";
-import { traceApplicationFeatureInputSchema } from "../domain/javascriptFeatureTraceSchemas.js";
-import { traceJavaScriptSemanticsInputSchema } from "../domain/javascriptSemanticTraceSchemas.js";
-import { compareApplicationVersionsInputSchema } from "../domain/javascriptApplicationVersionComparisonSchemas.js";
-import { compareSourceToBundleInputSchema } from "../domain/sourceToBundleComparisonSchemas.js";
-import { compareJavaScriptExportShapesInputSchema } from "../domain/javascriptExportShapeComparisonSchemas.js";
+import { traceApplicationFeatureInputSchema } from "../domain/javascript/javascriptFeatureTraceSchemas.js";
+import { traceJavaScriptSemanticsInputSchema } from "../domain/javascript/javascriptSemanticTraceSchemas.js";
+import { compareApplicationVersionsInputSchema } from "../domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
+import { compareSourceToBundleInputSchema } from "../domain/javascript/sourceToBundleComparisonSchemas.js";
+import { compareJavaScriptExportShapesInputSchema } from "../domain/javascript/javascriptExportShapeComparisonSchemas.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { reconstructionObligationLedgerInputSchema } from "../domain/reconstructionObligationLedgerSchemas.js";
 
@@ -80,6 +84,34 @@ export const registerApplicationCommands = (
   });
   registerObligationLedgerCommand(cli, logger);
   registerCoverageCommand(cli, logger);
+  registerJsonCommand({
+    cli,
+    logger,
+    name: CLI_COMMANDS.projectAndroidApplicationGraph,
+    description:
+      "Project authenticated APK inventory Evidence into an Android application graph",
+    inputSchema: androidApplicationProjectionInputSchema,
+    workflow: (input) => {
+      const result = projectAndroidApplicationEvidence(input);
+      return result.ok
+        ? { ok: true, value: jsonValueSchema.parse(result.value) }
+        : result;
+    },
+  });
+  registerJsonCommand({
+    cli,
+    logger,
+    name: CLI_COMMANDS.projectAppleApplicationGraph,
+    description:
+      "Project authenticated IPA or macOS app inventory Evidence into an Apple application graph",
+    inputSchema: appleApplicationProjectionInputSchema,
+    workflow: (input) => {
+      const result = projectAppleApplicationEvidence(input);
+      return result.ok
+        ? { ok: true, value: jsonValueSchema.parse(result.value) }
+        : result;
+    },
+  });
 };
 
 const registerObligationLedgerCommand = (

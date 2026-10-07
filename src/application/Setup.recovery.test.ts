@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { SUPPORTED_NODE_VERSION_PROSE } from "../domain/runtimeVersion.js";
 import { FakeSetupHost, options } from "./Setup.fixture.js";
 import { runSetup } from "./Setup.js";
 
@@ -122,7 +123,7 @@ describe("setup scoped readiness", () => {
     const nodeHost = new FakeSetupHost();
     nodeHost.nodeVersion = "20.0.0";
     expect((await runSetup(options(true), nodeHost)).remediation).toBe(
-      "Install Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+ and rerun setup.",
+      `Install ${SUPPORTED_NODE_VERSION_PROSE} and rerun setup.`,
     );
 
     const macHost = new FakeSetupHost();
@@ -193,7 +194,7 @@ describe("setup scoped readiness", () => {
     expect(result.status).toBe("needs_human");
     expect(host.hopperInstalls).toBe(0);
     expect(result.remediation).toBe(
-      "Automated Hopper setup supports Ubuntu 24.04+, Fedora 41+, and 64-bit Arch Linux; configure an existing supported provider instead.",
+      "Automated Hopper setup supports Ubuntu 24.04+, Fedora 41+, 64-bit Arch Linux, and CachyOS; configure an existing supported provider instead.",
     );
   });
 

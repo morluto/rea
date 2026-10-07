@@ -1,5 +1,7 @@
-import type { CapabilityDescriptor } from "../application/AnalysisProvider.js";
-import { GENERATED_MCP_TOOL_CATALOG } from "../generatedMcpToolCatalog.js";
+import type {
+  AnalysisOperation,
+  CapabilityDescriptor,
+} from "../application/AnalysisProvider.js";
 
 /** This version identifies REA's adapter, not IDA or the upstream Python package. */
 export const IDA_PROVIDER_IDENTITY = Object.freeze({
@@ -9,7 +11,7 @@ export const IDA_PROVIDER_IDENTITY = Object.freeze({
 });
 
 /** Read-only analyst outcomes supported by both upstream compatibility profiles. */
-export const IDA_OPERATIONS = [
+export const IDA_OPERATIONS = Object.freeze([
   "list_procedures",
   "search_procedures",
   "list_strings",
@@ -22,7 +24,7 @@ export const IDA_OPERATIONS = [
   "read_function_instructions",
   "xrefs",
   "analyze_function",
-] as const;
+] as const satisfies readonly Exclude<AnalysisOperation, "health">[]);
 export type IdaOperation = (typeof IDA_OPERATIONS)[number];
 
 /** Shared limitations of observations from an externally mutable analysis database. */
@@ -35,24 +37,12 @@ export const IDA_LIMITATIONS = Object.freeze([
   "Complete function body ranges, typed references, unresolved indirect calls, referenced data, and basic blocks are unavailable in this adapter. Empty unsupported dossier facets are unknown, not observed absence.",
 ]);
 
-/** Existing REA contracts implemented by the adapter; no upstream tools are exposed directly. */
-export const IDA_PROVIDER_TOOL_CONTRACTS = Object.freeze(
-  IDA_OPERATIONS.map((operation) => {
-    const contract = GENERATED_MCP_TOOL_CATALOG.find(
-      ({ name }) => name === operation,
-    );
-    if (contract === undefined)
-      throw new TypeError(`Missing contract for ${operation}`);
-    return { ...contract, name: operation };
-  }),
-);
-
 /** Advertise live observations and configured lifecycle effects truthfully. */
 export const idaCapabilities = (
   mode: "attached" | "headless",
   stdio: boolean,
 ): readonly CapabilityDescriptor[] =>
-  IDA_PROVIDER_TOOL_CONTRACTS.map(({ name: operation }) => ({
+  IDA_OPERATIONS.map((operation) => ({
     provider: IDA_PROVIDER_IDENTITY,
     operation,
     ...(mode === "headless" && operation === "procedure_callers"

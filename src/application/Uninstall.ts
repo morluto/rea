@@ -1,7 +1,10 @@
 import {
   parseClientConfiguration,
   serializeClientConfiguration,
-  type ClientServersKey,
+  clientServerPath,
+  legacyClientServerPath,
+  withClientServers,
+  type ClientConfigurationDocument,
 } from "./ClientConfigurationDocument.js";
 import { copyFile, lstat, readFile, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -141,15 +144,9 @@ const removeClient = async (
           "Configuration could not be read. Check file permissions, then rerun uninstall.",
         );
   }
-  let document: Record<string, unknown>;
-  let key: ClientServersKey;
-  let servers: Record<string, unknown>;
+  let parsed: ClientConfigurationDocument;
   try {
-    ({
-      document,
-      servers,
-      serversKey: key,
-    } = parseClientConfiguration(original, client.format));
+    parsed = parseClientConfiguration(original, client.format);
   } catch (cause: unknown) {
     void cause;
     return item(
@@ -158,18 +155,34 @@ const removeClient = async (
       `Configuration is not valid ${client.format === "toml" ? "TOML" : client.format === "opencode" ? "JSONC" : "JSON"} and was not changed. Repair it, then rerun uninstall.`,
     );
   }
-  const registration = servers[PRODUCT_IDENTITY.mcpServerKey];
-  if (registration === undefined)
+  const name = PRODUCT_IDENTITY.mcpServerKey;
+  // Beside a native OpenCode V2 table, OpenCode also loads a V1 `mcp.rea`.
+  const legacyPath = legacyClientServerPath(parsed, name);
+  const hasNative = Object.hasOwn(parsed.servers, name);
+  if (!hasNative && legacyPath === undefined)
     return item(client.name, "skipped", "REA registration is absent.");
-  if (!isOwnedRegistration(registration, client))
+  const removeNative =
+    hasNative && isOwnedRegistration(parsed.servers[name], client);
+  const removeLegacy =
+    legacyPath !== undefined &&
+    isOwnedRegistration(parsed.legacyServers[name], client);
+  if (!removeNative && !removeLegacy)
     return item(
       client.name,
       "retained",
       "The rea-named registration is not REA-owned.",
     );
-  const remaining = { ...servers };
-  delete remaining[PRODUCT_IDENTITY.mcpServerKey];
-  document[key] = remaining;
+  const remaining = { ...parsed.servers };
+  if (removeNative) delete remaining[name];
+  const document = withClientServers(
+    parsed,
+    remaining,
+    removeLegacy ? name : undefined,
+  );
+  const editedPaths = [
+    ...(removeNative ? [clientServerPath(parsed, name)] : []),
+    ...(removeLegacy ? [legacyPath] : []),
+  ];
   const backupPath = `${client.configPath}.rea.backup`;
   try {
     await fileSystem.copy(transactionPath, backupPath);
@@ -188,14 +201,17 @@ const removeClient = async (
         document,
         client.format,
         original,
-        PRODUCT_IDENTITY.mcpServerKey,
+        editedPaths,
       ),
     );
     const readback = parseClientConfiguration(
       await fileSystem.readText(transactionPath),
       client.format,
     );
-    if (PRODUCT_IDENTITY.mcpServerKey in readback.servers)
+    if (
+      (removeNative && Object.hasOwn(readback.servers, name)) ||
+      (removeLegacy && Object.hasOwn(readback.legacyServers, name))
+    )
       throw new Error("registration readback mismatch");
     return item(
       client.name,

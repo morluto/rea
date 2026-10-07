@@ -3,6 +3,10 @@ set -euo pipefail
 
 PACKAGE="rea-agents"
 REPOSITORY="morluto/rea"
+numeric_identifier='(0|[1-9][0-9]*)'
+prerelease_identifier="(${numeric_identifier}|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
+build_identifier='[0-9A-Za-z-]+'
+version_pattern="${numeric_identifier}\\.${numeric_identifier}\\.${numeric_identifier}(-${prerelease_identifier}(\\.${prerelease_identifier})*)?(\\+${build_identifier}(\\.${build_identifier})*)?"
 version="${REA_VERSION:-}"
 dry_run=false
 start_setup=true
@@ -67,12 +71,18 @@ if ! [[ "$_node_patch" =~ ^[0-9]+(\+[0-9A-Za-z.-]+)?$ ]] ||
 fi
 
 if [[ -n "$version" ]]; then
-  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || fail "version must be an exact semantic version."
+  [[ "$version" =~ ^${version_pattern}$ ]] || fail "version must be an exact semantic version."
 else
   release_json="$(curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$REPOSITORY/releases/latest")" || fail "the latest REA release could not be resolved. Check network access or pass --version VERSION, then retry."
   tag="$(printf '%s' "$release_json" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{const v=JSON.parse(s).tag_name;if(typeof v!=="string")process.exit(1);process.stdout.write(v)})' 2>/dev/null)" || fail "the release response was invalid. Retry later or pass --version VERSION."
-  [[ "$tag" =~ ^rea-agents-([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$ ]] || fail "the latest release tag was invalid. Retry later or pass --version VERSION."
+  [[ "$tag" =~ ^rea-agents-(${version_pattern})$ ]] || fail "the latest release tag was invalid. Retry later or pass --version VERSION."
   version="${BASH_REMATCH[1]}"
+fi
+
+# npm's exact-version resolver cleans build metadata from the requested version,
+# so it may install the base release and make the post-install identity check fail.
+if [[ "$version" =~ \+ ]]; then
+  fail "npm cannot install an exact version with build metadata. Pass a version without build metadata, then retry."
 fi
 
 prefix_args=()

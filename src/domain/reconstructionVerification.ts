@@ -12,14 +12,14 @@ import { functionComparisonResultSchema } from "./functionComparison.js";
 import {
   PROCESS_PROVIDER,
   isProcessEvidenceProvider,
-} from "./processEvidenceProvider.js";
+} from "./process/processEvidenceProvider.js";
 import { functionDossierSchema } from "./hopperValues.js";
 import {
   deriveProcessComparisonStatus,
   PROCESS_COMPARISON_DIMENSIONS,
   processCaptureComparisonSchema,
   processCaptureSchema,
-} from "./processCapture.js";
+} from "./process/processCapture.js";
 import {
   reconstructionClaimResultSchema,
   reconstructionSpecificationSchema,

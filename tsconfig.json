@@ -21,6 +21,11 @@
     "types": ["node"],
     "verbatimModuleSyntax": true
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"],
+  "include": [
+    "src/**/*.ts",
+    "tests/**/*.ts",
+    "vitest.config.ts",
+    "docs/.vitepress/config.ts"
+  ],
   "exclude": ["dist", "node_modules"]
 }
