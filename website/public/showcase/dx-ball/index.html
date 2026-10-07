@@ -40,6 +40,30 @@
         </p>
         <p class="page-meta">Windows i386 · C · REA + Ghidra</p>
       </div>
+      <figure class="explanatory-figure case-figure">
+        <div
+          class="figure-viewport"
+          tabindex="0"
+          role="region"
+          aria-label="DX-Ball sound-pan investigation; scroll horizontally on smaller screens"
+        >
+          <img
+            src="../../assets/figures/dx-ball-sound-pan-investigation.png"
+            width="1774"
+            height="887"
+            alt="DXBALL.EXE function 0x00406400 is inspected with REA and Ghidra. A brick-hit caller supplies 20 plus 30 times tile_x. Instructions load x, multiply by 1.5625, subtract 500.0, apply pan_scale and return an integer. The maintained C is checked independently against the original x86 in 3,205 cases and by VC4.0 compiler replay matching 63 bytes."
+            decoding="async"
+          />
+        </div>
+        <figcaption>
+          One function, from executable to checked C. REA supplies the
+          instructions, callers and data reads; the reconstruction project
+          implements and tests the result.
+          <a href="../../assets/figures/dx-ball-sound-pan-investigation.png"
+            >Open figure</a
+          >
+        </figcaption>
+      </figure>
       <div class="article-layout">
         <nav class="contents" aria-label="On this page">
           <p>In this case study</p>
@@ -108,54 +132,260 @@
               floating-point expression. The instructions and callers supplied
               the missing pieces.
             </p>
-            <ol class="numbered-notes">
-              <li>
-                <h3>Read the input from the instructions</h3>
-                <p>
-                  The function reads its integer input from
-                  <code>[EBP+8]</code> and loads it onto the x87 stack. This
-                  establishes the parameter that was absent from the pseudocode.
-                </p>
-              </li>
-              <li>
-                <h3>Follow the caller</h3>
-                <p>
-                  The brick-hit routine passes <code>20 + 30 × tile_x</code>.
-                  The input is the brick's horizontal screen position.
-                </p>
-              </li>
-              <li>
-                <h3>Check the constants and operation order</h3>
-                <p>
-                  Byte reads identify the constants <code>1.5625</code> and
-                  <code>500.0</code>. The instructions multiply, subtract and
-                  apply the stored pan scale before converting the result to an
-                  integer.
-                </p>
-              </li>
-            </ol>
-            <div class="code-block">
-              <div class="code-header">
-                <span>Reconstructed C · src/gameplay.c</span
-                ><button
-                  class="copy-button"
+            <details class="evidence-details">
+              <summary>The first decompiler view</summary>
+              <div class="code-block">
+                <div class="code-header">
+                  <span>REA / Ghidra · pseudocode excerpt</span>
+                </div>
+                <pre><code>longlong FUN_00406400(void)
+{
+  longlong lVar1;
+
+  lVar1 = __ftol();
+  return lVar1;
+}</code></pre>
+              </div>
+              <p>
+                The output shows a conversion call. Reading the instructions
+                below reveals the input and the calculation feeding that call.
+              </p>
+            </details>
+
+            <h3 class="small-heading">From instructions to C</h3>
+            <p>
+              Follow the five steps below. Each selection highlights the
+              original instructions and the C lines they informed.
+            </p>
+            <div class="step-comparison" data-step-comparison>
+              <div
+                class="step-selector"
+                role="group"
+                aria-label="Follow the sound-pan calculation"
+              >
+                <button
                   type="button"
-                  data-copy="pan-source"
-                  aria-label="Copy sound-pan function"
+                  data-select-step="1"
+                  aria-pressed="true"
+                  aria-controls="pan-assembly pan-source pan-step-detail"
                 >
-                  Copy
+                  <span>01</span> Input
+                </button>
+                <button
+                  type="button"
+                  data-select-step="2"
+                  aria-pressed="false"
+                  aria-controls="pan-assembly pan-source pan-step-detail"
+                >
+                  <span>02</span> Multiply
+                </button>
+                <button
+                  type="button"
+                  data-select-step="3"
+                  aria-pressed="false"
+                  aria-controls="pan-assembly pan-source pan-step-detail"
+                >
+                  <span>03</span> Subtract
+                </button>
+                <button
+                  type="button"
+                  data-select-step="4"
+                  aria-pressed="false"
+                  aria-controls="pan-assembly pan-source pan-step-detail"
+                >
+                  <span>04</span> Scale
+                </button>
+                <button
+                  type="button"
+                  data-select-step="5"
+                  aria-pressed="false"
+                  aria-controls="pan-assembly pan-source pan-step-detail"
+                >
+                  <span>05</span> Return
                 </button>
               </div>
-              <pre><code id="pan-source">DxBallInt dxball_screen_pan(DxBallInt x)
+              <div class="code-comparison">
+                <div class="code-block">
+                  <div class="code-header">
+                    <span>Original x86 · excerpt</span
+                    ><button
+                      class="copy-button"
+                      type="button"
+                      data-copy="pan-assembly"
+                      aria-label="Copy original assembly excerpt"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <pre><code id="pan-assembly"><span class="code-step is-active" data-step="1">0x406409: MOV EAX, dword ptr [EBP + 0x8]
+0x40640c: MOV dword ptr [EBP + -0xc], EAX
+0x40640f: FILD dword ptr [EBP + -0xc]</span>
+<span class="code-step" data-step="2">0x406415: FMUL double ptr [0x00420068]</span>
+<span class="code-step" data-step="3">0x40641e: FSUB double ptr [0x00420070]</span>
+<span class="code-step" data-step="4">0x406427: FMUL double ptr [0x004210a0]</span>
+<span class="code-step" data-step="5">0x406430: CALL 0x0041678c
+0x40643e: RET</span></code></pre>
+                </div>
+                <div class="code-block">
+                  <div class="code-header">
+                    <span>Reconstructed C</span
+                    ><button
+                      class="copy-button"
+                      type="button"
+                      data-copy="pan-source"
+                      aria-label="Copy sound-pan function"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <pre><code id="pan-source">DxBallInt dxball_screen_pan(<span class="is-active" data-step="1">DxBallInt x</span>)
 {
     double pan;
-    pan = (double)x;
-    pan = pan * 1.5625;
-    pan = pan - 500.0;
-    pan = pan * dxball_pan_scale;
-    return (DxBallInt)pan;
+<span class="code-step is-active" data-step="1">    pan = (double)x;</span>
+<span class="code-step" data-step="2">    pan = pan * 1.5625;</span>
+<span class="code-step" data-step="3">    pan = pan - 500.0;</span>
+<span class="code-step" data-step="4">    pan = pan * dxball_pan_scale;</span>
+<span class="code-step" data-step="5">    return (DxBallInt)pan;</span>
 }</code></pre>
+                </div>
+              </div>
+              <div
+                class="step-detail"
+                id="pan-step-detail"
+                aria-live="polite"
+                aria-atomic="true"
+              >
+                <p data-step-note="1">
+                  <strong>01 · Read the input.</strong>
+                  <code>[EBP+8]</code> holds the first stack argument.
+                  <code>FILD</code> loads that integer onto the x87 stack. The
+                  caller passes a brick's screen coordinate,
+                  <code>20 + 30 × tile_x</code>, establishing the meaning of
+                  <code>x</code>.
+                </p>
+                <p data-step-note="2" hidden>
+                  <strong>02 · Multiply by 1.5625.</strong>
+                  <code>FMUL</code> reads the double at <code>0x420068</code>.
+                  REA's <code>read_bytes</code> result decodes to
+                  <code>1.5625</code>; the C uses the same constant.
+                </p>
+                <p data-step-note="3" hidden>
+                  <strong>03 · Subtract 500.0.</strong> <code>FSUB</code> reads
+                  the double at <code>0x420070</code>. The data read identifies
+                  <code>500.0</code>, shifting the calculation's center to
+                  screen coordinate <code>320</code>.
+                </p>
+                <p data-step-note="4" hidden>
+                  <strong>04 · Apply the stored scale.</strong> The second
+                  <code>FMUL</code> reads <code>0x4210a0</code>. That global is
+                  named <code>dxball_pan_scale</code> in the maintained source.
+                  Its initial value is <code>1.0</code>.
+                </p>
+                <p data-step-note="5" hidden>
+                  <strong>05 · Return an integer.</strong> The call at
+                  <code>0x406430</code> reaches the conversion helper
+                  <code>__ftol</code>. The C casts the result to
+                  <code>DxBallInt</code>; original-x86 comparisons check the
+                  returned value.
+                </p>
+              </div>
             </div>
+            <p class="caption">
+              The assembly excerpt selects the input, arithmetic and return
+              instructions. The full listing below also includes the intervening
+              stores and function setup and cleanup.
+            </p>
+            <details class="evidence-details">
+              <summary>Full assembly and supporting evidence</summary>
+              <div class="code-block">
+                <div class="code-header">
+                  <span>REA / Ghidra · 0x406400–0x40643e</span
+                  ><button
+                    class="copy-button"
+                    type="button"
+                    data-copy="pan-assembly-full"
+                    aria-label="Copy complete sound-pan assembly"
+                  >
+                    Copy
+                  </button>
+                </div>
+                <pre><code id="pan-assembly-full">0x406400: PUSH EBP
+0x406401: MOV EBP, ESP
+0x406403: SUB ESP, 0xc
+0x406406: PUSH EBX
+0x406407: PUSH ESI
+0x406408: PUSH EDI
+0x406409: MOV EAX, dword ptr [EBP + 0x8]
+0x40640c: MOV dword ptr [EBP + -0xc], EAX
+0x40640f: FILD dword ptr [EBP + -0xc]
+0x406412: FST double ptr [EBP + -0x8]
+0x406415: FMUL double ptr [0x00420068]
+0x40641b: FST double ptr [EBP + -0x8]
+0x40641e: FSUB double ptr [0x00420070]
+0x406424: FST double ptr [EBP + -0x8]
+0x406427: FMUL double ptr [0x004210a0]
+0x40642d: FST double ptr [EBP + -0x8]
+0x406430: CALL 0x0041678c
+0x406435: JMP 0x0040643a
+0x40643a: POP EDI
+0x40643b: POP ESI
+0x40643c: POP EBX
+0x40643d: LEAVE
+0x40643e: RET</code></pre>
+              </div>
+              <h3>What the caller supplies</h3>
+              <p>
+                The brick-hit function at <code>0x411f40</code> scales its tile
+                coordinate by 30, adds 20, then pushes it before the call:
+              </p>
+              <div class="code-block">
+                <pre><code>0x411f50: MOV EAX, dword ptr [EBP + 0x8]
+0x411f53: ADD EAX, EAX
+0x411f55: LEA EAX, [EAX + EAX*0x2]
+0x411f58: LEA EAX, [EAX + EAX*0x4]
+0x411f5b: ADD EAX, 0x14
+0x411f5e: PUSH EAX
+0x411f5f: CALL 0x00406400
+0x411f64: ADD ESP, 0x4</code></pre>
+              </div>
+              <h3>What the data reads establish</h3>
+              <div class="evidence-table-wrap">
+                <table class="evidence-table">
+                  <caption>
+                    REA byte reads, decoded as little-endian doubles
+                  </caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">Address</th>
+                      <th scope="col">Value</th>
+                      <th scope="col">Used for</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><code>0x420068</code></td>
+                      <td><code>1.5625</code></td>
+                      <td>First multiplication</td>
+                    </tr>
+                    <tr>
+                      <td><code>0x420070</code></td>
+                      <td><code>500.0</code></td>
+                      <td>Subtraction</td>
+                    </tr>
+                    <tr>
+                      <td><code>0x4210a0</code></td>
+                      <td><code>1.0</code> initially</td>
+                      <td>Stored pan scale</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p class="caption">
+                Recorded with REA 4.1.0 and Ghidra 12.1.4 for the hash-pinned
+                DX-Ball 1.07 target. The linked investigation notes retain the
+                Evidence IDs.
+              </p>
+            </details>
             <p class="caption">
               <a
                 href="https://github.com/N0zoM1z0/dx-ball/blob/a55dca27ec0a07018c1b2c95ae2be027f7d8c3c4/src/gameplay.c#L41"

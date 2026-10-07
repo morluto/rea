@@ -435,6 +435,127 @@ pre code {
   font-size: 0.875rem;
   color: var(--muted);
 }
+.explanatory-figure {
+  margin: 0;
+}
+.figure-viewport {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+.explanatory-figure img {
+  display: block;
+  width: 100%;
+  min-width: 880px;
+  height: auto;
+}
+.explanatory-figure figcaption {
+  max-width: 800px;
+  margin-top: 1rem;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+.explanatory-figure figcaption a {
+  white-space: nowrap;
+}
+.case-figure {
+  margin-bottom: 3.2rem;
+}
+.step-selector {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-block: 1.5rem 0.9rem;
+}
+.step-selector button {
+  padding: 0.55rem 0.3rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--page);
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.step-selector button span {
+  font-size: 0.75rem;
+  margin-right: 0.3rem;
+  font-variant-numeric: tabular-nums;
+}
+.step-selector button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: #edf2f8;
+  color: var(--accent);
+}
+.code-comparison {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+}
+.code-comparison .code-block {
+  margin: 0;
+  min-width: 0;
+}
+.code-comparison .code-header {
+  padding-inline: 0.8rem;
+  font-size: 0.8rem;
+}
+.code-comparison pre {
+  padding: 1rem 0.8rem;
+  font-size: 0.75rem;
+  line-height: 1.95;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.step-comparison .is-active {
+  background: #dce8f6;
+  color: #173a67;
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.step-detail {
+  margin-block: 1.1rem;
+  padding-left: 1rem;
+  border-left: 2px solid var(--accent);
+}
+.step-detail p {
+  margin: 0;
+  font-size: 0.9rem;
+}
+.evidence-details {
+  margin-block: 1.5rem;
+}
+.evidence-details summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 0.95rem;
+}
+.evidence-details[open] summary {
+  margin-bottom: 1.2rem;
+}
+.evidence-details h3 {
+  margin-top: 1.5rem;
+  font-size: 1.1rem;
+}
+.evidence-table-wrap {
+  overflow-x: auto;
+  margin-block: 1rem;
+}
+.evidence-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.evidence-table caption {
+  text-align: left;
+  color: var(--muted);
+  margin-bottom: 0.6rem;
+}
+.evidence-table th,
+.evidence-table td {
+  text-align: left;
+  padding: 0.6rem 0.7rem;
+  border-bottom: 1px solid var(--line);
+}
 .numbered-notes {
   list-style: none;
   padding: 0;
@@ -552,6 +673,9 @@ pre code {
     grid-template-columns: 150px minmax(0, 1fr);
     gap: 2rem;
   }
+  .code-comparison {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 640px) {
@@ -641,6 +765,9 @@ pre code {
   .provider {
     grid-template-columns: 1fr;
     gap: 0.25rem;
+  }
+  .step-selector {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
   pre {
     padding: 1rem;

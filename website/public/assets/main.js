@@ -30,3 +30,28 @@ function initializeCopyButtons() {
 }
 
 initializeCopyButtons();
+
+function initializeStepComparisons() {
+  document.querySelectorAll("[data-step-comparison]").forEach((comparison) => {
+    const buttons = comparison.querySelectorAll("[data-select-step]");
+    buttons.forEach((button) => {
+      button.addEventListener("click", () => {
+        const selected = button.getAttribute("data-select-step");
+        buttons.forEach((candidate) => {
+          candidate.setAttribute("aria-pressed", String(candidate === button));
+        });
+        comparison.querySelectorAll("[data-step]").forEach((fragment) => {
+          fragment.classList.toggle(
+            "is-active",
+            fragment.getAttribute("data-step") === selected,
+          );
+        });
+        comparison.querySelectorAll("[data-step-note]").forEach((note) => {
+          note.hidden = note.getAttribute("data-step-note") !== selected;
+        });
+      });
+    });
+  });
+}
+
+initializeStepComparisons();
