@@ -1,7 +1,7 @@
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
-import { createEvidence, type Evidence } from "../domain/evidence.js";
+import type { Evidence } from "../domain/evidence.js";
 import type { EvidenceBundle } from "../domain/evidenceBundle.js";
 import { evidenceBundleForTarget } from "../domain/evidenceBundle.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
@@ -19,24 +19,23 @@ import type {
   AnalysisOperation,
 } from "./AnalysisProvider.js";
 import { AnalysisSnapshotCache } from "./AnalysisSnapshotCache.js";
-import { EvidenceLedger } from "./EvidenceLedger.js";
-import {
-  UNKNOWN_REGISTRY_PROVIDER,
-  unknownEvidenceLinks,
-  unknownMutationEvidence,
-} from "./UnknownEvidence.js";
+import { InvestigationRecords } from "./investigation/InvestigationRecords.js";
 
 export interface ActiveAnalysisBinding {
   readonly target: BinaryTarget;
   readonly profile: AnalysisProfileCommitment | null;
 }
 
-/** Owns session evidence, snapshots, and residual unknowns. */
+/** Binary snapshot owner and compatibility facade for composed investigation records. */
 export abstract class BinarySessionRecords {
-  readonly #evidence = new EvidenceLedger();
+  readonly #records: InvestigationRecords;
   readonly #snapshot = new AnalysisSnapshotCache();
   #snapshotInvalidated = false;
   readonly #snapshotListeners = new Set<() => void | Promise<void>>();
+
+  constructor(records: InvestigationRecords = new InvestigationRecords()) {
+    this.#records = records;
+  }
 
   /** Observe changes to the mutable current analysis snapshot resource. */
   onAnalysisSnapshotChanged(listener: () => void | Promise<void>): () => void {
@@ -47,27 +46,27 @@ export abstract class BinarySessionRecords {
   recordEvidence(
     evidence: Evidence,
   ): Result<"added" | "duplicate", EvidenceIntegrityError> {
-    const recorded = this.#evidence.record(evidence);
+    const recorded = this.#records.recordEvidence(evidence);
     if (recorded.ok && recorded.value === "added") this.#emitSnapshotChanged();
     return recorded;
   }
 
   hasEvidence(evidenceId: string): boolean {
-    return this.#evidence.has(evidenceId);
+    return this.#records.hasEvidence(evidenceId);
   }
 
   evidenceById(evidenceId: string): Evidence | undefined {
-    return this.#evidence.get(evidenceId);
+    return this.#records.evidenceById(evidenceId);
   }
 
   exportEvidenceBundle(): EvidenceBundle {
-    return this.#evidence.export();
+    return this.#records.exportEvidenceBundle();
   }
 
   importEvidenceBundle(
     bundle: unknown,
   ): Result<number, EvidenceIntegrityError> {
-    const imported = this.#evidence.import(bundle);
+    const imported = this.#records.mergeEvidenceBundle(bundle);
     if (!imported.ok) return imported;
     if (imported.value.changed) this.#emitSnapshotChanged();
     return ok(imported.value.recordsAdded);
@@ -95,8 +94,11 @@ export abstract class BinarySessionRecords {
       target,
       profile,
       target === undefined
-        ? this.#evidence.export()
-        : evidenceBundleForTarget(this.#evidence.export(), target.sha256),
+        ? this.#records.exportEvidenceBundle()
+        : evidenceBundleForTarget(
+            this.#records.exportEvidenceBundle(),
+            target.sha256,
+          ),
     );
   }
 
@@ -116,7 +118,7 @@ export abstract class BinarySessionRecords {
         ? undefined
         : { target: active.target, profile: active.profile },
       (bundle) => {
-        const imported = this.#evidence.import(bundle);
+        const imported = this.#records.mergeEvidenceBundle(bundle);
         return imported.ok ? ok(imported.value.recordsAdded) : imported;
       },
     );
@@ -175,7 +177,7 @@ export abstract class BinarySessionRecords {
   }
 
   protected clearSessionRecords(): void {
-    this.#evidence.clear();
+    this.#records.clear();
     this.#snapshot.clear();
     this.#snapshotInvalidated = false;
     this.#emitSnapshotChanged();
@@ -202,10 +204,7 @@ export abstract class BinarySessionRecords {
     input: RecordUnknownInput,
   ): Result<ResidualUnknown, AnalysisError> {
     const target = this.activeAnalysisBinding()?.target;
-    const recorded = this.#evidence.recordUnknown(
-      input,
-      unknownMutationEvidence(target, input),
-    );
+    const recorded = this.#records.recordUnknown(input, target);
     if (recorded.ok) this.#emitSnapshotChanged();
     return recorded;
   }
@@ -214,11 +213,7 @@ export abstract class BinarySessionRecords {
     evidence: Evidence,
     input: RecordUnknownInput,
   ): Result<ResidualUnknown | null, AnalysisError> {
-    const recorded = this.#evidence.recordWithUnknown(
-      evidence,
-      input,
-      unknownMutationEvidence(undefined, input),
-    );
+    const recorded = this.#records.recordEvidenceWithUnknown(evidence, input);
     if (recorded.ok) this.#emitSnapshotChanged();
     return recorded;
   }
@@ -227,22 +222,7 @@ export abstract class BinarySessionRecords {
     input: UpdateUnknownInput,
   ): Result<ResidualUnknown, AnalysisError> {
     const target = this.activeAnalysisBinding()?.target;
-    const evidence = createEvidence(target, UNKNOWN_REGISTRY_PROVIDER, {
-      predicateType: "rea.residual-unknown-mutation",
-      operation: "update_unknown",
-      parameters: {
-        unknown_id: input.unknown_id,
-        expected_revision: input.expected_revision,
-      },
-      result: { action: "update", status: input.status },
-      confidence: "derived",
-      authority: "analyst-inference",
-      evidenceLinks: unknownEvidenceLinks(input),
-      limitations: [
-        "Registry mutation evidence records analyst intent, not proof of the answer.",
-      ],
-    });
-    const updated = this.#evidence.updateUnknown(input, evidence);
+    const updated = this.#records.updateUnknown(input, target);
     if (updated.ok) this.#emitSnapshotChanged();
     return updated;
   }
@@ -254,7 +234,7 @@ export abstract class BinarySessionRecords {
       readonly domain?: string;
     } = {},
   ): ResidualUnknown[] {
-    return this.#evidence.listUnknowns(filters);
+    return this.#records.listUnknowns(filters);
   }
 
   verifyUnknownResolution(unknownId: string): Result<
@@ -265,6 +245,6 @@ export abstract class BinarySessionRecords {
     },
     UnknownRegistryError
   > {
-    return this.#evidence.verifyUnknownResolution(unknownId);
+    return this.#records.verifyUnknownResolution(unknownId);
   }
 }

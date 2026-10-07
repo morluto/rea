@@ -24,6 +24,7 @@ import {
   SessionProviderRouter,
   type SessionProviderRoute,
 } from "./SessionProviderRouter.js";
+import { InvestigationRecords } from "./investigation/InvestigationRecords.js";
 import { BinarySessionRecords } from "./BinarySessionRecords.js";
 import { binarySessionStatus } from "./BinarySessionStatus.js";
 import {
@@ -78,8 +79,11 @@ export class BinarySession
   >();
   readonly #availabilityListeners = new Set<() => void | Promise<void>>();
 
-  constructor(providerRouter: SessionProviderRouter) {
-    super();
+  constructor(
+    providerRouter: SessionProviderRouter,
+    records: InvestigationRecords = new InvestigationRecords(),
+  ) {
+    super(records);
     this.#providerRouter = providerRouter;
   }
 

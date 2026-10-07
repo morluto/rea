@@ -1,6 +1,6 @@
+import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 import { AndroidAnalysisService } from "../application/AndroidAnalysisService.js";
-import type { BinarySessionPort } from "../application/BinarySession.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { ToolContract } from "../contracts/toolContractTypes.js";
 import type { AndroidOperation } from "../domain/androidAnalysis.js";
@@ -14,7 +14,7 @@ export const registerAndroidTools = (
   server: McpServer,
   service: AndroidAnalysisService,
   logger: Logger,
-  recordEvidence?: BinarySessionPort["recordEvidence"],
+  recordEvidence?: EvidenceWriter["recordEvidence"],
 ): void => {
   const handler = (contract: ToolContract<AndroidOperation>) => {
     const name = contract.name;

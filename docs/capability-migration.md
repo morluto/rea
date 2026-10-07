@@ -13,7 +13,7 @@ there is no new universal provider interface or fixed module manifest.
 | Producer parsing and external tool protocols  | provider adapters                        | Keep behind the relevant typed port                            |
 | Shared analyst workflows                      | application                              | Share between CLI and MCP                                      |
 | Concrete provider construction                | binary runtime, composition, MCP startup | Consolidate one capability at a time in production composition |
-| Investigation Evidence and Unknowns           | BinarySessionRecords                     | Extract one composed record owner after caller migration       |
+| Investigation Evidence and Unknowns           | InvestigationRecords/EvidenceLedger      | Consume narrow read/write/atomic record ports                  |
 | Target/profile snapshots and invalidation     | BinarySessionRecords/BinarySession       | Keep binary-owned                                              |
 | Subprocess ownership and host primitives      | process/windows                          | Reuse; preserve cancellation and cleanup                       |
 | Public translation                            | CLI/MCP adapters                         | Delegate to shared workflows and named contracts               |
@@ -117,3 +117,31 @@ installs nothing. Core transport failures and shutdown still use their existing
 lifecycle. Fault-injection coverage uses the production loading/startup path and
 actual MCP SDK calls; recording ports establish composition behavior, while the
 real Inspector lane separately establishes runtime behavior.
+
+## Investigation record ownership pilot
+
+`src/application/investigation/InvestigationRecords.ts` owns one existing
+EvidenceLedger per runtime. The production session composition constructs that
+owner explicitly; the direct BinarySession constructor retains a fresh default
+for compatibility. There is no second ledger, global store, persistence or new
+retention policy.
+
+EvidenceReader, EvidenceWriter and EvidenceUnknownWriter describe existing
+read/write/atomic callback needs. UnknownRegistryPort preserves optimistic
+revisions and consistency verification. Non-binary MCP registrars use these
+record types without depending on the binary execution/lifecycle surface.
+BinarySessionPort retains its compatible record methods through composition.
+
+BinarySessionRecords remains the snapshot owner and compatibility facade. It
+passes the actual active target explicitly for recordUnknown/updateUnknown;
+recordEvidenceWithUnknown keeps its target-free mutation subject. Snapshot import
+merges records without notifying midway, then emits after the cache commits.
+Bundle import retains the full change delta so Unknown-only changes notify even
+when recordsAdded is zero. Clearing resets records, cache and invalidation before
+notification; observer failures remain best effort after a committed mutation.
+
+Close and failed-cleanup clearing, ordinary target-switch retention, detached
+reads, Evidence identities and deterministic bundle transfer keep their existing
+behavior. Snapshots still require an active target and concrete analysis profile;
+extracting investigation ownership does not make them a target-free record store.
+#721 remains responsible for any future lifetime-policy change.

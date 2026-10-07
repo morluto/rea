@@ -1,3 +1,4 @@
+import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import {
   optionalProviderUnavailable,
   type OptionalProviderLoadFailure,
@@ -5,7 +6,6 @@ import {
 import { err } from "../domain/result.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 
-import type { BinarySessionPort } from "../application/BinarySession.js";
 import type { BrowserScenarioCapturePort } from "../application/BrowserScenarioCapturePort.js";
 import { captureBrowserScenario } from "../application/BrowserScenarioCaptureService.js";
 import { BROWSER_SCENARIO_TOOL_CONTRACTS } from "../contracts/browserScenarioToolContracts.js";
@@ -19,7 +19,7 @@ interface BrowserScenarioToolRegistration {
   readonly logger: Logger;
   readonly loadFailure?: OptionalProviderLoadFailure | undefined;
   readonly provider: BrowserScenarioCapturePort | undefined;
-  readonly recordEvidence: BinarySessionPort["recordEvidence"] | undefined;
+  readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
 }
 
 /** Register the browser scenario tool with execution-time provider diagnostics. */

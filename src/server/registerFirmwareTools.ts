@@ -1,6 +1,6 @@
+import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 import type { FirmwareAnalysisService } from "../application/FirmwareAnalysisService.js";
-import type { BinarySessionPort } from "../application/BinarySession.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { ToolContract } from "../contracts/toolContractTypes.js";
 import type { FirmwareOperation } from "../domain/firmwareAnalysis.js";
@@ -14,7 +14,7 @@ export const registerFirmwareTools = (
   server: McpServer,
   service: FirmwareAnalysisService,
   logger: Logger,
-  recordEvidence?: BinarySessionPort["recordEvidence"],
+  recordEvidence?: EvidenceWriter["recordEvidence"],
 ): void => {
   const handler =
     (contract: ToolContract<FirmwareOperation>) =>

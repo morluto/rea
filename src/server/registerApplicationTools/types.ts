@@ -1,12 +1,16 @@
-import type { BinarySessionPort } from "../../application/BinarySession.js";
+import type {
+  EvidenceWriter,
+  EvidenceReader,
+  EvidenceUnknownWriter,
+} from "../../application/investigation/InvestigationRecordPort.js";
 import type { Logger } from "../../logger.js";
 
 /** Shared services for registering JavaScript application graph workflows. */
 export interface ApplicationToolRegistration {
   readonly logger: Logger;
-  readonly evidenceById: BinarySessionPort["evidenceById"] | undefined;
-  readonly recordEvidence: BinarySessionPort["recordEvidence"] | undefined;
+  readonly evidenceById: EvidenceReader["evidenceById"] | undefined;
+  readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
   readonly recordEvidenceWithUnknown:
-    | BinarySessionPort["recordEvidenceWithUnknown"]
+    | EvidenceUnknownWriter["recordEvidenceWithUnknown"]
     | undefined;
 }

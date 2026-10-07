@@ -1,3 +1,4 @@
+import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
@@ -5,7 +6,6 @@ import type {
   AnalysisExecution,
   AnalysisOperationPort,
 } from "../application/AnalysisProvider.js";
-import type { BinarySessionPort } from "../application/BinarySession.js";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
 import type { ToolContract } from "../contracts/toolContracts.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
@@ -28,7 +28,7 @@ import { toCallToolResult } from "./toolResult.js";
 export interface OfficialToolRegistration {
   readonly logger: Logger;
   readonly activeTarget: (() => BinaryTarget | undefined) | undefined;
-  readonly recordEvidence: BinarySessionPort["recordEvidence"] | undefined;
+  readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
 }
 
 /** Register direct bridge proxies, preserving MCP cancellation and typed errors. */
@@ -53,7 +53,7 @@ const registerOfficialTool = (
   registration: {
     readonly logger: Logger;
     readonly activeTarget: (() => BinaryTarget | undefined) | undefined;
-    readonly recordEvidence: BinarySessionPort["recordEvidence"] | undefined;
+    readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
   },
 ): void => {
   server.registerTool(

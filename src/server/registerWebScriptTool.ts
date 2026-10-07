@@ -1,6 +1,6 @@
+import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 
-import type { BinarySessionPort } from "../application/BinarySession.js";
 import { exportWebScriptsValidated } from "../application/WebScriptExportService.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { Logger } from "../logger.js";
@@ -13,7 +13,7 @@ export const registerWebScriptTool = (
   server: McpServer,
   options: {
     readonly logger: Logger;
-    readonly recordEvidence: BinarySessionPort["recordEvidence"] | undefined;
+    readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
   },
 ): void => {
   const contract = toolContract("export_web_scripts");

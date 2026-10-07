@@ -1,3 +1,4 @@
+import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import {
   optionalProviderUnavailable,
   type OptionalProviderLoadFailure,
@@ -5,7 +6,6 @@ import {
 import { err } from "../domain/result.js";
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 
-import type { BinarySessionPort } from "../application/BinarySession.js";
 import type { ElectronActiveObservationPort } from "../application/ElectronActiveObservationPort.js";
 import { captureElectronScenario } from "../application/ElectronActiveObservationService.js";
 import type { ElectronObservationPort } from "../application/ElectronObservationPort.js";
@@ -34,7 +34,7 @@ interface ElectronToolRegistration {
   readonly activeLoadFailure?: OptionalProviderLoadFailure | undefined;
   readonly electron: ElectronObservationPort | undefined;
   readonly electronActive: ElectronActiveObservationPort | undefined;
-  readonly recordEvidence: BinarySessionPort["recordEvidence"] | undefined;
+  readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
 }
 
 interface ElectronToolContext {

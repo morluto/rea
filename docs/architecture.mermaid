@@ -16,6 +16,8 @@ graph TD
         APP["src/application/<br/>Shared CLI/MCP workflows<br/>enhanced analysis and investigations"]
         SESSION["SessionProviderRouter + BinarySession<br/>one immutable deep binding per target<br/>disjoint auxiliary routing"]
         REGISTRY["AnalysisProviderRegistry<br/>sorted deep candidates<br/>deterministic selection, no fallback"]
+        RECORDS["src/application/investigation/<br/>composed InvestigationRecords + narrow ports<br/>EvidenceLedger and Unknown ownership"]
+        SNAPSHOT["BinarySessionRecords + AnalysisSnapshotCache<br/>binary target/profile snapshots<br/>compatibility facade and post-commit notifications"]
         JS_RECON["src/application/ + src/artifacts/<br/>JavaScript artifact reconstruction<br/>directory/ASAR reads<br/>AST-only bundle projection"]
     end
 
@@ -75,6 +77,11 @@ graph TD
     CLI --> ERRORS
     APP --> SESSION
     SESSION --> REGISTRY
+    SESSION --> SNAPSHOT
+    SNAPSHOT --> RECORDS
+    APP -->|record callbacks| RECORDS
+    SERVER -->|narrow record ports| RECORDS
+    RECORDS --> DOMAIN
     REGISTRY --> HOPPER
     REGISTRY --> GHIDRA
     REGISTRY --> IDA

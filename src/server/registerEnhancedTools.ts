@@ -1,11 +1,14 @@
 import type {
+  EvidenceWriter,
+  UnknownRegistryPort,
+} from "../application/investigation/InvestigationRecordPort.js";
+import type {
   CallToolResult,
   McpServer,
   ServerContext,
 } from "@modelcontextprotocol/server";
 
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
-import type { BinarySessionPort } from "../application/BinarySession.js";
 import {
   EnhancedTools,
   type ValidatedEnhancedCall,
@@ -34,8 +37,8 @@ export interface EnhancedToolRegistration {
   readonly analysisProfile:
     | (() => AnalysisProfileCommitment | undefined)
     | undefined;
-  readonly recordEvidence: BinarySessionPort["recordEvidence"] | undefined;
-  readonly recordUnknown: BinarySessionPort["recordUnknown"] | undefined;
+  readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
+  readonly recordUnknown: UnknownRegistryPort["recordUnknown"] | undefined;
 }
 
 /** Register composed workflows against the same port as direct bridge tools. */
@@ -319,7 +322,7 @@ interface WorkflowUnknownInput {
   readonly name: string;
   readonly result: JsonValue;
   readonly evidenceId: string;
-  readonly recordUnknown: BinarySessionPort["recordUnknown"] | undefined;
+  readonly recordUnknown: UnknownRegistryPort["recordUnknown"] | undefined;
 }
 
 const recordWorkflowUnknowns = ({
@@ -328,7 +331,7 @@ const recordWorkflowUnknowns = ({
   evidenceId,
   recordUnknown,
 }: WorkflowUnknownInput):
-  | ReturnType<BinarySessionPort["recordUnknown"]>
+  | ReturnType<UnknownRegistryPort["recordUnknown"]>
   | { readonly ok: true; readonly value: null } => {
   if (
     !["trace_feature", "trace_call_path", "inspect_native_api"].includes(

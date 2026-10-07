@@ -1,3 +1,4 @@
+import { InvestigationRecords } from "./investigation/InvestigationRecords.js";
 import type { AnalysisProvider } from "./AnalysisProvider.js";
 import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
 import { BinarySession } from "./BinarySession.js";
@@ -15,4 +16,5 @@ export const composeBinarySession = (
     registry instanceof SessionProviderRouter
       ? registry
       : SessionProviderRouter.selectable(registry, auxiliaryProviders),
+    new InvestigationRecords(),
   );

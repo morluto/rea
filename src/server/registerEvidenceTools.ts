@@ -1,10 +1,10 @@
+import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import type {
   AnalysisOperation,
   AnalysisOperationPort,
 } from "../application/AnalysisProvider.js";
-import type { BinarySessionPort } from "../application/BinarySession.js";
 import type { ToolContract } from "../contracts/toolContracts.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
@@ -19,7 +19,7 @@ import { createArtifactExtractionDestination } from "../application/ArtifactExtr
 interface EvidenceToolRegistration {
   readonly logger: Logger;
   readonly activeTarget: (() => BinaryTarget | undefined) | undefined;
-  readonly recordEvidence: BinarySessionPort["recordEvidence"] | undefined;
+  readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
   readonly sourceEvidence?: (
     operation: Exclude<AnalysisOperation, "health">,
     result: import("../domain/jsonValue.js").JsonValue,

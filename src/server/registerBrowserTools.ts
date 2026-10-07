@@ -1,3 +1,4 @@
+import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import {
   optionalProviderUnavailable,
   type OptionalProviderLoadFailure,
@@ -5,7 +6,6 @@ import {
 import { err } from "../domain/result.js";
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 
-import type { BinarySessionPort } from "../application/BinarySession.js";
 import type { BrowserObservationPort } from "../application/BrowserObservationPort.js";
 import {
   analyzeWebBundle,
@@ -35,7 +35,7 @@ interface BrowserToolRegistration {
   readonly logger: Logger;
   readonly loadFailure?: OptionalProviderLoadFailure | undefined;
   readonly browser: BrowserObservationPort | undefined;
-  readonly recordEvidence: BinarySessionPort["recordEvidence"] | undefined;
+  readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
 }
 
 interface BrowserToolContext {

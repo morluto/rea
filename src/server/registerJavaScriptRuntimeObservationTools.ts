@@ -1,3 +1,4 @@
+import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import {
   optionalProviderUnavailable,
   type OptionalProviderLoadFailure,
@@ -5,7 +6,6 @@ import {
 import { err } from "../domain/result.js";
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 
-import type { BinarySessionPort } from "../application/BinarySession.js";
 import type { JavaScriptRuntimeObservationPort } from "../application/JavaScriptRuntimeObservationPort.js";
 import {
   listJavaScriptRuntimeTargets,
@@ -26,7 +26,7 @@ interface RuntimeToolRegistration {
   readonly logger: Logger;
   readonly loadFailure?: OptionalProviderLoadFailure | undefined;
   readonly runtime: JavaScriptRuntimeObservationPort | undefined;
-  readonly recordEvidence: BinarySessionPort["recordEvidence"] | undefined;
+  readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
 }
 
 /** Register passive Inspector tools even when policy keeps them unavailable. */

@@ -1,3 +1,4 @@
+import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
@@ -18,7 +19,7 @@ export const registerManagedTools = (
   options: {
     readonly logger: Logger;
     readonly activeTarget: (() => BinaryTarget | undefined) | undefined;
-    readonly recordEvidence: BinarySessionPort["recordEvidence"] | undefined;
+    readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
     readonly session: BinarySessionPort | undefined;
   },
 ): void => {

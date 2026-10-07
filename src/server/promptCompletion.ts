@@ -1,3 +1,4 @@
+import type { EvidenceReader } from "../application/investigation/InvestigationRecordPort.js";
 import { z } from "zod";
 
 import { uniqueSorted } from "../domain/canonicalOrdering.js";
@@ -138,7 +139,7 @@ const evidenceCandidates = (
 };
 
 type LedgerEvidence = ReturnType<
-  BinarySessionPort["exportEvidenceBundle"]
+  EvidenceReader["exportEvidenceBundle"]
 >["records"][number];
 
 const evidenceValues = (
