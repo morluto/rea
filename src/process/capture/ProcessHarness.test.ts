@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import {
@@ -97,6 +97,95 @@ it("keeps empty cleanup exception messages actionable in the report", async () =
   });
 
   expect(report.temporary_root).toEqual({ state: "failed", reason: "Error" });
+});
+
+it("waits for token-owned processes to exit after one cleanup signal", async () => {
+  vi.useFakeTimers();
+  try {
+    let verificationCalls = 0;
+    const exitsAt = Date.now() + 50;
+    let cleanupCalls = 0;
+    const host: ProcessCaptureCleanupHost = {
+      platform: "linux",
+      cleanupProcessGroup: async () => {
+        cleanupCalls += 1;
+        return { cleaned: true, signaled: true };
+      },
+      verifyTokenOwnedProcesses: async () => {
+        verificationCalls += 1;
+        return Date.now() < exitsAt
+          ? { cleaned: false, reason: "owned process is exiting" }
+          : { cleaned: true, signaled: false };
+      },
+      removeTemporaryRoot: async () => undefined,
+    };
+    const result = releaseProcessResources({
+      timers: new Set(),
+      terminal: { pid: 321 },
+      renderer: undefined,
+      runId: "fixture-run",
+      temporaryRoot: "/fixture/root",
+      host,
+    });
+
+    await vi.runAllTimersAsync();
+    const report = await result;
+
+    expect(report.owned_process_group).toEqual({
+      state: "cleaned",
+      reason: null,
+    });
+    expect(cleanupCalls).toBe(1);
+    expect(verificationCalls).toBeGreaterThan(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("retains the last ownership failure when the verification grace expires", async () => {
+  vi.useFakeTimers();
+  try {
+    let verificationCalls = 0;
+    let cleanupCalls = 0;
+    const host: ProcessCaptureCleanupHost = {
+      platform: "linux",
+      cleanupProcessGroup: async () => {
+        cleanupCalls += 1;
+        return { cleaned: true, signaled: true };
+      },
+      verifyTokenOwnedProcesses: async () => {
+        verificationCalls += 1;
+        return {
+          cleaned: false,
+          reason:
+            verificationCalls === 1
+              ? "owned process has not exited yet"
+              : "owned process remained after identity recheck",
+        };
+      },
+      removeTemporaryRoot: async () => undefined,
+    };
+    const result = releaseProcessResources({
+      timers: new Set(),
+      terminal: { pid: 322 },
+      renderer: undefined,
+      runId: "fixture-run",
+      temporaryRoot: "/fixture/root",
+      host,
+    });
+
+    await vi.runAllTimersAsync();
+    const report = await result;
+
+    expect(report.owned_process_group).toEqual({
+      state: "unverified",
+      reason: "owned process remained after identity recheck",
+    });
+    expect(cleanupCalls).toBe(1);
+    expect(verificationCalls).toBeGreaterThan(1);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("retains observations and both causes when process cleanup is unverifiable", () => {

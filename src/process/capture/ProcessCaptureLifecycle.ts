@@ -36,6 +36,7 @@ import { classifyFilesystemEffects } from "./ProcessFilesystemEffects.js";
 import {
   cleanupOwnedProcessGroup,
   verifyNoTokenOwnedProcesses,
+  type ProcessCleanupResult,
   type ProcessOwnershipBaseline,
 } from "../ProcessOwnership.js";
 import {
@@ -626,9 +627,31 @@ const processCaptureCleanupHost: ProcessCaptureCleanupHost = {
   removeTemporaryRoot: (path) => rm(path, { recursive: true, force: true }),
 };
 
+const PROCESS_CLEANUP_VERIFICATION_GRACE_MS = 1_000;
+const PROCESS_CLEANUP_VERIFICATION_INTERVAL_MS = 25;
+
+const verifyTokenOwnedProcessesUntilSettled = async (
+  verify: () => Promise<ProcessCleanupResult>,
+): Promise<ProcessCleanupResult> => {
+  const deadline = Date.now() + PROCESS_CLEANUP_VERIFICATION_GRACE_MS;
+  let result = await verify();
+  while (!result.cleaned) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return result;
+    await new Promise<void>((resolve) =>
+      setTimeout(
+        resolve,
+        Math.min(PROCESS_CLEANUP_VERIFICATION_INTERVAL_MS, remaining),
+      ),
+    );
+    result = await verify();
+  }
+  return result;
+};
+
 export const releaseProcessResources = async (options: {
   readonly timers: ReadonlySet<ProcessTimer>;
-  readonly terminal: IPty | undefined;
+  readonly terminal: Pick<IPty, "pid"> | undefined;
   readonly renderer: TerminalRenderer | undefined;
   readonly runId: string;
   readonly temporaryRoot: string;
@@ -676,10 +699,12 @@ export const releaseProcessResources = async (options: {
       if (!cleaned.cleaned) {
         ownedProcessGroup = { state: "unverified", reason: cleaned.reason };
       } else {
-        const verified = await host.verifyTokenOwnedProcesses(
-          options.runId,
-          undefined,
-          options.captureBaseline,
+        const verified = await verifyTokenOwnedProcessesUntilSettled(() =>
+          host.verifyTokenOwnedProcesses(
+            options.runId,
+            undefined,
+            options.captureBaseline,
+          ),
         );
         if (!verified.cleaned)
           ownedProcessGroup = { state: "unverified", reason: verified.reason };
