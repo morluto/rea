@@ -82,7 +82,6 @@ try {
       "capture_native_ui_scenario",
       {
         ...scope,
-        restore: "leave-as-is",
         screenshot: false,
         steps: [
           { kind: "click", path: button.path },
@@ -111,8 +110,6 @@ try {
         String(scope.pid),
         "--window-id",
         String(scope.window_id),
-        "--restore",
-        "leave-as-is",
         "--steps",
         JSON.stringify([
           { kind: "click", path: button.path },
