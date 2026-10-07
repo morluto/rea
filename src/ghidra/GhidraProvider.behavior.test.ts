@@ -815,7 +815,20 @@ describe("compatible Ghidra builds", () => {
               provider: { id: "ghidra", version: "12.1.2" },
             }),
           ),
-        callTool: () => Promise.resolve(ok(null)),
+        callTool: () =>
+          Promise.resolve(
+            ok([
+              {
+                address: "0x1000",
+                value: "fixture_main",
+                procedure: {
+                  external: false,
+                  thunk: false,
+                  thunk_target: null,
+                },
+              },
+            ]),
+          ),
         close: () => Promise.resolve(),
       }),
     );
@@ -824,16 +837,24 @@ describe("compatible Ghidra builds", () => {
     );
     if (!resolved.ok || resolved.value.profile === null)
       throw new Error("expected a compatible Ghidra profile");
-    const health = await ghidra
-      .createClient(executableTarget("elf", "x86_64"), resolved.value.profile)
-      .execute("health", {});
+    const client = ghidra.createClient(
+      executableTarget("elf", "x86_64"),
+      resolved.value.profile,
+    );
+    const health = await client.execute("health", {});
+    const procedures = await client.execute("list_procedures", {});
     expect(ghidra.inspectAvailability()).toMatchObject({
       status: "available",
       diagnostics: { provider_version: "12.1.2", java_version: "27" },
     });
     expect(health.ok && health.value.provider.version).toBe("12.1.2");
+    const unverified = expect.stringContaining("12.1.2");
     expect(health.ok && health.value.limitations).toEqual(
-      expect.arrayContaining([expect.stringContaining("12.1.2")]),
+      expect.arrayContaining([unverified]),
     );
+    expect(procedures.ok && procedures.value.limitations).toEqual(
+      expect.arrayContaining([unverified]),
+    );
+    expect(procedures.ok && procedures.value.provider.version).toBe("12.1.2");
   });
 });
