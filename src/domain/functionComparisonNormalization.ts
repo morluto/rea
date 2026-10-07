@@ -1,5 +1,4 @@
-import canonicalize from "canonicalize";
-
+import { canonicalJson } from "./comparisonSemantics.js";
 import { compareCodePoints } from "./canonicalOrdering.js";
 
 import type {
@@ -179,8 +178,8 @@ export const stringAndNameProjection = (
 
 export const sorted = (values: readonly unknown[]): readonly unknown[] =>
   [...values].sort((left, right) => {
-    const leftJson = canonicalJson(left);
-    const rightJson = canonicalJson(right);
+    const leftJson = canonicalJson(left, "Function normalization");
+    const rightJson = canonicalJson(right, "Function normalization");
     // Preserve existing collation while ordering distinct values within a tie.
     return (
       leftJson.localeCompare(rightJson) ||
@@ -217,11 +216,4 @@ const relativeAddress = (value: string, base: string): string | null => {
   return parsed === null || parsedBase === null || parsed < parsedBase
     ? null
     : String(parsed - parsedBase);
-};
-
-const canonicalJson = (value: unknown): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined)
-    throw new TypeError("Function normalization could not canonicalize data");
-  return encoded;
 };

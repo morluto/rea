@@ -10,6 +10,7 @@ import {
 import type { ResidualUnknown } from "./residualUnknown.js";
 import { digestSchema } from "./../domain/digests.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
+import { comparisonStatusSchema } from "./comparisonStatus.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const classificationSchema = z.enum([
@@ -53,7 +54,7 @@ const bundleChangeSchema = z.object({
 
 /** Deterministic classified delta between two canonical Evidence bundles. */
 export const bundleComparisonResultSchema = z.object({
-  status: z.enum(["unchanged", "changed", "unknown"]),
+  status: comparisonStatusSchema,
   left_bundle_sha256: digestSchema,
   right_bundle_sha256: digestSchema,
   summary: z.object({
