@@ -161,6 +161,55 @@ describe("managed artifact inventory", () => {
   });
 });
 
+it("derives the string heap width after expanded AssemblyRef names", () => {
+  const references = Array.from(
+    { length: 5_000 },
+    (_, index) => `Reference.${String(index).padStart(4, "0")}`,
+  );
+  const bytes = buildManagedPeFixture({ references });
+  const result = inspectManagedArtifactBytes(
+    bytes,
+    managedPeFixtureTarget(bytes),
+  );
+
+  expect(result.references).toHaveLength(references.length);
+  expect(result.references.at(-1)?.name).toBe("Reference.4999");
+  expect(result.coverage).toMatchObject({ state: "complete", issues: [] });
+
+  const malformedBytes = buildManagedPeFixture({
+    references,
+    malformedAssemblyReferenceRows: [5_000],
+  });
+  const malformedResult = inspectManagedArtifactBytes(
+    malformedBytes,
+    managedPeFixtureTarget(malformedBytes),
+  );
+  expect(malformedResult.references).toHaveLength(4_999);
+  expect(malformedResult.coverage).toMatchObject({
+    state: "partial",
+    issues: [expect.objectContaining({ code: "invalid-heap-index" })],
+  });
+});
+
+it("derives ResolutionScope and Implementation widths at 16,384 AssemblyRefs", () => {
+  const references = Array.from(
+    { length: 16_384 },
+    (_, index) => `Reference.${String(index).padStart(5, "0")}`,
+  );
+  const bytes = buildManagedPeFixture({ references });
+  const result = inspectManagedArtifactBytes(
+    bytes,
+    managedPeFixtureTarget(bytes),
+  );
+
+  expect(result.references).toHaveLength(references.length);
+  expect(result.references.at(-1)?.name).toBe("Reference.16383");
+  expect(result.resources).toMatchObject([
+    { name: "Fixture.resources", embedded: true, data_length: 13 },
+  ]);
+  expect(result.coverage).toMatchObject({ state: "complete", issues: [] });
+});
+
 it("preserves U+FEFF in references and fixed attribute strings", () => {
   const bytes = buildManagedPeFixture({
     references: ["\uFEFFSystem.Runtime", "System.\uFEFFRuntime"],
