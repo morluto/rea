@@ -110,36 +110,24 @@ export class AsarArtifactReader implements ArtifactReader {
         `ASAR entry was not produced by this reader: ${entry.path}`,
       );
     if (entry.unpacked) {
-      const handle = await this.#openUnpackedEntry(entry, metadata);
+      const handle = await this.#openUnpackedEntry(entry);
       try {
         const observed = await handle.stat();
         abortIfNeeded(signal);
-        if (!observed.isFile() || observed.size !== metadata.size)
+        if (!observed.isFile())
           throw new ArtifactReaderFailure(
-            "integrity",
-            `ASAR unpacked entry changed before read: ${entry.path}`,
-            {},
-            {
-              logicalPath: entry.path,
-              declaredSha256: entry.declaredSha256,
-              calculatedSha256: null,
-              unpacked: true,
-            },
+            "path",
+            `ASAR unpacked entry is not a regular file: ${entry.path}`,
           );
       } catch (cause: unknown) {
         await handle.close().catch(() => undefined);
         throw cause;
       }
-      if (metadata.size === 0) {
-        await handle.close();
-        return Readable.from([]);
-      }
       const source = handle.createReadStream({
         start: 0,
-        end: metadata.size - 1,
         autoClose: true,
       });
-      return readExactEntry(source, metadata.size, entry.path, signal);
+      return readValidatedEntry(source, undefined, entry.path, signal);
     }
     const archiveSize = this.#archiveSize;
     const headerSize = this.#headerSize;
@@ -183,7 +171,7 @@ export class AsarArtifactReader implements ArtifactReader {
         end: start + metadata.size - 1,
         autoClose: true,
       });
-      return readExactEntry(source, metadata.size, entry.path, signal);
+      return readValidatedEntry(source, metadata.size, entry.path, signal);
     } catch (cause: unknown) {
       await handle?.close().catch(() => undefined);
       throw asarFailure(this.path, `read ${entry.path}`, cause);
@@ -207,10 +195,7 @@ export class AsarArtifactReader implements ArtifactReader {
     return [];
   }
 
-  async #openUnpackedEntry(
-    entry: ArtifactEntry,
-    metadata: AsarFileMetadata,
-  ): Promise<FileHandle> {
+  async #openUnpackedEntry(entry: ArtifactEntry): Promise<FileHandle> {
     const unpackedRoot = `${this.path}.unpacked`;
     try {
       const rootMetadata = await lstat(unpackedRoot);
@@ -251,8 +236,7 @@ export class AsarArtifactReader implements ArtifactReader {
       if (
         !openedMetadata.isFile() ||
         openedMetadata.dev !== pathMetadata.dev ||
-        openedMetadata.ino !== pathMetadata.ino ||
-        openedMetadata.size !== metadata.size
+        openedMetadata.ino !== pathMetadata.ino
       ) {
         await handle.close();
         throw new ArtifactReaderFailure(
@@ -308,9 +292,9 @@ const parseArchiveOffset = (value: string): number | undefined => {
   return Number.isSafeInteger(offset) ? offset : undefined;
 };
 
-const readExactEntry = (
+const readValidatedEntry = (
   source: Readable,
-  expectedBytes: number,
+  expectedBytes: number | undefined,
   path: string,
   signal?: AbortSignal,
 ): Readable => {
@@ -332,14 +316,14 @@ const readExactEntry = (
           observedBytes += Buffer.isBuffer(chunk)
             ? chunk.length
             : chunk.byteLength;
-          if (observedBytes > expectedBytes)
+          if (expectedBytes !== undefined && observedBytes > expectedBytes)
             throw new ArtifactReaderFailure(
               "integrity",
               `ASAR entry exceeded its declared size: ${path}`,
             );
           yield chunk;
         }
-        if (observedBytes !== expectedBytes)
+        if (expectedBytes !== undefined && observedBytes !== expectedBytes)
           throw new ArtifactReaderFailure(
             "integrity",
             `ASAR entry size disagrees with its header: ${path}`,

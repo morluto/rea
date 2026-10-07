@@ -12,6 +12,7 @@ import {
 import { join } from "node:path";
 import { createPackageWithOptions } from "@electron/asar";
 import { describe, expect, it } from "vitest";
+import { scanArtifactInventory } from "../../../src/application/ArtifactInventory.js";
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
 import { hashReadable } from "../../../src/artifacts/ArtifactHash.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -142,6 +143,29 @@ describe("ASAR entry streaming", () => {
     } finally {
       await reader.close();
     }
+  });
+
+  it("reports the observed digest when an unpacked member changes size", async () => {
+    const root = await createTestTempDirectory(
+      "rea-asar-unpacked-size-change-",
+    );
+    const source = join(root, "source");
+    const archive = join(root, "fixture.asar");
+    const original = join(source, "small.js");
+    const changed = "changed();\n";
+    await mkdir(source);
+    await writeFile(original, "module.exports = 1;\n");
+    await createPackageWithOptions(source, archive, { unpack: "small.js" });
+    await writeFile(join(`${archive}.unpacked`, "small.js"), changed);
+
+    await expect(scanArtifactInventory(archive)).rejects.toMatchObject({
+      reason: "integrity",
+      details: {
+        logicalPath: "small.js",
+        calculatedSha256: createHash("sha256").update(changed).digest("hex"),
+        unpacked: true,
+      },
+    });
   });
 
   it.each([
