@@ -8,6 +8,40 @@ import { describe, expect, it } from "vitest";
 import { inspectModuleBoundaries } from "../../scripts/lib/module-boundaries.mjs";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
+describe("binary production construction ownership", () => {
+  it.each([
+    "hopper/HopperProvider.js",
+    "ghidra/GhidraProvider.js",
+    "ida/IdaProvider.js",
+    "artifacts/ArtifactProvider.js",
+    "dotnet/ManagedStaticProvider.js",
+    "native/NativeMacOSProvider.js",
+  ])("keeps %s in production composition", (provider) => {
+    const source = `import { Provider } from "../${provider}";`;
+    for (const file of ["src/application/runtime.ts", "src/server/probe.ts"])
+      expect(
+        inspectModuleBoundaries(file, source, process.cwd()),
+      ).toMatchObject([{ boundary: "provider-construction" }]);
+    expect(
+      inspectModuleBoundaries(
+        "src/composition/binary.ts",
+        source,
+        process.cwd(),
+      ),
+    ).toEqual([]);
+  });
+
+  it("rejects the former runtime composition exception", () => {
+    expect(
+      inspectModuleBoundaries(
+        "src/application/runtime.ts",
+        'export { createBinarySession } from "../composition/binary.js";',
+        process.cwd(),
+      ),
+    ).toMatchObject([{ boundary: "application-composition" }]);
+  });
+});
+
 const execute = promisify(execFile);
 const verifier = resolve("scripts/verify-module-boundaries.mjs");
 
@@ -93,7 +127,7 @@ describe("incremental module import boundaries", () => {
       "../../android/JadxProvider.js",
       false,
     ],
-    ["src/application/runtime.ts", "../android/JadxProvider.js", true],
+    ["src/application/runtime.ts", "../android/JadxProvider.js", false],
     [
       "src/application/android/runtime.ts",
       "../../android/JadxProvider.js",

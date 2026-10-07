@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect } from "vitest";
 
-import { runProviderAnalysis } from "../../src/application/DirectAnalysis.js";
+import { runProviderAnalysis } from "../../src/composition/directAnalysis.js";
 import type { AnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { type Evidence, parseEvidence } from "../../src/domain/evidence.js";
 import type { Result } from "../../src/domain/result.js";

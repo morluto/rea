@@ -16,7 +16,7 @@ import {
 } from "../../support/applicationSessionFixture.js";
 
 import { projectAndroidApplicationEvidence } from "../../../src/application/android/AndroidApplicationService.js";
-import { runProviderAnalysis } from "../../../src/application/DirectAnalysis.js";
+import { runProviderAnalysis } from "../../../src/composition/directAnalysis.js";
 import { androidApplicationProjectionResultSchema } from "../../../src/domain/android/androidApplication.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 

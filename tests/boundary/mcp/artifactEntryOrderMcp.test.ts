@@ -5,7 +5,7 @@ import { expect, it } from "vitest";
 import { z } from "zod";
 
 import { parseConfig } from "../../../src/config.js";
-import { createBinarySession } from "../../../src/application/runtime.js";
+import { createBinarySession } from "../../../src/composition/binary.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
 import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph.js";
