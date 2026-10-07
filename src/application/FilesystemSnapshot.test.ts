@@ -1,5 +1,13 @@
 import { fstatSync } from "node:fs";
-import { mkdtemp, lstat, open, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  lstat,
+  open,
+  readdir,
+  rm,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -35,6 +43,21 @@ it("does not hash a replacement file using the earlier path metadata", async () 
     const expected = await lstat(path);
     await rm(path);
     await writeFile(path, "replacement with a different identity and size\n");
+
+    await expect(hashFile(path, expected, 1_000)).resolves.toBeNull();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("rejects a same-size rewrite even when its modification time is restored", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "rea-snapshot-ctime-"));
+  const path = join(directory, "observed-file");
+  try {
+    await writeFile(path, "before\n");
+    const expected = await lstat(path);
+    await writeFile(path, "after!\n");
+    await utimes(path, expected.atime, expected.mtime);
 
     await expect(hashFile(path, expected, 1_000)).resolves.toBeNull();
   } finally {

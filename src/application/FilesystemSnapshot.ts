@@ -26,7 +26,8 @@ const hasSameFileState = (before: Stats, after: Stats): boolean =>
   after.isFile() &&
   before.mode === after.mode &&
   before.size === after.size &&
-  before.mtimeMs === after.mtimeMs;
+  before.mtimeMs === after.mtimeMs &&
+  before.ctimeMs === after.ctimeMs;
 
 const lstatIfPresent = async (path: string): Promise<Stats | undefined> => {
   try {

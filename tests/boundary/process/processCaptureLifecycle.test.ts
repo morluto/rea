@@ -8,6 +8,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { itWithCaptureCapability } from "./processCaptureCapability.js";
 
 import { captureProcessScenario } from "../../../src/application/ProcessHarness.js";
+import { snapshotRoots } from "../../../src/application/FilesystemSnapshot.js";
 import { parseProcessScenario } from "../../../src/domain/processCapture.js";
 
 const processFixture = fileURLToPath(
@@ -125,16 +126,13 @@ itWithCaptureCapability(
   async () => {
     const root = await createTestTempDirectory("rea-snapshot-final-cancel-");
     const controller = new AbortController();
-    const { signal } = controller;
-    const throwIfAborted = signal.throwIfAborted.bind(signal);
-    let cancellationChecks = 0;
-    Object.defineProperty(signal, "throwIfAborted", {
-      value: () => {
-        cancellationChecks += 1;
-        if (cancellationChecks === 4) controller.abort();
-        throwIfAborted();
-      },
-    });
+    let initialSnapshotCompleted = false;
+    const captureSnapshot: typeof snapshotRoots = async (scenario, signal) => {
+      if (initialSnapshotCompleted) controller.abort();
+      const snapshot = await snapshotRoots(scenario, signal);
+      initialSnapshotCompleted = true;
+      return snapshot;
+    };
     const resultPromise = captureProcessScenario(
       parseProcessScenario({
         executable: process.execPath,
@@ -143,13 +141,16 @@ itWithCaptureCapability(
         filesystem_observation_paths: [root],
         settle_ms: 0,
       }),
-      signal,
+      controller.signal,
+      process.platform,
+      process.env,
+      captureSnapshot,
     );
 
     const result = await resultPromise;
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected final snapshot cancellation");
-    expect(cancellationChecks).toBe(4);
+    expect(initialSnapshotCompleted).toBe(true);
     expect(result.error).toMatchObject({
       reason: "cancelled",
       userCategory: "cancelled",
@@ -164,19 +165,14 @@ itWithCaptureCapability(
     const obstruction = join(root, "not-a-directory");
     await writeFile(obstruction, "file");
     const controller = new AbortController();
-    const { signal } = controller;
-    let signalReads = 0;
-    let aborted = false;
-    Object.defineProperty(signal, "aborted", {
-      get: () => {
-        signalReads += 1;
-        if (signalReads === 3) {
-          aborted = true;
-          controller.abort();
-        }
-        return aborted;
-      },
-    });
+    const captureSnapshot: typeof snapshotRoots = async (scenario, signal) => {
+      try {
+        return await snapshotRoots(scenario, signal);
+      } catch (cause: unknown) {
+        controller.abort();
+        throw cause;
+      }
+    };
 
     const result = await captureProcessScenario(
       parseProcessScenario({
@@ -184,10 +180,12 @@ itWithCaptureCapability(
         working_directory: root,
         filesystem_observation_paths: [join(obstruction, "child")],
       }),
-      signal,
+      controller.signal,
+      process.platform,
+      process.env,
+      captureSnapshot,
     );
 
-    expect(signalReads).toBe(3);
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected filesystem observation failure");
     expect(result.error).toMatchObject({
