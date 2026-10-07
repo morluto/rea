@@ -1,6 +1,6 @@
 # REA website writing and design guide
 
-> A good website should read like a good paper: easy to follow, concise and clear.
+> A good website is like a good paper: easy to follow, clear and concise, with a clean, refined presentation.
 >
 > — N0zoM1z0
 

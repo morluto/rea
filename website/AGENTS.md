@@ -1,5 +1,9 @@
 # Website maintenance
 
+> A good website is like a good paper: easy to follow, clear and concise, with a clean, refined presentation.
+>
+> — N0zoM1z0
+
 Read [README.md](README.md) and [style-guide.md](style-guide.md) before changing
 website content, layout or figures. Use [figures.md](figures.md) and `evidence/`
 for asset notes and the source of case-study claims.

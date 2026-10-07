@@ -1,5 +1,9 @@
 # REA website figures
 
+> A good website is like a good paper: easy to follow, clear and concise, with a clean, refined presentation.
+>
+> — N0zoM1z0
+
 Use [style-guide.md](style-guide.md#make-figures-explain-a-relationship) when adding
 or revising a figure. The prompts below are historical layout references; use
 the current SVG source for published labels.

@@ -1,5 +1,9 @@
 # REA website
 
+> A good website is like a good paper: easy to follow, clear and concise, with a clean, refined presentation.
+>
+> — N0zoM1z0
+
 An English static website with explanatory figures, worked guides and DX-Ball, Notion and TH04 investigations.
 The public files are in `website/public/`. The site uses HTML, CSS and a small
 script for copying code and following the assembly-to-C comparison. Python
