@@ -108,11 +108,15 @@ export const parseClientConfiguration = (
   const value = document[serversKey];
   const servers = value === undefined ? {} : objectSchema.parse(value);
   const native = servers.servers;
-  // A V1 server named `servers` is an entry with a `type`; the V2 table is not.
+  // A V1 server named `servers` has a string `type` discriminator; the V2
+  // table may instead hold a server object named `type`.
   if (
     format !== "opencode" ||
     native === undefined ||
-    (typeof native === "object" && native !== null && "type" in native)
+    (typeof native === "object" &&
+      native !== null &&
+      "type" in native &&
+      typeof native.type === "string")
   )
     return {
       document,

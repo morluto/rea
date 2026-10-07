@@ -322,6 +322,33 @@ describe("OpenCode V2 native server table", () => {
     });
   });
 
+  it("treats a V2 table holding a server named type as native", async () => {
+    const { home, client } = await openCodeClient("rea-opencode-type-server-");
+    const typeServer = { type: "local", command: ["node", "type.js"] };
+    await writeFile(
+      client.configPath,
+      `${JSON.stringify({ mcp: { servers: { type: typeServer, rea: { type: "local", command } } } })}\n`,
+    );
+
+    expect(await readClientRegistrationStatuses(home)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          client: "opencode",
+          state: "aligned",
+          command,
+        }),
+      ]),
+    );
+    expect((await systemUninstallHost(home).removeClient(client)).status).toBe(
+      "removed",
+    );
+    expect(
+      parseOpenCode(await readFile(client.configPath, "utf8")).mcp,
+    ).toEqual({
+      servers: { type: typeServer },
+    });
+  });
+
   it("keeps a V1 server named servers in the V1 table", async () => {
     const { client } = await openCodeClient("rea-opencode-v1-servers-");
     const servers = { type: "local", command: ["node", "servers.js"] };
