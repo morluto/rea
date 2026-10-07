@@ -128,7 +128,7 @@ describe("managed native boundary coded indexes", () => {
         expect.objectContaining({
           code: "invalid-row",
           detail:
-            "ImplMap MemberForwarded coded index 0x0 is null, but the column must reference a MethodDef row",
+            "ImplMap MemberForwarded coded index 0x0 is null, but the column must reference a Field or MethodDef row",
         }),
       ],
     });

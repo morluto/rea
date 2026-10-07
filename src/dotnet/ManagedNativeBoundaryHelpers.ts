@@ -162,7 +162,7 @@ export const parseImplMaps = ({
         offset: memberForwardedOffset,
         detail:
           memberForwardedReason === null
-            ? "ImplMap MemberForwarded coded index 0x0 is null, but the column must reference a MethodDef row"
+            ? "ImplMap MemberForwarded coded index 0x0 is null, but the column must reference a Field or MethodDef row"
             : `ImplMap MemberForwarded coded index 0x${memberForwardedRaw.toString(16)} is invalid: ${memberForwardedReason}`,
       });
     const memberToken = metadataCodedToken(
