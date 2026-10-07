@@ -340,6 +340,37 @@ it("retains an uncertain workspace and blocks new launches after cleanup failure
   expect(fixture.launches).toHaveLength(1);
 });
 
+it("accepts another build on the verified release line and reports it", async () => {
+  const fixture = await firmwareFixture("normal", "binwalk 3.1.2");
+  const result = await fixture.service.execute("inspect_firmware_regions", {
+    path: fixture.path,
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.provider.version).toBe("3.1.2");
+  expect(result.value.limitations.join("\n")).toContain(
+    "verified against 3.1.0",
+  );
+  expect(result.value.normalized_result).toMatchObject({
+    engine: { version: "3.1.2" },
+  });
+  await assertFirmwareCleanup(fixture.launches);
+});
+
+it("names the accepted release line when the banner is another line", async () => {
+  const fixture = await firmwareFixture("normal", "binwalk 3.2.0");
+  const result = await fixture.service.execute("inspect_firmware_regions", {
+    path: fixture.path,
+  });
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisCapabilityUnavailableError",
+      reason: expect.stringContaining("Binwalk 3.1.x"),
+    },
+  });
+  await assertFirmwareCleanup(fixture.launches);
+});
+
 it("rejects absent or unsupported engines without installing anything", async () => {
   const missing = await new FirmwareAnalysisService(
     new FirmwareProvider({}),

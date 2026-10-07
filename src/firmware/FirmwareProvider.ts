@@ -24,10 +24,10 @@ import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { publishFirmwareExtraction } from "./FirmwarePublication.js";
 import {
   FIRMWARE_LIMITS,
-  FIRMWARE_RELEASES,
   BINWALK_PROVIDER_IDENTITY,
   UNBLOB_PROVIDER_IDENTITY,
 } from "./FirmwareRelease.js";
+import { admitFirmwareVersion } from "./FirmwareVersion.js";
 import {
   resolveFirmwareCommand,
   runFirmwareCommand,
@@ -143,21 +143,22 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
         });
       const versionRun = await run(["--version"]);
       const version = versionRun.stdout.text.trim();
-      const expected = FIRMWARE_RELEASES[engineName].version;
-      if (
-        versionRun.stdout.bytes > 1024 ||
-        (engineName === "binwalk"
-          ? version !== `binwalk ${expected}`
-          : version !== expected)
-      )
+      if (versionRun.stdout.bytes > 1024)
         throw new AnalysisCapabilityUnavailableError(
           engineName,
           request.operation,
-          `Unsupported tool version ${version}; this adapter is verified against ${expected}`,
+          `Tool version banner is ${String(versionRun.stdout.bytes)} bytes; expected a short ${engineName} version line.`,
+        );
+      const admitted = admitFirmwareVersion(engineName, version);
+      if (admitted.status === "unsupported" || admitted.status === "unresolved")
+        throw new AnalysisCapabilityUnavailableError(
+          engineName,
+          request.operation,
+          admitted.message,
         );
       const engine = {
         name: engineName,
-        version: expected,
+        version: admitted.version,
         executable_path: command.command,
         executable_sha256: command.sha256,
         source_revision: null,
@@ -259,16 +260,23 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
         });
         raw = { report, execution: processRun, version_execution: versionRun };
       }
+      const catalog =
+        engineName === "binwalk"
+          ? BINWALK_PROVIDER_IDENTITY
+          : UNBLOB_PROVIDER_IDENTITY;
       outcome = ok(
         createAnalysisExecution(
           result,
-          engineName === "binwalk"
-            ? BINWALK_PROVIDER_IDENTITY
-            : UNBLOB_PROVIDER_IDENTITY,
+          { ...catalog, version: admitted.version },
           {
             subject: target.subject,
             rawResult: raw,
-            limitations,
+            limitations: [
+              ...limitations,
+              ...(admitted.status === "compatible"
+                ? [admitted.limitation]
+                : []),
+            ],
             locations: [
               {
                 kind: "file-offset-range",

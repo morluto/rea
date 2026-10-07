@@ -4,13 +4,16 @@ import { join } from "node:path";
 const args = process.argv.slice(2);
 const mode = process.env.REA_FIRMWARE_FIXTURE_MODE;
 const engine = process.env.REA_FIRMWARE_FIXTURE_ENGINE;
+const banner = process.env.REA_FIRMWARE_FIXTURE_VERSION;
 if (args.includes("--version")) {
   console.log(
     mode === "version"
       ? "unsupported"
-      : engine === "binwalk"
-        ? "binwalk 3.1.0"
-        : "26.6.4",
+      : banner !== undefined && banner.length > 0
+        ? banner
+        : engine === "binwalk"
+          ? "binwalk 3.1.0"
+          : "26.6.4",
   );
 } else if (mode === "stall") {
   setInterval(() => {}, 1000);

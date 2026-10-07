@@ -399,7 +399,9 @@ for the exact ABI, authority, graph and observation boundaries.
 `npm run fixtures:firmware` uses existing Python 3 and a host C compiler to make
 an ignored gzip/USTAR firmware fixture and independent offset/hash oracle.
 `npm run verify:firmware` requires caller-supplied Binwalk 3.1.0, Unblob 26.6.4
-and util-linux prlimit on Linux. It verifies CLI/MCP parity, selected ranges,
+and util-linux prlimit on Linux. The provider also accepts other 3.1.x and
+26.6.x builds and reports them as unverified; this lane proves the audited
+releases. It verifies CLI/MCP parity, selected ranges,
 unknown chunks, depth limits and extracted child digests. The optional
 `REA_FIRMWARE_VERIFY_EXT4=1` lane requires existing mke2fs/debugfs; the separate
 `REA_FIRMWARE_VERIFY_GHIDRA=1` lane checks a selected host ELF through real Ghidra.
