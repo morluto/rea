@@ -373,7 +373,10 @@ const resolveOriginalSource = (
 };
 
 const sourceMediaType = (source: string | null): string =>
-  source?.endsWith(".ts") || source?.endsWith(".tsx")
+  source?.endsWith(".ts") ||
+  source?.endsWith(".tsx") ||
+  source?.endsWith(".mts") ||
+  source?.endsWith(".cts")
     ? "text/typescript"
     : "text/javascript";
 
