@@ -5,12 +5,12 @@ import { basename, isAbsolute, join, resolve } from "node:path";
 import assert from "node:assert/strict";
 import { promisify } from "node:util";
 
-import { inspectManagedArtifactBytes } from "../../dist/dotnet/ManagedArtifactInspector.js";
-import { inspectManagedMembersBytes } from "../../dist/dotnet/ManagedMemberInspector.js";
-import { importManagedReconstructionEvidence } from "../../dist/application/ManagedReconstructionService.js";
-import { createEvidence } from "../../dist/domain/evidence.js";
-import { MANAGED_STATIC_PROVIDER } from "../../dist/application/InvestigationProviders.js";
-import { createManagedManifestVerifier } from "./managed-conformance-manifest.mjs";
+import { inspectManagedArtifactBytes } from "../../../dist/dotnet/ManagedArtifactInspector.js";
+import { inspectManagedMembersBytes } from "../../../dist/dotnet/ManagedMemberInspector.js";
+import { importManagedReconstructionEvidence } from "../../../dist/application/managed/ManagedReconstructionService.js";
+import { createEvidence } from "../../../dist/domain/evidence.js";
+import { MANAGED_STATIC_PROVIDER } from "../../../dist/application/InvestigationProviders.js";
+import { createManagedManifestVerifier } from "./manifest.mjs";
 
 const execFileAsync = promisify(execFile);
 

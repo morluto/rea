@@ -2,12 +2,12 @@ import { createHash } from "node:crypto";
 
 import canonicalize from "canonicalize";
 
-import { parseEvidence } from "./evidence.js";
+import { parseEvidence } from "../evidence.js";
 import {
   managedNativeBoundaryInspectionSchema,
   type ManagedNativeBoundaryInspection,
 } from "./managedArtifact.js";
-import type { JsonValue } from "./jsonValue.js";
+import type { JsonValue } from "../jsonValue.js";
 import {
   managedNativeVerificationResultSchema,
   type ManagedNativeVerificationInput,

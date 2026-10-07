@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import canonicalize from "canonicalize";
 
-import { parseEvidence } from "./evidence.js";
+import { parseEvidence } from "../evidence.js";
 import {
   managedMemberInspectionSchema,
   type ManagedMemberInspection,
@@ -11,7 +11,7 @@ import type {
   ManagedMemberComparisonResult,
   ManagedMemberComparisonSide,
 } from "./managedMemberComparison.js";
-import type { JsonValue } from "./jsonValue.js";
+import type { JsonValue } from "../jsonValue.js";
 
 export const sha256 = (value: JsonValue): string => {
   const serialized = canonicalize(value);

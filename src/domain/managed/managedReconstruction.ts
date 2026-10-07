@@ -3,15 +3,15 @@ import { createHash } from "node:crypto";
 import canonicalize from "canonicalize";
 import { z } from "zod";
 
-import { evidenceSchema, parseEvidence } from "./evidence.js";
+import { evidenceSchema, parseEvidence } from "../evidence.js";
 import {
   cliMetadataGuidSchema,
   managedMemberInspectionSchema,
   type ManagedMemberInspection,
 } from "./managedArtifact.js";
-import type { JsonValue } from "./jsonValue.js";
-import { digestSchema } from "./../domain/digests.js";
-import { prefixedDigestSchema } from "./../domain/digests.js";
+import type { JsonValue } from "../jsonValue.js";
+import { digestSchema } from "../digests.js";
+import { prefixedDigestSchema } from "../digests.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const tokenSchema = z.string().regex(/^0x[0-9a-f]{8}$/u);

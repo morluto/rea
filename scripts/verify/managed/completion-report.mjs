@@ -1,4 +1,4 @@
-import { createEvidence } from "../../dist/domain/evidence.js";
+import { createEvidence } from "../../../dist/domain/evidence.js";
 
 const COMPLETION_PROVIDER = {
   id: "rea-managed-conformance",

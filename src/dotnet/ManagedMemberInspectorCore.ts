@@ -2,7 +2,7 @@ import {
   managedFailure,
   ManagedReaderFailure,
 } from "./ManagedReaderFailure.js";
-import type { ManagedMemberInspection } from "../domain/managedArtifact.js";
+import type { ManagedMemberInspection } from "../domain/managed/managedArtifact.js";
 import {
   type ManagedMetadataLayout,
   type MetadataTableLayout,

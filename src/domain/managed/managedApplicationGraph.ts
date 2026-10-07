@@ -3,13 +3,13 @@ import { createHash } from "node:crypto";
 import canonicalize from "canonicalize";
 import { z } from "zod";
 
-import { evidenceSchema, parseEvidence, type Evidence } from "./evidence.js";
+import { evidenceSchema, parseEvidence, type Evidence } from "../evidence.js";
 import {
   createJavaScriptApplicationGraph,
   javascriptApplicationGraphSchema,
   type ApplicationEdge,
   type ApplicationNode,
-} from "./javascript/javascriptApplicationGraph.js";
+} from "../javascript/javascriptApplicationGraph.js";
 import {
   managedArtifactInspectionSchema,
   managedMemberInspectionSchema,
@@ -18,7 +18,7 @@ import {
   type ManagedMemberInspection,
   type ManagedNativeBoundaryInspection,
 } from "./managedArtifact.js";
-import type { JsonValue } from "./jsonValue.js";
+import type { JsonValue } from "../jsonValue.js";
 import {
   assessManagedGraphOmissions,
   managedGraphEvidenceCoverage,
@@ -30,8 +30,8 @@ import {
   addBoundaryNodes,
   addMemberNodes,
 } from "./managedApplicationGraphNodes.js";
-import { digestSchema } from "./../domain/digests.js";
-import { prefixedDigestSchema } from "./../domain/digests.js";
+import { digestSchema } from "../digests.js";
+import { prefixedDigestSchema } from "../digests.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const textSchema = z.string().min(1);

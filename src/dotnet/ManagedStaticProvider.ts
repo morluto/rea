@@ -21,7 +21,7 @@ import {
   managedMemberInputSchema,
   managedNativeBoundaryInputSchema,
   type ManagedToolName,
-} from "../contracts/managedToolContracts.js";
+} from "../contracts/managed/managedToolContracts.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import {
   AnalysisCancelledError,
@@ -35,7 +35,7 @@ import type {
   ManagedArtifactInspection,
   ManagedMemberInspection,
   ManagedNativeBoundaryInspection,
-} from "../domain/managedArtifact.js";
+} from "../domain/managed/managedArtifact.js";
 import { err, ok } from "../domain/result.js";
 import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";

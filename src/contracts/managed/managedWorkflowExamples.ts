@@ -1,9 +1,9 @@
-import { createEvidence } from "../domain/evidence.js";
+import { createEvidence } from "../../domain/evidence.js";
 import type {
   ManagedMemberInspection,
   ManagedNativeBoundaryInspection,
-} from "../domain/managedArtifact.js";
-import type { InspectMacho } from "../domain/nativeInspection.js";
+} from "../../domain/managed/managedArtifact.js";
+import type { InspectMacho } from "../../domain/nativeInspection.js";
 
 const MANAGED_STATIC_EXAMPLE_PROVIDER = {
   id: "rea-dotnet-static",

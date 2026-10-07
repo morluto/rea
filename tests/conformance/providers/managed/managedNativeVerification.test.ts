@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { verifyManagedNativeBoundariesEvidence } from "../../../../src/application/ManagedNativeVerificationService.js";
-import { MANAGED_NATIVE_VERIFICATION_EXAMPLE } from "../../../../src/contracts/managedWorkflowExamples.js";
+import { verifyManagedNativeBoundariesEvidence } from "../../../../src/application/managed/ManagedNativeVerificationService.js";
+import { MANAGED_NATIVE_VERIFICATION_EXAMPLE } from "../../../../src/contracts/managed/managedWorkflowExamples.js";
 import { createEvidence } from "../../../../src/domain/evidence.js";
 import {
   managedNativeVerificationInputSchema,
   managedNativeVerificationResultSchema,
   verifyManagedNativeBoundaries,
-} from "../../../../src/domain/managedNativeVerification.js";
-import { managedNativeBoundaryInspectionSchema } from "../../../../src/domain/managedArtifact.js";
+} from "../../../../src/domain/managed/managedNativeVerification.js";
+import { managedNativeBoundaryInspectionSchema } from "../../../../src/domain/managed/managedArtifact.js";
 import { inspectMachoSchema } from "../../../../src/domain/nativeInspection.js";
 
 const exampleInput = () =>

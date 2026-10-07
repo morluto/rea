@@ -6,7 +6,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { McpServer } from "@modelcontextprotocol/server";
 
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
-import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "../dist/contracts/managedWorkflowToolContracts.js";
+import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "../dist/contracts/managed/managedWorkflowToolContracts.js";
 import { auxiliaryAnalysisProviderDeclarations } from "../dist/composition/auxiliaryAnalysisProviders.js";
 import { toolRegistrationOptions } from "../dist/server/toolRegistrationOptions.js";
 import { ensureGeneratedFile } from "./lib/generated-file.mjs";

@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { parseBinaryTarget } from "../../dist/application/BinaryTargetResolver.js";
-import { buildManagedPeFixture } from "./managed-pe-fixture.mjs";
-import { createManagedConformanceOracleSupport } from "./managed-conformance-oracles.mjs";
+import { parseBinaryTarget } from "../../../dist/application/BinaryTargetResolver.js";
+import { buildManagedPeFixture } from "../../fixtures/managed/pe.mjs";
+import { createManagedConformanceOracleSupport } from "./oracles.mjs";
 
 export const createManagedConformanceSupport = (context) => {
   const fixtureBytes = async (name, bytes) => {

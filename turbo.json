@@ -109,6 +109,8 @@
         "scripts/generate-*.mjs",
         "scripts/check-doc-facts.mjs",
         "scripts/lib/*.mjs",
+        "scripts/verify/managed/*.mjs",
+        "scripts/fixtures/managed/*.mjs",
         "src/generated*.ts",
         "src/contracts/**/*.ts",
         "docs/**",

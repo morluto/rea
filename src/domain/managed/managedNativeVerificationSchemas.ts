@@ -1,10 +1,10 @@
 import { z } from "zod";
 
-import { emptyArraySchema } from "./emptyArraySchema.js";
-import { evidenceSchema } from "./evidence.js";
+import { emptyArraySchema } from "../emptyArraySchema.js";
+import { evidenceSchema } from "../evidence.js";
 import { cliMetadataGuidSchema } from "./managedArtifact.js";
-import { digestSchema } from "./../domain/digests.js";
-import { prefixedDigestSchema } from "./../domain/digests.js";
+import { digestSchema } from "../digests.js";
+import { prefixedDigestSchema } from "../digests.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const tokenSchema = z.string().regex(/^0x[0-9a-f]{8}$/u);

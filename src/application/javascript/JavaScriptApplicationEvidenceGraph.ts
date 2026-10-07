@@ -12,7 +12,7 @@ import {
 import type { JavaScriptApplicationGraph } from "../../domain/javascript/javascriptApplicationGraph.js";
 import type { JavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticGraph.js";
 import { javascriptRuntimeReconciliationResultSchema } from "../../domain/javascript/javascriptRuntimeReconciliationSchemas.js";
-import { managedApplicationGraphResultSchema } from "../../domain/managedApplicationGraph.js";
+import { managedApplicationGraphResultSchema } from "../../domain/managed/managedApplicationGraph.js";
 
 /** Supported immutable source for an application-level graph workflow. */
 export interface ApplicationGraphEvidenceSource {

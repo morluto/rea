@@ -3,21 +3,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 
-import { inspectManagedArtifactBytes } from "../dist/dotnet/ManagedArtifactInspector.js";
-import { inspectManagedMembersBytes } from "../dist/dotnet/ManagedMemberInspector.js";
-import { inspectManagedNativeBoundariesBytes } from "../dist/dotnet/ManagedNativeBoundaryInspector.js";
-import { compareManagedMemberPaths } from "../dist/application/ManagedMemberComparisonService.js";
-import { verifyManagedNativeBoundariesEvidence } from "../dist/application/ManagedNativeVerificationService.js";
-import { importManagedReconstructionEvidence } from "../dist/application/ManagedReconstructionService.js";
-import { projectManagedApplicationGraphEvidence } from "../dist/application/ManagedApplicationGraphService.js";
-import { traceApplicationFeatureEvidence } from "../dist/application/javascript/JavaScriptApplicationWorkflowService.js";
-import { MANAGED_STATIC_PROVIDER } from "../dist/application/InvestigationProviders.js";
-import { createEvidence } from "../dist/domain/evidence.js";
+import { inspectManagedArtifactBytes } from "../../../dist/dotnet/ManagedArtifactInspector.js";
+import { inspectManagedMembersBytes } from "../../../dist/dotnet/ManagedMemberInspector.js";
+import { inspectManagedNativeBoundariesBytes } from "../../../dist/dotnet/ManagedNativeBoundaryInspector.js";
+import { compareManagedMemberPaths } from "../../../dist/application/managed/ManagedMemberComparisonService.js";
+import { verifyManagedNativeBoundariesEvidence } from "../../../dist/application/managed/ManagedNativeVerificationService.js";
+import { importManagedReconstructionEvidence } from "../../../dist/application/managed/ManagedReconstructionService.js";
+import { projectManagedApplicationGraphEvidence } from "../../../dist/application/managed/ManagedApplicationGraphService.js";
+import { traceApplicationFeatureEvidence } from "../../../dist/application/javascript/JavaScriptApplicationWorkflowService.js";
+import { MANAGED_STATIC_PROVIDER } from "../../../dist/application/InvestigationProviders.js";
+import { createEvidence } from "../../../dist/domain/evidence.js";
 import {
   alternateMvid,
   buildNativePeFixture,
-} from "./lib/managed-pe-fixture.mjs";
-import { createManagedConformanceSupport } from "./lib/managed-conformance-support.mjs";
+} from "../../fixtures/managed/pe.mjs";
+import { createManagedConformanceSupport } from "./support.mjs";
 import {
   comparisonLimits,
   defaultIlBody,
@@ -25,9 +25,12 @@ import {
   inspectionLimits,
   memberLimits,
   nativeBoundaryLimits,
-} from "./lib/managed-conformance-config.mjs";
-import { createManagedCompletionReport } from "./lib/managed-completion-report.mjs";
-import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+} from "./config.mjs";
+import { createManagedCompletionReport } from "./completion-report.mjs";
+import {
+  completeVerifierRun,
+  createVerifierRun,
+} from "../../lib/verifier-run.mjs";
 
 const verifierRun = createVerifierRun();
 const workspace = await mkdtemp(join(tmpdir(), "rea-managed-conformance-"));

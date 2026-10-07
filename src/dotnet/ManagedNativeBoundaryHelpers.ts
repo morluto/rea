@@ -3,7 +3,7 @@ import {
   managedNativeBoundaryInspectionSchema,
   type ManagedNativeBoundaryInspection,
   type ManagedParseIssue,
-} from "../domain/managedArtifact.js";
+} from "../domain/managed/managedArtifact.js";
 import { type ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
 import {
   metadataRowCursor,

@@ -1,7 +1,7 @@
 import { recordSessionEvidenceSources } from "../sessionEvidence.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 
-import { projectManagedApplicationGraphEvidence } from "../../application/ManagedApplicationGraphService.js";
+import { projectManagedApplicationGraphEvidence } from "../../application/managed/ManagedApplicationGraphService.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { toCallToolResult } from "../toolResult.js";

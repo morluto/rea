@@ -3,14 +3,14 @@ import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
 import type { BinarySessionPort } from "../application/binary/BinarySession.js";
-import { MANAGED_TOOL_CONTRACTS } from "../contracts/managedToolContracts.js";
+import { MANAGED_TOOL_CONTRACTS } from "../contracts/managed/managedToolContracts.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { err } from "../domain/result.js";
 import type { Logger } from "../logger.js";
 import { registerEvidenceTools } from "./registerEvidenceTools.js";
 import { runManagedProviderExecution } from "../application/DirectAnalysis.js";
-import { isManagedToolName } from "../contracts/managedToolContracts.js";
+import { isManagedToolName } from "../contracts/managed/managedToolContracts.js";
 
 /** Register execution-free managed PE/CLI inspection. */
 export const registerManagedTools = (

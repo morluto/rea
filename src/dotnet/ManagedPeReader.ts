@@ -1,4 +1,4 @@
-import type { ManagedParseIssue } from "../domain/managedArtifact.js";
+import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import {
   managedFailure,
   ManagedReaderFailure,

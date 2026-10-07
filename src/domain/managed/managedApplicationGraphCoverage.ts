@@ -1,4 +1,4 @@
-import type { ApplicationGraphEvidence } from "./javascript/javascriptApplicationGraph.js";
+import type { ApplicationGraphEvidence } from "../javascript/javascriptApplicationGraph.js";
 import type {
   ManagedArtifactInspection,
   ManagedMemberInspection,

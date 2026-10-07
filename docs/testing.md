@@ -61,6 +61,16 @@ needed, exercise the actual target through browser, Electron, or process
 capture. Real model trials are manual; Vitest covers deterministic evaluator
 logic.
 
+`verify:managed` runs the portable PE byte-fixture conformance entrypoint under
+`scripts/verify/managed/`, with its byte builder under
+`scripts/fixtures/managed/`. It checks static classification, members,
+reconstruction, native-boundary relationships and application graphs without
+executing fixture PE files. Operator-local manifests and actual ILSpy oracles
+remain optional, separately reported checks; the real Ghidra NativeAOT lane has
+its own toolchain prerequisites. See [the managed guide](managed-code-analysis.md)
+for those configurations. Generated completion-ledger checks use the same owning
+entrypoint and include its verifier/fixture files in their cache inputs.
+
 ## End-to-end, integration and golden evidence
 
 Full E2E tests invoke the production command dispatcher and real providers,

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
-import { compareManagedMembers } from "../../../../src/domain/managedMemberComparison.js";
+import { compareManagedMembers } from "../../../../src/domain/managed/managedMemberComparison.js";
 import { inspectManagedMembersBytes } from "../../../../src/dotnet/ManagedMemberInspector.js";
 import {
   buildManagedPeFixture,
