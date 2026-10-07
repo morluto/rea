@@ -125,10 +125,7 @@
         "id": "firmware",
         "surface": "firmware-provider",
         "count": 2,
-        "tools": [
-          "extract_firmware",
-          "inspect_firmware_regions"
-        ]
+        "tools": ["extract_firmware", "inspect_firmware_regions"]
       },
       {
         "id": "android",
@@ -236,9 +233,7 @@
       "id": "binwalk",
       "name": "Binwalk",
       "version": "3.1.0",
-      "capabilities": [
-        "inspect_firmware_regions"
-      ]
+      "capabilities": ["inspect_firmware_regions"]
     },
     {
       "id": "ghidra",
@@ -366,17 +361,13 @@
       "id": "rea-android-application",
       "name": "REA Android application workflows",
       "version": "1",
-      "capabilities": [
-        "project_android_application_graph"
-      ]
+      "capabilities": ["project_android_application_graph"]
     },
     {
       "id": "rea-apple-application",
       "name": "REA Apple application workflows",
       "version": "1",
-      "capabilities": [
-        "project_apple_application_graph"
-      ]
+      "capabilities": ["project_apple_application_graph"]
     },
     {
       "id": "rea-artifact-graph",
@@ -411,10 +402,7 @@
       "id": "rea-cdp-electron",
       "name": "REA Electron file-page CDP observation provider",
       "version": "1",
-      "capabilities": [
-        "inspect_electron_page",
-        "list_electron_targets"
-      ]
+      "capabilities": ["inspect_electron_page", "list_electron_targets"]
     },
     {
       "id": "rea-dotnet-static",
@@ -441,9 +429,7 @@
       "id": "rea-javascript-application",
       "name": "REA JavaScript application analyzer",
       "version": "1",
-      "capabilities": [
-        "analyze_javascript_application"
-      ]
+      "capabilities": ["analyze_javascript_application"]
     },
     {
       "id": "rea-javascript-application-workflows",
@@ -463,25 +449,19 @@
       "id": "rea-javascript-runtime-reconciliation",
       "name": "REA JavaScript runtime reconciliation",
       "version": "1",
-      "capabilities": [
-        "reconcile_javascript_runtime"
-      ]
+      "capabilities": ["reconcile_javascript_runtime"]
     },
     {
       "id": "rea-playwright-browser-scenario",
       "name": "REA Playwright browser scenario capture provider",
       "version": "1",
-      "capabilities": [
-        "capture_browser_scenario"
-      ]
+      "capabilities": ["capture_browser_scenario"]
     },
     {
       "id": "rea-playwright-electron-active",
       "name": "REA Playwright active Electron observation provider",
       "version": "1",
-      "capabilities": [
-        "capture_electron_scenario"
-      ]
+      "capabilities": ["capture_electron_scenario"]
     },
     {
       "id": "rea-v8-inspector",
@@ -506,17 +486,13 @@
       "id": "unblob",
       "name": "Unblob",
       "version": "26.6.4",
-      "capabilities": [
-        "extract_firmware"
-      ]
+      "capabilities": ["extract_firmware"]
     },
     {
       "id": "wakaru",
       "name": "Wakaru",
       "version": "1.13.0",
-      "capabilities": [
-        "recover_javascript_sources"
-      ]
+      "capabilities": ["recover_javascript_sources"]
     }
   ],
   "setup_clients": [
