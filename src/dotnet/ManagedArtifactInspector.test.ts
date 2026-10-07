@@ -77,7 +77,88 @@ describe("managed artifact inventory", () => {
     ]);
     expect(result.coverage).toMatchObject({ state: "complete", issues: [] });
   });
+});
 
+describe("managed artifact coded indexes", () => {
+  it("reports an invalid ManifestResource implementation while retaining the resource", () => {
+    const bytes = buildManagedPeFixture({ resourceImplementationRaw: 9 });
+    const target = managedPeFixtureTarget(bytes);
+    const result = inspectManagedArtifactBytes(bytes, target);
+    const boundaries = inspectManagedNativeBoundariesBytes(bytes, target);
+
+    expect(result.resources).toMatchObject([
+      {
+        name: "Fixture.resources",
+        implementation_token: null,
+        embedded: false,
+      },
+    ]);
+    expect(result.coverage).toMatchObject({
+      state: "partial",
+      issues: [
+        expect.objectContaining({
+          code: "invalid-row",
+          scope: "metadata.ManifestResource:0x28000001",
+          detail: expect.stringContaining(
+            "coded index 0x9 is invalid: coded index selects row 2 in table 35, which has 1 rows",
+          ),
+        }),
+      ],
+    });
+    expect(boundaries.coverage).toMatchObject({
+      state: "partial",
+      issues: [
+        expect.objectContaining({
+          scope: "metadata.ManifestResource:0x28000001",
+        }),
+      ],
+    });
+  });
+
+  it("reports an invalid CustomAttribute constructor coded index", () => {
+    const bytes = buildManagedPeFixture({ customAttributeTypeRaw: 19 });
+    const result = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.attributes).toEqual([]);
+    expect(result.coverage).toMatchObject({
+      state: "partial",
+      issues: [
+        expect.objectContaining({
+          code: "invalid-row",
+          scope: "metadata.CustomAttribute:0x0c000001",
+          detail: expect.stringContaining(
+            "coded index 0x13 is invalid: coded index selects row 2 in table 10, which has 1 rows",
+          ),
+        }),
+      ],
+    });
+  });
+
+  it("reports null for the required CustomAttribute constructor coded index", () => {
+    const bytes = buildManagedPeFixture({ customAttributeTypeRaw: 0 });
+    const result = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.attributes).toEqual([]);
+    expect(result.coverage).toMatchObject({
+      state: "partial",
+      issues: [
+        expect.objectContaining({
+          code: "invalid-row",
+          detail:
+            "CustomAttribute constructor coded index 0x0 is null, but Type must reference a MethodDef or MemberRef row",
+        }),
+      ],
+    });
+  });
+});
+
+describe("managed artifact reference inventory", () => {
   it("returns all references inline while classifying from the full inventory", () => {
     const bytes = buildManagedPeFixture({
       references: ["System.Runtime", "UnityEngine.CoreModule"],

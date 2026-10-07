@@ -71,8 +71,11 @@ describe("managed artifact failure classification", () => {
     );
     expect(members.coverage.issues.map(({ code }) => code)).toEqual(issueCodes);
     expect(boundaries.coverage).toMatchObject({
-      state: "complete",
-      issues: [],
+      state: "partial",
+      issues: [
+        expect.objectContaining({ code: "invalid-heap-index" }),
+        expect.objectContaining({ code: "invalid-row" }),
+      ],
     });
   });
 });

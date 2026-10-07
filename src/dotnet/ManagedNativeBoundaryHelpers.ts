@@ -8,6 +8,7 @@ import { type ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
 import {
   metadataRowCursor,
   metadataCodedToken,
+  metadataCodedTokenInvalidReason,
   metadataToken,
   readMetadataString,
 } from "./ManagedMetadataHeaps.js";
@@ -127,6 +128,7 @@ interface ParseImplMapsContext {
   readonly heapExtent: number;
   readonly modules: readonly ModuleRef[];
   readonly members: ReadonlyMap<string, MemberCore>;
+  readonly issues: ManagedParseIssue[];
 }
 
 export const parseImplMaps = ({
@@ -135,6 +137,7 @@ export const parseImplMaps = ({
   heapExtent,
   modules,
   members,
+  issues,
 }: ParseImplMapsContext): readonly NativeImport[] => {
   const moduleNames = new Map(modules.map((module) => [module.token, module]));
   const imports: NativeImport[] = [];
@@ -142,8 +145,28 @@ export const parseImplMaps = ({
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
     const cursor = metadataRowCursor(bytes, layout, 28, row);
     const mappingFlags = cursor.readUInt16();
+    const memberForwardedOffset = cursor.offset;
+    const memberForwardedRaw = cursor.readIndex(
+      layout.codedIndexSize("MemberForwarded"),
+    );
+    const memberForwardedReason = metadataCodedTokenInvalidReason(
+      memberForwardedRaw,
+      1,
+      [4, 6],
+      layout.rowCounts,
+    );
+    if (memberForwardedReason !== null || memberForwardedRaw === 0)
+      issues.push({
+        code: "invalid-row",
+        scope: `metadata.ImplMap:${metadataToken(28, row)}`,
+        offset: memberForwardedOffset,
+        detail:
+          memberForwardedReason === null
+            ? "ImplMap MemberForwarded coded index 0x0 is null, but the column must reference a MethodDef row"
+            : `ImplMap MemberForwarded coded index 0x${memberForwardedRaw.toString(16)} is invalid: ${memberForwardedReason}`,
+      });
     const memberToken = metadataCodedToken(
-      cursor.readIndex(layout.codedIndexSize("MemberForwarded")),
+      memberForwardedRaw,
       1,
       [4, 6],
       layout.rowCounts,

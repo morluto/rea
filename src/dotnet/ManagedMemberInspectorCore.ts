@@ -13,7 +13,7 @@ import {
 import {
   metadataRowCursor,
   metadataCodedToken,
-  metadataCodedTokenIsInvalid,
+  metadataCodedTokenInvalidReason,
   metadataToken,
   readMetadataString,
   sha256Bytes,
@@ -228,15 +228,18 @@ export const parseTypes = (
       methodStart,
       nextRange?.methodStart ?? 0,
     );
-    if (
-      metadataCodedTokenIsInvalid(extendsRaw, 2, [2, 1, 27], layout.rowCounts)
-    )
+    const extendsReason = metadataCodedTokenInvalidReason(
+      extendsRaw,
+      2,
+      [2, 1, 27],
+      layout.rowCounts,
+    );
+    if (extendsReason !== null)
       issues.push({
         code: "invalid-row",
         scope: `metadata.TypeDef:${metadataToken(2, row)}`,
         offset: cursor.start,
-        detail:
-          "TypeDef Extends coded index references a row outside its table",
+        detail: `TypeDef Extends coded index 0x${extendsRaw.toString(16)} is invalid: ${extendsReason}`,
       });
     items.push({
       token: metadataToken(2, row),

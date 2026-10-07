@@ -5,6 +5,7 @@ import type { BinaryTarget } from "../domain/binaryTarget.js";
 interface ManagedPeFixtureOptions {
   readonly cliFlags?: number;
   readonly corruptMetadataSignature?: boolean;
+  readonly customAttributeTypeRaw?: number;
   readonly extendsRaw?: number;
   readonly fieldName?: string;
   readonly fieldSignature?: Buffer;
@@ -18,11 +19,13 @@ interface ManagedPeFixtureOptions {
   readonly mvid?: Buffer;
   readonly pinvoke?: {
     readonly importName?: string;
+    readonly memberForwardedRaw?: number;
     readonly mappingFlags?: number;
     readonly moduleName?: string;
   };
   readonly readyToRun?: boolean;
   readonly references?: readonly string[];
+  readonly resourceImplementationRaw?: number;
   readonly resourceData?: Buffer;
   readonly targetFramework?: string;
   readonly typeName?: string;
@@ -268,10 +271,11 @@ const implMapRow = (
   stringSize: MetadataIndexSize,
   memberForwardedSize: MetadataIndexSize,
   moduleRefSize: MetadataIndexSize,
+  memberForwardedRaw: number,
 ): Buffer =>
   Buffer.concat([
     u16(mappingFlags),
-    metadataIndex((1 << 1) | 1, memberForwardedSize),
+    metadataIndex(memberForwardedRaw, memberForwardedSize),
     metadataIndex(importName, stringSize),
     metadataIndex(importScope, moduleRefSize),
   ]);
@@ -317,16 +321,27 @@ const assemblyRefRow = (
 
 const customAttributeRow = (
   value: number,
-  malformedParent: boolean,
+  options: ManagedPeFixtureOptions,
   parentIndexSize: 2 | 4,
   typeIndexSize: MetadataIndexSize,
   blobSize: MetadataIndexSize,
 ): Buffer =>
   Buffer.concat([
     parentIndexSize === 2
-      ? u16(malformedParent ? 0xffff : (1 << 5) | 14)
-      : u32(malformedParent ? 0xffff_ffff : (1 << 5) | 14),
-    metadataIndex((1 << 3) | 3, typeIndexSize),
+      ? u16(
+          options.malformedCustomAttributeRows?.includes(1)
+            ? 0xffff
+            : (1 << 5) | 14,
+        )
+      : u32(
+          options.malformedCustomAttributeRows?.includes(1)
+            ? 0xffff_ffff
+            : (1 << 5) | 14,
+        ),
+    metadataIndex(
+      options.customAttributeTypeRaw ?? (1 << 3) | 3,
+      typeIndexSize,
+    ),
     metadataIndex(value, blobSize),
   ]);
 
@@ -334,12 +349,13 @@ const manifestResourceRow = (
   name: number,
   stringSize: MetadataIndexSize,
   implementationSize: MetadataIndexSize,
+  implementationRaw: number,
 ): Buffer =>
   Buffer.concat([
     u32(0),
     u32(2),
     metadataIndex(name, stringSize),
-    metadataIndex(0, implementationSize),
+    metadataIndex(implementationRaw, implementationSize),
   ]);
 
 const fixedStringAttributeBlob = (value: string): Buffer => {
@@ -610,7 +626,7 @@ const fixtureMetadataRows = ({
       [
         customAttributeRow(
           indexes.attributeBlob,
-          options.malformedCustomAttributeRows?.includes(1) ?? false,
+          options,
           widths.hasCustomAttribute,
           widths.customAttributeType,
           heapSizes.blobs,
@@ -635,6 +651,7 @@ const fixtureMetadataRows = ({
                 heapSizes.strings,
                 widths.coded([4, 6], 1),
                 widths.table(26),
+                options.pinvoke?.memberForwardedRaw ?? (1 << 1) | 1,
               ),
             ],
           ],
@@ -662,6 +679,7 @@ const fixtureMetadataRows = ({
           indexes.resourceName,
           heapSizes.strings,
           widths.implementation,
+          options.resourceImplementationRaw ?? 0,
         ),
       ],
     ],

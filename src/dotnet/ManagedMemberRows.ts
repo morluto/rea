@@ -18,7 +18,7 @@ import {
   metadataToken,
   metadataRowCursor,
   metadataCodedToken,
-  metadataCodedTokenIsInvalid,
+  metadataCodedTokenInvalidReason,
   readMetadataBlob,
   readMetadataString,
 } from "./ManagedMetadataHeaps.js";
@@ -97,20 +97,21 @@ export const parseMemberRefs = (
       layout.blob.size,
     );
     const token = metadataToken(10, row);
-    if (
-      metadataCodedTokenIsInvalid(
-        parentRaw,
-        3,
-        [2, 1, 26, 6, 27],
-        layout.rowCounts,
-      )
-    )
+    const parentReason = metadataCodedTokenInvalidReason(
+      parentRaw,
+      3,
+      [2, 1, 26, 6, 27],
+      layout.rowCounts,
+    );
+    if (parentReason !== null || parentRaw === 0)
       issues.push({
         code: "invalid-row",
         scope: `metadata.MemberRef:${token}`,
         offset: cursor.start,
         detail:
-          "MemberRef parent coded index references a row outside its table",
+          parentReason === null
+            ? "MemberRef parent coded index 0x0 is null, but the Class column must reference a row"
+            : `MemberRef parent coded index 0x${parentRaw.toString(16)} is invalid: ${parentReason}`,
       });
     refs.push({
       token,

@@ -132,8 +132,9 @@ describe("managed member reference bounds", () => {
         {
           code: "invalid-row",
           scope: "metadata.TypeDef:0x02000001",
-          detail:
-            "TypeDef Extends coded index references a row outside its table",
+          detail: expect.stringContaining(
+            "TypeDef Extends coded index 0xc is invalid: coded index selects row 3 in table 2, which has 1 rows",
+          ),
         },
       ],
     });
@@ -157,9 +158,33 @@ describe("managed member reference bounds", () => {
         {
           code: "invalid-row",
           scope: "metadata.MemberRef:0x0a000001",
-          detail:
-            "MemberRef parent coded index references a row outside its table",
+          detail: expect.stringContaining(
+            "MemberRef parent coded index 0x28 is invalid: coded index selects row 5 in table 2, which has 1 rows",
+          ),
         },
+      ],
+    });
+  });
+
+  it("reports a null required MemberRef parent without dropping the reference", () => {
+    const bytes = buildManagedPeFixture({ memberRefParentRaw: 0 });
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.member_refs[0]).toMatchObject({
+      token: "0x0a000001",
+      parent_token: null,
+    });
+    expect(result.coverage).toMatchObject({
+      state: "partial",
+      issues: [
+        expect.objectContaining({
+          code: "invalid-row",
+          detail:
+            "MemberRef parent coded index 0x0 is null, but the Class column must reference a row",
+        }),
       ],
     });
   });

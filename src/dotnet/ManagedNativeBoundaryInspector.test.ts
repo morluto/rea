@@ -71,11 +71,71 @@ describe("managed native boundaries", () => {
       ready_to_run: true,
       mixed_mode_or_native_header: true,
     });
+    expect(result.coverage).toMatchObject({ state: "complete", issues: [] });
     expect(result.limitations).toContain(
       "P/Invoke rows prove managed import declarations only; this inspection does not verify that a native library, export, thunk, or provider-qualified function exists.",
     );
   });
+});
 
+describe("managed native boundary coded indexes", () => {
+  it("retains P/Invoke imports with an invalid MemberForwarded index as partial evidence", () => {
+    const bytes = buildManagedPeFixture({
+      pinvoke: { memberForwardedRaw: 5 },
+    });
+    const result = inspectManagedNativeBoundariesBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.pinvoke_imports).toMatchObject([
+      {
+        member_token: null,
+        member_kind: "unknown",
+        member_name: null,
+        import_name: "MessageBoxW",
+      },
+    ]);
+    expect(result.coverage).toMatchObject({
+      state: "partial",
+      issues: [
+        expect.objectContaining({
+          code: "invalid-row",
+          scope: "metadata.ImplMap:0x1c000001",
+          detail: expect.stringContaining(
+            "coded index 0x5 is invalid: coded index selects row 2 in table 6, which has 1 rows",
+          ),
+        }),
+      ],
+    });
+  });
+
+  it("reports null for the required MemberForwarded index", () => {
+    const bytes = buildManagedPeFixture({
+      pinvoke: { memberForwardedRaw: 0 },
+    });
+    const result = inspectManagedNativeBoundariesBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.pinvoke_imports).toMatchObject([
+      { member_token: null, member_kind: "unknown" },
+    ]);
+    expect(result.coverage).toMatchObject({
+      state: "partial",
+      issues: [
+        expect.objectContaining({
+          code: "invalid-row",
+          detail:
+            "ImplMap MemberForwarded coded index 0x0 is null, but the column must reference a MethodDef row",
+        }),
+      ],
+    });
+  });
+});
+
+describe("managed native boundary inspection", () => {
   it("returns complete member inventories inline and reports unavailable metadata", () => {
     const bytes = buildManagedPeFixture();
     const paged = inspectManagedMembersBytes(
