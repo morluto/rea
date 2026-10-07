@@ -1,13 +1,15 @@
 import { z } from "zod";
 
+import { isAbsoluteLocalPath } from "../domain/localPath.js";
+
 import { artifactComparisonInputSchema } from "../domain/artifactComparison.js";
 import { bundleComparisonInputSchema } from "../domain/bundleComparison.js";
 import { callPathInputSchema } from "../domain/callPath.js";
 import { changedBehaviorInputSchema } from "../domain/changedBehavior.js";
 import { functionComparisonInputSchema } from "../domain/functionComparison.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import { processScenarioSchema } from "../domain/processCapture.js";
-import { processTraceSpecificationSchema } from "../domain/processTraceComparison.js";
+import { processScenarioSchema } from "../domain/process/processCapture.js";
+import { processTraceSpecificationSchema } from "../domain/process/processTraceComparison.js";
 import { recordUnknownInputSchema } from "../domain/residualUnknown.js";
 import { reconstructionVerificationInputSchema } from "../domain/reconstructionVerification.js";
 import { staticRuntimeCorrelationInputSchema } from "../domain/staticRuntimeCorrelation.js";
@@ -36,7 +38,16 @@ export const addressContextInputSchema = z.strictObject({
 
 /** Session-owned Evidence bundle import options. */
 export const importEvidenceBundleInputSchema = z.strictObject({
-  path: z.string().min(1),
+  path: z
+    .string()
+    .min(1)
+    .refine(isAbsoluteLocalPath, {
+      message:
+        "path must be an absolute local filesystem path (for example /tmp/evidence.json or C:\\rea\\evidence.json)",
+    })
+    .describe(
+      "Absolute local filesystem path for the evidence bundle to import; relative paths are rejected.",
+    ),
 });
 
 /** Evidence references for deterministic process comparison. */

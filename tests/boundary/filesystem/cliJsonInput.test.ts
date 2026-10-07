@@ -1,9 +1,12 @@
 import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { parseCliJsonInput } from "../../../src/cliJsonInput.js";
+import {
+  parseCliJsonInput,
+  resolveCliJsonPaths,
+} from "../../../src/cliJsonInput.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("CLI JSON input", () => {
@@ -49,5 +52,43 @@ describe("CLI JSON input", () => {
       ok: false,
       error: { input_reason: "read-failed" },
     });
+  });
+});
+
+describe("resolveCliJsonPaths", () => {
+  it("resolves named relative fields against the operator working directory", () => {
+    expect(
+      resolveCliJsonPaths({ executable_path: "chrome" }, [["executable_path"]]),
+    ).toEqual({ executable_path: resolve("chrome") });
+    expect(isAbsolute(resolve("chrome"))).toBe(true);
+  });
+
+  it("leaves absolute fields unchanged", () => {
+    const value = { path: "/tmp/evidence.json" };
+    expect(resolveCliJsonPaths(value, [["path"]])).toEqual(value);
+  });
+
+  it("resolves nested key paths and preserves sibling fields", () => {
+    expect(
+      resolveCliJsonPaths(
+        {
+          browser: { mode: "launch", executable_path: "chrome" },
+          actions: [],
+        },
+        [["browser", "executable_path"]],
+      ),
+    ).toEqual({
+      browser: { mode: "launch", executable_path: resolve("chrome") },
+      actions: [],
+    });
+  });
+
+  it("passes through non-objects, missing keys, and non-string fields", () => {
+    expect(resolveCliJsonPaths(null, [["path"]])).toBe(null);
+    expect(resolveCliJsonPaths("text", [["path"]])).toBe("text");
+    expect(resolveCliJsonPaths({ other: 1 }, [["path"]])).toEqual({
+      other: 1,
+    });
+    expect(resolveCliJsonPaths({ path: 42 }, [["path"]])).toEqual({ path: 42 });
   });
 });

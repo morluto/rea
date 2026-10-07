@@ -1,4 +1,4 @@
-import type { EvidenceProvider } from "./evidence.js";
+import type { EvidenceProvider } from "../evidence.js";
 
 /** Canonical provider identity for controlled process capture Evidence. */
 export const PROCESS_PROVIDER = {

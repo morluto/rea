@@ -6,12 +6,12 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type { AnalysisClient } from "../../../src/application/AnalysisProvider.js";
-import { compareProcessEvidenceFiles } from "../../../src/application/ProcessCli.js";
-import { PROCESS_PROVIDER } from "../../../src/application/ProcessEvidence.js";
-import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/contracts/processCaptureExample.js";
+import { compareProcessEvidenceFiles } from "../../../src/application/process/ProcessCli.js";
+import { PROCESS_PROVIDER } from "../../../src/application/process/ProcessEvidence.js";
+import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/contracts/process/processCaptureExample.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
-import type { ProcessTraceSpecification } from "../../../src/domain/processTraceComparison.js";
+import type { ProcessTraceSpecification } from "../../../src/domain/process/processTraceComparison.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";

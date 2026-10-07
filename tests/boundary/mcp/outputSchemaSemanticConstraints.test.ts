@@ -8,14 +8,14 @@ import { z } from "zod";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { MANAGED_NATIVE_VERIFICATION_EXAMPLE } from "../../../src/contracts/managed/managedWorkflowExamples.js";
-import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/processCaptureExample.js";
+import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
 import {
   managedNativeVerificationInputSchema,
   managedNativeVerificationResultSchema,
   verifyManagedNativeBoundaries,
 } from "../../../src/domain/managed/managedNativeVerification.js";
 import { nativeUiResultSchema } from "../../../src/domain/native/nativeUiObservation.js";
-import { processCaptureSchema } from "../../../src/domain/processCapture.js";
+import { processCaptureSchema } from "../../../src/domain/process/processCapture.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 
 const record = (value: unknown): Record<string, unknown> => {

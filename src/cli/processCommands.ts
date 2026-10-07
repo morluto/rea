@@ -4,7 +4,7 @@ import {
   captureProcessScenarioFile,
   compareProcessEvidenceFiles,
   isProcessCliFailure,
-} from "../application/ProcessCli.js";
+} from "../application/process/ProcessCli.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "../logger.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";

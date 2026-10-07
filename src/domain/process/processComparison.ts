@@ -2,7 +2,7 @@ import canonicalize from "canonicalize";
 import { z } from "zod";
 
 import type { ProcessCapture } from "./processCapture.js";
-import { jsonValueSchema } from "./jsonValue.js";
+import { jsonValueSchema } from "../jsonValue.js";
 import {
   compareProcessTraces,
   processTraceOutcomesDiffer,

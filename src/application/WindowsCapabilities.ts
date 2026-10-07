@@ -10,7 +10,7 @@ import {
 import {
   probeProcessCaptureCapability,
   type ProcessCaptureCapability,
-} from "./ProcessCaptureCapability.js";
+} from "../process/capture/ProcessCaptureCapability.js";
 
 /** One named Windows host observation without inferred authority. */
 export type WindowsCapabilityOutcome =

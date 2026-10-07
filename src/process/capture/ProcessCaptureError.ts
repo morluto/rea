@@ -1,4 +1,4 @@
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
 
 interface ProcessCaptureErrorOptions extends ErrorOptions {
   readonly userMessage?: string;

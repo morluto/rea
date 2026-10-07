@@ -1,4 +1,4 @@
-import type { JsonValue } from "./jsonValue.js";
+import type { JsonValue } from "../jsonValue.js";
 import { digestProcessCommitment } from "./processCapture.js";
 
 const normalization = {

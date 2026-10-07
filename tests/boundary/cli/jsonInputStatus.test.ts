@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect } from "vitest";
@@ -171,6 +171,73 @@ describe("compiled CLI JSON input failure status", () => {
         input_reason: "read-failed",
       });
       expect(result.exitCode).toBe(1);
+    },
+  );
+});
+
+describe("compiled CLI JSON path ambiguity", () => {
+  cliTest(
+    "classifies malformed inline JSON when a path prefix is a regular file",
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-cli-json-not-dir-");
+      await writeFile(join(root, "[prefix"), "regular file");
+      const input = "[prefix/rest";
+      const result = await cli.run({
+        arguments: ["capture-browser-scenario", input, "--json"],
+        cwd: root,
+        environment: {
+          HOME: root,
+          XDG_CONFIG_HOME: root,
+          XDG_CACHE_HOME: root,
+        },
+      });
+
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        category: "invalid_input",
+        details: {
+          operation: "capture_browser_scenario",
+          issues: [{ path: [], reason: "invalid_format", expected: "JSON" }],
+        },
+      });
+      expect(result.json).not.toHaveProperty("input_path");
+      expect(result.stdout).not.toContain("read-failed");
+      expect(result.stderr).toBe("");
+      expect(result.exitCode).toBe(1);
+    },
+  );
+
+  cliTest.runIf(process.platform !== "win32" && process.getuid?.() !== 0)(
+    "preserves permission errors for malformed path-like JSON input",
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-cli-json-denied-");
+      const denied = join(root, "[locked");
+      const input = "[locked/rest";
+      await mkdir(denied);
+      await chmod(denied, 0);
+      try {
+        await expect(readFile(join(root, input))).rejects.toMatchObject({
+          code: "EACCES",
+        });
+        const result = await cli.run({
+          arguments: ["capture-browser-scenario", input, "--json"],
+          cwd: root,
+          environment: {
+            HOME: root,
+            XDG_CONFIG_HOME: root,
+            XDG_CACHE_HOME: root,
+          },
+        });
+
+        expect(result.json).toMatchObject({
+          code: "invalid_request",
+          input_path: input,
+          input_reason: "read-failed",
+        });
+        expect(result.exitCode).toBe(1);
+      } finally {
+        await chmod(denied, 0o700);
+      }
     },
   );
 });

@@ -1,10 +1,10 @@
 import { expect, it } from "vitest";
 
-import { emptyUnverifiedProcessCapture } from "../domain/processCapture.fixture.js";
-import { parseProcessCapture } from "../domain/processCapture.js";
-import { parseProcessScenario } from "../domain/processScenario.js";
-import { createProcessCaptureEvidence } from "./ProcessEvidence.js";
-import { observeSettlement } from "./ProcessCaptureLifecycle.js";
+import { emptyUnverifiedProcessCapture } from "../../../src/domain/process/processCapture.fixture.js";
+import { parseProcessCapture } from "../../../src/domain/process/processCapture.js";
+import { parseProcessScenario } from "../../../src/domain/process/processScenario.js";
+import { createProcessCaptureEvidence } from "../../../src/application/process/ProcessEvidence.js";
+import { observeSettlement } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 
 it("stamps process Evidence from the capture manifest host", () => {
   const scenario = parseProcessScenario({

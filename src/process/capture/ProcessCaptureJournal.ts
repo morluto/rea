@@ -5,7 +5,7 @@ import type {
   ProcessCaptureEventJournalEntry,
   ProcessScenario,
   RecordProcessCaptureEvent,
-} from "../domain/processCapture.js";
+} from "../../domain/process/processCapture.js";
 import {
   normalizeProcessElapsedTime,
   normalizeProcessText,

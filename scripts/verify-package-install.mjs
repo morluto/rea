@@ -31,7 +31,7 @@ export async function verifyPackageInstall({
   const processCaptureCapabilityUrl = pathToFileURL(
     join(
       prefix,
-      "lib/node_modules/rea-agents/dist/application/ProcessCaptureCapability.js",
+      "lib/node_modules/rea-agents/dist/process/capture/ProcessCaptureCapability.js",
     ),
   ).href;
   const processCaptureCapability = json(
@@ -77,7 +77,7 @@ export async function verifyPackageInstall({
   const noOptionalCapabilityUrl = pathToFileURL(
     join(
       noOptionalPrefix,
-      "lib/node_modules/rea-agents/dist/application/ProcessCaptureCapability.js",
+      "lib/node_modules/rea-agents/dist/process/capture/ProcessCaptureCapability.js",
     ),
   ).href;
   const noOptionalCapability = json(

@@ -1,7 +1,7 @@
 import canonicalize from "canonicalize";
 import { z } from "zod";
 
-import { jsonValueSchema } from "./jsonValue.js";
+import { jsonValueSchema } from "../jsonValue.js";
 import {
   comparableProcessObservationPayload,
   processObservationSourceSchema,
