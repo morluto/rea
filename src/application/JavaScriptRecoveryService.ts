@@ -1,3 +1,5 @@
+import { isAbsolute } from "node:path";
+
 import {
   AnalysisCancelledError,
   AnalysisInputError,
@@ -35,6 +37,21 @@ export class JavaScriptRecoveryService {
           OPERATION,
           { cause: parsed.error },
           projectInputIssues(parsed.error.issues, input),
+        ),
+      );
+    const invalidPaths = (["path", "output_directory"] as const).filter(
+      (field) => !isAbsolute(parsed.data[field]),
+    );
+    if (invalidPaths.length > 0)
+      return err(
+        new AnalysisInputError(
+          OPERATION,
+          undefined,
+          invalidPaths.map((field) => ({
+            path: [field],
+            reason: "invalid_format",
+            message: `${field} must be an absolute filesystem path on this host.`,
+          })),
         ),
       );
     const execution = await this.provider.recover(parsed.data, options);

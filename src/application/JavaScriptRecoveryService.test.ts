@@ -115,6 +115,34 @@ describe("JavaScript recovery workflow", () => {
     if (result.ok) throw new Error("expected invalid port output");
     expect(result.error._tag).toBe("AnalysisOutputError");
   });
+  it.each(["path", "output_directory"])(
+    "rejects relative %s before acquiring the recovery engine",
+    async (field) => {
+      let invoked = false;
+      const service = new JavaScriptRecoveryService({
+        recover: async () => {
+          invoked = true;
+          return err(
+            new AnalysisCapabilityUnavailableError(
+              "fixture",
+              "recover_javascript_sources",
+              "engine missing",
+            ),
+          );
+        },
+      });
+      const result = await service.recover({
+        ...input,
+        [field]: "relative.js",
+      });
+      expect(invoked).toBe(false);
+      if (result.ok) throw new Error("expected invalid path");
+      expect(result.error._tag).toBe("AnalysisInputError");
+      expect(result.error).toMatchObject({
+        issues: [{ path: [field], reason: "invalid_format" }],
+      });
+    },
+  );
   it("rejects malformed and pre-cancelled input before acquiring the port", async () => {
     const service = new JavaScriptRecoveryService({
       recover: async () => {

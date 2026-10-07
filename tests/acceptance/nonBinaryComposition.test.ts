@@ -123,3 +123,46 @@ cliTest(
     );
   },
 );
+
+cliTest(
+  "returns recovery path diagnostics before missing-engine errors in CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-recovery-path-parity-");
+    const environment = {
+      REA_LOG_LEVEL: "silent",
+      REA_WAKARU_COMMAND: "relative-unavailable-tool",
+    };
+    const client = await connect(environment);
+    for (const field of ["path", "output_directory"] as const) {
+      const input = {
+        path: join(root, "bundle.js"),
+        output_directory: join(root, "output"),
+        [field]: "relative.js",
+      };
+      const result = await cli.run({
+        arguments: [
+          "recover-javascript-sources",
+          input.path,
+          input.output_directory,
+          "--json",
+        ],
+        environment,
+        timeoutMs: 10_000,
+      });
+      const response = await client.callTool({
+        name: "recover_javascript_sources",
+        arguments: input,
+      });
+      expect(result.exitCode).toBe(1);
+      expect(response.isError).toBe(true);
+      expect(response.structuredContent).toEqual({ error: result.json });
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "recover_javascript_sources",
+          issues: [{ path: [field], reason: "invalid_format" }],
+        },
+      });
+    }
+  },
+);
