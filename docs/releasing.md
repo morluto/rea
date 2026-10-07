@@ -95,11 +95,27 @@ A GitHub tag alone does not establish npm or MCP Registry publication.
 
 ## 4. Sync metadata back to main
 
+Post-release synchronization is part of completing the release. Finish it
+before cutting the next checkpoint; otherwise main retains the previous
+release baseline and can propose an already-published version again.
+
 After publication, open a PR from the release branch back to main. Preserve
 main's later implementation changes and resolve generated-file conflicts by
 regenerating from the combined contracts with the released package version.
 Review and test this synchronization PR, then use a merge commit so the release
 tag remains in main's ancestry. Keep the released tag unchanged.
+
+The synchronization must include `.release-please-manifest.json`,
+`package.json`, both root versions in `package-lock.json`, `CHANGELOG.md`,
+`server.json`, and the versioned documentation examples. Run
+`npm run docs:generate`, `npm run docs:check`, and the release configuration
+tests against the combined tree. After the merge, verify that the released
+tag is an ancestor of main:
+
+```bash
+git fetch origin main --tags
+git merge-base --is-ancestor rea-agents-5.0.0 origin/main
+```
 
 Close any superseded rolling release PR. Future releases repeat the checkpoint
 procedure from main; never resume automatic release-PR refreshes on main pushes.

@@ -54,7 +54,7 @@ describe("direct analysis snapshot files", () => {
     });
   });
 
-  it("replays a cache hit from the supplied path without root configuration", async () => {
+  it("does not replay unbound historical Evidence from a supplied snapshot", async () => {
     const directory = await createTestTempDirectory("rea-direct-snapshot-");
     const snapshotPath = join(directory, "analysis.json");
     const launcherPath = join(directory, "hopper-launcher");
@@ -97,6 +97,6 @@ describe("direct analysis snapshot files", () => {
           snapshotPath,
         },
       ),
-    ).resolves.toEqual(evidence);
+    ).resolves.not.toEqual(evidence);
   });
 });
