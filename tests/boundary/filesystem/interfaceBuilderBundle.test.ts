@@ -13,6 +13,57 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const compile = promisify(execFile);
 
+type PlistValue =
+  | string
+  | number
+  | boolean
+  | Date
+  | Uint8Array
+  | PlistValue[]
+  | { [key: string]: PlistValue }
+  | null;
+
+const keyedArchiveHierarchy = (
+  nodes: readonly {
+    readonly id: string;
+    readonly children: readonly number[];
+  }[],
+) => {
+  const nodeClass = 1 + nodes.length * 2;
+  const arrayClass = nodeClass + 1;
+  const objects: PlistValue[] = Array.from(
+    { length: arrayClass + 1 },
+    () => null,
+  );
+  objects[0] = "$null";
+  for (const [index, node] of nodes.entries()) {
+    const nodeUid = 1 + index * 2;
+    objects[nodeUid] = {
+      $class: { UID: nodeClass },
+      objectID: node.id,
+      children: { UID: nodeUid + 1 },
+    };
+    objects[nodeUid + 1] = {
+      $class: { UID: arrayClass },
+      "NS.objects": node.children.map((child) => ({ UID: 1 + child * 2 })),
+    };
+  }
+  objects[nodeClass] = {
+    $classname: "FixtureHierarchyNode",
+    $classes: ["FixtureHierarchyNode", "NSObject"],
+  };
+  objects[arrayClass] = {
+    $classname: "__NSArrayI",
+    $classes: ["__NSArrayI", "NSArray", "NSObject"],
+  };
+  return buildBinary({
+    $archiver: "NSKeyedArchiver",
+    $version: 100000,
+    $objects: objects,
+    $top: { root: { UID: 1 } },
+  });
+};
+
 describe("compiled Interface Builder bundle reader", () => {
   it("reads nib plist archives and reports provenance", async () => {
     const root = await createTestTempDirectory("rea-ib-test-");
@@ -149,7 +200,118 @@ describe("compiled Interface Builder bundle reader", () => {
       },
     ]);
   });
+});
 
+describe("keyed archive hierarchy coverage", () => {
+  it("projects a deep keyed-archive hierarchy through NSArray wrappers", async () => {
+    const root = await createTestTempDirectory("rea-ib-test-");
+    const bundle = join(root, "Example.app");
+    const resources = join(bundle, "Contents", "Resources");
+    await mkdir(resources, { recursive: true });
+    const nodes = Array.from({ length: 40 }, (_, index) => ({
+      id: `view-${index}`,
+      children: index === 39 ? [] : [index + 1],
+    }));
+    await writeFile(join(resources, "Deep.nib"), keyedArchiveHierarchy(nodes));
+
+    const analysis = await analyzeInterfaceBuilderBundle({
+      bundlePath: bundle,
+      targetSha256: "f".repeat(64),
+    });
+
+    expect(analysis.documents[0]?.hierarchy_complete).toBe(true);
+    expect(analysis.graph.truncated).toBe(false);
+    expect(analysis.graph.coverage).toContainEqual(
+      expect.objectContaining({
+        facet: "hierarchy:Contents/Resources/Deep.nib",
+        status: "complete",
+        omitted: 0,
+      }),
+    );
+    expect(
+      analysis.graph.edges.filter(
+        ({ relation, id }) =>
+          relation === "contains" && id.includes(":hierarchy:"),
+      ),
+    ).toHaveLength(40);
+  });
+
+  it("preserves source order for children in an archived collection", async () => {
+    const root = await createTestTempDirectory("rea-ib-test-");
+    const bundle = join(root, "Example.app");
+    const resources = join(bundle, "Contents", "Resources");
+    await mkdir(resources, { recursive: true });
+    await writeFile(
+      join(resources, "Branching.nib"),
+      keyedArchiveHierarchy([
+        { id: "root", children: [1, 2] },
+        { id: "first", children: [] },
+        { id: "second", children: [] },
+      ]),
+    );
+
+    const analysis = await analyzeInterfaceBuilderBundle({
+      bundlePath: bundle,
+      targetSha256: "e".repeat(64),
+    });
+    const archiveIdsByNodeId = new Map(
+      analysis.graph.nodes.map(({ id, attributes }) => [
+        id,
+        attributes.interface_builder_object_id,
+      ]),
+    );
+    const rootId = analysis.graph.nodes.find(
+      ({ attributes }) => attributes.interface_builder_object_id === "root",
+    )?.id;
+    const childNames = analysis.graph.edges
+      .filter(
+        ({ from, relation, id }) =>
+          from === rootId &&
+          relation === "contains" &&
+          id.includes(":hierarchy:"),
+      )
+      .map(({ to }) => (to === null ? null : archiveIdsByNodeId.get(to)));
+    expect(childNames).toEqual(["first", "second"]);
+  });
+
+  it.skipIf(process.platform !== "darwin")(
+    "projects a deep NSView archive produced by Foundation NSKeyedArchiver",
+    async () => {
+      const root = await createTestTempDirectory("rea-ib-test-");
+      const bundle = join(root, "Example.app");
+      const resources = join(bundle, "Contents", "Resources");
+      await mkdir(resources, { recursive: true });
+      const archive = join(resources, "Foundation.nib");
+      await compile("/usr/bin/xcrun", [
+        "swift",
+        "tests/conformance/native/keyed-archive-hierarchy.swift",
+        archive,
+        "40",
+      ]);
+
+      const analysis = await analyzeInterfaceBuilderBundle({
+        bundlePath: bundle,
+        targetSha256: "d".repeat(64),
+      });
+      expect(analysis.documents[0]?.hierarchy_complete).toBe(true);
+      expect(analysis.graph.truncated).toBe(false);
+      expect(
+        analysis.graph.coverage.find(
+          ({ facet }) =>
+            facet === "hierarchy:Contents/Resources/Foundation.nib",
+        ),
+      ).toMatchObject({ status: "complete", examined: 41, omitted: 0 });
+      expect(
+        analysis.graph.edges.filter(
+          ({ relation, id }) =>
+            relation === "contains" && id.includes(":hierarchy:"),
+        ),
+      ).toHaveLength(41);
+    },
+  );
+});
+
+describe("compiled Interface Builder bundle reader cancellation", () => {
   it("honors cancellation during directory traversal", async () => {
     const root = await createTestTempDirectory("rea-ib-test-");
     const controller = new AbortController();

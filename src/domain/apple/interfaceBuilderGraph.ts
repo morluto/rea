@@ -202,53 +202,66 @@ export const buildInterfaceBuilderAnalysis = (input: {
     };
     let hierarchyCount = 0;
     let hierarchyTruncated = false;
-    const visitHierarchy = (value: unknown, parentId: string): void => {
-      if (hierarchyCount >= input.limits.max_objects) {
-        truncated = true;
-        hierarchyTruncated = true;
-        return;
-      }
-      if (Array.isArray(value)) {
-        for (const child of value) visitHierarchy(child, parentId);
-        return;
-      }
-      if (typeof value !== "object" || value === null) return;
-      const item = record(value);
-      const objectId = firstString(
-        item.objectID,
-        item["object-id"],
-        item.id,
-        typeof item.archiveUID === "number" ? String(item.archiveUID) : null,
-      );
-      let nextParent = parentId;
-      if (objectId !== null) {
-        const known = objectIds.has(objectId);
-        const childId = known
-          ? objectNodeId(objectId)
-          : `${prefix}unknown:${objectId}`;
-        if (
-          !known &&
-          !addNode({
-            id: childId,
-            kind: "unknown",
-            name: firstString(item.label, item.name) ?? objectId,
-            location: null,
-            attributes: { interface_builder_object_id: objectId },
-            evidence: evidenceFor(`hierarchy item ${objectId}`),
-          })
-        )
+    const visitHierarchy = (
+      initial: unknown,
+      initialParentId: string,
+    ): void => {
+      const pending: { readonly value: unknown; readonly parentId: string }[] =
+        [{ value: initial, parentId: initialParentId }];
+      while (pending.length > 0) {
+        if (hierarchyCount >= input.limits.max_objects) {
+          truncated = true;
           hierarchyTruncated = true;
-        connect(
-          `${prefix}hierarchy:${parentId}:${childId}`,
-          parentId,
-          childId,
-          "contains",
-          `hierarchy ${objectId}`,
+          return;
+        }
+        const entry = pending.pop();
+        if (entry === undefined) break;
+        const { value, parentId } = entry;
+        if (Array.isArray(value)) {
+          for (let index = value.length - 1; index >= 0; index -= 1) {
+            const child = value[index];
+            if (child !== undefined) pending.push({ value: child, parentId });
+          }
+          continue;
+        }
+        if (typeof value !== "object" || value === null) continue;
+        const item = record(value);
+        const objectId = firstString(
+          item.objectID,
+          item["object-id"],
+          item.id,
+          typeof item.archiveUID === "number" ? String(item.archiveUID) : null,
         );
-        nextParent = childId;
-        hierarchyCount += 1;
+        let nextParent = parentId;
+        if (objectId !== null) {
+          const known = objectIds.has(objectId);
+          const childId = known
+            ? objectNodeId(objectId)
+            : `${prefix}unknown:${objectId}`;
+          if (
+            !known &&
+            !addNode({
+              id: childId,
+              kind: "unknown",
+              name: firstString(item.label, item.name) ?? objectId,
+              location: null,
+              attributes: { interface_builder_object_id: objectId },
+              evidence: evidenceFor(`hierarchy item ${objectId}`),
+            })
+          )
+            hierarchyTruncated = true;
+          connect(
+            `${prefix}hierarchy:${parentId}:${childId}`,
+            parentId,
+            childId,
+            "contains",
+            `hierarchy ${objectId}`,
+          );
+          nextParent = childId;
+          hierarchyCount += 1;
+        }
+        pending.push({ value: item.children, parentId: nextParent });
       }
-      visitHierarchy(item.children, nextParent);
     };
     for (const hierarchy of parsed.hierarchy) visitHierarchy(hierarchy, rootId);
     for (const [index, item] of parsed.connections
