@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { JsonValue } from "./jsonValue.js";
+import type { JsonValue } from "../jsonValue.js";
 import type { ProcessCapture } from "./processCapture.js";
 import {
   processObservationLocationSchema,

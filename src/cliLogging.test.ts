@@ -24,7 +24,7 @@ import {
   type UninstallHost,
 } from "./application/Uninstall.js";
 import { CLI_COMMANDS } from "./cliCommandNames.js";
-import { isProcessCliFailure } from "./application/ProcessCli.js";
+import { isProcessCliFailure } from "./application/process/ProcessCli.js";
 
 describe("CLI operation status classification", () => {
   it.each([

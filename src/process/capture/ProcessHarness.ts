@@ -8,11 +8,11 @@ import type {
   ProcessScenario,
   RecordProcessCaptureEvent,
   TerminalFrame,
-} from "../domain/processCapture.js";
-import { parseProcessCapture } from "../domain/processCapture.js";
-import { err, ok, type Result } from "../domain/result.js";
-import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
-import { type AnalysisError } from "../domain/analysisErrorBase.js";
+} from "../../domain/process/processCapture.js";
+import { parseProcessCapture } from "../../domain/process/processCapture.js";
+import { err, ok, type Result } from "../../domain/result.js";
+import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
+import { type AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   ProcessCaptureError,
   processCaptureCancelled,
@@ -23,7 +23,7 @@ import { snapshotRoots } from "./FilesystemSnapshot.js";
 import { TerminalRenderer } from "./TerminalRenderer.js";
 import type { ProcessTimer } from "./ProcessTimer.js";
 import { normalizeProcessText } from "./ProcessNormalization.js";
-import { selectCapturedProcessGroupIds } from "../process/ProcessOwnershipProcessTree.js";
+import { selectCapturedProcessGroupIds } from "../ProcessOwnershipProcessTree.js";
 import {
   awaitTerminalExit,
   buildCaptureResult,

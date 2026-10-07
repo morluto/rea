@@ -10,8 +10,8 @@ import {
   parseProcessCapture,
   parseProcessScenario,
   type ProcessCapture,
-} from "../domain/processCapture.js";
-import { emptyProcessCapture as emptyCapture } from "../domain/processCapture.fixture.js";
+} from "../../domain/process/processCapture.js";
+import { emptyProcessCapture as emptyCapture } from "../../domain/process/processCapture.fixture.js";
 
 const base = {
   executable: "/bin/sh",

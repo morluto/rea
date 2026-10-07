@@ -6,7 +6,7 @@ import { z } from "zod";
 
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import { emptyArraySchema } from "../../../src/domain/emptyArraySchema.js";
-import { processScenarioSchema } from "../../../src/domain/processScenario.js";
+import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import { GENERATED_MCP_TOOL_CATALOG } from "../../../src/generatedMcpToolCatalog.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 

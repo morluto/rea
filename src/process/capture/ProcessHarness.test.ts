@@ -1,11 +1,11 @@
 import { expect, it } from "vitest";
-import { processScenarioSchema } from "../domain/processScenario.js";
-import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
+import { processScenarioSchema } from "../../domain/process/processScenario.js";
+import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import { captureProcessScenario } from "./ProcessHarness.js";
 import { settleProcessCaptureJournal } from "./ProcessCaptureLifecycle.js";
-import { processCaptureSchema } from "../domain/processCapture.js";
-import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../domain/processCapture.fixture.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { processCaptureSchema } from "../../domain/process/processCapture.js";
+import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../domain/process/processCapture.fixture.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 
 it("rejects legacy replay output instead of silently discarding it", () => {
   expect(

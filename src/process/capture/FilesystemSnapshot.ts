@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import { lstat, open, readdir, readlink } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
-import type { FileState, ProcessScenario } from "../domain/processCapture.js";
+import type {
+  FileState,
+  ProcessScenario,
+} from "../../domain/process/processCapture.js";
 import type { Stats } from "node:fs";
 
 export interface SnapshotResult {

@@ -58,8 +58,13 @@ it("rejects a same-size rewrite even when its modification time is restored", as
     await writeFile(path, "before\n");
     await utimes(path, fixedMtime, fixedMtime);
     const expected = await lstat(path);
-    await writeFile(path, "after!\n");
-    await utimes(path, fixedMtime, fixedMtime);
+    await expect
+      .poll(async () => {
+        await writeFile(path, "after!\n");
+        await utimes(path, fixedMtime, fixedMtime);
+        return (await lstat(path)).ctimeMs;
+      })
+      .not.toBe(expected.ctimeMs);
     const rewritten = await lstat(path);
 
     expect(rewritten).toMatchObject({

@@ -1,18 +1,18 @@
 import { readFile } from "node:fs/promises";
 
-import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { createEvidence, parseEvidence } from "../domain/evidence.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
-import { projectInputIssues } from "../domain/inputIssueProjection.js";
-import { processTraceSpecificationSchema } from "../domain/processTraceComparison.js";
-import { processScenarioSchema } from "../domain/processScenario.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { createEvidence, parseEvidence } from "../../domain/evidence.js";
+import { jsonValueSchema } from "../../domain/jsonValue.js";
+import { projectInputIssues } from "../../domain/inputIssueProjection.js";
+import { processTraceSpecificationSchema } from "../../domain/process/processTraceComparison.js";
+import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import {
   compareProcessCaptures,
   parseProcessCapture,
-} from "../domain/processCapture.js";
-import { captureProcessScenario } from "./ProcessHarness.js";
+} from "../../domain/process/processCapture.js";
+import { captureProcessScenario } from "../../process/capture/ProcessHarness.js";
 import {
   PROCESS_PROVIDER,
   createProcessCaptureEvidence,
