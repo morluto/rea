@@ -13,11 +13,15 @@ export interface HopperResponseStreamOptions {
 /** Incrementally validates Hopper NDJSON response frames. */
 export class HopperResponseStream {
   #buffer = "";
+  #fragments: string[] = [];
 
   constructor(readonly options: HopperResponseStreamOptions) {}
 
   push(chunk: string): void {
-    this.#buffer += chunk;
+    this.#fragments.push(chunk);
+    if (!chunk.includes("\n")) return;
+    this.#buffer += this.#fragments.join("");
+    this.#fragments = [];
     let newline = this.#buffer.indexOf("\n");
     while (newline >= 0) {
       const line = this.#buffer.slice(0, newline).trim();
@@ -29,6 +33,7 @@ export class HopperResponseStream {
 
   reset(): void {
     this.#buffer = "";
+    this.#fragments = [];
   }
 
   #acceptLine(line: string): boolean {
