@@ -22,7 +22,7 @@
           ><span class="brand-caption">Reverse Engineer Anything</span></a
         >
         <nav class="navigation" aria-label="Main navigation">
-          <a href="../showcase/dx-ball/">DX-Ball</a
+          <a href="../showcase/">Showcases</a
           ><a class="nav-start" href="./" aria-current="page">Get started</a
           ><a href="../guides/">Guides</a
           ><a href="https://github.com/morluto/rea">GitHub</a>
@@ -59,20 +59,48 @@
               include Claude Code, Codex, Cursor, Gemini CLI, Windsurf and other
               supported MCP clients.
             </p>
-            <div class="code-block">
-              <div class="code-header">
-                <span>Terminal</span
-                ><button
+            <div class="agent-terminal">
+              <div class="terminal-header">
+                <span class="terminal-title"
+                  ><span class="terminal-dots" aria-hidden="true"
+                    ><i></i><i></i><i></i></span
+                  >Your coding agent</span
+                >
+                <button
                   class="copy-button"
                   type="button"
-                  data-copy="agent-setup"
-                  aria-label="Copy agent setup command"
+                  data-copy="agent-install-prompt"
+                  aria-label="Copy REA installation prompt"
                 >
                   Copy
                 </button>
               </div>
-              <pre><code id="agent-setup">npx rea-agents@latest setup</code></pre>
+              <p class="terminal-prompt">
+                <span class="prompt-symbol" aria-hidden="true">›</span
+                ><span id="agent-install-prompt"
+                  >Install REA and connect it to this coding agent using npx
+                  rea-agents@latest setup. Show me the setup plan for approval,
+                  then verify the installation.</span
+                ><span class="terminal-cursor" aria-hidden="true"></span>
+              </p>
             </div>
+            <details class="evidence-details">
+              <summary>Or run setup yourself</summary>
+              <div class="code-block">
+                <div class="code-header">
+                  <span>Terminal</span
+                  ><button
+                    class="copy-button"
+                    type="button"
+                    data-copy="agent-setup"
+                    aria-label="Copy agent setup command"
+                  >
+                    Copy
+                  </button>
+                </div>
+                <pre><code id="agent-setup">npx rea-agents@latest setup</code></pre>
+              </div>
+            </details>
             <p>
               Choose your client and review the setup plan. REA adds its MCP
               connection and the matching investigation skill, keeping a backup
