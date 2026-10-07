@@ -138,7 +138,7 @@ rea setup
 ### 系统要求
 
 - macOS 12 或更高版本
-- Ubuntu 24.04+、Fedora 41+ 或 64 位 Arch Linux
+- Ubuntu 24.04+、Fedora 41+、64 位 Arch Linux 或 CachyOS
 - Node.js 22.x (>=22.19)、24.x (>=24.11) 或 26+，以及 npm
 
 原生二进制分析需要 Hopper 或 Ghidra。Hopper 是独立软件；演示模式有厂商规定的限制，不要求购买许可证。
@@ -153,7 +153,7 @@ Setup 可以验证安装并保存路径，不会安装或升级 Ghidra、Java、
 
 运行 `npx -y rea-agents@latest doctor`，检查主机、依赖、分析工具和智能体配置。该命令不会修改文件。添加 `--json` 可获取结构化诊断。
 
-Linux 上的默认 Hopper 启动器为 `/opt/hopper/bin/Hopper`。其他路径可通过 `HOPPER_LAUNCHER_PATH` 指定。如果文件存在但仍报告缺少分析引擎，运行 `ldd /opt/hopper/bin/Hopper | grep 'not found'` 检查缺少的系统库。安装详情见 [Hopper 指南](docs/installation.md#hopper)。
+Linux 上 REA 会优先使用可执行的 `/opt/hopper/bin/Hopper`；如果不可用，则自动检查 `~/.local/share/rea/hopper/bin/Hopper`。其他路径可通过 `HOPPER_LAUNCHER_PATH` 指定。如果文件存在但仍报告缺少分析引擎，请对实际 Hopper 路径运行 `ldd /absolute/path/to/Hopper | grep 'not found'` 检查缺少的系统库。安装详情见 [Hopper 指南](docs/installation.md#hopper)。
 
 ### 更新与卸载
 

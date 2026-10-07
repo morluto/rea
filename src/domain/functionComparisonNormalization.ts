@@ -177,15 +177,19 @@ export const stringAndNameProjection = (
 };
 
 export const sorted = (values: readonly unknown[]): readonly unknown[] =>
-  [...values].sort((left, right) => {
-    const leftJson = canonicalJson(left, "Function normalization");
-    const rightJson = canonicalJson(right, "Function normalization");
-    // Preserve existing collation while ordering distinct values within a tie.
-    return (
-      leftJson.localeCompare(rightJson) ||
-      compareCodePoints(leftJson, rightJson)
-    );
-  });
+  values
+    .map((value) => ({
+      value,
+      json: canonicalJson(value, "Function normalization"),
+    }))
+    .sort((left, right) => {
+      // Preserve existing collation while ordering distinct values within a tie.
+      return (
+        left.json.localeCompare(right.json) ||
+        compareCodePoints(left.json, right.json)
+      );
+    })
+    .map(({ value }) => value);
 
 export const combineCoverage = <Item>(
   left: FunctionCollection<Item>,

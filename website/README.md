@@ -1,9 +1,16 @@
 # REA website
 
+> A good website is like a good paper: easy to follow, clear and concise, with a clean, refined presentation.
+>
+> — N0zoM1z0
+
 An English static website with explanatory figures, worked guides and DX-Ball, Notion and TH04 investigations.
 The public files are in `website/public/`. The site uses HTML, CSS and a small
 script for copying code and following the assembly-to-C comparison. Python
 packages the downloadable example; there is no frontend bundler or npm dependency.
+
+[style-guide.md](style-guide.md) explains the writing, page structure, figures,
+visual system and review process. Read it before adding or revising a page.
 
 ## Local preview
 
@@ -57,6 +64,11 @@ respecting reduced-motion preferences. Both the prompt and animation work
 without JavaScript. The homepage and agent setup section share a copyable
 installation prompt; setup still presents its plan for approval.
 
+Reading pages share a small `↑ Top` link at the bottom right. It appears after
+scrolling and returns to the page header, with smooth scrolling when reduced
+motion is disabled. Keyboard activation returns focus to the first navigation
+link. Without JavaScript, the link stays visible and uses its `#top` anchor.
+
 DX-Ball figures and findings refer to the linked 7 October 2026 checkpoint,
 commit `a55dca27ec0a07018c1b2c95ae2be027f7d8c3c4`. Update those links and figures
 together when moving to another checkpoint. Case-study source excerpts come
@@ -78,7 +90,8 @@ code; the scoped lint override admits `require` only in that example directory.
 
 The Notion case follows the same HTML figure style. Its short excerpts explain
 the packaged clipboard bridge; separate web-cache probes illustrate the rich
-clipboard and Markdown formats. Only selected source details and generic
+clipboard format, with Markdown tables available as an additional example in
+collapsed details. Only selected source details and generic
 example data belong on the site. Machine paths, account identifiers, local
 configuration, complete vendor bundles and raw captured results stay outside
 the website.

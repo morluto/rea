@@ -147,3 +147,54 @@ it("keeps an explicit return statement's full range and the producer's location"
   });
   expect(site.location.start.column).toBe(source.indexOf("return"));
 });
+
+it("links returned promises to the exact return site in each callable", () => {
+  const ir = analyzeJavaScriptSemantics(
+    [
+      "function first() { return Promise.resolve(1); }",
+      "function second() { return Promise.resolve(2); }",
+    ].join("\n"),
+  );
+  const callables = new Map(
+    ir.callables.map((callable) => [callable.name, callable]),
+  );
+  const promises = ir.promiseOperations.filter(
+    ({ method }) => method === "resolve",
+  );
+
+  expect(promises).toHaveLength(2);
+  for (const name of ["first", "second"] as const) {
+    const callable = callables.get(name);
+    const promise = promises.find(
+      ({ ownerCallableId }) => ownerCallableId === callable?.callableId,
+    );
+    expect(callable?.returnSites).toHaveLength(1);
+    expect(promise).toMatchObject({
+      ownership: "returned",
+      ownerCallableId: callable?.callableId,
+      returnSiteId: callable?.returnSites[0]?.returnSiteId,
+    });
+  }
+});
+
+it("does not assign a return site to a Promise owned by a binding", () => {
+  const ir = analyzeJavaScriptSemantics(
+    "function unrelated() { return Promise.resolve(2); }\nconst pending = Promise.resolve(1);",
+  );
+  const owned = ir.promiseOperations.find(
+    ({ ownerCallableId }) => ownerCallableId !== null,
+  );
+  const assigned = ir.promiseOperations.find(
+    ({ ownerCallableId }) => ownerCallableId === null,
+  );
+
+  expect(owned).toMatchObject({
+    ownership: "returned",
+    returnSiteId: ir.callables.find(({ name }) => name === "unrelated")
+      ?.returnSites[0]?.returnSiteId,
+  });
+  expect(assigned).toMatchObject({
+    ownership: "assigned",
+    returnSiteId: null,
+  });
+});

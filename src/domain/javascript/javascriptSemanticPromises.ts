@@ -15,7 +15,7 @@ import {
 } from "./javascriptSemanticState.js";
 import { compareCodePoints } from "../canonicalOrdering.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
-import { range, sourceRangesEqual } from "./javascriptStaticAnalysisHelpers.js";
+import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
   assignedSemanticResultBindings,
   dataEffectMemberCallee,
@@ -56,7 +56,10 @@ interface PromiseOwnershipContext {
   readonly candidate: PromiseCandidate;
   readonly candidateByNode: WeakMap<t.Node, PromiseCandidate>;
   readonly state: JavaScriptSemanticAnalysisState;
-  readonly callables: readonly JavaScriptSemanticCallable[];
+  readonly returnSiteIdFor: (
+    callableId: string | null,
+    location: JavaScriptSemanticPromiseOperation["location"],
+  ) => string | null;
 }
 
 /** Recover explicit Promise construction, chaining, aggregation, and ownership. */
@@ -66,6 +69,7 @@ export const collectJavaScriptSemanticPromises = (
   callables: readonly JavaScriptSemanticCallable[],
 ): JavaScriptSemanticPromiseOperation[] => {
   const candidates = collectCandidates(program, state, callables);
+  const returnSiteIdFor = createReturnSiteLookup(callables);
   const candidateByNode = new WeakMap<t.Node, PromiseCandidate>();
   for (const candidate of candidates)
     candidateByNode.set(candidate.node, candidate);
@@ -74,7 +78,7 @@ export const collectJavaScriptSemanticPromises = (
       candidate,
       candidateByNode,
       state,
-      callables,
+      returnSiteIdFor,
     );
     const sources = promiseSources(candidate, candidateByNode, state);
     return {
@@ -180,14 +184,14 @@ const promiseOwnership = (
   candidate: PromiseCandidate,
   candidateByNode: WeakMap<t.Node, PromiseCandidate>,
   state: JavaScriptSemanticAnalysisState,
-  callables: readonly JavaScriptSemanticCallable[],
+  returnSiteIdFor: PromiseOwnershipContext["returnSiteIdFor"],
 ): PromiseOwnership => {
   if (candidate.kind === "awaited-expression") return emptyOwnership("awaited");
   const context: PromiseOwnershipContext = {
     candidate,
     candidateByNode,
     state,
-    callables,
+    returnSiteIdFor,
   };
   for (let index = candidate.ancestors.length - 1; index >= 0; index -= 1) {
     const ancestor = candidate.ancestors[index];
@@ -203,7 +207,7 @@ const ownershipAtAncestor = (
   ancestor: t.Node,
   context: PromiseOwnershipContext,
 ): PromiseOwnership | "boundary" | null => {
-  const { candidate, candidateByNode, state, callables } = context;
+  const { candidate, candidateByNode, state, returnSiteIdFor } = context;
   if (t.isAwaitExpression(ancestor))
     return unwrapExpression(ancestor.argument) === candidate.node
       ? emptyOwnership("awaited")
@@ -234,7 +238,7 @@ const ownershipAtAncestor = (
     return returnedPromiseOwnership(
       candidate.ownerCallableId,
       range(ancestor),
-      callables,
+      returnSiteIdFor,
     );
   }
   if (t.isExpressionStatement(ancestor))
@@ -249,7 +253,7 @@ const ownershipAtAncestor = (
     ? returnedPromiseOwnership(
         candidate.ownerCallableId,
         range(ancestor.body),
-        callables,
+        returnSiteIdFor,
       )
     : "boundary";
 };
@@ -283,11 +287,11 @@ const assignedPromiseBinding = (
 const returnedPromiseOwnership = (
   callableId: string | null,
   location: JavaScriptSemanticPromiseOperation["location"],
-  callables: readonly JavaScriptSemanticCallable[],
+  returnSiteIdFor: PromiseOwnershipContext["returnSiteIdFor"],
 ): PromiseOwnership => ({
   ownership: "returned",
   ownerBindingId: null,
-  returnSiteId: matchingReturnSite(callableId, location, callables),
+  returnSiteId: returnSiteIdFor(callableId, location),
 });
 
 const outerConsumesCandidate = (
@@ -329,16 +333,56 @@ const emptyOwnership = (
   returnSiteId: null,
 });
 
-const matchingReturnSite = (
-  callableId: string | null,
-  location: JavaScriptSemanticPromiseOperation["location"],
+const indexReturnSites = (
+  callable: JavaScriptSemanticCallable,
+): ReadonlyMap<string, string> => {
+  const output = new Map<string, string>();
+  for (const site of callable.returnSites) {
+    const key = returnSiteKey(site.location);
+    if (!output.has(key)) output.set(key, site.returnSiteId);
+  }
+  return output;
+};
+
+const createReturnSiteLookup = (
   callables: readonly JavaScriptSemanticCallable[],
-): string | null =>
-  callables
-    .find(({ callableId: candidate }) => candidate === callableId)
-    ?.returnSites.find(({ location: candidate }) =>
-      sourceRangesEqual(candidate, location),
-    )?.returnSiteId ?? null;
+): PromiseOwnershipContext["returnSiteIdFor"] => {
+  let callablesById:
+    | ReadonlyMap<string, JavaScriptSemanticCallable>
+    | undefined;
+  let returnSiteIdsByCallable:
+    | Map<string, ReadonlyMap<string, string>>
+    | undefined;
+  return (callableId, location) => {
+    if (callableId === null) return null;
+    callablesById ??= indexCallablesById(callables);
+    const callable = callablesById.get(callableId);
+    if (callable === undefined) return null;
+    returnSiteIdsByCallable ??= new Map();
+    let returnSiteIds = returnSiteIdsByCallable.get(callableId);
+    if (returnSiteIds === undefined) {
+      returnSiteIds = indexReturnSites(callable);
+      returnSiteIdsByCallable.set(callableId, returnSiteIds);
+    }
+    return returnSiteIds.get(returnSiteKey(location)) ?? null;
+  };
+};
+
+const indexCallablesById = (
+  callables: readonly JavaScriptSemanticCallable[],
+): ReadonlyMap<string, JavaScriptSemanticCallable> => {
+  const output = new Map<string, JavaScriptSemanticCallable>();
+  for (const callable of callables) {
+    if (output.has(callable.callableId)) continue;
+    output.set(callable.callableId, callable);
+  }
+  return output;
+};
+
+const returnSiteKey = (
+  location: JavaScriptSemanticPromiseOperation["location"],
+): string =>
+  `${location.start.line}:${location.start.column}:${location.end.line}:${location.end.column}`;
 
 const promiseSources = (
   candidate: PromiseCandidate,

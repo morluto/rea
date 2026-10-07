@@ -19,6 +19,16 @@ const hasSameIdentity = (
   before.ino === after.ino &&
   (expected === "directory" ? after.isDirectory() : after.isSymbolicLink());
 
+const hasSameFileState = (before: Stats, after: Stats): boolean =>
+  before.dev === after.dev &&
+  before.ino === after.ino &&
+  before.isFile() &&
+  after.isFile() &&
+  before.mode === after.mode &&
+  before.size === after.size &&
+  before.mtimeMs === after.mtimeMs &&
+  before.ctimeMs === after.ctimeMs;
+
 const lstatIfPresent = async (path: string): Promise<Stats | undefined> => {
   try {
     return await lstat(path);
@@ -29,18 +39,26 @@ const lstatIfPresent = async (path: string): Promise<Stats | undefined> => {
   }
 };
 
-const hashFile = async (
+/** Hash a file only when its opened descriptor still matches the captured path state. */
+export const hashFile = async (
   path: string,
+  expected: Stats,
   maxBytes: number,
   signal?: AbortSignal,
 ): Promise<string | null> => {
+  signal?.throwIfAborted();
   const handle = await open(
     path,
-    fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0),
+    fsConstants.O_RDONLY |
+      (fsConstants.O_NOFOLLOW ?? 0) |
+      (fsConstants.O_NONBLOCK ?? 0),
   );
   try {
+    signal?.throwIfAborted();
     const stats = await handle.stat();
-    if (!stats.isFile() || stats.size > maxBytes) return null;
+    signal?.throwIfAborted();
+    if (!hasSameFileState(expected, stats) || stats.size > maxBytes)
+      return null;
     const hash = createHash("sha256");
     const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, maxBytes));
     let position = 0;
@@ -57,8 +75,8 @@ const hashFile = async (
       position += bytesRead;
     }
     const after = await handle.stat();
-    if (after.size !== stats.size || after.mtimeMs !== stats.mtimeMs)
-      return null;
+    signal?.throwIfAborted();
+    if (!hasSameFileState(stats, after)) return null;
     return hash.digest("hex");
   } finally {
     await handle.close();
@@ -110,7 +128,7 @@ export const snapshotRoots = async (
     if (stats.isFile()) {
       const sha256 =
         remainingBytes >= stats.size
-          ? await hashFile(path, remainingBytes, signal)
+          ? await hashFile(path, stats, remainingBytes, signal)
           : null;
       remainingBytes -= sha256 === null ? 0 : stats.size;
       if (sha256 === null) truncated = true;

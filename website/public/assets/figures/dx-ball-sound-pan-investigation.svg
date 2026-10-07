@@ -36,11 +36,11 @@
       <text x="1547" y="372" font-size="43">Maintained C</text>
       <text x="418" y="569" font-size="34">Brick-hit caller</text>
       <text x="418" y="615" font-size="28" fill="#5b6570">20 + 30 × tile_x</text>
-      <text x="1354" y="632" font-size="30">Original-x86</text>
+      <text x="1354" y="632" font-size="30">Original code</text>
       <text x="1354" y="670" font-size="30">comparison</text>
       <text x="1354" y="717" font-size="31" fill="#5b6570">3,205 cases</text>
-      <text x="1625" y="632" font-size="28">VC4.0 compiler</text>
-      <text x="1625" y="670" font-size="32">replay</text>
+      <text x="1625" y="632" font-size="28">VC4.0 build</text>
+      <text x="1625" y="670" font-size="30">comparison</text>
       <text x="1625" y="717" font-size="28" fill="#5b6570">63 matching bytes</text>
     </g>
   </g>

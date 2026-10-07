@@ -16,6 +16,10 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { createNativeUiHelperRuntime } from "./NativeUiHelperRuntime.js";
+import {
+  NATIVE_UI_OUTPUT_BUDGET_BYTES,
+  NATIVE_UI_OUTPUT_WEIGHT,
+} from "./NativeUiOutputBudget.js";
 
 const helper = fileURLToPath(
   new URL("../../bridge/native/ReaNativeUI.swift", import.meta.url),
@@ -135,8 +139,10 @@ const observeWithHelper = async (
           ),
         );
       launchTime = response.result.window.launch_time;
-      outputBytes += 2 * Buffer.byteLength(JSON.stringify(response.result));
-      if (outputBytes > 64 * 1024 * 1024)
+      outputBytes +=
+        NATIVE_UI_OUTPUT_WEIGHT *
+        Buffer.byteLength(JSON.stringify(response.result));
+      if (outputBytes > NATIVE_UI_OUTPUT_BUDGET_BYTES)
         return err(
           new AnalysisCapabilityUnavailableError(
             "native-macos",

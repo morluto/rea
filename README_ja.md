@@ -138,7 +138,7 @@ rea setup
 ### 要件
 
 - macOS 12 以降
-- Ubuntu 24.04+、Fedora 41+、または 64 ビット Arch Linux
+- Ubuntu 24.04+、Fedora 41+、64 ビット Arch Linux、または CachyOS
 - Node.js 22.x (>=22.19)、24.x (>=24.11)、または 26+ と npm
 
 ネイティブバイナリ解析には Hopper または Ghidra が必要です。Hopper は別製品です。デモにはベンダー所定の制限がありますが、有料ライセンスは必須ではありません。
@@ -153,7 +153,7 @@ Setup はインストールを確認し、パスを保存できます。Ghidra�
 
 `npx -y rea-agents@latest doctor` はホスト、依存関係、解析ツール、エージェント設定を変更せずに確認します。構造化された診断には `--json` を追加してください。
 
-Linux の既定ランチャーは `/opt/hopper/bin/Hopper` です。別の場所には `HOPPER_LAUNCHER_PATH` を設定します。ファイルがあるのに解析エンジンが見つからない場合は、`ldd /opt/hopper/bin/Hopper | grep 'not found'` で不足ライブラリを確認してください。詳しくは [Hopper ガイド](docs/installation.md#hopper)を参照してください。
+Linux では実行可能な `/opt/hopper/bin/Hopper` を優先し、利用できない場合は `~/.local/share/rea/hopper/bin/Hopper` を自動的に確認します。それ以外の場所では `HOPPER_LAUNCHER_PATH` を設定します。ファイルがあるのに解析エンジンが見つからない場合は、実際の Hopper パスに対して `ldd /absolute/path/to/Hopper | grep 'not found'` を実行し、不足ライブラリを確認してください。詳しくは [Hopper ガイド](docs/installation.md#hopper)を参照してください。
 
 ### 更新とアンインストール
 

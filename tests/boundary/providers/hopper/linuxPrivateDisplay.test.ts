@@ -25,6 +25,12 @@ const helperPath = fileURLToPath(
 const hangingHelperPath = fileURLToPath(
   new URL("../../../fixtures/x11ProbeHang.py", import.meta.url),
 );
+const dialogDetectionFixturePath = fileURLToPath(
+  new URL("../../../fixtures/hopperDialogDetection.py", import.meta.url),
+);
+const cleanupTimeoutFixturePath = fileURLToPath(
+  new URL("../../../fixtures/hopperCleanupTimeout.py", import.meta.url),
+);
 
 type DiagnosticOverrides = Partial<
   Omit<HopperStartupDiagnostic, "failure_code" | "status">
@@ -80,6 +86,46 @@ const failureExit = (code: HopperStartupFailureCode): number =>
     : code === "runtime_dependency_unavailable"
       ? 79
       : 70;
+
+describe("Hopper demo dialog detection", () => {
+  it.skipIf(process.platform !== "linux")(
+    "uses the Hopper transient-parent relation instead of exact dialog geometry",
+    () => {
+      const result = spawnSync(
+        "/usr/bin/python3",
+        [dialogDetectionFixturePath, helperPath],
+        { encoding: "utf8" },
+      );
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({
+        dialog: [10, 20, 100, 1200, 284],
+        click: [136, 362],
+        wrong_parent_rejected: true,
+      });
+    },
+  );
+});
+
+describe("Hopper process cleanup", () => {
+  it.skipIf(process.platform !== "linux")(
+    "kills a child that ignores SIGTERM after the bounded timeout",
+    () => {
+      const result = spawnSync(
+        "/usr/bin/python3",
+        [cleanupTimeoutFixturePath, helperPath],
+        { encoding: "utf8", timeout: 5_000 },
+      );
+      expect(result.status).toBe(0);
+      const parsed = JSON.parse(result.stdout) as {
+        readonly returncode: number;
+        readonly elapsed_ms: number;
+      };
+      expect(parsed.returncode).toBe(-9);
+      expect(parsed.elapsed_ms).toBeGreaterThanOrEqual(1_800);
+      expect(parsed.elapsed_ms).toBeLessThan(4_000);
+    },
+  );
+});
 
 describe("Linux private display selection", () => {
   it("prefers a successful direct Xvfb probe", async () => {

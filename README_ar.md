@@ -138,7 +138,7 @@ rea setup
 ### المتطلبات
 
 - macOS 12 أو أحدث
-- Ubuntu 24.04+ أو Fedora 41+ أو Arch Linux بنواة 64 بت
+- Ubuntu 24.04+ أو Fedora 41+ أو Arch Linux بنواة 64 بت أو CachyOS
 - Node.js 22.x (>=22.19) أو 24.x (>=24.11) أو 26+ وnpm
 
 يتطلب تحليل الملفات التنفيذية الأصلية Hopper أو Ghidra. Hopper برنامج منفصل، وللوضع التجريبي قيود يحددها المورّد، لكن الترخيص المدفوع ليس إلزاميًا.
@@ -153,7 +153,7 @@ rea setup
 
 يشخّص `npx -y rea-agents@latest doctor` الجهاز والاعتماديات وأدوات التحليل وإعدادات الوكيل من دون تغييرها. أضف `--json` للحصول على تشخيص منظم.
 
-مسار Hopper الافتراضي على Linux هو `/opt/hopper/bin/Hopper`. استخدم `HOPPER_LAUNCHER_PATH` للمسارات الأخرى. إذا كان الملف موجودًا لكن محرك التحليل لا يظهر، فشغّل `ldd /opt/hopper/bin/Hopper | grep 'not found'` للتحقق من المكتبات الناقصة. راجع [دليل Hopper](docs/installation.md#hopper).
+على Linux، يفضّل REA الملف التنفيذي `/opt/hopper/bin/Hopper`، وإذا لم يكن متاحًا يتحقق تلقائيًا من `~/.local/share/rea/hopper/bin/Hopper`. استخدم `HOPPER_LAUNCHER_PATH` للمسارات الأخرى. إذا كان الملف موجودًا لكن محرك التحليل لا يظهر، فشغّل `ldd /absolute/path/to/Hopper | grep 'not found'` على مسار Hopper الفعلي للتحقق من المكتبات الناقصة. راجع [دليل Hopper](docs/installation.md#hopper).
 
 ### التحديث والإزالة
 
@@ -313,7 +313,7 @@ npx -y rea-agents@latest compare /absolute/path/to/left-evidence.json /absolute/
 <details>
 <summary><strong>هل يعمل REA على Linux أو Windows؟</strong></summary>
 
-يدعم REA نظام macOS 12+ وUbuntu 24.04+ وFedora 41+ وArch Linux بنواة 64 بت. يعمل تحليل Ghidra للقراءة فقط على Linux x64 وmacOS x64/arm64 مع Ghidra 12.1.x وJDK الكامل الذي يعلنه التثبيت (JDK 21 أو أحدث دون حد أعلى في إصدارات 12.1 الحالية)، إضافة إلى حد Windows x64 P0 التجريبي لتطبيقات PE الأصلية x86-64 على NTFS محلي؛ راجع [دليل Windows Ghidra P0](docs/windows-ghidra-p0.md) للنطاق الموثق.
+يدعم REA نظام macOS 12+ وUbuntu 24.04+ وFedora 41+ وArch Linux بنواة 64 بت وCachyOS. يعمل تحليل Ghidra للقراءة فقط على Linux x64 وmacOS x64/arm64 مع Ghidra 12.1.x وJDK الكامل الذي يعلنه التثبيت (JDK 21 أو أحدث دون حد أعلى في إصدارات 12.1 الحالية)، إضافة إلى حد Windows x64 P0 التجريبي لتطبيقات PE الأصلية x86-64 على NTFS محلي؛ راجع [دليل Windows Ghidra P0](docs/windows-ghidra-p0.md) للنطاق الموثق.
 
 </details>
 

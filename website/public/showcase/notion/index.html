@@ -13,7 +13,7 @@
     <link rel="stylesheet" href="../../assets/styles.css" />
     <script src="../../assets/main.js" defer></script>
   </head>
-  <body>
+  <body id="top">
     <a class="skip-link" href="#main">Skip to content</a>
     <header class="site-header">
       <div class="container header-inner">
@@ -35,11 +35,10 @@
           <a href="../../">Home</a> / <a href="../">Showcases</a> / Notion
         </p>
         <p class="eyebrow">Case study · Electron</p>
-        <h1>Following a copy<br />through Notion.</h1>
+        <h1>How Notion copies<br />text and HTML.</h1>
         <p class="lede">
-          A familiar action leads through several files. Follow Notion's
-          clipboard API from the page, through Electron, to the system
-          clipboard.
+          Trace a clipboard call from Notion's page API, through the preload and
+          main process, to Electron's clipboard writer.
         </p>
         <p class="page-meta">Notion Desktop 7.6.1 · JavaScript · REA</p>
       </div>
@@ -93,8 +92,7 @@
           <ul>
             <li><a href="#clipboard">Follow the clipboard bridge</a></li>
             <li><a href="#rich-clipboard">Keeping a block's structure</a></li>
-            <li><a href="#markdown">Markdown becomes blocks</a></li>
-            <li><a href="#continue">Try another question</a></li>
+            <li><a href="#continue">More examples and sources</a></li>
           </ul>
         </nav>
         <article class="article" aria-label="Notion Electron case study">
@@ -294,14 +292,12 @@ function invokeInMainAndReturnResult(channel, ...args) {
           <section class="article-section" id="rich-clipboard">
             <h2>How does a copied block keep its structure?</h2>
             <p>
-              The cached web editor adds a small detail to programmatic copies.
-              It sends text and HTML through
-              <code>electronApi.clipboard.write</code>, while keeping Notion's
-              private block data in a local virtual clipboard. An ID in the HTML
-              connects the two.
+              Notion's web editor sends text and HTML through
+              <code>electronApi.clipboard.write</code>. It keeps the block data
+              locally and puts an ID in the copied HTML to connect them.
             </p>
             <figure class="workflow-figure">
-              <p class="figure-title">One copy, two representations</p>
+              <p class="figure-title">HTML links to saved block data</p>
               <div class="notion-clipboard-grid">
                 <div class="code-block">
                   <div class="code-header">
@@ -313,7 +309,7 @@ html: "&lt;p&gt;Project notes&lt;/p&gt;"
                 </div>
                 <div class="code-block">
                   <div class="code-header">
-                    <span>Kept in the local virtual clipboard</span>
+                    <span>Saved locally by Notion</span>
                   </div>
                   <pre><code>id: <span class="notion-channel">&lt;copy-id&gt;</span>
 mimeTypes:
@@ -327,76 +323,59 @@ mimeTypes:
               >
                 <li>Read the HTML ID</li>
                 <li>Find the same local ID</li>
-                <li>Restore private formats</li>
+                <li>Restore Notion block data</li>
               </ol>
               <figcaption>
-                Illustrative text and ID. The saved module probe recovered the
-                private formats when IDs matched; a stale entry left only the
-                ordinary text and HTML.
+                Illustrative text and ID. The recorded module test restores the
+                block data when IDs match; a stale entry returns only text and
+                HTML.
               </figcaption>
             </figure>
             <p>
-              On paste, the reader looks for the marker and checks it against
-              the saved copy. A matching ID reconnects the text to its richer
-              representation. This explains why the HTML carries more than
-              visible content.
+              On paste, Notion looks for the HTML ID and checks it against the
+              saved copy. Matching IDs restore the block data.
             </p>
             <p class="caption">
-              Web assets cached on July 13, 2026. The desktop-package bridge
-              above and this web-side format are separate pieces of the
-              investigation.
-            </p>
-          </section>
-
-          <section class="article-section" id="markdown">
-            <h2>From Markdown to structured blocks</h2>
-            <p>
-              The same investigation also recovered Notion's Markdown
-              processing. A small table makes the internal format easy to see:
-              its rows and cells become data that the block renderer can use.
-            </p>
-            <figure class="workflow-figure">
-              <p class="figure-title">
-                A table through Notion's Markdown parser
-              </p>
-              <div class="notion-table-example">
-                <div class="code-block">
-                  <div class="code-header"><span>Markdown input</span></div>
-                  <pre><code>| A | B |
-| - | - |
-| 1 | 2 |</code></pre>
-                </div>
-                <div class="code-block">
-                  <div class="code-header">
-                    <span>Structured parser output · excerpt</span>
-                  </div>
-                  <pre><code>table · headerRow: true
-  table_row
-    cells: ["A"], ["B"]
-  table_row
-    cells: ["1"], ["2"]</code></pre>
-                </div>
-              </div>
-              <figcaption>
-                A saved extracted-module probe of web parser
-                <code>422457</code>. Both page and chat filters preserve this
-                table. The tree shows the recorded rows and cell text.
-              </figcaption>
-            </figure>
-            <p>
-              Finding that transformation required separating the ordinary
-              paste/import path from the structured Markdown and AI/chat
-              parsers. Each has its own entry point and intermediate format.
+              Clipboard format recorded from web assets cached on July 13, 2026.
             </p>
           </section>
 
           <section class="article-section" id="continue">
-            <h2>Try another question</h2>
-            <p>
-              Start with one feature and follow the code that crosses a process
-              boundary. A named API, a literal channel and its receiver are
-              useful places to begin.
-            </p>
+            <h2>More examples and sources</h2>
+            <details class="evidence-details" id="markdown">
+              <summary>Another example: Markdown tables</summary>
+              <p>
+                Notion parses Markdown into block data. This example shows how a
+                table becomes header and data rows.
+              </p>
+              <figure class="workflow-figure">
+                <p class="figure-title">
+                  A table through Notion's Markdown parser
+                </p>
+                <div class="notion-table-example">
+                  <div class="code-block">
+                    <div class="code-header"><span>Markdown input</span></div>
+                    <pre><code>| A | B |
+| - | - |
+| 1 | 2 |</code></pre>
+                  </div>
+                  <div class="code-block">
+                    <div class="code-header">
+                      <span>Structured parser output · excerpt</span>
+                    </div>
+                    <pre><code>table · headerRow: true
+  table_row
+    cells: ["A"], ["B"]
+  table_row
+    cells: ["1"], ["2"]</code></pre>
+                  </div>
+                </div>
+                <figcaption>
+                  Recorded output from an extracted Markdown parser. The table
+                  becomes rows and cells.
+                </figcaption>
+              </figure>
+            </details>
             <details class="evidence-details">
               <summary>Another path: the offline SQLite connection</summary>
               <p>
@@ -436,6 +415,12 @@ mimeTypes:
                 matching receiver are connected by reading their wrapper
                 implementations in the package.
               </p>
+              <p>
+                The Markdown example uses parser module <code>422457</code>.
+                Saved module tests show that both page and chat filters preserve
+                this table. The paste/import, structured Markdown and AI/chat
+                parsers have separate entry points and intermediate formats.
+              </p>
             </details>
             <ul class="reading-list">
               <li>
@@ -454,7 +439,7 @@ mimeTypes:
             </ul>
             <div class="actions">
               <a class="button" href="../../get-started/"
-                >Start with your own target</a
+                >Analyze your own app</a
               >
             </div>
           </section>
@@ -473,5 +458,8 @@ mimeTypes:
       </div>
     </footer>
     <p class="sr-only" id="copy-status" role="status" aria-live="polite"></p>
+    <a class="back-to-top" href="#top" aria-label="Back to top">
+      <span aria-hidden="true">↑</span> Top
+    </a>
   </body>
 </html>
