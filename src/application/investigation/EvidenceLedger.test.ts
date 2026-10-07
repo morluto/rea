@@ -129,7 +129,6 @@ describe("evidence ledger metadata imports", () => {
     });
     const created = ledger.recordUnknown(
       recordUnknownInputSchema.parse({
-        approved: true,
         question: "Which path is current?",
         severity: "high",
         domain: "fixture",
@@ -241,7 +240,6 @@ describe("evidence bundle imports", () => {
       result: { action: "record" },
     });
     const unknown = recordUnknownInputSchema.parse({
-      approved: true,
       question: "What remains unresolved?",
       severity: "high",
       domain: "atomic-test",

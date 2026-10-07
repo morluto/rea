@@ -21,7 +21,6 @@ const makeUnknown = (
   dependency?: string,
 ) => {
   const input = recordUnknownInputSchema.parse({
-    approved: true,
     question,
     severity: "medium",
     domain: "bundle-projection",
@@ -95,7 +94,6 @@ describe("evidenceBundleForTarget", () => {
     const unknowns = [foreignRoot.unknown, middle.unknown];
     for (let index = 0; index < 125_000; index += 1) {
       const input = recordUnknownInputSchema.parse({
-        approved: true,
         question: `Target child ${index}`,
         severity: "medium",
         domain: "bundle-projection",

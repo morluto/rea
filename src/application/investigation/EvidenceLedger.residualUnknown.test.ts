@@ -43,7 +43,6 @@ const input = (
   overrides: Partial<RecordUnknownInput> = {},
 ): RecordUnknownInput =>
   recordUnknownInputSchema.parse({
-    approved: true,
     question,
     severity: "high",
     domain: "protocol",
@@ -60,7 +59,6 @@ const update = (
   overrides: Readonly<Record<string, unknown>> = {},
 ) =>
   updateUnknownInputSchema.parse({
-    approved: true,
     unknown_id: unknown.unknown_id,
     expected_revision: unknown.revision,
     status: "investigating",
