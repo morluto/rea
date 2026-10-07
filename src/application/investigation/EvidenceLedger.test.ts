@@ -41,6 +41,19 @@ describe("evidence ledger recording", () => {
       value: { recordsAdded: 0, unknownsAdded: 0, changed: false },
     });
     expect(ledger.export().records).toEqual([evidence]);
+    const relocatedBundleRecord = createEvidence(
+      { ...TARGET, path: "/relocated/fixture-renamed" },
+      PROVIDER,
+      { operation: "health", parameters: {}, result: true },
+    );
+    expect(
+      ledger.import(createEvidenceBundle([relocatedBundleRecord])),
+    ).toEqual({
+      ok: true,
+      value: { recordsAdded: 0, unknownsAdded: 0, changed: false },
+    });
+    expect(ledger.get(evidence.evidence_id)).toEqual(relocatedBundleRecord);
+    expect(ledger.export().records).toEqual([relocatedBundleRecord]);
     const ordered = createEvidence(TARGET, PROVIDER, {
       operation: "health",
       parameters: { alpha: 1, beta: 2 },

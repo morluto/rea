@@ -76,6 +76,7 @@ export class EvidenceLedger {
     // atomic merge without rebuilding and reparsing the entire ledger.
     if (bundle.unknowns.length === 0) {
       const additions = new Map<string, Evidence>();
+      const replacements = new Map<string, Evidence>();
       for (const evidence of bundle.records) {
         const existing = this.#records.get(evidence.evidence_id);
         if (existing !== undefined) {
@@ -83,10 +84,13 @@ export class EvidenceLedger {
             return err(
               new EvidenceIntegrityError("Conflicting evidence record"),
             );
+          replacements.set(evidence.evidence_id, evidence);
           continue;
         }
         additions.set(evidence.evidence_id, evidence);
       }
+      for (const [id, evidence] of replacements)
+        this.#records.set(id, evidence);
       for (const [id, evidence] of additions) this.#records.set(id, evidence);
       return ok({
         recordsAdded: additions.size,

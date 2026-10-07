@@ -158,7 +158,8 @@ export const evidenceBundleForTarget = (
       continue;
     }
     revisionsById.delete(unknown.unknown_id);
-    pending.push(...(dependents.get(unknown.unknown_id) ?? []));
+    for (const dependent of dependents.get(unknown.unknown_id) ?? [])
+      pending.push(dependent);
   }
   const unknowns = candidates.filter((unknown) => retained.has(unknown));
   const mutationIds = new Set(

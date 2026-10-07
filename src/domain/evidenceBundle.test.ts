@@ -83,4 +83,32 @@ describe("evidenceBundleForTarget", () => {
       createEvidenceBundle([retained.evidence], [retained.unknown]),
     );
   });
+
+  it("projects a valid graph with more than 125,000 dependents", () => {
+    const foreignRoot = makeUnknown("Foreign high-fan-out root", foreignDigest);
+    const unknowns = [foreignRoot.unknown];
+    for (let index = 0; index < 125_000; index += 1) {
+      const input = recordUnknownInputSchema.parse({
+        approved: true,
+        question: `Target child ${index}`,
+        severity: "medium",
+        domain: "bundle-projection",
+        required_authority: null,
+        required_confidence: "derived",
+        required_environment: null,
+        recommended_probes: [],
+        relationships: [
+          { type: "depends-on", unknown_id: foreignRoot.unknown.unknown_id },
+        ],
+      });
+      unknowns.push(
+        createResidualUnknown(input, foreignRoot.evidence.evidence_id, null),
+      );
+    }
+    const bundle = createEvidenceBundle([foreignRoot.evidence], unknowns);
+
+    expect(evidenceBundleForTarget(bundle, targetDigest)).toEqual(
+      createEvidenceBundle([], []),
+    );
+  });
 });
