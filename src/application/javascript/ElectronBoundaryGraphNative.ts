@@ -1,5 +1,5 @@
 import type { ElectronNativeAddonBindingFinding } from "../../domain/javascript/electronStaticAnalysisTypes.js";
-import type { JavaScriptArtifactFile } from "./JavaScriptArtifactFiles.js";
+import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
   javascriptAnalysisCoverage,
   resolveArtifactPath,

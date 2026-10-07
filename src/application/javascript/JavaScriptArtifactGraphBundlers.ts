@@ -1,6 +1,6 @@
 import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraph.js";
 import type { JavaScriptBundlerRegistration } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
-import type { JavaScriptArtifactFile } from "./JavaScriptArtifactFiles.js";
+import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
   addAstContainsEdge,
   artifactLocalIdentity,

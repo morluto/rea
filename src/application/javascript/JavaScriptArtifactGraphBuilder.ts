@@ -4,7 +4,7 @@ import {
   type JavaScriptApplicationGraph,
 } from "../../domain/javascript/javascriptApplicationGraph.js";
 import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
-import type { JavaScriptArtifactFileSet } from "./JavaScriptArtifactFiles.js";
+import type { JavaScriptArtifactFileSet } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { JavaScriptArtifactGraphAccumulator } from "./JavaScriptArtifactGraphAccumulator.js";
 import type { JavaScriptArtifactGraphContext } from "./JavaScriptArtifactGraphContext.js";
 import {

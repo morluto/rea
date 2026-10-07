@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import type { Readable } from "node:stream";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { streamChunkToBuffer } from "../../artifacts/StreamBytes.js";
+import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { streamChunkToBuffer } from "./StreamBytes.js";
 
+/** Full stream digest and byte count with bounded classification evidence. */
 export type HashResult = {
   readonly sha256: string;
   readonly bytes: number;
@@ -13,6 +14,7 @@ export type HashResult = {
 /** Bounded classification evidence; this is not an executable format size limit. */
 export const ARTIFACT_CLASSIFICATION_PREFIX_BYTES = 8_192;
 
+/** Preserve the inventory cancellation reason at a stream boundary. */
 export const abortIfNeeded = (signal?: AbortSignal): void => {
   if (signal?.aborted === true)
     throw new ArtifactReaderFailure(
@@ -21,6 +23,7 @@ export const abortIfNeeded = (signal?: AbortSignal): void => {
     );
 };
 
+/** Hash every stream byte and retain its bounded classification prefix. */
 export const hashReadable = async (
   stream: Readable,
   signal?: AbortSignal,

@@ -14,7 +14,7 @@ import type {
 import { sourceRangesEqual as rangesEqual } from "../../domain/javascript/javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptApplicationGraph } from "../../domain/javascript/javascriptApplicationGraph.js";
 import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
-import type { JavaScriptArtifactFile } from "./JavaScriptArtifactFiles.js";
+import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
   projectSemanticEvents,
   projectSemanticTimers,

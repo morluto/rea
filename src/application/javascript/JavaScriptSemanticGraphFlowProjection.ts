@@ -3,7 +3,7 @@ import type { JavaScriptSemanticGraphNode } from "../../domain/javascript/javasc
 import type { JavaScriptSemanticIr } from "../../domain/javascript/javascriptSemanticIr.js";
 import { sourceRangesEqual } from "../../domain/javascript/javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
-import type { JavaScriptArtifactFile } from "./JavaScriptArtifactFiles.js";
+import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
   addSemanticGraphNode,
   addSemanticGraphRelation,

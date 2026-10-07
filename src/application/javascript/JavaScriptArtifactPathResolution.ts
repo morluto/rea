@@ -1,7 +1,7 @@
 import { builtinModules } from "node:module";
 import { posix } from "node:path";
 
-import type { JavaScriptArtifactFile } from "./JavaScriptArtifactFiles.js";
+import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
   admitsCanonicalPathSyntax,
   hasScheme,

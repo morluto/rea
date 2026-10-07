@@ -1,7 +1,7 @@
 import type { ApplicationGraphEvidence } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import type { JavaScriptSemanticGraphNode } from "../../domain/javascript/javascriptSemanticGraph.js";
 import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
-import type { JavaScriptArtifactFile } from "./JavaScriptArtifactFiles.js";
+import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 
 const INFERENCE_LIMITATION =
   "This relationship is a conservative static candidate; it does not prove runtime execution or causal flow.";

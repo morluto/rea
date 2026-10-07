@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { JavaScriptArtifactFile } from "./JavaScriptArtifactFiles.js";
+import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { resolveArtifactPathByContext } from "./JavaScriptArtifactPathResolution.js";
 
 const filesFor = (paths: readonly string[]) =>

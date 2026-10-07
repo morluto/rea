@@ -6,7 +6,7 @@ import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { readJavaScriptArtifactFiles } from "../../../src/application/javascript/JavaScriptArtifactFiles.js";
+import { readJavaScriptArtifactFiles } from "../../../src/artifacts/javascript/JavaScriptArtifactFiles.js";
 import { reconstructJavaScriptArtifact } from "../../../src/application/javascript/JavaScriptArtifactReconstruction.js";
 import { scanArtifactInventory } from "../../../src/application/ArtifactInventory.js";
 import {

@@ -1,7 +1,7 @@
 import { open } from "node:fs/promises";
 
 import { classifyArtifactContent } from "../ArtifactGraphConstruction.js";
-import { ARTIFACT_CLASSIFICATION_PREFIX_BYTES } from "./hash.js";
+import { ARTIFACT_CLASSIFICATION_PREFIX_BYTES } from "../../artifacts/ArtifactHash.js";
 import type { ArtifactNode } from "../../domain/artifactGraph.js";
 import {
   hasZipSignature,

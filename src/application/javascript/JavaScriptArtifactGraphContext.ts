@@ -11,7 +11,7 @@ import type {
   JavaScriptArtifactFile,
   JavaScriptArtifactFileSet,
   JavaScriptArtifactFileKind,
-} from "./JavaScriptArtifactFiles.js";
+} from "../../domain/javascript/javascriptArtifactFiles.js";
 import { JavaScriptArtifactGraphAccumulator } from "./JavaScriptArtifactGraphAccumulator.js";
 import {
   artifactObservationEvidence,
