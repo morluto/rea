@@ -73,11 +73,13 @@ it("requires explicit release preparation or publication instead of main pushes"
 
 it("stops preparation when the CI-capable release token is missing", async () => {
   const workflow = await readReleaseWorkflow();
-  const command = z.string().parse(
-    workflow.jobs["release-please"].steps.find(
-      (step) => step.name === "Require a CI-capable release token",
-    )?.run,
-  );
+  const command = z
+    .string()
+    .parse(
+      workflow.jobs["release-please"].steps.find(
+        (step) => step.name === "Require a CI-capable release token",
+      )?.run,
+    );
   await expect(
     execFileAsync("bash", ["-e", "-o", "pipefail", "-c", command], {
       env: { ...process.env, RELEASE_PLEASE_TOKEN: "" },
