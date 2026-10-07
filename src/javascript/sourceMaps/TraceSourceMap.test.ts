@@ -151,6 +151,9 @@ describe("source-map layout admission", () => {
       expect(() => trace({ ...leaf, mappings })).toThrow();
     },
   );
+  it("validates regular-map source indexes after reusing its decoded rows", () => {
+    expect(() => trace({ ...leaf, mappings: "ACAA" })).toThrow(/index/u);
+  });
   it("rejects huge indexed offsets before upstream row allocation", () => {
     expect(() =>
       trace({
