@@ -277,16 +277,14 @@ const projectNibArchive = (archive: NibArchiveDocument) => {
         : className.includes("Control")
           ? "action"
           : className;
-      const controlAction = className.includes("Control");
-      const connectionSource = controlAction ? destination : source;
-      const connectionDestination = controlAction ? source : destination;
-      if (connectionSource === null) continue;
-      (connections[String(connectionSource)] ??= []).push({
+      // NSSource is the outlet owner or the sending control; NSDestination is
+      // the outlet value or the action target, and a nil target is the first
+      // responder.
+      (connections[String(source)] ??= []).push({
         type,
-        "destination-id":
-          connectionDestination === null ? null : String(connectionDestination),
+        "destination-id": destination === null ? null : String(destination),
         label,
-        source_id: String(connectionSource),
+        source_id: String(source),
         archive_object_id: String(object.id),
       });
     }

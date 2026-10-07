@@ -1,7 +1,7 @@
 import type { ManagedPeLayout } from "./ManagedPeReader.js";
 import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
 import {
-  declaringType,
+  createDeclaringTypeLookup,
   signature,
   type FieldCore,
   type ManagedCallEdge,
@@ -33,6 +33,7 @@ export const parseFields = (
   const fields: ManagedField[] = [];
   const core = new Map<string, FieldCore>();
   const table = layout.table(4);
+  const declaringType = createDeclaringTypeLookup(ranges, "field");
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
     const cursor = metadataRowCursor(bytes, layout, 4, row);
     const flags = cursor.readUInt16();
@@ -48,7 +49,7 @@ export const parseFields = (
       cursor.readIndex(layout.blobIndexSize),
       layout.blob.size,
     );
-    const declared = declaringType(ranges, "field", row);
+    const declared = declaringType(row);
     const token = metadataToken(4, row);
     fields.push({
       token,
@@ -123,6 +124,7 @@ export const parseMethods = ({
   const methods: ManagedMethod[] = [];
   const core = new Map<string, MethodCore>();
   const table = layout.table(6);
+  const declaringType = createDeclaringTypeLookup(ranges, "method");
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
     const cursor = metadataRowCursor(bytes, layout, 6, row);
     const rva = cursor.readUInt32();
@@ -141,7 +143,7 @@ export const parseMethods = ({
       layout.blob.size,
     );
     cursor.readIndex(layout.tableIndexSize(8));
-    const declared = declaringType(ranges, "method", row);
+    const declared = declaringType(row);
     const token = metadataToken(6, row);
     methods.push({
       token,

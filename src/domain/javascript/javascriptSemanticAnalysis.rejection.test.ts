@@ -1,7 +1,17 @@
+import * as t from "@babel/types";
 import { fc, it } from "@fast-check/vitest";
 import { describe, expect } from "vitest";
 
-import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+import {
+  analyzeJavaScriptSemantics,
+  analyzeParsedJavaScriptSemantics,
+} from "./javascriptSemanticAnalysis.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+import { analyzeParsedJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import {
+  collectJavaScriptExports,
+  fingerprintJavaScriptAst,
+} from "./javascriptAstFingerprint.js";
 import type { JavaScriptSemanticValue } from "./javascriptSemanticIr.js";
 import {
   onlyCallable,
@@ -9,6 +19,45 @@ import {
 } from "./javascriptSemanticAnalysis.fixture.js";
 
 describe("JavaScript semantic analysis: rejection 1", () => {
+  it.each(["left", "right"])(
+    "retains semantic facts and values from a deeply %s-chained AST",
+    (direction) => {
+      // Build an admitted AST directly: Babel's own recursion limit varies
+      // with parser optimization and must not determine this regression.
+      const parsed = parseJavaScriptSource("const result = 1; result;");
+      const declaration = parsed?.program.body[0];
+      if (parsed === null || !t.isVariableDeclaration(declaration))
+        throw new TypeError("Expected a parsed variable declaration");
+      const declarator = declaration.declarations[0];
+      if (declarator === undefined)
+        throw new TypeError("Expected a variable declarator");
+      let expression: t.Expression = t.numericLiteral(1);
+      for (let index = 1; index < 12000; index += 1)
+        expression =
+          direction === "left"
+            ? t.binaryExpression("+", expression, t.numericLiteral(1))
+            : t.binaryExpression("+", t.numericLiteral(1), expression);
+      declarator.init = expression;
+      const staticAnalysis = analyzeParsedJavaScriptStaticSource("", parsed);
+      expect(staticAnalysis.parse_status).toBe("complete");
+      expect(staticAnalysis.visited_ast_nodes).toBe(24006);
+      expect(collectJavaScriptExports(parsed).values).toEqual([]);
+      expect(fingerprintJavaScriptAst(parsed)).toMatch(/^[a-f0-9]{64}$/u);
+      const ir = analyzeParsedJavaScriptSemantics(parsed);
+      expect(ir.coverage.status).toBe("complete");
+      const binding = topLevelBinding(ir, "result");
+      expect(binding.value).toEqual({ status: "literal", value: 12000 });
+      expect(ir.references).toEqual([
+        expect.objectContaining({
+          name: "result",
+          role: "read",
+          resolution: "resolved",
+          bindingId: binding.bindingId,
+        }),
+      ]);
+    },
+  );
+
   it("retains complete finite facts and deeply nested static values", () => {
     const names = Array.from(
       { length: 280 },

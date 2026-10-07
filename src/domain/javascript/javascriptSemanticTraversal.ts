@@ -3,7 +3,8 @@ import * as t from "@babel/types";
 /**
  * Visit every Babel AST node in deterministic source-tree order.
  *
- * `ancestors` runs outermost-first and ends with the direct parent. Callers
+ * `readAncestors` returns a snapshot during `enter`, outermost-first and
+ * ending with the direct parent. Callers
  * need it whenever meaning depends on where a node sits, not just what its
  * immediate parent is — a binding inside `catch ({message})` or `({a} = o)`
  * has an ObjectProperty parent, so the parent alone cannot say whether the
@@ -15,23 +16,39 @@ export const traverseJavaScriptAst = (
     readonly enter: (
       node: t.Node,
       parent: t.Node | null,
-      ancestors: readonly t.Node[],
+      readAncestors: () => readonly t.Node[],
     ) => void;
     readonly exit?: (node: t.Node, parent: t.Node | null) => void;
   },
 ): void => {
-  const visit = (
-    node: t.Node,
-    parent: t.Node | null,
-    ancestors: readonly t.Node[],
-  ): void => {
-    visitor.enter(node, parent, ancestors);
-    for (const child of childNodes(node))
-      visit(child, node, [...ancestors, node]);
-    visitor.exit?.(node, parent);
+  const ancestors: t.Node[] = [];
+  const enter = (node: t.Node, parent: t.Node | null): TraversalFrame => {
+    visitor.enter(node, parent, () => [...ancestors]);
+    ancestors.push(node);
+    return { node, parent, children: childNodes(node), nextIndex: 0 };
   };
-  visit(root, null, []);
+  const pending = [enter(root, null)];
+  while (pending.length > 0) {
+    const current = pending.at(-1);
+    if (current === undefined) break;
+    const child = current.children[current.nextIndex];
+    if (child !== undefined) {
+      current.nextIndex += 1;
+      pending.push(enter(child, current.node));
+    } else {
+      visitor.exit?.(current.node, current.parent);
+      ancestors.pop();
+      pending.pop();
+    }
+  }
 };
+
+interface TraversalFrame {
+  readonly node: t.Node;
+  readonly parent: t.Node | null;
+  readonly children: readonly t.Node[];
+  nextIndex: number;
+}
 
 const childNodes = (node: t.Node): t.Node[] => {
   const keys: readonly string[] = t.VISITOR_KEYS[node.type] ?? [];

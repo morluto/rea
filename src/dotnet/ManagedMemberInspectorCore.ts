@@ -150,6 +150,42 @@ export const declaringType = (
   return null;
 };
 
+/** Resolve member ownership without rescanning ordered type ranges per row. */
+export const createDeclaringTypeLookup = (
+  ranges: readonly TypeRange[],
+  table: "field" | "method",
+): ((row: number) => ReturnType<typeof declaringType>) => {
+  const entries = ranges.map((range) => ({
+    range,
+    start: table === "field" ? range.fieldStart : range.methodStart,
+    end: table === "field" ? range.fieldEnd : range.methodEnd,
+  }));
+  const ordered = entries.every((entry, index) => {
+    const previous = entries[index - 1];
+    return (
+      entry.start <= entry.end &&
+      (previous === undefined || previous.end <= entry.start)
+    );
+  });
+  // Malformed metadata can overlap or reverse ranges. Retain the original
+  // first-match interpretation rather than guessing a different owner.
+  if (!ordered) return (row) => declaringType(ranges, table, row);
+  return (row) => {
+    let first = 0;
+    let end = entries.length;
+    while (first < end) {
+      const middle = first + Math.floor((end - first) / 2);
+      const entry = entries[middle];
+      if (entry === undefined) return null;
+      if (row >= entry.start && row < entry.end)
+        return { token: entry.range.token, fullName: entry.range.fullName };
+      if (row < entry.start) end = middle;
+      else first = middle + 1;
+    }
+    return null;
+  };
+};
+
 export const parseTypes = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,

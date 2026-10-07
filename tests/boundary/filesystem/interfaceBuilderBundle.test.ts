@@ -8,6 +8,7 @@ import { buildBinary } from "plist";
 import { describe, expect, it } from "vitest";
 
 import { analyzeInterfaceBuilderBundle } from "../../../src/application/InterfaceBuilderAnalysis.js";
+import { encodeNibArchiveFixture } from "../../../src/artifacts/NibArchive.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const compile = promisify(execFile);
@@ -69,6 +70,84 @@ describe("compiled Interface Builder bundle reader", () => {
     expect(analysis.graph.nodes.some(({ name }) => name === "Build")).toBe(
       true,
     );
+  });
+
+  it("projects compiled AppKit actions from the control to their target", async () => {
+    const root = await createTestTempDirectory("rea-ib-test-");
+    const bundle = join(root, "Example.app");
+    const resources = join(bundle, "Contents", "Resources");
+    await mkdir(resources, { recursive: true });
+    // NSNibControlConnector archives the sending control as NSSource and its
+    // target as NSDestination; a nil target is the first responder.
+    await writeFile(
+      join(resources, "Panel.nib"),
+      encodeNibArchiveFixture({
+        classes: [
+          "NSNibExternalObjectPlaceholder",
+          "NSButton",
+          "NSNibControlConnector",
+          "NSString",
+          "NSMenuItem",
+        ],
+        objects: [
+          { classIndex: 0, values: {} },
+          { classIndex: 1, values: {} },
+          {
+            classIndex: 2,
+            values: {
+              NSSource: { ref: 1 },
+              NSDestination: { ref: 0 },
+              NSLabel: { ref: 3 },
+            },
+          },
+          { classIndex: 3, values: { "NS.bytes": "doOK:" } },
+          { classIndex: 4, values: {} },
+          {
+            classIndex: 2,
+            values: {
+              NSSource: { ref: 4 },
+              NSDestination: null,
+              NSLabel: { ref: 6 },
+            },
+          },
+          { classIndex: 3, values: { "NS.bytes": "arrangeInFront:" } },
+        ],
+      }),
+    );
+
+    const analysis = await analyzeInterfaceBuilderBundle({
+      bundlePath: bundle,
+      targetSha256: "e".repeat(64),
+    });
+    const byId = new Map(analysis.graph.nodes.map((node) => [node.id, node]));
+    const routes = analysis.graph.nodes
+      .filter(({ kind }) => kind === "action")
+      .map((action) => ({
+        action: action.name,
+        from: analysis.graph.edges
+          .filter(
+            ({ relation, to }) =>
+              relation === "target_action" && to === action.id,
+          )
+          .map(({ from }) => byId.get(from)?.name),
+        to: analysis.graph.edges
+          .filter(
+            ({ relation, from, to }) =>
+              relation === "target_action" &&
+              from === action.id &&
+              (to === null || byId.get(to)?.kind !== "objc_selector"),
+          )
+          .map(({ to }) => (to === null ? null : byId.get(to)?.name)),
+      }))
+      .sort((left, right) => left.action.localeCompare(right.action));
+    expect(routes).toEqual([
+      { action: "arrangeInFront:", from: ["NSMenuItem"], to: [null] },
+      {
+        action: "doOK:",
+        from: ["NSButton"],
+        to: ["NSNibExternalObjectPlaceholder"],
+      },
+    ]);
   });
 
   it("honors cancellation during directory traversal", async () => {
@@ -183,7 +262,18 @@ describe("bounded Interface Builder archive decoding", () => {
           analysis.graph.nodes.find(({ id }) => id === from)?.kind ===
             "control",
       );
-      expect(actionSource).toBeDefined();
+      const describeNode = (id: string | null) => {
+        const node = analysis.graph.nodes.find((item) => item.id === id);
+        return node === undefined ? String(id) : `${node.kind}:${node.name}`;
+      };
+      const actionRoutes = analysis.graph.edges
+        .filter(
+          ({ relation, from, to }) =>
+            relation === "target_action" &&
+            (from === action?.id || to === action?.id),
+        )
+        .map(({ from, to }) => `${describeNode(from)} -> ${describeNode(to)}`);
+      expect(actionSource, actionRoutes.join("; ")).toBeDefined();
       expect(
         analysis.graph.edges.some(
           ({ from, relation, to }) =>

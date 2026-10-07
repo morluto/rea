@@ -100,9 +100,9 @@ export const collectSemanticReferences = (
   const output: JavaScriptSemanticReference[] = [];
   const seen = new Set<string>();
   traverseJavaScriptAst(program, {
-    enter: (node, parent, ancestors) => {
+    enter: (node, parent, readAncestors) => {
       if (!t.isIdentifier(node) || parent === null) return;
-      const role = semanticIdentifierRole(node, parent, ancestors);
+      const role = semanticIdentifierRole(node, parent, readAncestors());
       if (role === null) return;
       // A compound assignment or update reads before it writes; emit both so
       // reference consumers see the read they actually execute.

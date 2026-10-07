@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 
 import * as t from "@babel/types";
 
+import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+
 import { compareCodePoints } from "../canonicalOrdering.js";
 import { propertyName } from "./javascriptAstValues.js";
 import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
@@ -14,9 +16,11 @@ export interface StaticExports {
 /** Derive a rename-resistant syntax fingerprint without code execution. */
 export const fingerprintJavaScriptAst = (node: t.Node): string => {
   const tokens: string[] = [];
-  t.traverseFast(node, (current) => {
-    tokens.push(...semanticTokens(current));
-    return undefined;
+  traverseJavaScriptAst(node, {
+    enter: (current) => {
+      tokens.push(...semanticTokens(current));
+      return undefined;
+    },
   });
   return createHash("sha256").update(JSON.stringify(tokens)).digest("hex");
 };
@@ -24,11 +28,13 @@ export const fingerprintJavaScriptAst = (node: t.Node): string => {
 /** Collect statically declared CommonJS/bundler export names from one factory. */
 export const collectJavaScriptExports = (node: t.Node): StaticExports => {
   const exports = new Set<string>();
-  t.traverseFast(node, (current) => {
-    if (t.isAssignmentExpression(current))
-      collectAssignmentExports(current.left, current.right, exports);
-    if (t.isCallExpression(current)) collectCallExports(current, exports);
-    return undefined;
+  traverseJavaScriptAst(node, {
+    enter: (current) => {
+      if (t.isAssignmentExpression(current))
+        collectAssignmentExports(current.left, current.right, exports);
+      if (t.isCallExpression(current)) collectCallExports(current, exports);
+      return undefined;
+    },
   });
   return {
     values: [...exports].sort(compareCodePoints),

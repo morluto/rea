@@ -282,6 +282,9 @@ describe("primitive addition values", () => {
     ['"x" + false', "xfalse"],
     ['null + "x"', "nullx"],
     ["3 + 4", 7],
+    ['1 + 2 + "3"', "33"],
+    ['1 + (2 + "3")', "123"],
+    ['(1 + 2) + ("3" + 4)', "334"],
   ])("recovers %s using primitive coercion", (expression, expected) => {
     const ir = analyzeJavaScriptSemantics(`const answer = ${expression};`);
     expect(topLevelBinding(ir, "answer").value).toEqual({

@@ -18,6 +18,12 @@ export type CliOutputArgumentValidation =
 
 type JsonRecord = Record<string, unknown>;
 
+interface ParsedCliOutputArguments {
+  readonly filterOutput: boolean;
+  readonly format: string;
+  readonly tokenWindow: boolean;
+}
+
 const isRecord = (value: unknown): value is JsonRecord =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -28,16 +34,16 @@ const validationError = (value: JsonRecord): JsonRecord | undefined => {
   return undefined;
 };
 
-/** Reject text-window controls that would corrupt a structured document. */
-export const validateCliOutputArguments = (
+const parseCliOutputArguments = (
   arguments_: readonly string[],
-): CliOutputArgumentValidation => {
+): ParsedCliOutputArguments => {
   let format: string = "toon";
+  let filterOutput = false;
   let tokenWindow = false;
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index];
-    // Incur scans builtins across `--` and accepts only the spaced --format form.
-    // Mirror its effective format so malformed requests still emit complete JSON.
+    // Incur scans builtins across `--` and accepts only spaced value forms.
+    // Mirror those effective values at the executable output boundary.
     if (argument === "--json") {
       format = "json";
       continue;
@@ -46,6 +52,13 @@ export const validateCliOutputArguments = (
       const value = arguments_[index + 1];
       if (value !== undefined) {
         format = value;
+        index += 1;
+      }
+      continue;
+    }
+    if (argument === "--filter-output") {
+      if (arguments_[index + 1] !== undefined) {
+        filterOutput = true;
         index += 1;
       }
       continue;
@@ -63,6 +76,14 @@ export const validateCliOutputArguments = (
     )
       tokenWindow = true;
   }
+  return { filterOutput, format, tokenWindow };
+};
+
+/** Reject text-window controls that would corrupt a structured document. */
+export const validateCliOutputArguments = (
+  arguments_: readonly string[],
+): CliOutputArgumentValidation => {
+  const { format, tokenWindow } = parseCliOutputArguments(arguments_);
   if (
     tokenWindow &&
     (format === "json" || format === "jsonl" || format === "yaml")
@@ -74,6 +95,19 @@ export const validateCliOutputArguments = (
       message: UNSUPPORTED_OUTPUT_COMBINATION_MESSAGE,
     };
   return { ok: true };
+};
+
+/** Preserve a complete document when Incur filters the entire result away. */
+export const renderEmptyFilteredCliOutput = (
+  arguments_: readonly string[],
+): string | undefined => {
+  const { filterOutput, format } = parseCliOutputArguments(arguments_);
+  if (
+    filterOutput &&
+    (format === "json" || format === "jsonl" || format === "yaml")
+  )
+    return "{}\n";
+  return undefined;
 };
 
 /** Render one complete structured error before command execution. */
