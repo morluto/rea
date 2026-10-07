@@ -1,17 +1,17 @@
-import { functionDossierSchema } from "../domain/hopperValues.js";
-import { nativeCallTargetsSchema } from "../domain/nativeInstruction.js";
+import { functionDossierSchema } from "../../domain/hopperValues.js";
+import { nativeCallTargetsSchema } from "../../domain/native/nativeInstruction.js";
 import {
   nativeValueTraceInputSchema,
   nativeValueTraceSchema,
-} from "../domain/nativeValueTrace.js";
-import { createEvidence } from "../domain/evidence.js";
+} from "../../domain/native/nativeValueTrace.js";
+import { createEvidence } from "../../domain/evidence.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
-} from "../domain/analysisErrorCore.js";
-import { err, ok } from "../domain/result.js";
-import type { AnalysisOperationPort } from "./AnalysisProvider.js";
-import type { EnhancedResult } from "./EnhancedToolTypes.js";
+} from "../../domain/analysisErrorCore.js";
+import { err, ok } from "../../domain/result.js";
+import type { AnalysisOperationPort } from "../AnalysisProvider.js";
+import type { EnhancedResult } from "../EnhancedToolTypes.js";
 
 /** Compose bounded high-p-code def-use graphs across exactly referenced call destinations. */
 export const traceNativeValues = async (

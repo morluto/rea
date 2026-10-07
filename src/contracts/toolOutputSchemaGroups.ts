@@ -1,13 +1,13 @@
 import { z } from "zod";
-import { nativeFunctionAnnotationsSchema } from "../domain/nativeFunctionAnnotations.js";
-import { nativeLoadImageSchema } from "../domain/nativeLoadImage.js";
-import { nativeUiResultSchema } from "../domain/nativeUiObservation.js";
-import { nativeValueTraceSchema } from "../domain/nativeValueTrace.js";
-import { nativeDataTypeSchema } from "../domain/nativeDataType.js";
+import { nativeFunctionAnnotationsSchema } from "../domain/native/nativeFunctionAnnotations.js";
+import { nativeLoadImageSchema } from "../domain/native/nativeLoadImage.js";
+import { nativeUiResultSchema } from "../domain/native/nativeUiObservation.js";
+import { nativeValueTraceSchema } from "../domain/native/nativeValueTrace.js";
+import { nativeDataTypeSchema } from "../domain/native/nativeDataType.js";
 import {
   nativeInstructionSchema,
   nativeCallTargetsSchema,
-} from "../domain/nativeInstruction.js";
+} from "../domain/native/nativeInstruction.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { residualUnknownSchema } from "../domain/residualUnknown.js";
 import { evidenceBundleSchema } from "../domain/evidenceBundle.js";
@@ -20,14 +20,14 @@ import {
   functionInstructionWindowSchema,
   referenceKindSchema,
 } from "../domain/hopperValues.js";
-import { nativeApiInspectionResultSchema } from "../domain/nativeApiBoundary.js";
+import { nativeApiInspectionResultSchema } from "../domain/native/nativeApiBoundary.js";
 import {
   demangleSwiftSchema,
   inspectMachoSchema,
   inspectPlistSchema,
   inspectSignatureSchema,
   listArchitecturesSchema,
-} from "../domain/nativeInspection.js";
+} from "../domain/native/nativeInspection.js";
 import { artifactExtractionResultSchema } from "../domain/artifactGraph.js";
 import { artifactInspectionResultSchema } from "../domain/artifactInspection.js";
 import { interfaceBuilderAnalysisSchema } from "../domain/apple/interfaceBuilderGraph.js";
@@ -50,8 +50,8 @@ import { callPathResultSchema } from "../domain/callPath.js";
 import { staticRuntimeCorrelationResultSchema } from "../domain/staticRuntimeCorrelation.js";
 import { reconstructionVerificationResultSchema } from "../domain/reconstructionVerification.js";
 import { analysisErrorProjectionSchema } from "./errorSchemas.js";
-import { nativeDispatchMetadataResultSchema } from "../domain/objcSwiftMetadata.js";
-import { nativeInvestigationTraceSchema } from "../domain/nativeInvestigationGraph.js";
+import { nativeDispatchMetadataResultSchema } from "../domain/native/objcSwiftMetadata.js";
+import { nativeInvestigationTraceSchema } from "../domain/native/nativeInvestigationGraph.js";
 import {
   addressList,
   addressedValue,

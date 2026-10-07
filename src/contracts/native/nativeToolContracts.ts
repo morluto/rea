@@ -2,13 +2,13 @@ import { z } from "zod";
 import {
   nativeUiObservationInputSchema,
   nativeUiScenarioInputSchema,
-} from "../domain/nativeUiObservation.js";
+} from "../../domain/native/nativeUiObservation.js";
 
-import type { ToolContract } from "./toolContracts.js";
-import { nativeOutputSchemas } from "./toolOutputSchemas.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
-import { toolContractMetadata } from "./toolEffects.js";
-import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
+import type { ToolContract } from "../toolContracts.js";
+import { nativeOutputSchemas } from "../toolOutputSchemas.js";
+import { jsonValueSchema } from "../../domain/jsonValue.js";
+import { toolContractMetadata } from "../toolEffects.js";
+import { requireOutputSchema } from "../toolOutputSchemaPrimitives.js";
 
 const examples: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
   inspect_macho: {},

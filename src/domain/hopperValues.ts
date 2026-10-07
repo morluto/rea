@@ -3,8 +3,8 @@ import { z } from "zod";
 import type { JsonValue } from "./jsonValue.js";
 
 import { err, ok, type Result } from "./result.js";
-import { nativeApiBoundarySchema } from "./nativeApiBoundary.js";
-import { nativeValueFlowSchema } from "./nativeValueFlow.js";
+import { nativeApiBoundarySchema } from "./native/nativeApiBoundary.js";
+import { nativeValueFlowSchema } from "./native/nativeValueFlow.js";
 import { AnalysisOutputError } from "./analysisErrorCore.js";
 import { HopperProtocolError } from "./hopperErrors.js";
 

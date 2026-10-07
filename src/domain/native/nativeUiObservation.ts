@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import { z } from "zod";
 
-import { decodeCanonicalBase64 } from "./webScreenshot.js";
+import { decodeCanonicalBase64 } from "../webScreenshot.js";
 
 const scope = {
   pid: z.number().int().positive(),

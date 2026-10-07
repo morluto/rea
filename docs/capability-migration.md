@@ -404,3 +404,24 @@ analysis state. MCP startup constructs its connection session through the same
 binary factory. Source and compiled fixtures use these entrypoints. The former
 application runtime path is removed, and the source guard no longer admits its
 outward provider/composition imports.
+
+## Native analyst capability ownership
+
+`src/domain/native/` owns portable native inspection, instruction/data types,
+load-image facts, API boundaries, annotations, metadata recovery, UI observation
+semantics and value/investigation graphs. `src/application/native/` owns shared
+API projection, call routes, dispatch inspection and UI/value tracing. Its tests
+keep the existing service lane. `src/contracts/native/` owns the named native
+adapter contracts; shared official/enhanced aggregates remain at their owners.
+
+Producer interpretation, external commands and host UI lifecycle remain in
+`src/native/`, Hopper, Ghidra and IDA. The shared function dossier still lives in
+`domain/hopperValues.ts`: its historical name does not make its meaning exclusive
+to Hopper. This move retains existing typed ports, exact result schemas,
+observed/derived/unknown distinctions, profiles and Evidence links.
+
+Source and compiled verifier imports follow the new owners. Host UI and real
+native-value verifier locations are retained until their own proof lanes migrate;
+interactive macOS UI success and real dependency tracing require their respective
+host/engine workflows. Portable source fixtures and injected call-route tests
+establish their narrower boundaries, without expanding provider/platform support.

@@ -2,7 +2,7 @@ import type {
   ObjcSwiftMetadata,
   NativeMetadataEvidence,
   NativeMetadataLocation,
-} from "../domain/objcSwiftMetadata.js";
+} from "../domain/native/objcSwiftMetadata.js";
 
 /** Byte readers shared with the validated Mach-O metadata boundary. */
 export interface SwiftMetadataReaders {

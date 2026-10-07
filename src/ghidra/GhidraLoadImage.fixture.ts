@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { dosMz } from "../domain/binaryTarget.fixture.js";
-import type { NativeLoadImageObservation } from "../domain/nativeLoadImage.js";
+import type { NativeLoadImageObservation } from "../domain/native/nativeLoadImage.js";
 
 const hash = (bytes: Buffer): string =>
   createHash("sha256").update(bytes).digest("hex");

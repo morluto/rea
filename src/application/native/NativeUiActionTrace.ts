@@ -1,22 +1,22 @@
 import { z } from "zod";
 
-import type { AnalysisOperationPort } from "./AnalysisProvider.js";
-import type { EnhancedResult } from "./EnhancedToolTypes.js";
-import type { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
-import { interfaceBuilderAnalysisSchema } from "../domain/apple/interfaceBuilderGraph.js";
+import type { AnalysisOperationPort } from "../AnalysisProvider.js";
+import type { EnhancedResult } from "../EnhancedToolTypes.js";
+import type { enhancedInputSchemas } from "../../contracts/enhancedInputs.js";
+import { interfaceBuilderAnalysisSchema } from "../../domain/apple/interfaceBuilderGraph.js";
 import {
   nativeInvestigationGraphSchema,
   nativeInvestigationTraceSchema,
   traceNativeInvestigationGraph,
   joinInterfaceBuilderDispatch,
-} from "../domain/nativeInvestigationGraph.js";
-import { nativeDispatchMetadataResultSchema } from "../domain/objcSwiftMetadata.js";
+} from "../../domain/native/nativeInvestigationGraph.js";
+import { nativeDispatchMetadataResultSchema } from "../../domain/native/objcSwiftMetadata.js";
 import { inspectNativeDispatch } from "./NativeDispatchMetadataInspection.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
+import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { readNativeCallRoutes } from "./NativeCallRoutes.js";
-import { err, ok } from "../domain/result.js";
-import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { err, ok } from "../../domain/result.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 
 type Input = z.output<typeof enhancedInputSchemas.trace_native_ui_action>;
 /** Build a UI-to-code trace from the active app and selected native provider. */

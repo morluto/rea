@@ -17,8 +17,8 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import { nativeDataTypeSchema } from "../dist/domain/nativeDataType.js";
-import { nativeLoadImageSchema } from "../dist/domain/nativeLoadImage.js";
+import { nativeDataTypeSchema } from "../dist/domain/native/nativeDataType.js";
+import { nativeLoadImageSchema } from "../dist/domain/native/nativeLoadImage.js";
 
 const mode = process.argv[2] ?? "symbols";
 if (

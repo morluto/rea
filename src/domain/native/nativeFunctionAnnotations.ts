@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { functionDossierSchema } from "./hopperValues.js";
+import { functionDossierSchema } from "../hopperValues.js";
 
 /** One explicit function's analyst-authored metadata changes. */
 export const nativeFunctionAnnotationsInputSchema = z

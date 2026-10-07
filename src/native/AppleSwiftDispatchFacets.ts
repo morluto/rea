@@ -1,4 +1,4 @@
-import type { ObjcSwiftMetadata } from "../domain/objcSwiftMetadata.js";
+import type { ObjcSwiftMetadata } from "../domain/native/objcSwiftMetadata.js";
 import type { Segment, Section } from "./AppleMachoSelection.js";
 
 /** Resolved file-backed metadata location from the Mach-O layout. */

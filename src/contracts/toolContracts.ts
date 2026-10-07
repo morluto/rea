@@ -1,4 +1,4 @@
-import { NATIVE_TOOL_CONTRACTS } from "./nativeToolContracts.js";
+import { NATIVE_TOOL_CONTRACTS } from "./native/nativeToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "./artifactToolContracts.js";
 import { MANAGED_TOOL_CONTRACTS } from "./managed/managedToolContracts.js";
 import { FIRMWARE_TOOL_CONTRACTS } from "./firmware/firmwareToolContracts.js";

@@ -2,12 +2,12 @@ import { z } from "zod";
 import {
   nativeDispatchMetadataResultSchema,
   inspectNativeDispatchMetadata,
-} from "../domain/objcSwiftMetadata.js";
-import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
-import { err, ok } from "../domain/result.js";
-import type { AnalysisOperationPort } from "./AnalysisProvider.js";
-import type { EnhancedResult } from "./EnhancedToolTypes.js";
+} from "../../domain/native/objcSwiftMetadata.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
+import { jsonValueSchema } from "../../domain/jsonValue.js";
+import { err, ok } from "../../domain/result.js";
+import type { AnalysisOperationPort } from "../AnalysisProvider.js";
+import type { EnhancedResult } from "../EnhancedToolTypes.js";
 /** Prefer validated binary metadata, otherwise preserve the bound provider's symbol-only coverage. */
 export const inspectNativeDispatch = async (
   analysis: AnalysisOperationPort,

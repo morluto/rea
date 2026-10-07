@@ -1,11 +1,11 @@
 import { z } from "zod";
-import type { AnalysisOperationPort } from "./AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../AnalysisProvider.js";
 import {
   parseRelatedAddresses,
   referenceKindSchema,
-} from "../domain/hopperValues.js";
-import { err, ok } from "../domain/result.js";
-import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
+} from "../../domain/hopperValues.js";
+import { err, ok } from "../../domain/result.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 
 const referencesSchema = z.object({
   reference_kinds_available: z.boolean().optional(),
