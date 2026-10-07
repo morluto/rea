@@ -3,6 +3,7 @@ export type BrowserObservationOperation =
   | "list_browser_targets"
   | "inspect_web_page"
   | "analyze_web_bundle"
+  | "trace_web_module_imports"
   | "observe_web_session"
   | "discover_webmcp_tools"
   | "compare_web_captures"

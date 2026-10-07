@@ -432,6 +432,10 @@ Static Android APK inspection is verified on Linux with headless JADX; see [Andr
   and tracing tools. Source URLs, frame or transaction references, competing
   versions, and missing-source states remain inline. See
   [captured website scripts](docs/website-script-export.md).
+  Trace one exported script's native imports with `trace_web_module_imports` /
+  `rea trace-web-module-imports`, preserving query/fragment identity and optional
+  import-map context. Requires caller-supplied Chromium via
+  `REA_BROWSER_EXECUTABLE`; see [module relationships](docs/website-module-trace.md).
   Recover readable modules from selected local bundles with
   `recover_javascript_sources` / `rea recover-javascript-sources`, then pass
   the returned `analysis_input` to static analysis. This optional Linux x64

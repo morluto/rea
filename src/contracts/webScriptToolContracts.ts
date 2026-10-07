@@ -3,11 +3,37 @@ import {
   webScriptExportResultSchema,
 } from "../domain/webScriptExport.js";
 import type { ToolContract } from "./toolContractTypes.js";
+import {
+  webModuleTraceInputSchema,
+  webModuleTraceResultSchema,
+} from "../domain/webModuleTrace.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import { evidenceResultOf } from "./toolOutputSchemas.js";
 
 /** Local captured-script publication contracts shared by CLI and MCP. */
 export const WEB_SCRIPT_TOOL_CONTRACTS = [
+  {
+    name: "trace_web_module_imports",
+    ...toolContractMetadata("trace_web_module_imports"),
+    description:
+      "Trace one exported website script's outgoing native ES imports/re-exports, using exact URL and optional selected import-map context. Reads a local export_web_scripts manifest and verifies the selected source's SHA-256/size; returns source positions, native resolved URLs or exact errors, every matching captured candidate and explicit unknown execution. Query/fragment identities are preserved. Computed imports and bundler IDs remain unknown. Select importer_url for unknown inline/document-base context. Caller-supplied Chromium executes only a trusted REA resolver stub in an owned context with page requests locally fulfilled/blocked; no captured application execution or asset refetch. Requires absolute REA_BROWSER_EXECUTABLE for literal imports. 32 MiB manifest, 16 MiB source, 4 MiB map and 20-second native deadline; cleanup may extend the deadline.",
+    kind: "application",
+    inputSchema: webModuleTraceInputSchema,
+    outputSchema: evidenceResultOf(webModuleTraceResultSchema),
+    examples: [
+      {
+        title: "Trace an exported module under a selected import map",
+        input: {
+          manifest_path: "/analysis/exported-scripts/manifest.json",
+          script_index: 0,
+          import_map: {
+            path: "/analysis/import-map.json",
+            base_url: "https://example.test/app/",
+          },
+        },
+      },
+    ],
+  },
   {
     name: "export_web_scripts",
     ...toolContractMetadata("export_web_scripts"),

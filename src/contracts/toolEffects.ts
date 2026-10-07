@@ -41,6 +41,12 @@ const sessionEvidence = effects({ mutatesSession: true });
 
 /** Explicit effect audit for every public tool. */
 export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
+  trace_web_module_imports: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+  }),
   inspect_firmware_regions: effects({
     mutatesSession: true,
     launchesProcess: true,

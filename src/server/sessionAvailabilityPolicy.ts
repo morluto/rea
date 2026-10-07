@@ -17,6 +17,7 @@ export interface SessionAvailabilityDefaults {
     | "v8InspectorObservationEnabled"
     | "androidAnalysisEnabled"
     | "javascriptRecoveryEnabled"
+    | "webModuleResolutionEnabled"
     | "firmwareInspectionEnabled"
     | "firmwareExtractionEnabled"
   >;
@@ -39,6 +40,8 @@ export const sessionAvailabilityPolicy = (
         defaults.optionalFeatures?.androidAnalysisEnabled ?? false,
       javascriptRecoveryEnabled:
         defaults.optionalFeatures?.javascriptRecoveryEnabled ?? false,
+      webModuleResolutionEnabled:
+        defaults.optionalFeatures?.webModuleResolutionEnabled ?? false,
       browserObservationEnabled:
         defaults.optionalFeatures?.browserObservationEnabled ?? false,
       browserScenarioEnabled:

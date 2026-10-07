@@ -1,5 +1,6 @@
 /** Canonical names used by every one-shot CLI command registration. */
 export const CLI_COMMANDS = Object.freeze({
+  traceWebModuleImports: "trace-web-module-imports",
   analyze: "analyze",
   inspect: "inspect",
   decompile: "decompile",

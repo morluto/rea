@@ -2,6 +2,35 @@ import { describe, expect, it } from "vitest";
 
 import { buildCapabilityInventory } from "./CapabilityInventory.js";
 
+it("reports module syntax and native resolution availability separately", () => {
+  const input = { open: false, capabilities: [] };
+  const unavailable = buildCapabilityInventory(input, {
+    processCaptureEnabled: false,
+  }).find((tool) => tool.name === "trace_web_module_imports");
+  expect(unavailable).toMatchObject({
+    available: true,
+    default_mode_available: false,
+    modes: [
+      expect.objectContaining({
+        name: "sources-without-literal-imports",
+        available: true,
+      }),
+      expect.objectContaining({
+        name: "native-literal-resolution",
+        available: false,
+      }),
+    ],
+  });
+  const enabled = buildCapabilityInventory(input, {
+    processCaptureEnabled: false,
+    webModuleResolutionEnabled: true,
+  }).find((tool) => tool.name === "trace_web_module_imports");
+  expect(enabled).toMatchObject({
+    available: true,
+    default_mode_available: true,
+  });
+});
+
 const enabledPolicy: Parameters<typeof buildCapabilityInventory>[1] = {
   processCaptureEnabled: true,
   browserObservationEnabled: true,

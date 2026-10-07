@@ -37,6 +37,7 @@ export type AvailabilityPolicy = {
   readonly firmwareExtractionEnabled?: boolean;
   readonly androidAnalysisEnabled?: boolean;
   readonly javascriptRecoveryEnabled?: boolean;
+  readonly webModuleResolutionEnabled?: boolean;
   readonly browserObservationEnabled?: boolean;
   readonly browserScenarioEnabled?: boolean;
   readonly electronObservationEnabled?: boolean;
@@ -237,6 +238,34 @@ const workflowAvailabilityFor = ({
   kind,
   policy,
 }: AvailabilityContext): Availability | null => {
+  if (name === "trace_web_module_imports")
+    return {
+      reason: "available",
+      remediation: null,
+      defaultModeAvailable: policy.webModuleResolutionEnabled === true,
+      modes: [
+        {
+          name: "sources-without-literal-imports",
+          available: true,
+          missing_operations: [],
+          remediation: null,
+        },
+        policy.webModuleResolutionEnabled === true
+          ? {
+              name: "native-literal-resolution",
+              available: true,
+              missing_operations: [],
+              remediation: null,
+            }
+          : {
+              name: "native-literal-resolution",
+              available: false,
+              missing_operations: ["native-module-resolver"],
+              remediation:
+                "Provide an absolute REA_BROWSER_EXECUTABLE supporting import.meta.resolve; no binary target is required.",
+            },
+      ],
+    };
   if (name === "recover_javascript_sources")
     return policy.javascriptRecoveryEnabled === true
       ? { reason: "available", remediation: null }

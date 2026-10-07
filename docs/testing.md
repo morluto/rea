@@ -106,6 +106,14 @@ It uses an installed browser and accepts an optional installed REA entrypoint.
 The complete `verify:browser` lane also exercises passive script export through
 both public adapters. See [website script export](website-script-export.md).
 
+`verify:browser:modules` compares CLI and stdio MCP traces against an independent
+real Chromium module-loading fixture: import-map scopes, package prefixes,
+null/backtracking rejection, query/fragment identities, repeated module instances,
+lazy and computed unknowns, exact source/map identities and no implicit refetch.
+Set `REA_BROWSER_EXECUTABLE`; the optional script argument selects an installed
+package entrypoint. The complete `verify:browser` lane and existing conditional
+Chrome CI include this verifier. See [module relationships](website-module-trace.md).
+
 ## Real-toolchain verification lanes
 
 Each real-toolchain command must require only the host tools needed to prove

@@ -16,6 +16,9 @@ import { registerArtifactTools } from "./registerArtifactTools.js";
 import { registerBrowserScenarioTool } from "./registerBrowserScenarioTool.js";
 import { registerBrowserTools } from "./registerBrowserTools.js";
 import { registerWebScriptTool } from "./registerWebScriptTool.js";
+import { registerWebModuleTool } from "./registerWebModuleTool.js";
+import type { WebModuleTraceService } from "../application/WebModuleTraceService.js";
+import { createWebModuleTraceService } from "../composition/webModules.js";
 import { registerJavaScriptRecoveryTool } from "./registerJavaScriptRecoveryTool.js";
 import { JavaScriptRecoveryService } from "../application/JavaScriptRecoveryService.js";
 import type { JavaScriptRecoveryPort } from "../application/JavaScriptRecoveryPort.js";
@@ -50,6 +53,7 @@ export interface CreateServerOptions {
   readonly logger?: Logger;
   readonly firmwareAnalysis?: FirmwareAnalysisPort;
   readonly javascriptRecovery?: JavaScriptRecoveryPort;
+  readonly webModuleTrace?: WebModuleTraceService;
   readonly androidAnalysis?: AndroidAnalysisPort;
   readonly browserObservation?: BrowserObservationPort;
   readonly browserScenarioCapture?: BrowserScenarioCapturePort;
@@ -69,6 +73,9 @@ const installSessionToolAvailability = (
   const policy = sessionAvailabilityPolicy(options.availabilityPolicy, {
     optionalProviderLoadFailures: options.optionalProviderLoadFailures,
     optionalFeatures: {
+      webModuleResolutionEnabled:
+        options.webModuleTrace !== undefined ||
+        isAbsolute(process.env.REA_BROWSER_EXECUTABLE ?? ""),
       firmwareInspectionEnabled:
         options.firmwareAnalysis !== undefined ||
         (process.platform === "linux" &&
@@ -165,6 +172,12 @@ export const createServer = (
     recordEvidence,
   );
   registerObservationTools(toolContext);
+  registerWebModuleTool(
+    server,
+    options.webModuleTrace ?? createWebModuleTraceService(),
+    toolLogger,
+    recordEvidence,
+  );
   registerJavaScriptRecoveryTool(
     server,
     new JavaScriptRecoveryService(
