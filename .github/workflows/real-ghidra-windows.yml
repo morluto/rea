@@ -21,7 +21,14 @@ jobs:
         with:
           node-version-file: .nvmrc
       - name: Prepare cross compiler
-        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y g++-mingw-w64-x86-64
+        run: |
+          for source in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+            if [ -f "$source" ]; then
+              sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g; s|http://archive.ubuntu.com|https://archive.ubuntu.com|g' "$source"
+            fi
+          done
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y g++-mingw-w64-x86-64
       - run: npm run build:windows-native
       - run: npm run verify:windows-native:artifact
       - uses: actions/upload-artifact@v4
@@ -53,10 +60,18 @@ jobs:
         env:
           REA_ANALYSIS_PROVIDER: ghidra
         run: npm run verify:ghidra:windows | Tee-Object -FilePath windows-ghidra-proof.log
+      - name: Verify native x86 Windows Ghidra operations
+        env:
+          REA_ANALYSIS_PROVIDER: ghidra
+        run: npm run verify:ghidra:windows -- --x86 | Tee-Object -FilePath windows-ghidra-x86-proof.log
       - name: Verify ordinary-user CLI and MCP operations
         env:
           REA_ANALYSIS_PROVIDER: ghidra
         run: npm run verify:ghidra:windows:package | Tee-Object -FilePath windows-ghidra-package-proof.log
+      - name: Verify ordinary-user x86 CLI and MCP operations
+        env:
+          REA_ANALYSIS_PROVIDER: ghidra
+        run: npm run verify:ghidra:windows:package -- --x86 | Tee-Object -FilePath windows-ghidra-x86-package-proof.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -64,4 +79,6 @@ jobs:
           path: |
             windows-ghidra-proof.log
             windows-ghidra-package-proof.log
+            windows-ghidra-x86-proof.log
+            windows-ghidra-x86-package-proof.log
           retention-days: 30

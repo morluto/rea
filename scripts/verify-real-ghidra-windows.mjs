@@ -63,12 +63,20 @@ if (
   );
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const targetPath = resolve(root, "build", "fixtures", "rea-ghidra-windows.exe");
+const architecture = process.argv[2] === "--x86" ? "x86" : "x86_64";
+const targetPath = resolve(
+  root,
+  "build",
+  "fixtures",
+  architecture === "x86"
+    ? "rea-ghidra-windows-x86.exe"
+    : "rea-ghidra-windows.exe",
+);
 const target = await parseBinaryTarget(targetPath);
 if (
   !target.ok ||
   target.value.format !== "pe" ||
-  target.value.architecture !== "x86_64" ||
+  target.value.architecture !== architecture ||
   target.value.executableRole !== "application" ||
   target.value.managed !== false
 )
@@ -113,6 +121,9 @@ try {
     target.value.sha256,
     profile.value.profile.digest,
   );
+  const languagePrefix = architecture === "x86" ? "x86:LE:32:" : "x86:LE:64:";
+  if (!started.value.target.language_id.startsWith(languagePrefix))
+    throw new Error("Windows fixture imported with the wrong Ghidra language");
   coordinates = client.diagnostics();
   assertRuntimeCoordinates(coordinates, target.value.sha256);
 
@@ -137,6 +148,19 @@ try {
   );
   if (procedure === undefined)
     throw new Error("Windows Ghidra fixture exposed no local procedure");
+  const calleeAddress = architecture === "x86" ? 0x401010n : 0x140001010n;
+  const callee = procedures.find(
+    (item) => BigInt(item.address) === calleeAddress,
+  );
+  if (callee === undefined)
+    throw new Error("Windows fixture exposed no controlled callee");
+  const pseudoCode = await functionOperation("procedure_pseudo_code", {
+    procedure: callee.value,
+  });
+  if (typeof pseudoCode !== "string" || !/\b(?:42|0x2a)\b/iu.test(pseudoCode))
+    throw new Error(
+      "Windows fixture decompilation lost its known return value",
+    );
 
   await inventory("inspect_native_load_image", {});
   const memory = await inventory("read_bytes", {
@@ -210,6 +234,7 @@ try {
   report = {
     ok: true,
     provider: { id: "ghidra", version: SUPPORTED_GHIDRA_VERSION },
+    language_id: started.value.target.language_id,
     target: {
       format: target.value.format,
       architecture: target.value.architecture,
@@ -228,7 +253,7 @@ try {
     limitations: [
       "approved-non-sensitive-fixtures-only",
       "windows-x64-local-ntfs-only",
-      "native-x86-64-pe-applications-only",
+      "native-x86-and-x86-64-pe-applications-only",
       "no-gui-or-mutation-authority",
     ],
   };
