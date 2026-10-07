@@ -12,11 +12,7 @@ import {
   nativeInvestigationTraceLimitsSchema,
 } from "./nativeInvestigationGraph.js";
 
-export {
-  parseInterfaceBuilderRecords,
-  type InterfaceBuilderConnection,
-  type InterfaceBuilderObject,
-} from "./interfaceBuilderKeyedArchive.js";
+export { parseInterfaceBuilderRecords } from "./interfaceBuilderKeyedArchive.js";
 
 /** One compiled Interface Builder document projected from ibtool output. */
 export const interfaceBuilderDocumentSchema = z.strictObject({

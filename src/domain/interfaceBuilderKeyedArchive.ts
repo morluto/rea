@@ -31,8 +31,8 @@ const connection = z.strictObject({
   attributes: z.record(z.string(), jsonValueSchema),
 });
 
-export type InterfaceBuilderObject = z.infer<typeof objectNode>;
-export type InterfaceBuilderConnection = z.infer<typeof connection>;
+type InterfaceBuilderObject = z.infer<typeof objectNode>;
+type InterfaceBuilderConnection = z.infer<typeof connection>;
 
 /** Parse ibtool dictionaries or compiled keyed archives into typed records. */
 export const parseInterfaceBuilderRecords = (
