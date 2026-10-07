@@ -114,7 +114,9 @@ describe("ASAR inventory freshness", () => {
     const root = await createTestTempDirectory("rea-asar-missing-");
     const reader = new AsarArtifactReader(join(root, "missing.asar"));
 
-    await expect(reader.entries().next()).rejects.toMatchObject({
+    await expect(
+      reader.entries()[Symbol.asyncIterator]().next(),
+    ).rejects.toMatchObject({
       reason: "io",
       message: expect.stringContaining("ENOENT"),
     });
