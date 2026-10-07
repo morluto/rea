@@ -10,9 +10,63 @@ import { createEvidence } from "../../domain/evidence.js";
 import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
 import { ok } from "../../domain/result.js";
 import { createAnalysisExecution } from "../AnalysisProvider.js";
-import { AnalysisSnapshotCache } from "./AnalysisSnapshotCache.js";
+import type {
+  AnalysisOperation,
+  CapabilityDescriptor,
+} from "../AnalysisProvider.js";
+import {
+  AnalysisSnapshotCache,
+  isSnapshotCacheable,
+} from "./AnalysisSnapshotCache.js";
 
 describe("analysis snapshot cache partitioning", () => {
+  it.each<{
+    operation: Exclude<AnalysisOperation, "health">;
+    parameters: Record<string, string>;
+    cacheable: boolean;
+  }>([
+    { operation: "list_strings", parameters: {}, cacheable: false },
+    {
+      operation: "list_strings",
+      parameters: { document: "fixture" },
+      cacheable: true,
+    },
+    {
+      operation: "address_name",
+      parameters: { document: "fixture" },
+      cacheable: false,
+    },
+    {
+      operation: "address_name",
+      parameters: { document: "fixture", address: "0x1000" },
+      cacheable: true,
+    },
+    { operation: "binary_overview", parameters: {}, cacheable: true },
+  ])(
+    "retains explicit document and cursor requirements for $operation",
+    ({ operation, parameters, cacheable }) => {
+      const descriptor: CapabilityDescriptor = {
+        operation,
+        provider: ANALYSIS_SNAPSHOT_PROVIDER,
+        available: true,
+        reason: null,
+        effects: {
+          mutatesArtifact: false,
+          launchesProcess: false,
+          mayShowUi: false,
+          mayAccessNetwork: false,
+          mayWriteFilesystem: false,
+          changesPermissions: false,
+          requiresRoot: false,
+        },
+        limitations: [],
+      };
+      expect(isSnapshotCacheable(operation, descriptor, parameters)).toBe(
+        cacheable,
+      );
+    },
+  );
+
   it("returns detached data only from the exact provider/profile partition", () => {
     const cache = new AnalysisSnapshotCache();
     const execution = createAnalysisExecution(
