@@ -1,7 +1,6 @@
 import * as t from "@babel/types";
 
 import type {
-  JavaScriptModuleOrigin,
   JavaScriptSemanticBinding,
   JavaScriptSemanticModuleLink,
   JavaScriptSemanticReference,
@@ -14,6 +13,7 @@ import {
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticScopeState,
 } from "./javascriptSemanticState.js";
+import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
 import { compareCodePoints } from "../canonicalOrdering.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import {
@@ -100,12 +100,16 @@ export const collectSemanticReferences = (
 ): JavaScriptSemanticReference[] => {
   const output: JavaScriptSemanticReference[] = [];
   const seen = new Set<string>();
+  const patterns: t.Node[] = [];
   traverseJavaScriptAst(program, {
     enter: (node, parent, readAncestors) => {
+      if (isPatternNode(node)) patterns.push(node);
       if (
         !t.isIdentifier(node) ||
         parent === null ||
-        (name !== undefined && node.name !== name)
+        (name !== undefined && node.name !== name) ||
+        (isNonReferenceKey(node, parent) &&
+          !patterns.some((pattern) => bindsIdentifier(pattern, parent, node)))
       )
         return;
       const role = semanticIdentifierRole(node, parent, readAncestors());
@@ -137,6 +141,9 @@ export const collectSemanticReferences = (
                 : "unbound",
         });
       }
+    },
+    exit: (node) => {
+      if (isPatternNode(node)) patterns.pop();
     },
   });
   return output;
@@ -173,40 +180,6 @@ export const immutableSemanticBindings = (
       provenance: evaluateSemanticProvenance(binding, state),
     }))
     .sort((left, right) => compareCodePoints(left.bindingId, right.bindingId));
-
-/** Recover a literal require origin plus an optional member chain. */
-const semanticModuleOrigin = (
-  node: t.Node | null | undefined,
-  projection: readonly (string | number | null)[],
-  state: JavaScriptSemanticAnalysisState,
-): JavaScriptModuleOrigin | undefined => {
-  if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
-    const nested = t.isNode(node.object)
-      ? semanticModuleOrigin(node.object, projection, state)
-      : undefined;
-    const member = semanticStaticPropertyKey(node.property, node.computed);
-    return nested === undefined || member === null
-      ? undefined
-      : { ...nested, importedPath: [...nested.importedPath, member] };
-  }
-  if (
-    !t.isCallExpression(node) ||
-    !t.isIdentifier(node.callee, { name: "require" })
-  )
-    return undefined;
-  if (
-    resolveSemanticBindingState(state, node.callee, "require") !== undefined ||
-    semanticResolutionBlocked(state, node.callee, "require")
-  )
-    return undefined;
-  const specifier = stringValue(node.arguments[0]);
-  return specifier === undefined || projection.includes(null)
-    ? undefined
-    : {
-        specifier,
-        importedPath: projection.map((segment) => String(segment)),
-      };
-};
 
 export {
   semanticStaticPropertyKey,
@@ -318,7 +291,7 @@ const collectRequireLink = (
   node: t.VariableDeclarator,
   state: JavaScriptSemanticAnalysisState,
 ): void => {
-  const origin = semanticModuleOrigin(node.init, [], state);
+  const origin = semanticRequireOrigin(node.init, state);
   if (origin === undefined) return;
   for (const binding of requirePatternBindings(node.id, origin.importedPath))
     addModuleLink(state, {
@@ -364,7 +337,7 @@ const collectCommonJsExport = (
 ): void => {
   const exportedName = commonJsExportName(node.left, state);
   if (exportedName === undefined) return;
-  const origin = semanticModuleOrigin(node.right, [], state);
+  const origin = semanticRequireOrigin(node.right, state);
   addModuleLink(state, {
     kind: "commonjs-export",
     specifier: origin?.specifier ?? null,

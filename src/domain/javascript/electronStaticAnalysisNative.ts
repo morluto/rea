@@ -157,13 +157,12 @@ const nativeRequire = (
 ):
   | { readonly specifier: string; readonly member: string | null }
   | undefined => {
-  if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
-    const nested = t.isNode(node.object)
-      ? nativeRequire(node.object)
-      : undefined;
-    if (nested === undefined) return undefined;
-    const member = semanticStaticPropertyName(node.property, node.computed);
-    return { ...nested, member: member === "" ? nested.member : member };
+  let member: string | null = null;
+  while (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+    if (!t.isNode(node.object)) return undefined;
+    const property = semanticStaticPropertyName(node.property, node.computed);
+    if (member === null && property !== "") member = property;
+    node = node.object;
   }
   if (!t.isCallExpression(node)) return undefined;
   const name = calleeName(node.callee);
@@ -175,7 +174,7 @@ const nativeRequire = (
     return undefined;
   const specifier = stringValue(argumentNode(node.arguments[0]));
   return specifier !== undefined && isNativeSpecifier(specifier, "require")
-    ? { specifier, member: null }
+    ? { specifier, member }
     : undefined;
 };
 

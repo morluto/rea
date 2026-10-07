@@ -8,12 +8,12 @@ import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js
 import {
   compareManagedMembersEvidenceValidated,
   compareManagedMemberPaths,
-} from "../../../../src/application/ManagedMemberComparisonService.js";
+} from "../../../../src/application/managed/ManagedMemberComparisonService.js";
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
-import { managedMemberComparisonResultSchema } from "../../../../src/domain/managedMemberComparison.js";
+import { managedMemberComparisonResultSchema } from "../../../../src/domain/managed/managedMemberComparison.js";
 import { createEvidence } from "../../../../src/domain/evidence.js";
 import { jsonValueSchema } from "../../../../src/domain/jsonValue.js";
-import { compareManagedMembersInputSchema } from "../../../../src/domain/managedMemberComparison.js";
+import { compareManagedMembersInputSchema } from "../../../../src/domain/managed/managedMemberComparison.js";
 import { inspectManagedMembersBytes } from "../../../../src/dotnet/ManagedMemberInspector.js";
 import { managedPeFixtureTarget } from "../../../../src/dotnet/ManagedPe.fixture.js";
 import { buildManagedPeFixture } from "../../../../src/dotnet/ManagedPe.fixture.js";

@@ -1,9 +1,9 @@
 import { z } from "zod";
 
-import type { ToolContract } from "./toolContracts.js";
-import { managedOutputSchemas } from "./toolOutputSchemas.js";
-import { toolContractMetadata } from "./toolEffects.js";
-import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
+import type { ToolContract } from "../toolContracts.js";
+import { managedOutputSchemas } from "../toolOutputSchemas.js";
+import { toolContractMetadata } from "../toolEffects.js";
+import { requireOutputSchema } from "../toolOutputSchemaPrimitives.js";
 
 /** Exact caller boundary for execution-free PE/CLI triage and identity. */
 const managedTargetInputSchema = z.object({

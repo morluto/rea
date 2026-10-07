@@ -4,17 +4,15 @@ import { invalidateSemanticMutationPath } from "./javascriptSemanticMutationValu
 
 import type {
   JavaScriptBindingProvenance,
-  JavaScriptModuleOrigin,
   JavaScriptSemanticProperty,
   JavaScriptSemanticValue,
 } from "./javascriptSemanticIr.js";
 import {
   resolveSemanticBindingState,
-  semanticResolutionBlocked,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
+import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
 import { compareCodePoints } from "../canonicalOrdering.js";
 import { semanticStaticPropertyKey } from "./javascriptAstValues.js";
 import {
@@ -253,15 +251,28 @@ const evaluateMember = (
   node: t.MemberExpression | t.OptionalMemberExpression,
   context: EvaluationContext,
 ): JavaScriptSemanticValue => {
-  if (!t.isNode(node.object))
-    return { status: "unknown", reason: "Unsupported member base." };
-  const key =
-    semanticStaticPropertyKey(node.property, node.computed) ?? undefined;
-  if (key === undefined)
-    return { status: "unknown", reason: "Dynamic member key." };
-  return projectValue(evaluateExpression(node.object, nestedContext(context)), [
-    key,
-  ]);
+  const keys: string[] = [];
+  let current: t.Node = node;
+  let value: JavaScriptSemanticValue | undefined;
+  while (
+    t.isMemberExpression(current) ||
+    t.isOptionalMemberExpression(current)
+  ) {
+    if (!t.isNode(current.object)) {
+      value = { status: "unknown", reason: "Unsupported member base." };
+      break;
+    }
+    const key = semanticStaticPropertyKey(current.property, current.computed);
+    if (key === null) {
+      value = { status: "unknown", reason: "Dynamic member key." };
+      break;
+    }
+    keys.push(key);
+    current = current.object;
+  }
+  value ??= evaluateExpression(current, nestedContext(context));
+  for (const key of keys.reverse()) value = projectValue(value, [key]);
+  return value;
 };
 
 const evaluateAddition = (
@@ -425,7 +436,7 @@ const provenanceForExpression = (
   node: t.Node,
   context: EvaluationContext,
 ): JavaScriptBindingProvenance => {
-  const required = requireOrigin(node, context.state);
+  const required = semanticRequireOrigin(node, context.state);
   if (required !== undefined) return semanticOriginsProvenance([required]);
   if (t.isIdentifier(node)) {
     const binding = resolveSemanticBindingState(context.state, node, node.name);
@@ -437,25 +448,37 @@ const provenanceForExpression = (
       : provenanceForBinding(binding, nestedContext(context));
   }
   if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
-    if (!t.isNode(node.object))
-      return semanticUnresolvedProvenance(
-        "unknown",
-        "Unsupported member base.",
+    const members: string[] = [];
+    let current: t.Node = node;
+    while (
+      t.isMemberExpression(current) ||
+      t.isOptionalMemberExpression(current)
+    ) {
+      if (!t.isNode(current.object))
+        return semanticUnresolvedProvenance(
+          "unknown",
+          "Unsupported member base.",
+        );
+      const member = semanticStaticPropertyKey(
+        current.property,
+        current.computed,
       );
-    const member =
-      semanticStaticPropertyKey(node.property, node.computed) ?? undefined;
-    if (typeof member !== "string")
-      return semanticUnresolvedProvenance(
-        "unknown",
-        "Dynamic provenance member.",
-      );
-    const base = provenanceForExpression(node.object, nestedContext(context));
+      if (member === null)
+        return semanticUnresolvedProvenance(
+          "unknown",
+          "Dynamic provenance member.",
+        );
+      members.push(member);
+      current = current.object;
+    }
+    const base = provenanceForExpression(current, nestedContext(context));
+    const path = members.reverse();
     return base.status !== "module"
       ? base
       : semanticOriginsProvenance(
           base.origins.map((origin) => ({
             ...origin,
-            importedPath: [...origin.importedPath, member],
+            importedPath: [...origin.importedPath, ...path],
           })),
         );
   }
@@ -478,33 +501,6 @@ const provenanceForExpression = (
         );
   }
   return semanticLocalProvenance();
-};
-
-const requireOrigin = (
-  node: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-): JavaScriptModuleOrigin | undefined => {
-  if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
-    if (!t.isNode(node.object)) return undefined;
-    const nested = requireOrigin(node.object, state);
-    const member =
-      semanticStaticPropertyKey(node.property, node.computed) ?? undefined;
-    return nested === undefined || typeof member !== "string"
-      ? undefined
-      : { ...nested, importedPath: [...nested.importedPath, member] };
-  }
-  if (
-    !t.isCallExpression(node) ||
-    !t.isIdentifier(node.callee, { name: "require" })
-  )
-    return undefined;
-  if (
-    resolveSemanticBindingState(state, node.callee, "require") !== undefined ||
-    semanticResolutionBlocked(state, node.callee, "require")
-  )
-    return undefined;
-  const specifier = stringValue(node.arguments[0]);
-  return specifier === undefined ? undefined : { specifier, importedPath: [] };
 };
 
 const mergeValues = (

@@ -2,13 +2,13 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
-import { MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE } from "../contracts/managedWorkflowExamples.js";
+import { MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE } from "../../contracts/managed/managedWorkflowExamples.js";
 import {
   importManagedReconstruction,
   managedReconstructionImportInputSchema,
-} from "../domain/managedReconstruction.js";
-import { managedMemberInspectionSchema } from "../domain/managedArtifact.js";
-import { createEvidence } from "../domain/evidence.js";
+} from "../../domain/managed/managedReconstruction.js";
+import { managedMemberInspectionSchema } from "../../domain/managed/managedArtifact.js";
+import { createEvidence } from "../../domain/evidence.js";
 import { importManagedReconstructionEvidence } from "./ManagedReconstructionService.js";
 
 const exampleInput = () =>

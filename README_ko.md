@@ -17,6 +17,8 @@
 
 <a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
 
+**[웹사이트(영문)](https://morluto.github.io/rea/) · [가이드](https://morluto.github.io/rea/guides/) · [DX-Ball 사례](https://morluto.github.io/rea/showcase/dx-ball/)**
+
 [빠른 시작](#빠른-시작) · [현재 지원 범위](#현재-지원-범위) · [바이너리에서 동작까지](#바이너리에서-동작까지) · [조사 도구 카탈로그](#조사-도구-카탈로그) · [로드맵](#로드맵) · [작동 방식](#작동-방식)
 
 <table aria-label="REA community">

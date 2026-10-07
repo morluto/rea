@@ -1,7 +1,7 @@
 import type {
   ManagedArtifactInspection,
   ManagedParseIssue,
-} from "../domain/managedArtifact.js";
+} from "../domain/managed/managedArtifact.js";
 import {
   metadataRowOffset,
   type ManagedMetadataLayout,

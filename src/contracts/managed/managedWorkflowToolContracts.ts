@@ -1,17 +1,17 @@
 import { z } from "zod";
-import { evidenceSchema } from "../domain/evidence.js";
+import { evidenceSchema } from "../../domain/evidence.js";
 
-import { managedReconstructionImportInputSchema } from "../domain/managedReconstruction.js";
-import type { ToolContract } from "./toolContracts.js";
-import { managedWorkflowOutputSchemas } from "./toolOutputSchemas.js";
+import { managedReconstructionImportInputSchema } from "../../domain/managed/managedReconstruction.js";
+import type { ToolContract } from "../toolContracts.js";
+import { managedWorkflowOutputSchemas } from "../toolOutputSchemas.js";
 import {
   MANAGED_MEMBER_COMPARISON_EXAMPLE,
   MANAGED_NATIVE_VERIFICATION_EXAMPLE,
   MANAGED_APPLICATION_GRAPH_EXAMPLE,
   MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE,
 } from "./managedWorkflowExamples.js";
-import { toolContractMetadata } from "./toolEffects.js";
-import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
+import { toolContractMetadata } from "../toolEffects.js";
+import { requireOutputSchema } from "../toolOutputSchemaPrimitives.js";
 
 /** Inputs for comparing two managed observations carried inline. */
 export const compareManagedMembersReferenceInputSchema = z

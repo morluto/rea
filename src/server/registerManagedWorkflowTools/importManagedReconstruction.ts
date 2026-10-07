@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
-import { importManagedReconstructionEvidenceValidated } from "../../application/ManagedReconstructionService.js";
+import { importManagedReconstructionEvidenceValidated } from "../../application/managed/ManagedReconstructionService.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { toCallToolResult } from "../toolResult.js";

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { digestSchema } from "./../domain/digests.js";
+import { digestSchema } from "../digests.js";
 
 const tokenSchema = z.string().regex(/^0x[0-9a-f]{8}$/u);
 const offsetSchema = z.number().int().min(0);

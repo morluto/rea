@@ -3,18 +3,18 @@ import { z } from "zod";
 import {
   AnalysisInputError,
   AnalysisProtocolError,
-} from "../domain/analysisErrorCore.js";
-import { type AnalysisError } from "../domain/analysisErrorBase.js";
-import { createEvidence, type Evidence } from "../domain/evidence.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
+} from "../../domain/analysisErrorCore.js";
+import { type AnalysisError } from "../../domain/analysisErrorBase.js";
+import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import { jsonValueSchema } from "../../domain/jsonValue.js";
 import {
   importManagedReconstruction,
   managedReconstructionImportInputSchema,
   type ManagedReconstructionImportInput,
   type ManagedReconstructionImportResult,
-} from "../domain/managedReconstruction.js";
-import { err, ok, type Result } from "../domain/result.js";
-import { MANAGED_WORKFLOW_PROVIDER } from "./InvestigationProviders.js";
+} from "../../domain/managed/managedReconstruction.js";
+import { err, ok, type Result } from "../../domain/result.js";
+import { MANAGED_WORKFLOW_PROVIDER } from "../InvestigationProviders.js";
 
 const OPERATION = "import_managed_reconstruction" as const;
 

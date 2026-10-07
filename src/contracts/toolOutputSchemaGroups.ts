@@ -37,11 +37,11 @@ import {
   managedArtifactInspectionSchema,
   managedMemberInspectionSchema,
   managedNativeBoundaryInspectionSchema,
-} from "../domain/managedArtifact.js";
-import { managedMemberComparisonResultSchema } from "../domain/managedMemberComparison.js";
-import { managedNativeVerificationResultSchema } from "../domain/managedNativeVerification.js";
-import { managedReconstructionImportResultSchema } from "../domain/managedReconstruction.js";
-import { managedApplicationGraphResultSchema } from "../domain/managedApplicationGraph.js";
+} from "../domain/managed/managedArtifact.js";
+import { managedMemberComparisonResultSchema } from "../domain/managed/managedMemberComparison.js";
+import { managedNativeVerificationResultSchema } from "../domain/managed/managedNativeVerification.js";
+import { managedReconstructionImportResultSchema } from "../domain/managed/managedReconstruction.js";
+import { managedApplicationGraphResultSchema } from "../domain/managed/managedApplicationGraph.js";
 import { artifactComparisonResultSchema } from "../domain/artifactComparison.js";
 import { functionComparisonResultSchema } from "../domain/functionComparison.js";
 import { bundleComparisonResultSchema } from "../domain/bundleComparison.js";

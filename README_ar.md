@@ -17,6 +17,8 @@
 
 <a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
 
+**[الموقع (بالإنجليزية)](https://morluto.github.io/rea/) · [أدلة الاستخدام](https://morluto.github.io/rea/guides/) · [دراسة حالة DX-Ball](https://morluto.github.io/rea/showcase/dx-ball/)**
+
 [البدء السريع](#البدء-السريع) · [حالة الدعم](#حالة-الدعم) · [من الملف التنفيذي إلى السلوك](#من-الملف-التنفيذي-إلى-السلوك) · [منصة أدوات التحقيق](#منصة-أدوات-التحقيق) · [خطة العمل](#خطة-العمل) · [كيف يعمل؟](#كيف-يعمل)
 
 <table aria-label="REA community">

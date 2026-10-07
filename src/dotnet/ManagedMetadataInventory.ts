@@ -1,7 +1,7 @@
 import type {
   ManagedArtifactInspection,
   ManagedParseIssue,
-} from "../domain/managedArtifact.js";
+} from "../domain/managed/managedArtifact.js";
 import {
   METADATA_TABLE_NAMES,
   type ManagedMetadataLayout,

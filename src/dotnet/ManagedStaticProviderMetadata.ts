@@ -6,7 +6,7 @@ import { MANAGED_STATIC_PROVIDER } from "../application/InvestigationProviders.j
 import {
   MANAGED_TOOL_CONTRACTS,
   type ManagedToolName,
-} from "../contracts/managedToolContracts.js";
+} from "../contracts/managed/managedToolContracts.js";
 
 /** Identity of execution-free managed metadata observations. */
 export const MANAGED_STATIC_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze(

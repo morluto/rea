@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
-import { buildManagedPeFixture } from "../../../../scripts/lib/managed-pe-fixture.mjs";
+import { buildManagedPeFixture } from "../../../../scripts/fixtures/managed/pe.mjs";
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 
 const workspaces: string[] = [];

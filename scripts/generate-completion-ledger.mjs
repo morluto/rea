@@ -22,7 +22,7 @@ delete verifierEnvironment.REA_ILSPY_CMD_PATH;
 
 const { stdout } = await exec(
   process.execPath,
-  [join(root, "scripts/verify-managed-conformance.mjs")],
+  [join(root, "scripts/verify/managed/conformance.mjs")],
   {
     cwd: root,
     env: verifierEnvironment,
