@@ -64,6 +64,7 @@ export default defineConfig({
           { text: "MCP contracts", link: "/mcp-contracts" },
           { text: "Tool design", link: "/tool-design" },
           { text: "Testing", link: "/testing" },
+          { text: "Releasing", link: "/releasing" },
           { text: "Architecture decisions", link: "/adr/README" },
         ],
       },
