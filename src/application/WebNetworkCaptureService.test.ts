@@ -134,6 +134,23 @@ it("keeps explicitly sensitive values out of Evidence parameters and preserves h
   expect(result.value.authority).toBe("historical-reference");
 });
 
+it.each(["har", "ha"])(
+  "omits a format parameter containing a declared sensitive literal: %s",
+  async (literal) => {
+    const result = await new WebNetworkCaptureService({
+      inspect: () => Promise.resolve(ok(fixture())),
+    }).inspect({
+      capture_path: "/capture.har",
+      format: "har",
+      sensitive_values: [literal],
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value.parameters).not.toHaveProperty("format");
+    expect(JSON.stringify(result.value.parameters)).not.toContain(literal);
+    expect(result.value.normalized_result).toMatchObject({ format: "har" });
+  },
+);
+
 it.each([
   { record_ordinals: [0, 0] },
   { record_ordinals: [1] },

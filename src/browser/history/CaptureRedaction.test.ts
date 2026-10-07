@@ -14,6 +14,14 @@ it.each([
     value: " \t//user:password@example.test/path?token=ordinary#fragment\t ",
     expected: " \t//example.test/path?token=ordinary#fragment\t ",
   },
+  {
+    value: "\r\n \v\fhttps://user:password@example.test/path",
+    expected: "\r\n \v\fhttps://example.test/path",
+  },
+  {
+    value: "\u0000\u001f//user:password@example.test/path",
+    expected: "\u0000\u001f//example.test/path",
+  },
 ])(
   "excludes URL userinfo after optional whitespace while preserving the original header text: $value",
   ({ value, expected }) => {

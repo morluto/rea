@@ -276,65 +276,73 @@ try {
       cases++;
     }
   }
-  for (const format of ["har", "mitmproxy"]) {
-    for (const mode of ["cli", "mcp"]) {
-      const value = await inspect(mode, {
-        capture_path: join(
-          runtime.path,
-          format === "har" ? "ows.har" : "ows.mitm",
-        ),
-        format,
-      });
-      assert.ok(!JSON.stringify(value).includes("ows-secret"));
-      const record = value.records[0];
-      const states =
-        format === "har"
-          ? [record.reported]
-          : [record.reported, record.reported.backup];
-      for (const state of states) {
-        if (format === "har") {
-          for (const side of ["request", "response"])
-            assert.ok(
-              state[side].headers.some(
-                (header) =>
-                  header.value ===
-                  " \tHTTPS://example.test/path?token=ordinary#fragment\t ",
-              ),
-            );
-        } else {
-          assert.deepEqual(state.request.headers, [
-            [
-              "Referer",
-              " \tHTTPS://example.test/path?token=ordinary#fragment\t ",
-            ],
-            ["Origin", " \t//example.test/path?token=ordinary#fragment\t "],
-          ]);
-          assert.deepEqual(state.response.headers, [
-            [
-              "Location",
-              " \tHTTPS://example.test/path?token=ordinary#fragment\t ",
-            ],
-          ]);
+  for (const [fixture, prefix] of [
+    ["ows", " \t"],
+    ["controls", "\r\n \v\f\x00\x1f"],
+  ]) {
+    for (const format of ["har", "mitmproxy"]) {
+      for (const mode of ["cli", "mcp"]) {
+        const value = await inspect(mode, {
+          capture_path: join(
+            runtime.path,
+            `${fixture}.${format === "har" ? "har" : "mitm"}`,
+          ),
+          format,
+        });
+        assert.ok(!JSON.stringify(value).includes("ows-secret"));
+        const record = value.records[0];
+        const states =
+          format === "har"
+            ? [record.reported]
+            : [record.reported, record.reported.backup];
+        for (const state of states) {
+          if (format === "har") {
+            for (const side of ["request", "response"])
+              assert.ok(
+                state[side].headers.some(
+                  (header) =>
+                    header.value ===
+                    `${prefix}HTTPS://example.test/path?token=ordinary#fragment\t `,
+                ),
+              );
+          } else {
+            assert.deepEqual(state.request.headers, [
+              [
+                "Referer",
+                `${prefix}HTTPS://example.test/path?token=ordinary#fragment\t `,
+              ],
+              [
+                "Origin",
+                `${prefix}//example.test/path?token=ordinary#fragment\t `,
+              ],
+            ]);
+            assert.deepEqual(state.response.headers, [
+              [
+                "Location",
+                `${prefix}HTTPS://example.test/path?token=ordinary#fragment\t `,
+              ],
+            ]);
+          }
         }
+        if (format === "mitmproxy") {
+          for (const pointer of [
+            "/request/headers/0/1",
+            "/backup/request/headers/0/1",
+          ])
+            assert.deepEqual(
+              record.binary_fields.find((field) => field.pointer === pointer),
+              {
+                pointer,
+                representation: "producer-bytes",
+                state: "redacted",
+                content_base64: null,
+                bytes: null,
+                sha256: null,
+              },
+            );
+        }
+        cases++;
       }
-      if (format === "mitmproxy") {
-        for (const pointer of [
-          "/request/headers/0/1",
-          "/backup/request/headers/0/1",
-        ])
-          assert.deepEqual(
-            record.binary_fields.find((field) => field.pointer === pointer),
-            {
-              pointer,
-              representation: "producer-bytes",
-              state: "redacted",
-              content_base64: null,
-              bytes: null,
-              sha256: null,
-            },
-          );
-      }
-      cases++;
     }
   }
   for (const mode of ["cli", "mcp"]) {
@@ -502,6 +510,19 @@ try {
     assert.equal(body?.state, literal === "\ufffd" ? "redacted" : "retained");
     assert.equal(body.content_base64, literal === "\ufffd" ? null : "77+9");
     cases++;
+  }
+  for (const mode of ["cli", "mcp"]) {
+    for (const format of ["har", "mitmproxy"]) {
+      await inspect(mode, {
+        capture_path: join(
+          runtime.path,
+          format === "har" ? "producer.har" : "flows.mitm",
+        ),
+        format,
+        sensitive_values: [format],
+      });
+      cases++;
+    }
   }
   const oversizedPath = join(runtime.path, "oversized-capture");
   for (const mode of ["cli", "mcp"]) {
@@ -769,6 +790,13 @@ async function inspect(mode, input, errorCategory) {
 }
 
 function assertSensitiveLimitations(evidence, literals) {
+  for (const value of Object.values(evidence.parameters))
+    if (typeof value === "string")
+      for (const literal of literals)
+        assert.ok(
+          !value.includes(literal),
+          "Declared literal retained in Evidence parameter",
+        );
   const result = evidence.normalized_result;
   const texts = [
     evidence.limitations,

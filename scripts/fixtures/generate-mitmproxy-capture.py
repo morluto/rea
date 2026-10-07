@@ -103,17 +103,20 @@ class Generator:
             malformed["request"]["headers"] = [(b"Authorization", value)]
             with (root / (name + ".mitm")).open("wb") as handle:
                 tnetstring.dump(malformed, handle)
-        whitespace_har = json.loads((root / "producer.har").read_text())
-        entry = whitespace_har["log"]["entries"][0]
-        for side, name in [("response", "Location"), ("request", "Referer"), ("request", "Origin")]:
-            entry[side]["headers"] = [{"name": name, "value": " \tHTTPS://ows-user:ows-secret@example.test/path?token=ordinary#fragment\t "}] + entry[side]["headers"]
-        (root / "ows.har").write_text(json.dumps(whitespace_har))
-        whitespace_native = first.get_state()
-        for state in [whitespace_native, whitespace_native["backup"]]:
-            state["request"]["headers"] = [(b"Referer", b" \tHTTPS://ows-user:ows-secret@example.test/path?token=ordinary#fragment\t "), (b"Origin", " \t//ows-user:ows-secret@example.test/path?token=ordinary#fragment\t ")]
-            state["response"]["headers"] = [(b"Location", " \tHTTPS://ows-user:ows-secret@example.test/path?token=ordinary#fragment\t ")]
-        with (root / "ows.mitm").open("wb") as handle:
-            tnetstring.dump(whitespace_native, handle)
+        for prefix, name in [(" \t", "ows"), ("\r\n \v\f\x00\x1f", "controls")]:
+            url = prefix + "HTTPS://ows-user:ows-secret@example.test/path?token=ordinary#fragment\t "
+            relative = prefix + "//ows-user:ows-secret@example.test/path?token=ordinary#fragment\t "
+            whitespace_har = json.loads((root / "producer.har").read_text())
+            entry = whitespace_har["log"]["entries"][0]
+            for side, header in [("response", "Location"), ("request", "Referer"), ("request", "Origin")]:
+                entry[side]["headers"] = [{"name": header, "value": url}] + entry[side]["headers"]
+            (root / (name + ".har")).write_text(json.dumps(whitespace_har))
+            whitespace_native = first.get_state()
+            for state in [whitespace_native, whitespace_native["backup"]]:
+                state["request"]["headers"] = [(b"Referer", url.encode("utf-8")), (b"Origin", relative)]
+                state["response"]["headers"] = [(b"Location", url)]
+            with (root / (name + ".mitm")).open("wb") as handle:
+                tnetstring.dump(whitespace_native, handle)
         non_utf8_native = first.get_state()
         for state in [non_utf8_native, non_utf8_native["backup"]]:
             state["request"]["path"] = b"https://byte-user:byte-secret@example.test/path\xff"

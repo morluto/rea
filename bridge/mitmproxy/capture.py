@@ -62,7 +62,7 @@ def project_record(state, secrets):
         if not (transport_url or re.fullmatch(r"/(?:backup/)*request/(?:path|authority)", path)):
             return value, False
         binary = isinstance(value, bytes)
-        pattern = rb"^([ \t]*(?:[a-z][a-z0-9+.-]*:)?//)[^/?#]*@" if binary else r"^([ \t]*(?:[a-z][a-z0-9+.-]*:)?//)[^/?#]*@"
+        pattern = rb"^([\x00-\x20]*(?:[a-z][a-z0-9+.-]*:)?//)[^/?#]*@" if binary else r"^([\x00-\x20]*(?:[a-z][a-z0-9+.-]*:)?//)[^/?#]*@"
         replacement = rb"\1" if binary else r"\1"
         separator = b"@" if binary else "@"
         safe_url = re.sub(pattern, replacement, value, flags=re.I)

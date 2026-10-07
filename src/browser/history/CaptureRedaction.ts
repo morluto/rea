@@ -25,9 +25,8 @@ export class CaptureRedaction {
   text(value: string, pointer: string, transportUrl = false): string | null {
     let result = value;
     if (transportUrl) {
-      const match = /^([ \t]*(?:[a-z][a-z0-9+.-]*:)?\/\/)([^/?#]*@)/i.exec(
-        result,
-      );
+      const match =
+        /^([\x00-\x20]*(?:[a-z][a-z0-9+.-]*:)?\/\/)([^/?#]*@)/i.exec(result);
       if (match !== null) {
         result = `${match[1]}${result.slice(match[0].length)}`;
         this.redactions.push({ pointer, reason: "transport-credential" });

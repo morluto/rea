@@ -143,7 +143,11 @@ export class WebNetworkCaptureService {
     ).map(redactText);
     const parameters = jsonObjectSchema.parse({
       capture_path: safePath,
-      format: input.format,
+      ...(input.sensitive_values.some((literal) =>
+        input.format.includes(literal),
+      )
+        ? {}
+        : { format: input.format }),
       record_ordinals: selected,
       sensitive_value_count: input.sensitive_values.length,
     });
