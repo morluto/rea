@@ -84,8 +84,8 @@
     "build:cached": "turbo run build",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
-    "lint": "oxlint",
-    "lint:fix": "oxlint --fix",
+    "lint": "oxlint && npm run verify:module-boundaries",
+    "lint:fix": "oxlint --fix && npm run verify:module-boundaries",
     "knip": "knip",
     "jscpd": "jscpd src/ tests/",
     "scan:todos": "node scripts/scan-todos.mjs",
@@ -178,7 +178,8 @@
     "verify:ghidra:nativeaot": "npm run build:cached && node scripts/verify-real-ghidra-nativeaot.mjs",
     "verify:browser:scripts": "npm run build:cached && node scripts/verify-browser-scripts.mjs",
     "verify:test-discovery": "node scripts/verify-test-discovery.mjs",
-    "verify:javascript:recovery": "node scripts/verify-javascript-recovery.mjs"
+    "verify:javascript:recovery": "node scripts/verify-javascript-recovery.mjs",
+    "verify:module-boundaries": "node scripts/verify-module-boundaries.mjs"
   },
   "lint-staged": {
     "*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}": [

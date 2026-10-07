@@ -5,12 +5,12 @@ import { describe, expect, it } from "vitest";
 import {
   compareManagedMembers,
   managedMemberComparisonResultSchema,
-} from "./managedMemberComparison.js";
-import { inspectManagedMembersBytes } from "../dotnet/ManagedMemberInspector.js";
+} from "../../../../src/domain/managedMemberComparison.js";
+import { inspectManagedMembersBytes } from "../../../../src/dotnet/ManagedMemberInspector.js";
 import {
   buildManagedPeFixture,
   managedPeFixtureTarget,
-} from "../dotnet/ManagedPe.fixture.js";
+} from "../../../../src/dotnet/ManagedPe.fixture.js";
 
 describe("managed member comparison", () => {
   it("remaps renamed methods by exact CIL/signature without using names", () => {

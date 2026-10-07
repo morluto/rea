@@ -60,6 +60,21 @@ provider implementations. Production composition is a deliberate outer boundary.
 Other existing adapter imports will migrate incrementally; do not widen a lint
 exception to conceal new protocol code inside application workflows.
 
+`npm run verify:module-boundaries` parses repository-owned source imports,
+reexports, type imports and literal dynamic imports, then checks their resolved
+source layer. Nested names such as `domain/android` are domain code; `src/android`
+is the provider adapter. The check runs with lint, including cached static gates.
+It covers tracked and untracked non-ignored TypeScript source and skips cached
+paths removed during a move. Pass exact source paths for a focused check.
+
+Pure source and its tests keep inward dependencies. Application/server provider
+construction guards cover the migrated deep, Android, firmware, JavaScript recovery and observation
+implementations. The existing binary runtime is an exact temporary composition
+exception; shared browser capture/export helpers remain admitted while their
+ownership is reviewed. Test lane restrictions still use Oxlint. Producer-dependent
+browser and managed comparison tests live in boundary lanes with their original
+fixtures and assertions. This is a development guard, not runtime authorization.
+
 Select verification by the claim changed: schema/composition, package, real
 engine or host-native workflow. Record host/target prerequisites and source-owned
 fixtures. Run heavy lanes serially with bounded workers/heaps and reuse existing

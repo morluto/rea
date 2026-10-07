@@ -35,97 +35,6 @@
       }
     },
     {
-      "files": [
-        "src/{contracts,domain,server}/**/*.ts",
-        "src/application/**/*.ts"
-      ],
-      "excludeFiles": ["src/application/runtime.ts"],
-      "rules": {
-        "no-restricted-imports": [
-          "error",
-          {
-            "patterns": [
-              {
-                "group": [
-                  "**/ghidra/**",
-                  "**/hopper/**",
-                  "**/ida/**",
-                  "**/android/**",
-                  "**/firmware/**",
-                  "**/browser/*Provider.*",
-                  "**/javascript/**"
-                ],
-                "message": "Provider imports belong behind typed ports or in production composition."
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
-      "files": ["src/{contracts,domain}/**/*.ts"],
-      "rules": {
-        "no-restricted-imports": [
-          "error",
-          {
-            "patterns": [
-              {
-                "group": [
-                  "**/application/**",
-                  "**/server/**",
-                  "**/cli/**",
-                  "**/main/**",
-                  "**/cli.*",
-                  "**/main.*",
-                  "**/android/**",
-                  "**/artifacts/**",
-                  "**/browser/**",
-                  "**/dotnet/**",
-                  "**/firmware/**",
-                  "**/javascript/**",
-                  "**/ghidra/**",
-                  "**/hopper/**",
-                  "**/ida/**",
-                  "**/native/**",
-                  "**/process/**",
-                  "**/reference/**",
-                  "**/windows/**",
-                  "**/composition/**"
-                ],
-                "message": "Domain and contracts depend inward; use typed ports for application, caller and provider boundaries."
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
-      "files": ["src/application/**/*.ts"],
-      "excludeFiles": ["src/application/runtime.ts"],
-      "rules": {
-        "no-restricted-imports": [
-          "error",
-          {
-            "patterns": [
-              {
-                "group": [
-                  "**/ghidra/**",
-                  "**/hopper/**",
-                  "**/ida/**",
-                  "**/android/**",
-                  "**/firmware/**",
-                  "**/browser/*Provider.*",
-                  "**/javascript/**",
-                  "**/composition/**"
-                ],
-                "message": "Application workflows use typed ports; production construction belongs in composition."
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
       "files": ["tests/**/*.ts", "src/**/*.test.ts", "src/**/*.fixture.ts"],
       "rules": {
         "max-lines": "off",
@@ -135,37 +44,6 @@
             "max": 150,
             "skipBlankLines": true,
             "skipComments": true
-          }
-        ]
-      }
-    },
-    {
-      "files": ["src/domain/**/*.{fixture,test}.ts"],
-      "rules": {
-        "no-restricted-imports": [
-          "error",
-          {
-            "patterns": [
-              {
-                "group": [
-                  "**/application/**",
-                  "**/server/**",
-                  "**/process/**",
-                  "**/browser/**",
-                  "**/ghidra/**",
-                  "**/hopper/**",
-                  "**/ida/**",
-                  "**/replay/**",
-                  "**/cli.*",
-                  "**/main.*",
-                  "**/composition/**",
-                  "**/android/**",
-                  "**/firmware/**",
-                  "**/javascript/**"
-                ],
-                "message": "Domain tests may import only their owning domain and inward dependencies."
-              }
-            ]
           }
         ]
       }

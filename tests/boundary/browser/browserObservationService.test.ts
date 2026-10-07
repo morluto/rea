@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { listBrowserTargetsInputSchema } from "../domain/browserObservation.js";
-import { browserCaptureComparisonInputSchema } from "../domain/browserCaptureComparison.js";
-import { compareWebScreenshotsInputSchema } from "../domain/webScreenshot.js";
-import { BROWSER_TOOL_CONTRACTS } from "../contracts/browserToolContracts.js";
-import { CdpBrowserProvider } from "../browser/CdpBrowserProvider.js";
+import { listBrowserTargetsInputSchema } from "../../../src/domain/browserObservation.js";
+import { browserCaptureComparisonInputSchema } from "../../../src/domain/browserCaptureComparison.js";
+import { compareWebScreenshotsInputSchema } from "../../../src/domain/webScreenshot.js";
+import { BROWSER_TOOL_CONTRACTS } from "../../../src/contracts/browserToolContracts.js";
+import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import {
   compareWebCaptureEvidence,
   compareWebScreenshotEvidence,
   listBrowserTargets,
-} from "./BrowserObservationService.js";
+} from "../../../src/application/BrowserObservationService.js";
 
 describe("browser observation service prerequisites", () => {
   it("reports a missing provider without requiring a permission grant", async () => {

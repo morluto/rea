@@ -2,12 +2,12 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
-import { compareManagedMembers } from "./managedMemberComparison.js";
-import { inspectManagedMembersBytes } from "../dotnet/ManagedMemberInspector.js";
+import { compareManagedMembers } from "../../../../src/domain/managedMemberComparison.js";
+import { inspectManagedMembersBytes } from "../../../../src/dotnet/ManagedMemberInspector.js";
 import {
   buildManagedPeFixture,
   managedPeFixtureTarget,
-} from "../dotnet/ManagedPe.fixture.js";
+} from "../../../../src/dotnet/ManagedPe.fixture.js";
 
 const inspect = (bytes: Buffer, path: string) => {
   const target = managedPeFixtureTarget(bytes, path);
