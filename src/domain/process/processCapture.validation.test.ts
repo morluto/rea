@@ -65,7 +65,7 @@ it("rejects altered v4 commitments and accepts canonical key reordering", () => 
         executable_sha256: "f".repeat(64),
       },
     }),
-  ).toThrow("executable_sha256");
+  ).toThrow("executable_identity");
 });
 
 it("rejects settlement and cleanup combinations that cannot occur", () => {

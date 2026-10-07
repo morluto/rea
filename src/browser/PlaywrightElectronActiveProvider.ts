@@ -27,6 +27,7 @@ import {
   type ProcessCleanupResult,
   type ProcessLineageObservation,
 } from "../process/ProcessOwnership.js";
+import { prepareProcessOwnershipInspection } from "../process/ProcessOwnershipObservation.js";
 import { observeOwnedProcessLineage } from "../process/ProcessOwnershipObservation.js";
 import { selectCapturedProcessGroupIds } from "../process/ProcessOwnershipProcessTree.js";
 import {
@@ -157,6 +158,7 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
     try {
       if (options.signal?.aborted === true)
         throw new BrowserObservationError(OPERATION, "cancelled");
+      await prepareProcessOwnershipInspection(options.signal);
       const startupDeadline = Date.now() + STARTUP_TIMEOUT_MS;
       const paths = await canonicalPaths(input);
       application = await electron.launch({

@@ -3,11 +3,13 @@ import { readFile } from "node:fs/promises";
 import { launcherIdentityFailure } from "./ProcessOwnershipIdentity.js";
 import { descendantsOf, liveProcesses } from "./ProcessOwnershipProcessTree.js";
 import { execFileOutput } from "./ExecFileOutput.js";
+import { createDarwinProcessRunTokenReader } from "./DarwinProcessRunTokenReader.js";
 import type {
   OwnedProcessGroup,
   ProcessGroupObservation,
   ProcessLineageObservation,
   ProcessOwnershipHost,
+  ProcessOwnershipBaseline,
   ProcessTableEntry,
 } from "./ProcessOwnership.js";
 
@@ -148,9 +150,10 @@ export const parseProcessEnvironment = (
 export const createSystemProcessOwnershipHost = (
   platform: NodeJS.Platform = process.platform,
   hostEnvironment: NodeJS.ProcessEnv = process.env,
-): ProcessOwnershipHost => ({
-  platform,
-  async listProcesses() {
+): ProcessOwnershipHost => {
+  const darwinTokens =
+    platform === "darwin" ? createDarwinProcessRunTokenReader() : undefined;
+  const listProcesses = async () => {
     if (platform === "win32") return [];
     const { stdout } = await execFileOutput(
       "ps",
@@ -168,35 +171,134 @@ export const createSystemProcessOwnershipHost = (
         state: match[4] ?? "",
         command: match[5] ?? "",
       }));
-  },
-  async environment(pid) {
-    if (platform === "linux")
-      return parseProcessEnvironment(
-        await readFile(`/proc/${pid}/environ`, "utf8"),
+  };
+  const processIdentities = async (processes: readonly ProcessTableEntry[]) => {
+    if (darwinTokens === undefined || processes.length === 0) return new Map();
+    try {
+      return await darwinTokens.identities(processes);
+    } catch (cause: unknown) {
+      const reason = errorMessage(cause);
+      return new Map(
+        processes.map(({ pid }) => [
+          pid,
+          { state: "unavailable", reason } as const,
+        ]),
       );
-    const { stdout } = await execFileOutput("ps", ["eww", "-p", String(pid)], {
-      env: hostEnvironment,
-    });
-    const observedEnvironment: Record<string, string> = {};
-    for (const match of stdout.matchAll(
-      /(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=([^\s]*)/gu,
-    )) {
-      const name = match[1];
-      if (name !== undefined) observedEnvironment[name] = match[2] ?? "";
     }
-    return observedEnvironment;
-  },
-  signalGroup(processGroupId, signal) {
-    process.kill(-processGroupId, signal);
-  },
-});
+  };
+  const captureBaseline = async (): Promise<ProcessOwnershipBaseline> => {
+    if (darwinTokens === undefined) return [];
+    const processes = liveProcesses(await listProcesses());
+    let identities = await processIdentities(processes);
+    const unreadable = processes.filter(
+      ({ pid }) => identities.get(pid)?.state !== "readable",
+    );
+    if (unreadable.length > 0) {
+      const stillLive = liveProcesses(await listProcesses()).filter(({ pid }) =>
+        unreadable.some((entry) => entry.pid === pid),
+      );
+      const retried = await processIdentities(stillLive);
+      identities = new Map([...identities, ...retried]);
+      const unresolved = stillLive.filter(
+        ({ pid }) => identities.get(pid)?.state !== "readable",
+      );
+      const liveAfterRetry = liveProcesses(await listProcesses());
+      const stillUnresolved = unresolved.filter(({ pid }) =>
+        liveAfterRetry.some((entry) => entry.pid === pid),
+      );
+      if (stillUnresolved.length > 0)
+        throw new Error(
+          `macOS process identity snapshot is unavailable for ${String(stillUnresolved.length)} live processes`,
+        );
+    }
+    return processes.map(({ pid }) => {
+      const observation = identities.get(pid);
+      return {
+        pid,
+        identity:
+          observation?.state === "readable" ? observation.identity : null,
+      };
+    });
+  };
+  return {
+    platform,
+    prepare: async (signal) => {
+      await darwinTokens?.prepare(signal);
+    },
+    listProcesses,
+    async environment(pid) {
+      if (platform === "linux")
+        return parseProcessEnvironment(
+          await readFile(`/proc/${pid}/environ`, "utf8"),
+        );
+      if (platform === "darwin") {
+        const process = (await listProcesses()).find(
+          (entry) => entry.pid === pid,
+        );
+        if (process === undefined)
+          throw new Error(`process ${String(pid)} is not live`);
+        const observation = (await darwinTokens?.read([process]))?.get(pid);
+        if (observation === undefined || observation.state === "unavailable")
+          throw new Error(
+            observation?.reason ?? "process run token could not be read",
+          );
+        return observation.runId === undefined
+          ? {}
+          : { REA_PROCESS_RUN_ID: observation.runId };
+      }
+      const { stdout } = await execFileOutput(
+        "ps",
+        ["eww", "-p", String(pid)],
+        {
+          env: hostEnvironment,
+        },
+      );
+      const observedEnvironment: Record<string, string> = {};
+      for (const match of stdout.matchAll(
+        /(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=([^\s]*)/gu,
+      )) {
+        const name = match[1];
+        if (name !== undefined) observedEnvironment[name] = match[2] ?? "";
+      }
+      return observedEnvironment;
+    },
+    async runTokens(processes) {
+      if (platform !== "darwin" || processes.length === 0) return new Map();
+      try {
+        return (await darwinTokens?.read(processes)) ?? new Map();
+      } catch (cause: unknown) {
+        void cause;
+        return new Map(
+          processes.map(({ pid }) => [
+            pid,
+            { state: "unavailable", reason: "reader_failure" } as const,
+          ]),
+        );
+      }
+    },
+    ...(darwinTokens === undefined
+      ? {}
+      : { processIdentities, captureBaseline }),
+    signalGroup(processGroupId, signal) {
+      process.kill(-processGroupId, signal);
+    },
+    ...(darwinTokens === undefined ? {} : { close: darwinTokens.close }),
+  };
+};
 
-const systemHost = createSystemProcessOwnershipHost();
+export const systemProcessOwnershipHost = createSystemProcessOwnershipHost();
+
+/** Prepare native token inspection before REA launches a captured child. */
+export const prepareProcessOwnershipInspection = async (
+  signal?: AbortSignal,
+): Promise<void> => {
+  await systemProcessOwnershipHost.prepare?.(signal);
+};
 
 /** Observe one group without signaling it, failing closed on identity doubt. */
 export const observeOwnedProcessGroup = async (
   ownership: OwnedProcessGroup,
-  host: ProcessOwnershipHost = systemHost,
+  host: ProcessOwnershipHost = systemProcessOwnershipHost,
 ): Promise<ProcessGroupObservation> =>
   observeOwnedProcessGroupWithHost(ownership, host);
 
@@ -209,7 +311,7 @@ export const observeOwnedProcessGroup = async (
  */
 export const observeOwnedProcessLineage = async (
   ownership: OwnedProcessGroup,
-  host: ProcessOwnershipHost = systemHost,
+  host: ProcessOwnershipHost = systemProcessOwnershipHost,
 ): Promise<ProcessLineageObservation> =>
   observeOwnedProcessLineageWithHost(ownership, host);
 

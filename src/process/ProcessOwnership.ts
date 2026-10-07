@@ -2,8 +2,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 import {
-  createSystemProcessOwnershipHost,
   errorMessage,
+  systemProcessOwnershipHost as systemHost,
 } from "./ProcessOwnershipObservation.js";
 import { launcherIdentityFailure } from "./ProcessOwnershipIdentity.js";
 import { descendantsOf, liveProcesses } from "./ProcessOwnershipProcessTree.js";
@@ -21,7 +21,15 @@ export interface OwnedProcessGroup {
   readonly expectedParentPid?: number;
   /** Scan all live processes for this run token during cleanup. */
   readonly sweepTokenOwnedProcesses?: boolean;
+  /** Prelaunch process identities for this capture; absent on generic callers. */
+  readonly captureBaseline?: ProcessOwnershipBaseline;
 }
+
+/** Capture-local baseline; null means the PID identity could not be established. */
+export type ProcessOwnershipBaseline = readonly {
+  readonly pid: number;
+  readonly identity: string | null;
+}[];
 
 /** One entry from an operating-system process-table snapshot. */
 export interface ProcessTableEntry {
@@ -31,6 +39,11 @@ export interface ProcessTableEntry {
   readonly state: string;
   readonly command: string;
 }
+
+/** Native process start identity; unavailable identities must never be skipped. */
+export type ProcessIdentityObservation =
+  | { readonly state: "readable"; readonly identity: string }
+  | { readonly state: "unavailable"; readonly reason: string };
 
 /** Token-verified process lineage retained for one owned provider run. */
 export interface OwnedProcessLineage {
@@ -64,10 +77,29 @@ export type ProcessLineageObservation =
 /** Narrow operating-system seam used to inspect processes and signal groups. */
 export interface ProcessOwnershipHost {
   readonly platform?: NodeJS.Platform;
+  /** Prepare required native identity inspection before launching a child. */
+  prepare?(signal?: AbortSignal): Promise<void>;
+  /** Release owned native inspection helpers and their temporary files. */
+  close?(): Promise<void>;
   listProcesses(): Promise<readonly ProcessTableEntry[]>;
   environment(pid: number): Promise<Readonly<Record<string, string>>>;
+  /** Read only run-token values in one host operation when the OS supports it. */
+  runTokens?(
+    processes: readonly ProcessTableEntry[],
+  ): Promise<ReadonlyMap<number, ProcessRunTokenObservation>>;
+  /** Read stable per-process identities in one host operation when available. */
+  processIdentities?(
+    processes: readonly ProcessTableEntry[],
+  ): Promise<ReadonlyMap<number, ProcessIdentityObservation>>;
+  /** Snapshot identities before a capture launches its selected process. */
+  captureBaseline?(): Promise<ProcessOwnershipBaseline>;
   signalGroup(processGroupId: number, signal: NodeJS.Signals): void;
 }
+
+/** Whether one live process exposed its ownership token to the host. */
+export type ProcessRunTokenObservation =
+  | { readonly state: "readable"; readonly runId: string | undefined }
+  | { readonly state: "unavailable"; readonly reason: string };
 
 /** Narrow Windows P0 seam for bounded process-tree termination. */
 export interface WindowsProcessTreeHost {
@@ -77,7 +109,10 @@ export interface WindowsProcessTreeHost {
 /** Per-member reason that token-verified cleanup failed closed. */
 interface ProcessOwnershipValidationFailure {
   readonly pid: number;
-  readonly reason: "environment-unreadable" | "run-token-mismatch";
+  readonly reason:
+    | "environment-unreadable"
+    | "run-token-mismatch"
+    | "process-identity-unavailable";
   readonly diagnostic?: string;
 }
 
@@ -89,7 +124,10 @@ export type ProcessCleanupResult =
       readonly reason: string;
       readonly failures?: readonly {
         readonly pid: number;
-        readonly reason: "environment-unreadable" | "run-token-mismatch";
+        readonly reason:
+          | "environment-unreadable"
+          | "run-token-mismatch"
+          | "process-identity-unavailable";
         readonly diagnostic?: string;
       }[];
     };
@@ -127,8 +165,6 @@ export const cleanupWindowsProcessTree = async (
     };
   }
 };
-
-const systemHost = createSystemProcessOwnershipHost();
 
 const systemWindowsProcessTreeHost: WindowsProcessTreeHost = {
   async terminateTree(rootPid) {
@@ -181,6 +217,7 @@ export const cleanupOwnedProcessGroup = async (
       processGroupId,
       ownership,
       host,
+      plan.tokenOwnedIdentities,
     );
     if ("cleaned" in revalidation) return revalidation;
     if (revalidation.empty) continue;
@@ -197,6 +234,8 @@ export const cleanupOwnedProcessGroup = async (
         };
     }
   }
+  if (plan.unresolved.length > 0)
+    return cleanupValidationFailure(plan.unresolved);
   return { cleaned: true, signaled };
 };
 
@@ -204,6 +243,7 @@ export const cleanupOwnedProcessGroup = async (
 export const verifyNoTokenOwnedProcesses = async (
   runId: string,
   host: ProcessOwnershipHost = systemHost,
+  captureBaseline?: ProcessOwnershipBaseline,
 ): Promise<ProcessCleanupResult> => {
   const processTable = await readLiveProcessTable(host);
   if (!processTable.available)
@@ -215,6 +255,7 @@ export const verifyNoTokenOwnedProcesses = async (
     processTable.processes,
     runId,
     host,
+    captureBaseline,
   );
   if (scan.failures.length > 0) return cleanupValidationFailure(scan.failures);
   return scan.owned.length === 0
@@ -243,6 +284,8 @@ const readLiveProcessTable = async (
 
 interface OwnedCleanupPlan {
   readonly signalOrder: readonly number[];
+  readonly tokenOwnedIdentities: ReadonlyMap<number, string | null>;
+  readonly unresolved: readonly ProcessOwnershipValidationFailure[];
 }
 
 const createOwnedCleanupPlan = async (
@@ -252,10 +295,13 @@ const createOwnedCleanupPlan = async (
 ): Promise<OwnedCleanupPlan | ProcessCleanupResult> => {
   const tokenOwned =
     ownership.sweepTokenOwnedProcesses === true
-      ? await scanTokenOwnedProcesses(processes, ownership.runId, host)
-      : { owned: [], failures: [] };
-  if (tokenOwned.failures.length > 0)
-    return cleanupValidationFailure(tokenOwned.failures);
+      ? await scanTokenOwnedProcesses(
+          processes,
+          ownership.runId,
+          host,
+          ownership.captureBaseline,
+        )
+      : { owned: [], failures: [], identities: new Map() };
   const tokenOwnedGroupIds = new Set(
     tokenOwned.owned.map(({ processGroupId }) => processGroupId),
   );
@@ -268,7 +314,13 @@ const createOwnedCleanupPlan = async (
     rootMembers.length === 0 &&
     tokenOwned.owned.length === 0
   )
-    return { cleaned: true, signaled: false };
+    return tokenOwned.failures.length > 0
+      ? {
+          signalOrder: [],
+          tokenOwnedIdentities: tokenOwned.identities,
+          unresolved: tokenOwned.failures,
+        }
+      : { cleaned: true, signaled: false };
   let descendants: readonly ProcessTableEntry[] = [];
   if (launcher !== undefined) {
     const identityFailure = launcherIdentityFailure(launcher, ownership);
@@ -305,6 +357,7 @@ const createOwnedCleanupPlan = async (
     liveMembers,
     ownership.runId,
     host,
+    tokenOwned.identities,
   );
   if (failures.length > 0) return cleanupValidationFailure(failures);
   return {
@@ -313,6 +366,8 @@ const createOwnedCleanupPlan = async (
         .filter((processGroupId) => processGroupId !== ownership.processGroupId)
         .sort((left, right) => left - right),
     ),
+    tokenOwnedIdentities: tokenOwned.identities,
+    unresolved: tokenOwned.failures,
   };
 };
 
@@ -320,6 +375,7 @@ const revalidateOwnedProcessGroup = async (
   processGroupId: number,
   ownership: OwnedProcessGroup,
   host: ProcessOwnershipHost,
+  expectedIdentities: ReadonlyMap<number, string | null>,
 ): Promise<{ readonly empty: boolean } | ProcessCleanupResult> => {
   let members: readonly ProcessTableEntry[];
   try {
@@ -337,6 +393,7 @@ const revalidateOwnedProcessGroup = async (
     members,
     ownership.runId,
     host,
+    expectedIdentities,
   );
   if (failures.length > 0) return cleanupValidationFailure(failures);
   if (processGroupId === ownership.processGroupId) {
@@ -363,20 +420,97 @@ const revalidateOwnedProcessGroup = async (
 
 const cleanupValidationFailure = (
   failures: readonly ProcessOwnershipValidationFailure[],
-): ProcessCleanupResult => ({
-  cleaned: false,
-  reason: failures.some(({ reason }) => reason === "run-token-mismatch")
-    ? "process tree contains an unowned or PID-reused process"
-    : "process ownership could not be revalidated",
-  failures,
-});
+): ProcessCleanupResult => {
+  const unreadable = failures.filter(
+    ({ reason }) => reason === "environment-unreadable",
+  );
+  if (failures.some(({ reason }) => reason === "run-token-mismatch"))
+    return {
+      cleaned: false,
+      reason: "process tree contains an unowned or PID-reused process",
+      failures,
+    };
+  if (failures.some(({ reason }) => reason === "process-identity-unavailable"))
+    return {
+      cleaned: false,
+      reason: "process identity could not be revalidated",
+      failures,
+    };
+  if (unreadable.length > 0) {
+    const counts = new Map<string, number>();
+    for (const { diagnostic } of unreadable) {
+      const category = sanitizedTokenReadFailure(diagnostic);
+      counts.set(category, (counts.get(category) ?? 0) + 1);
+    }
+    const breakdown = [...counts]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([category, count]) => `${category}=${String(count)}`)
+      .join(", ");
+    return {
+      cleaned: false,
+      reason: `process ownership token could not be read for ${String(unreadable.length)} live process(es): ${breakdown}`,
+      failures,
+    };
+  }
+  return {
+    cleaned: false,
+    reason: "process ownership could not be revalidated",
+    failures,
+  };
+};
+
+const sanitizedTokenReadFailure = (diagnostic: string | undefined): string => {
+  if (diagnostic === "environment_unavailable") return diagnostic;
+  if (diagnostic === "apple_vector_unavailable") return diagnostic;
+  if (diagnostic === "ambiguous_environment_boundary") return diagnostic;
+  if (diagnostic === "malformed_procargs") return diagnostic;
+  if (diagnostic === "process_identity_changed_during_token_read")
+    return diagnostic;
+  if (diagnostic === "process_not_in_snapshot") return diagnostic;
+  const processTableFailure = /^process_table_failed_(\d+)$/u.exec(
+    diagnostic ?? "",
+  );
+  if (processTableFailure?.[1] !== undefined)
+    return `process_table_errno_${processTableFailure[1]}`;
+  const sysctlFailure = /^sysctl_failed_(\d+)$/u.exec(diagnostic ?? "");
+  if (sysctlFailure?.[1] !== undefined)
+    return `sysctl_errno_${sysctlFailure[1]}`;
+  if (diagnostic === "reader_failure") return diagnostic;
+  if (diagnostic === "duplicate_run_token") return diagnostic;
+  if (diagnostic === "invalid_run_token_encoding") return diagnostic;
+  return "other_unavailable";
+};
 
 const processOwnershipFailures = async (
   members: readonly ProcessTableEntry[],
   runId: string,
   host: ProcessOwnershipHost,
+  expectedIdentities: ReadonlyMap<number, string | null> = new Map(),
 ): Promise<readonly ProcessOwnershipValidationFailure[]> => {
   const failures: ProcessOwnershipValidationFailure[] = [];
+  if (expectedIdentities.size > 0 && host.processIdentities !== undefined) {
+    const expectedMembers = members.filter(({ pid }) =>
+      expectedIdentities.has(pid),
+    );
+    const observed = await host.processIdentities(expectedMembers);
+    for (const member of expectedMembers) {
+      const expected = expectedIdentities.get(member.pid);
+      const current = observed.get(member.pid);
+      if (
+        expected === null ||
+        current?.state !== "readable" ||
+        current.identity !== expected
+      ) {
+        if (await processIsGone(host, member.pid)) continue;
+        failures.push({
+          pid: member.pid,
+          reason: "process-identity-unavailable",
+          diagnostic:
+            "process identity changed or became unavailable before signal",
+        });
+      }
+    }
+  }
   for (const member of members) {
     try {
       if ((await host.environment(member.pid)).REA_PROCESS_RUN_ID !== runId)
@@ -406,16 +540,66 @@ const processOwnershipFailures = async (
 interface TokenOwnedProcessScan {
   readonly owned: readonly ProcessTableEntry[];
   readonly failures: readonly ProcessOwnershipValidationFailure[];
+  readonly identities: ReadonlyMap<number, string | null>;
 }
 
 const scanTokenOwnedProcesses = async (
   processes: readonly ProcessTableEntry[],
   runId: string,
   host: ProcessOwnershipHost,
+  captureBaseline?: ProcessOwnershipBaseline,
 ): Promise<TokenOwnedProcessScan> => {
+  let candidates = processes;
+  let candidateIdentities:
+    | ReadonlyMap<number, ProcessIdentityObservation>
+    | undefined;
+  if (host.processIdentities !== undefined) {
+    const current = await host.processIdentities(processes);
+    candidateIdentities = current;
+    if (captureBaseline !== undefined) {
+      const baseline = new Map(
+        captureBaseline.map(({ pid, identity }) => [pid, identity]),
+      );
+      candidates = processes.filter((process) => {
+        const before = baseline.get(process.pid);
+        const now = current.get(process.pid);
+        return !(
+          before !== undefined &&
+          before !== null &&
+          now?.state === "readable" &&
+          now.identity === before
+        );
+      });
+    }
+  }
+  let bulkTokens: ReadonlyMap<number, ProcessRunTokenObservation> | undefined;
+  if (host.runTokens !== undefined)
+    bulkTokens = await host.runTokens(candidates);
   const owned: ProcessTableEntry[] = [];
   const failures: ProcessOwnershipValidationFailure[] = [];
-  for (const process of processes) {
+  const ownedIdentities = new Map<number, string | null>();
+  for (const process of candidates) {
+    const bulkToken = bulkTokens?.get(process.pid);
+    if (bulkToken !== undefined) {
+      if (bulkToken.state === "readable") {
+        if (bulkToken.runId === runId) {
+          owned.push(process);
+          const identity = candidateIdentities?.get(process.pid);
+          ownedIdentities.set(
+            process.pid,
+            identity?.state === "readable" ? identity.identity : null,
+          );
+        }
+        continue;
+      }
+      if (!(await processIsGone(host, process.pid)))
+        failures.push({
+          pid: process.pid,
+          reason: "environment-unreadable",
+          diagnostic: bulkToken.reason,
+        });
+      continue;
+    }
     try {
       if ((await host.environment(process.pid)).REA_PROCESS_RUN_ID === runId)
         owned.push(process);
@@ -438,5 +622,45 @@ const scanTokenOwnedProcesses = async (
       });
     }
   }
-  return { owned, failures };
+  if (owned.length > 0 && host.processIdentities !== undefined) {
+    const afterRead = await host.processIdentities(owned);
+    const stillOwned: ProcessTableEntry[] = [];
+    for (const process of owned) {
+      const expected = ownedIdentities.get(process.pid);
+      const current = afterRead.get(process.pid);
+      if (
+        expected === null ||
+        current?.state !== "readable" ||
+        current.identity !== expected
+      ) {
+        if (
+          current?.state !== "readable" &&
+          (await processIsGone(host, process.pid))
+        )
+          continue;
+        failures.push({
+          pid: process.pid,
+          reason: "process-identity-unavailable",
+          diagnostic:
+            "process identity changed or became unavailable during token validation",
+        });
+      } else stillOwned.push(process);
+    }
+    return { owned: stillOwned, failures, identities: ownedIdentities };
+  }
+  return { owned, failures, identities: ownedIdentities };
+};
+
+const processIsGone = async (
+  host: ProcessOwnershipHost,
+  pid: number,
+): Promise<boolean> => {
+  try {
+    return !liveProcesses(await host.listProcesses()).some(
+      (process) => process.pid === pid,
+    );
+  } catch (cause: unknown) {
+    void cause;
+    return false;
+  }
 };

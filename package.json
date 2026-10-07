@@ -44,6 +44,8 @@
     "bridge/hopper_bridge.py",
     "bridge/native/NativeUIChildren.swift",
     "bridge/native/ReaNativeUI.swift",
+    "bridge/process/ProcessRunTokenReader.swift",
+    "bridge/process/ProcessRunTokenReaderMain.swift",
     "bridge/ghidra/ReaGhidraBridge.java",
     "bridge/ghidra/ReaGhidraExtensions.java",
     "bridge/ghidra/ReaGhidraPrepareCom.java",

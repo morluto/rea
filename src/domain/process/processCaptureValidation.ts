@@ -27,7 +27,13 @@ const validateCommitments = (
 ): void => {
   const { manifest } = capture;
   require(manifest.scenario.executable_sha256 ===
-    manifest.executable_sha256, "manifest.executable_sha256", "executable commitment does not match the scenario projection");
+    manifest.selected_executable_sha256, "manifest.selected_executable_sha256", "selected executable commitment does not match the scenario projection");
+  require(manifest.executable_identity.state === "path_metadata_unchanged"
+    ? manifest.executable_sha256 === manifest.selected_executable_sha256 &&
+        manifest.executable_identity.reason === null
+    : manifest.executable_sha256 === null &&
+        manifest.executable_identity.reason !==
+          null, "manifest.executable_identity", "launch identity and executable digest do not agree");
   for (const [field, value] of [
     ["full_scenario_sha256", manifest.scenario],
     ["comparison_contract_sha256", manifest.comparison_contract],

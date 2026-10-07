@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { constants, statSync, type BigIntStats } from "node:fs";
+import { open, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { IPty } from "@lydell/node-pty";
@@ -12,6 +12,11 @@ import type {
   UnverifiedProcessCapture,
   ProcessSample,
   ProcessSettlement,
+  ProcessCaptureCleanupReport,
+  PartialProcessCaptureObservation,
+  IncompleteProcessCaptureObservations,
+  PartialFilesystemSnapshot,
+  PartialProcessObservationField,
   ProcessScenario,
   ProcessCaptureEventJournalEntry,
   RecordProcessCaptureEvent,
@@ -19,6 +24,8 @@ import type {
 } from "../../domain/process/processCapture.js";
 import {
   digestProcessCommitment,
+  parseProcessCapture,
+  partialProcessCaptureObservationSchema,
   processComparisonContract,
   processScenarioCommitment,
 } from "../../domain/process/processCapture.js";
@@ -26,9 +33,20 @@ import { PRODUCT_IDENTITY } from "../../identity.js";
 import type { SnapshotResult } from "./FilesystemSnapshot.js";
 import { snapshotRoots } from "./FilesystemSnapshot.js";
 import { classifyFilesystemEffects } from "./ProcessFilesystemEffects.js";
-import { cleanupOwnedProcessGroup } from "../ProcessOwnership.js";
-import { observeOwnedProcessGroup } from "../ProcessOwnershipObservation.js";
-import { ProcessCaptureError } from "./ProcessCaptureError.js";
+import {
+  cleanupOwnedProcessGroup,
+  verifyNoTokenOwnedProcesses,
+  type ProcessOwnershipBaseline,
+} from "../ProcessOwnership.js";
+import {
+  observeOwnedProcessGroup,
+  prepareProcessOwnershipInspection,
+  systemProcessOwnershipHost,
+} from "../ProcessOwnershipObservation.js";
+import {
+  describeProcessCaptureExecutionFailure,
+  ProcessCaptureError,
+} from "./ProcessCaptureError.js";
 import { assertNotCancelled } from "./ProcessScenarioRuntimeValidation.js";
 import {
   normalizeProcessElapsedTime,
@@ -92,6 +110,107 @@ export type PendingProcessCapture = Omit<
   readonly settlement: ObservedProcessSettlement;
 };
 
+/** Mutable collection of facts available if completion stops before a capture exists. */
+export interface ProcessCaptureObservationBuffer {
+  target_pid: PartialProcessObservationField<number>;
+  frames: PartialProcessObservationField<readonly TerminalFrame[]>;
+  rendered_frames: PartialProcessObservationField<
+    UnverifiedProcessCapture["rendered_frames"]
+  >;
+  interaction_events: PartialProcessObservationField<
+    UnverifiedProcessCapture["interaction_events"]
+  >;
+  exit: IncompleteProcessCaptureObservations["exit"];
+  settlement: IncompleteProcessCaptureObservations["settlement"];
+  process_samples: PartialProcessObservationField<readonly ProcessSample[]>;
+  filesystem_snapshots: {
+    before: PartialProcessObservationField<PartialFilesystemSnapshot>;
+    after: PartialProcessObservationField<PartialFilesystemSnapshot>;
+  };
+  event_journal: PartialProcessObservationField<
+    readonly ProcessCaptureEventJournalEntry[]
+  >;
+  manifest: IncompleteProcessCaptureObservations["manifest"];
+}
+
+/** Seed explicit observation availability before capture completion begins. */
+export const createProcessCaptureObservationBuffer = (options: {
+  readonly frames: readonly TerminalFrame[];
+  readonly interactions: readonly InteractionEvent[];
+  readonly samples: readonly ProcessSample[];
+  readonly eventJournal: readonly ProcessCaptureEventJournalEntry[];
+  readonly before: SnapshotResult;
+}): ProcessCaptureObservationBuffer => ({
+  target_pid: {
+    state: "unavailable",
+    reason: "No PTY process was spawned before the run failed.",
+  },
+  frames: { state: "available", value: options.frames },
+  rendered_frames: {
+    state: "unavailable",
+    reason:
+      "Rendered terminal frames were not collected before capture completion finished.",
+  },
+  interaction_events: { state: "available", value: options.interactions },
+  exit: {
+    state: "unavailable",
+    reason: "Terminal exit was not observed before the run failed.",
+  },
+  settlement: {
+    state: "unavailable",
+    reason:
+      "Process settlement was not observed before capture completion finished.",
+  },
+  process_samples: { state: "available", value: options.samples },
+  filesystem_snapshots: {
+    before: {
+      state: "available",
+      value: {
+        files: options.before.files,
+        truncated: options.before.truncated,
+      },
+    },
+    after: {
+      state: "unavailable",
+      reason:
+        "Final filesystem snapshot was not collected before capture completion finished.",
+    },
+  },
+  event_journal: { state: "available", value: options.eventJournal },
+  manifest: {
+    state: "unavailable",
+    reason:
+      "Capture manifest was not produced before capture completion finished.",
+  },
+});
+
+const normalizePartialProcessObservations = (
+  observations: IncompleteProcessCaptureObservations,
+  context: { readonly scenario: ProcessScenario; readonly rootPid?: number },
+): IncompleteProcessCaptureObservations => {
+  const targetPid = observations.target_pid;
+  const target_pid =
+    targetPid.state === "available" && context.rootPid !== undefined
+      ? {
+          state: "available" as const,
+          value: context.scenario.normalization.pids ? 1 : context.rootPid,
+        }
+      : targetPid;
+  const samples = observations.process_samples;
+  const process_samples =
+    samples.state === "available" && context.rootPid !== undefined
+      ? {
+          state: "available" as const,
+          value: normalizeProcessSamples(
+            samples.value,
+            context.scenario,
+            context.rootPid,
+          ),
+        }
+      : samples;
+  return { ...observations, target_pid, process_samples };
+};
+
 /** Wait for trailing PTY callbacks before the capture becomes immutable. */
 export const settleProcessCaptureJournal = async (
   journal: readonly ProcessCaptureEventJournalEntry[],
@@ -152,6 +271,7 @@ export const buildCaptureResult = (
     ),
     truncated: options.truncated,
     limitations: [
+      "The executable digest is a prelaunch file sample; matching path metadata immediately after spawn does not prove an atomic operating-system image binding.",
       "Process trees are sampled and may omit short-lived descendants.",
       ...(options.samplingPartial
         ? ["Process-tree sampling ended with an incomplete observation."]
@@ -166,6 +286,11 @@ export const buildCaptureResult = (
         scope: "process",
         reason:
           "Process trees are sampled and may omit short-lived descendants.",
+      },
+      {
+        scope: "process",
+        reason:
+          "The executable digest is a prelaunch file sample; operating-system image binding is not atomically observed.",
       },
       {
         scope: "environment",
@@ -190,16 +315,163 @@ export const buildCaptureResult = (
   };
 };
 
-const hashFile = async (path: string): Promise<string> => {
-  const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path)) hash.update(chunk);
-  return hash.digest("hex");
+interface ExecutableFileIdentity {
+  readonly dev: bigint;
+  readonly ino: bigint;
+  readonly mode: bigint;
+  readonly size: bigint;
+  readonly mtimeNs: bigint;
+  readonly ctimeNs: bigint;
+}
+
+export interface SelectedExecutableObservation {
+  readonly sha256: string | null;
+  readonly identity: ExecutableFileIdentity | null;
+  readonly reason: string | null;
+}
+
+export interface LaunchedExecutableObservation {
+  readonly selectedSha256: string | null;
+  readonly sha256: string | null;
+  readonly state: "path_metadata_unchanged" | "unknown";
+  readonly reason: string | null;
+}
+
+const identityFromStats = (stats: BigIntStats): ExecutableFileIdentity => ({
+  dev: stats.dev,
+  ino: stats.ino,
+  mode: stats.mode,
+  size: stats.size,
+  mtimeNs: stats.mtimeNs,
+  ctimeNs: stats.ctimeNs,
+});
+
+const sameExecutableIdentity = (
+  left: ExecutableFileIdentity,
+  right: ExecutableFileIdentity,
+): boolean =>
+  left.dev === right.dev &&
+  left.ino === right.ino &&
+  left.mode === right.mode &&
+  left.size === right.size &&
+  left.mtimeNs === right.mtimeNs &&
+  left.ctimeNs === right.ctimeNs;
+
+const filesystemFailure = (cause: unknown): string | undefined => {
+  if (!(cause instanceof Error) || !("code" in cause) || !("syscall" in cause))
+    return undefined;
+  return `Executable file observation failed: ${cause.message}`;
+};
+
+/** Sample the caller-selected executable contents and stable file identity before launch. */
+export const observeSelectedExecutable = async (
+  path: string,
+  signal?: AbortSignal,
+): Promise<SelectedExecutableObservation> => {
+  assertNotCancelled(signal);
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
+    const openedStats = await handle.stat({ bigint: true });
+    if (!openedStats.isFile())
+      return {
+        sha256: null,
+        identity: null,
+        reason: "Selected executable is not a regular file.",
+      };
+    const openedIdentity = identityFromStats(openedStats);
+    const selectedPathIdentity = identityFromStats(
+      await stat(path, { bigint: true }),
+    );
+    if (!sameExecutableIdentity(openedIdentity, selectedPathIdentity))
+      return {
+        sha256: null,
+        identity: null,
+        reason: "Selected executable path changed while it was being opened.",
+      };
+
+    const hash = createHash("sha256");
+    for await (const chunk of handle.createReadStream({
+      autoClose: false,
+      signal,
+    })) {
+      assertNotCancelled(signal);
+      hash.update(chunk);
+    }
+    assertNotCancelled(signal);
+    const finalIdentity = identityFromStats(
+      await handle.stat({ bigint: true }),
+    );
+    if (!sameExecutableIdentity(openedIdentity, finalIdentity))
+      return {
+        sha256: null,
+        identity: null,
+        reason: "Selected executable changed while its contents were sampled.",
+      };
+    return {
+      sha256: hash.digest("hex"),
+      identity: openedIdentity,
+      reason: null,
+    };
+  } catch (cause: unknown) {
+    assertNotCancelled(signal);
+    const reason = filesystemFailure(cause);
+    if (reason !== undefined) return { sha256: null, identity: null, reason };
+    throw cause;
+  } finally {
+    await handle?.close();
+  }
+};
+
+/** Compare the selected file metadata with the path immediately after PTY spawn. */
+export const observeLaunchedExecutable = (
+  path: string,
+  selected: SelectedExecutableObservation,
+): LaunchedExecutableObservation => {
+  if (selected.identity === null || selected.sha256 === null)
+    return {
+      selectedSha256: selected.sha256,
+      sha256: null,
+      state: "unknown",
+      reason: selected.reason ?? "Selected executable identity is unavailable.",
+    };
+  try {
+    const currentStats = statSync(path, { bigint: true });
+    const currentIdentity = identityFromStats(currentStats);
+    if (
+      currentStats.isFile() &&
+      sameExecutableIdentity(selected.identity, currentIdentity)
+    )
+      return {
+        selectedSha256: selected.sha256,
+        sha256: selected.sha256,
+        state: "path_metadata_unchanged",
+        reason: null,
+      };
+    return {
+      selectedSha256: selected.sha256,
+      sha256: null,
+      state: "unknown",
+      reason: "Executable path metadata changed between sampling and spawn.",
+    };
+  } catch (cause: unknown) {
+    const reason = filesystemFailure(cause);
+    if (reason !== undefined)
+      return {
+        selectedSha256: selected.sha256,
+        sha256: null,
+        state: "unknown",
+        reason,
+      };
+    throw cause;
+  }
 };
 
 export const createRunManifest = async (
   scenario: ProcessScenario,
   startedAt: Date,
   completedAt: Date,
+  executable: LaunchedExecutableObservation,
   host: {
     readonly platform: NodeJS.Platform;
     readonly architecture: NodeJS.Architecture;
@@ -208,10 +480,9 @@ export const createRunManifest = async (
     architecture: process.arch,
   },
 ): Promise<UnverifiedProcessCapture["manifest"]> => {
-  const executableSha256 = await hashFile(scenario.executable);
   const scenarioCommitment = processScenarioCommitment(
     scenario,
-    executableSha256,
+    executable.selectedSha256 ?? undefined,
   );
   const comparisonContract = processComparisonContract(scenario);
   return {
@@ -226,7 +497,12 @@ export const createRunManifest = async (
     comparison_contract: comparisonContract,
     full_scenario_sha256: digestProcessCommitment(scenarioCommitment),
     comparison_contract_sha256: digestProcessCommitment(comparisonContract),
-    executable_sha256: executableSha256,
+    selected_executable_sha256: executable.selectedSha256,
+    executable_sha256: executable.sha256,
+    executable_identity: {
+      state: executable.state,
+      reason: executable.reason,
+    },
     normalization_sha256: digestProcessCommitment(scenario.normalization),
   };
 };
@@ -339,12 +615,14 @@ export const awaitTerminalExit = async ({
 export interface ProcessCaptureCleanupHost {
   readonly platform: NodeJS.Platform;
   readonly cleanupProcessGroup: typeof cleanupOwnedProcessGroup;
+  readonly verifyTokenOwnedProcesses: typeof verifyNoTokenOwnedProcesses;
   readonly removeTemporaryRoot: (path: string) => Promise<void>;
 }
 
 const processCaptureCleanupHost: ProcessCaptureCleanupHost = {
   platform: process.platform,
   cleanupProcessGroup: cleanupOwnedProcessGroup,
+  verifyTokenOwnedProcesses: verifyNoTokenOwnedProcesses,
   removeTemporaryRoot: (path) => rm(path, { recursive: true, force: true }),
 };
 
@@ -354,35 +632,97 @@ export const releaseProcessResources = async (options: {
   readonly renderer: TerminalRenderer | undefined;
   readonly runId: string;
   readonly temporaryRoot: string;
-  readonly capturedProcessGroupIds: readonly number[];
+  readonly captureBaseline?: ProcessOwnershipBaseline;
   readonly host?: ProcessCaptureCleanupHost;
-}): Promise<string | undefined> => {
+}): Promise<ProcessCaptureCleanupReport> => {
   const host = options.host ?? processCaptureCleanupHost;
   for (const timer of options.timers) timer.cancel();
-  let failure: string | undefined;
+  let terminalRenderer: ProcessCaptureCleanupReport["terminal_renderer"] = {
+    state: options.renderer === undefined ? "not_required" : "cleaned",
+    reason: null,
+  };
   try {
     await options.renderer?.dispose();
   } catch (cause: unknown) {
-    void cause;
-    failure ??= "terminal renderer cleanup failed";
+    terminalRenderer = {
+      state: "failed",
+      reason:
+        cause instanceof Error
+          ? cause.message || cause.name || "renderer dispose failed"
+          : "renderer dispose failed",
+    };
   }
-  if (options.terminal !== undefined && host.platform !== "win32") {
-    for (const processGroupId of new Set(options.capturedProcessGroupIds)) {
+  let ownedProcessGroup: ProcessCaptureCleanupReport["owned_process_group"] = {
+    state: options.terminal === undefined ? "not_required" : "cleaned",
+    reason: null,
+  };
+  if (options.terminal !== undefined) {
+    if (host.platform === "win32") {
+      ownedProcessGroup = {
+        state: "unverified",
+        reason:
+          "owned process cleanup is unverifiable on Windows without process-job authority",
+      };
+    } else {
       const cleaned = await host.cleanupProcessGroup({
         runId: options.runId,
-        leaderPid: processGroupId,
-        processGroupId,
+        leaderPid: options.terminal.pid,
+        processGroupId: options.terminal.pid,
+        sweepTokenOwnedProcesses: true,
+        ...(options.captureBaseline === undefined
+          ? {}
+          : { captureBaseline: options.captureBaseline }),
       });
-      if (!cleaned.cleaned) failure ??= cleaned.reason;
+      if (!cleaned.cleaned) {
+        ownedProcessGroup = { state: "unverified", reason: cleaned.reason };
+      } else {
+        const verified = await host.verifyTokenOwnedProcesses(
+          options.runId,
+          undefined,
+          options.captureBaseline,
+        );
+        if (!verified.cleaned)
+          ownedProcessGroup = { state: "unverified", reason: verified.reason };
+      }
     }
   }
+  let temporaryRoot: ProcessCaptureCleanupReport["temporary_root"] = {
+    state: "cleaned",
+    reason: null,
+  };
   try {
     await host.removeTemporaryRoot(options.temporaryRoot);
   } catch (cause: unknown) {
-    void cause;
-    failure ??= "temporary process root cleanup failed";
+    temporaryRoot = {
+      state: "failed",
+      reason:
+        cause instanceof Error
+          ? cause.message || cause.name || "temporary root removal failed"
+          : "temporary root removal failed",
+    };
   }
-  return failure;
+  return {
+    owned_process_group: ownedProcessGroup,
+    terminal_renderer: terminalRenderer,
+    temporary_root: temporaryRoot,
+  };
+};
+
+export const cleanupReportFailure = (
+  report: ProcessCaptureCleanupReport,
+): string | undefined => {
+  const failures = Object.entries(report).filter(
+    ([, outcome]) =>
+      outcome.state === "failed" || outcome.state === "unverified",
+  );
+  return failures.length === 0
+    ? undefined
+    : failures
+        .map(
+          ([resource, outcome]) =>
+            `${resource}: ${outcome.reason ?? outcome.state}`,
+        )
+        .join("; ");
 };
 
 export const captureTerminalFrames = (options: {
@@ -428,22 +768,106 @@ export const captureTerminalFrames = (options: {
 };
 
 export const resolveProcessResult = (
-  capture: ProcessCapture | undefined,
+  capture: PendingProcessCapture | ProcessCapture | undefined,
   executionFailure: unknown,
-  cleanupFailure: string | undefined,
+  cleanup: ProcessCaptureCleanupReport,
+  observations?: IncompleteProcessCaptureObservations,
+  partialContext?: {
+    readonly scenario: ProcessScenario;
+    readonly rootPid?: number;
+  },
 ): ProcessCapture => {
+  const cleanupFailure = cleanupReportFailure(cleanup);
+  if (cleanupFailure !== undefined) {
+    const cleanupResources = Object.entries(cleanup)
+      .filter(
+        ([, outcome]) =>
+          outcome.state === "failed" || outcome.state === "unverified",
+      )
+      .map(([resource]) => resource);
+    const executionFailureReason =
+      describeProcessCaptureExecutionFailure(executionFailure);
+    let partialObservation: PartialProcessCaptureObservation | undefined;
+    if (capture !== undefined || observations !== undefined) {
+      const normalizedObservations =
+        observations === undefined || partialContext === undefined
+          ? observations
+          : normalizePartialProcessObservations(observations, partialContext);
+      const partialPayload =
+        capture === undefined
+          ? { observations: normalizedObservations }
+          : { capture };
+      const pendingCapture =
+        capture === undefined
+          ? undefined
+          : {
+              ...capture,
+              settlement: {
+                ...capture.settlement,
+                cleanup_outcome: "failed" as const,
+              },
+            };
+      const partialResult = partialProcessCaptureObservationSchema.safeParse({
+        ...partialPayload,
+        ...(pendingCapture === undefined
+          ? {}
+          : {
+              capture: Object.fromEntries(
+                Object.entries(pendingCapture).filter(
+                  ([key]) => key !== "cleanup",
+                ),
+              ),
+            }),
+        cleanup,
+        execution_failure: executionFailureReason ?? null,
+      });
+      if (partialResult.success) partialObservation = partialResult.data;
+    }
+    throw new ProcessCaptureError(cleanupFailure, {
+      cause: executionFailure,
+      reason: "cleanup_incomplete",
+      cleanupResources,
+      ...(executionFailureReason === undefined
+        ? {}
+        : { executionFailure: executionFailureReason }),
+      ...(partialObservation === undefined ? {} : { partialObservation }),
+      cleanupReport: cleanup,
+    });
+  }
   if (executionFailure instanceof ProcessCaptureError) throw executionFailure;
-  if (executionFailure !== undefined)
+  if (executionFailure !== undefined) {
+    const executionFailureReason =
+      describeProcessCaptureExecutionFailure(executionFailure);
     throw new ProcessCaptureError("process capture failed", {
       cause: executionFailure,
+      ...(executionFailureReason === undefined
+        ? {}
+        : { executionFailure: executionFailureReason }),
     });
-  if (cleanupFailure !== undefined)
-    throw new ProcessCaptureError(cleanupFailure, {
-      reason: "cleanup_incomplete",
-    });
+  }
   if (capture === undefined)
     throw new ProcessCaptureError("process capture produced no result");
-  return capture;
+  if ("cleanup" in capture) return capture;
+
+  const settlement: UnverifiedProcessCapture["settlement"] =
+    capture.settlement.state === "quiesced"
+      ? { ...capture.settlement, cleanup_outcome: "not_required" }
+      : { ...capture.settlement, cleanup_outcome: "cleaned" };
+  try {
+    return parseProcessCapture({
+      ...capture,
+      settlement,
+      cleanup: {
+        owned_process_group: "verified",
+        temporary_root: "removed",
+      },
+    });
+  } catch (cause: unknown) {
+    throw new ProcessCaptureError(
+      `process capture validation failed${cause instanceof Error ? `: ${cause.message}` : ""}`,
+      { cause },
+    );
+  }
 };
 
 export const prepareProcessCapture = async (
@@ -454,14 +878,20 @@ export const prepareProcessCapture = async (
 ): Promise<{
   readonly temporaryRoot: string;
   readonly runId: string;
+  readonly ownershipBaseline: ProcessOwnershipBaseline;
   readonly before: SnapshotResult;
 }> => {
+  assertNotCancelled(signal);
+  await host.prepareOwnershipInspector?.(signal);
   assertNotCancelled(signal);
   const before = await captureSnapshot(scenario, signal);
   const temporaryRoot = await host.createTemporaryRoot();
   try {
+    assertNotCancelled(signal);
     const runId = randomUUID();
-    return { temporaryRoot, runId, before };
+    const ownershipBaseline = (await host.captureOwnershipBaseline?.()) ?? [];
+    assertNotCancelled(signal);
+    return { temporaryRoot, runId, ownershipBaseline, before };
   } catch (cause: unknown) {
     await host.cleanup(temporaryRoot);
     throw cause;
@@ -470,11 +900,16 @@ export const prepareProcessCapture = async (
 
 /** Filesystem seam for allocating and cleaning a capture's temporary root. */
 export interface ProcessPreparationHost {
+  prepareOwnershipInspector?(signal?: AbortSignal): Promise<void>;
+  captureOwnershipBaseline?(): Promise<ProcessOwnershipBaseline>;
   createTemporaryRoot(): Promise<string>;
   cleanup(path: string): Promise<void>;
 }
 
 const systemProcessPreparationHost: ProcessPreparationHost = {
+  prepareOwnershipInspector: prepareProcessOwnershipInspection,
+  captureOwnershipBaseline: () =>
+    systemProcessOwnershipHost.captureBaseline?.() ?? Promise.resolve([]),
   createTemporaryRoot: () => mkdtemp(join(tmpdir(), "rea-process-")),
   cleanup: (path) => rm(path, { recursive: true, force: true }),
 };

@@ -176,6 +176,12 @@ const deriveProcessCandidate = (
           ]
         : []),
     ];
+    if (capture.manifest.executable_sha256 === null) {
+      limitations.add(
+        `Process capture ${evidence.evidence_id} has no validated executable artifact identity; packaged-process lifecycle obligation was not bound to an artifact.`,
+      );
+      return;
+    }
     addCandidate(candidates, {
       obligation_id: obligationId(
         `process:${capture.manifest.executable_sha256}:${capture.manifest.full_scenario_sha256}`,

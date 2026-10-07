@@ -1,4 +1,4 @@
-import type { JsonValue } from "./jsonValue.js";
+import { jsonValueSchema, type JsonValue } from "./jsonValue.js";
 
 import {
   analysisErrorCategory,
@@ -336,12 +336,30 @@ const lifecycleErrorDetails = (
     return {
       cleanup: "incomplete",
       resources: [...error.cleanupResources],
+      ...(error.cleanupReport === undefined
+        ? {}
+        : { cleanup_report: jsonValueSchema.parse(error.cleanupReport) }),
+      ...(error.executionFailure === undefined
+        ? {}
+        : { execution_failure: error.executionFailure }),
+      ...(error.partialObservation === undefined
+        ? {}
+        : {
+            partial_observation: jsonValueSchema.parse(
+              error.partialObservation,
+            ),
+          }),
     };
   if (
     error._tag === "ProcessCaptureError" &&
     error.userCategory === "cancelled"
   )
     return { operation: "process_capture", cleanup: "complete" };
+  if (
+    error._tag === "ProcessCaptureError" &&
+    error.executionFailure !== undefined
+  )
+    return { execution_failure: error.executionFailure };
   if (error instanceof BinaryTargetError)
     return {
       path: error.path,

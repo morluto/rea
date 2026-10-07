@@ -8,6 +8,7 @@ import type {
   OwnedProcessGroup,
   ProcessCleanupResult,
 } from "./ProcessOwnership.js";
+import { prepareProcessOwnershipInspection } from "./ProcessOwnershipObservation.js";
 
 const DEFAULT_TERMINATION_GRACE_MS = 250;
 const DEFAULT_KILL_GRACE_MS = 1_000;
@@ -132,6 +133,7 @@ export type ProviderProcessStopResult =
 export const spawnOwnedProviderProcess = async (
   options: OwnedProviderProcessSpawnOptions,
 ): Promise<SpawnedOwnedProviderProcess> => {
+  await prepareProcessOwnershipInspection();
   const platform = options.platform ?? process.platform;
   const hostEnvironment = options.hostEnvironment ?? process.env;
   const environment = {

@@ -1,7 +1,11 @@
 import { expect, it } from "vitest";
 
 import { createProcessCaptureEvidence } from "../../../src/application/process/ProcessEvidence.js";
-import { createRunManifest } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
+import {
+  createRunManifest,
+  observeLaunchedExecutable,
+  observeSelectedExecutable,
+} from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import { emptyUnverifiedProcessCapture } from "../../../src/domain/process/processCapture.fixture.js";
 import {
   compareProcessCaptures,
@@ -61,8 +65,20 @@ const captureEvidenceForEnvironmentSecret = async (value: string) => {
     environment: { API_TOKEN: value },
     events: [{ type: "input", at_ms: 0, data: value }],
   });
+  const selectedExecutable = await observeSelectedExecutable(
+    scenario.executable,
+  );
+  const executableIdentity = observeLaunchedExecutable(
+    scenario.executable,
+    selectedExecutable,
+  );
+  const manifest = await createRunManifest(
+    scenario,
+    new Date(0),
+    new Date(1),
+    executableIdentity,
+  );
   const base = emptyUnverifiedProcessCapture();
-  const manifest = await createRunManifest(scenario, new Date(0), new Date(1));
   const scenarioManifest = {
     ...manifest,
     normalization_sha256: digestProcessCommitment(scenario.normalization),

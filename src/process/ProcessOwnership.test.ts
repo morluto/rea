@@ -93,6 +93,78 @@ describe("owned process-group cleanup discovery", () => {
     });
     expect(signalGroup).toHaveBeenCalledWith(100, "SIGKILL");
   });
+});
+
+describe("opaque process neighbors during cleanup", () => {
+  it("cleans verified run-owned groups while reporting an opaque neighbor", async () => {
+    const processes = [
+      { pid: 100, parentPid: 1, processGroupId: 100, command: "capture" },
+      {
+        pid: 200,
+        parentPid: 1,
+        processGroupId: 200,
+        command: "detached-child",
+      },
+      {
+        pid: 900,
+        parentPid: 1,
+        processGroupId: 900,
+        command: "opaque-neighbor",
+      },
+    ].map((process) => ({ ...process, state: "S" }));
+    const signalGroup = vi.fn();
+    const identities = new Map(
+      processes.map(({ pid }) => [
+        pid,
+        { state: "readable" as const, identity: `start-${String(pid)}` },
+      ]),
+    );
+    const adapter: ProcessOwnershipHost = {
+      listProcesses: () => Promise.resolve(processes),
+      environment: (pid) =>
+        Promise.resolve({
+          REA_PROCESS_RUN_ID: pid === 900 ? "unowned" : "run-token",
+        }),
+      processIdentities: () => Promise.resolve(identities),
+      runTokens: (members) =>
+        Promise.resolve(
+          new Map(
+            members.map(({ pid }) => [
+              pid,
+              pid === 900
+                ? {
+                    state: "unavailable" as const,
+                    reason: "environment_unavailable",
+                  }
+                : { state: "readable" as const, runId: "run-token" },
+            ]),
+          ),
+        ),
+      signalGroup,
+    };
+
+    const result = await cleanupOwnedProcessGroup(
+      {
+        ...ownership,
+        sweepTokenOwnedProcesses: true,
+        captureBaseline: [],
+      },
+      adapter,
+    );
+
+    expect(result).toMatchObject({
+      cleaned: false,
+      reason: expect.stringContaining("environment_unavailable=1"),
+    });
+    expect(signalGroup.mock.calls).toEqual([
+      [100, "SIGKILL"],
+      [200, "SIGKILL"],
+    ]);
+    expect(signalGroup).not.toHaveBeenCalledWith(900, "SIGKILL");
+  });
+});
+
+describe("rooted process-group cleanup", () => {
   it("validates and signals rooted descendant groups once, root first", async () => {
     const processes = [
       { pid: 100, parentPid: 1, processGroupId: 100 },

@@ -25,7 +25,12 @@ export const EMPTY_PROCESS_CAPTURE_EXAMPLE = {
     comparison_contract: comparisonContract,
     full_scenario_sha256: digestProcessCommitment(scenario),
     comparison_contract_sha256: digestProcessCommitment(comparisonContract),
+    selected_executable_sha256: "0".repeat(64),
     executable_sha256: "0".repeat(64),
+    executable_identity: {
+      state: "path_metadata_unchanged",
+      reason: null,
+    },
     normalization_sha256: digestProcessCommitment(normalization),
   },
   normalization,
