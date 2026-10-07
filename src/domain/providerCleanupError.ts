@@ -12,9 +12,11 @@ export class ProviderCleanupError extends ProviderAdapterError {
     providerId: string,
     resources: readonly string[],
     diagnostics: Readonly<Record<string, JsonValue>>,
-    options?: ErrorOptions,
+    /** Identify the operation owning these resources; binary callers retain their default. */
+    options?: ErrorOptions & { readonly operation?: string },
   ) {
-    super(providerId, "close_binary", { ...options, diagnostics });
+    const { operation = "close_binary", ...errorOptions } = options ?? {};
+    super(providerId, operation, { ...errorOptions, diagnostics });
     this.cleanupResources = [...resources];
   }
 }

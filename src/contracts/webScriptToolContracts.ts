@@ -9,9 +9,37 @@ import {
 } from "../domain/webModuleTrace.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import { evidenceResultOf } from "./toolOutputSchemas.js";
+import {
+  webSourceLocationInputSchema,
+  webSourceLocationResultSchema,
+} from "../domain/webSourceLocation.js";
 
 /** Local captured-script publication contracts shared by CLI and MCP. */
 export const WEB_SCRIPT_TOOL_CONTRACTS = [
+  {
+    name: "trace_web_source_location",
+    ...toolContractMetadata("trace_web_source_location"),
+    description:
+      "Trace one generated position in an exported website script through an explicitly paired local source map. Verifies manifest, selected script and map SHA-256/byte identities; returns every equal-position mapping, reported source/root, resolved source URL, embedded sourcesContent and original position inline. One-based lines and zero-based UTF-16 columns; greatest generated position <= requested across lines. Duplicate sources and generated-only mappings remain distinct. Caller-selected pairing does not establish deployment authenticity or execution. Regular maps and inline indexed sections only; external section URLs are unsupported. No network access or application execution; uses the pinned upstream codec in an owned Node process with private temporary files, independent 192 MiB old-generation heap and 20-second deadline. 4 MiB map, 32 MiB reply; complete evidence or actionable resource failure. Cleanup may extend the deadline.",
+    kind: "application",
+    inputSchema: webSourceLocationInputSchema,
+    outputSchema: evidenceResultOf(webSourceLocationResultSchema),
+    examples: [
+      {
+        title:
+          "Trace a selected captured JavaScript point to embedded original source",
+        input: {
+          manifest_path: "/analysis/scripts/manifest.json",
+          script_index: 0,
+          source_map: {
+            path: "/analysis/app.js.map",
+            url: "https://example.test/app.js.map",
+          },
+          generated_position: { line: 1, column: 25 },
+        },
+      },
+    ],
+  },
   {
     name: "trace_web_module_imports",
     ...toolContractMetadata("trace_web_module_imports"),

@@ -84,6 +84,7 @@ const PUBLISHED_TOOL_NAME_FLOOR = [
   "extract_artifact",
   "export_web_scripts",
   "trace_web_module_imports",
+  "trace_web_source_location",
   "find_changed_behavior",
   "find_xrefs_to_name",
   "get_call_graph",
