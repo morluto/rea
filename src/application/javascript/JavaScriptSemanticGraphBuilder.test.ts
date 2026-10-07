@@ -3,8 +3,8 @@ import { expect, it } from "vitest";
 import { buildJavaScriptSemanticGraph } from "./JavaScriptSemanticGraphBuilder.js";
 import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "./JavaScriptArtifactFiles.js";
-import { queryJavaScriptSemanticGraph } from "../../domain/javascriptSemanticQuery.js";
-import { analyzeJavaScriptSemantics } from "../../domain/javascriptSemanticAnalysis.js";
+import { queryJavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticQuery.js";
+import { analyzeJavaScriptSemantics } from "../../domain/javascript/javascriptSemanticAnalysis.js";
 
 const SHA256 = "a".repeat(64);
 const GRAPH_ID = `jag_${"b".repeat(64)}`;

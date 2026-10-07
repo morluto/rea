@@ -10,7 +10,7 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../../../dist/domain/evidence.js";
-import { javascriptRecoveryResultSchema } from "../../../dist/domain/javascriptRecovery.js";
+import { javascriptRecoveryResultSchema } from "../../../dist/domain/javascript/javascriptRecovery.js";
 import { buildRecoveryFixtures } from "../../fixtures/javascript-recovery/build.mjs";
 import { mcpTextValue } from "../../lib/mcp-verifier-results.mjs";
 

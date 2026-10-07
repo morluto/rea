@@ -3,8 +3,8 @@ import { AnyMap, eachMapping } from "@jridgewell/trace-mapping";
 
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import { isUrlLikeModuleSpecifier } from "../domain/webBundleAnalyzerAst.js";
-import { analyzeParsedJavaScriptSemantics } from "../domain/javascriptSemanticAnalysis.js";
-import { parseJavaScriptSource } from "../domain/javascriptSourceParser.js";
+import { analyzeParsedJavaScriptSemantics } from "../domain/javascript/javascriptSemanticAnalysis.js";
+import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
 import { hasValidSourceMapContents } from "../domain/sourceMapContents.js";
 import type {
   AnalyzeWebBundleInput,

@@ -8,7 +8,7 @@ import {
   JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
   JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE,
   SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE,
-} from "../../../src/contracts/javascriptApplicationWorkflowExamples.js";
+} from "../../../src/contracts/javascript/javascriptApplicationWorkflowExamples.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 
 const resources: Array<{ close(): Promise<unknown> }> = [];

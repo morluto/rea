@@ -5,8 +5,8 @@ import { expect, it } from "vitest";
 import {
   electronActiveObservationInputSchema,
   electronActiveObservationResultSchema,
-} from "../domain/electronActiveObservation.js";
-import { createElectronActiveObservationFixtureResult } from "../domain/electronActiveObservation.fixture.js";
+} from "../domain/javascript/electronActiveObservation.js";
+import { createElectronActiveObservationFixtureResult } from "../domain/javascript/electronActiveObservation.fixture.js";
 import { runElectronActions } from "./PlaywrightElectronActiveActions.js";
 
 it("parses window, renderer, and deep-link actions for agents", () => {

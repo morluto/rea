@@ -1,5 +1,5 @@
-import type { ApplicationGraphEvidence } from "../../domain/javascriptApplicationEvidenceSchemas.js";
-import type { JavaScriptSourceRange } from "../../domain/javascriptStaticAnalysisTypes.js";
+import type { ApplicationGraphEvidence } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
+import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 
 const EXTRACTOR = {
   name: "rea-javascript-artifact-reconstruction",

@@ -7,15 +7,15 @@ import {
 import { type AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { projectInputIssues } from "../../domain/inputIssueProjection.js";
-import { compareJavaScriptApplicationVersions } from "../../domain/javascriptApplicationVersionComparison.js";
-import { compareApplicationVersionsInputSchema } from "../../domain/javascriptApplicationVersionComparisonSchemas.js";
-import { compareJavaScriptExportShapes } from "../../domain/javascriptExportShapeComparison.js";
-import { compareJavaScriptExportShapesInputSchema } from "../../domain/javascriptExportShapeComparisonSchemas.js";
-import { traceApplicationFeature } from "../../domain/javascriptFeatureTrace.js";
-import { traceApplicationFeatureInputSchema } from "../../domain/javascriptFeatureTraceSchemas.js";
+import { compareJavaScriptApplicationVersions } from "../../domain/javascript/javascriptApplicationVersionComparison.js";
+import { compareApplicationVersionsInputSchema } from "../../domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
+import { compareJavaScriptExportShapes } from "../../domain/javascript/javascriptExportShapeComparison.js";
+import { compareJavaScriptExportShapesInputSchema } from "../../domain/javascript/javascriptExportShapeComparisonSchemas.js";
+import { traceApplicationFeature } from "../../domain/javascript/javascriptFeatureTrace.js";
+import { traceApplicationFeatureInputSchema } from "../../domain/javascript/javascriptFeatureTraceSchemas.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { compareSourceToBundle } from "../../domain/sourceToBundleComparison.js";
-import { compareSourceToBundleInputSchema } from "../../domain/sourceToBundleComparisonSchemas.js";
+import { compareSourceToBundle } from "../../domain/javascript/sourceToBundleComparison.js";
+import { compareSourceToBundleInputSchema } from "../../domain/javascript/sourceToBundleComparisonSchemas.js";
 import {
   parseApplicationGraphEvidence,
   parseNativeApplicationEvidence,

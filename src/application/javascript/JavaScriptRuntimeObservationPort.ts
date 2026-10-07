@@ -7,7 +7,7 @@ import type {
   JavaScriptRuntimeTargetList,
   ListJavaScriptRuntimeTargetsInput,
   ObserveJavaScriptRuntimeInput,
-} from "../../domain/javascriptRuntimeObservation.js";
+} from "../../domain/javascript/javascriptRuntimeObservation.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Result } from "../../domain/result.js";
 

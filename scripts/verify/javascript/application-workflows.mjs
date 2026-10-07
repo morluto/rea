@@ -9,9 +9,9 @@ import {
   compareJavaScriptExportShapesEvidence,
   traceApplicationFeatureEvidence,
 } from "../../../dist/application/javascript/JavaScriptApplicationWorkflowService.js";
-import { applicationVersionComparisonResultSchema } from "../../../dist/domain/javascriptApplicationVersionComparisonSchemas.js";
-import { applicationFeatureTraceResultSchema } from "../../../dist/domain/javascriptFeatureTraceSchemas.js";
-import { javaScriptExportShapeComparisonResultSchema } from "../../../dist/domain/javascriptExportShapeComparisonSchemas.js";
+import { applicationVersionComparisonResultSchema } from "../../../dist/domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
+import { applicationFeatureTraceResultSchema } from "../../../dist/domain/javascript/javascriptFeatureTraceSchemas.js";
+import { javaScriptExportShapeComparisonResultSchema } from "../../../dist/domain/javascript/javascriptExportShapeComparisonSchemas.js";
 import {
   completeVerifierRun,
   createVerifierRun,

@@ -8,10 +8,10 @@ import {
   analyzeJavaScriptApplicationInputSchema,
   javascriptApplicationAnalysisResultSchema,
   type JavaScriptApplicationAnalysisResult,
-} from "../../domain/javascriptApplicationAnalysis.js";
-import type { JavaScriptApplicationGraph } from "../../domain/javascriptApplicationGraph.js";
-import type { JavaScriptSemanticGraph } from "../../domain/javascriptSemanticGraph.js";
-import { javascriptRuntimeReconciliationResultSchema } from "../../domain/javascriptRuntimeReconciliationSchemas.js";
+} from "../../domain/javascript/javascriptApplicationAnalysis.js";
+import type { JavaScriptApplicationGraph } from "../../domain/javascript/javascriptApplicationGraph.js";
+import type { JavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticGraph.js";
+import { javascriptRuntimeReconciliationResultSchema } from "../../domain/javascript/javascriptRuntimeReconciliationSchemas.js";
 import { managedApplicationGraphResultSchema } from "../../domain/managedApplicationGraph.js";
 
 /** Supported immutable source for an application-level graph workflow. */

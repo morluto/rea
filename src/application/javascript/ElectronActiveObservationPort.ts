@@ -6,7 +6,7 @@ import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type {
   ElectronActiveObservationInput,
   ElectronActiveObservationResult,
-} from "../../domain/electronActiveObservation.js";
+} from "../../domain/javascript/electronActiveObservation.js";
 import type { Result } from "../../domain/result.js";
 
 /** Provider-neutral boundary for owned Electron runtime experiments. */

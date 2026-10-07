@@ -6,7 +6,7 @@ import {
   javascriptRecoveryResultSchema,
   type JavaScriptRecoveryInput,
   type JavaScriptRecoveryResult,
-} from "../../domain/javascriptRecovery.js";
+} from "../../domain/javascript/javascriptRecovery.js";
 import { readRecoveryFile, recoveryDigest } from "./RecoveryFiles.js";
 import {
   recoveryRanges,

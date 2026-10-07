@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptSemantics } from "../../domain/javascriptSemanticAnalysis.js";
-import { completeApplicationCoverage } from "../../domain/javascriptApplicationEvidenceSchemas.js";
+import { analyzeJavaScriptSemantics } from "../../domain/javascript/javascriptSemanticAnalysis.js";
+import { completeApplicationCoverage } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import { projectJavaScriptExportReturnShapes } from "./JavaScriptReturnShapeProjection.js";
 
 const projectReturns = (body: string) => {

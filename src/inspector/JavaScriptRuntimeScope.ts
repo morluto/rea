@@ -8,7 +8,7 @@ import type { BrowserExclusionReason } from "../domain/browserCompleteness.js";
 import type {
   JavaScriptRuntimeLocation,
   JavaScriptRuntimeTargetLocation,
-} from "../domain/javascriptRuntimeObservation.js";
+} from "../domain/javascript/javascriptRuntimeObservation.js";
 import { authorizedElectronFile } from "../browser/ElectronFileScope.js";
 
 export type RuntimeLocationDecision =

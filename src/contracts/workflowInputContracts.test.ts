@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { traceJavaScriptSemanticsRequestSchema } from "./applicationWorkflowInputContracts.js";
+import { traceJavaScriptSemanticsRequestSchema } from "./javascript/applicationWorkflowInputContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "./artifactToolContracts.js";
-import { JAVASCRIPT_FEATURE_TRACE_FULL_EVIDENCE_EXAMPLE } from "./javascriptApplicationWorkflowExamples.js";
+import { JAVASCRIPT_FEATURE_TRACE_FULL_EVIDENCE_EXAMPLE } from "./javascript/javascriptApplicationWorkflowExamples.js";
 import {
   MANAGED_APPLICATION_GRAPH_EXAMPLE,
   MANAGED_MEMBER_COMPARISON_EXAMPLE,

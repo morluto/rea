@@ -1,5 +1,5 @@
-import type { ApplicationNode } from "../../domain/javascriptApplicationGraph.js";
-import type { JavaScriptStaticAnalysis } from "../../domain/javascriptStaticAnalysisTypes.js";
+import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraph.js";
+import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "./JavaScriptArtifactFiles.js";
 import {
   addStaticInferenceEdge,

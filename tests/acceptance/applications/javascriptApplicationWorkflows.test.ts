@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { compareApplicationVersionsRequestSchema } from "../../../src/contracts/applicationWorkflowInputContracts.js";
+import { compareApplicationVersionsRequestSchema } from "../../../src/contracts/javascript/applicationWorkflowInputContracts.js";
 import { analyzeJavaScriptApplication } from "../../../src/application/javascript/JavaScriptApplicationService.js";
 import {
   compareApplicationVersionsEvidence,
@@ -15,23 +15,23 @@ import { reconcileJavaScriptRuntimeEvidence } from "../../../src/application/jav
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
 import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
-import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascriptApplicationAnalysis.js";
+import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import {
   applicationVersionComparisonResultSchema,
   type ApplicationVersionComparisonResult,
-} from "../../../src/domain/javascriptApplicationVersionComparisonSchemas.js";
-import { javascriptRuntimeReconciliationResultSchema } from "../../../src/domain/javascriptRuntimeReconciliationSchemas.js";
-import { compareJavaScriptApplicationVersions } from "../../../src/domain/javascriptApplicationVersionComparison.js";
-import { createJavaScriptApplicationGraph } from "../../../src/domain/javascriptApplicationGraph.js";
-import { traceApplicationFeature } from "../../../src/domain/javascriptFeatureTrace.js";
-import { applicationFeatureTraceResultSchema } from "../../../src/domain/javascriptFeatureTraceSchemas.js";
+} from "../../../src/domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
+import { javascriptRuntimeReconciliationResultSchema } from "../../../src/domain/javascript/javascriptRuntimeReconciliationSchemas.js";
+import { compareJavaScriptApplicationVersions } from "../../../src/domain/javascript/javascriptApplicationVersionComparison.js";
+import { createJavaScriptApplicationGraph } from "../../../src/domain/javascript/javascriptApplicationGraph.js";
+import { traceApplicationFeature } from "../../../src/domain/javascript/javascriptFeatureTrace.js";
+import { applicationFeatureTraceResultSchema } from "../../../src/domain/javascript/javascriptFeatureTraceSchemas.js";
 import {
   APPLICATION_GRAPH_DIGESTS,
   buildSyntheticJavaScriptApplicationGraph,
-} from "../../../src/domain/javascriptApplicationGraph.fixture.js";
+} from "../../../src/domain/javascript/javascriptApplicationGraph.fixture.js";
 import { writeVersionedJavaScriptApplicationFixtures } from "../../fixtures/javascriptArtifactApplication.js";
 import { JAVASCRIPT_APPLICATION_PROVIDER } from "../../../src/application/InvestigationProviders.js";
-import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "../../../src/contracts/javascriptRuntimeReconciliationExample.js";
+import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "../../../src/contracts/javascript/javascriptRuntimeReconciliationExample.js";
 
 const temporary: string[] = [];
 

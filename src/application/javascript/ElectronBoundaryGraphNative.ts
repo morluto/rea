@@ -1,4 +1,4 @@
-import type { ElectronNativeAddonBindingFinding } from "../../domain/electronStaticAnalysisTypes.js";
+import type { ElectronNativeAddonBindingFinding } from "../../domain/javascript/electronStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "./JavaScriptArtifactFiles.js";
 import {
   javascriptAnalysisCoverage,

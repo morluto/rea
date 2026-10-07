@@ -5,7 +5,7 @@ import type {
   JavaScriptRuntimeObservation,
   JavaScriptRuntimeTargetList,
   ObserveJavaScriptRuntimeInput,
-} from "../domain/javascriptRuntimeObservation.js";
+} from "../domain/javascript/javascriptRuntimeObservation.js";
 import {
   authorizeRuntimeLocation,
   inspectorExclusionKey,

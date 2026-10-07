@@ -6,8 +6,8 @@ import { parseExpression } from "@babel/parser";
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { javascriptApplicationAnalysisResultSchema } from "../../domain/javascriptApplicationAnalysis.js";
-import { staticPath } from "../../domain/javascriptStaticAnalysisHelpers.js";
+import { javascriptApplicationAnalysisResultSchema } from "../../domain/javascript/javascriptApplicationAnalysis.js";
+import { staticPath } from "../../domain/javascript/javascriptStaticAnalysisHelpers.js";
 import { analyzeJavaScriptApplication } from "./JavaScriptApplicationService.js";
 
 const urlCases = [

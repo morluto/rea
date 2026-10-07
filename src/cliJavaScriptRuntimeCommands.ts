@@ -11,7 +11,7 @@ import {
   javascriptRuntimeKindSchema,
   listJavaScriptRuntimeTargetsInputSchema,
   observeJavaScriptRuntimeInputSchema,
-} from "./domain/javascriptRuntimeObservation.js";
+} from "./domain/javascript/javascriptRuntimeObservation.js";
 import { AnalysisInputError } from "./domain/analysisErrorCore.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import type { JsonValue } from "./domain/jsonValue.js";

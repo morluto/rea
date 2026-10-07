@@ -10,7 +10,7 @@ import {
   type JavaScriptRuntimeTargetList,
   type ListJavaScriptRuntimeTargetsInput,
   type ObserveJavaScriptRuntimeInput,
-} from "../domain/javascriptRuntimeObservation.js";
+} from "../domain/javascript/javascriptRuntimeObservation.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";

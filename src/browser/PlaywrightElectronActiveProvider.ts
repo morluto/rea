@@ -14,7 +14,7 @@ import {
   electronActiveObservationResultSchema,
   type ElectronActiveObservationInput,
   type ElectronActiveObservationResult,
-} from "../domain/electronActiveObservation.js";
+} from "../domain/javascript/electronActiveObservation.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";

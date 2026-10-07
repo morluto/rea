@@ -6,7 +6,7 @@ import {
   type JavaScriptArtifactGraphContext,
 } from "./JavaScriptArtifactGraphContext.js";
 import { artifactObservationEvidence } from "./JavaScriptArtifactGraphEvidence.js";
-import { completeApplicationCoverage } from "../../domain/javascriptApplicationEvidenceSchemas.js";
+import { completeApplicationCoverage } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import { resolveArtifactPathByContext } from "./JavaScriptArtifactPathResolution.js";
 
 /** Project HTML renderer entrypoints and their local script assets. */

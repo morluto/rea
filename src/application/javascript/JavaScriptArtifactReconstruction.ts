@@ -6,9 +6,9 @@ import {
   type ArtifactReader,
 } from "../../artifacts/ArtifactReader.js";
 import { DirectoryArtifactReader } from "../../artifacts/DirectoryArtifactReader.js";
-import type { JavaScriptApplicationGraph } from "../../domain/javascriptApplicationGraph.js";
-import type { JavaScriptSemanticGraph } from "../../domain/javascriptSemanticGraph.js";
-import type { ElectronBoundarySummary } from "../../domain/javascriptApplicationAnalysis.js";
+import type { JavaScriptApplicationGraph } from "../../domain/javascript/javascriptApplicationGraph.js";
+import type { JavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticGraph.js";
+import type { ElectronBoundarySummary } from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import { analyzeJavaScriptArtifactFiles } from "./JavaScriptArtifactAnalysis.js";
 import { readJavaScriptArtifactFiles } from "./JavaScriptArtifactFiles.js";
 import { buildJavaScriptArtifactGraph } from "./JavaScriptArtifactGraphBuilder.js";

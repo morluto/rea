@@ -1,8 +1,8 @@
 import type {
   JavaScriptSourceRange,
   JavaScriptStaticAnalysis,
-} from "../../domain/javascriptStaticAnalysisTypes.js";
-import type { JavaScriptSemanticIr } from "../../domain/javascriptSemanticIr.js";
+} from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
+import type { JavaScriptSemanticIr } from "../../domain/javascript/javascriptSemanticIr.js";
 import type { JavaScriptArtifactFile } from "./JavaScriptArtifactFiles.js";
 
 interface JavaScriptStructuredObservation {

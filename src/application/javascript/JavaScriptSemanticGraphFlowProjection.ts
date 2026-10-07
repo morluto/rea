@@ -1,8 +1,8 @@
-import { createJavaScriptSemanticGraphUnknown } from "../../domain/javascriptSemanticGraph.js";
-import type { JavaScriptSemanticGraphNode } from "../../domain/javascriptSemanticGraph.js";
-import type { JavaScriptSemanticIr } from "../../domain/javascriptSemanticIr.js";
-import { sourceRangesEqual } from "../../domain/javascriptStaticAnalysisHelpers.js";
-import type { JavaScriptSourceRange } from "../../domain/javascriptStaticAnalysisTypes.js";
+import { createJavaScriptSemanticGraphUnknown } from "../../domain/javascript/javascriptSemanticGraph.js";
+import type { JavaScriptSemanticGraphNode } from "../../domain/javascript/javascriptSemanticGraph.js";
+import type { JavaScriptSemanticIr } from "../../domain/javascript/javascriptSemanticIr.js";
+import { sourceRangesEqual } from "../../domain/javascript/javascriptStaticAnalysisHelpers.js";
+import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "./JavaScriptArtifactFiles.js";
 import {
   addSemanticGraphNode,

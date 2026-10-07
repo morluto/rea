@@ -1,17 +1,17 @@
-import type { JavaScriptApplicationGraph } from "../../domain/javascriptApplicationGraph.js";
+import type { JavaScriptApplicationGraph } from "../../domain/javascript/javascriptApplicationGraph.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
-import { javascriptDisplayText } from "../../domain/javascriptAstValues.js";
+import { javascriptDisplayText } from "../../domain/javascript/javascriptAstValues.js";
 import {
   createJavaScriptSemanticGraphNode,
   createJavaScriptSemanticGraphRelation,
   type JavaScriptSemanticGraphNode,
-} from "../../domain/javascriptSemanticGraph.js";
-import type { ApplicationGraphEvidence } from "../../domain/javascriptApplicationEvidenceSchemas.js";
+} from "../../domain/javascript/javascriptSemanticGraph.js";
+import type { ApplicationGraphEvidence } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import type {
   JavaScriptSemanticGraphRelation,
   JavaScriptSemanticGraphUnknown,
-} from "../../domain/javascriptSemanticGraphSchemas.js";
-import type { JavaScriptSourceRange } from "../../domain/javascriptStaticAnalysisTypes.js";
+} from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
+import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "./JavaScriptArtifactFiles.js";
 import {
   inferredSemanticEvidence,

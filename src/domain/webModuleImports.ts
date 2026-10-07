@@ -1,6 +1,6 @@
 import { traverseFast, isStringLiteral, isTemplateLiteral } from "@babel/types";
 import type { Node } from "@babel/types";
-import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+import { parseJavaScriptSource } from "./javascript/javascriptSourceParser.js";
 import type { WebModuleImport } from "./webModuleTrace.js";
 import type { ExportedWebScript } from "./webScriptExport.js";
 

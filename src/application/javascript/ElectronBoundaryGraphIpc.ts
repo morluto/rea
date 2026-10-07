@@ -1,5 +1,5 @@
-import type { ApplicationNode } from "../../domain/javascriptApplicationGraph.js";
-import type { ElectronSenderValidationFinding } from "../../domain/electronStaticAnalysisTypes.js";
+import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraph.js";
+import type { ElectronSenderValidationFinding } from "../../domain/javascript/electronStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "./JavaScriptArtifactFiles.js";
 import {
   artifactLocalIdentity,

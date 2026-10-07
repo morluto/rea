@@ -5,7 +5,7 @@ import {
 } from "../../artifacts/ArtifactPaths.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import type { JavaScriptRecoveryResult } from "../../domain/javascriptRecovery.js";
+import type { JavaScriptRecoveryResult } from "../../domain/javascript/javascriptRecovery.js";
 import { readRecoveryFile, recoveryFailureMessage } from "./RecoveryFiles.js";
 import { RECOVERY_LIMITS } from "./WakaruRelease.js";
 import type { runWakaruCommand } from "./WakaruCommand.js";

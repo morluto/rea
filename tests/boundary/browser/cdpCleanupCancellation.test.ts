@@ -7,7 +7,7 @@ import { expect, it, onTestFinished, vi } from "vitest";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { CdpElectronProvider } from "../../../src/browser/CdpElectronProvider.js";
 import { observeWebSessionInputSchema } from "../../../src/domain/browserSession.js";
-import { inspectElectronPageInputSchema } from "../../../src/domain/electronObservation.js";
+import { inspectElectronPageInputSchema } from "../../../src/domain/javascript/electronObservation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 

@@ -8,10 +8,10 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { reconstructJavaScriptArtifact } from "../../../src/application/javascript/JavaScriptArtifactReconstruction.js";
 import { scanArtifactInventory } from "../../../src/application/ArtifactInventory.js";
-import { parseJavaScriptApplicationGraph } from "../../../src/domain/javascriptApplicationGraph.js";
-import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascriptApplicationAnalysis.js";
-import { createJavaScriptSemanticGraph } from "../../../src/domain/javascriptSemanticGraph.js";
-import { parseJavaScriptSemanticGraph } from "../../../src/domain/javascriptSemanticGraphSerialization.js";
+import { parseJavaScriptApplicationGraph } from "../../../src/domain/javascript/javascriptApplicationGraph.js";
+import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
+import { createJavaScriptSemanticGraph } from "../../../src/domain/javascript/javascriptSemanticGraph.js";
+import { parseJavaScriptSemanticGraph } from "../../../src/domain/javascript/javascriptSemanticGraphSerialization.js";
 import { writeJavaScriptArtifactFixture } from "../../fixtures/javascriptArtifactApplication.js";
 
 it("reconstructs package, Electron roles, Webpack/Rspack modules, and cross-layer facts without execution", async () => {

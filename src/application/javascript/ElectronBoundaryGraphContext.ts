@@ -1,6 +1,6 @@
-import type { ApplicationNode } from "../../domain/javascriptApplicationGraph.js";
-import { sha256Text } from "../../domain/javascriptStaticAnalysisHelpers.js";
-import type { JavaScriptSourceRange } from "../../domain/javascriptStaticAnalysisTypes.js";
+import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraph.js";
+import { sha256Text } from "../../domain/javascript/javascriptStaticAnalysisHelpers.js";
+import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "./JavaScriptArtifactFiles.js";
 import type {
   JavaScriptArtifactGraphContext,

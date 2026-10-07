@@ -4,7 +4,7 @@ import { err, ok } from "../../domain/result.js";
 import type {
   JavaScriptRecoveryInput,
   JavaScriptRecoveryResult,
-} from "../../domain/javascriptRecovery.js";
+} from "../../domain/javascript/javascriptRecovery.js";
 import { createAnalysisExecution } from "../AnalysisProvider.js";
 import { JavaScriptRecoveryService } from "./JavaScriptRecoveryService.js";
 

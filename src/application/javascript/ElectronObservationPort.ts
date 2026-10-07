@@ -8,7 +8,7 @@ import type {
   ElectronTargetList,
   InspectElectronPageInput,
   ListElectronTargetsInput,
-} from "../../domain/electronObservation.js";
+} from "../../domain/javascript/electronObservation.js";
 import type { Result } from "../../domain/result.js";
 
 /** Provider-neutral boundary for root-confined Electron file-page observation. */

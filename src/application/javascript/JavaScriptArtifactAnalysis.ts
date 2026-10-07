@@ -1,16 +1,16 @@
 import { createHash } from "node:crypto";
 
-import { analyzeParsedJavaScriptStaticSource } from "../../domain/javascriptStaticAnalysis.js";
-import { analyzeParsedJavaScriptSemantics } from "../../domain/javascriptSemanticAnalysis.js";
-import { parseJavaScriptSource } from "../../domain/javascriptSourceParser.js";
+import { analyzeParsedJavaScriptStaticSource } from "../../domain/javascript/javascriptStaticAnalysis.js";
+import { analyzeParsedJavaScriptSemantics } from "../../domain/javascript/javascriptSemanticAnalysis.js";
+import { parseJavaScriptSource } from "../../domain/javascript/javascriptSourceParser.js";
 import { hasValidSourceMapContents } from "../../domain/sourceMapContents.js";
 import { flattenSourceMapLeaves } from "../../domain/sourceMapEnvelope.js";
 import type {
   JavaScriptSourceRange,
   JavaScriptSourcePoint,
   JavaScriptStaticAnalysis,
-} from "../../domain/javascriptStaticAnalysisTypes.js";
-import { failedJavaScriptStaticAnalysis } from "../../domain/javascriptStaticAnalysisHelpers.js";
+} from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
+import { failedJavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisHelpers.js";
 import type {
   JavaScriptArtifactFile,
   JavaScriptArtifactFileSet,

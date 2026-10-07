@@ -1,6 +1,6 @@
 import type { ArtifactInventorySnapshot } from "../ArtifactInventory.js";
-import type { ApplicationNode } from "../../domain/javascriptApplicationGraph.js";
-import { completeApplicationCoverage } from "../../domain/javascriptApplicationEvidenceSchemas.js";
+import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraph.js";
+import { completeApplicationCoverage } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
 import type {
   JavaScriptArtifactContainer,

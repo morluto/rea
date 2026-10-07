@@ -10,7 +10,7 @@ import { CdpElectronProvider } from "../../../src/browser/CdpElectronProvider.js
 import {
   inspectElectronPageInputSchema,
   listElectronTargetsInputSchema,
-} from "../../../src/domain/electronObservation.js";
+} from "../../../src/domain/javascript/electronObservation.js";
 import {
   startFakeCdpBrowser,
   type FakeCdpBrowser,

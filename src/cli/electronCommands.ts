@@ -10,8 +10,8 @@ import { logCliCommand } from "../cliLogging.js";
 import {
   inspectElectronPageInputSchema,
   listElectronTargetsInputSchema,
-} from "../domain/electronObservation.js";
-import { electronActiveObservationInputSchema } from "../domain/electronActiveObservation.js";
+} from "../domain/javascript/electronObservation.js";
+import { electronActiveObservationInputSchema } from "../domain/javascript/electronActiveObservation.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";

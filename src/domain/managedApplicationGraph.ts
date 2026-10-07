@@ -9,7 +9,7 @@ import {
   javascriptApplicationGraphSchema,
   type ApplicationEdge,
   type ApplicationNode,
-} from "./javascriptApplicationGraph.js";
+} from "./javascript/javascriptApplicationGraph.js";
 import {
   managedArtifactInspectionSchema,
   managedMemberInspectionSchema,

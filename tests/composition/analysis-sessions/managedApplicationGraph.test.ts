@@ -6,7 +6,7 @@ import { MANAGED_APPLICATION_GRAPH_EXAMPLE } from "../../../src/contracts/manage
 import { traceApplicationFeatureEvidence } from "../../../src/application/javascript/JavaScriptApplicationWorkflowService.js";
 import { MANAGED_STATIC_PROVIDER } from "../../../src/application/InvestigationProviders.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { parseJavaScriptApplicationGraph } from "../../../src/domain/javascriptApplicationGraph.js";
+import { parseJavaScriptApplicationGraph } from "../../../src/domain/javascript/javascriptApplicationGraph.js";
 import { managedApplicationGraphResultSchema } from "../../../src/domain/managedApplicationGraph.js";
 import { inspectManagedArtifactBytes } from "../../../src/dotnet/ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "../../../src/dotnet/ManagedMemberInspector.js";
