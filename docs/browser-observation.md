@@ -22,6 +22,17 @@ REA can attach to a user-owned Chrome-family browser through the Chrome DevTools
 Target discovery returns the complete in-scope target array in one result.
 
 Electron `file://` pages use a separate provider and target boundary; see [electron-observation.md](electron-observation.md).
+
+## Provider authorities
+
+CDP page capture, V8 Inspector observation, and Playwright scenarios stay
+separate providers because their authorities differ: CDP and V8 attach to an
+already-running target and never launch, drive, evaluate, or mutate it, while
+Playwright providers own and drive the runtime (launch browsers, run actions,
+capture step snapshots). Merging them would mix attach-only and owned-process
+lifecycles in one contract. What they share instead is one exclusion
+vocabulary (`BrowserExclusionReason`): every denial reason in every stack maps
+onto it, even where a wire schema keeps a narrower historical bucket.
 Existing static application Evidence and passive web/Electron captures can be
 combined later through
 [JavaScript static/runtime reconciliation](javascript-runtime-reconciliation.md).

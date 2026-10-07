@@ -23,7 +23,10 @@ import {
   delayWithCancellation,
 } from "./CdpCaptureValues.js";
 import { CdpConnection, type CdpEvent } from "./CdpConnection.js";
-import { authorizeRuntimeTargetLocation } from "./JavaScriptRuntimeScope.js";
+import {
+  authorizeRuntimeTargetLocation,
+  inspectorExclusionKey,
+} from "./JavaScriptRuntimeScope.js";
 import {
   createInspectorExclusionCounts,
   describeInspectorTargetLimitations,
@@ -93,7 +96,7 @@ export class V8InspectorProvider implements JavaScriptRuntimeObservationPort {
           product: discovery.runtime.product,
         });
         if (!decision.allowed) {
-          excluded[decision.reason] += 1;
+          excluded[inspectorExclusionKey(decision.reason)] += 1;
           continue;
         }
         if (decision.location.kind === "builtin") {

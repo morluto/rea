@@ -6,7 +6,10 @@ import type {
   JavaScriptRuntimeTargetList,
   ObserveJavaScriptRuntimeInput,
 } from "../domain/javascriptRuntimeObservation.js";
-import { authorizeRuntimeLocation } from "./JavaScriptRuntimeScope.js";
+import {
+  authorizeRuntimeLocation,
+  inspectorExclusionKey,
+} from "./JavaScriptRuntimeScope.js";
 import type { CaptureState, ScriptDraft } from "./V8InspectorProvider.js";
 import type { AuthorizedV8InspectorTarget } from "./V8InspectorEndpoint.js";
 
@@ -52,7 +55,7 @@ export const finalizeInspectorCapture = async ({
   for (const draft of state.scripts) {
     const decision = await authorizeRuntimeLocation(draft.rawUrl);
     if (!decision.allowed) {
-      exclusions[decision.reason] += 1;
+      exclusions[inspectorExclusionKey(decision.reason)] += 1;
       continue;
     }
     const script = scriptFromDraft(draft, decision.location);

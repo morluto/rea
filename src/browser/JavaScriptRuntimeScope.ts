@@ -4,6 +4,7 @@ import {
   browserOriginSchema,
   sanitizeBrowserUrl,
 } from "../domain/browserObservation.js";
+import type { BrowserExclusionReason } from "../domain/browserCompleteness.js";
 import type {
   JavaScriptRuntimeLocation,
   JavaScriptRuntimeTargetLocation,
@@ -14,8 +15,22 @@ export type RuntimeLocationDecision =
   | { readonly allowed: true; readonly location: JavaScriptRuntimeLocation }
   | {
       readonly allowed: false;
-      readonly reason: "unsupported_location";
+      readonly reason: BrowserExclusionReason;
     };
+
+/**
+ * Wire bucket for inspector script exclusions. The V8 observation schemas
+ * fix the `unsupported_location` key, so every canonical denial reason maps
+ * onto it; the reason itself stays available on the decision for logs and
+ * limitations text.
+ */
+export const inspectorExclusionKey = (
+  reason: BrowserExclusionReason,
+): "unsupported_location" => {
+  // Every canonical denial collapses onto the fixed V8 wire bucket.
+  void reason;
+  return "unsupported_location";
+};
 
 /** Resolve a protocol location exposed by the explicitly selected Inspector endpoint. */
 export const authorizeRuntimeLocation = async (
@@ -29,7 +44,7 @@ export const authorizeRuntimeLocation = async (
   if (value.startsWith("file:")) {
     const filePath = await authorizedElectronFile(value);
     return filePath === undefined
-      ? { allowed: false, reason: "unsupported_location" }
+      ? { allowed: false, reason: "not_approved" }
       : { allowed: true, location: { kind: "file", file_path: filePath } };
   }
   let url: URL;
@@ -38,13 +53,13 @@ export const authorizeRuntimeLocation = async (
   } catch (cause: unknown) {
     // Non-URL input is outside the authorized runtime scope.
     void cause;
-    return { allowed: false, reason: "unsupported_location" };
+    return { allowed: false, reason: "unsupported_url" };
   }
   if (!["http:", "https:"].includes(url.protocol))
-    return { allowed: false, reason: "unsupported_location" };
+    return { allowed: false, reason: "unsupported_url" };
   const parsedOrigin = browserOriginSchema.safeParse(url.origin);
   if (!parsedOrigin.success)
-    return { allowed: false, reason: "unsupported_location" };
+    return { allowed: false, reason: "unsupported_url" };
   return {
     allowed: true,
     location: {
@@ -64,7 +79,7 @@ export const authorizeRuntimeTargetLocation = async (
       readonly allowed: true;
       readonly location: JavaScriptRuntimeTargetLocation;
     }
-  | { readonly allowed: false; readonly reason: "unsupported_location" }
+  | { readonly allowed: false; readonly reason: BrowserExclusionReason }
 > => {
   if (
     context.type !== "node" ||
