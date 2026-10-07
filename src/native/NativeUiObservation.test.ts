@@ -236,6 +236,27 @@ describe("native UI capture selection and budgets", () => {
         outcome: "cancelled",
       });
   });
+  it("reports aggregate output exhaustion after individually valid captures", async () => {
+    const largeSnapshot = {
+      ...snapshot,
+      window: { ...snapshot.window, title: "x".repeat(17 * 1024 * 1024) },
+    };
+    const result = await observeNativeUi(
+      target,
+      "capture_native_ui_scenario",
+      {
+        ...scope,
+        steps: [{ kind: "wait", milliseconds: 0 }],
+      },
+      { invoke: async () => ({ ok: true, result: largeSnapshot }) },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok)
+      expect(result.value.steps[0]).toMatchObject({
+        outcome: "failed",
+        reason: expect.stringContaining("64 MiB output budget"),
+      });
+  });
 });
 
 describe("native UI target and cancellation failures", () => {
