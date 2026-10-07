@@ -28,7 +28,7 @@ const binaryTargetPathSchema = z
   );
 
 /** Input contract for opening a target with an optional staged snapshot. */
-export const openBinaryInputSchema = z.object({
+export const openBinaryInputSchema = z.strictObject({
   path: binaryTargetPathSchema,
   format: executableFormatHintSchema
     .optional()
@@ -40,7 +40,7 @@ export const openBinaryInputSchema = z.object({
 });
 
 /** Input contract for closing a target after an optional atomic snapshot. */
-export const closeBinaryInputSchema = z.object({
+export const closeBinaryInputSchema = z.strictObject({
   snapshot_path: snapshotPathSchema.optional(),
   overwrite: z.boolean().default(false),
 });
