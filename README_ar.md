@@ -141,7 +141,7 @@ rea setup
 
 يتطلب تحليل الملفات التنفيذية الأصلية Hopper أو Ghidra. Hopper برنامج منفصل، وللوضع التجريبي قيود يحددها المورّد، لكن الترخيص المدفوع ليس إلزاميًا.
 
-يدعم Ghidra نظامي Linux x64 وmacOS x64/arm64. ثبت Ghidra 12.1.4 وJDK 21 الكامل بنواة 64 بت بصورة منفصلة، ثم اضبط REA لاستخدامهما. يحتاج macOS أيضًا إلى أداة فك الترجمة الأصلية المطابقة لمعمارية الجهاز.
+يدعم Ghidra نظامي Linux x64 وmacOS x64/arm64. ثبت Ghidra 12.1.x وJDK الكامل بنواة 64 بت الذي يعلنه ذلك التثبيت (`application.java.min` حتى `application.java.max`) بصورة منفصلة، ثم اضبط REA لاستخدامهما. تتطلب إصدارات 12.1 الحالية JDK 21 أو أحدث ولا تحدد حدًا أعلى. جرى التحقق من الجسر مع Ghidra 12.1.4 وJDK 21. يحتاج macOS أيضًا إلى أداة فك الترجمة الأصلية المطابقة لمعمارية الجهاز.
 
 يستطيع Setup التحقق من التثبيت وحفظ المسارات؛ ولا يثبت أو يحدّث Ghidra أو Java أو Node.js أو npm أو Homebrew.
 
@@ -311,7 +311,7 @@ npx -y rea-agents@latest compare /absolute/path/to/left-evidence.json /absolute/
 <details>
 <summary><strong>هل يعمل REA على Linux أو Windows؟</strong></summary>
 
-يدعم REA نظام macOS 12+ وUbuntu 24.04+ وFedora 41+ وArch Linux بنواة 64 بت. يعمل تحليل Ghidra للقراءة فقط على Linux x64 وmacOS x64/arm64 مع Ghidra 12.1.4 وJDK 21 الكامل، إضافة إلى حد Windows x64 P0 التجريبي لتطبيقات PE الأصلية x86-64 على NTFS محلي؛ راجع [دليل Windows Ghidra P0](docs/windows-ghidra-p0.md) للنطاق الموثق.
+يدعم REA نظام macOS 12+ وUbuntu 24.04+ وFedora 41+ وArch Linux بنواة 64 بت. يعمل تحليل Ghidra للقراءة فقط على Linux x64 وmacOS x64/arm64 مع Ghidra 12.1.x وJDK الكامل الذي يعلنه التثبيت (JDK 21 أو أحدث دون حد أعلى في إصدارات 12.1 الحالية)، إضافة إلى حد Windows x64 P0 التجريبي لتطبيقات PE الأصلية x86-64 على NTFS محلي؛ راجع [دليل Windows Ghidra P0](docs/windows-ghidra-p0.md) للنطاق الموثق.
 
 </details>
 

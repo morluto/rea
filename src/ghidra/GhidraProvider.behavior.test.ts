@@ -791,3 +791,49 @@ describe("Ghidra extension failures", () => {
     },
   );
 });
+
+describe("compatible Ghidra builds", () => {
+  it("accepts the build and reports that it is unverified", async () => {
+    const ghidra = provider(
+      {
+        ...installationHost(),
+        readText: () =>
+          "application.version=12.1.2\napplication.java.min=21\napplication.java.max=\n",
+        probeJava: () => ({
+          version: "27",
+          major: 27,
+          home: "/usr/lib/jvm/java-27-openjdk",
+          bits: 64,
+          runtime: "jdk",
+        }),
+      },
+      () => ({
+        start: () =>
+          Promise.resolve(
+            ok({
+              ...sessionInfo(),
+              provider: { id: "ghidra", version: "12.1.2" },
+            }),
+          ),
+        callTool: () => Promise.resolve(ok(null)),
+        close: () => Promise.resolve(),
+      }),
+    );
+    const resolved = await ghidra.resolveAnalysisProfile(
+      executableTarget("elf", "x86_64"),
+    );
+    if (!resolved.ok || resolved.value.profile === null)
+      throw new Error("expected a compatible Ghidra profile");
+    const health = await ghidra
+      .createClient(executableTarget("elf", "x86_64"), resolved.value.profile)
+      .execute("health", {});
+    expect(ghidra.inspectAvailability()).toMatchObject({
+      status: "available",
+      diagnostics: { provider_version: "12.1.2", java_version: "27" },
+    });
+    expect(health.ok && health.value.provider.version).toBe("12.1.2");
+    expect(health.ok && health.value.limitations).toEqual(
+      expect.arrayContaining([expect.stringContaining("12.1.2")]),
+    );
+  });
+});

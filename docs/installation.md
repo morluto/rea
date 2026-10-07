@@ -264,7 +264,10 @@ copying license secrets into logs, or killing unrelated Hopper processes.
 
 REA connects to an existing Ghidra installation on Linux x64, macOS x64/arm64,
 or experimental Windows x64 P0.
-It requires Ghidra 12.1.4 and a 64-bit full JDK 21. On macOS, the installation
+It accepts Ghidra 12.1.x and the 64-bit full JDK declared by that installation's
+`application.java.min` and `application.java.max`. Current 12.1 releases require
+JDK 21 or newer and set no maximum. The bridge is verified with Ghidra 12.1.4
+and JDK 21. On macOS, the installation
 must include the native decompiler for the host architecture; REA does not
 build it or change Gatekeeper quarantine settings.
 
@@ -310,9 +313,9 @@ installation remains unavailable on Windows. Setup never installs Ghidra,
 Java, or Python. It preserves valid detected Ghidra/JDK settings in agent
 registrations. See [Windows Ghidra P0](windows-ghidra-p0.md) for provider diagnostics.
 
-Doctor validates the platform, architecture, application version,
-`support/analyzeHeadless` or `support/analyzeHeadless.bat`, Java
-version/bitness, and the presence of `javac`/`javac.exe`.
+Doctor validates the platform, architecture, Ghidra 12.1.x application version,
+`support/analyzeHeadless` or `support/analyzeHeadless.bat`, the installation's
+Java major range, 64-bit JDK bitness, and the presence of `javac`/`javac.exe`.
 When Java is found through `PATH`, setup records its observed JDK home so GUI
 MCP clients do not depend on an incidental shell path. Setup shows every exact
 environment entry in its plan, writes only after approval, and never downloads,

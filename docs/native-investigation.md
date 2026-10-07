@@ -150,7 +150,7 @@ actions may change application data or trigger network activity.
 
 ## Provider and verification boundaries
 
-Install Ghidra 12.1.4 and a full 64-bit JDK 21 separately, then configure REA to
+Install a Ghidra 12.1.x release and the 64-bit full JDK it declares, then configure REA to
 use them. Ghidra analysis supports Linux x64 and macOS x64/arm64; macOS requires
 the matching native decompiler. Experimental Windows x64 P0 admits native
 x86-64 PE applications on local NTFS using bundled Job Object ownership,

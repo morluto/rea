@@ -141,7 +141,7 @@ rea setup
 
 ネイティブバイナリ解析には Hopper または Ghidra が必要です。Hopper は別製品です。デモにはベンダー所定の制限がありますが、有料ライセンスは必須ではありません。
 
-Ghidra は Linux x64 と macOS x64/arm64 に対応します。Ghidra 12.1.4 と完全な 64 ビット JDK 21 を別途インストールし、REA で使うように設定してください。macOS ではホストのアーキテクチャに合うネイティブデコンパイラーも必要です。
+Ghidra は Linux x64 と macOS x64/arm64 に対応します。Ghidra 12.1.x と、そのインストールが宣言する完全な 64 ビット JDK（`application.java.min` から `application.java.max` まで）を別途インストールし、REA で使うように設定してください。現行の 12.1 リリースは JDK 21 以降を要求し、上限は設定しません。ブリッジは Ghidra 12.1.4 と JDK 21 で検証しています。macOS ではホストのアーキテクチャに合うネイティブデコンパイラーも必要です。
 
 Setup はインストールを確認し、パスを保存できます。Ghidra、Java、Node.js、npm、Homebrew のインストールや更新は行いません。
 

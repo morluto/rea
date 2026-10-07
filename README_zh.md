@@ -141,7 +141,7 @@ rea setup
 
 原生二进制分析需要 Hopper 或 Ghidra。Hopper 是独立软件；演示模式有厂商规定的限制，不要求购买许可证。
 
-Ghidra 支持 Linux x64 和 macOS x64/arm64。单独安装 Ghidra 12.1.4 和完整的 64 位 JDK 21，然后配置 REA 使用它们。macOS 还需要对应架构的原生反编译器。
+Ghidra 支持 Linux x64 和 macOS x64/arm64。单独安装 Ghidra 12.1.x，以及该安装在 `application.java.min` 到 `application.java.max` 中声明的完整 64 位 JDK，然后配置 REA 使用它们。当前 12.1 发行版要求 JDK 21 或更新版本，并且不设置上限。桥接在 Ghidra 12.1.4 和 JDK 21 上完成验证。macOS 还需要对应架构的原生反编译器。
 
 Setup 可以验证安装并保存路径，不会安装或升级 Ghidra、Java、Node.js、npm 或 Homebrew。
 

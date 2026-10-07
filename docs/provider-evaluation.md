@@ -3,8 +3,10 @@
 This guide describes repository main. Check the [released package boundary](installation.md#released-package-and-main) when using npm.
 
 Ghidra read-only analysis is available on Linux x64 and macOS x64/arm64.
-Install Ghidra 12.1.4 and a full 64-bit JDK 21 separately, then configure REA to
-use them. macOS installations need the matching native decompiler.
+Install a Ghidra 12.1.x release and the 64-bit full JDK that release declares,
+then configure REA to use them. Current 12.1 releases require JDK 21 or newer
+and set no maximum. The bridge is verified with Ghidra 12.1.4 and JDK 21.
+macOS installations need the matching native decompiler.
 
 REA imports one target into a temporary project and exposes 25 read-only
 operations after analysis completes. They cover inventories, search,
@@ -53,9 +55,11 @@ follow.
 
 ## Shipped foundation boundary
 
-`GHIDRA_INSTALL_DIR` must identify an extracted official 12.1.4 release;
-optional `JAVA_HOME` must identify a 64-bit full JDK 21, otherwise doctor probes
-`java`/`javac` or `java.exe`/`javac.exe` from `PATH`. Supported Linux and macOS
+`GHIDRA_INSTALL_DIR` must identify an extracted Ghidra 12.1.x release. Optional
+`JAVA_HOME` must identify a 64-bit full JDK inside that installation's
+`application.java.min` and `application.java.max` (JDK 21 or newer, with no
+maximum, when the release leaves those at the 12.1 defaults). Otherwise doctor
+probes `java`/`javac` or `java.exe`/`javac.exe` from `PATH`. Supported Linux and macOS
 hosts accept compatible ELF, PE, and Mach-O executable targets. Host admission
 and target compatibility are separate checks. Windows x64 P0 admits only native,
 non-managed, non-DLL x86-64 PE applications on fixed local NTFS, with the packaged

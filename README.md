@@ -166,7 +166,7 @@ REA defaults `HOPPER_LAUNCHER_PATH` to `/Applications/Hopper Disassembler.app/Co
 
 ### Ghidra analysis provider
 
-Already use Ghidra? REA can connect it to your agent on Linux x64 or macOS x64/arm64. It requires **Ghidra 12.1.4** and a **64-bit JDK 21**. On macOS, your Ghidra installation must also include the native decompiler for your architecture.
+Already use Ghidra? REA can connect it to your agent on Linux x64 or macOS x64/arm64. It accepts **Ghidra 12.1.x** and the **64-bit full JDK** that installation declares (`application.java.min` through `application.java.max`). Current 12.1 releases require JDK 21 or newer and set no maximum. The bridge is verified with Ghidra 12.1.4 and JDK 21. On macOS, your Ghidra installation must also include the native decompiler for your architecture.
 
 Set the installation paths, then run setup:
 

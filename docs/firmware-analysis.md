@@ -161,7 +161,7 @@ Additional lanes are explicit, so the base lane stays small:
 REA_FIRMWARE_VERIFY_EXT4=1 npm run fixtures:firmware
 REA_FIRMWARE_VERIFY_EXT4=1 npm run verify:firmware
 
-# Existing Ghidra 12.1.4 and Java required.
+# Existing Ghidra 12.1.x and its declared JDK required.
 REA_FIRMWARE_VERIFY_GHIDRA=1 npm run verify:firmware
 ```
 

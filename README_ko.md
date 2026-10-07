@@ -142,7 +142,7 @@ rea setup
 
 네이티브 바이너리 분석에는 Hopper 또는 Ghidra가 필요합니다. Hopper는 별도 소프트웨어입니다. 데모에는 공급업체의 제한이 있지만 유료 라이선스가 필수는 아닙니다.
 
-Ghidra는 Linux x64와 macOS x64/arm64를 지원합니다. Ghidra 12.1.4와 완전한 64비트 JDK 21을 별도로 설치한 뒤 REA가 사용하도록 설정하세요. macOS에서는 호스트 아키텍처에 맞는 네이티브 디컴파일러도 필요합니다.
+Ghidra는 Linux x64와 macOS x64/arm64를 지원합니다. Ghidra 12.1.x와 그 설치본이 선언한 완전한 64비트 JDK(`application.java.min`부터 `application.java.max`까지)를 별도로 설치한 뒤 REA가 사용하도록 설정하세요. 현재 12.1 릴리스는 JDK 21 이상을 요구하고 상한은 없습니다. 브리지는 Ghidra 12.1.4와 JDK 21에서 검증됩니다. macOS에서는 호스트 아키텍처에 맞는 네이티브 디컴파일러도 필요합니다.
 
 Setup은 설치를 확인하고 경로를 저장할 수 있습니다. Ghidra, Java, Node.js, npm, Homebrew를 설치하거나 업데이트하지 않습니다.
 

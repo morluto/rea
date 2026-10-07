@@ -59,6 +59,7 @@ import {
   type GhidraInstallationHost,
   type GhidraInstallationInspection,
 } from "./GhidraInstallation.js";
+import { unverifiedGhidraBuildLimitation } from "./GhidraInstallationPolicy.js";
 import { GhidraHeadlessLauncher } from "./GhidraLauncher.js";
 import { resolveGhidraAnalysisProfile } from "./GhidraAnalysisProfile.js";
 import type { GhidraSessionError } from "./GhidraSessionError.js";
@@ -353,6 +354,9 @@ export class GhidraProvider implements AnalysisProviderCandidate {
             return err(projectSessionError(operation, started.error));
           const failed = await checkExtensions(operation, started.value);
           if (failed !== undefined) return err(failed);
+          const releaseLimitation = unverifiedGhidraBuildLimitation(
+            prerequisites.value.providerVersion,
+          );
           return ok(
             createAnalysisExecution(started.value, committedProfile.provider, {
               analysisProfile: committedProfile,
@@ -361,6 +365,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
                 ...providerLimitations,
                 ...targetLimitations,
                 ...ghidraExtensionLimitations(extensions),
+                ...(releaseLimitation === undefined ? [] : [releaseLimitation]),
               ],
             }),
           );
