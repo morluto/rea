@@ -88,7 +88,7 @@ These deadlines have different owners:
 | Deadline             | Owner and effect                                                                                                                                                 |
 | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | MCP initialize       | The client bounds transport/REA connection startup, before any target query.                                                                                     |
-| Ghidra startup       | REA allows 330,000 ms for engine readiness from the first provider query; startup failure is reported by that query.                                             |
+| Ghidra startup       | REA allows 330,000 ms (or `REA_GHIDRA_STARTUP_TIMEOUT_MS`) for engine readiness from the first provider query; startup failure is reported by that query.        |
 | Individual tool call | The client bounds its wait, including cold engine startup. The pinned client SDK 2.3.1 defaults to 60,000 ms and can cancel earlier than REA's startup deadline. |
 
 For an already connected client using the pinned SDK, request options are the
