@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
@@ -42,3 +42,59 @@ it.each(["\n", "\r\n", "\r", "\u2028", "\u2029"])(
     });
   },
 );
+
+it("resolves a bare source-map file name and worker URL next to the script", async () => {
+  const root = await createTestTempDirectory("rea-source-map-relative-");
+  await mkdir(join(root, "dist"));
+  await writeFile(
+    join(root, "dist", "app.js"),
+    [
+      'new Worker("worker.js");',
+      'navigator.serviceWorker.register("sw.js");',
+      "//# sourceMappingURL=app.js.map",
+    ].join("\n"),
+  );
+  await writeFile(
+    join(root, "dist", "worker.js"),
+    "self.onmessage = () => {};",
+  );
+  await writeFile(join(root, "dist", "sw.js"), "self.onfetch = () => {};");
+  await writeFile(
+    join(root, "dist", "app.js.map"),
+    JSON.stringify({
+      version: 3,
+      sources: ["../src/app.js"],
+      sourcesContent: ['new Worker("worker.js");'],
+      names: [],
+      mappings: "AAAA",
+    }),
+  );
+  const result = await reconstructJavaScriptArtifact({ input_path: root });
+  const nodes = new Map(result.graph.nodes.map((node) => [node.node_id, node]));
+  const mapEdge = result.graph.edges.find(
+    ({ relation, properties }) =>
+      relation === "maps_to" && properties.declared_url === "app.js.map",
+  );
+  expect(mapEdge?.properties).toMatchObject({
+    declared_url: "app.js.map",
+    resolved_path: "dist/app.js.map",
+  });
+  expect(nodes.get(mapEdge?.target_node_id ?? "")?.identity.strategy).toBe(
+    "content-digest",
+  );
+  const workerEdge = result.graph.edges.find(
+    ({ relation, source_node_id }) =>
+      relation === "maps_to" && nodes.get(source_node_id)?.kind === "worker",
+  );
+  expect(workerEdge?.properties).toMatchObject({
+    resolved_path: "dist/worker.js",
+  });
+  const serviceWorkerEdge = result.graph.edges.find(
+    ({ relation, source_node_id }) =>
+      relation === "maps_to" &&
+      nodes.get(source_node_id)?.kind === "service-worker",
+  );
+  expect(serviceWorkerEdge?.properties).toMatchObject({
+    resolved_path: "dist/sw.js",
+  });
+});

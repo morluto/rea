@@ -278,6 +278,29 @@ describe("native macOS provider inspection", () => {
   });
 });
 
+describe("native plist defaults for iOS-style bundles", () => {
+  it("defaults to the Info.plist the bundle program was resolved from", async () => {
+    directory = await createTestTempDirectory("rea-native-flat-");
+    const app = join(directory, "Flat.app");
+    const executable = join(app, "Flat");
+    await mkdir(app, { recursive: true });
+    await writeFile(executable, "fixture");
+    await writeFile(join(app, "Info.plist"), "fixture");
+    const client = new NativeMacOSProvider(
+      new FixtureRunner(),
+      "darwin",
+    ).createClient({
+      ...machoTarget(executable, app),
+      bundleInfoPlist: join(app, "Info.plist"),
+    });
+
+    const plist = await client.execute("inspect_plist", {});
+    expect(plist.ok && plist.value.result).toMatchObject({
+      source_path: join(app, "Info.plist"),
+    });
+  });
+});
+
 /** Emit entitlements whose dictionary also holds a legal `__proto__` key. */
 class PrototypeEntitlementsRunner extends FixtureRunner {
   override async run(tool: string, arguments_: readonly string[]) {

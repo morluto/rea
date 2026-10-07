@@ -132,7 +132,7 @@ export const bindExecutionTarget = (
   if (
     result.value.subject !== null &&
     result.value.subject.sha256 !== target.sha256 &&
-    !isArtifactInventorySubject(operation, result.value.subject, target)
+    !isArtifactBundleSubject(operation, result.value.subject, target)
   )
     return err(
       new ProviderAdapterError(
@@ -143,10 +143,12 @@ export const bindExecutionTarget = (
   return ok({ ...result.value, subject: result.value.subject ?? subject });
 };
 
-const isArtifactInventorySubject = (
+const isArtifactBundleSubject = (
   operation: AnalysisOperation,
   subject: EvidenceSubjectTarget,
   target: BinaryTarget,
 ): boolean =>
-  (operation === "inventory_artifact" || operation === "inspect_artifact") &&
+  (operation === "inventory_artifact" ||
+    operation === "inspect_artifact" ||
+    operation === "extract_artifact") &&
   subject.path === (target.sourcePath ?? target.path);

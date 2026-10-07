@@ -132,7 +132,7 @@ export const runWakaruCommand = async (context: WakaruCommandContext) => {
   );
   let failure: unknown;
   try {
-    while (!(await supervisor.waitForExit(100))) {
+    while (!(await supervisor.waitForOutputClose(100))) {
       checkRecoveryDeadline(context.deadline, context.signal);
       if (oversized)
         throw new AnalysisOutputError(

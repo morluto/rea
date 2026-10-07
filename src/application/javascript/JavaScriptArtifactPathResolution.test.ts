@@ -562,6 +562,61 @@ describe("contextual JavaScript module identity", () => {
   });
 });
 
+describe("url-reference JavaScript artifact path resolution", () => {
+  it("resolves sibling paths and rejects external URL forms", () => {
+    const files = fileMap([
+      file("dist/app.js", "root"),
+      file("dist/app.js.map", "root"),
+      file("dist/worker.js", "root"),
+    ]);
+
+    expect(
+      resolve({
+        declaredPath: "app.js.map",
+        sourcePath: "dist/app.js",
+        context: "url-reference",
+        files,
+      }),
+    ).toMatchObject({
+      resolution_status: "resolved",
+      resolved_path: "dist/app.js.map",
+    });
+    expect(
+      resolve({
+        declaredPath: "app.js.map?v=1#section",
+        sourcePath: "dist/app.js",
+        context: "url-reference",
+        files,
+      }),
+    ).toMatchObject({
+      resolution_status: "resolved",
+      resolved_path: "dist/app.js.map",
+    });
+    expect(
+      resolve({
+        declaredPath: "//cdn.example.com/app.js.map",
+        sourcePath: "dist/app.js",
+        context: "url-reference",
+        files,
+      }),
+    ).toMatchObject({
+      resolution_status: "external",
+      resolved_path: null,
+    });
+    expect(
+      resolve({
+        declaredPath: "https://cdn.example.com/app.js.map",
+        sourcePath: "dist/app.js",
+        context: "url-reference",
+        files,
+      }),
+    ).toMatchObject({
+      resolution_status: "external",
+      resolved_path: null,
+    });
+  });
+});
+
 const resolve = (input: ResolveArtifactPathInput) =>
   resolveArtifactPathByContext(input);
 

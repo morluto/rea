@@ -21,6 +21,8 @@ jobs:
     steps:
       - name: Check out the repository
         uses: actions/checkout@v4
+      - name: Check website links and publishing configuration
+        run: python3 scripts/verify-website.py
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload the website

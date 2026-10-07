@@ -61,6 +61,15 @@ describe("native DMG artifact reader", () => {
       run(arguments_) {
         if (arguments_[0] === "detach")
           return Promise.reject(new Error("detach failed"));
+        if (arguments_[0] === "info")
+          return Promise.resolve({
+            stdout: build({
+              images: [
+                { "system-entities": [{ "dev-entry": "/dev/disk-fixture" }] },
+              ],
+            }),
+            exitCode: 0,
+          });
         if (arguments_[0] !== "attach")
           return Promise.resolve({ stdout: "", exitCode: 0 });
         return Promise.resolve({
@@ -124,4 +133,86 @@ it("owns the canonical mount root and detaches each observed whole image once", 
     ["detach", "/dev/disk42"],
     ["detach", "/dev/disk41"],
   ]);
+});
+
+describe("APFS disk image detach", () => {
+  // hdiutil reports the image disk and its synthesized APFS container as two
+  // whole disks; detaching the container ejects the image disk as well.
+  const apfsHost = (stillListed: readonly string[]) => {
+    const calls: string[][] = [];
+    const host: NativeDmgHost = {
+      async run(arguments_) {
+        calls.push([...arguments_]);
+        if (arguments_[0] === "detach" && arguments_[1] === "/dev/disk4")
+          throw new Error("hdiutil: detach failed - No such file or directory");
+        if (arguments_[0] === "info")
+          return {
+            stdout: build({
+              images:
+                stillListed.length === 0
+                  ? []
+                  : [
+                      {
+                        "system-entities": stillListed.map((device) => ({
+                          "dev-entry": device,
+                        })),
+                      },
+                    ],
+            }),
+            exitCode: 0,
+          };
+        if (arguments_[0] !== "attach") return { stdout: "", exitCode: 0 };
+        const mountRoot = arguments_[arguments_.indexOf("-mountroot") + 1];
+        if (mountRoot === undefined) throw new Error("missing mount root");
+        const mountPoint = join(mountRoot, "Fixture");
+        await mkdir(mountPoint);
+        return {
+          stdout: build({
+            "system-entities": [
+              { "dev-entry": "/dev/disk4" },
+              { "dev-entry": "/dev/disk4s1" },
+              { "dev-entry": "/dev/disk5s1", "mount-point": mountPoint },
+              { "dev-entry": "/dev/disk5" },
+            ],
+          }),
+          exitCode: 0,
+        };
+      },
+    };
+    return { calls, host };
+  };
+
+  it("accepts an image disk that its container detach already ejected", async () => {
+    const { calls, host } = apfsHost([]);
+    const reader = await NativeDmgArtifactReader.create(
+      "/tmp/image.dmg",
+      undefined,
+      host,
+    );
+    await reader.close();
+    expect(
+      calls.filter((call) => call[0] !== "verify" && call[0] !== "attach"),
+    ).toEqual([
+      ["detach", "/dev/disk5"],
+      ["detach", "/dev/disk4"],
+      ["info", "-plist"],
+    ]);
+    expect(reader.provenance().map(({ arguments: args }) => args[0])).toEqual([
+      "verify",
+      "attach",
+      "detach",
+    ]);
+  });
+
+  it("still fails when the device that rejected detach remains attached", async () => {
+    const { host } = apfsHost(["/dev/disk4", "/dev/disk4s1"]);
+    const reader = await NativeDmgArtifactReader.create(
+      "/tmp/image.dmg",
+      undefined,
+      host,
+    );
+    await expect(reader.close()).rejects.toThrow(
+      "DMG detach or mount-root cleanup failed",
+    );
+  });
 });

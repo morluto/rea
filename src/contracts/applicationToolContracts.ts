@@ -36,6 +36,7 @@ import {
 import {
   ANDROID_APPLICATION_GRAPH_EXAMPLE,
   APPLE_APPLICATION_GRAPH_EXAMPLE,
+  MACOS_APPLICATION_GRAPH_EXAMPLE,
 } from "./mobileApplicationGraphExamples.js";
 
 const traceOutputSchema = evidenceResultOf(applicationFeatureTraceResultSchema);
@@ -278,7 +279,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     name: "project_apple_application_graph",
     ...toolContractMetadata("project_apple_application_graph"),
     description:
-      "Project authenticated IPA inventory_artifact Evidence into an execution-free Apple application inventory. Reports exact component paths and hashes, runtime-family hints, and path-based bridge hypotheses without parsing plist/CMS semantics or claiming observed runtime calls.",
+      "Project authenticated IPA, macOS .app directory, ZIP, or DMG inventory Evidence into an execution-free Apple application inventory. Reports application roots, nested bundles with path-convention roles (app extensions, XPC services, login items, privileged helpers, system extensions, frameworks), launchd plists, exact component paths and hashes, runtime-family hints, and path-based bridge hypotheses without parsing plist/CMS semantics or claiming observed runtime calls.",
     kind: "application",
     inputSchema: appleApplicationProjectionInputSchema,
     outputSchema: evidenceResultOf(appleApplicationProjectionResultSchema),
@@ -286,6 +287,11 @@ export const APPLICATION_TOOL_CONTRACTS = [
       {
         title: "Project IPA inventory Evidence into an Apple application graph",
         input: APPLE_APPLICATION_GRAPH_EXAMPLE,
+      },
+      {
+        title:
+          "Project a macOS .app directory inventory into its bundle anatomy",
+        input: MACOS_APPLICATION_GRAPH_EXAMPLE,
       },
     ],
   },

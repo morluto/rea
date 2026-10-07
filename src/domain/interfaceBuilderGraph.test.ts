@@ -318,6 +318,91 @@ describe("keyed archive decoding and graph limits", () => {
   });
 });
 
+describe("keyed archive object references", () => {
+  it("keeps referenced objects as stubs so shared and cyclic references stay finite", () => {
+    // Each view references its window, superview, and next key view, so
+    // inlining references would expand the table into an exponential tree.
+    const viewCount = 40;
+    const views = Array.from({ length: viewCount }, (_, index) => ({
+      $class: { UID: 1 },
+      NSWindow: { UID: 2 },
+      NSSuperview: { UID: index === 0 ? 2 : 3 + index - 1 },
+      NSNextKeyView: { UID: 3 + ((index + 1) % viewCount) },
+      NSSubviews: index + 1 < viewCount ? [{ UID: 3 + index + 1 }] : [],
+      NSTitle: { UID: 3 + viewCount },
+    }));
+    const parsed = parseInterfaceBuilderRecords({
+      $archiver: "NSKeyedArchiver",
+      $objects: [
+        "$null",
+        { $classname: "NSView", $classes: ["NSView", "NSObject"] },
+        { $class: { UID: 3 + viewCount + 1 }, NSContentView: { UID: 3 } },
+        ...views,
+        "Title",
+        { $classname: "NSWindow", $classes: ["NSWindow", "NSObject"] },
+      ],
+      $top: { root: { UID: 2 } },
+    });
+
+    expect(parsed.objects).toHaveLength(viewCount + 1);
+    const view = parsed.objects.find(({ id }) => id === "3");
+    expect(view?.name).toBe("NSView");
+    expect(view?.attributes).toEqual({
+      NSWindow: { archiveUID: 2, className: "NSWindow" },
+      NSSuperview: { archiveUID: 2, className: "NSWindow" },
+      NSNextKeyView: { archiveUID: 4, className: "NSView" },
+      NSSubviews: [{ archiveUID: 4, className: "NSView" }],
+      NSTitle: "Title",
+    });
+    expect(parsed.hierarchy).toMatchObject([
+      {
+        objectID: "2",
+        children: [{ objectID: "3", children: [{ objectID: "4" }] }],
+      },
+    ]);
+  });
+
+  it("resolves XML CF$UID references and the archived nil", () => {
+    const parsed = parseInterfaceBuilderRecords({
+      $archiver: "NSKeyedArchiver",
+      $objects: [
+        "$null",
+        {
+          $class: { CF$UID: 3 },
+          NSSource: { CF$UID: 2 },
+          source: { CF$UID: 2 },
+          destination: { CF$UID: 0 },
+          label: { CF$UID: 4 },
+        },
+        { $class: { CF$UID: 5 } },
+        {
+          $classname: "NSNibOutletConnector",
+          $classes: ["NSNibOutletConnector", "NSObject"],
+        },
+        { $class: { CF$UID: 6 }, "NS.string": "delegate" },
+        { $classname: "NSButton", $classes: ["NSButton", "NSObject"] },
+        {
+          $classname: "NSMutableString",
+          $classes: ["NSMutableString", "NSString", "NSObject"],
+        },
+      ],
+      $top: {},
+    });
+
+    expect(parsed.connections).toEqual([
+      expect.objectContaining({
+        kind: "outlet",
+        source_id: "2",
+        destination_id: null,
+        label: "delegate",
+      }),
+    ]);
+    expect(parsed.objects.find(({ id }) => id === "2")).toMatchObject({
+      class_name: "NSButton",
+    });
+  });
+});
+
 describe("AppKit keyed archive connectors", () => {
   it("reads outlet and control connectors from NS-prefixed keys", () => {
     const parsed = parseInterfaceBuilderRecords({

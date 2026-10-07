@@ -2,7 +2,7 @@ import { canonicalDigest } from "../domain/comparisonSemantics.js";
 import { createEvidence } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 
-const inventory = (format: "apk" | "ipa", digit: string) => {
+const inventory = (format: "apk" | "ipa" | "directory", digit: string) => {
   const sha = digit.repeat(64);
   const artifactId = `art_${canonicalDigest({ sha256: sha }, "Artifact inventory")}`;
   const occurrenceId = `occ_${canonicalDigest(
@@ -106,6 +106,23 @@ export const APPLE_APPLICATION_GRAPH_EXAMPLE = {
         operation: "inventory_artifact",
         parameters: {},
         result: inventory("ipa", "b"),
+        confidence: "observed",
+        authority: "shipped-artifact",
+      },
+    ),
+  ],
+};
+
+/** Catalog example for a macOS application bundle inventoried as a directory. */
+export const MACOS_APPLICATION_GRAPH_EXAMPLE = {
+  inventory_evidence: [
+    createEvidence(
+      { path: "Fixture.app", sha256: "c".repeat(64), format: "directory" },
+      provider,
+      {
+        operation: "inventory_artifact",
+        parameters: {},
+        result: inventory("directory", "c"),
         confidence: "observed",
         authority: "shipped-artifact",
       },

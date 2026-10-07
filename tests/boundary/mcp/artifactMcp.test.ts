@@ -148,6 +148,57 @@ it("extracts an active archive through MCP when requested", async () => {
   }
 });
 
+it("extracts a macOS app bundle through MCP", async () => {
+  const root = await createTestTempDirectory("rea-artifact-extract-app-mcp-");
+  const contents = join(root, "Fixture.app", "Contents");
+  await mkdir(join(contents, "MacOS"), { recursive: true });
+  const plist =
+    '<?xml version="1.0"?><plist><dict><key>CFBundleExecutable</key><string>Fixture</string></dict></plist>';
+  await writeFile(join(contents, "Info.plist"), plist);
+  const header = Buffer.alloc(32);
+  header.writeUInt32LE(0xfeedfacf, 0);
+  header.writeUInt32LE(0x01000007, 4);
+  header.writeUInt32LE(3, 8);
+  header.writeUInt32LE(2, 12);
+  await writeFile(join(contents, "MacOS", "Fixture"), header);
+
+  const session = createTestBinarySession(new ArtifactProvider());
+  const server = createServer(session, session);
+  const client = new Client({
+    name: "artifact-extract-app-test",
+    version: "1",
+  });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  let outputRoot: string | undefined;
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const opened = await client.callTool({
+      name: "open_binary",
+      arguments: { path: join(root, "Fixture.app") },
+    });
+    expect(opened.isError).not.toBe(true);
+
+    const result = await client.callTool({
+      name: "extract_artifact",
+      arguments: {},
+    });
+    expect(result.isError).not.toBe(true);
+    const normalized = z
+      .object({ output_root: z.string() })
+      .parse(compactResult(result.structuredContent).result);
+    outputRoot = normalized.output_root;
+    expect(
+      await readFile(join(outputRoot, "Contents", "Info.plist"), "utf8"),
+    ).toBe(plist);
+  } finally {
+    await Promise.allSettled([client.close(), server.close(), session.close()]);
+    if (outputRoot !== undefined)
+      await rm(outputRoot, { recursive: true, force: true });
+  }
+});
+
 it("records an explicitly continued mismatch, preserves verified siblings, and never reports equivalence", async () => {
   const root = await createTestTempDirectory("rea-asar-continue-mcp-");
   const source = join(root, "source");

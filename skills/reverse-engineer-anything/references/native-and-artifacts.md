@@ -69,6 +69,14 @@ ASAR, or DMG inputs when the artifact graph and findings help answer the
 question. It returns the complete artifact graph inline. Cite graph manifest
 IDs when using them.
 
+For an IPA or a macOS `.app`, ZIP, or DMG, pass the inventory Evidence to
+`project_apple_application_graph`. It reports application roots and nested
+bundles by path convention: app extensions, XPC services, frameworks, login
+items, system and driver extensions, and plug-ins. It also lists privileged
+helpers, launchd plists, symlinks, and each bundle's `info_plist_path` and
+executable candidates. Roles are path conventions, not parsed plists; read the
+listed plists with `inspect_plist`.
+
 Use `extract_artifact` when materialized files are needed. It takes no arguments
 and materializes all regular files into a fresh temporary directory chosen by
 REA. Symlinks and encrypted entries are inventory facts, not extractable files.

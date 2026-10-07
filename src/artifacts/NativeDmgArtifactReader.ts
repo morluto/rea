@@ -23,6 +23,13 @@ const attachOutputSchema = z.object({
     }),
   ),
 });
+const infoOutputSchema = z.object({
+  images: z.array(
+    z.object({
+      "system-entities": z.array(z.object({ "dev-entry": z.string() })),
+    }),
+  ),
+});
 
 /** Narrow host seam for tested, shell-free hdiutil lifecycle operations. */
 export interface NativeDmgHost {
@@ -113,7 +120,10 @@ export class NativeDmgArtifactReader implements ArtifactReader {
         });
         this.#provenance.push(command(["detach", device], ["mount"]));
       } catch (cause: unknown) {
-        detachFailure ??= cause;
+        // Detaching a synthesized APFS container also ejects the image that
+        // backs it, so a later whole disk of the same image may already be
+        // gone. Only a device that is still attached is a cleanup failure.
+        if (await this.#isAttached(device)) detachFailure ??= cause;
       }
     }
     this.#devices = [];
@@ -129,6 +139,27 @@ export class NativeDmgArtifactReader implements ArtifactReader {
         "DMG detach or mount-root cleanup failed",
         { cause: detachFailure },
       );
+  }
+
+  /**
+   * Report whether hdiutil still lists a device; unknown state counts as
+   * attached. Like detach, this cleanup query runs after the inventory
+   * snapshot has captured provenance, so it is not recorded there.
+   */
+  async #isAttached(device: string): Promise<boolean> {
+    try {
+      const info = await runChecked(this.host, ["info", "-plist"], undefined, {
+        timeoutMs: DETACH_TIMEOUT_MS,
+      });
+      const parsed = infoOutputSchema.parse(parse(info.stdout));
+      return parsed.images.some((image) =>
+        image["system-entities"].some(
+          (entity) => entity["dev-entry"] === device,
+        ),
+      );
+    } catch {
+      return true;
+    }
   }
 
   async attach(signal?: AbortSignal): Promise<void> {

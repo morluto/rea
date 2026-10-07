@@ -123,6 +123,7 @@
     "verify:apple-dispatch": "npm run build:cached && node scripts/verify-apple-dispatch.mjs",
     "verify:native-ui": "npm run build:cached && node scripts/verify-native-ui.mjs",
     "verify:keyed-archive": "npm run build:cached && node scripts/verify-keyed-archive.mjs",
+    "verify:macos-bundle": "npm run build:cached && node scripts/verify-macos-bundle.mjs",
     "verify:ghidra": "npm run build:cached && node scripts/verify-real-ghidra.mjs",
     "verify:ida": "npm run build:cached && node scripts/verify-real-ida.mjs",
     "verify:ghidra:switch": "npm run build:cached && node scripts/verify-real-ghidra-switch.mjs",

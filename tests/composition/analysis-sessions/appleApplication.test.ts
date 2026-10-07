@@ -1,5 +1,5 @@
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 import {
   TextReader,
@@ -149,15 +149,107 @@ describe("Apple application projection", () => {
     expect(JSON.stringify(left)).not.toContain("opaque signing bytes");
   });
 
-  it("rejects non-IPA Evidence", async () => {
+  it("reports a ZIP without an application bundle instead of guessing one", async () => {
     const inventory =
-      await createNonApplicationZipInventory("rea-apple-invalid-");
+      await createNonApplicationZipInventory("rea-apple-empty-");
+    const projection = appleApplicationProjectionResultSchema.parse(
+      requireSuccessfulProjection(
+        projectAppleApplicationEvidence({ inventory_evidence: [inventory] }),
+      ).normalized_result,
+    );
+    expect(projection).toMatchObject({
+      root_format: "zip",
+      application_roots: [],
+      bundles: [],
+    });
+    expect(projection.limitations).toContain(
+      "No application bundle (Payload/*.app or *.app/Contents) was present in the supplied inventory pages.",
+    );
+  });
+
+  it("rejects inventories of non-Apple package formats", async () => {
+    const root = await createTestTempDirectory("rea-apple-invalid-");
+    const path = join(root, "fixture.apk");
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add("AndroidManifest.xml", new TextReader("<manifest/>"));
+    await writeFile(path, await writer.close());
+    const inventory = parseEvidence(
+      await runProviderAnalysis(path, "inventory_artifact", {}),
+    );
     expect(
       projectAppleApplicationEvidence({ inventory_evidence: [inventory] }),
     ).toMatchObject({
       ok: false,
       error: { _tag: "AnalysisInputError" },
     });
+  });
+});
+
+describe("macOS application projection", () => {
+  it("projects a macOS .app directory inventory with nested bundle roles", async () => {
+    const root = await createTestTempDirectory("rea-apple-macos-");
+    const app = join(root, "Fixture.app");
+    const machO = Uint8Array.from([0xcf, 0xfa, 0xed, 0xfe, 0x0c, 0, 0, 1]);
+    const files: [string, string | Uint8Array][] = [
+      [
+        "Contents/Info.plist",
+        "<plist><dict><key>CFBundleExecutable</key><string>Fixture</string></dict></plist>",
+      ],
+      ["Contents/MacOS/Fixture", machO],
+      ["Contents/XPCServices/Fetch.xpc/Contents/MacOS/Fetch", machO],
+      ["Contents/PlugIns/Share.appex/Contents/MacOS/Share", machO],
+      ["Contents/Library/LoginItems/Login.app/Contents/MacOS/Login", machO],
+      ["Contents/Library/LaunchServices/com.example.helper", machO],
+      [
+        "Contents/Library/LaunchDaemons/com.example.helper.plist",
+        "<plist><dict/></plist>",
+      ],
+      ["Contents/Frameworks/Core.framework/Versions/A/Core", machO],
+    ];
+    for (const [relative, content] of files) {
+      await mkdir(dirname(join(app, relative)), { recursive: true });
+      await writeFile(join(app, relative), content);
+    }
+    await symlink(
+      "A",
+      join(app, "Contents/Frameworks/Core.framework/Versions/Current"),
+    );
+
+    const inventory = parseEvidence(
+      await runProviderAnalysis(app, "inventory_artifact", {}),
+    );
+    const result = projectAppleApplicationEvidence({
+      inventory_evidence: [inventory],
+    });
+    const projection = appleApplicationProjectionResultSchema.parse(
+      requireSuccessfulProjection(result).normalized_result,
+    );
+    expect(requireSuccessfulProjection(result).subject?.format).toBe(
+      "directory",
+    );
+    expect(projection).toMatchObject({
+      root_format: "directory",
+      platforms: ["macos"],
+      application_roots: ["."],
+      symlinks: ["Contents/Frameworks/Core.framework/Versions/Current"],
+      coverage: { status: "complete-within-inventory" },
+    });
+    expect(projection.bundles.map(({ path, role }) => [path, role])).toEqual([
+      [".", "application"],
+      ["Contents/Frameworks/Core.framework", "framework"],
+      ["Contents/Library/LoginItems/Login.app", "login-item"],
+      ["Contents/PlugIns/Share.appex", "app-extension"],
+      ["Contents/XPCServices/Fetch.xpc", "xpc-service"],
+    ]);
+    expect(
+      projection.components.privileged_helpers.map(({ path }) => path),
+    ).toEqual(["Contents/Library/LaunchServices/com.example.helper"]);
+    expect(projection.components.launchd_plists).toEqual([
+      expect.objectContaining({
+        path: "Contents/Library/LaunchDaemons/com.example.helper.plist",
+        domain: "daemon",
+      }),
+    ]);
   });
 });
 

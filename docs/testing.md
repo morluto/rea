@@ -81,6 +81,13 @@ an XML graph golden. `verify:asset-catalog` compiles source-owned colors with
 `actool`, invokes real `assetutil`, then checks CLI/MCP results, exact catalog
 digest, every raw metadata field, pagination and malformed input rejection.
 Neither artifact workflow requires Hopper or launches it. Both run in macOS CI.
+`verify:macos-bundle` needs only macOS with Command Line Tools. It compiles a
+source-owned app with `clang`: a versioned framework, XPC services, an app
+extension, a login item, a privileged helper, launchd plists, and a helper tool,
+signed ad hoc. It packs the app as a directory, a `ditto` ZIP, and an APFS DMG,
+then checks that `inspect-artifact` plus `project-apple-application-graph`
+report the same bundle anatomy for all three through the CLI, with stdio MCP
+parity. It also checks that the DMG is detached afterwards. It runs in macOS CI.
 
 MCP SDK transport tests with recording providers remain integration tests.
 They are useful for schema drift and failure projection but do not prove that
@@ -214,7 +221,7 @@ kept under ignored `_reference/`. No Gradle build, Android SDK, emulator or
 application execution is required. The lane compares real CLI/MCP package,
 class search, class inventory, method decompilation and incoming references.
 See [Android analysis](android-analysis.md) for boundaries and resource budgets.
-Authenticated IPA inventory projection is documented in
+Authenticated IPA and macOS application inventory projection is documented in
 [Apple application analysis](apple-application-analysis.md).
 
 The lane and owned-process cancellation helper live in `scripts/verify/android/`.

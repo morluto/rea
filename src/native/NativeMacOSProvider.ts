@@ -736,11 +736,10 @@ const resolvePlistPath = async (
       return ok(resolve(requested));
     const sourceMetadata = await stat(source);
     const root = sourceMetadata.isDirectory() ? source : dirname(target.path);
-    return ok(
-      requested === undefined
-        ? resolve(root, "Contents/Info.plist")
-        : resolve(root, requested),
-    );
+    if (requested !== undefined) return ok(resolve(root, requested));
+    // A bundle target records the Info.plist its program file was declared
+    // in: Contents/Info.plist, or the root plist of an iOS-style bundle.
+    return ok(target.bundleInfoPlist ?? resolve(root, "Contents/Info.plist"));
   } catch (cause: unknown) {
     return err(
       new ProviderAdapterError(IDENTITY.id, "inspect_plist", { cause }),

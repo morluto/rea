@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { parseBinary } from "plist";
 
 import { DirectoryArtifactReader } from "../artifacts/DirectoryArtifactReader.js";
+import { projectPlistValue } from "../domain/plistValue.js";
 import {
   omittedPrototypeKeysLimitation,
   parseXmlPropertyList,
@@ -214,15 +215,17 @@ const projectNibArchive = (archive: NibArchiveDocument) => {
     const object = byId.get(objectId);
     if (object === undefined) return null;
     const storedClass = object.class_name.replace(/\0+$/u, "");
-    return storedClass === "NSClassSwapper"
-      ? (referencedString(object.values.NSClassName) ?? storedClass)
+    if (storedClass === "NSClassSwapper")
+      return referencedString(object.values.NSClassName) ?? storedClass;
+    return storedClass === "UIClassSwapper"
+      ? (referencedString(object.values.UIClassName) ?? storedClass)
       : storedClass;
   };
   const objects = Object.fromEntries(
     archive.objects
       .filter((object) => {
         const name = runtimeClass(object.id) ?? "";
-        return !/^(?:NSObject|NSIBObjectData|NSString|NSMutableString|NSNumber|NSArray|NSMutableArray|NSSet|NSMutableSet|NSDictionary|NSMutableDictionary|NSApplication|NSNib.*Connector)$/u.test(
+        return !/^(?:NSObject|NSIBObjectData|NSString|NSMutableString|NSNumber|NSArray|NSMutableArray|NSSet|NSMutableSet|NSDictionary|NSMutableDictionary|NSApplication|NSNib.*Connector|UIRuntime\w*Connection)$/u.test(
           name,
         );
       })
@@ -268,26 +271,34 @@ const projectNibArchive = (archive: NibArchiveDocument) => {
   };
   for (const object of archive.objects) {
     const className = object.class_name.replace(/\0+$/u, "");
-    const source = reference(object.values.NSSource);
-    const destination = reference(object.values.NSDestination);
-    if (className.includes("Connector") && source !== null) {
-      const label = referencedString(object.values.NSLabel);
-      const type = className.includes("Outlet")
-        ? "outlet"
-        : className.includes("Control")
-          ? "action"
-          : className;
-      // NSSource is the outlet owner or the sending control; NSDestination is
-      // the outlet value or the action target, and a nil target is the first
-      // responder.
-      (connections[String(source)] ??= []).push({
-        type,
-        "destination-id": destination === null ? null : String(destination),
-        label,
-        source_id: String(source),
-        archive_object_id: String(object.id),
-      });
-    }
+    // AppKit connectors use NS-prefixed keys; UIKit's runtime outlet and
+    // event connections use UI-prefixed keys with the same roles.
+    const uiKit = /^UIRuntime\w*Connection$/u.test(className);
+    if (!uiKit && !className.includes("Connector")) continue;
+    const values = object.values;
+    const source = reference(uiKit ? values.UISource : values.NSSource);
+    if (source === null) continue;
+    const destination = reference(
+      uiKit ? values.UIDestination : values.NSDestination,
+    );
+    const label = referencedString(uiKit ? values.UILabel : values.NSLabel);
+    const type = className.includes("Outlet")
+      ? "outlet"
+      : className.includes("Control") || className.includes("Event")
+        ? "action"
+        : className;
+    const eventMask = values.UIEventMask;
+    // The source is the outlet owner or the sending control; the destination
+    // is the outlet value or the action target, and a nil target is the
+    // first responder.
+    (connections[String(source)] ??= []).push({
+      type,
+      "destination-id": destination === null ? null : String(destination),
+      label,
+      source_id: String(source),
+      archive_object_id: String(object.id),
+      ...(typeof eventMask === "number" ? { ui_event_mask: eventMask } : {}),
+    });
   }
   let hierarchyOmitted = 0;
   const hierarchyFor = (
@@ -390,6 +401,7 @@ const readEntry = async (
   return Buffer.concat(chunks, length);
 };
 
+/** Project decoded plist data and dates while retaining omitted-key coverage. */
 const decodePlist = (
   bytes: Buffer,
 ): { readonly value: JsonValue; readonly omittedPrototypeKeys: number } => {
@@ -397,5 +409,5 @@ const decodePlist = (
     bytes.subarray(0, 8).toString("ascii") === "bplist00"
       ? { value: parseBinary(bytes), omittedPrototypeKeys: 0 }
       : parseXmlPropertyList(bytes.toString("utf8"));
-  return { value: jsonValueSchema.parse(value), omittedPrototypeKeys };
+  return { value: projectPlistValue(value).value, omittedPrototypeKeys };
 };

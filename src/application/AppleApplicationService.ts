@@ -10,7 +10,7 @@ import { projectInventoryEvidence } from "./InventoryProjectionEvidence.js";
 
 const OPERATION = "project_apple_application_graph" as const;
 
-/** Project authenticated IPA inventory Evidence into Apple application evidence. */
+/** Project authenticated IPA or macOS app inventory Evidence into Apple application evidence. */
 export const projectAppleApplicationEvidence = (
   rawInput: unknown,
 ): Result<Evidence, AnalysisError> => {
@@ -21,7 +21,7 @@ export const projectAppleApplicationEvidence = (
     operation: OPERATION,
     predicateType: "rea.apple-application-graph",
     provider: APPLE_APPLICATION_PROVIDER,
-    subjectFormat: () => "ipa",
+    subjectFormat: (first) => first.subject?.format ?? "unknown",
     protocolError: "Apple application projection produced an invalid result",
   });
 };
