@@ -188,11 +188,56 @@ it("retains the last ownership failure when the verification grace expires", asy
   }
 });
 
+it("passes sampled detached groups into cleanup even when their token is unknown", async () => {
+  let sampledGroups: readonly number[] | undefined;
+  const host: ProcessCaptureCleanupHost = {
+    platform: "linux",
+    cleanupProcessGroup: async (ownership) => {
+      sampledGroups = ownership.sampledProcessGroupIds;
+      return {
+        cleaned: false,
+        reason: "sampled group has no verifiable run token",
+      };
+    },
+    verifyTokenOwnedProcesses: async () => ({
+      cleaned: true,
+      signaled: false,
+    }),
+    removeTemporaryRoot: async () => undefined,
+  };
+
+  const report = await releaseProcessResources({
+    timers: new Set(),
+    terminal: { pid: 321 },
+    renderer: undefined,
+    runId: "fixture-run",
+    temporaryRoot: "/fixture/root",
+    sampledProcessGroupIds: [654],
+    host,
+  });
+
+  expect(sampledGroups).toEqual([654]);
+  expect(report.owned_process_group).toEqual({
+    state: "unverified",
+    reason: "sampled group has no verifiable run token",
+  });
+});
+
 it("retains observations and both causes when process cleanup is unverifiable", () => {
   const verified = emptyProcessCapture();
   const capture = parseProcessCapture({
     ...verified,
     frames: [{ sequence: 0, at_ms: 0, data: "observed output" }],
+    process_samples: [
+      {
+        at_ms: 1,
+        pid: 654,
+        parent_pid: 321,
+        command: "sanitized-detached-child",
+        process_group_id: 654,
+        session_id: 654,
+      },
+    ],
     event_journal: [],
   });
   const executionFailure = new Error("capture ended after a fixture error");
@@ -226,6 +271,7 @@ it("retains observations and both causes when process cleanup is unverifiable", 
       partial_observation: {
         capture: {
           frames: [{ data: "observed output" }],
+          process_samples: [{ pid: 654, process_group_id: 654 }],
           settlement: { cleanup_outcome: "failed" },
         },
         execution_failure: "capture ended after a fixture error",

@@ -81,6 +81,14 @@ const cleanupFailedStartup = async (options: {
   readonly observations?: ProcessCaptureObservationBuffer;
   readonly temporaryRoot: string;
 }): Promise<never> => {
+  const sampledProcessGroupIds =
+    options.terminal !== undefined &&
+    options.observations?.process_samples.state === "available"
+      ? selectCapturedProcessGroupIds(
+          options.terminal.pid,
+          options.observations.process_samples.value,
+        ).filter((groupId) => groupId !== options.terminal?.pid)
+      : undefined;
   options.terminal?.kill("SIGKILL");
   if (options.observations !== undefined && options.renderer !== undefined) {
     try {
@@ -101,6 +109,7 @@ const cleanupFailedStartup = async (options: {
     renderer: options.renderer,
     runId: options.runId,
     captureBaseline: options.captureBaseline,
+    ...(sampledProcessGroupIds === undefined ? {} : { sampledProcessGroupIds }),
     temporaryRoot: options.temporaryRoot,
     ...(options.cleanupHost === undefined ? {} : { host: options.cleanupHost }),
   });
@@ -257,12 +266,20 @@ const finishProcessRun = async (options: {
   readonly rootPid?: number;
 }): Promise<ProcessCapture> => {
   await options.stopSampler();
+  const sampledProcessGroupIds =
+    options.runtime === undefined
+      ? undefined
+      : selectCapturedProcessGroupIds(
+          options.runtime.terminal.pid,
+          options.samples,
+        ).filter((groupId) => groupId !== options.runtime?.terminal.pid);
   const cleanup = await releaseProcessResources({
     timers: options.timers,
     terminal: options.runtime?.terminal,
     renderer: options.runtime?.renderer,
     runId: options.runId,
     captureBaseline: options.captureBaseline,
+    ...(sampledProcessGroupIds === undefined ? {} : { sampledProcessGroupIds }),
     temporaryRoot: options.temporaryRoot,
     ...(options.cleanupHost === undefined ? {} : { host: options.cleanupHost }),
   });

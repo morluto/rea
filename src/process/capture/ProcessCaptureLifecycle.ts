@@ -656,6 +656,7 @@ export const releaseProcessResources = async (options: {
   readonly runId: string;
   readonly temporaryRoot: string;
   readonly captureBaseline?: ProcessOwnershipBaseline;
+  readonly sampledProcessGroupIds?: readonly number[];
   readonly host?: ProcessCaptureCleanupHost;
 }): Promise<ProcessCaptureCleanupReport> => {
   const host = options.host ?? processCaptureCleanupHost;
@@ -692,6 +693,9 @@ export const releaseProcessResources = async (options: {
         leaderPid: options.terminal.pid,
         processGroupId: options.terminal.pid,
         sweepTokenOwnedProcesses: true,
+        ...(options.sampledProcessGroupIds === undefined
+          ? {}
+          : { sampledProcessGroupIds: options.sampledProcessGroupIds }),
         ...(options.captureBaseline === undefined
           ? {}
           : { captureBaseline: options.captureBaseline }),

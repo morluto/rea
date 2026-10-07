@@ -23,6 +23,11 @@ export interface OwnedProcessGroup {
   readonly sweepTokenOwnedProcesses?: boolean;
   /** Prelaunch process identities for this capture; absent on generic callers. */
   readonly captureBaseline?: ProcessOwnershipBaseline;
+  /**
+   * Groups observed in capture samples. Observation adds cleanup candidates but
+   * does not authorize signaling; every live member still needs token proof.
+   */
+  readonly sampledProcessGroupIds?: readonly number[];
 }
 
 /** Capture-local baseline; null means the PID identity could not be established. */
@@ -293,6 +298,12 @@ const createOwnedCleanupPlan = async (
   processes: readonly ProcessTableEntry[],
   host: ProcessOwnershipHost,
 ): Promise<OwnedCleanupPlan | ProcessCleanupResult> => {
+  const sampledProcessGroupIds = new Set(
+    (ownership.sampledProcessGroupIds ?? []).filter(
+      (processGroupId) =>
+        Number.isSafeInteger(processGroupId) && processGroupId > 0,
+    ),
+  );
   const tokenOwned =
     ownership.sweepTokenOwnedProcesses === true
       ? await scanTokenOwnedProcesses(
@@ -312,7 +323,10 @@ const createOwnedCleanupPlan = async (
   if (
     launcher === undefined &&
     rootMembers.length === 0 &&
-    tokenOwned.owned.length === 0
+    tokenOwned.owned.length === 0 &&
+    !processes.some(({ processGroupId }) =>
+      sampledProcessGroupIds.has(processGroupId),
+    )
   )
     return tokenOwned.failures.length > 0
       ? {
@@ -334,6 +348,11 @@ const createOwnedCleanupPlan = async (
     processGroupIds.add(descendant.processGroupId);
   for (const process of tokenOwned.owned)
     processGroupIds.add(process.processGroupId);
+  for (const processGroupId of sampledProcessGroupIds)
+    processGroupIds.add(processGroupId);
+  const signalableGroups = new Set<number>();
+  const unresolved = [...tokenOwned.failures];
+  const unverifiableSampledGroups = new Set<number>();
   for (const processGroupId of processGroupIds) {
     if (processGroupId === ownership.processGroupId) continue;
     const groupLeader = processes.find(
@@ -342,32 +361,69 @@ const createOwnedCleanupPlan = async (
     );
     if (
       (groupLeader === undefined || !descendantPids.has(groupLeader.pid)) &&
-      !tokenOwnedGroupIds.has(processGroupId)
+      !tokenOwnedGroupIds.has(processGroupId) &&
+      !sampledProcessGroupIds.has(processGroupId)
     )
       return {
         cleaned: false,
         reason:
           "descendant process-group leader identity could not be verified",
       };
+    if (
+      (groupLeader === undefined || !descendantPids.has(groupLeader.pid)) &&
+      !tokenOwnedGroupIds.has(processGroupId)
+    )
+      unverifiableSampledGroups.add(processGroupId);
   }
   const liveMembers = processes.filter(({ processGroupId }) =>
     processGroupIds.has(processGroupId),
   );
-  const failures = await processOwnershipFailures(
-    liveMembers,
-    ownership.runId,
-    host,
-    tokenOwned.identities,
-  );
-  if (failures.length > 0) return cleanupValidationFailure(failures);
+  for (const processGroupId of processGroupIds) {
+    const members = liveMembers.filter(
+      ({ processGroupId: observedGroupId }) =>
+        observedGroupId === processGroupId,
+    );
+    if (members.length === 0) continue;
+    const failures = await processOwnershipFailures(
+      members,
+      ownership.runId,
+      host,
+      tokenOwned.identities,
+    );
+    if (failures.length === 0 && unverifiableSampledGroups.has(processGroupId))
+      unresolved.push(
+        ...members.map(({ pid }) => ({
+          pid,
+          reason: "process-identity-unavailable" as const,
+          diagnostic:
+            "sampled process-group leader identity could not be verified",
+        })),
+      );
+    const scanFailures = tokenOwned.failures.filter(({ pid }) =>
+      members.some((member) => member.pid === pid),
+    );
+    if (failures.length > 0) unresolved.push(...failures);
+    if (
+      failures.length === 0 &&
+      scanFailures.length === 0 &&
+      !unverifiableSampledGroups.has(processGroupId)
+    )
+      signalableGroups.add(processGroupId);
+  }
+  if (ownership.sweepTokenOwnedProcesses !== true && unresolved.length > 0)
+    return cleanupValidationFailure(unresolved);
   return {
-    signalOrder: [ownership.processGroupId].concat(
-      [...processGroupIds]
-        .filter((processGroupId) => processGroupId !== ownership.processGroupId)
-        .sort((left, right) => left - right),
-    ),
+    signalOrder: [...signalableGroups]
+      .filter((groupId) => processGroupIds.has(groupId))
+      .sort((left, right) =>
+        left === ownership.processGroupId
+          ? -1
+          : right === ownership.processGroupId
+            ? 1
+            : left - right,
+      ),
     tokenOwnedIdentities: tokenOwned.identities,
-    unresolved: tokenOwned.failures,
+    unresolved,
   };
 };
 
