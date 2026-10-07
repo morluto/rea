@@ -6,7 +6,7 @@ import { realpathSync } from "node:fs";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 
 import { parseConfig } from "./config.js";
-import { createBinarySession } from "./application/runtime.js";
+import { createBinarySession } from "./composition/binary.js";
 import { createLogger } from "./logger.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import type { RuntimeDependencies } from "./main/types.js";

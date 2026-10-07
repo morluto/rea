@@ -841,6 +841,20 @@ pre code {
 .notion-bridge-flow {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
+.th04-flow {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.th04-overview {
+  margin-bottom: 3.2rem;
+}
+.th04-ring-figure img {
+  min-width: 680px;
+}
+.th04-preview img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
 .notion-channel {
   color: var(--accent);
   background: #edf2f8;
@@ -994,7 +1008,8 @@ pre code {
     grid-template-columns: 1fr;
   }
   .flow-steps,
-  .notion-bridge-flow {
+  .notion-bridge-flow,
+  .th04-flow {
     grid-template-columns: 1fr;
     gap: 2rem;
   }

@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
-import { runProviderAnalysis } from "../../../../src/application/DirectAnalysis.js";
+import { runProviderAnalysis } from "../../../../src/composition/directAnalysis.js";
 import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
 import { artifactInventoryResultSchema } from "../../../../src/domain/artifactGraph.js";
 import { artifactInspectionResultSchema } from "../../../../src/domain/artifactInspection.js";

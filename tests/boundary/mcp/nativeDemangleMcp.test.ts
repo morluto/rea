@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect } from "vitest";
 import { z } from "zod";
 
-import { createBinarySession } from "../../../src/application/runtime.js";
+import { createBinarySession } from "../../../src/composition/binary.js";
 import { parseConfig } from "../../../src/config.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
