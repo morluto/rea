@@ -1,3 +1,5 @@
+import { createAndroidAnalysisProvider } from "../composition/android.js";
+import type { AndroidAnalysisPort } from "../application/android/AndroidAnalysisPort.js";
 import type { StdioServerHandle } from "@modelcontextprotocol/server/stdio";
 
 import type { BinarySession } from "../application/binary/BinarySession.js";
@@ -27,6 +29,7 @@ export const startMcpTransport = async (
   | {
       readonly ok: true;
       readonly handle: StdioServerHandle;
+      readonly closeAndroid: () => Promise<void>;
     }
   | { readonly ok: false }
 > => {
@@ -50,14 +53,27 @@ export const startMcpTransport = async (
       "Optional MCP adapter could not load; its peers remain available",
     );
   }
+  const androidProviders: AndroidAnalysisPort[] = [];
+  const closeAndroid = async (): Promise<void> => {
+    const results = await Promise.allSettled(
+      androidProviders.map((provider) => provider.close()),
+    );
+    for (const result of results)
+      if (result.status === "rejected") throw result.reason;
+  };
   let handle: StdioServerHandle;
   try {
     handle = dependencies.serve(
-      () =>
-        (dependencies.createServer ?? createServer)(session, session, {
+      () => {
+        // The SDK can discard a discovery probe and construct a replacement server.
+        const android = createAndroidAnalysisProvider(dependencies.env);
+        androidProviders.push(android);
+        return (dependencies.createServer ?? createServer)(session, session, {
           logger: serverContext.logger,
           ...optionalProviders,
-        }),
+          androidAnalysis: android,
+        });
+      },
       {
         onerror: () => {
           serverLogger.error(MCP_CONNECTION_LOST);
@@ -66,7 +82,7 @@ export const startMcpTransport = async (
       },
     );
   } catch (cause: unknown) {
-    await session.close();
+    await Promise.allSettled([session.close(), closeAndroid()]);
     serverLogger.error(
       {
         error: cause instanceof Error ? cause.message : String(cause),
@@ -76,5 +92,5 @@ export const startMcpTransport = async (
     dependencies.writeStderr(`${MCP_CONNECTION_START_FAILED}\n`);
     return { ok: false };
   }
-  return { ok: true, handle };
+  return { ok: true, handle, closeAndroid };
 };

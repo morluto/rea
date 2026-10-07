@@ -17,7 +17,7 @@ import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 
 const MAX_FRAME_BYTES = 8 * 1024 * 1024;
-const MAX_SESSION_BYTES = 32 * 1024 * 1024;
+const MAX_OPERATION_BYTES = 32 * 1024 * 1024;
 
 /** Injectable process acquisition seam; the production launcher owns a POSIX group. */
 export type JadxLauncher = (
@@ -109,6 +109,12 @@ export class JadxMcpTransport implements Transport {
     return this.#failure;
   }
 
+  /** Scope both the byte budget and diagnostic retention to the next serialized request. */
+  beginOperation(): void {
+    this.#bytes = 0;
+    this.#supervisor?.resetOutput();
+  }
+
   async #stop(): Promise<void> {
     this.#closed = true;
     // A cancellation may race acquisition. Join it before inspecting ownership.
@@ -136,10 +142,10 @@ export class JadxMcpTransport implements Transport {
   };
   readonly #countStderr = (chunk: Buffer | string): void => {
     this.#bytes += Buffer.byteLength(chunk);
-    if (this.#bytes > MAX_SESSION_BYTES)
+    if (this.#bytes > MAX_OPERATION_BYTES)
       this.#fail(
         new Error(
-          `JADX session output exceeds ${MAX_SESSION_BYTES} bytes; no complete result is available`,
+          `JADX operation output exceeds ${MAX_OPERATION_BYTES} bytes; no complete result is available`,
         ),
       );
   };
@@ -147,10 +153,10 @@ export class JadxMcpTransport implements Transport {
     if (this.#closed) return;
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     this.#bytes += bytes.length;
-    if (this.#bytes > MAX_SESSION_BYTES) {
+    if (this.#bytes > MAX_OPERATION_BYTES) {
       this.#fail(
         new Error(
-          `JADX session output exceeds ${MAX_SESSION_BYTES} bytes; no complete result is available`,
+          `JADX operation output exceeds ${MAX_OPERATION_BYTES} bytes; no complete result is available`,
         ),
       );
       return;

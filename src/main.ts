@@ -81,6 +81,7 @@ export const run = async (
   });
   createShutdown({
     handle: transport.handle,
+    closeAndroid: transport.closeAndroid,
     session,
     unregisterReload,
     dependencies,

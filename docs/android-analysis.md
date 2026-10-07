@@ -11,7 +11,9 @@ connected server's tool list before selecting it.
 
 ## Supply tools
 
-Use **Java 17 or newer** and **jadx-headless-mcp 0.7.1**. REA does not install Java,
+Use a **full JDK 17 or newer** (including its compiler module) and
+**jadx-headless-mcp 0.7.1**. REA runs its packaged Java metadata bridge in
+source-file mode against the unmodified engine JAR. REA does not install Java,
 an Android SDK, JADX, a device service or an emulator. Set the path in the shell
 or MCP server environment:
 
@@ -21,8 +23,9 @@ export REA_JADX_MCP_JAR=/absolute/path/jadx-headless-mcp-0.7.1-all.jar
 export JAVA_HOME=/absolute/path/existing-jdk
 ```
 
-Linux is verified with the public Appium ApiDemos fixture. The POSIX adapter can
-run on macOS, but that host has not undergone real Android verification.
+The current metadata bridge is verified on macOS arm64 with OpenJDK 21 and the
+public Appium ApiDemos fixture. The POSIX adapter also supports Linux; the new
+bridge has not yet undergone real verification on Linux/JDK 25.
 Windows is unsupported for this provider's owned stdio process boundary.
 
 ## Answer an analyst question
@@ -72,7 +75,10 @@ selected overload. Native/abstract methods with no decompiled body report
   Signature verification is explicitly `not_performed`.
 - Class search consumes all pages and checks their counts. An empty `query`
   inventories all class names; class names are decompiler representations.
-- Class inventories return display signatures, fields and inner class names.
+- Class inventories read parsed metadata without generating source and return
+  full reported display types, fields and inner class names. Synthetic members
+  that code generation hides can appear in the inventory; it stays consistent
+  after method decompilation within the retained session.
   Exact DEX descriptors are unknown. Overload indices are tied to this artifact
   and engine, not stable identities across different builds.
 - Method inspection reports Java or smali, fallback markers and complete/partial
@@ -109,23 +115,48 @@ runtime calls.
 
 ## Resource and lifecycle limits
 
-Each request creates private, immutable APK and JAR copies. Their workspace and
-owned process group are cleaned on success, failure, timeout and cancellation.
+REA retains one serialized session with private, immutable APK, engine JAR and
+metadata-bridge copies. Matching requests reuse the loaded engine. APK/engine
+digests and JVM configuration are checked before reuse; changed inputs retire
+the previous session. Sessions are cleaned after 60 seconds of inactivity, on
+target/configuration changes, failure, timeout, cancellation, MCP disconnect or
+server shutdown. One-shot CLI commands always join cleanup before returning.
 REA never writes to the original APK or launches target code.
 
 If process cleanup cannot be confirmed, REA retains the workspace and reports its
 location. That provider instance blocks subsequent engine launches until the
 caller resolves the reported resources and starts a fresh instance.
 
-The provider serializes requests within each REA instance, uses one worker and
-sets JVM maximum heap to **512 MiB**. Heap is not a total RSS cap: the JVM also
+The provider uses one JADX analysis worker independently of JVM processor and
+garbage-collector settings. REA supplies no default heap or visible-CPU override;
+Java uses its normal ergonomics and inherits caller JVM settings. Optional
+provider settings add explicit JVM arguments:
+
+```sh
+export REA_JADX_HEAP_MIB=8192
+# Optional, independent of the single JADX worker:
+export REA_JADX_ACTIVE_PROCESSOR_COUNT=4
+# Or select settings through Java's standard environment options:
+export JAVA_TOOL_OPTIONS=-Xmx8g
+```
+
+Both REA settings must be positive safe integers; processor counts must also fit
+the JVM's signed 32-bit range. REA preserves
+`JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS` and `_JAVA_OPTIONS` rather than replacing
+them. Java's standard precedence applies: explicit command-line heap settings
+override `JAVA_TOOL_OPTIONS`, while `_JAVA_OPTIONS` can override command-line
+settings. Evidence reports the worker's observed `Runtime.maxMemory()` rounded
+down to MiB and retains exact bytes, Java version and visible processors in its
+raw runtime response. The observed allocatable heap can differ from configured
+`-Xmx`, especially with Serial GC. Heap is not a total RSS cap: the JVM also
 uses native memory. Independent REA instances have independent queues. Whole
 operations have a **120-second** execution deadline after reaching the queue's
 front; upstream decompilation is limited to **90 seconds**.
 
 Decoded manifest and method text have a **1 MiB** upstream byte budget and report
-truncation. A protocol frame above **8 MiB**, or cumulative stdout/stderr above
-**32 MiB**, fails with a diagnostic instead of returning an incomplete inventory
+truncation. Class-name pages use indexed slices of up to 4,096 names without changing the
+complete, case-sensitive search contract. A protocol frame above **8 MiB**, or combined stdout/stderr above
+**32 MiB per operation**, fails with a diagnostic instead of returning an incomplete inventory
 as complete. These are memory-safety boundaries, not undocumented result caps.
 
 ## Real verification

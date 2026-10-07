@@ -25,9 +25,16 @@ export const createJadxProtocolFixture = async (mode = "normal") => {
     runId: string;
     cwd: string | undefined;
     pid: number | undefined;
+    arguments: readonly string[] | undefined;
+    javaToolOptions: string | undefined;
+    legacyJavaOptions: string | undefined;
   }[] = [];
+  const environment: NodeJS.ProcessEnv = {
+    ...process.env,
+    REA_JADX_MCP_JAR: jar,
+  };
   const provider = createAndroidAnalysisProvider(
-    { ...process.env, REA_JADX_MCP_JAR: jar },
+    environment,
     async (options) => {
       const spawned = await spawnOwnedProviderProcess({
         ...options,
@@ -40,6 +47,10 @@ export const createJadxProtocolFixture = async (mode = "normal") => {
         runId: options.runId,
         cwd: options.cwd,
         pid: spawned.process.pid,
+        arguments: options.arguments,
+        javaToolOptions: options.hostEnvironment?.JAVA_TOOL_OPTIONS,
+        legacyJavaOptions:
+          options.env?._JAVA_OPTIONS ?? options.hostEnvironment?._JAVA_OPTIONS,
       });
       if (mode === "cleanup-failure") {
         onTestFinished(async () => {
@@ -63,11 +74,13 @@ export const createJadxProtocolFixture = async (mode = "normal") => {
       return spawned;
     },
   );
+  onTestFinished(() => provider.close().catch(() => undefined));
   return {
     service: new AndroidAnalysisService(provider),
     provider,
     apk,
     jar,
+    environment,
     launches,
   };
 };

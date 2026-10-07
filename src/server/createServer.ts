@@ -159,11 +159,26 @@ export const createServer = (
     recordEvidenceWithUnknown,
   };
   registerBinaryAnalysisTools(toolContext);
+  const android = options.androidAnalysis ?? createAndroidAnalysisProvider();
+  const previousOnclose = server.server.onclose;
+  server.server.onclose = () => {
+    previousOnclose?.();
+    void android.close().catch((cause: unknown) => {
+      logger.error(
+        { error: cause instanceof Error ? cause.message : String(cause) },
+        "Android provider cleanup failed",
+      );
+    });
+  };
+  const closeServer = server.close.bind(server);
+  server.close = async () => {
+    const results = await Promise.allSettled([closeServer(), android.close()]);
+    for (const result of results)
+      if (result.status === "rejected") throw result.reason;
+  };
   registerAndroidTools(
     server,
-    new AndroidAnalysisService(
-      options.androidAnalysis ?? createAndroidAnalysisProvider(),
-    ),
+    new AndroidAnalysisService(android),
     toolLogger,
     recordEvidence,
   );

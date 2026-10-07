@@ -254,6 +254,12 @@ export class ProviderProcessSupervisor {
     };
   }
 
+  /** Begin a new observation on a retained process without retaining earlier output. */
+  resetOutput(): void {
+    this.#stdout.reset();
+    this.#stderr.reset();
+  }
+
   /** Wait for process exit up to a caller-owned bounded interval. */
   async waitForExit(timeoutMs: number): Promise<boolean> {
     return waitForProcessEvent(
@@ -401,6 +407,11 @@ class ProcessOutputCapture {
 
   get bytes(): number {
     return this.#bytes;
+  }
+
+  reset(): void {
+    this.#chunks.length = 0;
+    this.#bytes = 0;
   }
 
   append(chunk: Buffer): void {

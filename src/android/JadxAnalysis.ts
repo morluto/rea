@@ -137,19 +137,20 @@ const searchClasses = async (
   engine: Engine,
 ): Promise<JsonValue> => {
   const classes: string[] = [];
+  const pageSize = 4096;
   let total: number | undefined;
   do {
     const page = jadxClassPageSchema.parse(
       await tools.json("list_classes", {
         offset: classes.length,
-        limit: 200,
+        limit: pageSize,
       }),
     );
     if (
       (total !== undefined && total !== page.total) ||
       page.offset !== classes.length ||
-      page.limit !== 200 ||
-      page.items.length > 200
+      page.limit !== pageSize ||
+      page.items.length > pageSize
     )
       throw new AnalysisOutputError(
         request.operation,
@@ -307,7 +308,7 @@ const traceReferences = async (
     throw new AnalysisCapabilityUnavailableError(
       "jadx",
       request.operation,
-      `JADX ${JADX_RELEASE.version} references select the first same-name method; ${summary.full_name}.${methodName} has ${candidates.length} overloads. No unambiguous reference result is available.`,
+      `References require a unique method name; ${summary.full_name}.${methodName} has ${candidates.length} overloads. No unambiguous reference result is available.`,
     );
   const expectedTarget =
     methodName === undefined

@@ -163,7 +163,7 @@ Deep native binary analysis requires [Hopper](https://www.hopperapp.com/), [Ghid
 
 Firmware region inspection and explicit extraction use caller-supplied Binwalk and Unblob on Linux. See [Firmware analysis](docs/firmware-analysis.md) for setup, provenance, resource limits and native handoff.
 
-Static APK analysis uses a separately supplied headless JADX JAR and Java, with no emulator or APK execution. See [Android analysis](docs/android-analysis.md) for setup, CLI/MCP operations, coverage and public test fixtures. Authenticated IPA inventory Evidence can be projected with [Apple application analysis](docs/apple-application-analysis.md).
+Static APK analysis uses a separately supplied headless JADX JAR and a full JDK, with no emulator or APK execution. See [Android analysis](docs/android-analysis.md) for setup, CLI/MCP operations, coverage and public test fixtures. Authenticated IPA inventory Evidence can be projected with [Apple application analysis](docs/apple-application-analysis.md).
 
 Repository main and npm 4.1.0 include experimental Windows x64 Ghidra support for native x86-64 PE applications on local NTFS, with bundled Job Object, private-DACL, and path-admission controls. Check the [release boundary](docs/installation.md#released-package-and-main) before expecting this from an older npm package. See [Windows Ghidra P0](docs/windows-ghidra-p0.md) for prerequisites and verified scope.
 
@@ -420,7 +420,7 @@ The public interface describes what the agent is trying to learn. Providers deci
 
 REA supports native application, JavaScript, Electron, .NET, and browser investigation on macOS and Linux. Individual tools have platform and runtime prerequisites. `rea capabilities` and `rea providers` describe the binary-session providers and auxiliary operations; they are not an inventory of every browser, Android, or application workflow. Use the connected MCP tool list and `binary_session` tool availability for the full MCP surface, and the relevant guide for each tool's prerequisites. Repository main can be ahead of [the npm release](docs/installation.md#released-package-and-main).
 
-Static Android APK inspection is verified on Linux with headless JADX; see [Android analysis](docs/android-analysis.md) for its separate prerequisites and coverage.
+Static Android APK inspection supports Linux and macOS; the current metadata bridge is verified on macOS arm64 with headless JADX; see [Android analysis](docs/android-analysis.md) for its separate prerequisites and coverage.
 
 - **Native binaries:** Open Mach-O, ELF, PE, and Mac `.app` targets through a selected deep provider. Hopper and Ghidra cover broad inventory and function analysis; the IDA adapter supplies its documented read-only function/string operations. Hopper also accepts `.hop` databases and supports annotations.
 - **Packages and resources:** Inspect directories, ZIP, APK, IPA, ASAR, plists, compiled Interface Builder files, and Apple asset catalogs. Artifact requests name the input and requested extraction or traversal directly; macOS DMG traversal also requires the host's native mounting support.

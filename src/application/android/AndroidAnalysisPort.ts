@@ -9,6 +9,8 @@ import type { Result } from "../../domain/result.js";
 
 /** Static Android inspection boundary; implementation details belong to the provider. */
 export interface AndroidAnalysisPort {
+  /** Cancel active work and join cleanup of any retained provider resources. */
+  close(): Promise<void>;
   execute(
     target: BinaryTarget,
     request: AndroidRequest,
