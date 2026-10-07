@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import type { AndroidOperation } from "../domain/androidAnalysis.js";
+import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 
 const count = z.number().int().nonnegative();
 export const jadxLoadSchema = z.object({

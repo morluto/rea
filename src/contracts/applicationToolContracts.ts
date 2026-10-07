@@ -19,7 +19,7 @@ import {
 import {
   androidApplicationProjectionInputSchema,
   androidApplicationProjectionResultSchema,
-} from "../domain/androidApplication.js";
+} from "../domain/android/androidApplication.js";
 import {
   appleApplicationProjectionInputSchema,
   appleApplicationProjectionResultSchema,

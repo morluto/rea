@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { AndroidAnalysisPort } from "../application/AndroidAnalysisPort.js";
+import type { AndroidAnalysisPort } from "../application/android/AndroidAnalysisPort.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -10,7 +10,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import type { AndroidRequest } from "../domain/androidAnalysis.js";
+import type { AndroidRequest } from "../domain/android/androidAnalysis.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import { err, ok } from "../domain/result.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";

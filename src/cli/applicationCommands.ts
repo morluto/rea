@@ -1,7 +1,7 @@
 import { reconstructionCoverageEvaluationInputSchema } from "../domain/reconstructionCoverageInput.js";
 import { Cli, z } from "incur";
 
-import { projectAndroidApplicationEvidence } from "../application/AndroidApplicationService.js";
+import { projectAndroidApplicationEvidence } from "../application/android/AndroidApplicationService.js";
 import { projectAppleApplicationEvidence } from "../application/AppleApplicationService.js";
 import {
   compareApplicationVersionsEvidenceValidated,
@@ -18,7 +18,7 @@ import { logCliCommand } from "../cliLogging.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { type AnalysisError } from "../domain/analysisErrorBase.js";
-import { androidApplicationProjectionInputSchema } from "../domain/androidApplication.js";
+import { androidApplicationProjectionInputSchema } from "../domain/android/androidApplication.js";
 import { appleApplicationProjectionInputSchema } from "../domain/appleApplication.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "../logger.js";

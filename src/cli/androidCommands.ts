@@ -1,10 +1,10 @@
 import { z } from "incur";
-import { AndroidAnalysisService } from "../application/AndroidAnalysisService.js";
+import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
 import { createAndroidAnalysisProvider } from "../composition/android.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import type { AndroidOperation } from "../domain/androidAnalysis.js";
+import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 import type { Logger } from "../logger.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";

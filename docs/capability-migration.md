@@ -207,3 +207,20 @@ All observation registrars resolve contracts by name. An isolated compiled-proce
 test reverses presentation arrays and performs actual MCP SDK calls to verify
 advertised schemas and handler meaning. Reordering metadata must not select a
 different operation, schema, provider or deep-provider priority.
+
+## Android layer and verification ownership
+
+Android workflows and their existing typed port live in `src/application/android/`,
+pure APK/inventory semantics in `src/domain/android/`, and the named inspection
+contracts in `src/contracts/android/`. The headless JADX producer remains in
+`src/android/`; `src/composition/android.ts` supplies its fresh factory to both
+caller adapters. Public names, result meaning and JVM/queue/cleanup limits are
+unchanged. Inventory-only application projection remains execution-free.
+
+The real lane and signal-cleanup helper belong to `scripts/verify/android/`; its
+explicit downloader and fixed manifest belong to `scripts/fixtures/android/`.
+`verify:android` and `fixtures:android` keep their command names and repository-root
+`_reference/apk-integration/` fixture default. Synthetic producer fixtures stay in
+`tests/fixtures/android/`, with matching boundary and composition ownership. Real
+JADX CLI/MCP parity requires the fixed APK and existing audited JAR; synthetic
+protocol/cancellation success does not establish that engine or an unverified host.

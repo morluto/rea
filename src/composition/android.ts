@@ -1,4 +1,4 @@
-import type { AndroidAnalysisPort } from "../application/AndroidAnalysisPort.js";
+import type { AndroidAnalysisPort } from "../application/android/AndroidAnalysisPort.js";
 import type { JadxLauncher } from "../android/JadxMcpTransport.js";
 import { JadxProvider } from "../android/JadxProvider.js";
 

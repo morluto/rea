@@ -6,18 +6,18 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { parseEvidence } from "../dist/domain/evidence.js";
-import { hashAndroidFile } from "../dist/android/AndroidTargetSnapshot.js";
-import { JADX_RELEASE } from "../dist/android/JadxRelease.js";
-import fixture from "./fixtures/android-apidemos.json" with { type: "json" };
-import { verifyAndroidCliCancellation } from "./lib/android-cli-cancellation.mjs";
+import { parseEvidence } from "../../../dist/domain/evidence.js";
+import { hashAndroidFile } from "../../../dist/android/AndroidTargetSnapshot.js";
+import { JADX_RELEASE } from "../../../dist/android/JadxRelease.js";
+import fixture from "../../fixtures/android/apidemos.json" with { type: "json" };
+import { verifyAndroidCliCancellation } from "./cli-cancellation.mjs";
 
-const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const apk = process.env.REA_ANDROID_TEST_APK;
 const jar = process.env.REA_JADX_MCP_JAR;
 if (apk === undefined || jar === undefined)
   throw new Error(
-    "verify:android requires REA_ANDROID_TEST_APK and REA_JADX_MCP_JAR. Run node scripts/fetch-android-fixtures.mjs and select the downloaded files; see docs/android-analysis.md.",
+    "verify:android requires REA_ANDROID_TEST_APK and REA_JADX_MCP_JAR. Run npm run fixtures:android and select the downloaded files; see docs/android-analysis.md.",
   );
 await access(apk);
 await access(jar);

@@ -4,7 +4,7 @@ import {
   parseJadxJson,
   normalizeJadxText,
 } from "../../../src/android/JadxProtocol.js";
-import { androidInputSchemas } from "../../../src/domain/androidAnalysis.js";
+import { androidInputSchemas } from "../../../src/domain/android/androidAnalysis.js";
 
 it("validates provider text envelopes and rejects unsupported content rather than dropping it", () => {
   expect(

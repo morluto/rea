@@ -1,18 +1,18 @@
 import type { AndroidAnalysisPort } from "./AndroidAnalysisPort.js";
-import type { ExecutionOptions } from "./AnalysisProvider.js";
-import { parseBinaryTarget } from "./BinaryTargetResolver.js";
+import type { ExecutionOptions } from "../AnalysisProvider.js";
+import { parseBinaryTarget } from "../BinaryTargetResolver.js";
 import {
   androidRequestSchema,
   type AndroidOperation,
-} from "../domain/androidAnalysis.js";
+} from "../../domain/android/androidAnalysis.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
-} from "../domain/analysisErrorCore.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { createEvidence, type Evidence } from "../domain/evidence.js";
-import { jsonObjectSchema } from "../domain/jsonValue.js";
-import { err, ok, type Result } from "../domain/result.js";
+} from "../../domain/analysisErrorCore.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import { jsonObjectSchema } from "../../domain/jsonValue.js";
+import { err, ok, type Result } from "../../domain/result.js";
 
 /** Shared CLI/MCP admission, execution and Evidence composition for Android. */
 export class AndroidAnalysisService {

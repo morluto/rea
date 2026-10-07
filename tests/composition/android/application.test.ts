@@ -15,9 +15,9 @@ import {
   requireSuccessfulProjection,
 } from "../../support/applicationSessionFixture.js";
 
-import { projectAndroidApplicationEvidence } from "../../../src/application/AndroidApplicationService.js";
+import { projectAndroidApplicationEvidence } from "../../../src/application/android/AndroidApplicationService.js";
 import { runProviderAnalysis } from "../../../src/application/DirectAnalysis.js";
-import { androidApplicationProjectionResultSchema } from "../../../src/domain/androidApplication.js";
+import { androidApplicationProjectionResultSchema } from "../../../src/domain/android/androidApplication.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 
 describe("Android application projection", () => {

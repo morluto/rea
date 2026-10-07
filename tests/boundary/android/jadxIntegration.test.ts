@@ -1,9 +1,9 @@
 import { expect, it as test } from "vitest";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
-import { AndroidAnalysisService } from "../../../src/application/AndroidAnalysisService.js";
+import { AndroidAnalysisService } from "../../../src/application/android/AndroidAnalysisService.js";
 import { JadxProvider } from "../../../src/android/JadxProvider.js";
-import { androidResultSchemas } from "../../../src/domain/androidAnalysis.js";
+import { androidResultSchemas } from "../../../src/domain/android/androidAnalysis.js";
 import {
   createJadxProtocolFixture as setup,
   verifyJadxFixtureCleanup as verifyCleanup,

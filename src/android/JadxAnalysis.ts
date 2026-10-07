@@ -1,6 +1,6 @@
 import type { z } from "zod";
-import type { AndroidRequest } from "../domain/androidAnalysis.js";
-import { androidResultSchemas } from "../domain/androidAnalysis.js";
+import type { AndroidRequest } from "../domain/android/androidAnalysis.js";
+import { androidResultSchemas } from "../domain/android/androidAnalysis.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,

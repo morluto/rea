@@ -45,7 +45,7 @@ const SOURCE_PATHS = {
   managedContracts: "dist/contracts/managedToolContracts.js",
   firmwareContracts: "dist/contracts/firmwareToolContracts.js",
   firmwareProvider: "dist/firmware/FirmwareRelease.js",
-  androidContracts: "dist/contracts/androidToolContracts.js",
+  androidContracts: "dist/contracts/android/androidToolContracts.js",
   androidProvider: "dist/android/JadxRelease.js",
   managedWorkflowContracts: "dist/contracts/managedWorkflowToolContracts.js",
   browserContracts: "dist/contracts/browserToolContracts.js",

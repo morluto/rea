@@ -2,7 +2,7 @@ import { access, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, onTestFinished } from "vitest";
-import { AndroidAnalysisService } from "../../../src/application/AndroidAnalysisService.js";
+import { AndroidAnalysisService } from "../../../src/application/android/AndroidAnalysisService.js";
 import { createAndroidAnalysisProvider } from "../../../src/composition/android.js";
 import {
   ProviderProcessSupervisor,

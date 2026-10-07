@@ -3,10 +3,10 @@ import { createHash } from "node:crypto";
 import canonicalize from "canonicalize";
 import { z } from "zod";
 
-import { parseArtifactInventoryEvidence } from "./artifactInventoryEvidence.js";
-import { evidenceSchema } from "./evidence.js";
-import { digestSchema } from "./../domain/digests.js";
-import { prefixedDigestSchema } from "./../domain/digests.js";
+import { parseArtifactInventoryEvidence } from "../artifactInventoryEvidence.js";
+import { evidenceSchema } from "../evidence.js";
+import { digestSchema } from "../digests.js";
+import { prefixedDigestSchema } from "../digests.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const pathSchema = z.string().min(1);

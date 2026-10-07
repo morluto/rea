@@ -1,10 +1,10 @@
 import {
   androidInputSchemas,
   androidResultSchemas,
-} from "../domain/androidAnalysis.js";
-import type { ToolContract } from "./toolContractTypes.js";
-import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
-import { toolContractMetadata } from "./toolEffects.js";
+} from "../../domain/android/androidAnalysis.js";
+import type { ToolContract } from "../toolContractTypes.js";
+import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
+import { toolContractMetadata } from "../toolEffects.js";
 
 /** Static APK operations backed by a separately supplied headless engine. */
 export const ANDROID_TOOL_CONTRACTS = [

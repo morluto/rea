@@ -3,7 +3,7 @@ import {
   createAnalysisExecution,
   type AnalysisExecution,
 } from "../application/AnalysisProvider.js";
-import type { AndroidRequest } from "../domain/androidAnalysis.js";
+import type { AndroidRequest } from "../domain/android/androidAnalysis.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,

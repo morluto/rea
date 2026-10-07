@@ -3,7 +3,7 @@ import { chmod, copyFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
-import type { AndroidOperation } from "../domain/androidAnalysis.js";
+import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 
 /** Stream a local file digest without retaining the APK or JAR in memory. */
 export const hashAndroidFile = async (path: string): Promise<string> => {

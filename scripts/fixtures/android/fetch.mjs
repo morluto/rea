@@ -3,15 +3,17 @@ import { createReadStream } from "node:fs";
 import { link, mkdir, open, rm } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { JADX_RELEASE } from "../src/android/JadxRelease.ts";
-import fixture from "./fixtures/android-apidemos.json" with { type: "json" };
+import { JADX_RELEASE } from "../../../src/android/JadxRelease.ts";
+import fixture from "./apidemos.json" with { type: "json" };
 
 const args = process.argv.slice(2);
 if (args.length > 1)
-  throw new Error("Usage: node scripts/fetch-android-fixtures.mjs [DIRECTORY]");
+  throw new Error("Usage: npm run fixtures:android -- [DIRECTORY]");
 const directory = resolve(
   args[0] ??
-    fileURLToPath(new URL("../_reference/apk-integration/", import.meta.url)),
+    fileURLToPath(
+      new URL("../../../_reference/apk-integration/", import.meta.url),
+    ),
 );
 await mkdir(directory, { recursive: true });
 const hashFile = async (path) => {

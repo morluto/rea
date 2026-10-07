@@ -193,6 +193,14 @@ See [Android analysis](android-analysis.md) for boundaries and resource budgets.
 Authenticated IPA inventory projection is documented in
 [Apple application analysis](apple-application-analysis.md).
 
+The lane and owned-process cancellation helper live in `scripts/verify/android/`.
+The explicit downloader and fixed manifest live in `scripts/fixtures/android/`;
+their default remains repository-root `_reference/apk-integration/`. Producer
+fixtures live in `tests/fixtures/android/`, boundary cases in
+`tests/boundary/android/`, and inventory projection composition cases in
+`tests/composition/android/`. Real engine success and synthetic protocol success
+are separate proof levels.
+
 Synthetic producer regressions run independently:
 
 ```sh

@@ -1,7 +1,7 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it as test, onTestFinished } from "vitest";
 import { access } from "node:fs/promises";
-import { ANDROID_TOOL_CONTRACTS } from "../../../src/contracts/androidToolContracts.js";
+import { ANDROID_TOOL_CONTRACTS } from "../../../src/contracts/android/androidToolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";

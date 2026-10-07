@@ -29,8 +29,8 @@ import { FirmwareAnalysisService } from "../application/FirmwareAnalysisService.
 import type { FirmwareAnalysisPort } from "../application/FirmwareAnalysisPort.js";
 import { createFirmwareAnalysisProvider } from "../composition/firmware.js";
 import { registerAndroidTools } from "./registerAndroidTools.js";
-import { AndroidAnalysisService } from "../application/AndroidAnalysisService.js";
-import type { AndroidAnalysisPort } from "../application/AndroidAnalysisPort.js";
+import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
+import type { AndroidAnalysisPort } from "../application/android/AndroidAnalysisPort.js";
 import { createAndroidAnalysisProvider } from "../composition/android.js";
 import { registerManagedWorkflowTools } from "./registerManagedWorkflowTools.js";
 import { registerNativeTools } from "./registerNativeTools.js";

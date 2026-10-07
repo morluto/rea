@@ -2,7 +2,7 @@ import { access, realpath, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
-import type { AndroidOperation } from "../domain/androidAnalysis.js";
+import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 import { JADX_JAR_CONFIGURATION_REMEDIATION } from "./JadxRelease.js";
 
 /** Caller-supplied tools, resolved only when an Android operation is selected. */

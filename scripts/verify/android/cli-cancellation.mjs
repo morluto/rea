@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import {
   cleanupOwnedProcessGroup,
   readProcessRunId,
-} from "../../dist/process/ProcessOwnership.js";
+} from "../../../dist/process/ProcessOwnership.js";
 
 /** Exercise a real CLI signal while the owned Java engine is still running. */
 export const verifyAndroidCliCancellation = async ({
