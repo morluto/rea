@@ -231,12 +231,9 @@ describe("Ghidra headless launcher", () => {
     expect(launched.ok).toBe(true);
     if (!launched.ok) return;
     const capturePath = join(runtimeRoot, "launch-capture.json");
-    const capture = await vi.waitFor(
-      async () =>
-        launchCaptureSchema.parse(
-          JSON.parse(await readFile(capturePath, "utf8")),
-        ),
-      { timeout: 10_000 },
+    await vi.waitFor(() => access(`${capturePath}.ready`), { timeout: 10_000 });
+    const capture = launchCaptureSchema.parse(
+      JSON.parse(await readFile(capturePath, "utf8")),
     );
     const encodedArguments = JSON.stringify(capture.arguments);
     const encodedEnvironment = JSON.stringify(capture.environment);

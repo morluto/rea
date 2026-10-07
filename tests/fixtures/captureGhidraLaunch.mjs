@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFile, rename, stat, writeFile } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 const arguments_ = process.argv.slice(2);
@@ -10,7 +10,7 @@ const descriptor = JSON.parse(await readFile(descriptorPath, "utf8"));
 const runtimeRoot = dirname(descriptorPath);
 const capturePath = join(runtimeRoot, "launch-capture.json");
 await writeFile(
-  `${capturePath}.pending`,
+  capturePath,
   `${JSON.stringify({
     arguments: arguments_,
     environment: {
@@ -39,5 +39,7 @@ await writeFile(
   })}\n`,
   { mode: 0o600 },
 );
-await rename(`${capturePath}.pending`, capturePath);
+// A Windows private runtime retains directory handles that restrict renames.
+// Publish readiness only after writeFile has closed the complete JSON capture.
+await writeFile(`${capturePath}.ready`, "", { flag: "wx", mode: 0o600 });
 setInterval(() => undefined, 1_000);
