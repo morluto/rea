@@ -13,9 +13,9 @@ import {
   captureProcessScenarioFile,
   compareProcessEvidenceFiles,
   projectProcessCliError,
-} from "../../../src/application/ProcessCli.js";
+} from "../../../src/application/process/ProcessCli.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
-import { PROCESS_PROVIDER } from "../../../src/application/ProcessEvidence.js";
+import { PROCESS_PROVIDER } from "../../../src/application/process/ProcessEvidence.js";
 
 const roots: string[] = [];
 const execFileAsync = promisify(execFile);

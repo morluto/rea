@@ -56,7 +56,7 @@ it("does not require duplicate origin scope declarations", () => {
   const scenario = browserScenarioSchema.parse({
     browser: {
       mode: "launch",
-      executable_path: "chrome",
+      executable_path: "/opt/chromium/chrome",
     },
     start_url: { url: "https://app.example.test/" },
     actions: [

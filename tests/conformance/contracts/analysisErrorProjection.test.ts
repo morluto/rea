@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ProcessCaptureError } from "../../../src/application/ProcessCaptureError.js";
+import { ProcessCaptureError } from "../../../src/process/capture/ProcessCaptureError.js";
 import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
 import { ArtifactOperationError } from "../../../src/domain/artifactOperationError.js";
 import { EvidenceFileError } from "../../../src/domain/evidenceErrors.js";

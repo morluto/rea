@@ -6,8 +6,8 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   captureProcessScenario,
   probeProcessCaptureCapability,
-} from "../../../src/application/ProcessHarness.js";
-import { parseProcessScenario } from "../../../src/domain/processCapture.js";
+} from "../../../src/process/capture/ProcessHarness.js";
+import { parseProcessScenario } from "../../../src/domain/process/processCapture.js";
 
 it("captures one command's terminal output, selected files, and owned cleanup", async () => {
   const root = await createTestTempDirectory("rea-process-capture-");

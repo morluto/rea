@@ -13,7 +13,7 @@ import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
   compareProcessCaptures,
   parseProcessCapture,
-} from "../domain/processCapture.js";
+} from "../domain/process/processCapture.js";
 import type { RecordUnknownInput } from "../domain/residualUnknown.js";
 import { err } from "../domain/result.js";
 import { recordDerivedEvidence } from "./recordDerivedEvidence.js";

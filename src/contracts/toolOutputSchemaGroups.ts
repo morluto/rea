@@ -15,7 +15,7 @@ import { evidenceBundleSchema } from "../domain/evidenceBundle.js";
 import {
   processCaptureComparisonSchema,
   processCaptureSchema,
-} from "../domain/processCapture.js";
+} from "../domain/process/processCapture.js";
 import {
   functionInstructionWindowSchema,
   referenceKindSchema,

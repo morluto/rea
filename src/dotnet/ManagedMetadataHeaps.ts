@@ -253,10 +253,32 @@ export const metadataCodedToken = (
   raw: number,
   bits: number,
   tables: readonly (number | undefined)[],
+  rowCounts: readonly number[],
 ): string | null => {
   if (raw === 0) return null;
   const tag = raw & (2 ** bits - 1);
   const row = Math.floor(raw / 2 ** bits);
   const table = tables[tag];
-  return table === undefined || row === 0 ? null : metadataToken(table, row);
+  return table === undefined || row === 0 || row > (rowCounts[table] ?? 0)
+    ? null
+    : metadataToken(table, row);
+};
+
+/** Explain why a non-null coded index cannot name an admitted metadata row. */
+export const metadataCodedTokenInvalidReason = (
+  raw: number,
+  bits: number,
+  tables: readonly (number | undefined)[],
+  rowCounts: readonly number[],
+): string | null => {
+  if (raw === 0) return null;
+  const tag = raw & (2 ** bits - 1);
+  const row = Math.floor(raw / 2 ** bits);
+  const table = tables[tag];
+  if (table === undefined) return `coded index tag ${tag} is not defined`;
+  if (row === 0) return `coded index selects row zero in table ${table}`;
+  const count = rowCounts[table] ?? 0;
+  return row > count
+    ? `coded index selects row ${row} in table ${table}, which has ${count} rows`
+    : null;
 };

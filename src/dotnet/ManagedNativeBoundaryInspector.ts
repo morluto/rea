@@ -156,6 +156,7 @@ export const inspectManagedNativeBoundariesBytes = (
     });
   }
   const heapExtent = Math.max(layout.strings.size, layout.blob.size);
+  const issues = [...inventory.issues];
   const moduleRefs = parseModuleRefs(bytes, layout, heapExtent);
   const members = new Map([
     ...parseFields(bytes, layout, heapExtent),
@@ -167,6 +168,7 @@ export const inspectManagedNativeBoundariesBytes = (
     heapExtent,
     modules: moduleRefs,
     members,
+    issues,
   });
   const pinvokeTokens = new Set(
     imports
@@ -187,6 +189,6 @@ export const inspectManagedNativeBoundariesBytes = (
     imports,
     implementations,
     native: cliNative(pe),
-    issues: [],
+    issues,
   });
 };

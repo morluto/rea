@@ -4,6 +4,7 @@ import {
   decodeInstructions,
   parseExceptionRegions,
 } from "./ManagedMemberInstructionDecoder.js";
+import { validateExceptionRegionRanges } from "./ManagedExceptionRegionValidation.js";
 import { sha256Bytes } from "./ManagedMetadataHeaps.js";
 
 const bodyStatus = (
@@ -60,6 +61,19 @@ const readMethodBodyHeader = (
   };
 };
 
+const readExceptionRegions = (
+  bytes: Buffer,
+  sectionOffset: number,
+  methodEnd: number,
+  ilSize: number,
+  instructionOffsets: readonly number[],
+): ReturnType<typeof parseExceptionRegions> =>
+  validateExceptionRegionRanges(
+    parseExceptionRegions(bytes, sectionOffset, methodEnd),
+    ilSize,
+    instructionOffsets,
+  );
+
 /** Decode admitted managed CIL, retaining unavailable implementation metadata as partial. */
 export const methodBody = (
   bytes: Buffer,
@@ -82,7 +96,13 @@ export const methodBody = (
     );
   try {
     const offset = pe.rvaToOffset(rva, 1, "method.body");
+    const methodExtent = pe.rvaAvailableBytes(rva, "method.body");
     const header = readMethodBodyHeader(bytes, offset);
+    if (
+      header.size > methodExtent ||
+      header.ilSize > methodExtent - header.size
+    )
+      throw new RangeError("Method body leaves file-backed PE section data");
     const ilOffset = offset + header.size;
     if (ilOffset > bytes.length - header.ilSize)
       throw new RangeError("Method IL bytes leave artifact");
@@ -114,7 +134,13 @@ export const methodBody = (
     const sectionOffset = (methodEnd + 3) & ~3;
     const exceptionRegions =
       header.format === "fat" && (header.flags & 8) !== 0
-        ? parseExceptionRegions(bytes, sectionOffset, bytes.length)
+        ? readExceptionRegions(
+            bytes,
+            sectionOffset,
+            offset + methodExtent,
+            header.ilSize,
+            decoded.instructionStarts,
+          )
         : null;
     const status = bodyStatus(
       decoded.issue,

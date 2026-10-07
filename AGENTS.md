@@ -25,6 +25,7 @@ REA is a layered ESM TypeScript application. Dependencies flow inward from pure 
 - `src/process/` owns shared process lifecycle primitives, not provider wire protocols. `bridge/` contains provider-side adapters.
 - `tests/` contains unit, composition, boundary, acceptance, and conformance tests. `scripts/verify-*` and capability directories under `scripts/verify/` contain real-toolchain checks.
 - `docs/product-catalog.json` is generated. Update its source contracts and regenerate it; do not edit it directly.
+- `src/generatedMcpToolCatalog.ts` is build-generated and gitignored. Never commit it; resolve any trace of it in merges by deleting it and running `npm run build:cached`.
 
 ## Build, Test, and Development Commands
 
