@@ -99,6 +99,8 @@ export type ProviderProcessDiagnostic =
 
 /** Options for process lifecycle diagnostics. */
 export interface ProviderProcessSupervisorOptions {
+  /** Retain stdout for diagnostics; disable when it carries a parsed protocol. Defaults to true. */
+  readonly captureStdout?: boolean;
   readonly onDiagnostic?: (event: ProviderProcessDiagnostic) => void;
 }
 
@@ -235,7 +237,8 @@ export class ProviderProcessSupervisor {
     options: ProviderProcessSupervisorOptions = {},
   ) {
     this.#options = options;
-    this.#attach(launch.process.stdout, "stdout");
+    if (options.captureStdout !== false)
+      this.#attach(launch.process.stdout, "stdout");
     this.#attach(launch.process.stderr, "stderr");
     launch.process.once("exit", this.#onExit);
     launch.process.once("close", this.#onClose);
