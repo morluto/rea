@@ -23,6 +23,7 @@ import { registerElectronCommands } from "./cli/electronCommands.js";
 import { registerJavaScriptRuntimeObservationCommands } from "./cliJavaScriptRuntimeCommands.js";
 import { registerApplicationCommands } from "./cli/applicationCommands.js";
 import type { CliInstance } from "./cli/types.js";
+import type { CliResultOutput } from "./cli/streamedJsonOutput.js";
 
 /**
  * Build the one-shot Incur CLI without starting Hopper at import time.
@@ -31,6 +32,7 @@ import type { CliInstance } from "./cli/types.js";
  */
 export const createCli = (
   environment: Readonly<Record<string, string | undefined>> = process.env,
+  resultOutput?: CliResultOutput,
 ): CliInstance => {
   const logger = createLogger(
     "cli",
@@ -50,7 +52,7 @@ export const createCli = (
   });
 
   registerSetupCommands(cli, logger);
-  registerCoreAnalysisCommands(cli, logger);
+  registerCoreAnalysisCommands(cli, logger, resultOutput);
   registerUtilityCommands(cli, logger, environment);
   registerArtifactCommands(cli, logger);
   registerManagedCommands(cli, logger);
@@ -66,7 +68,7 @@ export const createCli = (
   registerJavaScriptRecoveryCommands(cli, logger, environment);
   registerAdvancedBrowserCommands(cli, logger);
   registerBrowserScenarioCommands(cli, logger);
-  registerElectronCommands(cli, logger);
+  registerElectronCommands(cli, logger, resultOutput);
   registerJavaScriptRuntimeObservationCommands(cli, logger);
   registerApplicationCommands(cli, logger);
   return cli;
