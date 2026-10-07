@@ -1,10 +1,11 @@
-import { chmod, mkdir, realpath, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { build } from "plist";
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import { execFileOutput } from "../../../../src/process/ExecFileOutput.js";
 import { ArtifactReaderFailure } from "../../../../src/artifacts/ArtifactReader.js";
 import {
   NativeDmgArtifactReader,
@@ -159,6 +160,20 @@ describe("native DMG command failure diagnostics", () => {
       reason: "io",
       message: expect.stringContaining("Input/output error"),
     });
+
+    await expect(
+      NativeDmgArtifactReader.create("/tmp/image.dmg", undefined, {
+        run: () =>
+          Promise.resolve({
+            stdout: "checksum output",
+            stderr: "hdiutil: verify failed - image data corrupted\n",
+            exitCode: 1,
+          }),
+      }),
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      message: expect.stringContaining("image data corrupted"),
+    });
   });
 
   it("distinguishes child launch and host permission failures", async () => {
@@ -192,7 +207,9 @@ describe("native DMG command failure diagnostics", () => {
       message: expect.stringContaining('"code":"EACCES"'),
     });
   });
+});
 
+describe("native DMG real verification diagnostics", () => {
   it.skipIf(process.platform !== "darwin")(
     "classifies a real hdiutil verify refusal as a format failure with captured output",
     async () => {
@@ -248,6 +265,67 @@ describe("native DMG command failure diagnostics", () => {
         await chmod(unreadablePath, 0o600);
       }
     },
+  );
+
+  it.skipIf(process.platform !== "darwin")(
+    "classifies a checksum mismatch in an hdiutil-created DMG as an integrity failure",
+    async () => {
+      const root = await createTestTempDirectory(
+        "rea-dmg-checksum-corruption-",
+      );
+      const source = join(root, "source");
+      await mkdir(source);
+      await writeFile(join(source, "payload.bin"), Buffer.alloc(65_536, 0x5a));
+      const imagePath = join(root, "fixture.dmg");
+      await execFileOutput("/usr/bin/hdiutil", [
+        "create",
+        "-quiet",
+        "-srcfolder",
+        source,
+        "-volname",
+        "Fixture",
+        "-format",
+        "UDRO",
+        imagePath,
+      ]);
+      const valid = await execFileOutput("/usr/bin/hdiutil", [
+        "verify",
+        imagePath,
+      ]);
+      expect(valid.stderr).toContain("is VALID");
+
+      const image = await readFile(imagePath);
+      const footer = image.subarray(-512);
+      expect(footer.subarray(0, 4).toString("ascii")).toBe("koly");
+      const dataForkOffset = Number(footer.readBigUInt64BE(24));
+      const dataForkLength = Number(footer.readBigUInt64BE(32));
+      expect(dataForkLength).toBeGreaterThan(4096);
+      const corruptionOffset = dataForkOffset + 4096;
+      expect(corruptionOffset).toBeLessThan(dataForkOffset + dataForkLength);
+      const originalByte = image[corruptionOffset];
+      if (originalByte === undefined)
+        throw new Error("expected a byte in the generated image data fork");
+      image[corruptionOffset] = originalByte ^ 0x01;
+      await writeFile(imagePath, image);
+
+      const failure = await NativeDmgArtifactReader.create(imagePath).catch(
+        (cause: unknown) => cause,
+      );
+      expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+      if (!(failure instanceof ArtifactReaderFailure)) return;
+      expect(failure.reason).toBe("integrity");
+      expect(failure.message).toContain('"command":"/usr/bin/hdiutil"');
+      expect(failure.message).toContain('"arguments":["verify"');
+      expect(failure.message).toContain('"exitCode":1');
+      expect(failure.message).toContain("calculated CRC32");
+      expect(failure.message).toContain("expected   CRC32");
+      expect(failure.message).toContain("verify failed - invalid checksum");
+      expect(failure.cause).toBeInstanceOf(Error);
+      if (!(failure.cause instanceof Error)) return;
+      expect(Reflect.get(failure.cause, "code")).toBe(1);
+      expect(Reflect.get(failure.cause, "stderr")).toContain("is INVALID");
+    },
+    60_000,
   );
 });
 

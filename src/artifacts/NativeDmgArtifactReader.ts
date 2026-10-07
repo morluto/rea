@@ -359,21 +359,8 @@ const commandFailureReason = (
   if (typeof cause !== "object" || cause === null) return "unavailable";
   const code = Reflect.get(cause, "code");
   const exitCode = Reflect.get(cause, "exitCode");
-  if (typeof code === "number" || typeof exitCode === "number") {
-    if (operation !== "verify") return "unavailable";
-    const diagnostic = verifyFailureDiagnostic(
-      processOutput(cause, "stdout"),
-      processOutput(cause, "stderr"),
-    );
-    if (diagnostic === "image not recognized") return "format";
-    if (
-      diagnostic === "No such file or directory" ||
-      diagnostic === "Permission denied" ||
-      diagnostic === "Input/output error"
-    )
-      return "io";
-    return "unavailable";
-  }
+  if (typeof code === "number" || typeof exitCode === "number")
+    return operation === "verify" ? verifyFailureReason(cause) : "unavailable";
   if (code === "ENOENT") {
     const syscall = Reflect.get(cause, "syscall");
     return typeof syscall === "string" && syscall.startsWith("spawn")
@@ -393,6 +380,28 @@ const commandFailureReason = (
   )
     return "io";
   return "unavailable";
+};
+
+const verifyFailureReason = (
+  cause: unknown,
+): ArtifactReaderFailure["reason"] => {
+  const diagnostic = verifyFailureDiagnostic(
+    processOutput(cause, "stdout"),
+    processOutput(cause, "stderr"),
+  );
+  switch (diagnostic) {
+    case "image not recognized":
+      return "format";
+    case "invalid checksum":
+    case "image data corrupted":
+      return "integrity";
+    case "No such file or directory":
+    case "Permission denied":
+    case "Input/output error":
+      return "io";
+    default:
+      return "unavailable";
+  }
 };
 
 const verifyFailureDiagnostic = (
