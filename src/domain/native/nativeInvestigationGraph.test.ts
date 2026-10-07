@@ -8,7 +8,7 @@ import {
 import {
   buildInterfaceBuilderAnalysis,
   interfaceBuilderLimitsSchema,
-} from "./apple/interfaceBuilderGraph.js";
+} from "../apple/interfaceBuilderGraph.js";
 
 const evidence = [
   {

@@ -4,7 +4,7 @@ import {
   type NativeLoadImage,
   type NativeLoadImageCheck,
   type NativeLoadImageObservation,
-} from "../domain/nativeLoadImage.js";
+} from "../domain/native/nativeLoadImage.js";
 import { parseDosMzHeader, type DosMzHeader } from "../domain/dosMz.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { validateDosComLength } from "../domain/dosCom.js";

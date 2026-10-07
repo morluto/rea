@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { inspectMachoSchema } from "../../../../src/domain/nativeInspection.js";
+import { inspectMachoSchema } from "../../../../src/domain/native/nativeInspection.js";
 import { err } from "../../../../src/domain/result.js";
 import { NativeCommandFailure } from "../../../../src/native/CommandRunner.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";

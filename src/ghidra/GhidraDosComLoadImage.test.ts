@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { attestGhidraDosComLoadImage } from "./GhidraLoadImageValues.js";
 import { fixtureDosComLoadImage } from "./GhidraLoadImage.fixture.js";
-import type { NativeLoadImageObservation } from "../domain/nativeLoadImage.js";
+import type { NativeLoadImageObservation } from "../domain/native/nativeLoadImage.js";
 
 const mutations: ReadonlyArray<
   readonly [string, (o: NativeLoadImageObservation) => void]

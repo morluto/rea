@@ -7,7 +7,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 import { parseEvidence } from "../../dist/domain/evidence.js";
 import { analysisProfileSchema } from "../../dist/domain/analysisProfile.js";
-import { nativeValueTraceSchema } from "../../dist/domain/nativeValueTrace.js";
+import { nativeValueTraceSchema } from "../../dist/domain/native/nativeValueTrace.js";
 
 const defaultEntrypoint = fileURLToPath(new URL("../rea.mjs", import.meta.url));
 const environment = () => ({

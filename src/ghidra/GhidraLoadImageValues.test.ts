@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { attestGhidraDosLoadImage } from "./GhidraLoadImageValues.js";
 import { fixtureDosLoadImage } from "./GhidraLoadImage.fixture.js";
-import { nativeLoadImageObservationSchema } from "../domain/nativeLoadImage.js";
-import type { NativeLoadImageObservation } from "../domain/nativeLoadImage.js";
+import { nativeLoadImageObservationSchema } from "../domain/native/nativeLoadImage.js";
+import type { NativeLoadImageObservation } from "../domain/native/nativeLoadImage.js";
 
 const damage: ReadonlyArray<
   readonly [string, (observation: NativeLoadImageObservation) => void]

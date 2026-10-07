@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { nativeFunctionAnnotationsInputSchema } from "../domain/nativeFunctionAnnotations.js";
+import { nativeFunctionAnnotationsInputSchema } from "../domain/native/nativeFunctionAnnotations.js";
 
 import {
   officialOutputSchemas,
@@ -14,8 +14,8 @@ import {
 } from "./toolContractHelpers.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import { toolContractMetadata } from "./toolEffects.js";
-import { nativeDataTypeInputSchema } from "../domain/nativeDataType.js";
-import { nativeInstructionInputSchema } from "../domain/nativeInstruction.js";
+import { nativeDataTypeInputSchema } from "../domain/native/nativeDataType.js";
+import { nativeInstructionInputSchema } from "../domain/native/nativeInstruction.js";
 import { functionInstructionInputSchema } from "./functionInstructionContract.js";
 import { HOPPER_MEMORY_TOOL_DEFINITIONS } from "./hopperMemoryContracts.js";
 import { analysisSearchInput } from "./analysisSearchContract.js";

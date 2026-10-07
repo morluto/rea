@@ -3,7 +3,7 @@ import type {
   ManagedMemberInspection,
   ManagedNativeBoundaryInspection,
 } from "../../domain/managed/managedArtifact.js";
-import type { InspectMacho } from "../../domain/nativeInspection.js";
+import type { InspectMacho } from "../../domain/native/nativeInspection.js";
 
 const MANAGED_STATIC_EXAMPLE_PROVIDER = {
   id: "rea-dotnet-static",

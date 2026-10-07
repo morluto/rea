@@ -3,12 +3,12 @@ import { traceNativeValues } from "./NativeValueTrace.js";
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
-} from "./AnalysisProvider.js";
-import { ghidraFunctionDossier } from "../domain/ghidraValues.fixture.js";
-import { functionDossierSchema } from "../domain/hopperValues.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { ok, err } from "../domain/result.js";
+} from "../AnalysisProvider.js";
+import { ghidraFunctionDossier } from "../../domain/ghidraValues.fixture.js";
+import { functionDossierSchema } from "../../domain/hopperValues.js";
+import { jsonValueSchema } from "../../domain/jsonValue.js";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { ok, err } from "../../domain/result.js";
 
 const subject = {
   path: "/fixture",
