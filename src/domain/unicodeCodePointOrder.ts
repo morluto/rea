@@ -3,12 +3,16 @@ export const compareUnicodeCodePoints = (
   left: string,
   right: string,
 ): number => {
-  const leftPoints = [...left].map((value) => value.codePointAt(0) ?? 0);
-  const rightPoints = [...right].map((value) => value.codePointAt(0) ?? 0);
-  const length = Math.min(leftPoints.length, rightPoints.length);
-  for (let index = 0; index < length; index += 1) {
-    const difference = (leftPoints[index] ?? 0) - (rightPoints[index] ?? 0);
+  let leftIndex = 0;
+  let rightIndex = 0;
+  while (leftIndex < left.length && rightIndex < right.length) {
+    const leftPoint = left.codePointAt(leftIndex) ?? 0;
+    const rightPoint = right.codePointAt(rightIndex) ?? 0;
+    const difference = leftPoint - rightPoint;
     if (difference !== 0) return difference;
+    leftIndex += leftPoint > 0xffff ? 2 : 1;
+    rightIndex += rightPoint > 0xffff ? 2 : 1;
   }
-  return leftPoints.length - rightPoints.length;
+  if (leftIndex === left.length && rightIndex === right.length) return 0;
+  return leftIndex === left.length ? -1 : 1;
 };

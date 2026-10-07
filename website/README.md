@@ -1,9 +1,16 @@
 # REA website
 
+> A good website is like a good paper: easy to follow, clear and concise, with a clean, refined presentation.
+>
+> — N0zoM1z0
+
 An English static website with explanatory figures, worked guides and DX-Ball, Notion and TH04 investigations.
 The public files are in `website/public/`. The site uses HTML, CSS and a small
 script for copying code and following the assembly-to-C comparison. Python
 packages the downloadable example; there is no frontend bundler or npm dependency.
+
+[style-guide.md](style-guide.md) explains the writing, page structure, figures,
+visual system and review process. Read it before adding or revising a page.
 
 ## Local preview
 
@@ -78,7 +85,8 @@ code; the scoped lint override admits `require` only in that example directory.
 
 The Notion case follows the same HTML figure style. Its short excerpts explain
 the packaged clipboard bridge; separate web-cache probes illustrate the rich
-clipboard and Markdown formats. Only selected source details and generic
+clipboard format, with Markdown tables available as an additional example in
+collapsed details. Only selected source details and generic
 example data belong on the site. Machine paths, account identifiers, local
 configuration, complete vendor bundles and raw captured results stay outside
 the website.
