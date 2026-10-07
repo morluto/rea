@@ -92,10 +92,11 @@ export const collectSemanticModuleLink = (
   else if (t.isAssignmentExpression(node)) collectCommonJsExport(node, state);
 };
 
-/** Collect bounded lexical identifier references after definitions exist. */
+/** Collect lexical references after definitions exist, optionally for one name. */
 export const collectSemanticReferences = (
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
+  name?: string,
 ): JavaScriptSemanticReference[] => {
   const output: JavaScriptSemanticReference[] = [];
   const seen = new Set<string>();
@@ -104,6 +105,7 @@ export const collectSemanticReferences = (
       if (
         !t.isIdentifier(node) ||
         parent === null ||
+        (name !== undefined && node.name !== name) ||
         isNonReferenceKey(node, parent)
       )
         return;

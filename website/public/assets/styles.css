@@ -707,6 +707,209 @@ pre code {
 .small-heading {
   margin-top: 1.8rem;
 }
+.agent-terminal {
+  margin-block: 1.5rem;
+  overflow: hidden;
+  border: 1px solid #303d4a;
+  border-radius: 6px;
+  background: #202933;
+  color: #f1f4f8;
+}
+.terminal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.65rem 1rem;
+  border-bottom: 1px solid #384551;
+  color: #bdc8d4;
+  font-size: 0.8rem;
+}
+.terminal-title {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+.terminal-dots {
+  display: flex;
+  gap: 4px;
+}
+.terminal-dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #81909e;
+}
+.agent-terminal .copy-button {
+  color: #d6dee7;
+}
+.agent-terminal .copy-button:hover {
+  background: #384551;
+  color: white;
+}
+.agent-terminal .terminal-prompt {
+  margin: 0;
+  padding: 1.4rem;
+  color: #f1f4f8;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.9rem;
+  line-height: 1.9;
+}
+.prompt-symbol {
+  color: #9bbfe5;
+  margin-right: 0.65rem;
+}
+.terminal-cursor {
+  display: inline-block;
+  width: 0.5em;
+  height: 1em;
+  margin-left: 0.4em;
+  vertical-align: -0.12em;
+  background: #9bbfe5;
+}
+.agent-terminal.is-visible .terminal-cursor {
+  animation: terminal-blink 1s step-end 6;
+}
+@keyframes terminal-blink {
+  50% {
+    opacity: 0;
+  }
+}
+.workflow-figure {
+  margin: 1.7rem 0;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 1.4rem;
+  background: #fafbfc;
+}
+.figure-title {
+  margin: 0 0 1.3rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+.flow-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1.9rem;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.flow-steps li {
+  position: relative;
+  margin: 0;
+  min-width: 0;
+}
+.flow-steps li:not(:last-child)::after {
+  content: "→";
+  position: absolute;
+  right: -1.4rem;
+  top: 2.1rem;
+  color: #8191a2;
+}
+.flow-label {
+  display: block;
+  margin-bottom: 0.65rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.flow-node {
+  display: block;
+  padding: 0.8rem;
+  background: white;
+  border: 1px solid #ced9e5;
+  border-radius: 4px;
+  color: var(--accent);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  font-weight: 500;
+}
+.flow-note {
+  display: block;
+  margin-top: 0.65rem;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.flow-result {
+  margin: 1.3rem 0 0;
+  padding: 0.9rem 1rem;
+  border-left: 2px solid var(--accent);
+  background: #edf2f8;
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+.workflow-figure figcaption {
+  margin-top: 1rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.guide-index {
+  padding-bottom: 3rem;
+}
+.guide-entry {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: 2.5rem;
+  padding-block: 2.5rem;
+  border-top: 1px solid var(--line);
+}
+.guide-entry .eyebrow {
+  margin: 0;
+}
+.guide-entry h2 {
+  font-size: 1.75rem;
+}
+.guide-entry p {
+  max-width: 660px;
+  color: var(--muted);
+}
+.guide-route {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 1.25rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.guide-route span {
+  padding: 0.2rem 0.55rem;
+  background: var(--soft);
+  border-radius: 3px;
+  color: #414b55;
+}
+.example-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem 1.25rem;
+  padding: 0;
+  list-style: none;
+  font-size: 0.9rem;
+}
+.example-files li + li {
+  margin: 0;
+}
+.example-app {
+  max-width: 720px;
+  padding-block: 3.5rem;
+}
+.example-app h1 {
+  font-size: 3rem;
+}
+.example-notes {
+  padding: 0;
+  list-style: none;
+  margin-block: 2rem;
+}
+.example-notes li {
+  padding-block: 0.8rem;
+  border-bottom: 1px solid var(--line);
+}
+.example-status {
+  margin-block: 1.5rem 1rem;
+}
 .sr-only {
   position: absolute;
   width: 1px;
@@ -736,6 +939,17 @@ pre code {
   .code-comparison,
   .rea-query-pair {
     grid-template-columns: 1fr;
+  }
+  .flow-steps {
+    grid-template-columns: 1fr;
+    gap: 2rem;
+  }
+  .flow-steps li:not(:last-child)::after {
+    content: "↓";
+    top: auto;
+    bottom: -1.7rem;
+    right: auto;
+    left: 0.85rem;
   }
 }
 
@@ -827,6 +1041,13 @@ pre code {
     grid-template-columns: 1fr;
     gap: 0.25rem;
   }
+  .guide-entry {
+    grid-template-columns: 1fr;
+    gap: 0.7rem;
+  }
+  .workflow-figure {
+    padding: 1rem;
+  }
   .step-selector {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -836,6 +1057,12 @@ pre code {
   .code-inline {
     align-items: flex-start;
     padding: 0.9rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-terminal.is-visible .terminal-cursor {
+    animation: none;
   }
 }
 

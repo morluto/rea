@@ -658,3 +658,52 @@ describe("source-map original artifact language metadata", () => {
     }
   });
 });
+
+describe("deep source-map original syntax", () => {
+  it("retains valid source maps and native/CommonJS evidence after a parser-admitted deep property chain", async () => {
+    const source = `const value = root${".next".repeat(12_000)};\nimport "./last.js";\nrequire("./common.js");\nfunction local(require) { require("./shadowed.js"); }`;
+    const text = JSON.stringify({
+      version: 3,
+      names: [],
+      sources: ["../src/main.js"],
+      sourcesContent: [source],
+      mappings: "AAAA",
+    });
+    const result = await fetchWebSourceMaps([request], input(), undefined, {
+      fetch: async () => new Response(text),
+    });
+    expect(result).toMatchObject({
+      status: "included",
+      items: [
+        {
+          status: "included",
+          limitation: null,
+          artifact: { text },
+          original_sources: [{ artifact: { text: source } }],
+          original_module_edges: [
+            {
+              from_source: `${origin}/src/main.js`,
+              kind: "static_import",
+              specifier: "./last.js",
+              resolved_source: `${origin}/src/last.js`,
+            },
+            {
+              from_source: `${origin}/src/main.js`,
+              kind: "require",
+              specifier: "./common.js",
+              resolved_source: `${origin}/src/common.js`,
+            },
+          ],
+          mappings: [
+            {
+              generated_line: 1,
+              generated_column: 0,
+              original_line: 1,
+              original_column: 0,
+            },
+          ],
+        },
+      ],
+    });
+  });
+});

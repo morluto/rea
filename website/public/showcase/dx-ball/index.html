@@ -24,7 +24,7 @@
         <nav class="navigation" aria-label="Main navigation">
           <a href="./" aria-current="page">DX-Ball</a>
           <a class="nav-start" href="../../get-started/">Get started</a>
-          <a href="https://github.com/morluto/rea/tree/main/docs">Docs</a>
+          <a href="../../guides/">Guides</a>
           <a href="https://github.com/morluto/rea">GitHub</a>
         </nav>
       </div>
@@ -124,6 +124,34 @@
               When a brick is hit, its horizontal position is passed to the
               sound code. The investigation needed to recover how that screen
               coordinate becomes a left/right panning value.
+            </p>
+            <div class="agent-terminal">
+              <div class="terminal-header">
+                <span class="terminal-title"
+                  ><span class="terminal-dots" aria-hidden="true"
+                    ><i></i><i></i><i></i></span
+                  >Your coding agent</span
+                ><button
+                  class="copy-button"
+                  type="button"
+                  data-copy="dxball-prompt"
+                  aria-label="Copy example prompt"
+                >
+                  Copy
+                </button>
+              </div>
+              <p class="terminal-prompt">
+                <span class="prompt-symbol" aria-hidden="true">›</span
+                ><span id="dxball-prompt"
+                  >Use REA to find how DX-Ball calculates sound panning. Explain
+                  the calculation and show the code.</span
+                ><span class="terminal-cursor" aria-hidden="true"></span>
+              </p>
+            </div>
+            <p class="caption">
+              An example prompt for your coding agent, with the local executable
+              available. The investigation below shows the REA queries and
+              evidence behind the answer.
             </p>
             <p>
               The agent used REA to inspect the function, follow its brick-hit
@@ -567,10 +595,11 @@
                 ><span>Current source, progress and local setup.</span>
               </li>
               <li>
-                <a
-                  href="https://github.com/N0zoM1z0/dx-ball/blob/a55dca27ec0a07018c1b2c95ae2be027f7d8c3c4/docs/REA.md"
-                  >REA analysis workflow</a
-                ><span>Pinned tools, MCP sessions and retained evidence.</span>
+                <a href="../../guides/native/">REA analysis workflow</a
+                ><span
+                  >Follow the calculation, then use the same approach with your
+                  own binary.</span
+                >
               </li>
               <li>
                 <a

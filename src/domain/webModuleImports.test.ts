@@ -47,6 +47,31 @@ describe("native module syntax observations", () => {
   });
 });
 
+describe("deep native module syntax", () => {
+  it("retains imports and their locations after a parser-admitted deep property chain", () => {
+    const source = `const value = root${".next".repeat(12_000)};\nimport "./last.js";\nexport * from "./reexport.js";\nimport("./lazy.js");`;
+    const result = collectWebModuleImports(source);
+    expect(result.state).toBe("parsed");
+    expect(result.diagnostics).toEqual([]);
+    expect(
+      result.imports.map(({ kind, specifier }) => [kind, specifier]),
+    ).toEqual([
+      ["static-import", "./last.js"],
+      ["re-export", "./reexport.js"],
+      ["dynamic-import", "./lazy.js"],
+    ]);
+    for (const item of result.imports)
+      expect(source.slice(item.start.offset, item.end.offset)).toBe(
+        item.expression,
+      );
+    expect(result.imports[0]?.start).toEqual({
+      offset: source.indexOf('"./last.js"'),
+      line: 2,
+      column: 7,
+    });
+  });
+});
+
 const script = (
   url: string,
   kind: "page-script" | "scenario-response",

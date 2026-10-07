@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Native analysis — REA</title>
+    <meta
+      name="description"
+      content="Recover a native calculation with REA: inspect instructions, follow a caller, read constants and check reconstructed C."
+    />
+    <meta name="theme-color" content="#ffffff" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../assets/styles.css" />
+    <script src="../../assets/main.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="../../" aria-label="REA home"
+          ><span class="brand-name">REA</span
+          ><span class="brand-caption">Reverse Engineer Anything</span></a
+        >
+        <nav class="navigation" aria-label="Main navigation">
+          <a href="../../showcase/dx-ball/">DX-Ball</a
+          ><a class="nav-start" href="../../get-started/">Get started</a
+          ><a href="../">Guides</a
+          ><a href="https://github.com/morluto/rea">GitHub</a>
+        </nav>
+      </div>
+    </header>
+    <main id="main" class="container">
+      <div class="page-heading">
+        <p class="breadcrumb">
+          <a href="../../">Home</a> / <a href="../">Guides</a> / Native analysis
+        </p>
+        <h1>Recover a calculation.<br />Follow the evidence.</h1>
+        <p class="lede">
+          Use DX-Ball’s sound panning to see how an agent moves from a binary to
+          an explanation and a checked C function.
+        </p>
+      </div>
+      <div class="article-layout">
+        <nav class="contents" aria-label="On this page">
+          <p>In this guide</p>
+          <ul>
+            <li><a href="#example">The example</a></li>
+            <li><a href="#ask">Ask your agent</a></li>
+            <li><a href="#follow">Follow the evidence</a></li>
+            <li><a href="#result">Recover and check</a></li>
+            <li><a href="#try">Use your own binary</a></li>
+          </ul>
+        </nav>
+        <article class="article" aria-label="Native analysis">
+          <section class="article-section" id="example">
+            <h2>A position becomes a sound</h2>
+            <p>
+              In DX-Ball, a brick hit supplies a horizontal screen position. The
+              sound code turns it into a left/right panning value. We want to
+              recover that calculation from the executable.
+            </p>
+            <p>
+              The starting function, <code>0x00406400</code>, has a short
+              decompiler result: a call to <code>__ftol()</code>. REA also
+              returns its instructions and callers, which give the agent a way
+              to investigate the missing arithmetic.
+            </p>
+            <figure class="workflow-figure">
+              <p class="figure-title">
+                Three pieces of evidence, one calculation
+              </p>
+              <ol class="flow-steps">
+                <li>
+                  <span class="flow-label">01 · Instructions</span
+                  ><span class="flow-node">An integer input</span
+                  ><span class="flow-note"
+                    >A stack read supplies the value used by the floating-point
+                    instructions.</span
+                  >
+                </li>
+                <li>
+                  <span class="flow-label">02 · Caller</span
+                  ><span class="flow-node">A screen coordinate</span
+                  ><span class="flow-note"
+                    >The brick-hit caller passes
+                    <code>20 + 30 × tile_x</code>.</span
+                  >
+                </li>
+                <li>
+                  <span class="flow-label">03 · Data bytes</span
+                  ><span class="flow-node">The numeric constants</span
+                  ><span class="flow-note"
+                    >Referenced bytes decode to <code>1.5625</code>,
+                    <code>500.0</code> and a scale value.</span
+                  >
+                </li>
+              </ol>
+              <p class="flow-result">
+                <code>pan = (x × 1.5625 − 500.0) × scale</code>
+              </p>
+              <figcaption>
+                REA supplies the instructions, call relationship and bytes. The
+                agent interprets them together.
+              </figcaption>
+            </figure>
+          </section>
+          <section class="article-section" id="ask">
+            <h2>Ask about the behavior</h2>
+            <p>
+              After
+              <a href="../../get-started/#agent">connecting REA to your agent</a
+              >, provide the local executable and a question:
+            </p>
+            <div class="agent-terminal">
+              <div class="terminal-header">
+                <span class="terminal-title"
+                  ><span class="terminal-dots" aria-hidden="true"
+                    ><i></i><i></i><i></i></span
+                  >Your coding agent</span
+                ><button
+                  class="copy-button"
+                  type="button"
+                  data-copy="native-prompt"
+                  aria-label="Copy example prompt"
+                >
+                  Copy
+                </button>
+              </div>
+              <p class="terminal-prompt">
+                <span class="prompt-symbol" aria-hidden="true">›</span
+                ><span id="native-prompt"
+                  >Use REA to find how DX-Ball calculates sound panning. Explain
+                  the calculation and show the code.</span
+                ><span class="terminal-cursor" aria-hidden="true"></span>
+              </p>
+            </div>
+            <p class="caption">
+              Example prompt. Give your agent the path to your local DX-Ball
+              1.07 executable.
+            </p>
+            <p>
+              You can start with a feature name. Your agent uses REA to locate
+              relevant functions, then follows the evidence with more focused
+              queries.
+            </p>
+          </section>
+          <section class="article-section" id="follow">
+            <h2>Follow what REA returns</h2>
+            <h3>Read the input</h3>
+            <div class="code-block">
+              <div class="code-header">
+                <span>REA instruction excerpt · 0x406409</span>
+              </div>
+              <pre><code>MOV EAX, dword ptr [EBP + 0x8]
+MOV dword ptr [EBP + -0xc], EAX
+FILD dword ptr [EBP + -0xc]</code></pre>
+            </div>
+            <p>
+              The instructions load an integer argument and convert it for
+              floating-point arithmetic. This is the input absent from the first
+              pseudocode view.
+            </p>
+            <h3 class="small-heading">Follow the caller</h3>
+            <div class="code-block">
+              <div class="code-header">
+                <span>REA caller excerpt · 0x411f5b</span>
+              </div>
+              <pre><code>ADD EAX, 0x14
+PUSH EAX
+CALL 0x00406400</code></pre>
+            </div>
+            <p>
+              REA identifies the brick-hit caller. Its earlier instructions
+              multiply the tile coordinate by 30; adding <code>0x14</code> (20)
+              gives the brick's screen position.
+            </p>
+            <h3 class="small-heading">Read the referenced constants</h3>
+            <div class="code-block">
+              <div class="code-header">
+                <span
+                  >REA byte results · interpreted as little-endian doubles</span
+                >
+              </div>
+              <pre><code>0x420068  000000000000f93f  → 1.5625
+0x420070  0000000000407f40  → 500.0
+0x4210a0  000000000000f03f  → 1.0</code></pre>
+            </div>
+            <p>
+              The arithmetic references these addresses. Reading the bytes
+              supplies the actual values; the instruction order tells the agent
+              how they are used.
+            </p>
+          </section>
+          <section class="article-section" id="result">
+            <h2>Write and check the recovered function</h2>
+            <div class="code-block">
+              <div class="code-header"><span>Recovered C · excerpt</span></div>
+              <pre><code>pan = (double)x;
+pan = pan * 1.5625;
+pan = pan - 500.0;
+pan = pan * dxball_pan_scale;
+return (DxBallInt)pan;</code></pre>
+            </div>
+            <p>
+              With a scale of 1.0, screen positions 0, 320 and 640 map to −500,
+              0 and 500 before integer conversion. The calculation puts the
+              center of the screen at the center of the stereo field.
+            </p>
+            <p>
+              The agent used REA's findings to write the C. Separate checks
+              compared 3,205 inputs against the original x86 function and
+              reproduced all 63 compiled bytes of the complete function.
+            </p>
+            <p>
+              <a href="../../showcase/dx-ball/#sound-pan"
+                >See the full investigation and assembly-to-C comparison</a
+              >
+            </p>
+          </section>
+          <section class="article-section" id="try">
+            <h2>Try it with your own binary</h2>
+            <p>
+              <a href="../../get-started/#native"
+                >Connect a native analysis provider</a
+              >, then give your agent a local executable or library and a
+              feature to investigate. Useful starting questions include “How is
+              this file parsed?” or “Which function handles this menu action?”
+            </p>
+            <p>
+              If you already know a function name or address, you can query it
+              from the terminal. For a configured Ghidra installation:
+            </p>
+            <div class="code-block">
+              <div class="code-header">
+                <span>Function analysis</span
+                ><button
+                  class="copy-button"
+                  type="button"
+                  data-copy="native-command"
+                  aria-label="Copy function analysis"
+                >
+                  Copy
+                </button>
+              </div>
+              <pre><code id="native-command">npx -y rea-agents@latest function /absolute/path/to/program main \
+  --provider ghidra --json</code></pre>
+            </div>
+            <p>
+              Replace the target path and <code>main</code> with your own
+              function name or address. Each CLI invocation imports and analyzes
+              the binary, then closes its session. Your agent's MCP queries
+              reuse the imported binary while that session is open.
+            </p>
+            <p>
+              Read the pseudocode alongside instructions and references. When a
+              result leaves a call or value unresolved, use that location as the
+              next question.
+            </p>
+          </section>
+        </article>
+      </div>
+    </main>
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <p>REA · Reverse Engineer Anything</p>
+        <div class="footer-links">
+          <a href="https://github.com/morluto/rea">Source</a
+          ><a href="https://github.com/morluto/rea/blob/main/LICENSE"
+            >MIT license</a
+          ><a href="https://discord.gg/GkcryMnJDM">Community</a>
+        </div>
+      </div>
+    </footer>
+    <p class="sr-only" id="copy-status" role="status" aria-live="polite"></p>
+  </body>
+</html>
