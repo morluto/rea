@@ -1,6 +1,6 @@
 import { z } from "incur";
 import { FirmwareAnalysisService } from "../application/FirmwareAnalysisService.js";
-import { FirmwareProvider } from "../firmware/FirmwareProvider.js";
+import { createFirmwareAnalysisProvider } from "../composition/firmware.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -16,7 +16,7 @@ export const registerFirmwareCommands = (
   environment: Readonly<Record<string, string | undefined>>,
 ): void => {
   const service = new FirmwareAnalysisService(
-    new FirmwareProvider(environment),
+    createFirmwareAnalysisProvider(environment),
   );
   const execute = (
     name: string,

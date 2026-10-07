@@ -11,6 +11,23 @@ import {
 
 const it = test.skipIf(process.platform === "win32");
 
+it("does not carry a factory instance's cleanup failure into another instance", async () => {
+  const failed = await setup("cleanup-failure");
+  const healthy = await setup();
+  const failure = await failed.service.execute("inspect_android_package", {
+    path: failed.apk,
+  });
+  expect(failure).toMatchObject({
+    ok: false,
+    error: { cleanupIncomplete: true },
+  });
+  const result = await healthy.service.execute("inspect_android_package", {
+    path: healthy.apk,
+  });
+  expect(result.ok).toBe(true);
+  await verifyCleanup(healthy.launches);
+});
+
 it("retains APK identity, original input, raw producer data and normalized observations", async () => {
   const { service, apk, launches } = await setup();
   const outcome = await service.execute("inspect_android_package", {

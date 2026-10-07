@@ -6,17 +6,17 @@ there is no new universal provider interface or fixed module manifest.
 
 ## Ownership to preserve
 
-| Responsibility                                | Current owner                               | Migration direction                                            |
-| --------------------------------------------- | ------------------------------------------- | -------------------------------------------------------------- |
-| Analyst semantics and Evidence representation | domain                                      | Keep pure and provider-neutral                                 |
-| Named public input/output contracts           | contracts                                   | Keep exact CLI/MCP meaning and complete discovery              |
-| Producer parsing and external tool protocols  | provider adapters                           | Keep behind the relevant typed port                            |
-| Shared analyst workflows                      | application                                 | Share between CLI and MCP                                      |
-| Concrete provider construction                | binary runtime, CLI registrars, MCP startup | Consolidate one capability at a time in production composition |
-| Investigation Evidence and Unknowns           | BinarySessionRecords                        | Extract one composed record owner after caller migration       |
-| Target/profile snapshots and invalidation     | BinarySessionRecords/BinarySession          | Keep binary-owned                                              |
-| Subprocess ownership and host primitives      | process/windows                             | Reuse; preserve cancellation and cleanup                       |
-| Public translation                            | CLI/MCP adapters                            | Delegate to shared workflows and named contracts               |
+| Responsibility                                | Current owner                            | Migration direction                                            |
+| --------------------------------------------- | ---------------------------------------- | -------------------------------------------------------------- |
+| Analyst semantics and Evidence representation | domain                                   | Keep pure and provider-neutral                                 |
+| Named public input/output contracts           | contracts                                | Keep exact CLI/MCP meaning and complete discovery              |
+| Producer parsing and external tool protocols  | provider adapters                        | Keep behind the relevant typed port                            |
+| Shared analyst workflows                      | application                              | Share between CLI and MCP                                      |
+| Concrete provider construction                | binary runtime, composition, MCP startup | Consolidate one capability at a time in production composition |
+| Investigation Evidence and Unknowns           | BinarySessionRecords                     | Extract one composed record owner after caller migration       |
+| Target/profile snapshots and invalidation     | BinarySessionRecords/BinarySession       | Keep binary-owned                                              |
+| Subprocess ownership and host primitives      | process/windows                          | Reuse; preserve cancellation and cleanup                       |
+| Public translation                            | CLI/MCP adapters                         | Delegate to shared workflows and named contracts               |
 
 Retain exact Evidence IDs, provenance, detached reads, atomic Evidence/Unknown
 mutations and optimistic revisions. Preserve current close and failed-cleanup
@@ -77,3 +77,19 @@ verification. Its integration is broader than swapping a provider. The migration
 should eliminate incidental duplicate wiring, not erase those design decisions.
 
 Update these examples with real migrated entrypoints before closing #740.
+
+## First production factory migration
+
+`src/composition/android.ts` and `src/composition/firmware.ts` construct providers
+behind the existing AndroidAnalysisPort and FirmwareAnalysisPort. CLI registrars
+pass their selected environment; MCP uses the process environment unless a caller
+injects a port. Each factory call returns a fresh instance and acquires no process,
+workspace or toolchain. Queues, cleanup-failure state and per-request cleanup stay
+inside the provider. The existing launcher seams remain available to boundary
+fixtures, which now exercise the production factories.
+
+Application workflows and MCP registration must not import these concrete
+providers. Composition may import their implementations. Binary composition is
+still at its existing entrypoint while its direct-analysis callers are investigated.
+This concrete pilot does not introduce a shared provider interface or module
+manifest.

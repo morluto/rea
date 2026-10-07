@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { access, rm, writeFile } from "node:fs/promises";
 import { expect, onTestFinished } from "vitest";
-import { FirmwareProvider } from "../../../src/firmware/FirmwareProvider.js";
+import { createFirmwareAnalysisProvider } from "../../../src/composition/firmware.js";
 import { FirmwareAnalysisService } from "../../../src/application/FirmwareAnalysisService.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { createTestTempDirectory } from "../temporaryDirectory.js";
@@ -18,7 +18,7 @@ export const firmwareFixture = async (mode = "normal") => {
     pid: number | undefined;
     args: readonly string[];
   }[] = [];
-  const provider = new FirmwareProvider(
+  const provider = createFirmwareAnalysisProvider(
     {
       ...process.env,
       REA_BINWALK_COMMAND: "/usr/bin/true",

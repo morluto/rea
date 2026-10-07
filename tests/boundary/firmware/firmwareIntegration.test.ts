@@ -13,6 +13,23 @@ import { toCallToolResult } from "../../../src/server/toolResult.js";
 
 const it = test.skipIf(process.platform !== "linux");
 
+it("keeps cleanup-failure state local to the selected factory instance", async () => {
+  const failed = await firmwareFixture("cleanup-failure");
+  const healthy = await firmwareFixture();
+  const failure = await failed.service.execute("inspect_firmware_regions", {
+    path: failed.path,
+  });
+  expect(failure).toMatchObject({
+    ok: false,
+    error: { cleanupIncomplete: true },
+  });
+  const result = await healthy.service.execute("inspect_firmware_regions", {
+    path: healthy.path,
+  });
+  expect(result.ok).toBe(true);
+  await assertFirmwareCleanup(healthy.launches);
+});
+
 it("binds region observations to exact bytes and preserves provider-reported uncertainty", async () => {
   const fixture = await firmwareFixture();
   const result = await fixture.service.execute("inspect_firmware_regions", {

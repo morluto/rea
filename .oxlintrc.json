@@ -46,8 +46,14 @@
           {
             "patterns": [
               {
-                "group": ["**/ghidra/**", "**/hopper/**", "**/ida/**"],
-                "message": "Deep-provider imports belong behind adapters or in the application composition root."
+                "group": [
+                  "**/ghidra/**",
+                  "**/hopper/**",
+                  "**/ida/**",
+                  "**/android/**",
+                  "**/firmware/**"
+                ],
+                "message": "Provider imports belong behind typed ports or in production composition."
               }
             ]
           }
@@ -80,9 +86,34 @@
                   "**/native/**",
                   "**/process/**",
                   "**/reference/**",
-                  "**/windows/**"
+                  "**/windows/**",
+                  "**/composition/**"
                 ],
                 "message": "Domain and contracts depend inward; use typed ports for application, caller and provider boundaries."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/application/**/*.ts"],
+      "excludeFiles": ["src/application/runtime.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "**/ghidra/**",
+                  "**/hopper/**",
+                  "**/ida/**",
+                  "**/android/**",
+                  "**/firmware/**",
+                  "**/composition/**"
+                ],
+                "message": "Application workflows use typed ports; production construction belongs in composition."
               }
             ]
           }
@@ -121,7 +152,10 @@
                   "**/ida/**",
                   "**/replay/**",
                   "**/cli.*",
-                  "**/main.*"
+                  "**/main.*",
+                  "**/composition/**",
+                  "**/android/**",
+                  "**/firmware/**"
                 ],
                 "message": "Domain tests may import only their owning domain and inward dependencies."
               }

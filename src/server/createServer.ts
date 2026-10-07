@@ -22,11 +22,11 @@ import { registerManagedTools } from "./registerManagedTools.js";
 import { registerFirmwareTools } from "./registerFirmwareTools.js";
 import { FirmwareAnalysisService } from "../application/FirmwareAnalysisService.js";
 import type { FirmwareAnalysisPort } from "../application/FirmwareAnalysisPort.js";
-import { FirmwareProvider } from "../firmware/FirmwareProvider.js";
+import { createFirmwareAnalysisProvider } from "../composition/firmware.js";
 import { registerAndroidTools } from "./registerAndroidTools.js";
 import { AndroidAnalysisService } from "../application/AndroidAnalysisService.js";
 import type { AndroidAnalysisPort } from "../application/AndroidAnalysisPort.js";
-import { JadxProvider } from "../android/JadxProvider.js";
+import { createAndroidAnalysisProvider } from "../composition/android.js";
 import { registerManagedWorkflowTools } from "./registerManagedWorkflowTools.js";
 import { registerNativeTools } from "./registerNativeTools.js";
 import { registerOfficialTools } from "./registerOfficialTools.js";
@@ -137,14 +137,16 @@ export const createServer = (
   registerBinaryAnalysisTools(toolContext);
   registerAndroidTools(
     server,
-    new AndroidAnalysisService(options.androidAnalysis ?? new JadxProvider()),
+    new AndroidAnalysisService(
+      options.androidAnalysis ?? createAndroidAnalysisProvider(),
+    ),
     toolLogger,
     recordEvidence,
   );
   registerFirmwareTools(
     server,
     new FirmwareAnalysisService(
-      options.firmwareAnalysis ?? new FirmwareProvider(),
+      options.firmwareAnalysis ?? createFirmwareAnalysisProvider(),
     ),
     toolLogger,
     recordEvidence,

@@ -11,10 +11,17 @@ describe("incremental module import boundaries", () => {
     ["src/domain/probe.ts", "../browser/Provider.js", false],
     ["src/contracts/probe.ts", "../android/Provider.js", false],
     ["src/contracts/probe.ts", "../cli.js", false],
+    ["src/contracts/probe.ts", "../composition/android.js", false],
+    ["src/domain/probe.test.ts", "../composition/firmware.js", false],
+    ["src/application/probe.ts", "../android/JadxProvider.js", false],
+    ["src/application/probe.ts", "../composition/android.js", false],
+    ["src/server/probe.ts", "../firmware/FirmwareProvider.js", false],
     ["src/domain/probe.ts", "./result.js", true],
     ["src/contracts/probe.ts", "../domain/result.js", true],
     ["src/application/probe.ts", "../domain/result.js", true],
     ["src/composition/probe.ts", "../ghidra/Provider.js", true],
+    ["src/composition/probe.ts", "../android/JadxProvider.js", true],
+    ["src/composition/probe.ts", "../firmware/FirmwareProvider.js", true],
   ])("checks %s importing %s", async (file, dependency, allowed) => {
     const temporary = await createTestTempDirectory("rea-module-boundary-");
     const config = join(temporary, ".oxlintrc.json");

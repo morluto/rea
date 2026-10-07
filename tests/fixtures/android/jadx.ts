@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, onTestFinished } from "vitest";
 import { AndroidAnalysisService } from "../../../src/application/AndroidAnalysisService.js";
-import { JadxProvider } from "../../../src/android/JadxProvider.js";
+import { createAndroidAnalysisProvider } from "../../../src/composition/android.js";
 import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
@@ -26,7 +26,7 @@ export const createJadxProtocolFixture = async (mode = "normal") => {
     cwd: string | undefined;
     pid: number | undefined;
   }[] = [];
-  const provider = new JadxProvider(
+  const provider = createAndroidAnalysisProvider(
     { ...process.env, REA_JADX_MCP_JAR: jar },
     async (options) => {
       const spawned = await spawnOwnedProviderProcess({

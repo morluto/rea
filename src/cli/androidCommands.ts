@@ -1,6 +1,6 @@
 import { z } from "incur";
 import { AndroidAnalysisService } from "../application/AndroidAnalysisService.js";
-import { JadxProvider } from "../android/JadxProvider.js";
+import { createAndroidAnalysisProvider } from "../composition/android.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -15,7 +15,9 @@ export const registerAndroidCommands = (
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
 ): void => {
-  const service = new AndroidAnalysisService(new JadxProvider(environment));
+  const service = new AndroidAnalysisService(
+    createAndroidAnalysisProvider(environment),
+  );
   const execute = (name: string, operation: AndroidOperation, input: unknown) =>
     withCommandCancellation((signal) =>
       logCliCommand(logger, name, async () => {
