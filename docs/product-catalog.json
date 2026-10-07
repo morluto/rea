@@ -10,7 +10,7 @@
     "skill_version": "26"
   },
   "tools": {
-    "total": 127,
+    "total": 129,
     "families": [
       {
         "id": "direct",
@@ -179,7 +179,7 @@
       {
         "id": "application",
         "surface": "application-workflow",
-        "count": 9,
+        "count": 11,
         "tools": [
           "build_reconstruction_obligation_ledger",
           "compare_application_versions",
@@ -187,6 +187,8 @@
           "compare_source_to_bundle",
           "evaluate_reconstruction_coverage",
           "export_web_scripts",
+          "project_android_application_graph",
+          "project_apple_application_graph",
           "recover_javascript_sources",
           "trace_application_feature",
           "trace_javascript_semantics"
@@ -350,6 +352,18 @@
         "list_architectures",
         "observe_native_ui"
       ]
+    },
+    {
+      "id": "rea-android-application",
+      "name": "REA Android application workflows",
+      "version": "1",
+      "capabilities": ["project_android_application_graph"]
+    },
+    {
+      "id": "rea-apple-application",
+      "name": "REA Apple application workflows",
+      "version": "1",
+      "capabilities": ["project_apple_application_graph"]
     },
     {
       "id": "rea-artifact-graph",
@@ -546,7 +560,7 @@
     }
   ],
   "cli": {
-    "primary_count": 82,
+    "primary_count": 84,
     "commands": [
       "address-to-file-offset",
       "analyze",
@@ -611,6 +625,8 @@
       "observe-javascript-runtime",
       "observe-native-ui",
       "observe-web-session",
+      "project-android-application-graph",
+      "project-apple-application-graph",
       "project-managed-application-graph",
       "providers",
       "read-bytes",
@@ -640,15 +656,15 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 82,
-      "mcp_tools": 127,
+      "cli_commands": 84,
+      "mcp_tools": 129,
       "mcp_prompts": 6
     },
     "digests": {
-      "tools_sha256": "5d4fa325e1649ae3f75aa6f9cbba7fac1175440a0e2792e6e1a469849e2c2dc3",
+      "tools_sha256": "53ac19960ec7b9907a63951a4e4d8eff02a6c41ad04a4611d61370b8511cc783",
       "prompts_sha256": "ef2de8814390b340623c32001610aa2709d90bed51537b6e562ab3abf144ab4d",
-      "combined_sha256": "d8e9c865c40f7d8f96e21f575d7157cbd000e86991a1944ba2aa07c2f1d70bc7",
-      "providers_sha256": "0bccfa9588376a90350d18abded999db7e1d0e4424a61a21d03d392a1c5418fe"
+      "combined_sha256": "856ce0f99cc6e858f3317e40cec27c2cfd479ae7ff6a8d9cf695504d6166b64d",
+      "providers_sha256": "6e1de7ee30b9b1ff633abfa4fd2b3848bb58e6e76a2ed196aa01836a202e1941"
     }
   }
 }

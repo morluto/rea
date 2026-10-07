@@ -6,7 +6,7 @@ const inventory = (format: "apk" | "ipa", digit: string) => {
   const sha = digit.repeat(64);
   const artifactId = `art_${canonicalDigest({ sha256: sha }, "Artifact inventory")}`;
   const occurrenceId = `occ_${canonicalDigest(
-    { artifact_id: artifactId, logical_path: "." },
+    { root: artifactId },
     "Artifact inventory",
   )}`;
   const nodes = [
