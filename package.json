@@ -83,7 +83,7 @@
     "check:pr": "turbo run typecheck lint format:check knip metadata:check test:run && npm run docs:check && npm run jscpd && npm run scan:todos",
     "precheck:ci": "npm run deps:check",
     "check:ci": "turbo run typecheck lint format:check knip metadata:check jscpd scan:todos",
-    "build:cached": "turbo run build",
+    "build:cached": "node scripts/check-dependency-install.mjs && turbo run build",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
     "lint": "oxlint && npm run verify:module-boundaries",

@@ -1,12 +1,20 @@
-import { copyFile, mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import {
+  copyFile,
+  mkdir,
+  readFile,
+  readdir,
+  writeFile,
+  symlink,
+} from "node:fs/promises";
+import { dirname, join, relative } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const script = join(process.cwd(), "scripts", "check-dependency-install.mjs");
+const sourceRoot = process.cwd();
 
 const fixture = async (
   installedVersion?: string,
@@ -88,4 +96,175 @@ describe("dependency install freshness", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("alpha: installed 0.9.0, expected 1.0.0");
   });
+
+  it("checks installed dependencies before restoring a cached build", async () => {
+    const root = await createBuildCacheFixture();
+    const seeded = await runNpm(root, ["run", "build:cached"]);
+    expect(seeded.status, seeded.stderr).toBe(0);
+
+    const rootLock = asRecord(
+      JSON.parse(await readFile(join(root, "package-lock.json"), "utf8")),
+    );
+    const lockPackages = asRecord(rootLock?.packages);
+    const rootPackage = asRecord(lockPackages?.[""]);
+    const directDependencies = {
+      ...asRecord(rootPackage?.dependencies),
+      ...asRecord(rootPackage?.devDependencies),
+    };
+    const dependencyName = Object.keys(directDependencies).sort()[0];
+    if (dependencyName === undefined)
+      throw new Error("fixture has no direct dependencies");
+    const dependencyPath = `node_modules/${dependencyName}`;
+    const expectedDependency = asRecord(lockPackages?.[dependencyPath]);
+    if (typeof expectedDependency?.version !== "string")
+      throw new Error(
+        `fixture is missing the locked ${dependencyName} version`,
+      );
+    const installedLockPath = join(root, "node_modules", ".package-lock.json");
+    const installedLock = asRecord(
+      JSON.parse(await readFile(installedLockPath, "utf8")),
+    );
+    const packages = asRecord(installedLock?.packages);
+    const installedDependency = asRecord(packages?.[dependencyPath]);
+    if (installedDependency === undefined)
+      throw new Error(`fixture is missing installed ${dependencyName}`);
+    installedDependency.version = "0.0.0";
+    await writeFile(installedLockPath, JSON.stringify(installedLock));
+
+    const blocked = await runNpm(root, ["run", "build:cached"]);
+    expect(blocked.status).toBe(1);
+    expect(blocked.stderr).toContain(
+      `${dependencyName}: installed 0.0.0, expected ${expectedDependency.version}`,
+    );
+
+    const cached = await runTurbo(root);
+    expect(cached.status, cached.stderr).toBe(0);
+    expect(`${cached.stdout}${cached.stderr}`).toMatch(/cache hit/u);
+  }, 60_000);
 });
+
+const createBuildCacheFixture = async (): Promise<string> => {
+  const root = await createTestTempDirectory("rea-build-cache-guard-");
+  const packageJson = asRecord(
+    JSON.parse(await readFile(join(sourceRoot, "package.json"), "utf8")),
+  );
+  const scripts = asRecord(packageJson?.scripts);
+  if (
+    packageJson === undefined ||
+    typeof scripts?.["build:cached"] !== "string"
+  )
+    throw new Error("package is missing its cached build command");
+  const paths = [
+    ".nvmrc",
+    "package-lock.json",
+    "turbo.json",
+    "tsconfig.json",
+    "tsconfig.build.json",
+    "scripts/check-dependency-install.mjs",
+    "scripts/clean-build-output.mjs",
+    "scripts/generate-package-metadata.mjs",
+    "scripts/lib/generated-file.mjs",
+    "skills/reverse-engineer-anything/SKILL.md",
+    "src/generatedPackageMetadata.ts",
+  ];
+  await Promise.all(
+    paths.map(async (path) => {
+      const destination = join(root, path);
+      await mkdir(dirname(destination), { recursive: true });
+      await copyFile(join(sourceRoot, path), destination);
+    }),
+  );
+  await writeFile(
+    join(root, "package.json"),
+    JSON.stringify({
+      ...packageJson,
+      scripts: {
+        ...scripts,
+        build: "node scripts/cache-fixture-build.mjs",
+      },
+    }),
+  );
+  await writeFile(
+    join(root, "scripts/cache-fixture-build.mjs"),
+    'import { mkdir, writeFile } from "node:fs/promises"; await mkdir("dist", { recursive: true }); await writeFile("dist/cache-fixture.js", "built");\n',
+  );
+  await createNodeModulesLinks(root);
+  await writeFile(
+    join(root, "node_modules", ".package-lock.json"),
+    await readFile(join(sourceRoot, "node_modules", ".package-lock.json")),
+  );
+  return root;
+};
+
+const createNodeModulesLinks = async (root: string): Promise<void> => {
+  const source = join(sourceRoot, "node_modules");
+  const destination = join(root, "node_modules");
+  await mkdir(destination);
+  for (const entry of await readdir(source, { withFileTypes: true })) {
+    if (entry.name === ".package-lock.json") continue;
+    const sourcePath = join(source, entry.name);
+    const destinationPath = join(destination, entry.name);
+    if (entry.name.startsWith("@") && entry.isDirectory()) {
+      await mkdir(destinationPath);
+      for (const packageName of await readdir(sourcePath))
+        await symlink(
+          join(sourcePath, packageName),
+          join(destinationPath, packageName),
+          process.platform === "win32" ? "junction" : undefined,
+        );
+    } else {
+      await symlink(
+        sourcePath,
+        destinationPath,
+        process.platform === "win32" ? "junction" : undefined,
+      );
+    }
+  }
+};
+
+const runNpm = (cwd: string, arguments_: readonly string[]) =>
+  run("npm", arguments_, cwd);
+
+const runTurbo = (cwd: string) =>
+  run(
+    process.execPath,
+    [
+      join(cwd, "node_modules", "turbo", "bin", "turbo"),
+      "run",
+      "build",
+      "--output-logs=full",
+    ],
+    cwd,
+  );
+
+const run = (
+  command: string,
+  arguments_: readonly string[],
+  cwd: string,
+): Promise<{
+  readonly status: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}> =>
+  new Promise((resolve, reject) => {
+    const child = spawn(command, [...arguments_], {
+      cwd,
+      env: process.env,
+      shell: process.platform === "win32",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
+    child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+    child.once("error", reject);
+    child.once("close", (status) =>
+      resolve({ status: status ?? 1, stdout, stderr }),
+    );
+  });
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const asRecord = (value: unknown): Record<string, unknown> | undefined =>
+  isRecord(value) ? value : undefined;

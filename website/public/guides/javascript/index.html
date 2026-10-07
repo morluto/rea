@@ -35,10 +35,10 @@
           <a href="../../">Home</a> / <a href="../">Guides</a> / JavaScript
           &amp; Electron
         </p>
-        <h1>Follow a feature<br />across the app.</h1>
+        <h1>Trace an Electron<br />CSV export.</h1>
         <p class="lede">
-          Use a CSV export to see how REA connects JavaScript files, exposed
-          APIs and Electron process boundaries.
+          Follow a button click from the page API, through Electron IPC, to the
+          CSV file writer.
         </p>
       </div>
       <div class="article-layout">
@@ -47,9 +47,9 @@
           <ul>
             <li><a href="#example">The example</a></li>
             <li><a href="#ask">Ask your agent</a></li>
-            <li><a href="#follow">Connect the pieces</a></li>
+            <li><a href="#follow">Trace the export code</a></li>
             <li><a href="#try">Try the example</a></li>
-            <li><a href="#next">Continue investigating</a></li>
+            <li><a href="#next">Inspect the CSV writer</a></li>
           </ul>
         </nav>
         <article class="article" aria-label="JavaScript &amp; Electron">
@@ -62,7 +62,9 @@
               across several files.
             </p>
             <figure class="workflow-figure">
-              <p class="figure-title">A feature across two processes</p>
+              <p class="figure-title">
+                The CSV export across Electron processes
+              </p>
               <ol class="flow-steps">
                 <li>
                   <span class="flow-label">Renderer → preload</span
@@ -101,7 +103,7 @@
             </figure>
           </section>
           <section class="article-section" id="ask">
-            <h2>Give your agent one feature</h2>
+            <h2>Ask about the CSV export</h2>
             <p>
               <a href="../../get-started/#agent">Connect your agent to REA</a>
               and give it the app directory or ASAR file:
@@ -140,7 +142,7 @@
             </p>
           </section>
           <section class="article-section" id="follow">
-            <h2>Connect the pieces</h2>
+            <h2>Trace the export code</h2>
             <h3>The page calls a small API</h3>
             <div class="code-block">
               <div class="code-header">
@@ -266,10 +268,10 @@
   /absolute/path/to/notes-example --json</code></pre>
             </div>
             <p>
-              Replace the path with the folder you unzipped. Look for
-              <code>normalized_result.summary.ipc</code> and the source
-              locations in <code>normalized_result.graph</code>. The example has
-              one channel and one paired invocation.
+              Replace the path with the folder you unzipped. You should find one
+              IPC channel and one matching handler in
+              <code>normalized_result.summary.ipc</code>. Source locations are
+              in <code>normalized_result.graph</code>.
             </p>
             <p>
               For your own app, use the same command with its directory or ASAR
@@ -278,7 +280,7 @@
             </p>
           </section>
           <section class="article-section" id="next">
-            <h2>Ask the next question</h2>
+            <h2>Inspect the CSV writer</h2>
             <blockquote class="prompt">
               <p>
                 Follow <code>notes:export</code> to its handler. Which inputs

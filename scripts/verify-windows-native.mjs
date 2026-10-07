@@ -263,6 +263,57 @@ try {
     ]);
     native.call("runtime_snapshot_cancel", [runtime.handle]);
     await assert.rejects(cancelled, /cancelled/u);
+    assert.equal(await exists(join(runtime.path, "cancelled.bin")), false);
+    const readbackRuntime = WindowsPrivateRuntime.create(
+      workspace.replaceAll("\\", "/"),
+      "readback-",
+    );
+    try {
+      readbackRuntime.writeFile("written.txt", "runtime-write-readback");
+      assert.equal(
+        readbackRuntime.readFile("written.txt"),
+        "runtime-write-readback",
+      );
+      const readbackSnapshot = await readbackRuntime.snapshot(
+        source,
+        "snapshot.bin",
+      );
+      assert.equal(
+        readbackSnapshot.sha256,
+        createHash("sha256")
+          .update(await readFile(source))
+          .digest("hex"),
+      );
+      assert.equal(
+        readbackRuntime.readFile("snapshot.bin"),
+        await readFile(source, "utf8"),
+      );
+      const writtenPath = join(readbackRuntime.observation.path, "written.txt");
+      await assert.rejects(writeFile(writtenPath, "replace"));
+      await assert.rejects(rename(writtenPath, `${writtenPath}.renamed`));
+      await assert.rejects(rm(writtenPath));
+      assert.equal(
+        readbackRuntime.readFile("written.txt"),
+        "runtime-write-readback",
+      );
+      const snapshotPath = join(
+        readbackRuntime.observation.path,
+        "snapshot.bin",
+      );
+      await assert.rejects(rename(snapshotPath, `${snapshotPath}.renamed`));
+      await assert.rejects(rm(snapshotPath));
+      assert.equal(
+        readbackRuntime.readFile("snapshot.bin"),
+        await readFile(source, "utf8"),
+      );
+      report.controls = {
+        ...report.controls,
+        completedRuntimeFileReadback: true,
+        completedRuntimeFileMutationDenied: true,
+      };
+    } finally {
+      await readbackRuntime.close();
+    }
     report.controls = {
       ...report.controls,
       protectedDaclReadback: true,

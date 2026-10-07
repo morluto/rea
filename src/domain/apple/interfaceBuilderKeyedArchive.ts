@@ -196,39 +196,85 @@ const keyedArchiveTable = (objectTable: readonly unknown[]) => {
   };
   const hierarchy = (start: unknown): unknown[] => {
     const visited = new Set<number>();
-    const node = (
+    const root: unknown[] = [];
+    const pending: { readonly value: unknown; readonly output: unknown[] }[] = [
+      { value: start, output: root },
+    ];
+    const appendNode = (
       item: Record<string, unknown>,
       uid: number | undefined,
-      depth: number,
-    ): unknown[] => {
+      output: unknown[],
+    ): void => {
       const objectId = firstString(
         authoredId(item),
         text(item.id),
         uid === undefined ? null : String(uid),
       );
-      const children = Object.entries(item)
-        .filter(([key]) => HIERARCHY_KEY.test(key))
-        .flatMap(([, child]) => visit(child, depth + 1));
-      return objectId === null ? children : [{ objectID: objectId, children }];
+      if (objectId === null) {
+        for (const [key, child] of Object.entries(item).reverse())
+          if (HIERARCHY_KEY.test(key)) pending.push({ value: child, output });
+        return;
+      }
+      const children: unknown[] = [];
+      output.push({ objectID: objectId, children });
+      for (const [key, child] of Object.entries(item).reverse())
+        if (HIERARCHY_KEY.test(key))
+          pending.push({ value: child, output: children });
     };
-    const visit = (value: unknown, depth: number): unknown[] => {
-      if (depth > 32) return [];
+    while (pending.length > 0) {
+      const entry = pending.pop();
+      if (entry === undefined) break;
+      const { value, output } = entry;
       const uid = archiveUid(value);
       if (uid !== undefined) {
-        if (visited.has(uid)) return [];
+        if (visited.has(uid)) continue;
         visited.add(uid);
         const target = objectTable[uid];
-        if (Array.isArray(target)) return visit(target, depth + 1);
-        return typeof target === "object" && target !== null
-          ? node(record(target), uid, depth)
-          : [];
+        if (Array.isArray(target)) {
+          for (let index = target.length - 1; index >= 0; index -= 1) {
+            const child = target[index];
+            if (child !== undefined) pending.push({ value: child, output });
+          }
+          continue;
+        }
+        if (typeof target !== "object" || target === null) continue;
+        const item = record(target);
+        if (archivedArrayClass(item.$class)) {
+          const members = item["NS.objects"];
+          if (Array.isArray(members))
+            for (let index = members.length - 1; index >= 0; index -= 1) {
+              const child = members[index];
+              if (child !== undefined) pending.push({ value: child, output });
+            }
+          continue;
+        }
+        appendNode(item, uid, output);
+        continue;
       }
-      if (Array.isArray(value))
-        return value.flatMap((item) => visit(item, depth + 1));
-      if (typeof value !== "object" || value === null) return [];
-      return node(record(value), undefined, depth);
-    };
-    return visit(start, 0);
+      if (Array.isArray(value)) {
+        for (let index = value.length - 1; index >= 0; index -= 1) {
+          const child = value[index];
+          if (child !== undefined) pending.push({ value: child, output });
+        }
+      } else if (typeof value === "object" && value !== null) {
+        appendNode(record(value), undefined, output);
+      }
+    }
+    return root;
+  };
+  const archivedArrayClass = (classReference: unknown): boolean => {
+    const uid = archiveUid(classReference);
+    const descriptor = record(
+      uid === undefined ? classReference : objectTable[uid],
+    );
+    const classNames = Array.isArray(descriptor.$classes)
+      ? descriptor.$classes.filter(
+          (name): name is string => typeof name === "string",
+        )
+      : [];
+    return (
+      classNames.includes("NSArray") || classNames.includes("NSMutableArray")
+    );
   };
   return { resolve, hierarchy };
 };

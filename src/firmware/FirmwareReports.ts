@@ -43,6 +43,13 @@ const stat = z.object({
   is_link: z.boolean(),
   link_target: z.string().nullable(),
 });
+const multiFile = z.object({
+  id: z.string(),
+  handler_name: z.string(),
+  name: z.string(),
+  paths: z.array(z.string()),
+  extraction_reports: z.array(jsonValueSchema),
+});
 const hashes = z.object({ sha256: digestSchema });
 const region = z.object({
   id: z.string(),
@@ -242,6 +249,11 @@ export const normalizeUnblobReport = (
                 }
               : null,
         });
+      }
+      if (item.__typename__ === "MultiFileReport") {
+        const parsed = multiFile.parse(item);
+        if (parsed.extraction_reports.length > 0)
+          diagnostics.push({ input_path: path, report: item });
       }
     }
   }

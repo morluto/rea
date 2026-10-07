@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { observeNativeUi } from "../dist/native/NativeUiObservation.js";
+import { NATIVE_UI_HELPER_MAX_BUFFER } from "../dist/native/NativeUiOutputBudget.js";
 
 if (process.platform !== "darwin")
   throw new Error(
@@ -30,7 +31,38 @@ try {
     "-o",
     childRetrievalTest,
   ]);
-  await promisify(execFile)(childRetrievalTest, []);
+  const childRetrieval = await promisify(execFile)(childRetrievalTest, []);
+  const [slashRichProducerJson, numericProducerJson] = childRetrieval.stdout
+    .trimEnd()
+    .split("\n");
+  if (
+    slashRichProducerJson === undefined ||
+    numericProducerJson === undefined
+  ) {
+    throw new Error(
+      "Native UI serializer seam did not emit its producer bytes",
+    );
+  }
+  const slashRichConsumerJson = JSON.stringify(
+    JSON.parse(slashRichProducerJson),
+  );
+  if (slashRichProducerJson !== slashRichConsumerJson) {
+    throw new Error(
+      "Swift helper JSON bytes differ from the normalized JavaScript consumer representation",
+    );
+  }
+  const numericConsumerJson = JSON.stringify(JSON.parse(numericProducerJson));
+  if (
+    Buffer.byteLength(numericProducerJson) <=
+    Buffer.byteLength(numericConsumerJson)
+  ) {
+    throw new Error(
+      "Foundation numeric fixture no longer exercises larger producer JSON bytes",
+    );
+  }
+  if (Buffer.byteLength(numericProducerJson) > NATIVE_UI_HELPER_MAX_BUFFER) {
+    throw new Error("Foundation numeric fixture exceeds the raw helper budget");
+  }
 
   const contents = join(root, "Fixture.app", "Contents");
   await mkdir(join(contents, "MacOS"), { recursive: true });
