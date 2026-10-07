@@ -5,6 +5,10 @@ graph TD
         DISPATCH["scripts/rea.mjs<br/>Executable dispatcher<br/>routes mcp / one-shot"]
     end
 
+    subgraph "Production Composition"
+        COMPOSITION["src/composition/<br/>fresh typed provider and session factories<br/>one-shot binding and independent optional loading"]
+    end
+
     subgraph "Adapters"
         SERVER["src/server/<br/>MCP request translation<br/>createServer, tool registration, toolResult"]
         HOPPER_BRIDGE["bridge/hopper_bridge.py<br/>Runs inside Hopper<br/>adapts operations to Hopper Python API"]
@@ -18,7 +22,7 @@ graph TD
         REGISTRY["AnalysisProviderRegistry<br/>sorted deep candidates<br/>deterministic selection, no fallback"]
         RECORDS["src/application/investigation/<br/>composed InvestigationRecords + narrow ports<br/>EvidenceLedger and Unknown ownership"]
         SNAPSHOT["BinarySessionRecords + AnalysisSnapshotCache<br/>binary target/profile snapshots<br/>compatibility facade and post-commit notifications"]
-        JS_RECON["src/application/ + src/artifacts/<br/>JavaScript artifact reconstruction<br/>directory/ASAR reads<br/>AST-only bundle projection"]
+        JS_RECON["src/application/javascript/ + src/artifacts/javascript/<br/>JavaScript artifact reconstruction<br/>directory/ASAR reads<br/>AST-only bundle projection"]
     end
 
     subgraph "Provider Layers"
@@ -69,6 +73,10 @@ graph TD
     MAIN --> SERVER
     MAIN --> APP
     CLI --> APP
+    MAIN --> COMPOSITION
+    CLI --> COMPOSITION
+    SERVER --> COMPOSITION
+    COMPOSITION --> SESSION
     APP --> FIRMWARE
     FIRMWARE --> PROCESS
     FIRMWARE --> CONTRACTS
@@ -84,9 +92,10 @@ graph TD
     APP -->|record callbacks| RECORDS
     SERVER -->|narrow record ports| RECORDS
     RECORDS --> DOMAIN
-    REGISTRY --> HOPPER
-    REGISTRY --> GHIDRA
-    REGISTRY --> IDA
+    COMPOSITION --> HOPPER
+    COMPOSITION --> GHIDRA
+    COMPOSITION --> IDA
+    COMPOSITION --> AUX
     IDA --> IDA_MCP
     IDA --> CONTRACTS
     IDA --> DOMAIN

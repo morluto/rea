@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { runProviderAnalysis } from "../../../src/application/DirectAnalysis.js";
+import { runProviderAnalysis } from "../../../src/composition/directAnalysis.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import {
   identifyRuntimes,

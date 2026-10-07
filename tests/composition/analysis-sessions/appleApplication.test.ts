@@ -17,7 +17,7 @@ import {
 } from "../../support/applicationSessionFixture.js";
 
 import { projectAppleApplicationEvidence } from "../../../src/application/apple/AppleApplicationService.js";
-import { runProviderAnalysis } from "../../../src/application/DirectAnalysis.js";
+import { runProviderAnalysis } from "../../../src/composition/directAnalysis.js";
 import { appleApplicationProjectionResultSchema } from "../../../src/domain/apple/appleApplication.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 

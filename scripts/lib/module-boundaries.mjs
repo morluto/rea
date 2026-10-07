@@ -89,12 +89,14 @@ const failedBoundary = (file, target) => {
     )
       return "pure-layer";
   }
-  if (file === "src/application/runtime.ts") return undefined;
   if (layer === "application" && targetLayer === "composition")
     return "application-composition";
   if (
     (layer === "application" || layer === "server") &&
     (MIGRATED_PROVIDER_ROOTS.has(targetLayer) ||
+      /^src\/(?:artifacts\/ArtifactProvider|dotnet\/ManagedStaticProvider|native\/NativeMacOSProvider)\.[^/]+$/u.test(
+        target,
+      ) ||
       /^src\/browser\/[^/]*Provider\.[^/]+$/u.test(target))
   )
     return "provider-construction";

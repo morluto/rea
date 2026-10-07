@@ -5,7 +5,7 @@ import {
   runCapabilityStatus,
   runProviderAnalysis,
   runProviderStatus,
-} from "../application/DirectAnalysis.js";
+} from "../composition/directAnalysis.js";
 import { importReferenceSource } from "../application/ReferenceSourceImport.js";
 import { projectReferenceSourceImportError } from "../application/ReferenceSourceImportTypes.js";
 import { parseConfig } from "../config.js";
