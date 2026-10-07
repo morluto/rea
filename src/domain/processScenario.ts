@@ -4,10 +4,16 @@ import { z } from "zod";
 
 const positiveBudget = z.number().int().safe().positive();
 const timedEventBase = { at_ms: z.number().int().safe().nonnegative() };
+const reservedRunIdEnvironmentName = "REA_PROCESS_RUN_ID";
 const environmentName = z
   .string()
-  .regex(/^[^=\0]+$/u, "Environment names cannot contain '=' or NUL");
-const reservedEnvironment = new Set(["REA_PROCESS_RUN_ID"]);
+  .min(1, "Environment names must not be empty")
+  .regex(/^(?!REA_PROCESS_RUN_ID(?![\s\S]))[^=\0]+$/u, {
+    error: (issue) =>
+      issue.input === reservedRunIdEnvironmentName
+        ? `${reservedRunIdEnvironmentName} is reserved by the process adapter`
+        : "Environment names cannot contain '=' or NUL",
+  });
 export const normalizationSchema = z.object({
   paths: z.boolean(),
   pids: z.boolean(),
@@ -167,16 +173,6 @@ export const processScenarioSchema = z
           code: "custom",
           message: "events must be ordered by at_ms",
           path: ["events", index],
-        });
-      }
-    }
-    const explicit = new Set(Object.keys(scenario.environment));
-    for (const name of explicit) {
-      if (reservedEnvironment.has(name)) {
-        context.addIssue({
-          code: "custom",
-          message: `${name} is reserved by the process adapter`,
-          path: ["environment", name],
         });
       }
     }

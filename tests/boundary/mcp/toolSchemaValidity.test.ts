@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import { emptyArraySchema } from "../../../src/domain/emptyArraySchema.js";
+import { processScenarioSchema } from "../../../src/domain/processScenario.js";
 import { GENERATED_MCP_TOOL_CATALOG } from "../../../src/generatedMcpToolCatalog.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 
@@ -26,6 +27,76 @@ function schemaErrors(tools: readonly ToolSchemas[]): string[] {
     }),
   );
 }
+
+const advertiseAndEnforceProcessEnvironmentKeyConstraint =
+  async (): Promise<void> => {
+    const contract = TOOL_CONTRACTS.find(
+      ({ name }) => name === "capture_process_scenario",
+    );
+    if (contract === undefined)
+      throw new Error("Process capture contract was not registered");
+
+    let handlerCalled = false;
+    const server = new McpServer({ name: "process-schema", version: "0" });
+    server.registerTool(
+      contract.name,
+      {
+        title: contract.title,
+        description: contract.description,
+        inputSchema: processScenarioSchema.shape,
+      },
+      async () => {
+        handlerCalled = true;
+        return {
+          content: [{ type: "text" as const, text: "handler ran" }],
+          isError: true,
+        };
+      },
+    );
+    const client = new Client({ name: "process-schema", version: "0" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const advertised = (await client.listTools()).tools.find(
+        ({ name }) => name === contract.name,
+      );
+      if (advertised === undefined)
+        throw new Error("Process capture tool was not advertised");
+
+      const validate = new Ajv2020({
+        strict: false,
+        validateFormats: false,
+      }).compile(advertised.inputSchema);
+      const valid = { executable: "node", environment: { APP_MODE: "test" } };
+      const reserved = {
+        executable: "node",
+        environment: { REA_PROCESS_RUN_ID: "caller-value" },
+      };
+      const reservedWithTrailingNewline = {
+        executable: "node",
+        environment: { "REA_PROCESS_RUN_ID\n": "caller-value" },
+      };
+      expect(validate(valid)).toBe(true);
+      expect(contract.inputSchema.safeParse(valid).success).toBe(true);
+      expect(validate(reserved)).toBe(false);
+      expect(contract.inputSchema.safeParse(reserved).success).toBe(false);
+      expect(validate(reservedWithTrailingNewline)).toBe(true);
+      expect(
+        contract.inputSchema.safeParse(reservedWithTrailingNewline).success,
+      ).toBe(true);
+
+      const result = await client.callTool({
+        name: contract.name,
+        arguments: reserved,
+      });
+      expect(result.isError).toBe(true);
+      expect(handlerCalled).toBe(false);
+    } finally {
+      await Promise.allSettled([client.close(), server.close()]);
+    }
+  };
 
 describe("MCP JSON Schema validity", () => {
   it("preserves empty-array validation in the advertised representation", () => {
@@ -154,3 +225,8 @@ describe("MCP JSON Schema validity", () => {
     expect(schemaErrors(GENERATED_MCP_TOOL_CATALOG)).toEqual([]);
   });
 });
+
+it(
+  "advertises and enforces the process-owned environment key constraint",
+  advertiseAndEnforceProcessEnvironmentKeyConstraint,
+);

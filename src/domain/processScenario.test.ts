@@ -28,13 +28,37 @@ describe("direct process scenarios", () => {
   });
 
   it("rejects malformed environment names and adapter-reserved identity", () => {
-    for (const name of ["", "KEY=VALUE", "KEY\0VALUE", "REA_PROCESS_RUN_ID"])
-      expect(
-        processScenarioSchema.safeParse({
-          executable: "node",
-          environment: { [name]: "value" },
-        }).success,
-      ).toBe(false);
+    for (const name of ["", "KEY=VALUE", "KEY\0VALUE", "REA_PROCESS_RUN_ID"]) {
+      const result = processScenarioSchema.safeParse({
+        executable: "node",
+        environment: { [name]: "value" },
+      });
+      expect(result.success).toBe(false);
+      if (name === "" && !result.success) {
+        const invalidKey = result.error.issues[0];
+        expect(invalidKey?.code).toBe("invalid_key");
+        if (invalidKey?.code === "invalid_key") {
+          expect(invalidKey.issues[0]?.message).toBe(
+            "Environment names must not be empty",
+          );
+        }
+      }
+      if (name === "REA_PROCESS_RUN_ID" && !result.success) {
+        const invalidKey = result.error.issues[0];
+        expect(invalidKey?.code).toBe("invalid_key");
+        if (invalidKey?.code === "invalid_key") {
+          expect(invalidKey.issues[0]?.message).toBe(
+            "REA_PROCESS_RUN_ID is reserved by the process adapter",
+          );
+        }
+      }
+    }
+    expect(
+      processScenarioSchema.safeParse({
+        executable: "node",
+        environment: { "REA_PROCESS_RUN_ID\n": "caller-value" },
+      }).success,
+    ).toBe(true);
   });
 
   it("keeps bounded capture controls and ordered scheduled interaction", () => {
