@@ -1,5 +1,14 @@
 import { createHash } from "node:crypto";
-import { mkdir, writeFile, truncate } from "node:fs/promises";
+import { fstatSync, type Stats } from "node:fs";
+import {
+  open as openFile,
+  lstat,
+  mkdir,
+  rm,
+  readdir,
+  writeFile,
+  truncate,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { createPackageWithOptions } from "@electron/asar";
 import { describe, expect, it } from "vitest";
@@ -16,7 +25,125 @@ const expectedSha256 = (): string => {
   return hash.digest("hex");
 };
 
+const descriptorDirectory =
+  process.platform === "darwin" ? "/dev/fd" : "/proc/self/fd";
+
+const matchingDescriptorCount = async (identity: Stats): Promise<number> => {
+  const descriptors = await readdir(descriptorDirectory);
+  return descriptors.filter((descriptor) => {
+    if (!/^\d+$/u.test(descriptor)) return false;
+    try {
+      const observed = fstatSync(Number(descriptor));
+      return observed.dev === identity.dev && observed.ino === identity.ino;
+    } catch {
+      return false;
+    }
+  }).length;
+};
+
+const waitForNoMatchingDescriptor = async (identity: Stats): Promise<void> => {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if ((await matchingDescriptorCount(identity)) === 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  expect(await matchingDescriptorCount(identity)).toBe(0);
+};
+
 describe("ASAR entry streaming", () => {
+  it.skipIf(process.platform === "win32")(
+    "closes a packed member handle when its unopened output stream is destroyed",
+    async () => {
+      const root = await createTestTempDirectory(
+        "rea-asar-destroy-before-read-",
+      );
+      const source = join(root, "source");
+      const archive = join(root, "fixture.asar");
+      await mkdir(source);
+      await writeFile(join(source, "small.js"), "module.exports = 1;\n");
+      await createPackageWithOptions(source, archive, {});
+
+      const identity = await lstat(archive);
+      const probe = await openFile(archive, "r");
+      expect(await matchingDescriptorCount(identity)).toBeGreaterThan(0);
+      await probe.close();
+      await waitForNoMatchingDescriptor(identity);
+      const reader = new AsarArtifactReader(archive);
+
+      try {
+        const entries = [];
+        for await (const entry of reader.entries()) {
+          entries.push(entry);
+        }
+        const entry = entries.find(({ path }) => path === "small.js");
+        if (entry === undefined) throw new Error("Expected packed ASAR member");
+        expect(await matchingDescriptorCount(identity)).toBe(0);
+        const output = await reader.open(entry);
+        expect(await matchingDescriptorCount(identity)).toBeGreaterThan(0);
+        const closed = new Promise<void>((resolve) =>
+          output.once("close", resolve),
+        );
+        output.destroy();
+        await closed;
+        await waitForNoMatchingDescriptor(identity);
+      } finally {
+        await reader.close();
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "closes a packed member handle when cancellation arrives during open",
+    async () => {
+      const root = await createTestTempDirectory("rea-asar-abort-during-stat-");
+      const source = join(root, "source");
+      const archive = join(root, "fixture.asar");
+      await mkdir(source);
+      await writeFile(join(source, "small.js"), "module.exports = 1;\n");
+      await createPackageWithOptions(source, archive, {});
+
+      const identity = await lstat(archive);
+      const reader = new AsarArtifactReader(archive);
+
+      try {
+        const entries = [];
+        for await (const entry of reader.entries()) entries.push(entry);
+        const entry = entries.find(({ path }) => path === "small.js");
+        if (entry === undefined) throw new Error("Expected packed ASAR member");
+        const controller = new AbortController();
+        const opening = reader.open(entry, controller.signal);
+        controller.abort();
+        await expect(opening).rejects.toMatchObject({ reason: "cancelled" });
+        await waitForNoMatchingDescriptor(identity);
+      } finally {
+        await reader.close();
+      }
+    },
+  );
+
+  it("classifies a missing packed member container as an I/O failure", async () => {
+    const root = await createTestTempDirectory("rea-asar-missing-member-");
+    const source = join(root, "source");
+    const archive = join(root, "fixture.asar");
+    await mkdir(source);
+    await writeFile(join(source, "small.js"), "module.exports = 1;\n");
+    await createPackageWithOptions(source, archive, {});
+
+    const reader = new AsarArtifactReader(archive);
+    try {
+      const entries = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      const entry = entries.find(({ path }) => path === "small.js");
+      if (entry === undefined) throw new Error("Expected packed ASAR member");
+      await rm(archive);
+      await expect(reader.open(entry)).rejects.toMatchObject({
+        reason: "io",
+        cause: { code: "ENOENT" },
+      });
+    } finally {
+      await reader.close();
+    }
+  });
+
   it.each([
     ["packed", {}],
     ["unpacked", { unpack: "large.bin" }],

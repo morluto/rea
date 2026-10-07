@@ -113,6 +113,7 @@ export class AsarArtifactReader implements ArtifactReader {
       const handle = await this.#openUnpackedEntry(entry, metadata);
       try {
         const observed = await handle.stat();
+        abortIfNeeded(signal);
         if (!observed.isFile() || observed.size !== metadata.size)
           throw new ArtifactReaderFailure(
             "integrity",
@@ -164,27 +165,29 @@ export class AsarArtifactReader implements ArtifactReader {
         `ASAR entry range is outside its container: ${entry.path}`,
       );
     if (metadata.size === 0) return Readable.from([]);
-    const handle = await open(
-      this.path,
-      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-    );
-    const observed = await handle.stat().catch(async (cause: unknown) => {
-      await handle.close().catch(() => undefined);
-      throw cause;
-    });
-    if (!observed.isFile() || observed.size !== archiveSize) {
-      await handle.close();
-      throw new ArtifactReaderFailure(
-        "integrity",
-        `ASAR container changed before read: ${entry.path}`,
+    let handle: FileHandle | undefined;
+    try {
+      handle = await open(
+        this.path,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
       );
+      const observed = await handle.stat();
+      abortIfNeeded(signal);
+      if (!observed.isFile() || observed.size !== archiveSize)
+        throw new ArtifactReaderFailure(
+          "integrity",
+          `ASAR container changed before read: ${entry.path}`,
+        );
+      const source = handle.createReadStream({
+        start,
+        end: start + metadata.size - 1,
+        autoClose: true,
+      });
+      return readExactEntry(source, metadata.size, entry.path, signal);
+    } catch (cause: unknown) {
+      await handle?.close().catch(() => undefined);
+      throw asarFailure(this.path, `read ${entry.path}`, cause);
     }
-    const source = handle.createReadStream({
-      start,
-      end: start + metadata.size - 1,
-      autoClose: true,
-    });
-    return readExactEntry(source, metadata.size, entry.path, signal);
   }
 
   /** Open raw container bytes to verify the inventory identity before analysis. */
@@ -310,25 +313,15 @@ const readExactEntry = (
   expectedBytes: number,
   path: string,
   signal?: AbortSignal,
-): Readable =>
-  Readable.from(
+): Readable => {
+  const output = Readable.from(
     (async function* () {
       let observedBytes = 0;
       const iterator = source[Symbol.asyncIterator]();
-      const onAbort = (): void => {
-        source.destroy(
-          new ArtifactReaderFailure("cancelled", "ASAR operation cancelled"),
-        );
-      };
       try {
         while (true) {
           abortIfNeeded(signal);
-          const pending = iterator.next();
-          signal?.addEventListener("abort", onAbort, { once: true });
-          if (signal?.aborted === true) onAbort();
-          const next = await pending.finally(() =>
-            signal?.removeEventListener("abort", onAbort),
-          );
+          const next = await iterator.next();
           if (next.done) break;
           const chunk: unknown = next.value;
           if (!Buffer.isBuffer(chunk) && !(chunk instanceof Uint8Array))
@@ -352,12 +345,26 @@ const readExactEntry = (
             `ASAR entry size disagrees with its header: ${path}`,
           );
       } finally {
-        signal?.removeEventListener("abort", onAbort);
         await iterator.return?.();
         if (!source.destroyed) source.destroy();
       }
     })(),
   );
+  const closeSource = (): void => {
+    signal?.removeEventListener("abort", onAbort);
+    if (!source.destroyed) source.destroy();
+  };
+  const onAbort = (): void => {
+    closeSource();
+    output.destroy(
+      new ArtifactReaderFailure("cancelled", "ASAR operation cancelled"),
+    );
+  };
+  output.once("close", closeSource);
+  signal?.addEventListener("abort", onAbort, { once: true });
+  if (signal?.aborted === true) onAbort();
+  return output;
+};
 
 const abortIfNeeded = (signal?: AbortSignal): void => {
   if (signal?.aborted === true)
