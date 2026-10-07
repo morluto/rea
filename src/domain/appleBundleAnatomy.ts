@@ -141,14 +141,18 @@ export const detectBundles = (
 interface Tree {
   readonly children: ReadonlyMap<string, ReadonlySet<string>>;
   readonly files: ReadonlyMap<string, Component>;
+  /** Paths observed as directories, or implied by a deeper path. */
+  readonly directories: ReadonlySet<string>;
 }
 
 const indexTree = (entries: readonly Entry[]): Tree => {
   const children = new Map<string, Set<string>>();
   const files = new Map<string, Component>();
+  const directories = new Set<string>();
   for (const { path, kind, component } of entries) {
     if (isSidecar(path)) continue;
     if (kind === "file" && component !== undefined) files.set(path, component);
+    if (kind === "directory") directories.add(path);
     const segments = path.split("/");
     let parent = "";
     for (const segment of segments) {
@@ -156,9 +160,10 @@ const indexTree = (entries: readonly Entry[]): Tree => {
       names.add(segment);
       children.set(parent, names);
       parent = joinPath(parent, segment);
+      if (parent !== path) directories.add(parent);
     }
   }
-  return { children, files };
+  return { children, files, directories };
 };
 
 const joinPath = (directory: string, name: string): string =>
@@ -223,9 +228,12 @@ const contentDirectories = (
   if (layout === "macos-deep") return [joinPath(directory, "Contents")];
   if (layout === "shallow") return [directory];
   const versions = joinPath(directory, "Versions");
+  // Only real version directories count: Current is a symlink, and files
+  // such as .DS_Store are not versions.
   return [...(tree.children.get(versions) ?? [])]
     .filter((version) => version !== "Current")
     .map((version) => joinPath(versions, version))
+    .filter((version) => tree.directories.has(version))
     .sort(compare);
 };
 
@@ -234,7 +242,11 @@ const infoPlistPath = (
   layout: Bundle["layout"],
   tree: Tree,
 ): string | null => {
-  const candidates = contentDirectories(bundle, layout, tree)
+  const directories = contentDirectories(bundle, layout, tree);
+  // With several real versions, Versions/Current (a symlink outside the
+  // inventory) decides which plist applies, so the plist stays unknown.
+  if (directories.length !== 1) return null;
+  const candidates = directories
     .map((directory) =>
       joinPath(
         directory,

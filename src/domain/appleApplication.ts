@@ -149,6 +149,7 @@ export const projectAppleApplication = (
       ...classified.executables,
       ...classified.native_libraries,
     ]),
+    roots,
   );
   const uninventoriedImage =
     rootFormat === "dmg" && inventory.occurrences.length === 1;
@@ -305,18 +306,27 @@ const identifyRuntimeFamilies = (all: readonly Component[]) => {
   return [...families].sort(compare);
 };
 
+/** Pair scripts and native code only within the same application root. */
 const identifyBridgeCandidates = (
   scripts: readonly Component[],
   native: readonly Component[],
-) => ({
-  candidates: scripts.flatMap((script) =>
-    native.map((item) => ({
-      source_path: script.path,
-      native_path: item.path,
-      basis: bridgeBasis(item.path),
-    })),
-  ),
-});
+  roots: readonly string[],
+) => {
+  const owner = (path: string): string | null =>
+    roots.find((root) => isWithin(path, root)) ?? null;
+  return {
+    candidates: scripts.flatMap((script) => {
+      const root = owner(script.path);
+      return native
+        .filter(({ path }) => owner(path) === root)
+        .map((item) => ({
+          source_path: script.path,
+          native_path: item.path,
+          basis: bridgeBasis(item.path),
+        }));
+    }),
+  };
+};
 
 const bridgeBasis = (
   path: string,
@@ -360,7 +370,7 @@ const projectionLimitations = (facts: {
       layout === "versioned-framework" && plist === null,
   )
     ? [
-        "A versioned framework has zero or several Versions/*/Resources/Info.plist files; the one Versions/Current selects is unknown because symlink targets are not inventoried.",
+        "A versioned framework has several version directories or no Versions/*/Resources/Info.plist; the Info.plist that Versions/Current selects is unknown because symlink targets are not inventoried.",
       ]
     : []),
   ...(facts.symlinks

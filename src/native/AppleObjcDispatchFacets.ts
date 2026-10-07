@@ -1,5 +1,7 @@
 import type { ObjcSwiftMetadata } from "../domain/objcSwiftMetadata.js";
 import type { Segment, Section } from "./AppleMachoSelection.js";
+import { boundClassName, decodeObjcCategories } from "./AppleObjcCategories.js";
+import { readObjcPropertiesOf } from "./AppleObjcProperties.js";
 import { createObjcProtocolReader } from "./AppleObjcProtocols.js";
 import type {
   BinaryMetadataEvidence,
@@ -10,8 +12,14 @@ import type {
 /** Byte readers shared by Objective-C class/method/ivar decode facets. */
 export interface ObjcDispatchReaders {
   u32(address: bigint): number;
+  /** Plain 64-bit data, never a fixup. */
+  u64(address: bigint): bigint;
   i32(address: bigint): number;
   pointer(address: bigint): bigint;
+  /** The symbol a pointer at `address` is bound to, when it is a bind fixup. */
+  bound(
+    address: bigint,
+  ): { readonly symbol: string; readonly library: string | null } | undefined;
   string(address: bigint): string;
   location(address: bigint): ResolvedMetadataLocation;
   evidence(address: bigint, description: string): BinaryMetadataEvidence;
@@ -21,6 +29,36 @@ export interface ObjcDispatchReaders {
 const hex = (value: bigint) => `0x${value.toString(16)}`;
 const decoded = { status: "decoded" as const, reason: null };
 
+/** Name of a class defined in this image, from its class_ro_t. */
+const localClassName = (read: ObjcDispatchReaders, address: bigint): string =>
+  read.string(read.pointer((read.pointer(address + 32n) & ~7n) + 24n));
+
+/**
+ * Resolve a class's superclass: a bind to `_OBJC_CLASS_$_Name` names a class
+ * in another image; otherwise the pointer is a class_t in this image.
+ */
+const resolveSuperclass = (
+  read: ObjcDispatchReaders,
+  address: bigint,
+  className: string,
+  failures: string[],
+): { name: string | null; address: string | null } => {
+  const external = boundClassName(read, address + 8n);
+  if (external !== undefined) return { name: external, address: null };
+  const superclass = read.pointer(address + 8n);
+  if (superclass === 0n) return { name: null, address: null };
+  try {
+    return { name: localClassName(read, superclass), address: hex(superclass) };
+  } catch (cause: unknown) {
+    // Superclass resolution failure is recorded; the cause adds no identity.
+    void cause;
+    failures.push(
+      `Superclass pointer ${hex(superclass)} of ${className} requires unsupported binding/fixup resolution`,
+    );
+    return { name: null, address: hex(superclass) };
+  }
+};
+
 /** Decode Objective-C protocol lists, classlists, methods, and ivars into `result`. */
 export const decodeObjcDispatchFacets = (input: {
   bytes: Buffer;
@@ -29,7 +67,7 @@ export const decodeObjcDispatchFacets = (input: {
   readers: ObjcDispatchReaders;
   budget: DispatchRecordBudget;
   result: ObjcSwiftMetadata;
-}): { failures: string[]; examined: number } => {
+}): { failures: string[]; examined: number; categoriesExamined: number } => {
   const { bytes, sections, segments, readers: read, budget, result } = input;
   const failures: string[] = [];
   let examined = 0;
@@ -37,8 +75,10 @@ export const decodeObjcDispatchFacets = (input: {
     list: bigint,
     className: string,
     methodType: "instance" | "class",
-  ) => {
-    if (list === 0n) return;
+    category?: string,
+  ): string[] => {
+    const selectors: string[] = [];
+    if (list === 0n) return selectors;
     const flags = read.u32(list),
       count = read.u32(list + 4n),
       relative = (flags & 0x80000000) !== 0;
@@ -103,10 +143,13 @@ export const decodeObjcDispatchFacets = (input: {
         // best-effort cleanup: external/chained pointers remain unresolved.
         void cause;
       }
+      const selector = read.string(selectorAddress);
+      selectors.push(selector);
       result.objc_dispatch_implementations.push({
         class_name: className,
-        selector: read.string(selectorAddress),
+        selector,
         method_type: methodType,
+        ...(category === undefined ? {} : { category }),
         implementation_address: implementationLocation?.address ?? null,
         location: read.location(entry),
         decode:
@@ -124,6 +167,7 @@ export const decodeObjcDispatchFacets = (input: {
         ),
       });
     }
+    return selectors;
   };
   const protocolReader = createObjcProtocolReader({
     readers: {
@@ -134,6 +178,7 @@ export const decodeObjcDispatchFacets = (input: {
       evidence: read.evidence,
       admit: () => budget.admit(),
       i32: read.i32,
+      u64: read.u64,
     },
     result,
     failures,
@@ -157,23 +202,9 @@ export const decodeObjcDispatchFacets = (input: {
     visited.add(hex(address));
     const ro = read.pointer(address + 32n) & ~7n;
     const name = read.string(read.pointer(ro + 24n));
-    const superclass = read.pointer(address + 8n);
     const root = (read.u32(ro) & 2) !== 0;
-    let superclassName: string | null = null;
-    if (superclass !== 0n) {
-      try {
-        superclassName = read.string(
-          read.pointer((read.pointer(superclass + 32n) & ~7n) + 24n),
-        );
-      } catch (cause: unknown) {
-        // Superclass resolution failure is recorded; the cause adds no identity.
-        void cause;
-        failures.push(
-          `Superclass pointer ${hex(superclass)} of ${name} requires unsupported binding/fixup resolution`,
-        );
-      }
-    }
-    if (superclass === 0n && !root)
+    const superclass = resolveSuperclass(read, address, name, failures);
+    if (superclass.name === null && superclass.address === null && !root)
       failures.push(
         `Superclass of ${name} requires external binding resolution`,
       );
@@ -220,7 +251,7 @@ export const decodeObjcDispatchFacets = (input: {
     methods(read.pointer(ro + 32n), name, meta ? "class" : "instance");
     result.objc_classes.push({
       name,
-      super_class: superclassName,
+      super_class: superclass.name,
       is_meta_class: meta,
       is_root_class: root,
       methods: result.objc_dispatch_implementations
@@ -241,15 +272,19 @@ export const decodeObjcDispatchFacets = (input: {
           is_required: false,
           is_optional: false,
         })),
-      properties: [],
+      properties: readObjcPropertiesOf(read, read.pointer(ro + 64n), {
+        owner: name,
+        admit: () => budget.admit(),
+        failures,
+      }),
       protocols: protocolReader.list(read.pointer(ro + 40n)),
       ivar_count: ivarCount,
       instance_size: read.u32(ro + 8n),
       location: read.location(address),
-      superclass_address: superclass === 0n ? null : hex(superclass),
+      superclass_address: superclass.address,
       metaclass_address: meta ? null : hex(read.pointer(address)),
       decode:
-        superclassName === null && !root
+        superclass.name === null && !root
           ? { status: "partial", reason: "superclass_binding_unresolved" }
           : decoded,
       evidence: read.evidence(
@@ -288,5 +323,15 @@ export const decodeObjcDispatchFacets = (input: {
       }
     }
   }
-  return { failures, examined };
+  const categoriesExamined = decodeObjcCategories({
+    sections,
+    read,
+    result,
+    failures,
+    admit: () => budget.admit(),
+    methods,
+    protocols: (list) => protocolReader.list(list),
+    localClassName: (address) => localClassName(read, address),
+  });
+  return { failures, examined, categoriesExamined };
 };
