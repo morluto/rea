@@ -1,18 +1,18 @@
 import { expect, it } from "vitest";
 
-import { createProcessCaptureEvidence } from "./ProcessEvidence.js";
-import { createRunManifest } from "./ProcessCaptureLifecycle.js";
-import { emptyUnverifiedProcessCapture } from "../domain/processCapture.fixture.js";
+import { createProcessCaptureEvidence } from "../../../src/application/process/ProcessEvidence.js";
+import { createRunManifest } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
+import { emptyUnverifiedProcessCapture } from "../../../src/domain/process/processCapture.fixture.js";
 import {
   compareProcessCaptures,
   parseProcessCapture,
-} from "../domain/processCapture.js";
+} from "../../../src/domain/process/processCapture.js";
 import {
   digestProcessCommitment,
   parseProcessScenario,
   processComparisonContract,
   processScenarioCommitment,
-} from "../domain/processScenario.js";
+} from "../../../src/domain/process/processScenario.js";
 
 const captureEvidenceForSensitiveInput = (data: string) => {
   const scenario = parseProcessScenario({

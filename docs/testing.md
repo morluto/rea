@@ -103,6 +103,15 @@ names remain unchanged.
 The existing Apple CI job also runs the host Swift-demangling CLI/MCP regression
 suites, including option-like symbols, carriage returns and multiline rejection.
 
+Process semantics/tests live in `src/domain/process/`; PTY capture implementation
+and forked helper tests live in `src/process/capture/`. Evidence projection and
+file workflows live in `src/application/process/`; producer-backed Evidence/host
+cases run in the serial `tests/boundary/process/` lane. Installed-package probes
+load the compiled capture capability owner, including the missing-optional-module
+case. Real capture tests preserve actual descendant and cleanup checks.
+The existing Apple job also exercises the relocated filesystem snapshot identity,
+cancellation and descriptor cleanup regressions on macOS.
+
 MCP SDK transport tests with recording providers remain integration tests.
 They are useful for schema drift and failure projection but do not prove that
 Hopper, Ghidra or another substituted engine works. `verify:package` proves

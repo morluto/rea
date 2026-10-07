@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { jsonValueSchema, type JsonValue } from "./jsonValue.js";
+import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
 import type { UnverifiedProcessCapture } from "./processCapture.js";
 
 /** Process-capture observation families shared by live drivers and trace assertions. */

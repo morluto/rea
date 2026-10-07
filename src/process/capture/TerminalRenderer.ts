@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import type {
   RecordProcessCaptureEvent,
   RenderedTerminalFrame,
-} from "../domain/processCapture.js";
+} from "../../domain/process/processCapture.js";
 
 const require = createRequire(import.meta.url);
 // SAFETY: both pinned xterm packages publish CommonJS at runtime and matching declarations.

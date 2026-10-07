@@ -1,13 +1,13 @@
-import type { JsonValue } from "../domain/jsonValue.js";
-import { createEvidence } from "../domain/evidence.js";
-import { PROCESS_PROVIDER } from "../domain/processEvidenceProvider.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
+import { createEvidence } from "../../domain/evidence.js";
+import { PROCESS_PROVIDER } from "../../domain/process/processEvidenceProvider.js";
+import { jsonValueSchema } from "../../domain/jsonValue.js";
 import type {
   ProcessCapture,
   ProcessScenario,
-} from "../domain/processCapture.js";
+} from "../../domain/process/processCapture.js";
 
-export { PROCESS_PROVIDER } from "../domain/processEvidenceProvider.js";
+export { PROCESS_PROVIDER } from "../../domain/process/processEvidenceProvider.js";
 
 /** Project one process scenario into secret-free Evidence parameters. */
 const processEvidenceParameters = (

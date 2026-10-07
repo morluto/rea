@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { jsonValueSchema } from "./jsonValue.js";
+import { jsonValueSchema } from "../jsonValue.js";
 
 import { normalizationSchema } from "./processScenario.js";
 import { collectProcessCaptureIssues } from "./processCaptureValidation.js";

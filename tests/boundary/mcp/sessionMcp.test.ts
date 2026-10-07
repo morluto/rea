@@ -15,7 +15,7 @@ import type {
   AnalysisProvider,
   CapabilityDescriptor,
 } from "../../../src/application/AnalysisProvider.js";
-import { probeProcessCaptureCapability } from "../../../src/application/ProcessHarness.js";
+import { probeProcessCaptureCapability } from "../../../src/process/capture/ProcessHarness.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
@@ -225,6 +225,37 @@ describe("target-free MCP workflow", () => {
         })
       ).isError,
     ).not.toBe(true);
+    await mcp.callTool({ name: "close_binary", arguments: {} });
+  }, 10_000);
+});
+
+describe("session filesystem path boundaries over MCP", () => {
+  it("rejects relative snapshot and export paths with an absolute-path error", async () => {
+    directory = await createTestTempDirectory("rea-mcp-path-boundary-");
+    const { mcp, first } = await createSessionMcpHarness(
+      directory,
+      provider,
+      resources,
+    );
+
+    const exported = await mcp.callTool({
+      name: "export_evidence_bundle",
+      arguments: { path: "relative-bundle.json" },
+    });
+    expect(exported.isError, JSON.stringify(exported.content)).toBe(true);
+    expect(JSON.stringify(exported.content)).toContain("absolute");
+
+    const opened = await mcp.callTool({
+      name: "open_binary",
+      arguments: { path: first },
+    });
+    expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
+    const closed = await mcp.callTool({
+      name: "close_binary",
+      arguments: { snapshot_path: "relative-analysis.json" },
+    });
+    expect(closed.isError, JSON.stringify(closed.content)).toBe(true);
+    expect(JSON.stringify(closed.content)).toContain("absolute");
     await mcp.callTool({ name: "close_binary", arguments: {} });
   }, 10_000);
 });

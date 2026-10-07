@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { isAbsoluteLocalPath } from "../domain/localPath.js";
 import {
   sessionOutputSchemas,
   requireOutputSchema,
@@ -47,7 +48,16 @@ const session = <Name extends string, Schema extends z.ZodObject>(
 
 /** Session-owned Evidence bundle export options. */
 export const exportEvidenceBundleInputSchema = z.strictObject({
-  path: z.string().min(1),
+  path: z
+    .string()
+    .min(1)
+    .refine(isAbsoluteLocalPath, {
+      message:
+        "path must be an absolute local filesystem path (for example /tmp/rea/evidence.json or C:\\rea\\evidence.json)",
+    })
+    .describe(
+      "Absolute local filesystem path for the exported evidence bundle; relative paths are rejected.",
+    ),
   overwrite: z.boolean().default(false),
 });
 

@@ -75,7 +75,7 @@ const SOURCE_PATHS = {
   evidenceBundle: "dist/domain/evidenceBundle.js",
   evidenceCompletion: "dist/domain/evidenceCompletionLedger.js",
   completionGeneration: "dist/domain/completionLedgerGeneration.js",
-  processCapture: "dist/domain/processCapture.js",
+  processCapture: "dist/domain/process/processCapture.js",
   analysisSnapshot: "dist/domain/analysisSnapshot.js",
   artifactGraph: "dist/domain/artifactGraph.js",
   browserObservation: "dist/domain/browserObservation.js",

@@ -1,6 +1,11 @@
 import { z } from "zod";
 
-const pathInputSchema = z.string().trim().min(1);
+import { isAbsoluteLocalPath } from "../localPath.js";
+
+const pathInputSchema = z.string().trim().min(1).refine(isAbsoluteLocalPath, {
+  message:
+    "Electron executable, application, and root paths must be absolute local filesystem paths (for example /Applications/Electron.app/Contents/MacOS/Electron)",
+});
 const absolutePathSchema = z
   .string()
   .min(1)
@@ -60,9 +65,17 @@ const actionSchema = z.discriminatedUnion("kind", [
 
 /** Input for one explicit, provider-owned Electron runtime experiment. */
 export const electronActiveObservationInputSchema = z.strictObject({
-  executable_path: pathInputSchema,
-  application_path: pathInputSchema,
-  application_root: pathInputSchema.optional(),
+  executable_path: pathInputSchema.describe(
+    "Absolute local filesystem path for the Electron executable; relative paths are rejected.",
+  ),
+  application_path: pathInputSchema.describe(
+    "Absolute local filesystem path for the Electron application; relative paths are rejected.",
+  ),
+  application_root: pathInputSchema
+    .optional()
+    .describe(
+      "Absolute local filesystem root for application-relative paths; omit to derive it from the application path. Relative paths are rejected.",
+    ),
   args: z.array(z.string()).default([]),
   actions: z.array(actionSchema).default([]),
 });
