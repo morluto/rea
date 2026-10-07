@@ -51,7 +51,7 @@ export const safeResponseMetadata = (
         coop: policyToken(headers.get("cross-origin-opener-policy")),
         coep: policyToken(headers.get("cross-origin-embedder-policy")),
         corp: policyToken(headers.get("cross-origin-resource-policy")),
-        referrer_policy: policyToken(headers.get("referrer-policy")),
+        referrer_policy: referrerPolicy(headers.get("referrer-policy")),
         x_content_type_options: policyToken(
           headers.get("x-content-type-options"),
         ),
@@ -301,6 +301,27 @@ const agentHint = (
 
 const isAgentRel = (value: string): boolean =>
   ["mcp", "model-context", "ai-plugin", "service-desc"].includes(value);
+
+const referrerPolicies = new Set([
+  "no-referrer",
+  "no-referrer-when-downgrade",
+  "same-origin",
+  "origin",
+  "strict-origin",
+  "origin-when-cross-origin",
+  "strict-origin-when-cross-origin",
+  "unsafe-url",
+]);
+
+const referrerPolicy = (value: string | undefined): string | null => {
+  let policy: string | null = null;
+  for (const raw of (value ?? "").split(",")) {
+    const token = raw.trim().toLowerCase();
+    if (!/^[a-z-]*$/u.test(token)) return null;
+    if (referrerPolicies.has(token)) policy = token;
+  }
+  return policy;
+};
 
 const policyToken = (value: string | undefined): string | null => {
   const token = (value ?? "").trim().toLowerCase();
