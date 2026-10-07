@@ -50,6 +50,7 @@ const SOURCE_PATHS = {
   managedWorkflowContracts:
     "dist/contracts/managed/managedWorkflowToolContracts.js",
   browserContracts: "dist/contracts/browserToolContracts.js",
+  webRuntimeContracts: "dist/contracts/webRuntimeToolContracts.js",
   browserScenarioContracts: "dist/contracts/browserScenarioToolContracts.js",
   electronContracts: "dist/contracts/javascript/electronToolContracts.js",
   javascriptRuntimeObservationContracts:

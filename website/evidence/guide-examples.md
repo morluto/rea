@@ -30,6 +30,12 @@ rea analyze-javascript-application \
 The source was formatted before this result was recorded. Re-run analysis
 when the example files change.
 
+The guide's `examples/notes-example.zip` is generated from exactly these six
+source files, under the `notes-example/` folder. Packaging changes no file
+contents. Website verification compares every ZIP entry to its source file and
+rejects extra entries. Existing source digests and static findings remain valid
+for the unzipped example.
+
 ## Notes browser example
 
 The three-file browser app is in `website/public/examples/notes-web/`.

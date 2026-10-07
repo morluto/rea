@@ -81,10 +81,12 @@ const decodeValidatedMap = (
   inspected: ReturnType<typeof inspectSourceMap>,
   url: string,
 ) => {
+  let regularRows: ReturnType<typeof decodedMappings> | undefined;
   for (const leaf of inspected.leaves) {
     const decoded = decodedMappings(
       new TraceMap(JSON.stringify(leaf.map), url),
     );
+    if (inspected.format === "regular") regularRows = decoded;
     for (const [line, row] of decoded.entries())
       for (const segment of row) {
         if (
@@ -112,7 +114,7 @@ const decodeValidatedMap = (
       }
   }
   const map = new AnyMap(inspected.jsonText, url);
-  const rows = decodedMappings(map);
+  const rows = regularRows ?? decodedMappings(map);
   for (const row of rows)
     for (const segment of row) {
       if (

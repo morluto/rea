@@ -51,3 +51,16 @@ it("preserves source-tree enter/exit order and detached ancestor snapshots", () 
     ],
   ]);
 });
+
+it("skips sparse child slots without disturbing sibling visit order", () => {
+  const parsed = parseJavaScriptSource("const values = [first, , second];");
+  if (parsed === null)
+    throw new TypeError("Expected a parsed JavaScript fixture");
+  const identifiers: string[] = [];
+  traverseJavaScriptAst(parsed.program, {
+    enter: (node) => {
+      if (t.isIdentifier(node)) identifiers.push(node.name);
+    },
+  });
+  expect(identifiers).toEqual(["values", "first", "second"]);
+});

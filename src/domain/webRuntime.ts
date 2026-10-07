@@ -1,0 +1,79 @@
+import { z } from "zod";
+import {
+  browserAllowedOriginsSchema,
+  browserEndpointSchema,
+} from "./browserObservation.js";
+import { browserVersionSchema } from "./browserObservationSchemas.js";
+import { jsonObjectSchema } from "./jsonValue.js";
+
+/** Scope for one externally owned page; omitted origins select its current origin. */
+export const webRuntimeScopeSchema = z.strictObject({
+  cdp_endpoint: browserEndpointSchema,
+  allowed_origins: browserAllowedOriginsSchema,
+  target_id: z.string().min(1),
+});
+
+/** Source evidence is bound by the selected CDP session's script ID, never URL equality. */
+export const webRuntimeSourceSchema = z.object({
+  script_id: z.string().min(1),
+  url: z.string(),
+  execution_context_id: z.number().int().nullable(),
+  reported_execution_context: jsonObjectSchema.nullable(),
+  reported_script_context_aux_data: jsonObjectSchema.nullable(),
+  frame_id: z.string().nullable(),
+  producer_hash: z.string().nullable(),
+  source_map_url: z.string().nullable(),
+  has_source_url: z.boolean().nullable(),
+  language: z.string().nullable(),
+  resource_start: z
+    .object({
+      line_number: z.number().int().min(0),
+      column_number: z.number().int().min(0),
+    })
+    .nullable(),
+  source: z.discriminatedUnion("state", [
+    z.object({
+      state: z.literal("captured"),
+      text: z.string(),
+      sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+      utf8_bytes: z.number().int().min(0),
+      utf16_units: z.number().int().min(0),
+    }),
+    z.object({
+      state: z.enum(["unavailable", "excluded"]),
+      reason: z.string().min(1),
+    }),
+  ]),
+});
+export type WebRuntimeSource = z.infer<typeof webRuntimeSourceSchema>;
+
+/** Producer callsite coordinates are zero-based resource lines and UTF-16 columns. */
+export const webRuntimeLocationSchema = z.object({
+  script_id: z.string(),
+  url: z.string().nullable(),
+  line_number: z.number().int().min(0),
+  column_number: z.number().int().min(0).nullable(),
+  function_name: z.string().nullable(),
+  source_association: z.enum(["script_id", "unknown"]),
+});
+
+/** Common identity for a selected live page document. */
+export const webRuntimeTargetSchema = z.object({
+  target_id: z.string().min(1),
+  origin: z.string().min(1),
+  initial_url: z.string(),
+  frame_id: z.string().min(1),
+  loader_id: z.string().nullable(),
+});
+
+/** Producer product identity is observed separately from the unknown host platform. */
+export const webRuntimeBrowserSchema = browserVersionSchema;
+
+/** Complete runtime evidence has explicit byte budgets rather than silent item truncation. */
+export const WEB_RUNTIME_LIMITS = {
+  protocolBytes: 64 * 1024 * 1024,
+  retainedEventBytes: 8 * 1024 * 1024,
+  sourceBytes: 32 * 1024 * 1024,
+  commandTimeoutMs: 20_000,
+  cleanupTimeoutMs: 5_000,
+} as const;

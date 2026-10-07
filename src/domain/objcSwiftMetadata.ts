@@ -156,6 +156,8 @@ export const objcDispatchImplementationSchema = z.strictObject({
   selector: z.string().min(1),
   method_type: z.enum(["instance", "class"]),
   implementation_address: z.string().nullable(),
+  /** Category that adds this method, when it is not defined by the class itself. */
+  category: z.string().nullable().optional(),
   location: nativeMetadataLocationSchema,
   decode: nativeMetadataDecodeSchema,
   evidence: z.array(nativeMetadataEvidenceSchema).min(1),
@@ -163,6 +165,21 @@ export const objcDispatchImplementationSchema = z.strictObject({
 export type ObjcDispatchImplementation = z.infer<
   typeof objcDispatchImplementationSchema
 >;
+
+/** Objective-C category: methods, protocols and properties added to a class. */
+export const objcCategorySchema = z.strictObject({
+  name: z.string().min(1),
+  /** Extended class; external classes come from the category's bind symbol. */
+  class_name: z.string().min(1).nullable(),
+  class_source: z.enum(["local", "external", "unresolved"]),
+  instance_methods: z.array(z.string()),
+  class_methods: z.array(z.string()),
+  protocols: z.array(z.string()),
+  properties: z.array(objcPropertySchema),
+  location: nativeMetadataLocationSchema,
+  decode: nativeMetadataDecodeSchema,
+  evidence: z.array(nativeMetadataEvidenceSchema).min(1),
+});
 
 /** Swift protocol conformance and its associated witness-table location. */
 export const swiftConformanceSchema = z.strictObject({
@@ -279,6 +296,7 @@ export type DbSaveResult = z.infer<typeof dbSaveResultSchema>;
 export const objcSwiftMetadataSchema = z.strictObject({
   objc_classes: z.array(objcClassSchema).default([]),
   objc_protocols: z.array(objcProtocolSchema).default([]),
+  objc_categories: z.array(objcCategorySchema).default([]),
   swift_decls: z.array(swiftDeclSchema).default([]),
   objc_ivars: z.array(objcIvarSchema).default([]),
   objc_protocol_records: z.array(objcProtocolRecordSchema).default([]),

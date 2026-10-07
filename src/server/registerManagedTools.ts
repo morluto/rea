@@ -9,7 +9,7 @@ import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { err } from "../domain/result.js";
 import type { Logger } from "../logger.js";
 import { registerEvidenceTools } from "./registerEvidenceTools.js";
-import { runManagedProviderExecution } from "../application/DirectAnalysis.js";
+import { runManagedProviderExecution } from "../composition/directAnalysis.js";
 import { isManagedToolName } from "../contracts/managed/managedToolContracts.js";
 
 /** Register execution-free managed PE/CLI inspection. */

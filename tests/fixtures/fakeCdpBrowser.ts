@@ -92,6 +92,11 @@ export const startFakeCdpBrowser = async (
     socket.on("message", (raw) => {
       const command = parseCommand(raw.toString());
       commands.push(command);
+      const commandError = options.commandError?.(command);
+      if (commandError !== undefined) {
+        socket.send(JSON.stringify({ id: command.id, error: commandError }));
+        return;
+      }
       if (options.closeOnMethod === command.method) {
         socket.close();
         return;
@@ -124,19 +129,7 @@ export const startFakeCdpBrowser = async (
         return;
       }
       if (command.method === "Page.getFrameTree") frameTreeReads += 1;
-      socket.send(
-        JSON.stringify({
-          id: command.id,
-          result: resultFor(command, port, options, frameTreeReads),
-        }),
-      );
-      if (options.malformedEventOnMethod === command.method)
-        socket.send("{not-json");
-      if (options.malformedEventShapeOnMethod === command.method)
-        socket.send(JSON.stringify({ method: 42 }));
-      emitEvents(socket, command, port, options);
-      if (options.closeAfterMethod === command.method)
-        setImmediate(() => socket.close());
+      replyToCommand(socket, command, port, options, frameTreeReads);
     });
   });
   await new Promise<void>((resolve, reject) => {
@@ -150,6 +143,12 @@ export const startFakeCdpBrowser = async (
     browserWebSocketUrl: `ws://127.0.0.1:${String(port)}/devtools/browser/fake`,
     allowedOrigin: endpoint,
     commands,
+    emitRawMessage(message) {
+      for (const socket of sockets) socket.send(message);
+    },
+    emitEvent(event) {
+      for (const socket of sockets) socket.send(JSON.stringify(event));
+    },
     httpRequests,
     async close() {
       for (const socket of sockets) socket.terminate();
@@ -169,4 +168,37 @@ const boundPort = (
   if (address === null || typeof address === "string")
     throw new Error("Fake CDP server did not bind a TCP address");
   return address.port;
+};
+
+/** Emit a configured producer reply and its associated events. */
+const replyToCommand = (
+  socket: WebSocket,
+  command: FakeCdpCommand,
+  port: number,
+  options: FakeOptions,
+  frameTreeReads: number,
+): void => {
+  socket.send(
+    JSON.stringify({
+      id: command.id,
+      result:
+        options.commandResult?.(
+          command,
+          `http://127.0.0.1:${String(port)}`,
+          frameTreeReads,
+        ) ?? resultFor(command, port, options, frameTreeReads),
+    }),
+  );
+  if (options.malformedEventOnMethod === command.method)
+    socket.send("{not-json");
+  if (options.malformedEventShapeOnMethod === command.method)
+    socket.send(JSON.stringify({ method: 42 }));
+  const customEvents = options.commandEvents?.(
+    command,
+    `http://127.0.0.1:${String(port)}`,
+  );
+  if (customEvents === undefined) emitEvents(socket, command, port, options);
+  else for (const event of customEvents) socket.send(JSON.stringify(event));
+  if (options.closeAfterMethod === command.method)
+    setImmediate(() => socket.close());
 };

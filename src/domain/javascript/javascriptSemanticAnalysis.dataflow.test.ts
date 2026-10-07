@@ -149,6 +149,31 @@ describe("JavaScript semantic analysis: dataflow 1", () => {
   });
 });
 
+describe("JavaScript semantic call result flows", () => {
+  it("links only directly assigned scalar call results", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      function run() {
+        const direct = produce();
+        const { field } = unpack();
+        const nested = outer(inner());
+        return direct;
+      }
+    `);
+    const bindingNames = new Map(
+      ir.bindings.map(({ bindingId, name }) => [bindingId, name]),
+    );
+
+    expect(
+      ir.callResultFlows.map(({ bindingId }) => bindingNames.get(bindingId)),
+    ).toEqual(["direct", "nested"]);
+    expect(ir.callSites).toHaveLength(4);
+    expect(ir.callResultFlows.map(({ callSiteId }) => callSiteId)).toEqual([
+      ir.callSites[0]?.callSiteId,
+      ir.callSites[2]?.callSiteId,
+    ]);
+  });
+});
+
 describe("JavaScript semantic analysis: read-modify-write", () => {
   it.each(["+= 1", "++", "--", "||= 1", "&&= 1", "??= 1"])(
     "retains the property read in a read-modify-write operation: %s",

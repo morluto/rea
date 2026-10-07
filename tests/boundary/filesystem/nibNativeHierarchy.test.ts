@@ -6,8 +6,8 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { decodeNibArchive } from "../../../src/artifacts/NibArchive.js";
-import { analyzeInterfaceBuilderBundle } from "../../../src/application/InterfaceBuilderAnalysis.js";
+import { decodeNibArchive } from "../../../src/artifacts/apple/NibArchive.js";
+import { analyzeInterfaceBuilderBundle } from "../../../src/artifacts/apple/InterfaceBuilderAnalysis.js";
 
 const compile = promisify(execFile);
 

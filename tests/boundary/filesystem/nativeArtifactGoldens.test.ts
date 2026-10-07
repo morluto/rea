@@ -1,10 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { decodeKeyedArchiveBytes } from "../../../src/artifacts/KeyedArchiveReader.js";
+import { decodeKeyedArchiveBytes } from "../../../src/artifacts/apple/KeyedArchiveReader.js";
 import {
   parseAppleAssetCatalogRecords,
   projectAppleAssetCatalogPage,
-} from "../../../src/domain/appleAssetCatalog.js";
+} from "../../../src/domain/apple/appleAssetCatalog.js";
 
 const golden = (path: string) =>
   new URL(`../../fixtures/golden/${path}`, import.meta.url);

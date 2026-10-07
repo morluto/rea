@@ -51,11 +51,19 @@ interface TraversalFrame {
 }
 
 const childNodes = (node: t.Node): t.Node[] => {
-  const keys: readonly string[] = t.VISITOR_KEYS[node.type] ?? [];
-  return keys.flatMap((key) => {
+  const keys = t.VISITOR_KEYS[node.type];
+  if (keys === undefined) return [];
+  const children: t.Node[] = [];
+  for (const key of keys) {
     const value: unknown = Reflect.get(node, key);
-    if (t.isNode(value)) return [value];
-    if (!Array.isArray(value)) return [];
-    return value.filter((item): item is t.Node => t.isNode(item));
-  });
+    if (t.isNode(value)) {
+      children.push(value);
+      continue;
+    }
+    if (!Array.isArray(value)) continue;
+    for (const item of value) {
+      if (t.isNode(item)) children.push(item);
+    }
+  }
+  return children;
 };

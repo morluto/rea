@@ -11,13 +11,15 @@ export class BrowserObservationError extends AnalysisError {
   override readonly cleanupIncomplete: boolean;
   override readonly cleanupResources: readonly string[];
   override readonly userCategory: "cancelled" | undefined;
+  override readonly userMessage: string | undefined;
 
   constructor(
     readonly operation: BrowserObservationOperation,
     readonly reason: BrowserObservationFailureReason,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { readonly detail?: string },
   ) {
     super(`Browser observation ${operation} failed: ${reason}`, options);
+    this.userMessage = options?.detail;
     this.cleanupIncomplete = reason === "cleanup_failed";
     this.cleanupResources =
       reason === "cleanup_failed" ? ["browser_transport"] : [];

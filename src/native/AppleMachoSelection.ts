@@ -1,3 +1,5 @@
+import type { FixupCommands } from "./AppleMachoFixups.js";
+
 /** One mapped Mach-O segment with file-backed VA range. */
 export interface Segment {
   address: bigint;
@@ -23,6 +25,10 @@ export interface MachoSlice {
 export interface MachoLayout {
   segments: Segment[];
   sections: Section[];
+  /** Fixup load commands and dependent dylibs of the selected slice. */
+  fixups: FixupCommands;
+  /** VM address of the segment that maps file offset 0 (the preferred load address). */
+  baseAddress: bigint;
   /** Map a virtual address range onto a file offset within the selected slice. */
   offset(address: bigint, size?: number): number;
 }
@@ -112,48 +118,31 @@ export const parseMachoLayout = (
   const commandEnd = slice + 32 + bytes.readUInt32LE(slice + 20);
   if (commands > 4096 || commandEnd > sliceEnd)
     throw new RangeError("Malformed Mach-O command bounds");
-  const segments: Segment[] = [];
-  const sections: Section[] = [];
+  const state: LayoutState = {
+    slice,
+    sliceEnd,
+    segments: [],
+    sections: [],
+    dylibs: [],
+    binds: [],
+    chained: null,
+    baseAddress: undefined,
+  };
   let cursor = slice + 32;
   for (let index = 0; index < commands; index++) {
     if (cursor + 8 > commandEnd) throw new RangeError("Truncated load command");
-    const kind = bytes.readUInt32LE(cursor),
-      size = bytes.readUInt32LE(cursor + 4);
-    if (size < 8 || cursor + size > commandEnd)
+    const command = {
+      cursor,
+      kind: bytes.readUInt32LE(cursor),
+      size: bytes.readUInt32LE(cursor + 4),
+    };
+    if (command.size < 8 || cursor + command.size > commandEnd)
       throw new RangeError("Invalid load command size");
-    if (kind === 0x19) {
-      if (size < 72) throw new RangeError("Truncated segment command");
-      const address = bytes.readBigUInt64LE(cursor + 24),
-        fileSize = bytes.readBigUInt64LE(cursor + 48),
-        fileOffset = bytes.readBigUInt64LE(cursor + 40);
-      if (fileOffset + fileSize > BigInt(sliceEnd - slice))
-        throw new RangeError("Segment file range exceeds target bytes");
-      segments.push({
-        address,
-        size: fileSize,
-        offset: slice + Number(fileOffset),
-        executable: (bytes.readUInt32LE(cursor + 60) & 4) !== 0,
-      });
-      const count = bytes.readUInt32LE(cursor + 64);
-      if (72 + count * 80 > size)
-        throw new RangeError("Truncated section table");
-      for (let section = 0; section < count; section++) {
-        const position = cursor + 72 + section * 80;
-        const sectionSize = bytes.readBigUInt64LE(position + 40);
-        if (sectionSize > BigInt(Number.MAX_SAFE_INTEGER))
-          throw new RangeError("Section size exceeds exact numeric range");
-        sections.push({
-          name: bytes
-            .subarray(position, position + 16)
-            .toString("ascii")
-            .replace(/\0.*$/u, ""),
-          address: bytes.readBigUInt64LE(position + 32),
-          size: Number(sectionSize),
-        });
-      }
-    }
-    cursor += size;
+    if (command.kind === 0x19) collectSegment(bytes, command, state);
+    else collectFixupCommand(bytes, command, state);
+    cursor += command.size;
   }
+  const { segments, sections, chained, binds, dylibs } = state;
   const offset = (address: bigint, size = 1): number => {
     const matches = segments.filter(
       (segment) =>
@@ -168,5 +157,109 @@ export const parseMachoLayout = (
     if (segment === undefined) throw new RangeError("Missing metadata segment");
     return segment.offset + Number(address - segment.address);
   };
-  return { segments, sections, offset };
+  return {
+    segments,
+    sections,
+    offset,
+    fixups: { chained, binds, dylibs },
+    baseAddress: state.baseAddress ?? 0n,
+  };
+};
+
+/** Load commands and fixup ranges collected while walking one slice. */
+interface LayoutState {
+  readonly slice: number;
+  readonly sliceEnd: number;
+  readonly segments: Segment[];
+  readonly sections: Section[];
+  readonly dylibs: string[];
+  readonly binds: FixupCommands["binds"][number][];
+  chained: FixupCommands["chained"];
+  baseAddress: bigint | undefined;
+}
+
+/** One load command header inside the selected slice. */
+interface LoadCommand {
+  readonly cursor: number;
+  readonly kind: number;
+  readonly size: number;
+}
+
+/** Record an `LC_SEGMENT_64` and its section table. */
+const collectSegment = (
+  bytes: Buffer,
+  { cursor, size }: LoadCommand,
+  state: LayoutState,
+): void => {
+  if (size < 72) throw new RangeError("Truncated segment command");
+  const address = bytes.readBigUInt64LE(cursor + 24),
+    fileSize = bytes.readBigUInt64LE(cursor + 48),
+    fileOffset = bytes.readBigUInt64LE(cursor + 40);
+  if (fileOffset + fileSize > BigInt(state.sliceEnd - state.slice))
+    throw new RangeError("Segment file range exceeds target bytes");
+  state.segments.push({
+    address,
+    size: fileSize,
+    offset: state.slice + Number(fileOffset),
+    executable: (bytes.readUInt32LE(cursor + 60) & 4) !== 0,
+  });
+  if (fileOffset === 0n && fileSize > 0n) state.baseAddress ??= address;
+  const count = bytes.readUInt32LE(cursor + 64);
+  if (72 + count * 80 > size) throw new RangeError("Truncated section table");
+  for (let section = 0; section < count; section++) {
+    const position = cursor + 72 + section * 80;
+    const sectionSize = bytes.readBigUInt64LE(position + 40);
+    if (sectionSize > BigInt(Number.MAX_SAFE_INTEGER))
+      throw new RangeError("Section size exceeds exact numeric range");
+    state.sections.push({
+      name: bytes
+        .subarray(position, position + 16)
+        .toString("ascii")
+        .replace(/\0.*$/u, ""),
+      address: bytes.readBigUInt64LE(position + 32),
+      size: Number(sectionSize),
+    });
+  }
+};
+
+const LC_DYLD_INFO = 0x22;
+const LC_DYLD_INFO_ONLY = 0x80000022;
+const LC_DYLD_CHAINED_FIXUPS = 0x80000034;
+const DYLIB_COMMANDS: readonly number[] = [
+  0xc, 0x80000018, 0x8000001f, 0x20, 0x80000023,
+];
+
+/** Record fixup data ranges and dylib install names from one load command. */
+const collectFixupCommand = (
+  bytes: Buffer,
+  { cursor, kind, size }: LoadCommand,
+  state: LayoutState,
+): void => {
+  const range = (at: number): { offset: number; size: number } => {
+    const offset = state.slice + bytes.readUInt32LE(at);
+    const length = bytes.readUInt32LE(at + 4);
+    if (offset + length > state.sliceEnd)
+      throw new RangeError("Fixup data exceeds the Mach-O slice");
+    return { offset, size: length };
+  };
+  if (kind === LC_DYLD_CHAINED_FIXUPS && size >= 16)
+    state.chained = range(cursor + 8);
+  else if ((kind === LC_DYLD_INFO || kind === LC_DYLD_INFO_ONLY) && size >= 48)
+    for (const [at, stream] of [
+      [cursor + 16, "bind"],
+      [cursor + 24, "weak"],
+      [cursor + 32, "lazy"],
+    ] as const) {
+      const bound = range(at);
+      if (bound.size > 0) state.binds.push({ ...bound, stream });
+    }
+  else if (DYLIB_COMMANDS.includes(kind) && size >= 24) {
+    const nameOffset = bytes.readUInt32LE(cursor + 8);
+    const end = bytes.indexOf(0, cursor + nameOffset);
+    state.dylibs.push(
+      nameOffset >= size || end < 0 || end > cursor + size
+        ? ""
+        : bytes.toString("utf8", cursor + nameOffset, end),
+    );
+  }
 };

@@ -6,7 +6,12 @@ export const createObjcProtocolReader = (input: {
   readers: Pick<
     SwiftMetadataReaders,
     "u32" | "string" | "location" | "evidence" | "admit"
-  > & { pointer(address: bigint): bigint; i32(address: bigint): number };
+  > & {
+    pointer(address: bigint): bigint;
+    /** Plain 64-bit data, never a fixup. */
+    u64(address: bigint): bigint;
+    i32(address: bigint): number;
+  };
   result: ObjcSwiftMetadata;
   failures: string[];
 }) => {
@@ -15,7 +20,8 @@ export const createObjcProtocolReader = (input: {
   const name = (address: bigint) => read.string(read.pointer(address + 8n));
   const list = (address: bigint): string[] => {
     if (address === 0n) return [];
-    const count = read.pointer(address);
+    // `count` is plain uintptr_t data, not a pointer fixup.
+    const count = read.u64(address);
     if (count > 20000n)
       throw new RangeError("Protocol list exceeds 20000 entries");
     const names: string[] = [];

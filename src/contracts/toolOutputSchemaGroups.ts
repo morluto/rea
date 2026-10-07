@@ -30,9 +30,9 @@ import {
 } from "../domain/nativeInspection.js";
 import { artifactExtractionResultSchema } from "../domain/artifactGraph.js";
 import { artifactInspectionResultSchema } from "../domain/artifactInspection.js";
-import { interfaceBuilderAnalysisSchema } from "../domain/interfaceBuilderGraph.js";
-import { keyedArchiveResultSchema } from "../domain/keyedArchive.js";
-import { appleAssetCatalogResultSchema } from "../domain/appleAssetCatalog.js";
+import { interfaceBuilderAnalysisSchema } from "../domain/apple/interfaceBuilderGraph.js";
+import { keyedArchiveResultSchema } from "../domain/apple/keyedArchive.js";
+import { appleAssetCatalogResultSchema } from "../domain/apple/appleAssetCatalog.js";
 import {
   managedArtifactInspectionSchema,
   managedMemberInspectionSchema,

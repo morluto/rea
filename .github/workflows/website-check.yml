@@ -6,6 +6,7 @@ on:
     paths:
       - "website/**"
       - "scripts/verify-website.py"
+      - "scripts/prepare-website.py"
       - ".github/workflows/**"
   workflow_dispatch:
 
@@ -24,5 +25,7 @@ jobs:
     steps:
       - name: Check out the repository
         uses: actions/checkout@v4
+      - name: Prepare the example download
+        run: python3 scripts/prepare-website.py
       - name: Check website links and publishing configuration
         run: python3 scripts/verify-website.py

@@ -1,15 +1,16 @@
 # REA website
 
-An English static website with explanatory figures, worked guides and a DX-Ball investigation.
+An English static website with explanatory figures, worked guides and DX-Ball, Notion and TH04 investigations.
 The public files are in `website/public/`. The site uses HTML, CSS and a small
-script for copying code and following the assembly-to-C comparison; it has no
-build step or npm dependencies.
+script for copying code and following the assembly-to-C comparison. Python
+packages the downloadable example; there is no frontend bundler or npm dependency.
 
 ## Local preview
 
 From the repository root:
 
 ```sh
+python3 scripts/prepare-website.py
 python3 -m http.server 4173 --bind 127.0.0.1 --directory website/public
 ```
 
@@ -17,8 +18,11 @@ Open <http://127.0.0.1:4173/>. Refresh the browser after editing a file.
 
 ## Pages
 
-- `public/index.html`: product introduction and DX-Ball overview.
+- `public/index.html`: product introduction and case-study overviews.
+- `public/showcase/index.html`: the case-study index.
 - `public/showcase/dx-ball/index.html`: sound-pan investigation and project status.
+- `public/showcase/notion/index.html`: Notion's Electron clipboard bridge and rich clipboard format.
+- `public/showcase/th04/index.html`: TH04's 16-bit DOS bullet-angle calculation and compiler checks.
 - `public/get-started/index.html`: agent setup, first CLI result and provider guides.
 - `public/guides/`: a guide hub and native, JavaScript/Electron and browser examples.
 - `public/examples/`: downloadable Electron source and an interactive Notes browser app.
@@ -40,9 +44,18 @@ Electron fixture is for static analysis; Electron is not a prerequisite for
 following that example. The separate Notes browser app runs in the local preview
 and constructs a CSV download after fetching its JSON data.
 
+The Electron guide offers one ZIP containing the six source files under
+`notes-example/`. `scripts/prepare-website.py` generates this download from
+an explicit file list, with fixed timestamps and permissions. The ZIP is ignored
+by Git; website checks and each manual publication regenerate it before checking
+and uploading the public directory. The verifier checks that its entries match
+the current source and contain no extra files.
+
 Agent terminals show example prompts, not transcripts of previous
-investigations. A short cursor animation starts when the prompt enters view and
-respects reduced-motion preferences. All prompt text is present without JavaScript.
+investigations. All cursors blink continuously with the same CSS animation,
+respecting reduced-motion preferences. Both the prompt and animation work
+without JavaScript. The homepage and agent setup section share a copyable
+installation prompt; setup still presents its plan for approval.
 
 DX-Ball figures and findings refer to the linked 7 October 2026 checkpoint,
 commit `a55dca27ec0a07018c1b2c95ae2be027f7d8c3c4`. Update those links and figures
@@ -63,6 +76,24 @@ The worked guides use semantic HTML flows that stack vertically on smaller
 screens. The Electron teaching example uses CommonJS, matching its preload
 code; the scoped lint override admits `require` only in that example directory.
 
+The Notion case follows the same HTML figure style. Its short excerpts explain
+the packaged clipboard bridge; separate web-cache probes illustrate the rich
+clipboard and Markdown formats. Only selected source details and generic
+example data belong on the site. Machine paths, account identifiers, local
+configuration, complete vendor bundles and raw captured results stay outside
+the website.
+[evidence/notion-clipboard.md](evidence/notion-clipboard.md) records the REA
+package version, selected findings, source anchors and module-probe scope.
+
+## TH04 case study
+
+The TH04 case inspects the original PC-98 DOS angle helper through REA 4.1.0.
+Its selected instructions are paired with readable C++ and a source SVG of
+fixed and aimed rings. [evidence/th04-bullet-ring.md](evidence/th04-bullet-ring.md)
+records the fresh load-image/function evidence and separately credited TH04
+source and historical compiler replay. The figure illustrates the calculation;
+original game assets and executable bytes are not website downloads.
+
 ## GitHub Pages
 
 `.github/workflows/website-pages.yml` prepares and deploys only `website/public`.
@@ -75,6 +106,7 @@ and the single Pages publisher without installing npm dependencies. The same
 checks run before each manual deployment. You can also run them locally:
 
 ```sh
+python3 scripts/prepare-website.py
 python3 scripts/verify-website.py
 ```
 

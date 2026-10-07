@@ -8,7 +8,7 @@ import {
 import {
   buildInterfaceBuilderAnalysis,
   interfaceBuilderLimitsSchema,
-} from "./interfaceBuilderGraph.js";
+} from "./apple/interfaceBuilderGraph.js";
 
 const evidence = [
   {
@@ -166,6 +166,7 @@ describe("Interface Builder dispatch joins", () => {
     const joined = joinInterfaceBuilderDispatch(ui.graph, {
       objc_classes: [],
       objc_protocols: [],
+      objc_categories: [],
       swift_decls: [],
       objc_ivars: [],
       objc_protocol_records: [],
@@ -227,6 +228,7 @@ describe("Interface Builder dispatch joins", () => {
     const metadata = {
       objc_classes: [],
       objc_protocols: [],
+      objc_categories: [],
       swift_decls: [],
       objc_ivars: [],
       objc_protocol_records: [],
@@ -304,6 +306,7 @@ describe("placeholder dispatch joins", () => {
     const joined = joinInterfaceBuilderDispatch(ui.graph, {
       objc_classes: [],
       objc_protocols: [],
+      objc_categories: [],
       swift_decls: [],
       objc_ivars: [],
       objc_protocol_records: [],

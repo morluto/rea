@@ -89,6 +89,12 @@ then checks that `inspect-artifact` plus `project-apple-application-graph`
 report the same bundle anatomy for all three through the CLI, with stdio MCP
 parity. It also checks that the DMG is detached afterwards. It runs in macOS CI.
 
+Apple artifact verifiers live in `scripts/verify/apple/`, with the macOS bundle
+builder under `scripts/fixtures/apple/` and NIB byte fixtures beside the decoder
+in `src/artifacts/apple/`. The npm entrypoints are unchanged. Format-specific
+Swift/XIB/asset sources and goldens retain their locations; real Apple workflows
+resolve them from the verifier file URL and run in the macOS CI lane.
+
 MCP SDK transport tests with recording providers remain integration tests.
 They are useful for schema drift and failure projection but do not prove that
 Hopper, Ghidra or another substituted engine works. `verify:package` proves
@@ -463,17 +469,24 @@ that explicit lane, not the routine iteration requirement.
 
 ## Apple native metadata and UI
 
-`npm run verify:apple-dispatch` compiles Objective-C class/protocol and Swift
-conformance/vtable fixtures, inspects their bytes and repeats after stripping
-local symbols. It requires macOS and the host Xcode toolchain; targets are not
-executed. `npm run verify:native-ui` launches exactly one source-owned fixture
-window and requires successful selected-window capture and selected actions.
-An OS permission denial fails the positive lane. `npm run verify:native-ui:permissions`
-allows a host-permission-boundary-only result and explicitly reports
-`positive_e2e: false`; it must not be reported as capture/action proof.
-Both commands reject a changed executable digest and clean up the fixture
-process and helper. These lanes require an interactive macOS desktop. See [native investigation](native-investigation.md)
-for the exact ABI, authority, graph and observation boundaries.
+`npm run verify:apple-dispatch` compiles the Objective-C fixture (classes,
+protocols, a property and an `NSString` category) and the Swift
+conformance/vtable fixture.
+
+- Each fixture is linked with legacy `LC_DYLD_INFO` binds and with chained
+  fixups; on Apple silicon the ObjC fixture is also built as arm64e, which uses
+  authenticated pointers.
+- The lane inspects the bytes and repeats after stripping local symbols.
+- It requires the bound `NSObject` superclass, the external category, and the
+  matching `pointer_fixups` coverage. It requires macOS and the host Xcode toolchain; targets are not
+  executed. `npm run verify:native-ui` launches exactly one source-owned fixture
+  window and requires successful selected-window capture and selected actions.
+  An OS permission denial fails the positive lane. `npm run verify:native-ui:permissions`
+  allows a host-permission-boundary-only result and explicitly reports
+  `positive_e2e: false`; it must not be reported as capture/action proof.
+  Both commands reject a changed executable digest and clean up the fixture
+  process and helper. These lanes require an interactive macOS desktop. See [native investigation](native-investigation.md)
+  for the exact ABI, authority, graph and observation boundaries.
 
 ### Firmware adapters
 
@@ -530,3 +543,19 @@ checks an installed package after building the verifier dependencies. The separa
 conditional `real-web-source-map` CI job supplies Chrome and an isolated pinned
 fixture compiler; static/unit checks do not acquire a browser. See
 [the source location guide](web-source-location.md) for the verified decoder profile.
+
+### Website runtime attribution lane
+
+`npm run verify:browser:runtime` uses caller-supplied
+`REA_BROWSER_EXECUTABLE` and an owned synthetic site/profile. It exercises public
+CLI and stdio MCP for precise execution and native listener source locations,
+including actual armed progress, Unicode/CRLF digests, repeated source URLs with
+distinct script IDs, zero branches and function-only unknowns on repeated
+coverage, request initiators and an externally owned page that remains open.
+
+An optional entrypoint argument to `scripts/verify-browser-runtime.mjs` runs the
+same checks through an isolated installed package. The conditional
+`real-web-runtime` CI job runs only for relevant changes and needs no fixture
+compiler. Ordinary unit/static gates acquire no browser. See
+[website runtime attribution](web-runtime.md) for effects, resource bounds and
+coverage limits.

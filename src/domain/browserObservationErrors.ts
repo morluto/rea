@@ -5,6 +5,8 @@ export type BrowserObservationOperation =
   | "analyze_web_bundle"
   | "trace_web_module_imports"
   | "observe_web_session"
+  | "observe_web_execution"
+  | "inspect_web_event_listeners"
   | "discover_webmcp_tools"
   | "compare_web_captures"
   | "capture_web_screenshot"

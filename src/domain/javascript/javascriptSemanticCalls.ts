@@ -183,9 +183,7 @@ const collectCallResultFlow = (
     context.ancestors,
     context.state,
   ).filter(({ projectionPath }) => projectionPath.length === 0)) {
-    const binding = [...context.state.bindingsById.values()].find(
-      ({ bindingId }) => bindingId === assigned.bindingId,
-    );
+    const binding = context.state.bindingsById.get(assigned.bindingId);
     if (binding === undefined) continue;
     const identifierRange = range(assigned.identifier);
     const definition = binding.definitions.find(
