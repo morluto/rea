@@ -10,7 +10,6 @@ export const NATIVE_UI_OUTPUT_WEIGHT = 2;
 export const NATIVE_UI_HELPER_ENVELOPE_BYTES =
   HELPER_SUCCESS_WRAPPER.byteLength - Buffer.byteLength("{}");
 
-/** The largest one-capture helper response that can fit the aggregate budget. */
+/** Raw helper output is bounded by the scenario's existing unweighted byte budget. */
 export const NATIVE_UI_HELPER_MAX_BUFFER =
-  Math.ceil(NATIVE_UI_OUTPUT_BUDGET_BYTES / NATIVE_UI_OUTPUT_WEIGHT) +
-  NATIVE_UI_HELPER_ENVELOPE_BYTES;
+  NATIVE_UI_OUTPUT_BUDGET_BYTES + NATIVE_UI_HELPER_ENVELOPE_BYTES;

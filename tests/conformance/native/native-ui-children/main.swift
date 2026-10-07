@@ -19,6 +19,10 @@ let slashRich = try! serializeHelperOutput([
 FileHandle.standardOutput.write(slashRich)
 FileHandle.standardOutput.write(Data("\n".utf8))
 
+let numericFormat = try! serializeHelperOutput(["launch_time": 1_791_385_671.621])
+FileHandle.standardOutput.write(numericFormat)
+FileHandle.standardOutput.write(Data("\n".utf8))
+
 let failed: ChildBatch<Int> = captureChildValues(requestedCount: 2) { nil }
 precondition(failed.values.isEmpty, "AX retrieval failure must return no values")
 precondition(!failed.complete, "AX retrieval failure must mark traversal incomplete")
