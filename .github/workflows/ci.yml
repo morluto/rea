@@ -77,6 +77,8 @@ jobs:
       - run: npm ci
       - if: github.event_name == 'push' || needs.changes.outputs.code == 'true'
         run: npm run check:ci
+      - if: github.event_name == 'push' || needs.changes.outputs.code == 'true'
+        run: npm run verify:test-discovery
       - if: github.event_name == 'pull_request' && needs.changes.outputs.code != 'true'
         run: npm run format:check
 

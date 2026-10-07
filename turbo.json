@@ -28,7 +28,8 @@
         "tests/**/*.ts",
         "tsconfig.json",
         "tsconfig.build.json",
-        "vitest.config.ts"
+        "vitest.config.ts",
+        "scripts/**/*.d.mts"
       ],
       "outputs": [".cache/tsconfig.typecheck.tsbuildinfo"]
     },

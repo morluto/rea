@@ -6,11 +6,19 @@
     "max-depth": ["warn", 4],
     "max-lines": [
       "warn",
-      { "max": 500, "skipBlankLines": true, "skipComments": true }
+      {
+        "max": 500,
+        "skipBlankLines": true,
+        "skipComments": true
+      }
     ],
     "max-lines-per-function": [
       "warn",
-      { "max": 100, "skipBlankLines": true, "skipComments": true }
+      {
+        "max": 100,
+        "skipBlankLines": true,
+        "skipComments": true
+      }
     ],
     "max-params": ["warn", 4],
     "no-var": "warn",
@@ -47,12 +55,51 @@
       }
     },
     {
+      "files": ["src/{contracts,domain}/**/*.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "**/application/**",
+                  "**/server/**",
+                  "**/cli/**",
+                  "**/main/**",
+                  "**/cli.*",
+                  "**/main.*",
+                  "**/android/**",
+                  "**/artifacts/**",
+                  "**/browser/**",
+                  "**/dotnet/**",
+                  "**/firmware/**",
+                  "**/ghidra/**",
+                  "**/hopper/**",
+                  "**/ida/**",
+                  "**/native/**",
+                  "**/process/**",
+                  "**/reference/**",
+                  "**/windows/**"
+                ],
+                "message": "Domain and contracts depend inward; use typed ports for application, caller and provider boundaries."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
       "files": ["tests/**/*.ts", "src/**/*.test.ts", "src/**/*.fixture.ts"],
       "rules": {
         "max-lines": "off",
         "max-lines-per-function": [
           "error",
-          { "max": 150, "skipBlankLines": true, "skipComments": true }
+          {
+            "max": 150,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
         ]
       }
     },

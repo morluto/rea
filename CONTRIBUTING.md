@@ -2,6 +2,10 @@
 
 REA welcomes focused bug fixes, documentation improvements, tests, and reverse-engineering workflow enhancements. Open an issue before a large contract or architecture change so its scope can be agreed before implementation.
 
+For capability organization and provider composition, follow the incremental
+[migration guide](docs/capability-migration.md). Run `npm run verify:test-discovery`
+after adding or moving tests.
+
 When adding or changing an MCP tool, follow the [tool design guide](docs/tool-design.md) and preserve the canonical contracts and generated catalog.
 
 ## Development setup

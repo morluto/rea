@@ -1,3 +1,4 @@
+import { reconstructionCoverageEvaluationInputSchema } from "../domain/reconstructionCoverageInput.js";
 import { Cli, z } from "incur";
 
 import {
@@ -7,10 +8,7 @@ import {
   traceApplicationFeatureEvidenceValidated,
 } from "../application/JavaScriptApplicationWorkflowService.js";
 import { traceJavaScriptSemanticsEvidenceValidated } from "../application/JavaScriptSemanticTraceService.js";
-import {
-  evaluateReconstructionCoverage,
-  reconstructionCoverageEvaluationInputSchema,
-} from "../application/ReconstructionCoverageService.js";
+import { evaluateReconstructionCoverage } from "../application/ReconstructionCoverageService.js";
 import { buildReconstructionObligationLedgerEvidenceValidated } from "../application/ReconstructionObligationLedgerService.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";

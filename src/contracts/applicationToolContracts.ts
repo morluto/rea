@@ -10,7 +10,7 @@ import {
   traceApplicationFeatureRequestSchema,
   traceJavaScriptSemanticsRequestSchema,
 } from "./applicationWorkflowInputContracts.js";
-import { reconstructionCoverageEvaluationInputSchema } from "../application/ReconstructionCoverageService.js";
+import { reconstructionCoverageEvaluationInputSchema } from "../domain/reconstructionCoverageInput.js";
 import { reconstructionClosureResultSchema } from "../domain/reconstructionCoverage.js";
 import {
   reconstructionObligationLedgerInputSchema,

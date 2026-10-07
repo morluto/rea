@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { createCli } from "../cli.js";
-import { createCliInventory } from "../../scripts/lib/product-catalog.mjs";
 
 import { ENHANCED_TOOL_CONTRACTS } from "./enhancedToolContracts.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "./officialToolContracts.js";
@@ -19,14 +17,7 @@ import { JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS } from "./javascriptRunti
 import { APPLICATION_TOOL_CONTRACTS } from "./applicationToolContracts.js";
 import { WEB_SCRIPT_TOOL_CONTRACTS } from "./webScriptToolContracts.js";
 import { TOOL_EFFECTS } from "./toolEffects.js";
-import { TOOL_CONTRACTS, toolContract } from "./toolContracts.js";
-import {
-  CLI_COMMAND_ALIASES,
-  CLI_COMMAND_NAMES,
-  CLI_COMMAND_TOOL_ALIASES,
-  MCP_TOOLS_WITHOUT_DEDICATED_CLI,
-} from "../cliCommandNames.js";
-
+import { toolContract } from "./toolContracts.js";
 const contractJsonSchema = (schema: z.ZodType) =>
   z.toJSONSchema(schema, { target: "draft-07", unrepresentable: "any" });
 
@@ -134,40 +125,5 @@ describe("tool contract surface", () => {
       readOnlyHint: false,
       destructiveHint: false,
     });
-  });
-
-  it("accounts for every MCP tool on the CLI or marks it intentionally MCP-only", () => {
-    const registeredCli = createCliInventory(createCli());
-    const registeredCommandNames = new Set([
-      ...registeredCli.primary,
-      ...registeredCli.aliases.map(({ name }) => name),
-    ]);
-    const cliToolNames = new Set(
-      registeredCli.primary.map((command) => command.replaceAll("-", "_")),
-    );
-    for (const [command, names] of Object.entries(CLI_COMMAND_TOOL_ALIASES)) {
-      expect(registeredCommandNames.has(command)).toBe(true);
-      for (const name of names) cliToolNames.add(name);
-    }
-    for (const command of CLI_COMMAND_NAMES)
-      expect(registeredCommandNames.has(command)).toBe(true);
-    for (const command of CLI_COMMAND_ALIASES)
-      expect(registeredCommandNames.has(command)).toBe(true);
-    const intentionalMcpOnly = new Set<string>(MCP_TOOLS_WITHOUT_DEDICATED_CLI);
-    expect(
-      [...intentionalMcpOnly].filter((name) => cliToolNames.has(name)).sort(),
-    ).toEqual([]);
-    const unaccounted = TOOL_CONTRACTS.map(({ name }) => name).filter(
-      (name) => !cliToolNames.has(name) && !intentionalMcpOnly.has(name),
-    );
-    expect(unaccounted).toEqual([]);
-    expect(new Set(MCP_TOOLS_WITHOUT_DEDICATED_CLI).size).toBe(
-      MCP_TOOLS_WITHOUT_DEDICATED_CLI.length,
-    );
-    expect(
-      MCP_TOOLS_WITHOUT_DEDICATED_CLI.every((name) =>
-        TOOL_CONTRACTS.some((contract) => contract.name === name),
-      ),
-    ).toBe(true);
   });
 });
