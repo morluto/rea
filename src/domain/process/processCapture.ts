@@ -174,6 +174,11 @@ export interface UnverifiedProcessCapture {
     readonly selected_executable_sha256: string | null;
     /** Digest associated with the launch only when path metadata stayed stable across spawn. */
     readonly executable_sha256: string | null;
+    /**
+     * Digest recorded by the original v3 format before selected and launch
+     * executable digests were distinguished. Kept only on migrated captures.
+     */
+    readonly legacy_executable_sha256?: string | undefined;
     readonly executable_identity: {
       readonly state: "path_metadata_unchanged" | "unknown";
       readonly reason: string | null;
@@ -364,6 +369,10 @@ const processCaptureShapeSchema = z.strictObject({
       .string()
       .regex(/^[a-f0-9]{64}$/u)
       .nullable(),
+    legacy_executable_sha256: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/u)
+      .optional(),
     executable_identity: z.strictObject({
       state: z.enum(["path_metadata_unchanged", "unknown"]),
       reason: z.string().nullable(),
