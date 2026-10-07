@@ -5,7 +5,7 @@ import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTyp
 import type {
   JavaScriptArtifactContainer,
   JavaScriptArtifactFile,
-} from "./JavaScriptArtifactFiles.js";
+} from "../../domain/javascript/javascriptArtifactFiles.js";
 import type { JavaScriptArtifactGraphAccumulator } from "./JavaScriptArtifactGraphAccumulator.js";
 import {
   addArtifactContainsEdge,

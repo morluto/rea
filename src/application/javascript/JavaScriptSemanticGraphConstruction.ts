@@ -12,7 +12,7 @@ import type {
   JavaScriptSemanticGraphUnknown,
 } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
-import type { JavaScriptArtifactFile } from "./JavaScriptArtifactFiles.js";
+import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
   inferredSemanticEvidence,
   observedSemanticEvidence,

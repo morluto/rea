@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { classifyArtifactContent } from "../../../src/application/ArtifactGraphConstruction.js";
 import { classifyRoot } from "../../../src/application/ArtifactInventory/classify.js";
-import { ARTIFACT_CLASSIFICATION_PREFIX_BYTES } from "../../../src/application/ArtifactInventory/hash.js";
+import { ARTIFACT_CLASSIFICATION_PREFIX_BYTES } from "../../../src/artifacts/ArtifactHash.js";
 import { scanCanonicalArtifactInventory } from "../../../src/application/ArtifactInventory/scanCanonical.js";
 import { targetFormatSchema } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph.js";

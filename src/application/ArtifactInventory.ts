@@ -4,7 +4,7 @@ import {
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,
 } from "../domain/artifactGraph.js";
-import { abortIfNeeded } from "./ArtifactInventory/hash.js";
+import { abortIfNeeded } from "../artifacts/ArtifactHash.js";
 import { scanCanonicalArtifactInventory } from "./ArtifactInventory/scanCanonical.js";
 import type {
   ArtifactIntegrityPolicy,

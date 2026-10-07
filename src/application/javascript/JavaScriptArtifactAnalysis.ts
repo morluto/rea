@@ -14,7 +14,7 @@ import { failedJavaScriptStaticAnalysis } from "../../domain/javascript/javascri
 import type {
   JavaScriptArtifactFile,
   JavaScriptArtifactFileSet,
-} from "./JavaScriptArtifactFiles.js";
+} from "../../domain/javascript/javascriptArtifactFiles.js";
 import type {
   AnalyzedJavaScriptArtifactFile,
   JavaScriptArtifactAnalysis,

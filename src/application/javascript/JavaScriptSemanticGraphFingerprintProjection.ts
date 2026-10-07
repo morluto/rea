@@ -4,7 +4,7 @@ import {
   type JavaScriptSemanticGraphNode,
 } from "../../domain/javascript/javascriptSemanticGraph.js";
 import type { JavaScriptSemanticIr } from "../../domain/javascript/javascriptSemanticIr.js";
-import type { JavaScriptArtifactFile } from "./JavaScriptArtifactFiles.js";
+import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { observedSemanticEvidence } from "./JavaScriptSemanticGraphEvidence.js";
 
 /** Bind domain fingerprint components to exact semantic function nodes. */

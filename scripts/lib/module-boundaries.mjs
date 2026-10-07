@@ -61,6 +61,22 @@ const failedBoundary = (file, target) => {
   const layer = file.split("/")[1];
   const targetLayer = target.split("/")[1];
   if (
+    file.startsWith("src/application/javascript/") &&
+    /^src\/artifacts\/(?:Asar|Directory)ArtifactReader\.(?:js|ts)$/u.test(
+      target,
+    )
+  )
+    return "provider-construction";
+  if (
+    (file.startsWith("src/artifacts/javascript/") ||
+      /^src\/artifacts\/ArtifactHash\.(?:js|ts)$/u.test(file)) &&
+    (["application", "composition", "server", "cli", "main"].includes(
+      targetLayer,
+    ) ||
+      /^src\/(?:cli|main)\./u.test(target))
+  )
+    return "artifact-acquisition";
+  if (
     PROVIDER_ROOTS.has(layer) &&
     /^src\/generatedMcpToolCatalog\.(?:js|ts)$/u.test(target)
   )

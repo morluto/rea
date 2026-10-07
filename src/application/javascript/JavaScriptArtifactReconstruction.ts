@@ -1,16 +1,12 @@
 import { lstat, realpath } from "node:fs/promises";
 
-import { AsarArtifactReader } from "../../artifacts/AsarArtifactReader.js";
-import {
-  ArtifactReaderFailure,
-  type ArtifactReader,
-} from "../../artifacts/ArtifactReader.js";
-import { DirectoryArtifactReader } from "../../artifacts/DirectoryArtifactReader.js";
+import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { createJavaScriptArtifactReader as createReader } from "../../artifacts/javascript/JavaScriptArtifactReader.js";
 import type { JavaScriptApplicationGraph } from "../../domain/javascript/javascriptApplicationGraph.js";
 import type { JavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticGraph.js";
 import type { ElectronBoundarySummary } from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import { analyzeJavaScriptArtifactFiles } from "./JavaScriptArtifactAnalysis.js";
-import { readJavaScriptArtifactFiles } from "./JavaScriptArtifactFiles.js";
+import { readJavaScriptArtifactFiles } from "../../artifacts/javascript/JavaScriptArtifactFiles.js";
 import { buildJavaScriptArtifactGraph } from "./JavaScriptArtifactGraphBuilder.js";
 import {
   javascriptArtifactReconstructionInputSchema,
@@ -123,14 +119,6 @@ const resolveFormat = async (
     );
   return observed;
 };
-
-const createReader = (
-  path: string,
-  format: "asar" | "directory",
-): ArtifactReader =>
-  format === "asar"
-    ? new AsarArtifactReader(path)
-    : new DirectoryArtifactReader(path);
 
 const abortIfNeeded = (signal?: AbortSignal): void => {
   if (signal?.aborted === true)

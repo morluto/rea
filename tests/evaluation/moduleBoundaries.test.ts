@@ -18,6 +18,48 @@ describe("incremental module import boundaries", () => {
     ["src/contracts/probe.ts", "../android/Provider.js", false],
     ["src/contracts/probe.ts", "../cli.js", false],
     ["src/contracts/probe.ts", "../composition/android.js", false],
+    [
+      "src/artifacts/javascript/probe.ts",
+      "../../application/ArtifactInventory.js",
+      false,
+    ],
+    [
+      "src/artifacts/javascript/probe.ts",
+      "../../composition/android.js",
+      false,
+    ],
+    ["src/artifacts/javascript/probe.ts", "../../cli.js", false],
+    [
+      "src/artifacts/ArtifactHash.ts",
+      "../application/ArtifactInventory/hash.js",
+      false,
+    ],
+    [
+      "src/artifacts/javascript/probe.ts",
+      "../../domain/artifactInventorySnapshot.js",
+      true,
+    ],
+    ["src/artifacts/javascript/probe.ts", "../AsarArtifactReader.js", true],
+    [
+      "src/application/javascript/probe.ts",
+      "../../artifacts/AsarArtifactReader.js",
+      false,
+    ],
+    [
+      "src/application/javascript/probe.ts",
+      "../../artifacts/DirectoryArtifactReader.js",
+      false,
+    ],
+    [
+      "src/application/javascript/probe.ts",
+      "../../artifacts/javascript/JavaScriptArtifactReader.js",
+      true,
+    ],
+    [
+      "src/application/ArtifactInventory/probe.ts",
+      "../../artifacts/AsarArtifactReader.js",
+      true,
+    ],
     ["src/domain/probe.test.ts", "../composition/firmware.js", false],
     ["src/application/probe.ts", "../android/JadxProvider.js", false],
     ["src/application/probe.ts", "../composition/android.js", false],

@@ -8,7 +8,7 @@ import {
   resolveArtifactPathByContext,
   type ArtifactPathResolution,
 } from "../../../src/application/javascript/JavaScriptArtifactPathResolution.js";
-import type { JavaScriptArtifactFile } from "../../../src/application/javascript/JavaScriptArtifactFiles.js";
+import type { JavaScriptArtifactFile } from "../../../src/domain/javascript/javascriptArtifactFiles.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 const execute = promisify(execFile);
 const TARGETS = [

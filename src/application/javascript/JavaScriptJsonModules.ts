@@ -1,6 +1,6 @@
 import { compareCodePoints } from "../../domain/canonicalOrdering.js";
 import type { JavaScriptJsonModuleObservation } from "./JavaScriptArtifactAnalysisTypes.js";
-import type { JavaScriptArtifactFile } from "./JavaScriptArtifactFiles.js";
+import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 
 /** Parse one approved JSON module without evaluating JavaScript or resolving imports. */
 export const analyzeJavaScriptJsonModule = (
