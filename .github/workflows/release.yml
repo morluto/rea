@@ -2,7 +2,8 @@ name: Release
 
 on:
   push:
-    branches: [main]
+    branches: ["release/*"]
+  workflow_dispatch:
 
 env:
   HUSKY: "0"
@@ -21,13 +22,47 @@ jobs:
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
+      sha: ${{ steps.release.outputs.sha }}
     steps:
+      - name: Validate release selection
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_BRANCH: ${{ github.ref_name }}
+        run: |
+          if [[ "${GITHUB_REF}" != "refs/heads/${RELEASE_BRANCH}" || "${RELEASE_BRANCH}" != release/* ]]; then
+            echo "Select a release/ branch; main and tags are not release checkpoints." >&2
+            exit 1
+          fi
+          if ! git check-ref-format "refs/heads/${RELEASE_BRANCH}"; then
+            echo "Invalid release branch: ${RELEASE_BRANCH}" >&2
+            exit 1
+          fi
+          selected_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${RELEASE_BRANCH}" --jq '.object.sha')"
+          if [[ "${selected_sha}" != "${GITHUB_SHA}" ]]; then
+            echo "The release branch moved after this run was triggered; review its new checkpoint before publication." >&2
+            exit 1
+          fi
+          printf 'Selected release checkpoint: %s\n' "${selected_sha}"
+
       - uses: googleapis/release-please-action@v4
         id: release
         with:
           # A dedicated credential lets release-PR updates trigger CI. GitHub
           # requires manual approval for pull_request events from GITHUB_TOKEN.
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          target-branch: ${{ github.ref_name }}
+
+      - name: Bind publication to the triggering checkpoint
+        if: steps.release.outputs.release_created == 'true'
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
+        run: |
+          if [[ "${RELEASE_SHA}" != "${GITHUB_SHA}" ]]; then
+            echo "The tagged release SHA differs from the triggering checkpoint; refusing to publish mismatched source provenance." >&2
+            exit 1
+          fi
 
       - name: Check out release pull request
         if: steps.release.outputs.prs_created == 'true'
@@ -99,6 +134,9 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.release-please.outputs.sha }}
+          persist-credentials: false
 
       - uses: actions/setup-node@v6
         with:
@@ -168,7 +206,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
+          ref: ${{ needs.release-please.outputs.sha }}
           persist-credentials: false
 
       - name: Verify package and registry metadata versions
