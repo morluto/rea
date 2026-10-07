@@ -8,8 +8,8 @@ import {
   PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY,
   CDP_ELECTRON_PROVIDER_IDENTITY,
   PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY,
-  V8_INSPECTOR_PROVIDER_IDENTITY,
 } from "../browser/providerIdentities.js";
+import { V8_INSPECTOR_PROVIDER_IDENTITY } from "../inspector/providerIdentity.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 /** Precisely typed startup factories for the five existing observation ports. */

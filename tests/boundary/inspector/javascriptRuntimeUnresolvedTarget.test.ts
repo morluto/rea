@@ -6,9 +6,9 @@ import { expect, test } from "vitest";
 
 import { analyzeJavaScriptApplication } from "../../../src/application/JavaScriptApplicationService.js";
 import { createJavaScriptRuntimeObservationEvidence } from "../../../src/application/JavaScriptRuntimeObservationEvidence.js";
-import { V8InspectorProvider } from "../../../src/browser/V8InspectorProvider.js";
+import { V8InspectorProvider } from "../../../src/inspector/V8InspectorProvider.js";
 import { reconcileJavaScriptRuntime } from "../../../src/domain/javascriptRuntimeReconciliation.js";
-import { startFakeV8Inspector } from "../../fixtures/fakeV8Inspector.js";
+import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 test("keeps unresolved target identity unknown while matching verified loaded scripts", async () => {

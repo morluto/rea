@@ -28,6 +28,7 @@ graph TD
         IDA_MCP["External ida-pro-mcp<br/>GUI proxy or database supervisor<br/>upstream installation and engine lifecycle"]
         AUX["src/artifacts/ + src/native/<br/>disjoint artifact and native capabilities"]
         BROWSER["src/browser/<br/>CDP / Playwright capture<br/>captured script adapters and publication"]
+        INSPECTOR["src/inspector/<br/>passive V8 Inspector discovery and capture<br/>script and target locations"]
         DOTNET["src/dotnet/<br/>Managed static metadata provider<br/>PE/CLI metadata inventory, members, IL"]
         FIRMWARE["src/firmware/<br/>Binwalk / Unblob adapters<br/>owned processes, report normalization, private extraction"]
         ANDROID["src/android/<br/>Static APK adapter<br/>owned SDK stdio, pinned headless JADX, normalization"]
@@ -94,6 +95,9 @@ graph TD
     SERVER --> CONTRACTS
     SERVER --> APP
     APP --> BROWSER
+    APP -->|runtime observation port| INSPECTOR
+    INSPECTOR -->|shared CDP and file-location helpers| BROWSER
+    INSPECTOR --> DOMAIN
     APP --> DOTNET
     DOTNET --> DOMAIN
     HOPPER --> HOPPER_BRIDGE

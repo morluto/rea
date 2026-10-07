@@ -23,7 +23,9 @@ describe("incremental module import boundaries", () => {
     ["src/application/probe.ts", "../composition/android.js", false],
     ["src/server/probe.ts", "../firmware/FirmwareProvider.js", false],
     ["src/server/probe.ts", "../browser/CdpBrowserProvider.js", false],
-    ["src/application/probe.ts", "../browser/V8InspectorProvider.js", false],
+    ["src/application/probe.ts", "../inspector/V8InspectorProvider.js", false],
+    ["src/server/probe.ts", "../inspector/V8InspectorEndpoint.js", false],
+    ["src/composition/probe.ts", "../inspector/V8InspectorProvider.js", true],
     ["src/composition/probe.ts", "../browser/CdpBrowserProvider.js", true],
     [
       "src/application/probe.ts",
@@ -40,6 +42,7 @@ describe("incremental module import boundaries", () => {
     ["src/composition/probe.ts", "../firmware/FirmwareProvider.js", true],
     ["src/domain/android/probe.ts", "./types.js", true],
     ["src/domain/javascript/probe.ts", "./types.js", true],
+    ["src/domain/inspector/probe.ts", "./types.js", true],
     ["src/domain/firmware/probe.ts", "../android/types.js", true],
     ["src/domain/android/probe.ts", "../../android/JadxProvider.js", false],
     ["src/application/android/probe.ts", "../../domain/android/types.js", true],

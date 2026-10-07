@@ -7,7 +7,7 @@ import { afterEach, describe, expect, test } from "vitest";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { observeJavaScriptRuntime } from "../../../src/application/JavaScriptRuntimeObservationService.js";
-import { V8InspectorProvider } from "../../../src/browser/V8InspectorProvider.js";
+import { V8InspectorProvider } from "../../../src/inspector/V8InspectorProvider.js";
 import {
   javascriptRuntimeObservationSchema,
   javascriptRuntimeTargetListSchema,
@@ -15,7 +15,7 @@ import {
 } from "../../../src/domain/javascriptRuntimeObservation.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
-import { startFakeV8Inspector } from "../../fixtures/fakeV8Inspector.js";
+import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("JavaScript runtime observation MCP tools", () => {

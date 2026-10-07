@@ -6,7 +6,7 @@ import type {
 } from "../domain/javascriptRuntimeObservation.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { type BrowserObservationOperation } from "../domain/browserObservationErrors.js";
-import { parseCdpEndpointValue, readCdpJson } from "./CdpEndpoint.js";
+import { parseCdpEndpointValue, readCdpJson } from "../browser/CdpEndpoint.js";
 
 const versionSchema = z
   .object({

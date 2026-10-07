@@ -9,7 +9,7 @@ import type {
   JavaScriptRuntimeLocation,
   JavaScriptRuntimeTargetLocation,
 } from "../domain/javascriptRuntimeObservation.js";
-import { authorizedElectronFile } from "./ElectronFileScope.js";
+import { authorizedElectronFile } from "../browser/ElectronFileScope.js";
 
 export type RuntimeLocationDecision =
   | { readonly allowed: true; readonly location: JavaScriptRuntimeLocation }

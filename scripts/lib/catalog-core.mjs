@@ -68,7 +68,7 @@ const SOURCE_PATHS = {
   browserScenarioProvider: "dist/browser/PlaywrightBrowserScenarioProvider.js",
   electronProvider: "dist/browser/CdpElectronProvider.js",
   electronActiveProvider: "dist/browser/PlaywrightElectronActiveProvider.js",
-  v8InspectorProvider: "dist/browser/V8InspectorProvider.js",
+  v8InspectorProvider: "dist/inspector/V8InspectorProvider.js",
   evidence: "dist/domain/evidence.js",
   evidenceBundle: "dist/domain/evidenceBundle.js",
   evidenceCompletion: "dist/domain/evidenceCompletionLedger.js",

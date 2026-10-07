@@ -135,7 +135,7 @@
     "verify:browser:dom": "node scripts/verify-browser-dom-destinations.mjs",
     "verify:browser:network": "npm run build:cached && node scripts/verify-browser-network.mjs",
     "verify:electron": "npm run build:cached && node scripts/verify-real-electron.mjs",
-    "verify:inspector": "npm run build:cached && node scripts/verify-real-javascript-runtime-observation.mjs",
+    "verify:inspector": "npm run build:cached && node scripts/verify/inspector/runtime-observation.mjs",
     "verify:javascript-runtime": "npm run build:cached && node scripts/verify-local-javascript-runtime.mjs",
     "verify:javascript:digests": "npm run build:cached && node scripts/verify-large-javascript-digests.mjs",
     "verify:application-workflows": "npm run build:cached && node scripts/verify-local-application-workflows.mjs",

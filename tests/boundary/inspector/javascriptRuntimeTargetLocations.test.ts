@@ -4,8 +4,8 @@ import { pathToFileURL } from "node:url";
 
 import { afterEach, expect, test } from "vitest";
 
-import { V8InspectorProvider } from "../../../src/browser/V8InspectorProvider.js";
-import { startFakeV8Inspector } from "../../fixtures/fakeV8Inspector.js";
+import { V8InspectorProvider } from "../../../src/inspector/V8InspectorProvider.js";
+import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const roots: string[] = [];

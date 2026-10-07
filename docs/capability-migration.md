@@ -167,6 +167,24 @@ behavior. Snapshots still require an active target and concrete analysis profile
 extracting investigation ownership does not make them a target-free record store.
 #721 remains responsible for any future lifetime-policy change.
 
+## Inspector adapter ownership
+
+`src/inspector/` owns V8 Inspector discovery, passive capture, script/target
+location interpretation and its lightweight provider identity. The composition
+factory and optional loader use this owner. Browser CDP connection, endpoint/value
+and Electron file-location helpers remain deliberate shared adapter utilities at
+their existing paths; no provider wire protocol moves into domain or process.
+
+Loopback fixtures and producer boundaries now live under
+`tests/fixtures/inspector/` and `tests/boundary/inspector/`. The socket-backed
+unresolved-target reconciliation test moves from composition into the forked
+boundary lane with its original assertions. Adapter tests retain fork isolation.
+`npm run verify:inspector` keeps its public development entrypoint and delegates
+to `scripts/verify/inspector/runtime-observation.mjs`, using the real Node fixture
+under `tests/conformance/inspector/`. Catalog imports, source guards and test
+discovery follow the new paths. Observation authority, lifecycle, producer
+interpretation and caller-visible contracts stay unchanged.
+
 ## Auxiliary source declaration pilot
 
 Artifact, macOS native and managed static metadata now belongs to each adapter's

@@ -11,7 +11,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 const execute = promisify(execFile);
-const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const root = await realpath(await mkdtemp(join(tmpdir(), "rea-inspector-")));
 const environment = {
   ...process.env,
@@ -43,9 +43,7 @@ try {
   for (const name of names) {
     const targetPath =
       name === "node-target.mjs"
-        ? await realpath(
-            join(repository, "tests/conformance/runtime-inspector", name),
-          )
+        ? await realpath(join(repository, "tests/conformance/inspector", name))
         : join(root, name);
     if (name !== "node-target.mjs")
       await writeFile(targetPath, "setInterval(() => {}, 1000);\n");

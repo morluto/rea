@@ -20,7 +20,7 @@ import { CDP_BROWSER_PROVIDER_IDENTITY } from "../../../src/browser/CdpBrowserPr
 import { CDP_ELECTRON_PROVIDER_IDENTITY } from "../../../src/browser/CdpElectronProvider.js";
 import { PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY } from "../../../src/browser/PlaywrightElectronActiveProvider.js";
 import { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "../../../src/browser/PlaywrightBrowserScenarioProvider.js";
-import { V8_INSPECTOR_PROVIDER_IDENTITY } from "../../../src/browser/V8InspectorProvider.js";
+import { V8_INSPECTOR_PROVIDER_IDENTITY } from "../../../src/inspector/V8InspectorProvider.js";
 import { CLI_COMMAND_NAMES } from "../../../src/cliCommandNames.js";
 import { createCli } from "../../../src/cli.js";
 import {

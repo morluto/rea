@@ -21,8 +21,8 @@ import {
   recordValue,
   cdpStringValue,
   delayWithCancellation,
-} from "./CdpCaptureValues.js";
-import { CdpConnection, type CdpEvent } from "./CdpConnection.js";
+} from "../browser/CdpCaptureValues.js";
+import { CdpConnection, type CdpEvent } from "../browser/CdpConnection.js";
 import {
   authorizeRuntimeTargetLocation,
   inspectorExclusionKey,
@@ -39,8 +39,8 @@ import {
 } from "./V8InspectorEndpoint.js";
 
 /** Public identity committed by passive V8 Inspector observations. */
-export { V8_INSPECTOR_PROVIDER_IDENTITY } from "./providerIdentities.js";
-import { V8_INSPECTOR_PROVIDER_IDENTITY } from "./providerIdentities.js";
+export { V8_INSPECTOR_PROVIDER_IDENTITY } from "./providerIdentity.js";
+import { V8_INSPECTOR_PROVIDER_IDENTITY } from "./providerIdentity.js";
 
 export interface ScriptDraft {
   readonly rawUrl: string;

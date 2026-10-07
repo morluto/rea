@@ -171,6 +171,15 @@ the CLI and stdio MCP, including special filenames, unresolved discovery
 locations, and independently resolved loaded scripts. Double-quote filenames
 are tested on POSIX only because Windows does not support them.
 
+Inspector adapters live in `src/inspector/`, with loopback fixtures under
+`tests/fixtures/inspector/` and forked producer boundaries under
+`tests/boundary/inspector/`. The real lane is owned by
+`scripts/verify/inspector/runtime-observation.mjs` and
+`tests/conformance/inspector/`. Browser and Inspector deliberately share the
+existing browser CDP transport/value and file-location helpers. Node fixture
+success proves this Inspector workflow on the tested host; it does not prove
+Electron GUI behavior or another engine.
+
 ## Android APK analysis
 
 `npm run verify:android` requires an existing Java 17+ and an explicit

@@ -10,8 +10,8 @@ import {
   observeJavaScriptRuntime,
 } from "../../../src/application/JavaScriptRuntimeObservationService.js";
 import { reconcileJavaScriptRuntimeEvidence } from "../../../src/application/JavaScriptRuntimeReconciliationService.js";
-import { V8_INSPECTOR_PROVIDER_IDENTITY } from "../../../src/browser/V8InspectorProvider.js";
-import { V8InspectorProvider } from "../../../src/browser/V8InspectorProvider.js";
+import { V8_INSPECTOR_PROVIDER_IDENTITY } from "../../../src/inspector/V8InspectorProvider.js";
+import { V8InspectorProvider } from "../../../src/inspector/V8InspectorProvider.js";
 import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "../../../src/contracts/javascriptRuntimeReconciliationExample.js";
 import type {
   JavaScriptRuntimeObservation,
@@ -19,7 +19,7 @@ import type {
 } from "../../../src/domain/javascriptRuntimeObservation.js";
 import { observeJavaScriptRuntimeInputSchema } from "../../../src/domain/javascriptRuntimeObservation.js";
 import { javascriptRuntimeReconciliationResultSchema } from "../../../src/domain/javascriptRuntimeReconciliationSchemas.js";
-import { startFakeV8Inspector } from "../../fixtures/fakeV8Inspector.js";
+import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("passive V8 Inspector provider", () => {
