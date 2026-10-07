@@ -82,6 +82,9 @@ describeBrowser("CdpBrowserProvider: redirect errors", () => {
         inspection.network.requests[0]?.body_shapes.request,
       ).not.toBeNull();
       expect(inspection.network.requests[0]?.body_shapes.response).toBeNull();
+      expect(inspection.network.requests[0]?.body_shapes.status).toBe(
+        "partial",
+      );
       expect(inspection.metadata.responses).toHaveLength(1);
       expect(inspection.metadata.responses[0]).toMatchObject({
         url: `${browser.allowedOrigin}/malformed-redirect-prior`,
@@ -92,8 +95,16 @@ describeBrowser("CdpBrowserProvider: redirect errors", () => {
       expect(inspection.completeness.unavailable_sections).toContain(
         "network_requests",
       );
+      expect(inspection.completeness.unavailable_sections).toContain(
+        "json_body_shapes",
+      );
       expect(inspection.completeness.excluded).toContainEqual({
         section: "network_requests",
+        reason: "invalid_protocol_value",
+        count: expect.any(Number),
+      });
+      expect(inspection.completeness.excluded).toContainEqual({
+        section: "json_body_shapes",
         reason: "invalid_protocol_value",
         count: expect.any(Number),
       });

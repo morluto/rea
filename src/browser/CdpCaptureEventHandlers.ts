@@ -10,7 +10,10 @@ import {
   cdpStringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
-import { requestBodyShape } from "./CdpCaptureEventBodyShapes.js";
+import {
+  requestBodyShape,
+  updateResponseBodyShape,
+} from "./CdpCaptureEventBodyShapes.js";
 import {
   consolePrimitive,
   decodeBase64,
@@ -19,10 +22,11 @@ import {
   firstCallFrame,
   initiatorLocation,
   integerOrNull,
+  isJsonMediaType,
   isMainFrameNavigation,
 } from "./CdpCaptureEventHelpers.js";
 import type { CdpCaptureEventsState } from "./CdpCaptureEventState.js";
-import type { CapturedScript } from "./CdpCaptureEventTypes.js";
+import type { CapturedScript, NetworkState } from "./CdpCaptureEventTypes.js";
 
 export const handleExecutionContextCreated = (
   state: CdpCaptureEventsState,
@@ -141,16 +145,10 @@ export const handleRequestWillBeSent = (
   const redirectResponse = recordValue(params.redirectResponse);
   if (
     Object.hasOwn(params, "redirectResponse") &&
-    redirectResponse === undefined
-  ) {
-    state.completeness.exclude("network_requests", "invalid_protocol_value");
-    // Preserve evidence already attributed to this CDP request ID. Without a
-    // valid redirect envelope, the continuation cannot safely replace it.
-    if (previous !== undefined) {
-      state.malformedRedirectRequestIds.add(requestId);
-      return;
-    }
-  }
+    redirectResponse === undefined &&
+    preserveMalformedRedirectEvidence(state, requestId, previous)
+  )
+    return;
   const redirects = [...(previous?.redirects ?? [])];
   if (redirectResponse !== undefined) {
     const rawResponseUrl = cdpStringValue(redirectResponse.url);
@@ -227,6 +225,25 @@ export const handleRequestWillBeSent = (
   const timestamp = numberValue(params.timestamp);
   if (timestamp === undefined) state.networkRequestTimestamps.delete(requestId);
   else state.networkRequestTimestamps.set(requestId, timestamp);
+};
+
+const preserveMalformedRedirectEvidence = (
+  state: CdpCaptureEventsState,
+  requestId: string,
+  previous: NetworkState | undefined,
+): boolean => {
+  state.completeness.exclude("network_requests", "invalid_protocol_value");
+  if (previous === undefined) return false;
+  state.malformedRedirectRequestIds.add(requestId);
+  if (
+    state.input.include_json_body_shapes &&
+    isJsonMediaType(previous.mime_type) &&
+    previous.body_shapes.response === null
+  ) {
+    updateResponseBodyShape(state, requestId, null);
+    state.completeness.exclude("json_body_shapes", "invalid_protocol_value");
+  }
+  return true;
 };
 
 const redirectResponseUrlReason = (
