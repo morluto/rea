@@ -4,18 +4,33 @@ import { WEB_NETWORK_CAPTURE_LIMITS } from "../../domain/webNetworkCapture.js";
 import { CaptureFormatError } from "./CaptureFormatError.js";
 
 type Frame =
-  | { kind: "object"; members: Map<string, unknown>; pendingKey?: string }
-  | { kind: "array"; items: unknown[] };
+  | {
+      kind: "object";
+      pointer: string;
+      members: Map<string, unknown>;
+      pendingKey?: string;
+    }
+  | { kind: "array"; pointer: string; items: unknown[] };
 
 /** Materialize upstream JSON events without duplicate folding, prototype setters or numeric rounding. */
 export const parseHarJson = (text: string): unknown => {
   const frames: Frame[] = [];
   let result: unknown;
+  const valuePointer = (): string => {
+    const parent = frames.at(-1);
+    if (parent === undefined) return "";
+    if (parent.kind === "array")
+      return `${parent.pointer}/${parent.items.length}`;
+    return parent.pendingKey === undefined
+      ? parent.pointer
+      : `${parent.pointer}/${parent.pendingKey.replaceAll("~", "~0").replaceAll("/", "~1")}`;
+  };
   const checkDepth = (): void => {
     if (frames.length > WEB_NETWORK_CAPTURE_LIMITS.depth)
       throw new CaptureFormatError(
         "input-limit",
         "HAR exceeds the 64-level complete-evidence nesting budget.",
+        valuePointer(),
       );
   };
   const append = (value: unknown): void => {
@@ -36,7 +51,11 @@ export const parseHarJson = (text: string): unknown => {
     {
       onObjectBegin: () => {
         checkDepth();
-        frames.push({ kind: "object", members: new Map() });
+        frames.push({
+          kind: "object",
+          pointer: valuePointer(),
+          members: new Map(),
+        });
       },
       onObjectProperty: (key) => {
         if (key === "__proto__")
@@ -64,7 +83,7 @@ export const parseHarJson = (text: string): unknown => {
       },
       onArrayBegin: () => {
         checkDepth();
-        frames.push({ kind: "array", items: [] });
+        frames.push({ kind: "array", pointer: valuePointer(), items: [] });
       },
       onArrayEnd: () => {
         const frame = frames.pop();
