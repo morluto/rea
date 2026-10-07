@@ -1,12 +1,15 @@
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { promisify } from "node:util";
 
 import { describe, expect, it } from "vitest";
 
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { decodeNibArchive } from "../artifacts/NibArchive.js";
-import { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { decodeNibArchive } from "../../../src/artifacts/NibArchive.js";
+import { analyzeInterfaceBuilderBundle } from "../../../src/application/InterfaceBuilderAnalysis.js";
+
+const compile = promisify(execFile);
 
 const compileNestedViews = async (depth: number, withWindow = false) => {
   const root = await createTestTempDirectory("rea-nib-hierarchy-");
@@ -34,7 +37,7 @@ const compileNestedViews = async (depth: number, withWindow = false) => {
       .replace("</view>\n  </objects>", "</view></window>\n  </objects>");
   await writeFile(xib, xibSource);
   const nib = join(resources, "Main.nib");
-  execFileSync("/usr/bin/xcrun", [
+  await compile("/usr/bin/xcrun", [
     "ibtool",
     "--errors",
     "--warnings",

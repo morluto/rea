@@ -72,6 +72,7 @@ const onSocketData = (socket, server, chunk, state) => {
     state.buffer.value = state.buffer.value.slice(newline + 1);
     newline = state.buffer.value.indexOf("\n");
     const request = JSON.parse(line);
+    process.send?.({ method: request.method });
     if (request.token !== state.token) {
       socket.end(
         `${JSON.stringify({

@@ -106,9 +106,6 @@ It uses an installed browser and accepts an optional installed REA entrypoint.
 The complete `verify:browser` lane also exercises passive script export through
 both public adapters. See [website script export](website-script-export.md).
 
-The [test suite audit](test-suite-audit.md) records the pruning decisions,
-replacement evidence and remaining priorities.
-
 ## Real-toolchain verification lanes
 
 Each real-toolchain command must require only the host tools needed to prove

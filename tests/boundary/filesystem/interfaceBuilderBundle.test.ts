@@ -1,26 +1,20 @@
 import { existsSync } from "node:fs";
-import { execFileSync } from "node:child_process";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { execFile } from "node:child_process";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { promisify } from "node:util";
 
 import { buildBinary } from "plist";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
-import { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
+import { analyzeInterfaceBuilderBundle } from "../../../src/application/InterfaceBuilderAnalysis.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-const roots: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
-  );
-});
+const compile = promisify(execFile);
 
 describe("compiled Interface Builder bundle reader", () => {
   it("reads nib plist archives and reports provenance", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-ib-test-"));
-    roots.push(root);
+    const root = await createTestTempDirectory("rea-ib-test-");
     const bundle = join(root, "Example.app");
     const nib = join(
       bundle,
@@ -78,8 +72,7 @@ describe("compiled Interface Builder bundle reader", () => {
   });
 
   it("honors cancellation during directory traversal", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-ib-test-"));
-    roots.push(root);
+    const root = await createTestTempDirectory("rea-ib-test-");
     const controller = new AbortController();
     controller.abort();
     await expect(
@@ -94,8 +87,7 @@ describe("compiled Interface Builder bundle reader", () => {
 
 describe("bounded Interface Builder archive decoding", () => {
   it("counts malformed archives against the document limit", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-ib-test-"));
-    roots.push(root);
+    const root = await createTestTempDirectory("rea-ib-test-");
     const bundle = join(root, "Example.app");
     const resources = join(bundle, "Contents", "Resources");
     await mkdir(resources, { recursive: true });
@@ -122,8 +114,7 @@ describe("bounded Interface Builder archive decoding", () => {
   it.skipIf(process.platform !== "darwin" || !existsSync("/usr/bin/ibtool"))(
     "decodes an Xcode-compiled storyboard NIB and recovers its UI routes",
     async () => {
-      const root = await mkdtemp(join(tmpdir(), "rea-ib-compiled-test-"));
-      roots.push(root);
+      const root = await createTestTempDirectory("rea-ib-compiled-test-");
       const bundle = join(root, "Example.app");
       const resources = join(bundle, "Contents", "Resources");
       const source = join(
@@ -134,7 +125,7 @@ describe("bounded Interface Builder archive decoding", () => {
         "MacFixture.storyboard",
       );
       await mkdir(resources, { recursive: true });
-      execFileSync("/usr/bin/ibtool", [
+      await compile("/usr/bin/ibtool", [
         "--compile",
         join(resources, "MacFixture.storyboardc"),
         source,

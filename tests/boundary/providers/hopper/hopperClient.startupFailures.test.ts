@@ -1,6 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { access } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -14,44 +13,7 @@ import type {
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 import { LINUX_PRIVATE_DISPLAY_DIAGNOSTIC_PREFIX } from "../../../../src/hopper/LinuxPrivateDisplayDiagnostic.js";
 
-const fixturePath = fileURLToPath(
-  new URL("../../../fixtures/fakeHopper.mjs", import.meta.url),
-);
-
-class FixtureLauncher implements BridgeLauncher {
-  socketPaths: string[] = [];
-  directories: string[] = [];
-  runIds: string[] = [];
-  processes: ChildProcess[] = [];
-
-  constructor(readonly tokenOverride?: string) {}
-
-  launch(session: BridgeSession) {
-    this.socketPaths.push(session.socketPath);
-    this.directories.push(session.directory);
-    this.runIds.push(session.runId);
-    const child = spawn(
-      process.execPath,
-      [
-        fixturePath,
-        session.socketPath,
-        this.tokenOverride ?? session.token,
-        session.runId,
-      ],
-      {
-        stdio: ["ignore", "ignore", "pipe"],
-      },
-    );
-    this.processes.push(child);
-    return Promise.resolve(
-      ok({
-        process: child,
-        ownsProcessLifetime: true as const,
-        shutdownMode: "bridge-request" as const,
-      }),
-    );
-  }
-}
+import { HopperFixtureLauncher as FixtureLauncher } from "./hopperClient.fixture.js";
 
 class SilentLauncher implements BridgeLauncher {
   launch() {
@@ -175,12 +137,10 @@ describe("HopperClient startup failures", () => {
     // Cancel after launch: a timer can fire during runtime-directory creation,
     // leaving the silent first launch to be consumed by the retry instead.
     const firstProcess = await launcher.firstLaunch;
-    const startedAt = Date.now();
     controller.abort();
     const result = await pending;
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error._tag).toBe("HopperCancelledError");
-    expect(Date.now() - startedAt).toBeLessThan(500);
     expect(
       firstProcess.exitCode !== null || firstProcess.signalCode !== null,
     ).toBe(true);

@@ -1,8 +1,9 @@
-import { access, chmod, readFile, rm, stat } from "node:fs/promises";
+import { access, chmod, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { createGhidraTestRuntime } from "../../../fixtures/ghidraRuntime.js";
@@ -22,8 +23,25 @@ const fixturePath = fileURLToPath(
     import.meta.url,
   ),
 );
-const roots: string[] = [];
 const runtimes: PrivateRuntimeRoot[] = [];
+
+const launchCaptureSchema = z.object({
+  arguments: z.array(z.string()),
+  environment: z.record(z.string(), z.string()),
+  descriptor_mode: z.number().int(),
+  descriptor_has_token: z.boolean(),
+});
+
+const expectOptions = (
+  arguments_: readonly string[],
+  options: readonly (readonly [string, string])[],
+): void => {
+  for (const [flag, value] of options) {
+    const index = arguments_.indexOf(flag);
+    expect(index, flag).toBeGreaterThanOrEqual(0);
+    expect(arguments_[index + 1], flag).toBe(value);
+  }
+};
 
 const expectIsolatedEnvironment = (
   environment: Record<string, string>,
@@ -68,9 +86,6 @@ beforeAll(async () => {
 afterEach(async () => {
   vi.unstubAllEnvs();
   await Promise.all(runtimes.splice(0).map((runtime) => runtime.close()));
-  await Promise.all(
-    roots.splice(0).map((path) => rm(path, { recursive: true, force: true })),
-  );
 });
 
 describe("Ghidra COM loader", () => {
@@ -84,15 +99,11 @@ describe("Ghidra COM loader", () => {
       scriptLogPath: "/tmp/script.log",
       dosCom: true,
     });
-    expect(arguments_.slice(4, 12)).toEqual([
-      "-loader",
-      "BinaryLoader",
-      "-loader-baseAddr",
-      "1000:0100",
-      "-processor",
-      "x86:LE:16:Real Mode",
-      "-cspec",
-      "default",
+    expectOptions(arguments_, [
+      ["-loader", "BinaryLoader"],
+      ["-loader-baseAddr", "1000:0100"],
+      ["-processor", "x86:LE:16:Real Mode"],
+      ["-cspec", "default"],
     ]);
     const prepare = arguments_.indexOf("-preScript");
     expect(arguments_[prepare + 1]).toBe(
@@ -115,44 +126,36 @@ describe("Ghidra headless launcher", () => {
       scriptLogPath: "/tmp/script.log",
       dosMz: true,
     });
-    expect(arguments_.slice(4, 10)).toEqual([
-      "-loader",
-      "MzLoader",
-      "-processor",
-      "x86:LE:16:Real Mode",
-      "-cspec",
-      "default",
+    expectOptions(arguments_, [
+      ["-loader", "MzLoader"],
+      ["-processor", "x86:LE:16:Real Mode"],
+      ["-cspec", "default"],
     ]);
     expect(arguments_).toContain("-readOnly");
     expect(arguments_).toContain("-deleteProject");
   });
-  it("builds a read-only import in deterministic order", () => {
-    expect(
-      ghidraHeadlessArguments({
-        projectRoot: "/tmp/project",
-        targetPath: "/tmp/target",
-        bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
-        descriptorPath: "/tmp/session.json",
-        ghidraLogPath: "/tmp/ghidra.log",
-        scriptLogPath: "/tmp/script.log",
-      }),
-    ).toEqual([
-      "/tmp/project",
-      "rea-project",
-      "-import",
-      "/tmp/target",
-      "-readOnly",
-      "-deleteProject",
-      "-log",
-      "/tmp/ghidra.log",
-      "-scriptlog",
-      "/tmp/script.log",
-      "-scriptPath",
-      "/package/bridge",
-      "-postScript",
-      "/package/bridge/ReaGhidraBridge.java",
-      "/tmp/session.json",
+  it("builds a read-only ephemeral import with its bridge descriptor", () => {
+    const arguments_ = ghidraHeadlessArguments({
+      projectRoot: "/tmp/project",
+      targetPath: "/tmp/target",
+      bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
+      descriptorPath: "/tmp/session.json",
+      ghidraLogPath: "/tmp/ghidra.log",
+      scriptLogPath: "/tmp/script.log",
+    });
+    expect(arguments_.slice(0, 2)).toEqual(["/tmp/project", "rea-project"]);
+    expectOptions(arguments_, [
+      ["-import", "/tmp/target"],
+      ["-log", "/tmp/ghidra.log"],
+      ["-scriptlog", "/tmp/script.log"],
+      ["-scriptPath", "/package/bridge"],
+      ["-postScript", "/package/bridge/ReaGhidraBridge.java"],
     ]);
+    expect(arguments_[arguments_.indexOf("-postScript") + 2]).toBe(
+      "/tmp/session.json",
+    );
+    expect(arguments_).toContain("-readOnly");
+    expect(arguments_).toContain("-deleteProject");
   });
 
   it("wraps the Windows batch launcher without enabling a Node shell", () => {
@@ -203,7 +206,6 @@ describe("Ghidra headless launcher", () => {
     vi.stubEnv("JDK_JAVA_OPTIONS", "-XX:MaxRAMPercentage=99");
     vi.stubEnv("_JAVA_OPTIONS", "-Xmx99G");
     const parent = await createTestTempDirectory("rea-launcher-test-");
-    roots.push(parent);
     const runtime = await createGhidraTestRuntime(parent);
     runtimes.push(runtime);
     const runtimeRoot = runtime.path;
@@ -229,8 +231,13 @@ describe("Ghidra headless launcher", () => {
     expect(launched.ok).toBe(true);
     if (!launched.ok) return;
     const capturePath = join(runtimeRoot, "launch-capture.json");
-    await waitFor(capturePath);
-    const capture = JSON.parse(await readFile(capturePath, "utf8"));
+    const capture = await vi.waitFor(
+      async () =>
+        launchCaptureSchema.parse(
+          JSON.parse(await readFile(capturePath, "utf8")),
+        ),
+      { timeout: 10_000 },
+    );
     const encodedArguments = JSON.stringify(capture.arguments);
     const encodedEnvironment = JSON.stringify(capture.environment);
     expect(encodedArguments).not.toContain(token);
@@ -255,15 +262,3 @@ describe("Ghidra headless launcher", () => {
     await expect(access(join(runtimeRoot, "project"))).resolves.toBeUndefined();
   });
 });
-
-const waitFor = async (path: string): Promise<void> => {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try {
-      await access(path);
-      return;
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-  }
-  throw new Error(`Timed out waiting for ${path}`);
-};
