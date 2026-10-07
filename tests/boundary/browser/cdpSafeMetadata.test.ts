@@ -249,3 +249,44 @@ describe("Link header value delimiters", () => {
     expect(links[1]?.destination_scope).toBe("approved");
   });
 });
+describe("safe CDP response metadata referrer policy", () => {
+  it.each<[string | undefined, string | null]>([
+    [
+      "no-referrer, strict-origin-when-cross-origin",
+      "strict-origin-when-cross-origin",
+    ],
+    ["origin, future-policy", "origin"],
+    ["future-policy, no-referrer", "no-referrer"],
+    ["unsafe-url, NO-REFERRER", "no-referrer"],
+    ["origin,, no-referrer", "no-referrer"],
+    ["future-policy", null],
+    ['unsafe-url, "no-referrer"', null],
+    ["no-referrer; report-to=x, origin", null],
+    ["", null],
+    [undefined, null],
+    ...[
+      "no-referrer",
+      "no-referrer-when-downgrade",
+      "same-origin",
+      "origin",
+      "strict-origin",
+      "origin-when-cross-origin",
+      "strict-origin-when-cross-origin",
+      "unsafe-url",
+    ].map((policy): [string, string] => [policy, policy]),
+  ])("normalizes declared Referrer-Policy %s", (raw, expected) => {
+    const captured = safeResponseMetadata(
+      "request-referrer",
+      `${origin}/api`,
+      {
+        headers: {
+          "Referrer-Policy": raw,
+          "Cross-Origin-Opener-Policy": "same-origin",
+        },
+      },
+      new Set([origin]),
+    );
+    expect(captured.response.policies.referrer_policy).toBe(expected);
+    expect(captured.response.policies.coop).toBe("same-origin");
+  });
+});
