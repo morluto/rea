@@ -10,10 +10,15 @@ import {
   truncate,
 } from "node:fs/promises";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import { createPackageWithOptions } from "@electron/asar";
 import { describe, expect, it } from "vitest";
 import { scanArtifactInventory } from "../../../src/application/ArtifactInventory.js";
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
+import {
+  closeAsarHandle,
+  readValidatedAsarEntry,
+} from "../../../src/artifacts/AsarEntryStream.js";
 import { hashReadable } from "../../../src/artifacts/ArtifactHash.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -144,7 +149,99 @@ describe("ASAR entry streaming", () => {
       await reader.close();
     }
   });
+});
 
+describe("ASAR read failures", () => {
+  it.skipIf(process.platform === "win32")(
+    "checks cancellation after closing an empty member handle",
+    async () => {
+      const root = await createTestTempDirectory("rea-asar-empty-close-");
+      const archive = join(root, "container.asar");
+      await writeFile(archive, "container bytes");
+      const identity = await lstat(archive);
+      const handle = await openFile(archive, "r");
+      try {
+        expect(await matchingDescriptorCount(identity)).toBeGreaterThan(0);
+        const controller = new AbortController();
+
+        await expect(
+          closeAsarHandle(async () => {
+            await handle.close();
+            controller.abort();
+          }, controller.signal),
+        ).rejects.toMatchObject({ reason: "cancelled" });
+        await waitForNoMatchingDescriptor(identity);
+      } finally {
+        await handle.close().catch(() => undefined);
+      }
+    },
+  );
+
+  it.each(["missing", "replaced"] as const)(
+    "validates the container before returning a zero-length member when it is %s",
+    async (change) => {
+      const root = await createTestTempDirectory("rea-asar-empty-member-");
+      const source = join(root, "source");
+      const archive = join(root, "fixture.asar");
+      await mkdir(source);
+      await writeFile(join(source, "empty.js"), "");
+      await createPackageWithOptions(source, archive, {});
+      const reader = new AsarArtifactReader(archive);
+
+      try {
+        const entries = [];
+        for await (const entry of reader.entries()) entries.push(entry);
+        const entry = entries.find(({ path }) => path === "empty.js");
+        if (entry === undefined) throw new Error("Expected empty ASAR member");
+        if (change === "missing") await rm(archive);
+        else await writeFile(archive, "replacement container");
+
+        await expect(reader.open(entry)).rejects.toMatchObject(
+          change === "missing"
+            ? { reason: "io", cause: { code: "ENOENT" } }
+            : { reason: "integrity" },
+        );
+      } finally {
+        await reader.close();
+      }
+    },
+  );
+
+  it("preserves filesystem errors raised while consuming a member stream", async () => {
+    const ioError = Object.assign(new Error("device read failed"), {
+      code: "EIO",
+      errno: -5,
+      syscall: "read",
+    });
+    const source = Readable.from(
+      (async function* () {
+        yield Buffer.from("partial");
+        throw ioError;
+      })(),
+    );
+    const output = readValidatedAsarEntry(
+      source,
+      undefined,
+      "nested/member.bin",
+      "/tmp/source.asar",
+    );
+
+    await expect(async () => {
+      for await (const _chunk of output) {
+        // Consume through the source failure.
+      }
+    }).rejects.toMatchObject({
+      name: "ArtifactReaderFailure",
+      reason: "io",
+      message: expect.stringContaining(
+        "Could not read nested/member.bin ASAR at /tmp/source.asar",
+      ),
+      cause: { code: "EIO", errno: -5, syscall: "read" },
+    });
+  });
+});
+
+describe("ASAR entry streaming", () => {
   it("reports the observed digest when an unpacked member changes size", async () => {
     const root = await createTestTempDirectory(
       "rea-asar-unpacked-size-change-",

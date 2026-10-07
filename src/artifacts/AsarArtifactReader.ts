@@ -10,6 +10,7 @@ import {
   type ArtifactEntry,
   type ArtifactReader,
 } from "./ArtifactReader.js";
+import { closeAsarHandle, readValidatedAsarEntry } from "./AsarEntryStream.js";
 
 /**
  * Official Electron ASAR adapter with range-streamed member reads.
@@ -127,7 +128,13 @@ export class AsarArtifactReader implements ArtifactReader {
         start: 0,
         autoClose: true,
       });
-      return readValidatedEntry(source, undefined, entry.path, signal);
+      return readValidatedAsarEntry(
+        source,
+        undefined,
+        entry.path,
+        this.path,
+        signal,
+      );
     }
     const archiveSize = this.#archiveSize;
     const headerSize = this.#headerSize;
@@ -152,26 +159,37 @@ export class AsarArtifactReader implements ArtifactReader {
         "format",
         `ASAR entry range is outside its container: ${entry.path}`,
       );
-    if (metadata.size === 0) return Readable.from([]);
     let handle: FileHandle | undefined;
     try {
-      handle = await open(
+      const openedHandle = await open(
         this.path,
         constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
       );
-      const observed = await handle.stat();
+      handle = openedHandle;
+      const observed = await openedHandle.stat();
       abortIfNeeded(signal);
       if (!observed.isFile() || observed.size !== archiveSize)
         throw new ArtifactReaderFailure(
           "integrity",
           `ASAR container changed before read: ${entry.path}`,
         );
-      const source = handle.createReadStream({
+      if (metadata.size === 0) {
+        await closeAsarHandle(() => openedHandle.close(), signal);
+        handle = undefined;
+        return Readable.from([]);
+      }
+      const source = openedHandle.createReadStream({
         start,
         end: start + metadata.size - 1,
         autoClose: true,
       });
-      return readValidatedEntry(source, metadata.size, entry.path, signal);
+      return readValidatedAsarEntry(
+        source,
+        metadata.size,
+        entry.path,
+        this.path,
+        signal,
+      );
     } catch (cause: unknown) {
       await handle?.close().catch(() => undefined);
       throw asarFailure(this.path, `read ${entry.path}`, cause);
@@ -290,64 +308,6 @@ const parseArchiveOffset = (value: string): number | undefined => {
   if (!/^(?:0|[1-9][0-9]*)$/u.test(value)) return undefined;
   const offset = Number(value);
   return Number.isSafeInteger(offset) ? offset : undefined;
-};
-
-const readValidatedEntry = (
-  source: Readable,
-  expectedBytes: number | undefined,
-  path: string,
-  signal?: AbortSignal,
-): Readable => {
-  const output = Readable.from(
-    (async function* () {
-      let observedBytes = 0;
-      const iterator = source[Symbol.asyncIterator]();
-      try {
-        while (true) {
-          abortIfNeeded(signal);
-          const next = await iterator.next();
-          if (next.done) break;
-          const chunk: unknown = next.value;
-          if (!Buffer.isBuffer(chunk) && !(chunk instanceof Uint8Array))
-            throw new ArtifactReaderFailure(
-              "format",
-              `ASAR entry did not return bytes: ${path}`,
-            );
-          observedBytes += Buffer.isBuffer(chunk)
-            ? chunk.length
-            : chunk.byteLength;
-          if (expectedBytes !== undefined && observedBytes > expectedBytes)
-            throw new ArtifactReaderFailure(
-              "integrity",
-              `ASAR entry exceeded its declared size: ${path}`,
-            );
-          yield chunk;
-        }
-        if (expectedBytes !== undefined && observedBytes !== expectedBytes)
-          throw new ArtifactReaderFailure(
-            "integrity",
-            `ASAR entry size disagrees with its header: ${path}`,
-          );
-      } finally {
-        await iterator.return?.();
-        if (!source.destroyed) source.destroy();
-      }
-    })(),
-  );
-  const closeSource = (): void => {
-    signal?.removeEventListener("abort", onAbort);
-    if (!source.destroyed) source.destroy();
-  };
-  const onAbort = (): void => {
-    closeSource();
-    output.destroy(
-      new ArtifactReaderFailure("cancelled", "ASAR operation cancelled"),
-    );
-  };
-  output.once("close", closeSource);
-  signal?.addEventListener("abort", onAbort, { once: true });
-  if (signal?.aborted === true) onAbort();
-  return output;
 };
 
 const abortIfNeeded = (signal?: AbortSignal): void => {
