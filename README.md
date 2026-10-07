@@ -373,19 +373,16 @@ REA handles the app analysis in steps 1 through 5. The agent performs step 6 wit
 
 ### DX-Ball: game reconstruction (in progress)
 
-[DX-Ball](https://github.com/N0zoM1z0/dx-ball) reconstructs the classic Windows
-game from its original executable. It uses REA with Ghidra on Linux to inspect
-functions, follow calls and state, and guide maintainable C implementations.
-The project validates selected functions against original x86 execution and
-pinned-compiler byte comparisons.
+[DX-Ball](https://github.com/N0zoM1z0/dx-ball) follows the journey from a classic
+Windows game's executable to maintainable C. Using REA's Ghidra provider, the
+project traces functions, game state and dependencies, then checks reconstructed
+behavior with original-x86 differential tests and pinned-compiler replay.
 
-Its [gameplay investigation](https://github.com/N0zoM1z0/dx-ball/blob/main/docs/GAMEPLAY_OWNER.md)
-shows how instruction, caller and constant evidence recovers sound-pan behavior
-from incomplete pseudocode. See its [REA workflow](https://github.com/N0zoM1z0/dx-ball/blob/main/docs/REA.md)
-for analysis and retained Evidence.
-
-**Status:** board/resource inspectors and a C analysis library are implemented;
-playable whole-game integration remains in progress.
+A [sound-pan investigation](https://github.com/N0zoM1z0/dx-ball/blob/main/docs/GAMEPLAY_OWNER.md)
+turns incomplete pseudocode into a C implementation that passes 3,205 original-x86
+cases and reproduces all 63 compiled function bytes. Follow its
+[REA workflow](https://github.com/N0zoM1z0/dx-ball/blob/main/docs/REA.md)
+from binary evidence to reconstruction.
 
 ## What agents can do
 
