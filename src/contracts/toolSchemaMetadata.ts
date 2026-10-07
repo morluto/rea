@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { ToolContract } from "./toolContractTypes.js";
+import { sanitizeWireInputSchema } from "./wireSchemaSanitizer.js";
 
 const PROPERTY_DESCRIPTIONS: Readonly<Record<string, string>> = {
   addresses: "Ordered provider-normalized procedure addresses to analyze.",
@@ -63,13 +64,18 @@ export const toolInputSchemaWithMetadata = <Contract extends ToolContract>(
 
   // Zod's input projection drops root metadata when a descendant transforms.
   // Preserve the parser and let the SDK own conversion of everything else.
+  // The wire projection is additionally sanitized so strict function-calling
+  // clients can consume the tool catalog (#919); the canonical Zod contract
+  // is untouched.
   Object.defineProperty(schema, "~standard", {
     value: {
       ...standard,
       jsonSchema: {
         ...standard.jsonSchema,
         input: (options: Parameters<typeof inputJsonSchema>[0]) => ({
-          ...describeProperties(inputJsonSchema(options)),
+          ...sanitizeWireInputSchema(
+            describeProperties(inputJsonSchema(options)),
+          ),
           examples: contract.examples.map(({ input }) => input),
         }),
       },
