@@ -1,4 +1,4 @@
-import { mkdir, realpath, writeFile } from "node:fs/promises";
+import { chmod, mkdir, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { build } from "plist";
@@ -58,14 +58,14 @@ describe("native DMG artifact reader", () => {
         run: () =>
           Promise.resolve({
             stdout: "verify output",
-            stderr: "hdiutil: verification failed",
+            stderr: "hdiutil: verify failed - image not recognized",
             exitCode: 1,
           }),
       }),
     ).rejects.toMatchObject({
       reason: "format",
       message: expect.stringMatching(
-        /"arguments":\["verify","\/tmp\/image\.dmg"\].*"exitCode":1.*"stderr":"hdiutil: verification failed"/u,
+        /"arguments":\["verify","\/tmp\/image\.dmg"\].*"exitCode":1.*"stderr":"hdiutil: verify failed - image not recognized"/u,
       ),
     });
 
@@ -125,6 +125,42 @@ describe("native DMG command failure diagnostics", () => {
     });
   });
 
+  it("keeps unrecognized numeric verify failures unknown and maps the observed I/O diagnostic", async () => {
+    const unknown = await NativeDmgArtifactReader.create(
+      "/tmp/image.dmg",
+      undefined,
+      {
+        run: () =>
+          Promise.resolve({
+            stdout: "verify stdout",
+            stderr: "hdiutil: verify failed - an unrecognized system failure",
+            exitCode: 1,
+          }),
+      },
+    ).catch((cause: unknown) => cause);
+    expect(unknown).toBeInstanceOf(ArtifactReaderFailure);
+    if (!(unknown instanceof ArtifactReaderFailure)) return;
+    expect(unknown.reason).toBe("unavailable");
+    expect(unknown.message).toContain("do not establish the failure cause");
+    expect(unknown.message).toContain('"exitCode":1');
+    expect(unknown.message).toContain('"stdout":"verify stdout"');
+    expect(unknown.message).toContain("an unrecognized system failure");
+
+    await expect(
+      NativeDmgArtifactReader.create("/tmp/image.dmg", undefined, {
+        run: () =>
+          Promise.resolve({
+            stdout: "",
+            stderr: "hdiutil: verify failed - Input/output error\n",
+            exitCode: 1,
+          }),
+      }),
+    ).rejects.toMatchObject({
+      reason: "io",
+      message: expect.stringContaining("Input/output error"),
+    });
+  });
+
   it("distinguishes child launch and host permission failures", async () => {
     await expect(
       NativeDmgArtifactReader.create("/tmp/image.dmg", undefined, {
@@ -174,6 +210,43 @@ describe("native DMG command failure diagnostics", () => {
       expect(failure.message).toContain('"exitCode":1');
       expect(failure.message).toContain('"stdout":""');
       expect(failure.message).toContain('"stderr":"');
+    },
+  );
+
+  it.skipIf(process.platform !== "darwin")(
+    "classifies real hdiutil target access failures as I/O, separately from malformed images",
+    async () => {
+      const root = await createTestTempDirectory("rea-dmg-target-errors-");
+      const missingPath = join(root, "missing.dmg");
+      const unreadablePath = join(root, "unreadable.dmg");
+      await writeFile(unreadablePath, "not a disk image\n");
+      await chmod(unreadablePath, 0);
+      try {
+        for (const [path, expectedDiagnostic] of [
+          [missingPath, "No such file or directory"],
+          [unreadablePath, "Permission denied"],
+        ] as const) {
+          const failure = await NativeDmgArtifactReader.create(path).catch(
+            (cause: unknown) => cause,
+          );
+          expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+          if (!(failure instanceof ArtifactReaderFailure)) continue;
+          expect(failure.reason).toBe("io");
+          expect(failure.message).toContain('"command":"/usr/bin/hdiutil"');
+          expect(failure.message).toContain('"arguments":["verify"');
+          expect(failure.message).toContain('"exitCode":1');
+          expect(failure.message).toContain('"stdout":""');
+          expect(failure.message).toContain(expectedDiagnostic);
+          expect(failure.cause).toBeInstanceOf(Error);
+          if (!(failure.cause instanceof Error)) continue;
+          expect(Reflect.get(failure.cause, "code")).toBe(1);
+          expect(Reflect.get(failure.cause, "stderr")).toContain(
+            expectedDiagnostic,
+          );
+        }
+      } finally {
+        await chmod(unreadablePath, 0o600);
+      }
     },
   );
 });

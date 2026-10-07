@@ -41,6 +41,7 @@ export interface NativeDmgHost {
     readonly stdout: string;
     readonly stderr?: string;
     readonly exitCode: number;
+    readonly cause?: unknown;
   }>;
 }
 
@@ -59,6 +60,14 @@ const systemHost: NativeDmgHost = {
     } catch (cause: unknown) {
       if (cause instanceof Error && cause.name === "AbortError")
         throw new ArtifactReaderFailure("cancelled", "DMG operation cancelled");
+      const exitCode = processExitCode(cause);
+      if (exitCode !== undefined)
+        return {
+          stdout: processOutput(cause, "stdout"),
+          stderr: processOutput(cause, "stderr"),
+          exitCode,
+          cause,
+        };
       throw new ArtifactReaderFailure(
         commandFailureReason(cause, arguments_[0]),
         `hdiutil ${arguments_[0] ?? "operation"} failed: ${describeCommandFailure(cause, arguments_)}`,
@@ -274,19 +283,28 @@ const runChecked = async (
       { cause },
     );
   }
-  if (result.exitCode !== 0)
+  if (result.exitCode !== 0) {
+    const failure = {
+      command: "/usr/bin/hdiutil",
+      exitCode: result.exitCode,
+      ...(result.cause === undefined
+        ? {}
+        : { code: processExitCode(result.cause) }),
+      stdout: result.stdout,
+      ...(result.stderr === undefined ? {} : { stderr: result.stderr }),
+    };
+    const reason = commandFailureReason(failure, arguments_[0]);
+    const details = describeCommandFailure(failure, arguments_);
+    const unknownVerifyFailure =
+      arguments_[0] === "verify" && reason === "unavailable";
     throw new ArtifactReaderFailure(
-      commandFailureReason({ exitCode: result.exitCode }, arguments_[0]),
-      `hdiutil ${arguments_[0] ?? "operation"} failed: ${describeCommandFailure(
-        {
-          command: "/usr/bin/hdiutil",
-          exitCode: result.exitCode,
-          stdout: result.stdout,
-          ...(result.stderr === undefined ? {} : { stderr: result.stderr }),
-        },
-        arguments_,
-      )}`,
+      reason,
+      unknownVerifyFailure
+        ? `hdiutil verify failed; captured diagnostics do not establish the failure cause: ${details}`
+        : `hdiutil ${arguments_[0] ?? "operation"} failed: ${details}`,
+      result.cause === undefined ? undefined : { cause: result.cause },
     );
+  }
   return { stdout: result.stdout, exitCode: 0 };
 };
 
@@ -320,6 +338,20 @@ const describeCommandFailure = (
   return JSON.stringify(fields);
 };
 
+const processExitCode = (cause: unknown): number | undefined => {
+  if (typeof cause !== "object" || cause === null) return undefined;
+  const exitCode = Reflect.get(cause, "exitCode");
+  if (typeof exitCode === "number") return exitCode;
+  const code = Reflect.get(cause, "code");
+  return typeof code === "number" ? code : undefined;
+};
+
+const processOutput = (cause: unknown, field: "stdout" | "stderr"): string => {
+  if (typeof cause !== "object" || cause === null) return "";
+  const value = Reflect.get(cause, field);
+  return typeof value === "string" ? value : "";
+};
+
 const commandFailureReason = (
   cause: unknown,
   operation: string | undefined,
@@ -327,8 +359,21 @@ const commandFailureReason = (
   if (typeof cause !== "object" || cause === null) return "unavailable";
   const code = Reflect.get(cause, "code");
   const exitCode = Reflect.get(cause, "exitCode");
-  if (typeof code === "number" || typeof exitCode === "number")
-    return operation === "verify" ? "format" : "unavailable";
+  if (typeof code === "number" || typeof exitCode === "number") {
+    if (operation !== "verify") return "unavailable";
+    const diagnostic = verifyFailureDiagnostic(
+      processOutput(cause, "stdout"),
+      processOutput(cause, "stderr"),
+    );
+    if (diagnostic === "image not recognized") return "format";
+    if (
+      diagnostic === "No such file or directory" ||
+      diagnostic === "Permission denied" ||
+      diagnostic === "Input/output error"
+    )
+      return "io";
+    return "unavailable";
+  }
   if (code === "ENOENT") {
     const syscall = Reflect.get(cause, "syscall");
     return typeof syscall === "string" && syscall.startsWith("spawn")
@@ -348,6 +393,18 @@ const commandFailureReason = (
   )
     return "io";
   return "unavailable";
+};
+
+const verifyFailureDiagnostic = (
+  stdout: string,
+  stderr: string,
+): string | undefined => {
+  const prefix = "hdiutil: verify failed - ";
+  return `${stdout}\n${stderr}`
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find((line) => line.startsWith(prefix))
+    ?.slice(prefix.length);
 };
 
 const command = (
