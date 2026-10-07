@@ -10,7 +10,10 @@ import {
 } from "../application/BrowserObservationService.js";
 import { CdpBrowserProvider } from "../browser/CdpBrowserProvider.js";
 import { logCliCommand } from "../cliLogging.js";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  type AnalysisInputIssue,
+} from "../domain/analysisErrorCore.js";
 import { browserCaptureComparisonInputSchema } from "../domain/browserCaptureComparison.js";
 import { discoverWebMcpToolsInputSchema } from "../domain/webMcpDiscovery.js";
 import {
@@ -89,19 +92,30 @@ const registerCaptureDiff = (
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "compare-web-captures", async () => {
-        const before = parseJson(args.beforeJson);
-        const after = parseJson(args.afterJson);
+        const before = safeParseJson(args.beforeJson);
+        const after = safeParseJson(args.afterJson);
+        const normalization = safeParseJson(options.normalizationJson);
+        if (!before.ok)
+          return inputError("compare_web_captures", [
+            invalidJsonIssue("before"),
+          ]);
+        if (!after.ok)
+          return inputError("compare_web_captures", [invalidJsonIssue("after")]);
+        if (!normalization.ok)
+          return inputError("compare_web_captures", [
+            invalidJsonIssue("normalization"),
+          ]);
         const scenarioComparison =
           browserCaptureComparisonInputSchema.safeParse({
-            before_scenario: before,
-            after_scenario: after,
-            normalization: parseJson(options.normalizationJson),
+            before_scenario: before.value,
+            after_scenario: after.value,
+            normalization: normalization.value,
           });
         const parsed = scenarioComparison.success
           ? scenarioComparison
           : browserCaptureComparisonInputSchema.safeParse({
-              before,
-              after,
+              before: before.value,
+              after: after.value,
             });
         if (!parsed.success) return inputError("compare_web_captures");
         const result = await compareWebCaptureEvidence(
@@ -186,5 +200,14 @@ const parseJson = (value: string): unknown => {
   return parsed.ok ? parsed.value : undefined;
 };
 
-const inputError = (operation: string): JsonValue =>
-  browserCliError(new AnalysisInputError(operation));
+const invalidJsonIssue = (field: string): AnalysisInputIssue => ({
+  path: [field],
+  reason: "invalid_format",
+  expected: "JSON",
+});
+
+const inputError = (
+  operation: string,
+  issues: readonly AnalysisInputIssue[] = [],
+): JsonValue =>
+  browserCliError(new AnalysisInputError(operation, undefined, issues));
