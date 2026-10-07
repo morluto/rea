@@ -179,7 +179,7 @@ requires unresolved table bounds or case mappings to remain visible as
 residual unknowns.
 
 `npm run verify:inspector` requires the supported Node.js runtime and installed
-REA dependencies. CI runs it on Linux and Windows. It starts owned loopback
+REA dependencies. CI runs it on Linux and macOS x64/arm64 and Windows x64. It starts owned loopback
 Node Inspector fixtures and verifies discovery and passive observation through
 the CLI and stdio MCP, including special filenames, unresolved discovery
 locations, and independently resolved loaded scripts. Double-quote filenames
@@ -311,6 +311,30 @@ status. Storyboard compilation additionally requires an installed iOS platform.
 Keep the provider-specific acceptance path independent from optional
 cross-compilers. Cross-format failures belong to the cross-format lane and must
 not make native host acceptance unavailable.
+
+## Native platform baseline in CI
+
+CI exercises the pinned Node.js runtime on native hosted runners:
+
+| Host                  | Runner             | Baseline checks                                                                          |
+| --------------------- | ------------------ | ---------------------------------------------------------------------------------------- |
+| Linux x64             | `ubuntu-latest`    | Installed package and real Node Inspector CLI/MCP                                        |
+| Linux arm64 (aarch64) | `ubuntu-24.04-arm` | Installed package and real Node Inspector CLI/MCP                                        |
+| macOS arm64           | `macos-14`         | Installed package and real Node Inspector CLI/MCP                                        |
+| macOS x64             | `macos-15-intel`   | Installed package and real Node Inspector CLI/MCP                                        |
+| Windows x64           | `windows-latest`   | Curated capabilities, native controls, installed package and real Node Inspector CLI/MCP |
+
+Package and Inspector matrices assert the actual Node platform/architecture
+before verification and record those values with the Node version. Each matrix
+runs at most two jobs concurrently with explicit timeouts and Node heap/thread
+limits. Package checks cover installation, CLI/MCP discovery, target-free
+analysis, configuration backups/recovery, Evidence and owned lifecycle; Inspector
+checks execute source-owned loopback targets and special filename cases.
+
+These native baseline checks complement the Linux source-test shards and the
+separate Apple-artifact and real-provider lanes. Actual Hopper, Ghidra, IDA,
+browser and managed-tool claims require their corresponding verification lanes.
+Runner labels follow the [GitHub hosted-runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
 
 ## Developer commands
 

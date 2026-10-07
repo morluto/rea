@@ -244,15 +244,41 @@ jobs:
     if: github.event_name == 'push' || needs.changes.outputs.package == 'true'
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
-        os: [ubuntu-latest, macos-14]
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            architecture: x64
+          - os: ubuntu-24.04-arm
+            platform: linux
+            architecture: arm64
+          - os: macos-14
+            platform: darwin
+            architecture: arm64
+          - os: macos-15-intel
+            platform: darwin
+            architecture: x64
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      NODE_OPTIONS: "--max-old-space-size=1024"
+      UV_THREADPOOL_SIZE: "2"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
           cache: npm
+      - name: Verify native runtime identity
+        env:
+          EXPECTED_CI_PLATFORM: ${{ matrix.platform }}
+          EXPECTED_CI_ARCHITECTURE: ${{ matrix.architecture }}
+        run: >-
+          node -e "const assert = require('node:assert/strict');
+          assert.equal(process.platform, process.env.EXPECTED_CI_PLATFORM);
+          assert.equal(process.arch, process.env.EXPECTED_CI_ARCHITECTURE);
+          console.log(JSON.stringify({ platform: process.platform, architecture: process.arch, node: process.version }));"
       - run: npm ci
       - uses: actions/download-artifact@v4
         with:
@@ -318,16 +344,44 @@ jobs:
     if: github.event_name == 'push' || needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            architecture: x64
+          - os: ubuntu-24.04-arm
+            platform: linux
+            architecture: arm64
+          - os: macos-14
+            platform: darwin
+            architecture: arm64
+          - os: macos-15-intel
+            platform: darwin
+            architecture: x64
+          - os: windows-latest
+            platform: win32
+            architecture: x64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
+    env:
+      NODE_OPTIONS: "--max-old-space-size=1024"
+      UV_THREADPOOL_SIZE: "2"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
           cache: npm
+      - name: Verify native runtime identity
+        env:
+          EXPECTED_CI_PLATFORM: ${{ matrix.platform }}
+          EXPECTED_CI_ARCHITECTURE: ${{ matrix.architecture }}
+        run: >-
+          node -e "const assert = require('node:assert/strict');
+          assert.equal(process.platform, process.env.EXPECTED_CI_PLATFORM);
+          assert.equal(process.arch, process.env.EXPECTED_CI_ARCHITECTURE);
+          console.log(JSON.stringify({ platform: process.platform, architecture: process.arch, node: process.version }));"
       - run: npm ci
       - name: Verify real Node Inspector discovery and observation
         run: npm run verify:inspector
