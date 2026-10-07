@@ -78,10 +78,13 @@ describeBrowser("CdpBrowserProvider: redirect errors", () => {
           },
         ],
       });
+      expect(inspection.network.requests[0]?.body_shapes).toMatchObject({
+        status: "partial",
+        response: null,
+      });
       expect(
         inspection.network.requests[0]?.body_shapes.request,
       ).not.toBeNull();
-      expect(inspection.network.requests[0]?.body_shapes.response).toBeNull();
       expect(inspection.metadata.responses).toHaveLength(1);
       expect(inspection.metadata.responses[0]).toMatchObject({
         url: `${browser.allowedOrigin}/malformed-redirect-prior`,
@@ -89,8 +92,8 @@ describeBrowser("CdpBrowserProvider: redirect errors", () => {
         content_length: 123,
         content_encoding: "gzip",
       });
-      expect(inspection.completeness.unavailable_sections).toContain(
-        "network_requests",
+      expect(inspection.completeness.unavailable_sections).toEqual(
+        expect.arrayContaining(["network_requests", "json_body_shapes"]),
       );
       expect(inspection.completeness.excluded).toContainEqual({
         section: "network_requests",
@@ -117,11 +120,14 @@ describeBrowser("CdpBrowserProvider: redirect errors", () => {
       status: 201,
       mime_type: "application/json",
       encoded_data_length: null,
-      body_shapes: { response: null },
+      body_shapes: { status: "partial", response: null },
     });
     expect(inspection.metadata.responses).toHaveLength(1);
     expect(inspection.metadata.responses[0]?.url).toBe(
       `${browser.allowedOrigin}/malformed-redirect-prior`,
+    );
+    expect(inspection.completeness.unavailable_sections).toContain(
+      "json_body_shapes",
     );
     expect(inspection.completeness.excluded).toContainEqual({
       section: "network_requests",

@@ -10,7 +10,10 @@ import {
   cdpStringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
-import { requestBodyShape } from "./CdpCaptureEventBodyShapes.js";
+import {
+  requestBodyShape,
+  updateResponseBodyShape,
+} from "./CdpCaptureEventBodyShapes.js";
 import {
   consolePrimitive,
   decodeBase64,
@@ -19,6 +22,7 @@ import {
   firstCallFrame,
   initiatorLocation,
   integerOrNull,
+  isJsonMediaType,
   isMainFrameNavigation,
 } from "./CdpCaptureEventHelpers.js";
 import type { CdpCaptureEventsState } from "./CdpCaptureEventState.js";
@@ -148,6 +152,16 @@ export const handleRequestWillBeSent = (
     // valid redirect envelope, the continuation cannot safely replace it.
     if (previous !== undefined) {
       state.malformedRedirectRequestIds.add(requestId);
+      // The predecessor stays, but its response body is not fetched. A JSON
+      // response would otherwise keep an included body-shape status with no
+      // captured response shape.
+      if (
+        state.input.include_json_body_shapes &&
+        isJsonMediaType(previous.mime_type)
+      ) {
+        updateResponseBodyShape(state, requestId, null);
+        state.completeness.unavailable("json_body_shapes");
+      }
       return;
     }
   }
