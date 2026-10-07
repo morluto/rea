@@ -1,24 +1,15 @@
 name: Release
 
 on:
+  push:
+    branches: ["release/*"]
   workflow_dispatch:
-    inputs:
-      release_branch:
-        description: Frozen release branch (release/VERSION)
-        required: true
-        type: string
-      phase:
-        description: Prepare the release PR, or publish its reviewed merge
-        required: true
-        default: prepare
-        type: choice
-        options: [prepare, publish]
 
 env:
   HUSKY: "0"
 
 concurrency:
-  group: release-${{ inputs.release_branch }}
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -37,27 +28,22 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_BRANCH: ${{ inputs.release_branch }}
-          RELEASE_PHASE: ${{ inputs.phase }}
+          RELEASE_BRANCH: ${{ github.ref_name }}
         run: |
-          if [[ "${RELEASE_PHASE}" == prepare && "${GITHUB_REF}" != "refs/heads/main" ]]; then
-            echo "Run prepare from main; release_branch selects the frozen source." >&2
-            exit 1
-          fi
-          if [[ "${RELEASE_PHASE}" == publish && "${GITHUB_REF}" != "refs/heads/${RELEASE_BRANCH}" ]]; then
-            echo "Run publish from the selected frozen release branch so npm provenance records its source." >&2
-            exit 1
-          fi
-          if [[ "${RELEASE_BRANCH}" != release/* ]]; then
-            echo "release_branch must select a release/ branch; main is not a release checkpoint." >&2
+          if [[ "${GITHUB_REF}" != "refs/heads/${RELEASE_BRANCH}" || "${RELEASE_BRANCH}" != release/* ]]; then
+            echo "Select a release/ branch; main and tags are not release checkpoints." >&2
             exit 1
           fi
           if ! git check-ref-format "refs/heads/${RELEASE_BRANCH}"; then
-            echo "Invalid release_branch: ${RELEASE_BRANCH}" >&2
+            echo "Invalid release branch: ${RELEASE_BRANCH}" >&2
             exit 1
           fi
-          gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${RELEASE_BRANCH}" \
-            --jq '.object.sha'
+          selected_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${RELEASE_BRANCH}" --jq '.object.sha')"
+          if [[ "${selected_sha}" != "${GITHUB_SHA}" ]]; then
+            echo "The release branch moved after this run was triggered; review its new checkpoint before publication." >&2
+            exit 1
+          fi
+          printf 'Selected release checkpoint: %s\n' "${selected_sha}"
 
       - uses: googleapis/release-please-action@v4
         id: release
@@ -65,24 +51,16 @@ jobs:
           # A dedicated credential lets release-PR updates trigger CI. GitHub
           # requires manual approval for pull_request events from GITHUB_TOKEN.
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
-          target-branch: ${{ inputs.release_branch }}
-          skip-github-release: ${{ inputs.phase == 'prepare' }}
-          skip-github-pull-request: ${{ inputs.phase == 'publish' }}
+          target-branch: ${{ github.ref_name }}
 
-      - name: Require a merged release PR for publication
-        if: inputs.phase == 'publish' && steps.release.outputs.release_created != 'true'
-        run: |
-          echo "No new release was created. Merge the reviewed release PR into its frozen branch before publishing. For a partial publication, re-run failed jobs in the original run." >&2
-          exit 1
-
-      - name: Bind publication to the dispatched checkpoint
-        if: inputs.phase == 'publish' && steps.release.outputs.release_created == 'true'
+      - name: Bind publication to the triggering checkpoint
+        if: steps.release.outputs.release_created == 'true'
         shell: bash
         env:
           RELEASE_SHA: ${{ steps.release.outputs.sha }}
         run: |
           if [[ "${RELEASE_SHA}" != "${GITHUB_SHA}" ]]; then
-            echo "The tagged release SHA differs from the dispatched checkpoint; refusing to publish mismatched source provenance." >&2
+            echo "The tagged release SHA differs from the triggering checkpoint; refusing to publish mismatched source provenance." >&2
             exit 1
           fi
 

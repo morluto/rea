@@ -1,9 +1,12 @@
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
+import { delimiter, join } from "node:path";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
 import { parse } from "yaml";
 import { z } from "zod";
+
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const execFileAsync = promisify(execFile);
 const stepSchema = z.object({
@@ -37,28 +40,17 @@ async function readReleaseWorkflow() {
     );
 }
 
-it("requires explicit release preparation or publication instead of main pushes", async () => {
+it("prepares and publishes only from frozen release branches", async () => {
   const workflow = await readReleaseWorkflow();
-  expect(Object.keys(workflow.on)).toEqual(["workflow_dispatch"]);
-  expect(workflow.on.workflow_dispatch).toMatchObject({
-    inputs: {
-      release_branch: { required: true, type: "string" },
-      phase: {
-        required: true,
-        type: "choice",
-        default: "prepare",
-        options: ["prepare", "publish"],
-      },
-    },
-  });
+  expect(workflow.on.push).toEqual({ branches: ["release/*"] });
+  expect(workflow.on).toHaveProperty("workflow_dispatch");
+  expect(workflow.on.workflow_dispatch).toBeNull();
   const release = workflow.jobs["release-please"].steps.find((step) =>
     step.uses?.startsWith("googleapis/release-please-action@"),
   );
-  expect(release?.with).toMatchObject({
-    "target-branch": "${{ inputs.release_branch }}",
-    "skip-github-release": "${{ inputs.phase == 'prepare' }}",
-    "skip-github-pull-request": "${{ inputs.phase == 'publish' }}",
-  });
+  expect(release?.with?.["target-branch"]).toBe("${{ github.ref_name }}");
+  expect(release?.with).not.toHaveProperty("skip-github-release");
+  expect(release?.with).not.toHaveProperty("skip-github-pull-request");
 });
 
 it("binds npm and MCP publication to the same immutable release SHA", async () => {
@@ -94,25 +86,26 @@ it
       execFileAsync("bash", ["-e", "-o", "pipefail", "-c", command], {
         env: {
           ...process.env,
-          GITHUB_REF: "refs/heads/main",
+          GITHUB_REF: `refs/heads/${releaseBranch}`,
           RELEASE_BRANCH: releaseBranch,
-          RELEASE_PHASE: "prepare",
         },
       }),
     ).rejects.toMatchObject({
       code: 1,
-      stderr: expect.stringMatching(/release_branch/u),
+      stderr: expect.stringMatching(/release.*branch/u),
     });
   },
 );
 
-it.skipIf(process.platform === "win32").each([
-  { phase: "prepare", ref: "refs/heads/feature/unreviewed-workflow" },
-  { phase: "publish", ref: "refs/heads/main" },
-  { phase: "publish", ref: "refs/heads/release/another-version" },
-])(
-  "rejects $phase from $ref before contacting GitHub",
-  async ({ phase, ref }) => {
+it
+  .skipIf(process.platform === "win32")
+  .each([
+    "refs/heads/main",
+    "refs/tags/release/5.0.0",
+    "refs/heads/release/another-version",
+  ])(
+  "rejects a ref that does not select the release branch: %s",
+  async (ref) => {
     const workflow = await readReleaseWorkflow();
     const command = z
       .string()
@@ -127,13 +120,62 @@ it.skipIf(process.platform === "win32").each([
           ...process.env,
           GITHUB_REF: ref,
           RELEASE_BRANCH: "release/5.0.0",
-          RELEASE_PHASE: phase,
         },
       }),
     ).rejects.toMatchObject({
       code: 1,
-      stderr: expect.stringContaining(`Run ${phase} from`),
+      stderr: expect.stringContaining("Select a release/ branch"),
     });
+  },
+);
+
+it.skipIf(process.platform === "win32").each([true, false])(
+  "checks the release branch still matches its triggering commit before tagging (match: %s)",
+  async (match) => {
+    const workflow = await readReleaseWorkflow();
+    const command = z
+      .string()
+      .parse(
+        workflow.jobs["release-please"].steps.find(
+          (step) => step.name === "Validate release selection",
+        )?.run,
+      );
+    const directory = await createTestTempDirectory("rea-release-selection-");
+    await writeFile(
+      join(directory, "gh"),
+      '#!/bin/sh\nprintf "%s\\n" "$TEST_RELEASE_REF_SHA"\n',
+      { mode: 0o755 },
+    );
+    const result = execFileAsync(
+      "bash",
+      ["-e", "-o", "pipefail", "-c", command],
+      {
+        env: {
+          ...process.env,
+          PATH: `${directory}${delimiter}${process.env.PATH ?? ""}`,
+          GITHUB_REF: "refs/heads/release/5.0.0",
+          RELEASE_BRANCH: "release/5.0.0",
+          GITHUB_REPOSITORY: "fixture/fixture",
+          GITHUB_SHA: "1111111111111111111111111111111111111111",
+          TEST_RELEASE_REF_SHA: match
+            ? "1111111111111111111111111111111111111111"
+            : "2222222222222222222222222222222222222222",
+        },
+      },
+    );
+    if (match) {
+      await expect(result).resolves.toMatchObject({
+        stdout: expect.stringContaining("Selected release checkpoint:"),
+        stderr: "",
+      });
+    } else {
+      await expect(result).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining(
+          "release branch moved after this run was triggered",
+        ),
+      });
+    }
   },
 );
 
@@ -146,7 +188,7 @@ it.skipIf(process.platform === "win32").each([true, false])(
       .parse(
         workflow.jobs["release-please"].steps.find(
           (step) =>
-            step.name === "Bind publication to the dispatched checkpoint",
+            step.name === "Bind publication to the triggering checkpoint",
         )?.run,
       );
     const result = execFileAsync(

@@ -1,10 +1,10 @@
 # Releasing from a checkpoint
 
-REA releases use an explicit source checkpoint. Main can continue accepting
+REA releases use a frozen source checkpoint. Main can continue accepting
 changes while a release is tested and published. The Release workflow runs
-only when a maintainer dispatches it; main pushes do not refresh release PRs.
+on `release/*` branches; main pushes do not refresh release PRs.
 
-## 1. Select the source
+## 1. Cut the release branch
 
 Choose the next version from the unreleased Conventional Commits, including
 breaking changes. Record the full source SHA and create `release/VERSION` at
@@ -25,47 +25,43 @@ older checkpoint, backport only the release infrastructure first and record
 that additional commit. Do not merge later implementation changes into the
 release branch or rebase the candidate onto a moving main.
 
-## 2. Prepare the bot PR
-
-Run the workflow definition from main and select the frozen source separately:
+The branch push runs Release Please against that branch and opens a PR for
+the version, changelog, and registry metadata. The generation step normalizes
+the product catalog. To retry preparation after a failed run, select the same
+frozen branch explicitly:
 
 ```bash
-gh workflow run release.yml --ref main \
-  -f release_branch=release/5.0.0 -f phase=prepare
+gh workflow run release.yml --ref release/5.0.0
 ```
 
-Release Please targets that branch and prepares its version, changelog, and
-registry metadata. The existing generation step normalizes the product
-catalog. Preparation cannot create a GitHub release or publish a package.
+## 2. Review and merge the bot PR
+
 Record the final bot PR head after normalization. Approve GitHub-blocked bot
-workflow runs for that head when needed.
+workflow runs for that head when needed. Review the candidate's version,
+notes, generated metadata, and package contents. Wait for the candidate's CI
+and relevant real-provider checks. Routine local iterations need focused
+checks; CI owns full deterministic coverage and platform lanes. If an artifact
+or real-provider check is unavailable, report that limit before deciding to
+publish.
 
-Review the candidate's version, notes, generated metadata, and package
-contents. Wait for the candidate's CI and relevant real-provider checks.
-Routine local iterations need focused checks; CI owns full deterministic
-coverage and platform lanes. If an artifact or real-provider check is
-unavailable, report that limit before deciding to publish.
+Merge the reviewed PR into `release/5.0.0` with its head SHA matched. **This
+merge authorizes and triggers publication.** Further main commits do not change
+this candidate. Do not push or merge anything else into the release branch
+while publication is running. A necessary release fix must be reviewed and
+tested before the bot PR merges and establishes a new recorded checkpoint.
 
-Merge the reviewed PR into `release/5.0.0` with its head SHA matched. Further
-main commits do not change this candidate. A necessary release fix belongs
-on the release branch, must be reviewed and tested, and establishes a new
-recorded checkpoint.
+## 3. Verify publication
 
-## 3. Publish the reviewed merge
+The merge push runs Release Please again, creates the tag and GitHub release,
+and publishes npm followed by MCP Registry metadata. Both publishers check
+out Release Please's exact release SHA. The triggering workflow also runs
+from that release commit so npm's provenance records the actual source.
 
-After the release PR has merged:
-
-```bash
-gh workflow run release.yml --ref release/5.0.0 \
-  -f release_branch=release/5.0.0 -f phase=publish
-```
-
-Publication creates the release from the merged bot PR without preparing or
-updating another PR. Both npm and MCP Registry jobs check out Release Please's
-exact release SHA. They do not build the current main tip or a mutable branch.
-The publish dispatch runs from the frozen release branch so npm's provenance
-records the actual release commit. The workflow rejects a mismatch between
-the tagged release SHA and the dispatch SHA before either registry publish.
+Before invoking Release Please, the workflow checks that the release branch
+still equals the triggering SHA and rejects main or tag refs. Before either
+registry publish, it rejects a mismatch between the tagged release SHA and
+the triggering SHA. These checks detect moved branches; maintainers must also
+keep the release branch frozen throughout publication.
 See [npm's provenance implementation](https://github.com/npm/cli/blob/v11.16.0/workspaces/libnpmpublish/lib/provenance.js)
 for the use of GitHub's workflow ref and commit SHA.
 
@@ -82,7 +78,7 @@ Record these outcomes separately:
 
 A GitHub tag alone does not establish npm or MCP Registry publication.
 
-## 4. Sync metadata back to main
+## Sync metadata back to main
 
 After publication, open a PR from the release branch back to main. Preserve
 main's later implementation changes and resolve generated-file conflicts by
@@ -101,7 +97,7 @@ publishing it again. Re-run failed jobs in the original publication run so its
 release SHA and outputs stay fixed. If only MCP publication failed, retry that
 job after checking that the npm canary succeeded.
 
-Do not dispatch a fresh publish phase to repair an already-created release:
+Do not start a fresh workflow run to repair an already-created release:
 Release Please will not create the same release again. Do not move the tag,
 delete the release, or unpublish npm as a retry. A defective public package
 requires a reviewed correction and a new version.
