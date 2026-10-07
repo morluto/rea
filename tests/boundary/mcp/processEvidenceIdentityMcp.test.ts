@@ -5,14 +5,14 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 
-import { compareProcessEvidenceFiles } from "../../../src/application/ProcessCli.js";
-import { PROCESS_PROVIDER } from "../../../src/application/ProcessEvidence.js";
+import { compareProcessEvidenceFiles } from "../../../src/application/process/ProcessCli.js";
+import { PROCESS_PROVIDER } from "../../../src/application/process/ProcessEvidence.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
 import {
   FUNCTION_COMPARISON_EVIDENCE,
   INVESTIGATION_EXAMPLES,
 } from "../../../src/contracts/investigationExamples.js";
-import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/contracts/processCaptureExample.js";
+import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/contracts/process/processCaptureExample.js";
 import { findChangedBehavior } from "../../../src/domain/changedBehavior.js";
 import {
   createEvidence,

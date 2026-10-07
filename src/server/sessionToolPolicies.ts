@@ -1,4 +1,4 @@
-export { PROCESS_PROVIDER } from "../application/ProcessEvidence.js";
+export { PROCESS_PROVIDER } from "../application/process/ProcessEvidence.js";
 export {
   ARTIFACT_COMPARISON_PROVIDER,
   BUNDLE_COMPARISON_PROVIDER,

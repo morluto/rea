@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { digestSchema } from "./../domain/digests.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
-import { PROCESS_COMPARISON_DIMENSIONS } from "./processComparison.js";
+import { PROCESS_COMPARISON_DIMENSIONS } from "./process/processComparison.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const unknownIdSchema = prefixedDigestSchema("unk");

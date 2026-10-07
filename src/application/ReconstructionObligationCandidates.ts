@@ -7,7 +7,7 @@ import {
   parseEvidenceBundle,
   type EvidenceBundle,
 } from "../domain/evidenceBundle.js";
-import { parseProcessCapture } from "../domain/processCapture.js";
+import { parseProcessCapture } from "../domain/process/processCapture.js";
 import type {
   ReconstructionObligation,
   ReviewedReconstructionObligation,

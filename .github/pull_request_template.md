@@ -28,7 +28,7 @@ intentionally not included. -->
 - Provider, bridge, target-format, or platform compatibility:
 - Evidence, artifact, provenance, or reconstruction contract:
 - Process execution, authorization, cleanup, or containment impact:
-- Generated metadata (`docs/product-catalog.json`), package, or installation impact:
+- Generated metadata (`docs/product-catalog.json`), package, or installation impact (the regen-generated bot pushes tracked generated files; never hand-edit them):
 
 ## Evidence and regression coverage
 

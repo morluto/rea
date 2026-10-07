@@ -8,7 +8,7 @@ import {
   EvidenceIntegrityError,
 } from "../domain/evidenceErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { parseProcessCapture } from "../domain/processCapture.js";
+import { parseProcessCapture } from "../domain/process/processCapture.js";
 import { readJsonFile, writeTextFile } from "./JsonFiles.js";
 
 type EvidenceReadFailure = EvidenceFileError | EvidenceIntegrityError;

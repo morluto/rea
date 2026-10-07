@@ -18,7 +18,7 @@ import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "../logger.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { parseCliJsonInput } from "../cliJsonInput.js";
+import { parseCliJsonInput, resolveCliJsonPaths } from "../cliJsonInput.js";
 import {
   electronPageInspectionOptions,
   javascriptApplicationOptions,
@@ -57,7 +57,11 @@ const registerElectronActiveCommand = (
         );
         if (!input.ok) return input.error;
         const parsed = electronActiveObservationInputSchema.safeParse(
-          input.value,
+          resolveCliJsonPaths(input.value, [
+            ["executable_path"],
+            ["application_path"],
+            ["application_root"],
+          ]),
         );
         if (!parsed.success)
           return inputError(

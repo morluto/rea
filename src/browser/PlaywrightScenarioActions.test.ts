@@ -7,7 +7,7 @@ import { browserScenarioSchema } from "../domain/browserScenario.js";
 
 it("uses exact accessible-name matching without a caller confirmation field", async () => {
   const scenario = browserScenarioSchema.parse({
-    browser: { mode: "launch", executable_path: "chrome" },
+    browser: { mode: "launch", executable_path: "/opt/chromium/chrome" },
     start_url: { url: "https://app.example.test/" },
     actions: [
       {
