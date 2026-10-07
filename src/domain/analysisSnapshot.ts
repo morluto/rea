@@ -384,6 +384,7 @@ export const parseAnalysisSnapshot = (input: unknown): AnalysisSnapshot => {
   const boundEntries: AnalysisSnapshotEntry[] = [];
   const boundWorkflowEntries: AnalysisSnapshotWorkflowEntry[] = [];
   const index = createEvidenceIndex(parsed);
+  const workflowIndex = createWorkflowEvidenceIndex(parsed);
   for (const entry of parsed.entries) {
     if (
       entry.execution.provider.id !== parsed.binding.provider.id ||
@@ -438,8 +439,8 @@ export const parseAnalysisSnapshot = (input: unknown): AnalysisSnapshot => {
     if (ids.has(entry.query_id))
       throw new TypeError("Analysis snapshot contains duplicate queries");
     ids.add(entry.query_id);
-    if (!workflowEntryHasMatchingEvidence(entry, parsed)) {
-      if (workflowEntryHasCorrespondingEvidence(entry, parsed))
+    if (!workflowEntryHasMatchingEvidence(entry, workflowIndex)) {
+      if (workflowEntryHasCorrespondingEvidence(entry, workflowIndex))
         throw new TypeError(
           `Analysis snapshot workflow entry ${entry.operation} differs from its Evidence record`,
         );
@@ -620,23 +621,35 @@ const isWorkflowEvidence = (
   evidence.provider.name === entry.execution.provider.name &&
   evidence.provider.version === entry.execution.provider.version;
 
+const createWorkflowEvidenceIndex = (
+  snapshot: Pick<AnalysisSnapshot, "target" | "evidence_bundle">,
+): EvidenceIndex => {
+  const matching = new Set<string>();
+  const corresponding = new Set<string>();
+  for (const evidence of snapshot.evidence_bundle.records) {
+    if (
+      evidence.predicate_type !== "rea.analysis" ||
+      evidence.confidence !== "derived" ||
+      evidence.authority !== "shipped-artifact" ||
+      evidence.subject?.digest.sha256 !== snapshot.target.sha256 ||
+      !("analysis_profile" in evidence)
+    )
+      continue;
+    corresponding.add(evidenceQueryKey(evidence));
+    matching.add(canonicalJson(evidenceContentProjection(evidence)));
+  }
+  return { matching, corresponding };
+};
+
 const workflowEntryHasMatchingEvidence = (
   entry: AnalysisSnapshotWorkflowEntry,
-  snapshot: Pick<AnalysisSnapshot, "target" | "evidence_bundle">,
-): boolean =>
-  snapshot.evidence_bundle.records.some((evidence) =>
-    evidenceMatchesWorkflowEntry(evidence, entry, snapshot),
-  );
+  index: EvidenceIndex,
+): boolean => index.matching.has(workflowEntryEvidenceKey(entry));
 
 const workflowEntryHasCorrespondingEvidence = (
   entry: AnalysisSnapshotWorkflowEntry,
-  snapshot: Pick<AnalysisSnapshot, "target" | "evidence_bundle">,
-): boolean =>
-  snapshot.evidence_bundle.records.some(
-    (evidence) =>
-      isWorkflowEvidence(evidence, snapshot, entry) &&
-      evidenceQueryKey(evidence) === workflowEntryQueryKey(entry),
-  );
+  index: EvidenceIndex,
+): boolean => index.corresponding.has(workflowEntryQueryKey(entry));
 
 const evidenceMatchesWorkflowEntry = (
   evidence: Evidence,
