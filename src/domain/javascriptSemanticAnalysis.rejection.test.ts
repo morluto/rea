@@ -7,6 +7,11 @@ import {
   analyzeParsedJavaScriptSemantics,
 } from "./javascriptSemanticAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+import { analyzeParsedJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import {
+  collectJavaScriptExports,
+  fingerprintJavaScriptAst,
+} from "./javascriptAstFingerprint.js";
 import type { JavaScriptSemanticValue } from "./javascriptSemanticIr.js";
 import {
   onlyCallable,
@@ -33,6 +38,11 @@ describe("JavaScript semantic analysis: rejection 1", () => {
             ? t.binaryExpression("+", expression, t.numericLiteral(1))
             : t.binaryExpression("+", t.numericLiteral(1), expression);
       declarator.init = expression;
+      const staticAnalysis = analyzeParsedJavaScriptStaticSource("", parsed);
+      expect(staticAnalysis.parse_status).toBe("complete");
+      expect(staticAnalysis.visited_ast_nodes).toBe(24006);
+      expect(collectJavaScriptExports(parsed).values).toEqual([]);
+      expect(fingerprintJavaScriptAst(parsed)).toMatch(/^[a-f0-9]{64}$/u);
       const ir = analyzeParsedJavaScriptSemantics(parsed);
       expect(ir.coverage.status).toBe("complete");
       const binding = topLevelBinding(ir, "result");

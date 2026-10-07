@@ -1,5 +1,7 @@
 import * as t from "@babel/types";
 
+import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+
 import {
   collectJavaScriptExports,
   fingerprintJavaScriptAst,
@@ -251,13 +253,16 @@ const collectBundlerCallArgumentValues = (
 ): StaticValues => {
   const values: string[] = [];
   let unknown = 0;
-  t.traverseFast(factory, (node) => {
-    if (!t.isCallExpression(node) && !t.isNewExpression(node)) return undefined;
-    if (calleeName(node.callee) !== callee) return undefined;
-    const value = argumentValue(node.arguments[0]);
-    if (value === undefined) unknown += 1;
-    else values.push(value);
-    return undefined;
+  traverseJavaScriptAst(factory, {
+    enter: (node) => {
+      if (!t.isCallExpression(node) && !t.isNewExpression(node))
+        return undefined;
+      if (calleeName(node.callee) !== callee) return undefined;
+      const value = argumentValue(node.arguments[0]);
+      if (value === undefined) unknown += 1;
+      else values.push(value);
+      return undefined;
+    },
   });
   return uniqueValues(values, unknown);
 };

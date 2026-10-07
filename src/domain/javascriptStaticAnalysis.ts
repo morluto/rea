@@ -1,5 +1,7 @@
 import * as t from "@babel/types";
 
+import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+
 import { inspectElectronStaticNode } from "./electronStaticAnalysis.js";
 import {
   detectVendors,
@@ -56,10 +58,12 @@ const traverseStaticSource = (
   file: ParsedJavaScriptSource,
   accumulator: AnalysisAccumulator,
 ): void => {
-  t.traverseFast(file, (node) => {
-    accumulator.visitedNodes += 1;
-    inspectNode(source, node, accumulator);
-    return undefined;
+  traverseJavaScriptAst(file, {
+    enter: (node) => {
+      accumulator.visitedNodes += 1;
+      inspectNode(source, node, accumulator);
+      return undefined;
+    },
   });
 };
 
