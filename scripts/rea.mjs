@@ -19,7 +19,7 @@ const runtimeFiles = isMcpMode
   ? ["dist/main.js"]
   : isMcpDoctorMode
     ? ["dist/main.js", "dist/mcpDoctor.js"]
-    : ["dist/cli.js", "dist/cliOutput.js"];
+    : ["dist/cli.js", "dist/cliOutput.js", "dist/cli/streamedJsonOutput.js"];
 
 if (!(await compiledRuntimeExists(runtimeFiles))) {
   process.stderr.write(
@@ -39,6 +39,8 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   process.exitCode = result.exitCode;
 } else {
   const { createCli } = await import("../dist/cli.js");
+  const { createStreamedCliJsonOutput } =
+    await import("../dist/cli/streamedJsonOutput.js");
   const {
     renderCliOutputArgumentError,
     renderEmptyFilteredCliOutput,
@@ -51,14 +53,20 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
     process.exitCode = 1;
   } else {
     let wroteOutput = false;
-    await createCli().serve(args, {
+    const resultOutput = createStreamedCliJsonOutput(args, process.stdout);
+    await createCli(process.env, resultOutput).serve(args, {
       stdout: (output) => {
+        if (resultOutput?.handled) {
+          if (resultOutput.failed)
+            process.stderr.write(sanitizeCliOutput(output));
+          return;
+        }
         const sanitized = sanitizeCliOutput(output);
         if (sanitized.length > 0) wroteOutput = true;
         process.stdout.write(sanitized);
       },
     });
-    if (!wroteOutput)
+    if (!wroteOutput && !resultOutput?.handled)
       process.stdout.write(renderEmptyFilteredCliOutput(args) ?? "");
   }
 }

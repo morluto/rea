@@ -11,6 +11,7 @@ describe("executable dispatcher", () => {
     async ({ processes, workspace }) => {
       const scripts = await workspace.mkdir("scripts");
       await workspace.mkdir("dist");
+      await workspace.mkdir("dist/cli");
       await Promise.all([
         copyFile("scripts/rea.mjs", join(scripts, "rea.mjs")),
         workspace.write(
@@ -28,6 +29,10 @@ describe("executable dispatcher", () => {
         workspace.write(
           "dist/cliOutput.js",
           "export const sanitizeCliOutput = (output) => output; export const validateCliOutputArguments = () => ({ ok: true }); export const renderCliOutputArgumentError = () => ''; export const renderEmptyFilteredCliOutput = () => undefined;\n",
+        ),
+        workspace.write(
+          "dist/cli/streamedJsonOutput.js",
+          "export const createStreamedCliJsonOutput = () => undefined;\n",
         ),
         workspace.write(
           "dist/mcpDoctor.js",

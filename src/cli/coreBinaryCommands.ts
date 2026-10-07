@@ -13,13 +13,18 @@ import {
 } from "./options.js";
 import type { CliInstance } from "./types.js";
 import { runCliJavaScriptApplicationAnalysis } from "./javascriptApplicationAnalysis.js";
+import type {
+  CliCommandOutput,
+  CliResultOutput,
+} from "./streamedJsonOutput.js";
 
 /** Register provider-neutral binary overview and procedure CLI commands. */
 export const registerCoreBinaryCommands = (
   cli: CliInstance,
   logger: Logger,
+  resultOutput?: CliResultOutput,
 ): void => {
-  registerOverviewCommands(cli, logger);
+  registerOverviewCommands(cli, logger, resultOutput);
   registerFunctionCommand(cli, logger);
   registerInstructionsCommand(cli, logger);
   registerSearchCommand(cli, logger);
@@ -27,7 +32,11 @@ export const registerCoreBinaryCommands = (
   registerTraceCommand(cli, logger);
 };
 
-const registerOverviewCommands = (cli: CliInstance, logger: Logger): void => {
+const registerOverviewCommands = (
+  cli: CliInstance,
+  logger: Logger,
+  resultOutput?: CliResultOutput,
+): void => {
   const overviewOptions = z.object({
     snapshot: z
       .string()
@@ -43,9 +52,16 @@ const registerOverviewCommands = (cli: CliInstance, logger: Logger): void => {
       path: z.string().describe("App, program, or analysis database path"),
     }),
     options: overviewOptions,
-    run: ({ args, options }) =>
+    run: ({ args, options, format }) =>
       logCliCommand(logger, "analyze", () =>
-        runRoutedOverview(args.path, options, logger),
+        runRoutedOverview(
+          args.path,
+          options,
+          logger,
+          resultOutput === undefined
+            ? undefined
+            : { output: resultOutput, command: CLI_COMMANDS.analyze, format },
+        ),
       ),
   });
   cli.command(CLI_COMMANDS.inspect, {
@@ -109,6 +125,7 @@ const runRoutedOverview = async (
     readonly provider?: string | undefined;
   },
   logger: Logger,
+  output?: CliCommandOutput,
 ) => {
   if (
     options.provider === undefined &&
@@ -116,9 +133,10 @@ const runRoutedOverview = async (
     options["target-format"] === undefined &&
     (await isJavaScriptApplicationPath(path))
   )
-    return runCliJavaScriptApplicationAnalysis({
-      input_path: resolve(path),
-    });
+    return runCliJavaScriptApplicationAnalysis(
+      { input_path: resolve(path) },
+      output,
+    );
   return runDirectAnalysis(
     path,
     "binary_overview",

@@ -561,6 +561,18 @@ conditional `real-web-source-map` CI job supplies Chrome and an isolated pinned
 fixture compiler; static/unit checks do not acquire a browser. See
 [the source location guide](web-source-location.md) for the verified decoder profile.
 
+### JavaScript large-output lane
+
+`npm run verify:javascript:output` exercises the CLI JSON result surface beyond
+the running Node engine's single-string limit. Shared input leaves keep the
+fixture's graph small; the verifier writes one temporary output file, checks its
+complete byte count and an independent digest, then removes it. It requires only
+Node and the built REA runtime, with space for the output plus a 1 GiB reserve.
+Run `npm run verify:javascript:output -- jsonl` for compact JSONL coverage. This
+opt-in lane is separate from routine tests and the canonical hash check
+`npm run verify:javascript:digests`. It verifies serialization rather than an
+arbitrary third-party application's parsing cost or MCP client capacity.
+
 ### Website runtime attribution lane
 
 `npm run verify:browser:runtime` uses caller-supplied

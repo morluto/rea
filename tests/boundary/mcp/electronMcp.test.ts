@@ -10,6 +10,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type { ElectronActiveObservationPort } from "../../../src/application/javascript/ElectronActiveObservationPort.js";
+import { analyzeJavaScriptApplication } from "../../../src/application/javascript/JavaScriptApplicationService.js";
 import { CdpElectronProvider } from "../../../src/browser/CdpElectronProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
@@ -270,12 +271,18 @@ it("exposes the target-free static JavaScript application workflow", async () =>
   await server.connect(serverTransport);
   await client.connect(clientTransport);
 
-  const analyzed = await client.callTool({
-    name: "analyze_javascript_application",
-    arguments: { input_path: root },
-  });
+  const progress: number[] = [];
+  const analyzed = await client.callTool(
+    {
+      name: "analyze_javascript_application",
+      arguments: { input_path: root },
+    },
+    { onprogress: (update) => progress.push(update.progress) },
+  );
 
   expect(analyzed.isError).not.toBe(true);
+  expect(progress[0]).toBe(0);
+  expect(progress.at(-1)).toBe(1);
   const projected = z
     .object({
       evidence_id: z.string(),
@@ -314,6 +321,9 @@ it("exposes the target-free static JavaScript application workflow", async () =>
   expect(projected.result.graph.nodes.length).toBeGreaterThan(0);
   expect(projected.result.semantic_graph.nodes.length).toBeGreaterThan(0);
   expect(projected.evidence.operation).toBe("analyze_javascript_application");
+  const direct = await analyzeJavaScriptApplication({ input_path: root });
+  if (!direct.ok) throw direct.error;
+  expect(projected.evidence_id).toBe(direct.value.evidence_id);
 });
 
 const evidenceFor = (value: unknown) => {

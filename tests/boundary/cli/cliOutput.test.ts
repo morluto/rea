@@ -245,7 +245,7 @@ describe("compiled CLI output boundary", () => {
       expect(result).toMatchObject({
         exitCode: 0,
         stdout: "{}\n",
-        stderr: "",
+        stderr: expect.stringContaining('"rea_progress":'),
         json: {},
       });
       const nested = await cli.run({
@@ -260,7 +260,7 @@ describe("compiled CLI output boundary", () => {
       });
       expect(nested).toMatchObject({
         exitCode: 0,
-        stderr: "",
+        stderr: expect.stringContaining('"rea_progress":'),
         json: { normalized_result: {} },
       });
       const selected = await cli.run({
@@ -275,7 +275,7 @@ describe("compiled CLI output boundary", () => {
       });
       expect(selected).toMatchObject({
         exitCode: 0,
-        stderr: "",
+        stderr: expect.stringContaining('"rea_progress":'),
         json: {
           normalized_result: {
             summary: expect.objectContaining({ browser_windows: 0 }),
