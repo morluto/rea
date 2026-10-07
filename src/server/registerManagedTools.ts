@@ -2,7 +2,7 @@ import type { EvidenceWriter } from "../application/investigation/InvestigationR
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
-import type { BinarySessionPort } from "../application/BinarySession.js";
+import type { BinarySessionPort } from "../application/binary/BinarySession.js";
 import { MANAGED_TOOL_CONTRACTS } from "../contracts/managedToolContracts.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";

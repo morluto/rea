@@ -2,7 +2,7 @@ import type {
   AnalysisClient,
   AnalysisProvider,
 } from "../../../src/application/AnalysisProvider.js";
-import type { BinarySession } from "../../../src/application/BinarySession.js";
+import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import type { RecordUnknownInput } from "../../../src/domain/residualUnknown.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";

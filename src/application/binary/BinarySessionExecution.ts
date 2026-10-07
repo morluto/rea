@@ -1,18 +1,18 @@
-import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
-import type { BinaryTarget } from "../domain/binaryTarget.js";
-import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
-import { NoBinaryOpenError } from "../domain/configurationErrors.js";
-import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { type AnalysisError } from "../domain/analysisErrorBase.js";
-import type { JsonValue } from "../domain/jsonValue.js";
-import type { EvidenceSubjectTarget } from "../domain/evidence.js";
-import { err, ok, type Result } from "../domain/result.js";
+import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
+import type { BinaryTarget } from "../../domain/binaryTarget.js";
+import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
+import { NoBinaryOpenError } from "../../domain/configurationErrors.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import { type AnalysisError } from "../../domain/analysisErrorBase.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
+import type { EvidenceSubjectTarget } from "../../domain/evidence.js";
+import { err, ok, type Result } from "../../domain/result.js";
 import type {
   AnalysisClient,
   AnalysisExecution,
   AnalysisOperation,
   CapabilityDescriptor,
-} from "./AnalysisProvider.js";
+} from "../AnalysisProvider.js";
 import { isSnapshotCacheable } from "./AnalysisSnapshotCache.js";
 import type { SessionProviderRoute } from "./SessionProviderRouter.js";
 

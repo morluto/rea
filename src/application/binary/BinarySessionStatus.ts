@@ -1,10 +1,10 @@
-import type { BinaryTarget } from "../domain/binaryTarget.js";
-import type { JsonValue } from "../domain/jsonValue.js";
+import type { BinaryTarget } from "../../domain/binaryTarget.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 import type {
   CapabilityDescriptor,
   ProviderRequestActivitySnapshot,
   ProviderRuntimeLineageSnapshot,
-} from "./AnalysisProvider.js";
+} from "../AnalysisProvider.js";
 import type {
   SessionProviderRoute,
   SessionProviderRouter,

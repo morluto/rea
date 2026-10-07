@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { createAnalysisProfile } from "../domain/analysisProfile.js";
+import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import {
   ANALYSIS_SNAPSHOT_PROFILE,
   ANALYSIS_SNAPSHOT_PROVIDER,
   ANALYSIS_SNAPSHOT_TARGET,
-} from "../domain/analysisSnapshot.fixture.js";
-import { createEvidence } from "../domain/evidence.js";
-import { createEvidenceBundle } from "../domain/evidenceBundle.js";
-import { ok } from "../domain/result.js";
-import { createAnalysisExecution } from "./AnalysisProvider.js";
+} from "../../domain/analysisSnapshot.fixture.js";
+import { createEvidence } from "../../domain/evidence.js";
+import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
+import { ok } from "../../domain/result.js";
+import { createAnalysisExecution } from "../AnalysisProvider.js";
 import { AnalysisSnapshotCache } from "./AnalysisSnapshotCache.js";
 
 describe("analysis snapshot cache partitioning", () => {

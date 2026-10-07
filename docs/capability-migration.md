@@ -225,6 +225,27 @@ explicit downloader and fixed manifest belong to `scripts/fixtures/android/`.
 JADX CLI/MCP parity requires the fixed APK and existing audited JAR; synthetic
 protocol/cancellation success does not establish that engine or an unverified host.
 
+## Binary application ownership
+
+`src/application/binary/` owns the active session, deep-provider registry and
+evaluation, operation routing, disjoint provider composition, lazy auxiliary
+clients, cancellation and client cleanup. Its records facade and snapshot
+cache/files remain bound to the exact target and analysis profile. Investigation
+records still have their separate owner in `src/application/investigation/`.
+
+`AnalysisProvider.ts` stays shared because its identity/execution types also serve
+nonbinary ports. `BinaryTargetResolver.ts` stays shared because Android, firmware,
+managed and artifact workflows use its target parsing. The existing `runtime.ts`
+remains the exact temporary production wiring entrypoint while direct-analysis
+callers are migrated deliberately; application workflows gain no outward
+composition dependency.
+
+The three colocated application tests move with their owner. Composition cases
+remain in `tests/composition/analysis-sessions/`; filesystem and SDK cases retain
+their boundary lanes. The shared `tests/fixtures/binarySession.ts` factory supports
+several capability families. Existing recursive application globs discover the
+moved tests; bridge assets and real-verifier entrypoints remain at their owners.
+
 ## Firmware layer and verification ownership
 
 Firmware workflows and their existing typed port live in

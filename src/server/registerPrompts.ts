@@ -6,7 +6,7 @@ import {
 import { z } from "zod";
 
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
-import type { BinarySessionPort } from "../application/BinarySession.js";
+import type { BinarySessionPort } from "../application/binary/BinarySession.js";
 import {
   PROMPT_CONTRACTS,
   renderGuidedPrompt,

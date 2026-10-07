@@ -2,7 +2,7 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import type { BinarySession } from "../../../src/application/BinarySession.js";
+import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { createServer } from "../../../src/server/createServer.js";
 import {
   JAVASCRIPT_FEATURE_TRACE_FULL_EVIDENCE_EXAMPLE,

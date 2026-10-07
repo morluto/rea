@@ -8,11 +8,11 @@ import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { AnalysisProviderRegistry } from "../../../src/application/AnalysisProviderRegistry.js";
-import { composeBinarySession } from "../../../src/application/BinarySessionComposition.js";
-import type { BinarySession } from "../../../src/application/BinarySession.js";
+import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
+import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
+import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import type { BinaryTarget } from "../../../src/domain/binaryTarget.js";
-import { SessionProviderRouter } from "../../../src/application/SessionProviderRouter.js";
+import { SessionProviderRouter } from "../../../src/application/binary/SessionProviderRouter.js";
 import { MANAGED_NATIVE_VERIFICATION_EXAMPLE } from "../../../src/contracts/managedWorkflowExamples.js";
 import { ManagedStaticProvider } from "../../../src/dotnet/ManagedStaticProvider.js";
 import { createServer } from "../../../src/server/createServer.js";

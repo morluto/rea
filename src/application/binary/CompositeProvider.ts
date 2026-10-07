@@ -1,7 +1,7 @@
-import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
-import { err, ok } from "../domain/result.js";
-import type { BinaryTarget } from "../domain/binaryTarget.js";
-import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
+import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
+import { err, ok } from "../../domain/result.js";
+import type { BinaryTarget } from "../../domain/binaryTarget.js";
+import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import type {
   AnalysisClient,
   AnalysisClientContext,
@@ -9,7 +9,7 @@ import type {
   AnalysisProvider,
   CapabilityDescriptor,
   ProviderIdentity,
-} from "./AnalysisProvider.js";
+} from "../AnalysisProvider.js";
 import { closeAnalysisClient } from "./AnalysisClientCleanup.js";
 
 /** Synthetic compatibility identity for a deterministic provider set. */

@@ -1,15 +1,15 @@
 import type { AppConfig } from "../config.js";
-import type { BinarySession } from "./BinarySession.js";
+import type { BinarySession } from "./binary/BinarySession.js";
 import { HopperProvider } from "../hopper/HopperProvider.js";
 import { GhidraProvider } from "../ghidra/GhidraProvider.js";
 import { IdaProvider } from "../ida/IdaProvider.js";
 import { silentLogger, type Logger } from "../logger.js";
 import { auxiliaryAnalysisProviderDeclarations } from "../composition/auxiliaryAnalysisProviders.js";
-import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
-import { composeBinarySession } from "./BinarySessionComposition.js";
-import { LazyAnalysisProvider } from "./LazyAnalysisProvider.js";
+import { AnalysisProviderRegistry } from "./binary/AnalysisProviderRegistry.js";
+import { composeBinarySession } from "./binary/BinarySessionComposition.js";
+import { LazyAnalysisProvider } from "./binary/LazyAnalysisProvider.js";
 import { ManagedStaticProvider } from "../dotnet/ManagedStaticProvider.js";
-import { SessionProviderRouter } from "./SessionProviderRouter.js";
+import { SessionProviderRouter } from "./binary/SessionProviderRouter.js";
 
 /**
  * Compose the target-switching runtime shared directly by CLI and MCP adapters.

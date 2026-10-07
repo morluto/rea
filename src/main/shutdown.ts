@@ -1,6 +1,6 @@
 import type { StdioServerHandle } from "@modelcontextprotocol/server/stdio";
 
-import type { BinarySession } from "../application/BinarySession.js";
+import type { BinarySession } from "../application/binary/BinarySession.js";
 import type { Logger } from "../logger.js";
 import type { RuntimeDependencies } from "./types.js";
 import { MCP_SHUTDOWN_FAILED } from "./messages.js";

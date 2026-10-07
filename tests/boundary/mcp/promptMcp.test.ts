@@ -9,7 +9,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import type { AnalysisClient } from "../../../src/application/AnalysisProvider.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import type { BinarySession } from "../../../src/application/BinarySession.js";
+import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";

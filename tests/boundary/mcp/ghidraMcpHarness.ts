@@ -1,8 +1,8 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { composeBinarySession } from "../../../src/application/BinarySessionComposition.js";
-import type { BinarySession } from "../../../src/application/BinarySession.js";
-import { AnalysisProviderRegistry } from "../../../src/application/AnalysisProviderRegistry.js";
-import { SessionProviderRouter } from "../../../src/application/SessionProviderRouter.js";
+import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
+import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
+import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
+import { SessionProviderRouter } from "../../../src/application/binary/SessionProviderRouter.js";
 import { parseConfig } from "../../../src/config.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { ok } from "../../../src/domain/result.js";

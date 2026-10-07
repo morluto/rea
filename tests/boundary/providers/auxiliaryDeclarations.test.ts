@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 
 import { auxiliaryAnalysisProviderDeclarations } from "../../../src/composition/auxiliaryAnalysisProviders.js";
-import { LazyAnalysisProvider } from "../../../src/application/LazyAnalysisProvider.js";
+import { LazyAnalysisProvider } from "../../../src/application/binary/LazyAnalysisProvider.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { GENERATED_AUXILIARY_PROVIDERS } from "../../../src/generatedMcpToolCatalog.js";
 

@@ -1,18 +1,18 @@
-import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
+import type { AnalysisProviderSelector } from "../../contracts/providerSelection.js";
 import {
   analysisProfileSchema,
   type AnalysisProfileCommitment,
-} from "../domain/analysisProfile.js";
-import type { BinaryTarget } from "../domain/binaryTarget.js";
+} from "../../domain/analysisProfile.js";
+import type { BinaryTarget } from "../../domain/binaryTarget.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
-} from "../domain/analysisErrorCore.js";
-import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { ProviderSelectionError } from "../domain/providerSelectionError.js";
-import { type AnalysisError } from "../domain/analysisErrorBase.js";
-import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
-import { err, ok, type Result } from "../domain/result.js";
+} from "../../domain/analysisErrorCore.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import { ProviderSelectionError } from "../../domain/providerSelectionError.js";
+import { type AnalysisError } from "../../domain/analysisErrorBase.js";
+import { jsonObjectSchema, type JsonValue } from "../../domain/jsonValue.js";
+import { err, ok, type Result } from "../../domain/result.js";
 import type {
   AnalysisClient,
   AnalysisClientContext,
@@ -22,7 +22,7 @@ import type {
   AnalysisProvider,
   CapabilityDescriptor,
   ProviderIdentity,
-} from "./AnalysisProvider.js";
+} from "../AnalysisProvider.js";
 import {
   AnalysisProviderRegistry,
   type AnalysisProviderBinding,

@@ -5,8 +5,8 @@ import {
   getNavigationContext,
   inspectAddressContext,
 } from "../application/AnalysisContextQueries.js";
-import { readAnalysisSnapshot } from "../application/AnalysisSnapshotFiles.js";
-import type { BinarySessionPort } from "../application/BinarySession.js";
+import { readAnalysisSnapshot } from "../application/binary/AnalysisSnapshotFiles.js";
+import type { BinarySessionPort } from "../application/binary/BinarySession.js";
 import { createProcessCaptureEvidence } from "../application/ProcessEvidence.js";
 import { captureProcessScenario } from "../application/ProcessHarness.js";
 import { toolContract } from "../contracts/toolContracts.js";

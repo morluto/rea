@@ -1,11 +1,11 @@
-import type { BinaryTarget } from "../domain/binaryTarget.js";
-import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
-import type { JsonValue } from "../domain/jsonValue.js";
-import type { EvidenceBundle } from "../domain/evidenceBundle.js";
-import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
-import { NoBinaryOpenError } from "../domain/configurationErrors.js";
-import { type AnalysisError } from "../domain/analysisErrorBase.js";
-import { err, ok, type Result } from "../domain/result.js";
+import type { BinaryTarget } from "../../domain/binaryTarget.js";
+import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
+import type { EvidenceBundle } from "../../domain/evidenceBundle.js";
+import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
+import { NoBinaryOpenError } from "../../domain/configurationErrors.js";
+import { type AnalysisError } from "../../domain/analysisErrorBase.js";
+import { err, ok, type Result } from "../../domain/result.js";
 import {
   analysisQueryId,
   createAnalysisSnapshotEntry,
@@ -18,13 +18,13 @@ import {
   type AnalysisSnapshotEntry,
   type AnalysisSnapshotBinding,
   type AnalysisSnapshotTarget,
-} from "../domain/analysisSnapshot.js";
+} from "../../domain/analysisSnapshot.js";
 import type {
   AnalysisExecution,
   AnalysisOperation,
   CapabilityDescriptor,
-} from "./AnalysisProvider.js";
-import { GENERATED_MCP_TOOL_CATALOG } from "../generatedMcpToolCatalog.js";
+} from "../AnalysisProvider.js";
+import { GENERATED_MCP_TOOL_CATALOG } from "../../generatedMcpToolCatalog.js";
 
 const STATEFUL_OPERATIONS: ReadonlySet<AnalysisOperation> = new Set([
   "health",

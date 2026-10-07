@@ -2,24 +2,24 @@ import {
   analysisProviderIdSchema,
   analysisProviderSelectorSchema,
   type AnalysisProviderSelector,
-} from "../contracts/providerSelection.js";
-import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
-import type { BinaryTarget } from "../domain/binaryTarget.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+} from "../../contracts/providerSelection.js";
+import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
+import type { BinaryTarget } from "../../domain/binaryTarget.js";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import {
   ProviderSelectionError,
   type ProviderSelectionFailureReason,
   type ProviderSelectionRejection,
-} from "../domain/providerSelectionError.js";
-import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
-import { err, ok, type Result } from "../domain/result.js";
+} from "../../domain/providerSelectionError.js";
+import { jsonObjectSchema, type JsonValue } from "../../domain/jsonValue.js";
+import { err, ok, type Result } from "../../domain/result.js";
 import type {
   AnalysisProviderCandidate,
   CapabilityDescriptor,
   ProviderAvailability,
   ProviderIdentity,
   ProviderTargetSupport,
-} from "./AnalysisProvider.js";
+} from "../AnalysisProvider.js";
 import {
   evaluateAnalysisProviderCandidate,
   type AnalysisProviderCandidateEvaluation,

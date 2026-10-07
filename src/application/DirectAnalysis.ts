@@ -20,7 +20,7 @@ import { access } from "node:fs/promises";
 import {
   readAnalysisSnapshot,
   writeAnalysisSnapshot,
-} from "./AnalysisSnapshotFiles.js";
+} from "./binary/AnalysisSnapshotFiles.js";
 import { parseBinaryTarget } from "./BinaryTargetResolver.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import {

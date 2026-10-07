@@ -1,17 +1,17 @@
-import type { ExecutableFormatHint } from "../domain/dosCom.js";
-import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
-import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
+import type { ExecutableFormatHint } from "../../domain/dosCom.js";
+import type { AnalysisProviderSelector } from "../../contracts/providerSelection.js";
+import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import {
   snapshotMatchesBinding,
   snapshotMatchesTarget,
   snapshotTarget,
-} from "../domain/analysisSnapshot.js";
-import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
-import { parseBinaryTarget } from "./BinaryTargetResolver.js";
-import { type BinaryTarget } from "../domain/binaryTarget.js";
-import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
-import { type AnalysisError } from "../domain/analysisErrorBase.js";
-import { err, type Result } from "../domain/result.js";
+} from "../../domain/analysisSnapshot.js";
+import type { AnalysisSnapshot } from "../../domain/analysisSnapshot.js";
+import { parseBinaryTarget } from "../BinaryTargetResolver.js";
+import { type BinaryTarget } from "../../domain/binaryTarget.js";
+import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
+import { type AnalysisError } from "../../domain/analysisErrorBase.js";
+import { err, type Result } from "../../domain/result.js";
 import type { SessionProviderRoute } from "./SessionProviderRouter.js";
 import { SessionProviderRouter } from "./SessionProviderRouter.js";
 

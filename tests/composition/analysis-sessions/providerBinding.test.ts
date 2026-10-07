@@ -15,10 +15,10 @@ import {
   type CapabilityDescriptor,
   type ProviderIdentity,
 } from "../../../src/application/AnalysisProvider.js";
-import { AnalysisProviderRegistry } from "../../../src/application/AnalysisProviderRegistry.js";
-import type { BinarySession } from "../../../src/application/BinarySession.js";
-import { composeBinarySession } from "../../../src/application/BinarySessionComposition.js";
-import { SessionProviderRouter } from "../../../src/application/SessionProviderRouter.js";
+import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
+import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
+import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
+import { SessionProviderRouter } from "../../../src/application/binary/SessionProviderRouter.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";

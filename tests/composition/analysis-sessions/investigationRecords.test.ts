@@ -1,7 +1,7 @@
 import { expect, it, onTestFinished } from "vitest";
 
-import { BinarySession } from "../../../src/application/BinarySession.js";
-import { SessionProviderRouter } from "../../../src/application/SessionProviderRouter.js";
+import { BinarySession } from "../../../src/application/binary/BinarySession.js";
+import { SessionProviderRouter } from "../../../src/application/binary/SessionProviderRouter.js";
 import { InvestigationRecords } from "../../../src/application/investigation/InvestigationRecords.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { recordUnknownInputSchema } from "../../../src/domain/residualUnknown.js";

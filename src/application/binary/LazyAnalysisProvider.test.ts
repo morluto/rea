@@ -1,10 +1,13 @@
 import { expect, it } from "vitest";
 
-import { parseBinaryTarget } from "./BinaryTargetResolver.js";
-import type { AnalysisProvider, ProviderIdentity } from "./AnalysisProvider.js";
+import { parseBinaryTarget } from "../BinaryTargetResolver.js";
+import type {
+  AnalysisProvider,
+  ProviderIdentity,
+} from "../AnalysisProvider.js";
 import { LazyAnalysisProvider } from "./LazyAnalysisProvider.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { err } from "../domain/result.js";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { err } from "../../domain/result.js";
 
 const identity: ProviderIdentity = {
   id: "test-provider",

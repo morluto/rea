@@ -12,13 +12,13 @@ import {
   type ProviderAvailability,
   type ProviderIdentity,
   type ProviderTargetSupport,
-} from "./AnalysisProvider.js";
-import { createAnalysisProfile } from "../domain/analysisProfile.js";
-import type { BinaryTarget } from "../domain/binaryTarget.js";
-import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { ProviderSelectionError } from "../domain/providerSelectionError.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { err, ok } from "../domain/result.js";
+} from "../AnalysisProvider.js";
+import { createAnalysisProfile } from "../../domain/analysisProfile.js";
+import type { BinaryTarget } from "../../domain/binaryTarget.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import { ProviderSelectionError } from "../../domain/providerSelectionError.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { err, ok } from "../../domain/result.js";
 
 const DATABASE_TARGET: BinaryTarget = {
   path: "/tmp/fixture.hop",

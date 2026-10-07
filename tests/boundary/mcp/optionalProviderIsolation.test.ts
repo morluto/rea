@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { afterEach, expect } from "vitest";
 import { z } from "zod";
 
-import type { BinarySessionPort } from "../../../src/application/BinarySessionPort.js";
+import type { BinarySessionPort } from "../../../src/application/binary/BinarySessionPort.js";
 import {
   loadOptionalObservationProviders,
   type OptionalObservationFactories,

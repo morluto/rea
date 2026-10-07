@@ -29,9 +29,9 @@ same bytes could therefore disagree because of language, compiler, loader,
 analyzer, or provider-version differences while appearing target-compatible.
 
 The decision addressed the earlier representations of
-[`CompositeProvider`](../../src/application/CompositeProvider.ts),
+[`CompositeProvider`](../../src/application/binary/CompositeProvider.ts),
 [runtime composition](../../src/application/runtime.ts),
-[`BinarySession`](../../src/application/BinarySession.ts),
+[`BinarySession`](../../src/application/binary/BinarySession.ts),
 [`BinaryTarget`](../../src/domain/binaryTarget.ts),
 [analysis snapshot](../../src/domain/analysisSnapshot.ts), and
 [session lifecycle inputs](../../src/contracts/sessionLifecycleInputs.ts).

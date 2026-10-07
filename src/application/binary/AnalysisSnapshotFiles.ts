@@ -2,13 +2,13 @@ import {
   parseAnalysisSnapshot,
   serializeAnalysisSnapshot,
   type AnalysisSnapshot,
-} from "../domain/analysisSnapshot.js";
+} from "../../domain/analysisSnapshot.js";
 import {
   EvidenceFileError,
   EvidenceIntegrityError,
-} from "../domain/evidenceErrors.js";
-import { err, ok, type Result } from "../domain/result.js";
-import { readJsonFile, writeTextFile } from "./JsonFiles.js";
+} from "../../domain/evidenceErrors.js";
+import { err, ok, type Result } from "../../domain/result.js";
+import { readJsonFile, writeTextFile } from "../JsonFiles.js";
 
 type SnapshotFailure = EvidenceFileError | EvidenceIntegrityError;
 

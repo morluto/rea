@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { uniqueSorted } from "../domain/canonicalOrdering.js";
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
-import type { BinarySessionPort } from "../application/BinarySession.js";
+import type { BinarySessionPort } from "../application/binary/BinarySession.js";
 import type { PromptCompletionKind } from "../contracts/promptContracts.js";
 import { artifactInventoryResultSchema } from "../domain/artifactGraph.js";
 import { artifactInspectionResultSchema } from "../domain/artifactInspection.js";

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { CompositeProvider } from "../../../src/application/CompositeProvider.js";
+import { CompositeProvider } from "../../../src/application/binary/CompositeProvider.js";
 import type {
   AnalysisOperation,
   AnalysisProvider,

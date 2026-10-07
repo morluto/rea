@@ -1,4 +1,4 @@
-import type { BinarySession } from "../application/BinarySession.js";
+import type { BinarySession } from "../application/binary/BinarySession.js";
 import type { AppConfig } from "../config.js";
 import type { Logger } from "../logger.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";

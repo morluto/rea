@@ -1,4 +1,4 @@
-import type { LazyAnalysisProvider } from "../application/LazyAnalysisProvider.js";
+import type { LazyAnalysisProvider } from "../application/binary/LazyAnalysisProvider.js";
 import {
   ARTIFACT_PROVIDER_IDENTITY,
   artifactCapabilities,

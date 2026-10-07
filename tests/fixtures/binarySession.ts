@@ -14,8 +14,8 @@ import type {
   AnalysisProfileResolutionOptions,
   AnalysisProvider,
 } from "../../src/application/AnalysisProvider.js";
-import { BinarySession } from "../../src/application/BinarySession.js";
-import { SessionProviderRouter } from "../../src/application/SessionProviderRouter.js";
+import { BinarySession } from "../../src/application/binary/BinarySession.js";
+import { SessionProviderRouter } from "../../src/application/binary/SessionProviderRouter.js";
 
 import { err, ok as resultOk } from "../../src/domain/result.js";
 import { observed } from "./analysisExecution.js";

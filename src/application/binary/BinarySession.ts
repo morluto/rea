@@ -1,31 +1,31 @@
 import { randomUUID } from "node:crypto";
 
-import type { BinaryTarget } from "../domain/binaryTarget.js";
+import type { BinaryTarget } from "../../domain/binaryTarget.js";
 import {
   analysisProfilesEqual,
   type AnalysisProfileCommitment,
-} from "../domain/analysisProfile.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { type AnalysisError } from "../domain/analysisErrorBase.js";
-import { err, ok, type Result } from "../domain/result.js";
-import type { JsonValue } from "../domain/jsonValue.js";
-import { createEvidence } from "../domain/evidence.js";
+} from "../../domain/analysisProfile.js";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { type AnalysisError } from "../../domain/analysisErrorBase.js";
+import { err, ok, type Result } from "../../domain/result.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
+import { createEvidence } from "../../domain/evidence.js";
 import type {
   AnalysisClient,
   AnalysisExecution,
   ExecutionOptions,
   AnalysisOperationPort,
   ProviderIdentity,
-} from "./AnalysisProvider.js";
-import type { AnalysisOperation } from "./AnalysisProvider.js";
-import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
-import { ENHANCED_TOOL_CONTRACTS } from "../contracts/enhancedToolContracts.js";
+} from "../AnalysisProvider.js";
+import type { AnalysisOperation } from "../AnalysisProvider.js";
+import { OFFICIAL_TOOL_CONTRACTS } from "../../contracts/officialToolContracts.js";
+import { ENHANCED_TOOL_CONTRACTS } from "../../contracts/enhancedToolContracts.js";
 import type { BinarySessionPort } from "./BinarySessionPort.js";
 import {
   SessionProviderRouter,
   type SessionProviderRoute,
 } from "./SessionProviderRouter.js";
-import { InvestigationRecords } from "./investigation/InvestigationRecords.js";
+import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 import { BinarySessionRecords } from "./BinarySessionRecords.js";
 import { binarySessionStatus } from "./BinarySessionStatus.js";
 import {

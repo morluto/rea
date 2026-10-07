@@ -14,9 +14,9 @@ import {
   type CapabilityDescriptor,
   type ProviderIdentity,
 } from "../../../src/application/AnalysisProvider.js";
-import { AnalysisProviderRegistry } from "../../../src/application/AnalysisProviderRegistry.js";
-import { composeBinarySession } from "../../../src/application/BinarySessionComposition.js";
-import { SessionProviderRouter } from "../../../src/application/SessionProviderRouter.js";
+import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
+import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
+import { SessionProviderRouter } from "../../../src/application/binary/SessionProviderRouter.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { ok } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";

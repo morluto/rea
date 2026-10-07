@@ -1,5 +1,5 @@
-import { InvestigationRecords } from "./investigation/InvestigationRecords.js";
-import type { AnalysisProvider } from "./AnalysisProvider.js";
+import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
+import type { AnalysisProvider } from "../AnalysisProvider.js";
 import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
 import { BinarySession } from "./BinarySession.js";
 import { SessionProviderRouter } from "./SessionProviderRouter.js";

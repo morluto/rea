@@ -32,6 +32,12 @@ registries but do not cross production filesystem, process, socket, or browser b
 Boundary tests cross one production boundary. Only acceptance tests assemble
 the complete runtime or invoke the compiled product surface.
 
+Binary session, registry, lazy-client and snapshot module cases live under
+`src/application/binary/`. Their composition cases stay in
+`tests/composition/analysis-sessions/`; snapshot persistence and actual SDK calls
+stay in the filesystem and MCP boundary lanes. The shared injected session fixture
+serves several capabilities and remains under `tests/fixtures/`.
+
 Focused immutable builders and recording ports shared by one test family live
 beside their production owner as `src/**/*.fixture.ts`. They are typechecked
 with the suite and excluded from package builds; broader runtime and provider

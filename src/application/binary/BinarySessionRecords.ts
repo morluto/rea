@@ -1,25 +1,25 @@
-import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
-import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
-import type { BinaryTarget } from "../domain/binaryTarget.js";
-import type { Evidence } from "../domain/evidence.js";
-import type { EvidenceBundle } from "../domain/evidenceBundle.js";
-import { evidenceBundleForTarget } from "../domain/evidenceBundle.js";
-import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
-import { type AnalysisError } from "../domain/analysisErrorBase.js";
-import { type UnknownRegistryError } from "../domain/unknownRegistryError.js";
+import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
+import type { AnalysisSnapshot } from "../../domain/analysisSnapshot.js";
+import type { BinaryTarget } from "../../domain/binaryTarget.js";
+import type { Evidence } from "../../domain/evidence.js";
+import type { EvidenceBundle } from "../../domain/evidenceBundle.js";
+import { evidenceBundleForTarget } from "../../domain/evidenceBundle.js";
+import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
+import { type AnalysisError } from "../../domain/analysisErrorBase.js";
+import { type UnknownRegistryError } from "../../domain/unknownRegistryError.js";
 import type {
   RecordUnknownInput,
   ResidualUnknown,
   UnknownStatus,
   UpdateUnknownInput,
-} from "../domain/residualUnknown.js";
-import { err, ok, type Result } from "../domain/result.js";
+} from "../../domain/residualUnknown.js";
+import { err, ok, type Result } from "../../domain/result.js";
 import type {
   AnalysisExecution,
   AnalysisOperation,
-} from "./AnalysisProvider.js";
+} from "../AnalysisProvider.js";
 import { AnalysisSnapshotCache } from "./AnalysisSnapshotCache.js";
-import { InvestigationRecords } from "./investigation/InvestigationRecords.js";
+import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 
 export interface ActiveAnalysisBinding {
   readonly target: BinaryTarget;
@@ -146,7 +146,7 @@ export abstract class BinarySessionRecords {
     profile: AnalysisProfileCommitment,
     operation: AnalysisOperation,
     parameters: Readonly<
-      Record<string, import("../domain/jsonValue.js").JsonValue>
+      Record<string, import("../../domain/jsonValue.js").JsonValue>
     >,
   ): AnalysisExecution | undefined {
     return this.#snapshot.lookup(target, profile, operation, parameters);

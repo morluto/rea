@@ -1,19 +1,19 @@
-import type { InvestigationRecordPort } from "./investigation/InvestigationRecordPort.js";
-import type { ExecutableFormatHint } from "../domain/dosCom.js";
-import type { BinaryTarget } from "../domain/binaryTarget.js";
-import type { JsonValue } from "../domain/jsonValue.js";
-import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
-import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
-import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import type { Result } from "../domain/result.js";
+import type { InvestigationRecordPort } from "../investigation/InvestigationRecordPort.js";
+import type { ExecutableFormatHint } from "../../domain/dosCom.js";
+import type { BinaryTarget } from "../../domain/binaryTarget.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
+import type { AnalysisSnapshot } from "../../domain/analysisSnapshot.js";
+import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
+import type { AnalysisProviderSelector } from "../../contracts/providerSelection.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import type { Result } from "../../domain/result.js";
 
 import type {
   AnalysisOperation,
   AnalysisOperationPort,
   ExecutionOptions,
   ProviderIdentity,
-} from "./AnalysisProvider.js";
+} from "../AnalysisProvider.js";
 
 /** Target lifecycle used by CLI and MCP without exposing a concrete provider. */
 export interface BinarySessionPort
