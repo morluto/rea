@@ -113,3 +113,81 @@ describe("DOM metadata document base URLs", () => {
     expect(result.agentHints).toEqual([]);
   });
 });
+
+describe("empty form destinations with a document base URL", () => {
+  it.each([
+    { nodeName: "FORM", attribute: "action" },
+    { nodeName: "BUTTON", attribute: "formaction" },
+    { nodeName: "INPUT", attribute: "formaction" },
+  ])(
+    "resolves an empty $nodeName $attribute to the document",
+    ({ nodeName, attribute }) => {
+      const pageUrl = `${documentUrl}?selected=fixture#section`;
+      const baseUrl = `${origin}/assets/`;
+      const value = snapshot(baseUrl, "/assets/", pageUrl, "");
+      value.strings[6] = nodeName;
+      value.strings[14] = attribute;
+      value.strings[15] = "";
+      const result = capture(value);
+      expect(result.urls[3]).toMatchObject({
+        attribute,
+        url: pageUrl,
+        destination_scope: "approved",
+      });
+      expect(result.urls[1]?.url).toBe(baseUrl);
+    },
+  );
+
+  it("keeps an empty form action approved when the document base is foreign", () => {
+    const foreign = "https://cdn.example.test/assets/";
+    const value = snapshot(foreign, foreign);
+    value.strings[15] = "";
+    expect(capture(value).urls[3]).toMatchObject({
+      url: documentUrl,
+      destination_scope: "approved",
+    });
+  });
+
+  it.each([" ", "\t\r\n\f"])(
+    "resolves an HTML-whitespace-only form action to the document: %j",
+    (action) => {
+      const baseUrl = `${origin}/assets/`;
+      const value = snapshot(baseUrl);
+      value.strings[15] = action;
+      expect(capture(value).urls[3]?.url).toBe(documentUrl);
+    },
+  );
+
+  it.each(["BUTTON", "INPUT"])(
+    "retains document-base resolution for a whitespace-only %s formaction",
+    (nodeName) => {
+      const baseUrl = `${origin}/assets/`;
+      const value = snapshot(baseUrl);
+      value.strings[6] = nodeName;
+      value.strings[14] = "formaction";
+      value.strings[15] = " ";
+      expect(capture(value).urls[3]?.url).toBe(baseUrl);
+    },
+  );
+
+  it.each([
+    { value: "\u000b", suffix: "" },
+    { value: "\u00a0", suffix: "%C2%A0" },
+  ])(
+    "does not treat non-HTML whitespace as an empty form action: $value",
+    ({ value: action, suffix }) => {
+      const baseUrl = `${origin}/assets/`;
+      const value = snapshot(baseUrl);
+      value.strings[15] = action;
+      expect(capture(value).urls[3]?.url).toBe(`${baseUrl}${suffix}`);
+    },
+  );
+
+  it("does not apply form semantics to an action attribute on another element", () => {
+    const baseUrl = `${origin}/assets/`;
+    const value = snapshot(baseUrl);
+    value.strings[6] = "DIV";
+    value.strings[15] = "";
+    expect(capture(value).urls[3]?.url).toBe(baseUrl);
+  });
+});

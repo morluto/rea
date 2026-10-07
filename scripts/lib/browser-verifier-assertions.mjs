@@ -87,6 +87,7 @@ function assertObservationPrivacy(result) {
 }
 
 function assertObservationMetadata(result, origin) {
+  assertFormDestinations(result);
   if (
     !result.metadata.dom_urls.some(
       ({ attribute, url }) =>
@@ -119,6 +120,23 @@ function assertObservationMetadata(result, origin) {
     )
   )
     throw new Error("Real Chrome safe response metadata was missing");
+}
+
+/** Assert the fixture's empty form destinations retain the current document URL. */
+export function assertFormDestinations(
+  result,
+  documentUrl = result.target.url,
+) {
+  const destinations = result.metadata.dom_urls.filter(
+    ({ attribute }) => attribute === "action" || attribute === "formaction",
+  );
+  if (
+    destinations.length !== 4 ||
+    destinations.some(({ url }) => url !== documentUrl)
+  )
+    throw new Error(
+      `Real Chrome form destinations did not use the current document URL: ${JSON.stringify({ expected: documentUrl, target: result.target.url, destinations })}`,
+    );
 }
 
 /** Assert real-browser static bundle and source-map findings. */

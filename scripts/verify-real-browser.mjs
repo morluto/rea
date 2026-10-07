@@ -37,6 +37,7 @@ import { verifyLargeScreenshotE2e } from "./lib/browser-screenshot-e2e.mjs";
 import { verifyPopupEventCoverage } from "./lib/browser-popup-e2e.mjs";
 import { verifyBrowserNetworkEvidence } from "./lib/browser-network-e2e.mjs";
 import { verifyBrowserScriptExport } from "./lib/browser-script-export-e2e.mjs";
+import { verifyBrowserDomDestinations } from "./lib/browser-dom-destinations-e2e.mjs";
 
 const REAL_BROWSER_STARTUP_TIMEOUT_MS = 60_000;
 const SCENARIO_SECRET_VALUE = "rea-browser-verifier-secret";
@@ -98,6 +99,10 @@ try {
   );
   if (!observed.ok) throw observed.error;
   assertObservation(observed.value, site.origin);
+  const domDestinations = await verifyBrowserDomDestinations({
+    cdp_endpoint: endpoint,
+    target_id: target,
+  });
   const serialized = JSON.stringify(observed.value);
   if (
     !observed.value.target.url.includes("startup=browser-secret-value") ||
@@ -352,6 +357,7 @@ try {
       popupEvents,
       networkEvidence,
       scriptExport,
+      domDestinations,
       browserScenarioCli: true,
       browserScenarioAttachCleanup: "disconnected-external",
       browserScenarioLaunchCleanup: "terminated-owned-process",

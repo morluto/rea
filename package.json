@@ -132,6 +132,7 @@
     "verify:ghidra:cross-format": "npm run build:cached && node scripts/verify-real-ghidra.mjs --cross-format",
     "verify:ghidra:windows": "npm run build:cached && npm run build:ghidra-windows-fixture && node scripts/verify-real-ghidra-windows.mjs",
     "verify:browser": "npm run build:cached && node scripts/verify-real-browser.mjs",
+    "verify:browser:dom": "node scripts/verify-browser-dom-destinations.mjs",
     "verify:browser:network": "npm run build:cached && node scripts/verify-browser-network.mjs",
     "verify:electron": "npm run build:cached && node scripts/verify-real-electron.mjs",
     "verify:inspector": "npm run build:cached && node scripts/verify-real-javascript-runtime-observation.mjs",

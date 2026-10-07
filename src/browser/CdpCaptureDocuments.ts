@@ -194,6 +194,7 @@ export const captureDom = (
         attributes: attributeIndexes,
         // The BASE element itself resolves against the document fallback URL.
         baseUrl: nodeName.toLowerCase() === "base" ? documentUrl : baseUrl,
+        documentUrl,
         nodeIndex,
         nodeName,
         allowedOrigins,
@@ -363,6 +364,7 @@ interface DomMetadataOptions {
   readonly strings: readonly string[];
   readonly attributes: readonly number[];
   readonly baseUrl: string;
+  readonly documentUrl: string;
   readonly nodeIndex: number;
   readonly nodeName: string;
   readonly allowedOrigins: ReadonlySet<string>;
@@ -374,8 +376,15 @@ const domMetadata = (
   readonly urls: WebPageInspection["metadata"]["dom_urls"];
   readonly agentHints: WebPageInspection["metadata"]["agent_hints"];
 } => {
-  const { strings, attributes, baseUrl, nodeIndex, nodeName, allowedOrigins } =
-    options;
+  const {
+    strings,
+    attributes,
+    baseUrl,
+    documentUrl,
+    nodeIndex,
+    nodeName,
+    allowedOrigins,
+  } = options;
   const pairs = new Map<string, string>();
   for (let index = 0; index + 1 < attributes.length; index += 2) {
     const name = indexedString(strings, attributes[index]).toLowerCase();
@@ -386,7 +395,21 @@ const domMetadata = (
   for (const attribute of domUrlAttributes) {
     const value = pairs.get(attribute);
     if (value === undefined) continue;
-    const destination = domDestination(value, baseUrl, allowedOrigins);
+    const tagName = nodeName.toLowerCase();
+    // Chrome strips HTML whitespace for FORM.action, while submit controls
+    // use the document URL only for an exactly empty formaction attribute.
+    const usesDocumentUrl =
+      (tagName === "form" &&
+        attribute === "action" &&
+        /^[\t\n\f\r ]*$/u.test(value)) ||
+      ((tagName === "button" || tagName === "input") &&
+        attribute === "formaction" &&
+        value === "");
+    const destination = domDestination(
+      usesDocumentUrl ? documentUrl : value,
+      baseUrl,
+      allowedOrigins,
+    );
     urls.push({
       node_index: nodeIndex,
       attribute,

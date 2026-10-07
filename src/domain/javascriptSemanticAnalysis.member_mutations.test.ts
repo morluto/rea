@@ -115,3 +115,25 @@ describe("JavaScript semantic values for properties unaffected by a mutation", (
     ).toBe("unknown");
   });
 });
+
+describe("property mutations through TypeScript satisfies aliases", () => {
+  it.each([
+    'const shared = { mode: "initial" }; const alias = shared satisfies { mode: string }; alias.mode = "updated"; return shared.mode;',
+    'const shared = { nested: { mode: "initial" } }; const alias = shared satisfies { nested: { mode: string } }; alias.nested.mode = "updated"; return shared.nested.mode;',
+    'const shared = { mode: "initial" }; const alias = (shared satisfies { mode: string }) as { mode: string }; delete alias.mode; return shared.mode;',
+    "const shared = [1]; const alias = shared satisfies number[]; alias[0]++; return shared[0];",
+  ])("keeps the mutated value unknown: %s", (body) => {
+    expect(resultValue(body)?.status).toBe("unknown");
+  });
+
+  it("retains the untouched property through a satisfies alias", () => {
+    expect(
+      resultValue(`
+      const shared = { mode: "initial", token: "TOKEN" };
+      const alias = shared satisfies { mode: string; token: string };
+      alias.mode = "updated";
+      return shared.token;
+    `),
+    ).toEqual({ status: "literal", value: "TOKEN" });
+  });
+});

@@ -93,6 +93,12 @@ installed Chrome-family browser. An optional script argument selects an already
 installed package's `scripts/rea.mjs` entry point for packaged-artifact checks.
 The complete `verify:browser` lane includes these same checks.
 
+After building, `verify:browser:dom` checks empty and HTML-whitespace form
+destinations against a native Chrome DOM-property oracle through CLI and stdio
+MCP. It requires `REA_BROWSER_EXECUTABLE` and accepts an optional installed REA
+entrypoint. The full browser lane includes the same public-adapter assertions
+before other fixtures navigate the selected page.
+
 `verify:browser:scripts` checks active script capture → exact-byte export →
 existing static JavaScript analysis through CLI and stdio MCP, including
 manifest readback, competing query variants, and resolved relative imports.
