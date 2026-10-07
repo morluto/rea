@@ -337,8 +337,8 @@ CI exercises the pinned Node.js runtime on native hosted runners:
 | --------------------- | ------------------ | ---------------------------------------------------------------------------------------- |
 | Linux x64             | `ubuntu-latest`    | Installed package and real Node Inspector CLI/MCP                                        |
 | Linux arm64 (aarch64) | `ubuntu-24.04-arm` | Installed package and real Node Inspector CLI/MCP                                        |
-| macOS arm64           | `macos-14`         | Installed package and real Node Inspector CLI/MCP                                        |
-| macOS x64             | `macos-15-intel`   | Installed package and real Node Inspector CLI/MCP                                        |
+| macOS 15 arm64        | `macos-15`         | Installed package and real Node Inspector CLI/MCP                                        |
+| macOS 15 x64          | `macos-15-intel`   | Installed package and real Node Inspector CLI/MCP                                        |
 | Windows x64           | `windows-latest`   | Curated capabilities, native controls, installed package and real Node Inspector CLI/MCP |
 
 Package and Inspector matrices assert the actual Node platform/architecture
@@ -347,6 +347,11 @@ runs at most two jobs concurrently with explicit timeouts and Node heap/thread
 limits. Package checks cover installation, CLI/MCP discovery, target-free
 analysis, configuration backups/recovery, Evidence and owned lifecycle; Inspector
 checks execute source-owned loopback targets and special filename cases.
+
+macOS uses one OS version with one native baseline job per architecture. Each job
+runs package and Inspector checks after a single dependency installation. The
+separate Inspector matrix covers Linux and Windows; Apple artifact checks retain
+their own macOS 15 arm64 job for Xcode-dependent workflows.
 
 These native baseline checks complement the Linux source-test shards and the
 separate Apple-artifact and real-provider lanes. Actual Hopper, Ghidra, IDA,
