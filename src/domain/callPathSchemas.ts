@@ -24,7 +24,7 @@ export const parseCallPathAddress = (input: unknown): string =>
   inputAddressSchema.parse(input);
 
 /** Strict input for explicit call-path reconstruction from complete dossiers. */
-export const callPathInputSchema = z.object({
+export const callPathInputSchema = z.strictObject({
   functions: z.array(evidenceSchema).min(1),
   start: z.object({ address: inputAddressSchema }).strict(),
   goal: z.object({ address: inputAddressSchema }).strict(),

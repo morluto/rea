@@ -94,7 +94,7 @@ const browserInput = {
 };
 
 /** Public input for complete discovery, optionally filtered by exact origin. */
-export const listBrowserTargetsInputSchema = z.object({
+export const listBrowserTargetsInputSchema = z.strictObject({
   ...browserInput,
 });
 

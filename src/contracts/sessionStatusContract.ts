@@ -3,7 +3,7 @@ import { z } from "zod";
 import { isAbsoluteLocalPath } from "../domain/localPath.js";
 
 /** Optional expectations used to compare the live session with its caller. */
-export const binarySessionInputSchema = z.object({
+export const binarySessionInputSchema = z.strictObject({
   expected_package_version: z.string().min(1).optional(),
   expected_catalog_digest: z
     .string()

@@ -27,7 +27,9 @@ it("runs every managed static inspection independently of an active native targe
     "rea-managed-independent-mcp-",
   );
   const path = join(directory, "fixture.dll");
+  const otherPath = join(directory, "other-fixture.dll");
   await writeFile(path, buildManagedPeFixture());
+  await writeFile(otherPath, buildManagedPeFixture({ methodName: "Other" }));
   const session = composeBinarySession(
     SessionProviderRouter.selectable(new AnalysisProviderRegistry([]), [
       new ManagedStaticProvider(),
@@ -54,6 +56,12 @@ it("runs every managed static inspection independently of an active native targe
   try {
     await server.connect(serverTransport);
     await client.connect(clientTransport);
+    const managedMembersTool = (await client.listTools()).tools.find(
+      ({ name }) => name === "inspect_managed_members",
+    );
+    expect(managedMembersTool?.inputSchema).toMatchObject({
+      additionalProperties: false,
+    });
     const artifact = structured(
       await client.callTool({
         name: "inspect_managed_artifact",
@@ -67,6 +75,11 @@ it("runs every managed static inspection independently of an active native targe
         subject: { local_path: path, format: "pe" },
       },
     });
+    const misspelledPath = await client.callTool({
+      name: "inspect_managed_members",
+      arguments: { pth: otherPath },
+    });
+    expect(misspelledPath.isError).toBe(true);
     const invalidSelection = await client.callTool({
       name: "inspect_managed_artifact",
       arguments: { path: join(directory, "missing.dll") },
@@ -80,6 +93,24 @@ it("runs every managed static inspection independently of an active native targe
         operation: "inspect_managed_members",
         provider: { id: "rea-dotnet-static" },
         subject: { local_path: path, format: "pe" },
+      },
+    });
+    const otherArtifact = structured(
+      await client.callTool({
+        name: "inspect_managed_artifact",
+        arguments: { path: otherPath },
+      }),
+    );
+    expect(otherArtifact).toMatchObject({
+      evidence: { subject: { local_path: otherPath, format: "pe" } },
+    });
+    const reusedOtherTarget = structured(
+      await client.callTool({ name: "inspect_managed_members", arguments: {} }),
+    );
+    expect(reusedOtherTarget).toMatchObject({
+      evidence: {
+        operation: "inspect_managed_members",
+        subject: { local_path: otherPath, format: "pe" },
       },
     });
     const boundaries = structured(
