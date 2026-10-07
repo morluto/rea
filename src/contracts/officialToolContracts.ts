@@ -24,16 +24,18 @@ const official = <Name extends string, Schema extends z.ZodObject>(
   name: Name,
   description: string,
   inputSchema: Schema,
-) =>
-  ({
+) => {
+  const strictInputSchema = inputSchema.strict();
+  return {
     name,
     ...toolContractMetadata(name),
     description,
     kind: "official-proxy",
-    inputSchema,
+    inputSchema: strictInputSchema,
     outputSchema: requireOutputSchema(officialOutputSchemas, name),
-    examples: examplesFor(name, inputSchema),
-  }) satisfies ToolContract<Name, Schema>;
+    examples: examplesFor(name, strictInputSchema),
+  } satisfies ToolContract<Name, typeof strictInputSchema>;
+};
 
 /** Bridge operations exposed without additional application composition. */
 export const OFFICIAL_TOOL_CONTRACTS = [

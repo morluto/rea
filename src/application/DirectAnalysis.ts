@@ -5,6 +5,8 @@ import { EnhancedTools } from "./EnhancedTools.js";
 import { executeFunctionAnalysisEvidence } from "./FunctionAnalysisEvidence.js";
 import type { DirectAnalysisDependencies } from "./DirectAnalysisDependencies.js";
 import type { BinarySession } from "./binary/BinarySession.js";
+import type { SessionProviderRoute } from "./binary/SessionProviderRouter.js";
+import type { ResolvedSessionOpen } from "./binary/BinarySessionOpen.js";
 import { silentLogger, type Logger } from "../logger.js";
 import { createEvidence } from "../domain/evidence.js";
 import type { Evidence } from "../domain/evidence.js";
@@ -28,10 +30,17 @@ import {
   snapshotEvidenceForQuery,
   snapshotMatchesTarget,
 } from "../domain/analysisSnapshot.js";
-import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
+import {
+  analysisProfileSchema,
+  committedProviderSchema,
+  type AnalysisProfileCommitment,
+} from "../domain/analysisProfile.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
-import type { AnalysisExecution } from "./AnalysisProvider.js";
+import type {
+  AnalysisExecution,
+  ProviderIdentity,
+} from "./AnalysisProvider.js";
 import {
   REA_WORKFLOW_PROVIDER,
   workflowAnalysisProfile,
@@ -194,7 +203,42 @@ const runAnalysis = async (
     });
     if (!prepared.ok) return cliError(prepared.error);
     const { snapshot } = prepared.value;
-    const opened = await session.open(path, {
+    let resolvedTarget: ResolvedSessionOpen | undefined;
+    if (snapshot !== undefined && prepared.value.target !== undefined) {
+      const preview = await session.previewTarget(prepared.value.target, {
+        signal,
+        snapshot,
+        ...(options.formatHint === undefined
+          ? {}
+          : { formatHint: options.formatHint }),
+        ...(options.providerId === undefined
+          ? {}
+          : { providerId: options.providerId }),
+      });
+      if (!preview.ok) return cliError(preview.error);
+      resolvedTarget = preview.value;
+      const route = preview.value.route;
+      const bindingProfile = route.profile ?? undefined;
+      const evidenceProfile = analysisProfileForRoute(route, tool);
+      if (
+        bindingProfile !== undefined &&
+        evidenceProfile !== undefined &&
+        allowsSnapshotReplay(route, tool)
+      ) {
+        const cached = snapshotEvidenceForQuery(snapshot, {
+          target: preview.value.target,
+          bindingProfile,
+          operation: tool,
+          parameters: arguments_,
+          provider: isWorkflowEvidenceTool(tool)
+            ? REA_WORKFLOW_PROVIDER
+            : providerIdentityForRoute(route, tool),
+          evidenceProfile,
+        });
+        if (cached !== undefined) return cached;
+      }
+    }
+    const openOptions = {
       signal,
       ...(options.formatHint === undefined
         ? {}
@@ -203,26 +247,13 @@ const runAnalysis = async (
       ...(options.providerId === undefined
         ? {}
         : { providerId: options.providerId }),
-    });
+    };
+    const opened =
+      resolvedTarget === undefined
+        ? await session.open(path, openOptions)
+        : await session.openResolvedTarget(resolvedTarget, openOptions);
     if (!opened.ok) return cliError(opened.error);
     const evidenceProfile = analysisProfileForEvidence(session, tool);
-    const bindingProfile = session.analysisProfile();
-    if (
-      canReplayDirectTool(session, tool) &&
-      snapshot !== undefined &&
-      evidenceProfile !== undefined &&
-      bindingProfile !== undefined
-    ) {
-      const cached = snapshotEvidenceForQuery(snapshot, {
-        target: opened.value,
-        bindingProfile,
-        operation: tool,
-        parameters: arguments_,
-        provider: replayProviderFor(session, tool),
-        evidenceProfile,
-      });
-      if (cached !== undefined) return cached;
-    }
     const { output, evidence } = await executeAnalysisTool({
       session,
       openedTarget: opened.value,
@@ -232,6 +263,41 @@ const runAnalysis = async (
       evidenceProfile,
     });
     if (evidence !== undefined) session.recordEvidence(evidence);
+    if (
+      isWorkflowEvidenceTool(tool) &&
+      tool !== "trace_native_ui_action" &&
+      snapshotPath !== undefined &&
+      evidence !== undefined &&
+      "analysis_profile" in evidence &&
+      session.allowsSnapshotReplay(tool)
+    ) {
+      const recorded = session.recordWorkflowSnapshot({
+        operation: tool,
+        parameters: arguments_,
+        execution: {
+          result: evidence.normalized_result,
+          rawResult: evidence.raw_result,
+          provider: committedProviderSchema.parse(evidence.provider),
+          analysisProfile: analysisProfileSchema.parse(
+            evidence.analysis_profile,
+          ),
+          limitations: evidence.limitations,
+          locations: evidence.locations,
+          subject:
+            evidence.subject === null
+              ? null
+              : {
+                  path: evidence.subject.local_path,
+                  sha256: evidence.subject.digest.sha256,
+                  format: evidence.subject.format,
+                  ...(evidence.subject.architecture === null
+                    ? {}
+                    : { architecture: evidence.subject.architecture }),
+                },
+        },
+      });
+      if (!recorded.ok) return cliError(recorded.error);
+    }
     if (
       tool !== "trace_native_ui_action" &&
       snapshotPath !== undefined &&
@@ -251,12 +317,6 @@ const runAnalysis = async (
     await session.close();
   }
 };
-
-const canReplayDirectTool = (
-  session: BinarySession,
-  tool: Parameters<typeof runAnalysis>[2],
-): boolean =>
-  tool !== "trace_native_ui_action" && session.allowsSnapshotReplay(tool);
 
 const executeAnalysisTool = async (input: {
   readonly session: BinarySession;
@@ -353,7 +413,10 @@ const prepareSnapshot = async (options: {
   readonly formatHint?: ExecutableFormatHint;
   readonly snapshotPath: string | undefined;
 }): Promise<
-  Result<{ readonly snapshot?: AnalysisSnapshot }, AnalysisError>
+  Result<
+    { readonly snapshot?: AnalysisSnapshot; readonly target?: BinaryTarget },
+    AnalysisError
+  >
 > => {
   const { path, snapshotPath } = options;
   if (snapshotPath === undefined || !(await fileExists(snapshotPath)))
@@ -374,20 +437,52 @@ const prepareSnapshot = async (options: {
         "Analysis snapshot target does not match the requested binary",
       ),
     );
-  return ok({ snapshot: loaded.value });
+  return ok({ snapshot: loaded.value, target: target.value });
 };
 
-const replayProviderFor = (
-  session: BinarySession,
+const allowsSnapshotReplay = (
+  route: SessionProviderRoute,
   tool:
     | NativeToolName
     | ArtifactAnalysisOperation
     | ManagedToolName
     | DirectAnalysisTool,
-) =>
-  isWorkflowEvidenceTool(tool)
-    ? REA_WORKFLOW_PROVIDER
-    : session.providerIdentity(tool);
+): boolean => {
+  if (tool === "trace_native_ui_action") return false;
+  const descriptor = route.capabilities?.get(tool);
+  return descriptor === undefined
+    ? ![...(route.capabilities?.values() ?? [])].some(
+        ({ cachePolicy }) => cachePolicy === "live",
+      )
+    : descriptor.cachePolicy !== "live";
+};
+
+const analysisProfileForRoute = (
+  route: SessionProviderRoute,
+  tool:
+    | NativeToolName
+    | ArtifactAnalysisOperation
+    | ManagedToolName
+    | DirectAnalysisTool,
+): AnalysisProfileCommitment | undefined => {
+  const profile = route.profile;
+  if (profile === null || profile === undefined) return undefined;
+  if (isWorkflowEvidenceTool(tool)) return workflowAnalysisProfile(profile);
+  const provider = providerIdentityForRoute(route, tool);
+  return provider.id === profile.provider.id ? profile : undefined;
+};
+
+/** Mirror BinarySession.providerIdentity for a route not opened yet. */
+const providerIdentityForRoute = (
+  route: SessionProviderRoute,
+  operation: string,
+): ProviderIdentity => {
+  const selected =
+    route.capabilities?.get(operation)?.provider ?? route.identity;
+  return route.profile?.provider.id === selected.id
+    ? route.profile.provider
+    : selected;
+};
 
 const analysisProfileForEvidence = (
   session: BinarySession,

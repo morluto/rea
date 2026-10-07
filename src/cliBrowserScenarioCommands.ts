@@ -4,7 +4,7 @@ import { z } from "zod";
 import { captureBrowserScenario } from "./application/BrowserScenarioCaptureService.js";
 import { createBrowserScenarioProvider } from "./composition/browserScenario.js";
 import { CLI_COMMANDS } from "./cliCommandNames.js";
-import { parseCliJsonInput } from "./cliJsonInput.js";
+import { parseCliJsonInput, resolveCliJsonPaths } from "./cliJsonInput.js";
 import { logCliCommand } from "./cliLogging.js";
 import { AnalysisInputError } from "./domain/analysisErrorCore.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
@@ -32,7 +32,9 @@ export const registerBrowserScenarioCommands = (
       logCliCommand(logger, CLI_COMMANDS.captureBrowserScenario, async () => {
         const input = await parseCliJsonInput(args.inputJson, OPERATION);
         if (!input.ok) return input.error;
-        const scenario = browserScenarioSchema.safeParse(input.value);
+        const scenario = browserScenarioSchema.safeParse(
+          resolveCliJsonPaths(input.value, [["browser", "executable_path"]]),
+        );
         if (!scenario.success)
           return cliError(
             new AnalysisInputError(

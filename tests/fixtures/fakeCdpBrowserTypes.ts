@@ -75,6 +75,12 @@ export interface FakeOptions {
   readonly indexedDbDateKeys?: boolean;
   readonly foreignSessionEvents?: boolean;
   readonly redirectToDisallowedOrigin?: boolean;
+  readonly redirectFromDisallowedOrigin?: boolean;
+  readonly redirectWithinOrigin?: boolean;
+  readonly malformedRedirectResponse?: boolean;
+  readonly redirectResponseUrl?: string;
+  readonly redirectResponseEnvelope?: unknown;
+  readonly responseAfterMalformedUrl?: string;
   readonly unrelatedWorker?: boolean;
   readonly binaryWebSocketEvent?: boolean;
   readonly invalidBinaryWebSocketEvent?: boolean;

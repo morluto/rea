@@ -3,6 +3,7 @@ import type {
   AnalysisProvider,
 } from "../../../src/application/AnalysisProvider.js";
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
+import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import type { RecordUnknownInput } from "../../../src/domain/residualUnknown.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
@@ -156,6 +157,65 @@ describe("detached provider and target metadata", () => {
     expect(session.activeTarget()?.path).toBe(first);
 
     await session.close();
+  });
+});
+
+describe("opening previewed targets", () => {
+  it("rechecks the active target after another serialized transition", async () => {
+    const [first, second] = await createBinarySessionTargets();
+    const calls: string[] = [];
+    const session = createTestBinarySession(createCacheProvider(calls));
+    try {
+      expect((await session.open(first)).ok).toBe(true);
+      const target = session.activeTarget();
+      if (target === undefined) throw new Error("Expected an active target");
+      const preview = await session.previewTarget(target);
+      if (!preview.ok) throw preview.error;
+      expect(preview.value.sameTarget).toBe(true);
+      expect((await session.open(second)).ok).toBe(true);
+      expect((await session.openResolvedTarget(preview.value)).ok).toBe(true);
+      expect(session.activeTarget()?.path).toBe(first);
+      expect(calls).toEqual(["health", "health", "health"]);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it("rejects cancellation and a staged snapshot changed after preview without startup", async () => {
+    const [first, second] = await createBinarySessionTargets();
+    const calls: string[] = [];
+    const session = createTestBinarySession(createCacheProvider(calls));
+    const other = createTestBinarySession(createCacheProvider([]));
+    try {
+      const parsed = await parseBinaryTarget(first);
+      if (!parsed.ok) throw parsed.error;
+      const preview = await session.previewTarget(parsed.value);
+      if (!preview.ok) throw preview.error;
+      const controller = new AbortController();
+      controller.abort();
+      const cancelled = await session.openResolvedTarget(preview.value, {
+        signal: controller.signal,
+      });
+      expect(cancelled).toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisCancelledError" },
+      });
+
+      expect((await other.open(second)).ok).toBe(true);
+      const snapshot = other.exportAnalysisSnapshot();
+      if (!snapshot.ok) throw snapshot.error;
+      expect(session.importAnalysisSnapshot(snapshot.value).ok).toBe(true);
+      const rejected = await session.openResolvedTarget(preview.value);
+      expect(rejected).toMatchObject({
+        ok: false,
+        error: { _tag: "EvidenceIntegrityError" },
+      });
+      expect(calls).toEqual([]);
+      expect(session.activeTarget()).toBeUndefined();
+    } finally {
+      await session.close();
+      await other.close();
+    }
   });
 });
 

@@ -167,12 +167,13 @@ export const recordUnknownInputSchema = residualUnknownObjectSchema
   .extend({
     supporting_evidence_ids: z.array(evidenceIdSchema).default([]),
     contradicting_evidence_ids: z.array(evidenceIdSchema).default([]),
-  });
+  })
+  .strict();
 
 export type RecordUnknownInput = z.infer<typeof recordUnknownInputSchema>;
 
 /** Explicit optimistic-concurrency update command for one unknown. */
-export const updateUnknownInputSchema = z.object({
+export const updateUnknownInputSchema = z.strictObject({
   unknown_id: unknownIdSchema,
   expected_revision: z.number().int().min(1),
   status: residualUnknownObjectSchema.shape.status,

@@ -553,7 +553,7 @@ Setup offers supported agent integrations for selection. Existing REA registrati
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@4.1.0", "mcp"]
+      "args": ["-y", "rea-agents@5.0.0", "mcp"]
     }
   }
 }

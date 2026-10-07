@@ -1,5 +1,6 @@
 import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
 import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -276,6 +277,53 @@ const outputFor = (name: string): JsonValue => {
     };
   return name.includes("address") ? "0x1000" : "fixture";
 };
+
+describe("official tool input contracts", () => {
+  it("rejects misspelled top-level inputs before dispatch and keeps record keys open", async () => {
+    const invocations: Invocation[] = [];
+    const client = await connect({
+      execute: (name, arguments_) => {
+        invocations.push({ name, arguments_ });
+        return Promise.resolve(ok(outputFor(name)));
+      },
+    });
+    const { tools } = await client.listTools();
+    const advertisedByName = new Map(tools.map((tool) => [tool.name, tool]));
+    for (const contract of OFFICIAL_TOOL_CONTRACTS) {
+      expect(advertisedByName.get(contract.name)?.inputSchema).toHaveProperty(
+        "additionalProperties",
+        false,
+      );
+    }
+    const advertised = tools.find(({ name }) => name === "address_name");
+    const recordTool = tools.find(({ name }) => name === "set_addresses_names");
+    if (advertised === undefined || recordTool === undefined)
+      throw new Error("Official tools were not advertised");
+
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    const validateAddressName = ajv.compile(advertised.inputSchema);
+    const validateRecordInput = ajv.compile(recordTool.inputSchema);
+    const typoInput = { adress: "0x1234" };
+    expect(advertised.inputSchema).toHaveProperty(
+      "additionalProperties",
+      false,
+    );
+    expect(validateAddressName(typoInput)).toBe(false);
+    expect(
+      OFFICIAL_TOOL_CONTRACTS.find(
+        ({ name }) => name === "address_name",
+      )?.inputSchema.safeParse(typoInput).success,
+    ).toBe(false);
+    expect(validateRecordInput({ names: { "0x1000": "entry" } })).toBe(true);
+
+    const result = await client.callTool({
+      name: "address_name",
+      arguments: typoInput,
+    });
+    expect(result.isError).toBe(true);
+    expect(invocations).toEqual([]);
+  });
+});
 
 describe("official Hopper proxy tools", () => {
   it("executes every handler and projects omitted Python optionals to null", async () => {
