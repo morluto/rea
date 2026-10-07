@@ -84,7 +84,8 @@ interface FileContext extends SemanticFlowProjectionContext {
  *
  * This is a real resource-safety constraint, not a presentation preference, so
  * the ceiling is applied and reported through the graph's own `coverage` fields
- * (`truncated`, `omitted_nodes`, `limits`) rather than silently dropping data.
+ * (`truncated`, `omitted_nodes`, `omitted_relations`, `limits`) rather than
+ * silently dropping data.
  *
  * Sizing: a retained semantic node costs roughly 3 KB once serialized, and V8
  * additionally caps a single string at 512 MB. The result is serialized after the
@@ -121,11 +122,14 @@ export const buildJavaScriptSemanticGraph = ({
       SEMANTIC_GRAPH_FILE_NODE_CEILING,
       remainingTreeBudget,
     );
+    state.fileNodesDropped = false;
     fingerprints.push(
       ...projectFile(analyzed.file, analyzed.semantic.ir, state),
     );
-    // The file consumed its entire share, so nodes were dropped.
-    if ((state.fileNodeBudget ?? 1) <= 0) truncatedFiles += 1;
+    // Nodes were dropped only if the budget actually blocked creation. A file
+    // that exactly fills its share ends with a zero budget without dropping
+    // anything, so the remaining budget alone cannot decide truncation.
+    if (state.fileNodesDropped) truncatedFiles += 1;
     state.fileNodeBudget = null;
   }
   if (state.roots.size === 0) addFallbackRoot(rootArtifactSha256, state);
@@ -143,7 +147,7 @@ export const buildJavaScriptSemanticGraph = ({
       status: truncatedFiles > 0 ? "partial" : "unknown",
       truncated: truncatedFiles > 0,
       omitted_nodes: truncatedFiles > 0 ? null : 0,
-      omitted_relations: 0,
+      omitted_relations: truncatedFiles > 0 ? null : 0,
       limits:
         truncatedFiles > 0
           ? [
@@ -161,7 +165,7 @@ export const buildJavaScriptSemanticGraph = ({
           (relation) =>
             JAVASCRIPT_SEMANTIC_RELATION_FAMILY[relation.relation] === family,
         ).length,
-        omitted_relations: 0,
+        omitted_relations: truncatedFiles > 0 ? null : 0,
         unknown_ids: unknowns
           .filter((unknown) => unknown.family === family)
           .map(({ unknown_id: identifier }) => identifier),

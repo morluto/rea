@@ -36,6 +36,14 @@ export interface SemanticGraphProjectionState {
    * for that file and is reported through the graph's `coverage` fields.
    */
   fileNodeBudget?: number | null;
+  /**
+   * Whether the file currently being projected lost any nodes to its budget.
+   *
+   * A file that exactly fills its share ends with a zero budget without
+   * dropping anything, so callers must consult this flag rather than the
+   * remaining budget to decide whether coverage is truncated.
+   */
+  fileNodesDropped?: boolean;
 }
 
 /** Input for one exact artifact-version semantic node. */
@@ -102,7 +110,10 @@ export const addSemanticGraphNode = (
   if (existing !== undefined) return existing;
   const budget = state.fileNodeBudget;
   if (typeof budget === "number") {
-    if (budget <= 0) return null;
+    if (budget <= 0) {
+      state.fileNodesDropped = true;
+      return null;
+    }
     state.fileNodeBudget = budget - 1;
   }
   state.nodes.set(node.node_id, node);

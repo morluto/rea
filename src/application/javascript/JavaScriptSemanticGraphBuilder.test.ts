@@ -2,8 +2,14 @@ import { expect, it } from "vitest";
 
 import {
   buildJavaScriptSemanticGraph,
+  SEMANTIC_GRAPH_FILE_NODE_CEILING,
   SEMANTIC_GRAPH_NODE_CEILING,
 } from "./JavaScriptSemanticGraphBuilder.js";
+import {
+  addSemanticGraphNode,
+  constructSemanticGraphNode,
+  createSemanticGraphProjectionState,
+} from "./JavaScriptSemanticGraphConstruction.js";
 import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { queryJavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticQuery.js";
@@ -290,6 +296,31 @@ const graphFor = (source: string) => {
   });
 };
 
+const semanticNodeFor = (roleKey: string) => {
+  const file: JavaScriptArtifactFile = {
+    path: "budget.js",
+    container_sha256: SHA256,
+    sha256: SHA256,
+    bytes: 0,
+    inventory_artifact_id: `art_${SHA256}`,
+    kind: "javascript",
+    unpacked: false,
+    text: { included: true, value: "" },
+  };
+  const state = createSemanticGraphProjectionState({ nodes: [] });
+  return constructSemanticGraphNode(
+    file,
+    {
+      kind: "expression",
+      roleKey,
+      location: null,
+      label: roleKey,
+      functionNodeId: null,
+    },
+    state,
+  );
+};
+
 it.each([
   "const value = consume(Promise.resolve(1));",
   "async function run() { await consume(Promise.resolve(1)); }",
@@ -447,6 +478,13 @@ it("bounds semantic node projection and reports the ceiling in coverage", () => 
   expect(graph.nodes.length).toBeLessThanOrEqual(SEMANTIC_GRAPH_NODE_CEILING);
   expect(graph.coverage.truncated).toBe(true);
   expect(graph.coverage.status).toBe("partial");
+  expect(graph.coverage.omitted_nodes).toBeNull();
+  expect(graph.coverage.omitted_relations).toBeNull();
+  expect(
+    graph.coverage.families.every(
+      ({ omitted_relations }) => omitted_relations === null,
+    ),
+  ).toBe(true);
   expect(
     graph.coverage.limits.some(
       ({ name }) => name === "semantic_graph_node_ceiling",
@@ -457,5 +495,42 @@ it("bounds semantic node projection and reports the ceiling in coverage", () => 
 it("leaves a small application complete and untruncated", () => {
   const graph = graphFor("const answer = 40 + 2;");
   expect(graph.coverage.truncated).toBe(false);
+  expect(graph.coverage.omitted_nodes).toBe(0);
+  expect(graph.coverage.omitted_relations).toBe(0);
   expect(graph.coverage.limits).toEqual([]);
+});
+
+it("does not mark a file truncated when it exactly fills its budget", () => {
+  // Each unbound reference projects one expression, plus the module root.
+  const graph = graphFor(
+    "external;\n".repeat(SEMANTIC_GRAPH_FILE_NODE_CEILING - 1),
+  );
+  expect(graph.nodes).toHaveLength(SEMANTIC_GRAPH_FILE_NODE_CEILING);
+  expect(graph.coverage).toMatchObject({
+    truncated: false,
+    omitted_nodes: 0,
+    omitted_relations: 0,
+    limits: [],
+  });
+});
+
+it("only records node loss when the budget rejects a new identity", () => {
+  // The truncation signal must record blocked node creation, not a zero
+  // remaining budget: a file using exactly its share drops nothing.
+  const state = createSemanticGraphProjectionState({ nodes: [] });
+  state.fileNodeBudget = 2;
+  state.fileNodesDropped = false;
+  const first = addSemanticGraphNode(state, semanticNodeFor("first"));
+  const second = addSemanticGraphNode(state, semanticNodeFor("second"));
+  expect(first).not.toBeNull();
+  expect(second).not.toBeNull();
+  expect(state.fileNodeBudget).toBe(0);
+  expect(state.fileNodesDropped).toBe(false);
+
+  expect(addSemanticGraphNode(state, semanticNodeFor("first"))).toBe(first);
+  expect(state.fileNodesDropped).toBe(false);
+
+  const blocked = addSemanticGraphNode(state, semanticNodeFor("third"));
+  expect(blocked).toBeNull();
+  expect(state.fileNodesDropped).toBe(true);
 });
