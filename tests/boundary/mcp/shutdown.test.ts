@@ -12,6 +12,7 @@ it("keeps shutdown output stable while logging the rejected cause at debug level
   const output: string[] = [];
   const exitCodes: number[] = [];
   const requests: Array<() => void> = [];
+  let androidClosed = false;
   const failure = Object.assign(
     new TypeError("fixture transport close failed"),
     {
@@ -36,6 +37,9 @@ it("keeps shutdown output stable while logging the rejected cause at debug level
   const logger = pino({ level: "debug" }, { write: (line) => logs.push(line) });
   createShutdown({
     handle,
+    closeAndroid: async () => {
+      androidClosed = true;
+    },
     session: createManagedBinarySession(),
     unregisterReload: () => undefined,
     dependencies,
@@ -46,6 +50,7 @@ it("keeps shutdown output stable while logging the rejected cause at debug level
   await new Promise((resolve) => setImmediate(resolve));
 
   expect(exitCodes).toEqual([1]);
+  expect(androidClosed).toBe(true);
   expect(output).toEqual([`${MCP_SHUTDOWN_FAILED}\n`]);
   expect(logs.map((line) => JSON.parse(line))).toContainEqual(
     expect.objectContaining({

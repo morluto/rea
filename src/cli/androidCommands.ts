@@ -1,4 +1,5 @@
 import { z } from "incur";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
 import { createAndroidAnalysisProvider } from "../composition/android.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -15,13 +16,19 @@ export const registerAndroidCommands = (
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
 ): void => {
-  const service = new AndroidAnalysisService(
-    createAndroidAnalysisProvider(environment),
-  );
+  const provider = createAndroidAnalysisProvider(environment);
+  const service = new AndroidAnalysisService(provider);
   const execute = (name: string, operation: AndroidOperation, input: unknown) =>
     withCommandCancellation((signal) =>
       logCliCommand(logger, name, async () => {
         const result = await service.execute(operation, input, { signal });
+        try {
+          await provider.close();
+        } catch (cause) {
+          if (cause instanceof AnalysisError)
+            return projectAnalysisError(cause);
+          throw cause;
+        }
         return result.ok ? result.value : projectAnalysisError(result.error);
       }),
     );

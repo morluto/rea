@@ -11,6 +11,7 @@ import { hashAndroidFile } from "../../../dist/android/AndroidTargetSnapshot.js"
 import { JADX_RELEASE } from "../../../dist/android/JadxRelease.js";
 import fixture from "../../fixtures/android/apidemos.json" with { type: "json" };
 import { verifyAndroidCliCancellation } from "./cli-cancellation.mjs";
+import { verifyAndroidMetadata } from "./metadata.mjs";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const apk = process.env.REA_ANDROID_TEST_APK;
@@ -41,6 +42,14 @@ const entrypoint =
   process.env.REA_ANDROID_ENTRYPOINT ?? resolve(repository, "scripts/rea.mjs");
 const environment = { ...process.env, REA_JADX_MCP_JAR: resolve(jar) };
 const path = resolve(apk);
+await verifyAndroidMetadata({
+  java,
+  jar: resolve(jar),
+  apk: path,
+  repository,
+  execute,
+  bridge: resolve(dirname(entrypoint), "../bridge/android/ReaJadxBridge.java"),
+});
 const tasks = [
   {
     name: "inspect_android_package",
@@ -212,6 +221,8 @@ const report = {
   original_apk_unchanged: true,
   apk_executed: false,
   cli_sigterm_cleanup: true,
+  metadata_without_code_generation: true,
+  stable_overload_selection: true,
 };
 if (process.env.REA_ANDROID_REPORT !== undefined)
   await writeFile(

@@ -9,6 +9,7 @@ import { JADX_JAR_CONFIGURATION_REMEDIATION } from "./JadxRelease.js";
 export interface JadxConfiguration {
   readonly jar: string;
   readonly java: string;
+  readonly jvmArguments: readonly string[];
 }
 
 /** Admit explicit local tooling without installing or changing host configuration. */
@@ -20,7 +21,7 @@ export const resolveJadxConfiguration = async (
     new AnalysisCapabilityUnavailableError("jadx", operation, reason);
   if (process.platform !== "linux" && process.platform !== "darwin")
     throw unavailable(
-      `Android JADX subprocess ownership is unsupported on ${process.platform}; use Linux or macOS. Only Linux has real-provider verification.`,
+      `Android JADX subprocess ownership is unsupported on ${process.platform}; use Linux or macOS. The metadata bridge has real-provider verification on macOS arm64.`,
     );
   const jar = environment.REA_JADX_MCP_JAR;
   if (environment.JAVA_HOME !== undefined && !isAbsolute(environment.JAVA_HOME))
@@ -55,5 +56,25 @@ export const resolveJadxConfiguration = async (
       );
     }
   }
-  return { jar: await realpath(jar), java };
+  const jvmArguments: string[] = [];
+  for (const [name, prefix, suffix] of [
+    ["REA_JADX_HEAP_MIB", "-Xmx", "m"],
+    ["REA_JADX_ACTIVE_PROCESSOR_COUNT", "-XX:ActiveProcessorCount=", ""],
+  ] as const) {
+    const value = environment[name];
+    if (value === undefined) continue;
+    if (!/^[1-9]\d*$/u.test(value) || !Number.isSafeInteger(Number(value)))
+      throw unavailable(
+        `${name} must be a positive safe integer; received ${value}.`,
+      );
+    if (
+      name === "REA_JADX_ACTIVE_PROCESSOR_COUNT" &&
+      Number(value) > 2_147_483_647
+    )
+      throw unavailable(
+        `${name} exceeds the JVM's signed 32-bit processor-count range.`,
+      );
+    jvmArguments.push(`${prefix}${value}${suffix}`);
+  }
+  return { jar: await realpath(jar), java, jvmArguments };
 };

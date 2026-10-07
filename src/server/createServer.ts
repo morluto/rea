@@ -19,6 +19,9 @@ import { registerWebScriptTool } from "./registerWebScriptTool.js";
 import { registerWebModuleTool } from "./registerWebModuleTool.js";
 import type { WebModuleTraceService } from "../application/WebModuleTraceService.js";
 import { createWebModuleTraceService } from "../composition/webModules.js";
+import { createWebSourceLocationService } from "../composition/webSourceLocations.js";
+import { registerWebSourceLocationTool } from "./registerWebSourceLocationTool.js";
+import type { WebSourceLocationService } from "../application/WebSourceLocationService.js";
 import { registerJavaScriptRecoveryTool } from "./registerJavaScriptRecoveryTool.js";
 import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
 import type { JavaScriptRecoveryPort } from "../application/javascript/JavaScriptRecoveryPort.js";
@@ -54,6 +57,7 @@ export interface CreateServerOptions {
   readonly firmwareAnalysis?: FirmwareAnalysisPort;
   readonly javascriptRecovery?: JavaScriptRecoveryPort;
   readonly webModuleTrace?: WebModuleTraceService;
+  readonly webSourceLocation?: WebSourceLocationService;
   readonly androidAnalysis?: AndroidAnalysisPort;
   readonly browserObservation?: BrowserObservationPort;
   readonly browserScenarioCapture?: BrowserScenarioCapturePort;
@@ -155,11 +159,26 @@ export const createServer = (
     recordEvidenceWithUnknown,
   };
   registerBinaryAnalysisTools(toolContext);
+  const android = options.androidAnalysis ?? createAndroidAnalysisProvider();
+  const previousOnclose = server.server.onclose;
+  server.server.onclose = () => {
+    previousOnclose?.();
+    void android.close().catch((cause: unknown) => {
+      logger.error(
+        { error: cause instanceof Error ? cause.message : String(cause) },
+        "Android provider cleanup failed",
+      );
+    });
+  };
+  const closeServer = server.close.bind(server);
+  server.close = async () => {
+    const results = await Promise.allSettled([closeServer(), android.close()]);
+    for (const result of results)
+      if (result.status === "rejected") throw result.reason;
+  };
   registerAndroidTools(
     server,
-    new AndroidAnalysisService(
-      options.androidAnalysis ?? createAndroidAnalysisProvider(),
-    ),
+    new AndroidAnalysisService(android),
     toolLogger,
     recordEvidence,
   );
@@ -175,6 +194,12 @@ export const createServer = (
   registerWebModuleTool(
     server,
     options.webModuleTrace ?? createWebModuleTraceService(),
+    toolLogger,
+    recordEvidence,
+  );
+  registerWebSourceLocationTool(
+    server,
+    options.webSourceLocation ?? createWebSourceLocationService(),
     toolLogger,
     recordEvidence,
   );

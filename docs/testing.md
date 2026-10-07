@@ -486,3 +486,25 @@ and compares a finite set of known fixture results. It does not establish
 arbitrary recovered-application equivalence. CI installs these prerequisites only
 in `.github/workflows/real-javascript-recovery.yml`; the existing `real-browser`
 lane uses real Chrome for browser capture and website workflows.
+
+### Captured website source-map lane
+
+`npm run verify:browser:source-maps` checks actual Chromium capture/export and
+source-map point tracing through CLI and stdio MCP. It requires absolute
+`REA_BROWSER_EXECUTABLE` and `REA_WEB_SOURCE_MAP_COMPILER` pointing to esbuild
+0.25.10's `lib/main.js` in a caller-owned isolated installation. Preflight reports
+missing prerequisites for this lane. The compiler is used only to generate the
+source-owned fixture. No Hopper, Ghidra or application dependency installation
+is required.
+
+```bash
+REA_BROWSER_EXECUTABLE=/absolute/path/to/chromium \
+REA_WEB_SOURCE_MAP_COMPILER=/absolute/path/to/fixture-tools/node_modules/esbuild/lib/main.js \
+npm run verify:browser:source-maps
+```
+
+`scripts/verify-browser-source-maps.mjs /absolute/path/to/installed/rea.mjs`
+checks an installed package after building the verifier dependencies. The separate
+conditional `real-web-source-map` CI job supplies Chrome and an isolated pinned
+fixture compiler; static/unit checks do not acquire a browser. See
+[the source location guide](web-source-location.md) for the verified decoder profile.

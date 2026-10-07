@@ -46,6 +46,7 @@
     "bridge/ghidra/ReaGhidraBridge.java",
     "bridge/ghidra/ReaGhidraExtensions.java",
     "bridge/ghidra/ReaGhidraPrepareCom.java",
+    "bridge/android/ReaJadxBridge.java",
     "scripts/rea.mjs",
     "scripts/electron-active-hook.cjs",
     "scripts/electron-active-hook-boundaries.cjs",
@@ -180,7 +181,8 @@
     "verify:browser:modules": "npm run build:cached && node scripts/verify-browser-modules.mjs",
     "verify:test-discovery": "node scripts/verify-test-discovery.mjs",
     "verify:javascript:recovery": "node scripts/verify/javascript/recovery.mjs",
-    "verify:module-boundaries": "node scripts/verify-module-boundaries.mjs"
+    "verify:module-boundaries": "node scripts/verify-module-boundaries.mjs",
+    "verify:browser:source-maps": "npm run build:cached && node scripts/verify-browser-source-maps.mjs"
   },
   "lint-staged": {
     "*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}": [

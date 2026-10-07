@@ -6,18 +6,13 @@ import type {
   WebModuleResolution,
   WebModuleTraceInput,
 } from "../domain/webModuleTrace.js";
-import type { webScriptExportManifestSchema } from "../domain/webScriptExport.js";
-import type { z } from "zod";
+import type { SelectedWebScriptArtifacts } from "../domain/webScriptArtifacts.js";
 import type { ExecutionOptions } from "./AnalysisProvider.js";
 
 type JsonObject = Record<string, JsonValue>;
 
 /** Verified selected source and capture metadata; provider protocols stay outside. */
-export interface WebModuleArtifacts {
-  readonly manifest: z.output<typeof webScriptExportManifestSchema>;
-  readonly manifestFile: WebModuleFile;
-  readonly sourceFile: WebModuleFile;
-  readonly source: string;
+export interface WebModuleArtifacts extends SelectedWebScriptArtifacts {
   readonly importMap: {
     readonly file: WebModuleFile;
     readonly baseUrl: string;

@@ -4,6 +4,14 @@ import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 
 const count = z.number().int().nonnegative();
+/** Values observed inside the exact JVM producing the analysis. */
+export const jadxRuntimeSchema = z.object({
+  engine_reported_version: z.string().min(1),
+  max_heap_bytes: z.number().int().positive().safe(),
+  available_processors: z.number().int().positive(),
+  java_version: z.string().min(1),
+  metadata_scope: z.literal("parsed_members"),
+});
 export const jadxLoadSchema = z.object({
   state: z.literal("LOADED"),
   apk_path: z.string(),

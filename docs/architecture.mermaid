@@ -28,6 +28,7 @@ graph TD
         IDA_MCP["External ida-pro-mcp<br/>GUI proxy or database supervisor<br/>upstream installation and engine lifecycle"]
         AUX["src/artifacts/ + src/native/<br/>disjoint artifact and native capabilities"]
         BROWSER["src/browser/<br/>CDP / Playwright capture<br/>captured scripts and native module resolution"]
+        JS_CODEC["src/javascript/sourceMaps/<br/>pinned upstream map codec<br/>owned heap-limited Node process, complete point evidence"]
         INSPECTOR["src/inspector/<br/>passive V8 Inspector discovery and capture<br/>script and target locations"]
         DOTNET["src/dotnet/<br/>Managed static metadata provider<br/>PE/CLI metadata inventory, members, IL"]
         FIRMWARE["src/firmware/<br/>Binwalk / Unblob adapters<br/>owned processes, report normalization, private extraction"]
@@ -95,6 +96,9 @@ graph TD
     SERVER --> CONTRACTS
     SERVER --> APP
     APP --> BROWSER
+    APP -->|source-map codec port| JS_CODEC
+    JS_CODEC --> PROCESS
+    JS_CODEC --> DOMAIN
     APP -->|runtime observation port| INSPECTOR
     INSPECTOR -->|shared CDP and file-location helpers| BROWSER
     INSPECTOR --> DOMAIN

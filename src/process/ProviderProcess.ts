@@ -187,7 +187,7 @@ export const spawnOwnedProviderProcess = async (
 /**
  * Supervises only generic process resources; wire protocol remains adapter-owned.
  *
- * Output retention is bounded per stream while byte totals remain exact. Stop
+ * Output retention is complete per stream; adapters own resource budgets. Stop
  * first honors token-verified group cleanup when supplied, otherwise it uses a
  * bounded TERM-to-KILL escalation for a directly owned child.
  */
@@ -199,6 +199,8 @@ export class ProviderProcessSupervisor {
     readonly code: number | null;
     readonly signal: NodeJS.Signals | null;
   }>();
+  readonly #outputClose = deferred<void>();
+  #outputClosed = false;
   readonly #onStdout = (chunk: Buffer | string): void => {
     this.#capture("stdout", this.#stdout, chunk);
   };
@@ -216,6 +218,8 @@ export class ProviderProcessSupervisor {
     signal: NodeJS.Signals | null,
   ): void => {
     this.#recordExit(code, signal);
+    this.#outputClosed = true;
+    this.#outputClose.resolve(undefined);
   };
   readonly #onError = (cause: Error): void => {
     this.#options.onDiagnostic?.({ type: "error", message: cause.message });
@@ -250,20 +254,28 @@ export class ProviderProcessSupervisor {
     };
   }
 
+  /** Begin a new observation on a retained process without retaining earlier output. */
+  resetOutput(): void {
+    this.#stdout.reset();
+    this.#stderr.reset();
+  }
+
   /** Wait for process exit up to a caller-owned bounded interval. */
   async waitForExit(timeoutMs: number): Promise<boolean> {
-    if (this.#exitObservation !== undefined) return true;
-    let timer: NodeJS.Timeout | undefined;
-    try {
-      return await Promise.race([
-        this.#exit.promise.then(() => true),
-        new Promise<boolean>((resolve) => {
-          timer = setTimeout(() => resolve(false), Math.max(0, timeoutMs));
-        }),
-      ]);
-    } finally {
-      if (timer !== undefined) clearTimeout(timer);
-    }
+    return waitForProcessEvent(
+      this.#exitObservation !== undefined,
+      this.#exit.promise,
+      timeoutMs,
+    );
+  }
+
+  /** Wait until the producer has closed its output streams; exit alone does not prove complete output. */
+  async waitForOutputClose(timeoutMs: number): Promise<boolean> {
+    return waitForProcessEvent(
+      this.#outputClosed,
+      this.#outputClose.promise,
+      timeoutMs,
+    );
   }
 
   /** Stop an owned process once; concurrent callers share the same escalation. */
@@ -397,6 +409,11 @@ class ProcessOutputCapture {
     return this.#bytes;
   }
 
+  reset(): void {
+    this.#chunks.length = 0;
+    this.#bytes = 0;
+  }
+
   append(chunk: Buffer): void {
     this.#bytes += chunk.byteLength;
     this.#chunks.push(Buffer.from(chunk));
@@ -442,3 +459,22 @@ const waitForSpawn = (child: ChildProcess): Promise<void> =>
     child.once("spawn", onSpawn);
     child.once("error", onError);
   });
+
+const waitForProcessEvent = async (
+  observed: boolean,
+  event: Promise<unknown>,
+  timeoutMs: number,
+): Promise<boolean> => {
+  if (observed) return true;
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      event.then(() => true),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), Math.max(0, timeoutMs));
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+};

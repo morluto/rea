@@ -6,12 +6,15 @@ import { z } from "zod";
 // It is a protocol fixture, not evidence of JADX decompiler support.
 const mode = process.env.REA_FAKE_JADX_MODE ?? "normal";
 const server = new McpServer({
-  name: "jadx-headless-mcp",
-  version: mode === "version" ? "99.0.0" : "0.7.1",
+  name: "rea-jadx-bridge",
+  version: mode === "version" ? "99.0.0" : "1",
 });
 const classes = [
   "fixture.Target",
-  ...Array.from({ length: 400 }, (_, index) => `fixture.Class${index}`),
+  ...Array.from(
+    { length: mode === "large-inventory" ? 9000 : 400 },
+    (_, index) => `fixture.Class${index}`,
+  ),
 ];
 const methods = [
   {
@@ -37,6 +40,15 @@ const text = (value) => ({ content: [{ type: "text", text: value }] });
 const json = (value) => text(JSON.stringify(value));
 const register = (name, handler) =>
   server.registerTool(name, { inputSchema: z.looseObject({}) }, handler);
+register("rea_jvm_status", () =>
+  json({
+    engine_reported_version: mode === "engine-version" ? "0.7.0" : "0.7.1",
+    max_heap_bytes: 8 * 1024 * 1024 * 1024,
+    available_processors: 4,
+    java_version: "21-fixture",
+    metadata_scope: "parsed_members",
+  }),
+);
 register("load_apk", async ({ path }) => {
   if (mode === "stall") await new Promise(() => {});
   return json({
@@ -59,12 +71,13 @@ register("get_app_info", () =>
   }),
 );
 register("get_android_manifest", () => {
-  if (mode === "tool-error")
+  if (mode === "tool-error" || mode === "cleanup-failure")
     return {
       ...text("manifest decoder rejected malformed binary XML"),
       isError: true,
     };
   if (mode === "frame-overflow") return text("x".repeat(9 * 1024 * 1024));
+  if (mode === "large-manifest") return text("x".repeat(1024 * 1024));
   return text('<manifest package="fixture"/>');
 });
 register("list_classes", ({ offset, limit }) =>
