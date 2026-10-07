@@ -26,11 +26,12 @@ func childCount(_ element: AXUIElement) -> Int {
   var count = 0
   return AXUIElementGetAttributeValueCount(element, kAXChildrenAttribute as CFString, &count) == .success ? count : 0
 }
-func children(_ element: AXUIElement, count: Int) -> [AXUIElement] {
-  var value: CFArray?
-  // The caller already queried this remote accessibility count for its budget.
-  if count <= 0 { return [] }
-  return AXUIElementCopyAttributeValues(element, kAXChildrenAttribute as CFString, 0, count, &value) == .success ? value as? [AXUIElement] ?? [] : []
+func children(_ element: AXUIElement, count: Int) -> ChildBatch<AXUIElement> {
+  captureChildValues(requestedCount: count) {
+    var value: CFArray?
+    guard AXUIElementCopyAttributeValues(element, kAXChildrenAttribute as CFString, 0, count, &value) == .success else { return nil }
+    return value as? [AXUIElement]
+  }
 }
 func text(_ element: AXUIElement, _ key: String) -> Any { (attribute(element, key) as? String) ?? NSNull() as Any }
 func windowBounds(_ element: AXUIElement) -> CGRect? {
@@ -115,9 +116,12 @@ func observe(_ request: Request) async throws -> [String: Any] {
       if path.count >= 32 { if totalChildren > 0 { truncated = true }; continue }
       let available = max(0, request.max_nodes - nodes.count - pending.count)
       let count = min(available, totalChildren)
-      let items = children(element, count: count)
+      let batch = children(element, count: count)
+      if !batch.complete { truncated = true }
       if totalChildren > count { truncated = true }
-      for index in (0..<count).reversed() { pending.append((items[index], path + [index])) }
+      for (index, item) in batch.values.enumerated().reversed() {
+        pending.append((item, path + [index]))
+      }
     }
   }
   var screenshot: Any = NSNull()

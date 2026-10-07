@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +14,13 @@ export const createNativeUiHelperRuntime = () => {
     if (executable === undefined) {
       root = await mkdtemp(join(tmpdir(), "rea-native-ui-"));
       const output = join(root, "observer");
+      const main = join(root, "main.swift");
+      await symlink(
+        fileURLToPath(
+          new URL("../../bridge/native/ReaNativeUI.swift", import.meta.url),
+        ),
+        main,
+      );
       await execFileOutput(
         "/usr/bin/xcrun",
         [
@@ -21,8 +28,12 @@ export const createNativeUiHelperRuntime = () => {
           "-module-cache-path",
           join(root, "modules"),
           fileURLToPath(
-            new URL("../../bridge/native/ReaNativeUI.swift", import.meta.url),
+            new URL(
+              "../../bridge/native/NativeUIChildren.swift",
+              import.meta.url,
+            ),
           ),
+          main,
           "-o",
           output,
         ],

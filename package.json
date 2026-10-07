@@ -42,6 +42,7 @@
     "dist",
     "install.sh",
     "bridge/hopper_bridge.py",
+    "bridge/native/NativeUIChildren.swift",
     "bridge/native/ReaNativeUI.swift",
     "bridge/ghidra/ReaGhidraBridge.java",
     "bridge/ghidra/ReaGhidraExtensions.java",
