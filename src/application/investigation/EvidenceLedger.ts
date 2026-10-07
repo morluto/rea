@@ -77,6 +77,7 @@ export class EvidenceLedger {
     if (bundle.unknowns.length === 0) {
       const additions = new Map<string, Evidence>();
       const replacements = new Map<string, Evidence>();
+      let metadataChanged = false;
       for (const evidence of bundle.records) {
         const existing = this.#records.get(evidence.evidence_id);
         if (existing !== undefined) {
@@ -84,7 +85,10 @@ export class EvidenceLedger {
             return err(
               new EvidenceIntegrityError("Conflicting evidence record"),
             );
-          replacements.set(evidence.evidence_id, evidence);
+          if (canonicalize(existing) !== canonicalize(evidence)) {
+            replacements.set(evidence.evidence_id, evidence);
+            metadataChanged = true;
+          }
           continue;
         }
         additions.set(evidence.evidence_id, evidence);
@@ -95,14 +99,20 @@ export class EvidenceLedger {
       return ok({
         recordsAdded: additions.size,
         unknownsAdded: 0,
-        changed: additions.size > 0,
+        changed: additions.size > 0 || metadataChanged,
       });
     }
     const pending = new Map(this.#records);
+    let metadataChanged = false;
     for (const evidence of bundle.records) {
       const existing = pending.get(evidence.evidence_id);
       if (existing !== undefined && !recordsAgree(existing, evidence))
         return err(new EvidenceIntegrityError("Conflicting evidence record"));
+      if (
+        existing !== undefined &&
+        canonicalize(existing) !== canonicalize(evidence)
+      )
+        metadataChanged = true;
       pending.set(evidence.evidence_id, evidence);
     }
     const pendingUnknowns = new Map(this.#unknownRevisions);
@@ -136,7 +146,7 @@ export class EvidenceLedger {
     return ok({
       recordsAdded: added,
       unknownsAdded,
-      changed: added > 0 || unknownsAdded > 0,
+      changed: added > 0 || unknownsAdded > 0 || metadataChanged,
     });
   }
 

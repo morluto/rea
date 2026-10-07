@@ -4,6 +4,7 @@ import { createEvidence } from "./evidence.js";
 import {
   createEvidenceBundle,
   evidenceBundleForTarget,
+  parseEvidenceBundle,
 } from "./evidenceBundle.js";
 import {
   createResidualUnknown,
@@ -86,7 +87,12 @@ describe("evidenceBundleForTarget", () => {
 
   it("projects a valid graph with more than 125,000 dependents", () => {
     const foreignRoot = makeUnknown("Foreign high-fan-out root", foreignDigest);
-    const unknowns = [foreignRoot.unknown];
+    const middle = makeUnknown(
+      "Target middle depending on foreign root",
+      targetDigest,
+      foreignRoot.unknown.unknown_id,
+    );
+    const unknowns = [foreignRoot.unknown, middle.unknown];
     for (let index = 0; index < 125_000; index += 1) {
       const input = recordUnknownInputSchema.parse({
         approved: true,
@@ -98,14 +104,16 @@ describe("evidenceBundleForTarget", () => {
         required_environment: null,
         recommended_probes: [],
         relationships: [
-          { type: "depends-on", unknown_id: foreignRoot.unknown.unknown_id },
+          { type: "depends-on", unknown_id: middle.unknown.unknown_id },
         ],
       });
       unknowns.push(
-        createResidualUnknown(input, foreignRoot.evidence.evidence_id, null),
+        createResidualUnknown(input, middle.evidence.evidence_id, targetDigest),
       );
     }
-    const bundle = createEvidenceBundle([foreignRoot.evidence], unknowns);
+    const bundle = parseEvidenceBundle(
+      createEvidenceBundle([foreignRoot.evidence, middle.evidence], unknowns),
+    );
 
     expect(evidenceBundleForTarget(bundle, targetDigest)).toEqual(
       createEvidenceBundle([], []),

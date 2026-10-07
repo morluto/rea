@@ -10,6 +10,7 @@ import { HopperStartError } from "../../../src/domain/hopperErrors.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
+import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import {
   ControllableAnalysisClient,
@@ -268,6 +269,76 @@ describe("fresh run identity", () => {
 });
 
 describe("replay of exact immutable calls", () => {
+  it("invalidates cached analysis when an import changes evidence path metadata", async () => {
+    const [target] = await createBinarySessionTargets();
+    const calls: string[] = [];
+    const session = createTestBinarySession(createCacheProvider(calls));
+    expect((await session.open(target)).ok).toBe(true);
+    expect(
+      (
+        await session.execute("address_name", {
+          address: "0x1000",
+          document: "first",
+        })
+      ).ok,
+    ).toBe(true);
+    expect(session.exportAnalysisSnapshot().ok).toBe(true);
+
+    const evidence = session
+      .exportEvidenceBundle()
+      .records.find(({ operation }) => operation === "address_name");
+    expect(evidence?.subject).not.toBeNull();
+    if (evidence?.subject === null || evidence === undefined) {
+      await session.close();
+      return;
+    }
+    expect(
+      session.importEvidenceBundle(createEvidenceBundle([evidence])),
+    ).toEqual({ ok: true, value: 0 });
+    expect(session.exportAnalysisSnapshot().ok).toBe(true);
+    const callsAfterInitialRead = [...calls];
+    expect(
+      (
+        await session.execute("address_name", {
+          address: "0x1000",
+          document: "first",
+        })
+      ).ok,
+    ).toBe(true);
+    expect(calls).toEqual(callsAfterInitialRead);
+
+    const relocated = {
+      ...evidence,
+      subject: {
+        ...evidence.subject,
+        local_path: `${evidence.subject.local_path}.moved`,
+        name: `${evidence.subject.name}.moved`,
+      },
+    };
+    expect(
+      session.importEvidenceBundle(createEvidenceBundle([relocated])),
+    ).toEqual({ ok: true, value: 0 });
+    expect(session.exportEvidenceBundle().records).toContainEqual(relocated);
+    expect(
+      (
+        await session.execute("address_name", {
+          address: "0x1000",
+          document: "first",
+        })
+      ).ok,
+    ).toBe(true);
+    expect(calls).toHaveLength(callsAfterInitialRead.length + 1);
+    expect(session.exportAnalysisSnapshot()).toMatchObject({
+      ok: false,
+      error: {
+        message: expect.stringContaining(
+          "Analysis snapshots are unavailable after analysis metadata mutations",
+        ),
+      },
+    });
+    await session.close();
+  });
+
   it("replays exact immutable calls from a matching provider-neutral snapshot", async () => {
     const [first, second] = await createBinarySessionTargets();
     const initialCalls: string[] = [];
