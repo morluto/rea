@@ -210,10 +210,13 @@ const retainedArguments = (
     | t.SpreadElement
     | t.JSXNamespacedName
     | t.ArgumentPlaceholder
+    | null
   )[],
 ): JavaScriptSemanticCallSite["arguments"] => {
   const retained: JavaScriptSemanticCallSite["arguments"][number][] = [];
   for (const [index, node] of nodes.entries()) {
+    // Babel recovery can leave null slots; retain the other argument positions.
+    if (node === null) continue;
     retained.push({
       index,
       location: range(node),

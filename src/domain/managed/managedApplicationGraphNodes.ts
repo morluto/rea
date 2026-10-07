@@ -4,7 +4,7 @@ import {
   createJavaScriptApplicationNode,
   type ApplicationGraphEvidence,
   type ApplicationNode,
-} from "./javascript/javascriptApplicationGraph.js";
+} from "../javascript/javascriptApplicationGraph.js";
 import { managedSourceCoverage } from "./managedApplicationGraphCoverage.js";
 import {
   type ManagedMemberInspection,

@@ -12,7 +12,7 @@ import type { ArtifactAnalysisOperation } from "../contracts/artifactToolContrac
 import {
   isManagedToolName,
   type ManagedToolName,
-} from "../contracts/managedToolContracts.js";
+} from "../contracts/managed/managedToolContracts.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { type AnalysisError } from "../domain/analysisErrorBase.js";

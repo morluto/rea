@@ -8,22 +8,22 @@ import {
   managedMemberComparisonResultSchema,
   parseManagedMemberEvidence,
   type CompareManagedMembersInput,
-} from "../domain/managedMemberComparison.js";
+} from "../../domain/managed/managedMemberComparison.js";
 import {
   AnalysisInputError,
   AnalysisProtocolError,
-} from "../domain/analysisErrorCore.js";
-import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
-import { type AnalysisError } from "../domain/analysisErrorBase.js";
-import { createEvidence, type Evidence } from "../domain/evidence.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
-import { parseBinaryTarget } from "./BinaryTargetResolver.js";
-import { err, ok, type Result } from "../domain/result.js";
-import { inspectManagedMembersBytes } from "../dotnet/ManagedMemberInspector.js";
+} from "../../domain/analysisErrorCore.js";
+import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
+import { type AnalysisError } from "../../domain/analysisErrorBase.js";
+import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import { jsonValueSchema } from "../../domain/jsonValue.js";
+import { parseBinaryTarget } from "../BinaryTargetResolver.js";
+import { err, ok, type Result } from "../../domain/result.js";
+import { inspectManagedMembersBytes } from "../../dotnet/ManagedMemberInspector.js";
 import {
   MANAGED_STATIC_PROVIDER,
   MANAGED_WORKFLOW_PROVIDER,
-} from "./InvestigationProviders.js";
+} from "../InvestigationProviders.js";
 
 /** Compare managed members from input parsed by a trusted adapter. */
 export const compareManagedMembersEvidenceValidated = (

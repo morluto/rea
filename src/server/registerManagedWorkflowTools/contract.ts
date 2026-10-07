@@ -1,4 +1,4 @@
-import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "../../contracts/managedWorkflowToolContracts.js";
+import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "../../contracts/managed/managedWorkflowToolContracts.js";
 
 /** Locate one managed workflow tool contract by exact name. */
 export function managedWorkflowContract(

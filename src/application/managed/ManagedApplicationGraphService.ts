@@ -3,19 +3,19 @@ import { z } from "zod";
 import {
   AnalysisInputError,
   AnalysisProtocolError,
-} from "../domain/analysisErrorCore.js";
-import { type AnalysisError } from "../domain/analysisErrorBase.js";
-import { createEvidence, type Evidence } from "../domain/evidence.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
+} from "../../domain/analysisErrorCore.js";
+import { type AnalysisError } from "../../domain/analysisErrorBase.js";
+import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import { jsonValueSchema } from "../../domain/jsonValue.js";
 import {
   managedApplicationGraphResultSchema,
   projectManagedApplicationGraph,
   projectManagedApplicationGraphInputSchema,
   type ManagedApplicationGraphResult,
   type ProjectManagedApplicationGraphInput,
-} from "../domain/managedApplicationGraph.js";
-import { err, ok, type Result } from "../domain/result.js";
-import { MANAGED_WORKFLOW_PROVIDER } from "./InvestigationProviders.js";
+} from "../../domain/managed/managedApplicationGraph.js";
+import { err, ok, type Result } from "../../domain/result.js";
+import { MANAGED_WORKFLOW_PROVIDER } from "../InvestigationProviders.js";
 
 const OPERATION = "project_managed_application_graph" as const;
 

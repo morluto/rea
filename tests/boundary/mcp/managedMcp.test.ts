@@ -13,7 +13,7 @@ import { composeBinarySession } from "../../../src/application/binary/BinarySess
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import type { BinaryTarget } from "../../../src/domain/binaryTarget.js";
 import { SessionProviderRouter } from "../../../src/application/binary/SessionProviderRouter.js";
-import { MANAGED_NATIVE_VERIFICATION_EXAMPLE } from "../../../src/contracts/managedWorkflowExamples.js";
+import { MANAGED_NATIVE_VERIFICATION_EXAMPLE } from "../../../src/contracts/managed/managedWorkflowExamples.js";
 import { ManagedStaticProvider } from "../../../src/dotnet/ManagedStaticProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { buildManagedPeFixture } from "../../../src/dotnet/ManagedPe.fixture.js";

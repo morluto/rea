@@ -295,6 +295,30 @@ lifecycles. Runtime ports retain their distinct Inspector, passive Electron and
 active Electron effects; shipped Electron hooks remain at their existing
 provider boundary.
 
+## Managed capability ownership
+
+`src/domain/managed/` owns managed artifact and member semantics, reconstruction
+import, native-boundary verification and application graph projection.
+`src/application/managed/` owns their shared Evidence workflows, and
+`src/contracts/managed/` owns their named contracts and examples. Producer
+metadata/IL parsing stays in `src/dotnet/`; target resolution, Evidence, ordering
+and investigation records retain their shared owners. Path-based member
+comparison preserves its actual target/byte-digest admission and existing parser
+helper.
+
+`scripts/verify/managed/` groups the portable conformance entrypoint and its
+support, manifest, oracle and completion-report helpers. Its PE byte fixture
+builder and declaration live in `scripts/fixtures/managed/`, shared with the
+installed-package lane and existing managed conformance tests. `verify:managed`
+keeps its command name and optional caller-cwd manifest resolution. Compiled
+catalog and generator imports follow the owners; document-check cache inputs
+include the relocated runtime verifier and fixture files.
+
+Portable byte fixtures, optional operator-local manifests, actual ILSpy oracles
+and real Ghidra NativeAOT checks retain their distinct proof levels and
+prerequisites. The existing NativeAOT fixture/engine lane keeps its owner. This
+move preserves implementations, Evidence identities and generated commitments.
+
 ## Binary application ownership
 
 `src/application/binary/` owns the active session, deep-provider registry and

@@ -11,7 +11,7 @@ import {
   managedArtifactInspectionSchema,
   managedMemberInspectionSchema,
   managedNativeBoundaryInspectionSchema,
-} from "../../../../src/domain/managedArtifact.js";
+} from "../../../../src/domain/managed/managedArtifact.js";
 import { ManagedStaticProvider } from "../../../../src/dotnet/ManagedStaticProvider.js";
 import { buildManagedPeFixture } from "../../../../src/dotnet/ManagedPe.fixture.js";
 

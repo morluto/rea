@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createEvidence } from "./evidence.js";
+import { createEvidence } from "../evidence.js";
 import { managedReconstructionImportInputSchema } from "./managedReconstruction.js";
 
 describe("managed reconstruction import input", () => {

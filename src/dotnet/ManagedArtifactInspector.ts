@@ -3,7 +3,7 @@ import {
   managedArtifactInspectionSchema,
   type ManagedArtifactInspection,
   type ManagedParseIssue,
-} from "../domain/managedArtifact.js";
+} from "../domain/managed/managedArtifact.js";
 import {
   readManagedPeLayout,
   type ManagedCliHeader,

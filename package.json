@@ -141,7 +141,7 @@
     "verify:javascript-runtime": "npm run build:cached && node scripts/verify/javascript/runtime-observation.mjs",
     "verify:javascript:digests": "npm run build:cached && node scripts/verify/javascript/digests.mjs",
     "verify:application-workflows": "npm run build:cached && node scripts/verify/javascript/application-workflows.mjs",
-    "verify:managed": "npm run build:cached && node scripts/verify-managed-conformance.mjs",
+    "verify:managed": "npm run build:cached && node scripts/verify/managed/conformance.mjs",
     "verify:firmware": "npm run build:cached && node scripts/verify/firmware/analysis.mjs",
     "fixtures:firmware": "node scripts/fixtures/firmware/generate.mjs",
     "verify:android": "npm run build:cached && node scripts/verify/android/analysis.mjs",
