@@ -28,6 +28,8 @@ export class ArtifactOperationError extends AnalysisError {
       calculatedSha256: string | null;
       unpacked: boolean;
     }>,
+    /** The specific constraint that failed, such as the colliding path. */
+    readonly detail?: string,
   ) {
     super(
       artifactDetails === undefined

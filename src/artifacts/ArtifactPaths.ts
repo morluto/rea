@@ -14,7 +14,7 @@ export const normalizeArtifactPath = (input: string): string => {
   )
     throw new ArtifactReaderFailure(
       "path",
-      "Artifact path is absolute or unsafe",
+      `Artifact path is absolute or unsafe: ${JSON.stringify(input)}`,
     );
   const normalized = input.normalize("NFC").replace(/\/+$/u, "");
   const parts = normalized.split("/");
@@ -23,7 +23,10 @@ export const normalizeArtifactPath = (input: string): string => {
     parts.some((part) => part === "" || part === "." || part === "..") ||
     posix.normalize(normalized) !== normalized
   )
-    throw new ArtifactReaderFailure("path", "Artifact path is not normalized");
+    throw new ArtifactReaderFailure(
+      "path",
+      `Artifact path is not normalized: ${JSON.stringify(input)}`,
+    );
   return normalized;
 };
 
@@ -45,7 +48,7 @@ export class ArtifactPathRegistry {
       if (child !== undefined && child.spelling !== part)
         throw new ArtifactReaderFailure(
           "path",
-          `Artifact path collision: ${path}`,
+          `Artifact path collision: ${path} differs only in case from ${[...parts.slice(0, index), child.spelling].join("/")}`,
         );
       if (child === undefined) {
         child = { spelling: part, kind: undefined, children: new Map() };

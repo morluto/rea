@@ -75,7 +75,12 @@ export const analyzeJavaScriptApplicationValidated = async (
   } catch (cause: unknown) {
     if (cause instanceof ArtifactReaderFailure)
       return err(
-        new ArtifactOperationError(OPERATION, cause.reason, cause.details),
+        new ArtifactOperationError(
+          OPERATION,
+          cause.reason,
+          cause.details,
+          cause.message,
+        ),
       );
     if (cause instanceof z.ZodError)
       return err(
