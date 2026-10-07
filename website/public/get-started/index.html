@@ -24,7 +24,7 @@
         <nav class="navigation" aria-label="Main navigation">
           <a href="../showcase/dx-ball/">DX-Ball</a
           ><a class="nav-start" href="./" aria-current="page">Get started</a
-          ><a href="https://github.com/morluto/rea/tree/main/docs">Docs</a
+          ><a href="../guides/">Guides</a
           ><a href="https://github.com/morluto/rea">GitHub</a>
         </nav>
       </div>
@@ -39,10 +39,6 @@
         </p>
         <p class="requirements">
           You'll need Node.js 22 (22.19+), 24 (24.11+) or 26+, and npm.
-          <a
-            href="https://github.com/morluto/rea/blob/main/docs/installation.md"
-            >Full installation guide</a
-          >
         </p>
       </div>
       <div class="article-layout">
@@ -59,11 +55,9 @@
           <section class="article-section" id="agent">
             <h2>With your agent</h2>
             <p>
-              Run setup to connect REA to Claude Code, Codex, Cursor or another
-              <a
-                href="https://github.com/morluto/rea/blob/main/docs/installation.md#supported-agents"
-                >supported client</a
-              >.
+              Run setup to connect REA to your coding agent. Client choices
+              include Claude Code, Codex, Cursor, Gemini CLI, Windsurf and other
+              supported MCP clients.
             </p>
             <div class="code-block">
               <div class="code-header">
@@ -154,8 +148,7 @@
               <pre><code id="install-cli">npm install --global rea-agents</code></pre>
             </div>
             <p>
-              <a
-                href="https://github.com/morluto/rea/blob/main/docs/javascript-application-workflows.md"
+              <a href="../guides/javascript/"
                 >Continue with the JavaScript application guide</a
               >
             </p>
@@ -164,47 +157,107 @@
           <section class="article-section" id="native">
             <h2>Working with native binaries</h2>
             <p>
-              Choose a deep-analysis provider for your target and host. If you
-              already use one of these tools, start with its connection guide.
+              REA connects your agent to a local analysis provider. Choose the
+              tool you already use, configure its connection, then ask about
+              your executable or library.
             </p>
             <div class="provider-list">
               <div class="provider">
                 <h3>Ghidra</h3>
                 <div>
                   <p>
-                    Use an existing Ghidra installation and JDK. Setup checks
-                    their paths and records them for your selected clients.
+                    Use an existing Ghidra 12.1.x installation and a 64-bit JDK
+                    21 or newer on Linux x64 or macOS x64/arm64. Set the paths
+                    before running setup:
                   </p>
-                  <a
-                    href="https://github.com/morluto/rea/blob/main/docs/installation.md#ghidra"
-                    >Ghidra setup and supported hosts</a
-                  >
+                  <details class="evidence-details">
+                    <summary>Connect your Ghidra installation</summary>
+                    <div class="code-block">
+                      <div class="code-header">
+                        <span>Ghidra connection · macOS / Linux</span
+                        ><button
+                          class="copy-button"
+                          type="button"
+                          data-copy="ghidra-connect"
+                          aria-label="Copy ghidra connection · macos / linux"
+                        >
+                          Copy
+                        </button>
+                      </div>
+                      <pre><code id="ghidra-connect">export GHIDRA_INSTALL_DIR=/absolute/path/to/ghidra_12.1.4_PUBLIC
+export JAVA_HOME=/absolute/path/to/jdk-21
+npx -y rea-agents@latest doctor --provider ghidra --json
+npx rea-agents@latest setup</code></pre>
+                    </div>
+                    <p>
+                      Replace both paths with your existing installations. Setup
+                      checks them and records valid settings for your selected
+                      client. On macOS, use a Ghidra package with the native
+                      decompiler matching your host architecture.
+                    </p>
+                  </details>
                 </div>
               </div>
               <div class="provider">
                 <h3>Hopper</h3>
                 <div>
                   <p>
-                    Connect Hopper on macOS or Linux. Setup can also install it
-                    after you review and approve the installation plan.
+                    Connect Hopper on macOS or Linux. Run the setup command
+                    above; it detects an existing installation or offers an
+                    installation plan for your approval.
                   </p>
-                  <a
-                    href="https://github.com/morluto/rea/blob/main/docs/installation.md#hopper"
-                    >Hopper installation</a
-                  >
+                  <p>
+                    On macOS, complete Hopper's first-run choice of demo mode or
+                    license activation before an unattended analysis.
+                  </p>
                 </div>
               </div>
               <div class="provider">
                 <h3>IDA</h3>
                 <div>
                   <p>
-                    Reuse an existing IDA MCP registration for read-only
-                    analysis through an attached GUI or headless database.
+                    Use a working IDA MCP registration for read-only analysis
+                    through an attached GUI or headless database.
                   </p>
-                  <a
-                    href="https://github.com/morluto/rea/blob/main/docs/ida-provider.md"
-                    >IDA connection guide</a
-                  >
+                  <details class="evidence-details">
+                    <summary>Connect an existing IDA MCP registration</summary>
+                    <p>
+                      Keep the upstream server's working <code>command</code>,
+                      <code>args</code> and optional <code>env</code> in a JSON
+                      file. An existing <code>mcpServers</code> object with an
+                      <code>ida-pro-mcp</code> entry is also accepted. Point REA
+                      at that file before setup:
+                    </p>
+                    <div class="code-block">
+                      <div class="code-header">
+                        <span>IDA connection · macOS / Linux</span
+                        ><button
+                          class="copy-button"
+                          type="button"
+                          data-copy="ida-connect"
+                          aria-label="Copy ida connection · macos / linux"
+                        >
+                          Copy
+                        </button>
+                      </div>
+                      <pre><code id="ida-connect">export REA_IDA_MCP_CONFIG=/absolute/path/to/ida-mcp.json
+npx -y rea-agents@latest doctor --provider ida --json
+npx rea-agents@latest setup</code></pre>
+                    </div>
+                    <p>
+                      The attached profile uses upstream legacy 1.4.0 tools with
+                      the original binary already open in IDA. The headless
+                      profile uses the upstream database-supervisor API and a
+                      registration with <code>"mode": "headless"</code>.
+                    </p>
+                    <p>
+                      Give REA the original executable path, with
+                      <code>--provider ida</code> in a CLI query. For an agent,
+                      include <code>REA_IDA_MCP_CONFIG</code> in the REA
+                      registration's environment and select IDA when opening the
+                      binary.
+                    </p>
+                  </details>
                 </div>
               </div>
             </div>
@@ -230,6 +283,10 @@
               Replace <code>main</code> with the function name or address you
               want to inspect. The first query imports and analyzes the target,
               so it can take longer than later requests.
+            </p>
+            <p>
+              <a href="../guides/native/">Follow a native analysis example</a>
+              to see how the function result leads to a recovered calculation.
             </p>
           </section>
 
@@ -273,12 +330,10 @@
             <p>The report gives the failed check and a suggested next step.</p>
             <ul class="reading-list">
               <li>
-                <a
-                  href="https://github.com/morluto/rea/blob/main/docs/installation.md"
-                  >Installation and troubleshooting</a
+                <a href="../guides/">Choose an investigation guide</a
                 ><span
-                  >Client configuration, versions and provider
-                  requirements.</span
+                  >Worked examples for a binary, an Electron app and a
+                  browser.</span
                 >
               </li>
               <li>

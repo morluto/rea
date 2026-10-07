@@ -55,3 +55,22 @@ function initializeStepComparisons() {
 }
 
 initializeStepComparisons();
+
+function initializeAgentTerminals() {
+  if (!("IntersectionObserver" in window)) return;
+  const observer = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        entry.target.classList.add("is-visible");
+        observer.unobserve(entry.target);
+      });
+    },
+    { threshold: 0.25 },
+  );
+  document.querySelectorAll(".agent-terminal").forEach((terminal) => {
+    observer.observe(terminal);
+  });
+}
+
+initializeAgentTerminals();
