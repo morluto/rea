@@ -79,7 +79,7 @@ export class JadxSession {
         );
       const engine = {
         name: "jadx-headless-mcp",
-        version: "0.7.1",
+        version: JADX_RELEASE.version,
         artifact_sha256: jarHash,
         source_revision:
           jarHash === JADX_RELEASE.sha256 ? JADX_RELEASE.revision : null,
