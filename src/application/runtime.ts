@@ -4,10 +4,9 @@ import { HopperProvider } from "../hopper/HopperProvider.js";
 import { GhidraProvider } from "../ghidra/GhidraProvider.js";
 import { IdaProvider } from "../ida/IdaProvider.js";
 import { silentLogger, type Logger } from "../logger.js";
-import { GENERATED_AUXILIARY_PROVIDERS } from "../generatedMcpToolCatalog.js";
+import { auxiliaryAnalysisProviderDeclarations } from "../composition/auxiliaryAnalysisProviders.js";
 import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
 import { composeBinarySession } from "./BinarySessionComposition.js";
-import { nativeHostCapabilities } from "../native/NativeHostCapabilities.js";
 import { LazyAnalysisProvider } from "./LazyAnalysisProvider.js";
 import { ManagedStaticProvider } from "../dotnet/ManagedStaticProvider.js";
 import { SessionProviderRouter } from "./SessionProviderRouter.js";
@@ -24,47 +23,14 @@ export const createBinarySession = (
   const hopper = new HopperProvider(config, logger);
   const ghidra = new GhidraProvider(config, logger);
   const ida = new IdaProvider(config);
-  const auxiliary = new Map(
-    GENERATED_AUXILIARY_PROVIDERS.map((provider) => [
-      provider.identity.id,
-      provider,
-    ]),
-  );
-  const lazyProvider = (
-    id: string,
-    load: ConstructorParameters<typeof LazyAnalysisProvider>[0]["load"],
-  ) => {
-    const generated = auxiliary.get(id);
-    if (generated === undefined)
-      throw new TypeError(`Missing generated provider metadata for ${id}`);
-    return new LazyAnalysisProvider({
-      ...generated,
-      capabilities: nativeHostCapabilities(generated.capabilities),
-      load,
-    });
-  };
   return composeBinarySession(
     new AnalysisProviderRegistry(
       [hopper, ghidra, ida],
       config.analysisProvider,
     ),
-    [
-      lazyProvider("rea-artifact-graph", async () => {
-        const { ArtifactProvider } =
-          await import("../artifacts/ArtifactProvider.js");
-        return new ArtifactProvider();
-      }),
-      lazyProvider("native-macos", async () => {
-        const { NativeMacOSProvider } =
-          await import("../native/NativeMacOSProvider.js");
-        return new NativeMacOSProvider();
-      }),
-      lazyProvider("rea-dotnet-static", async () => {
-        const { ManagedStaticProvider } =
-          await import("../dotnet/ManagedStaticProvider.js");
-        return new ManagedStaticProvider();
-      }),
-    ],
+    auxiliaryAnalysisProviderDeclarations().map(
+      (declaration) => new LazyAnalysisProvider(declaration),
+    ),
   );
 };
 

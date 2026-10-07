@@ -7,9 +7,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "../dist/contracts/managedWorkflowToolContracts.js";
-import { ArtifactProvider } from "../dist/artifacts/ArtifactProvider.js";
-import { ManagedStaticProvider } from "../dist/dotnet/ManagedStaticProvider.js";
-import { NativeMacOSProvider } from "../dist/native/NativeMacOSProvider.js";
+import { auxiliaryAnalysisProviderDeclarations } from "../dist/composition/auxiliaryAnalysisProviders.js";
 import { toolRegistrationOptions } from "../dist/server/toolRegistrationOptions.js";
 import { ensureGeneratedFile } from "./lib/generated-file.mjs";
 
@@ -88,14 +86,9 @@ async function sdkToolCatalog() {
     await Promise.allSettled([client.close(), server.close()]);
   }
 }
-const auxiliaryProviders = [
-  new ArtifactProvider(CATALOG_PLATFORM),
-  new NativeMacOSProvider(undefined, CATALOG_PLATFORM),
-  new ManagedStaticProvider(),
-].map((provider) => ({
-  identity: provider.identity(),
-  capabilities: provider.capabilities(),
-}));
+const auxiliaryProviders = auxiliaryAnalysisProviderDeclarations(
+  CATALOG_PLATFORM,
+).map(({ identity, capabilities }) => ({ identity, capabilities }));
 
 const canonicalizeJson = (value) => {
   if (Array.isArray(value)) return value.map(canonicalizeJson);

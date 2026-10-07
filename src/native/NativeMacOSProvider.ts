@@ -1,3 +1,8 @@
+import {
+  NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY,
+  nativeMacOSCapabilities,
+} from "./NativeMacOSProviderMetadata.js";
+export { NATIVE_MACOS_PROVIDER_IDENTITY } from "./NativeMacOSProviderMetadata.js";
 import { inspectAppleDispatchMetadata } from "./AppleDispatchMetadata.js";
 import { observeNativeUi } from "./NativeUiObservation.js";
 import { dirname, isAbsolute, resolve } from "node:path";
@@ -51,14 +56,6 @@ import {
   inspectNativeMacho,
 } from "./NativeMachoInspection.js";
 
-/** Public identity committed by macOS-native inspection observations. */
-export const NATIVE_MACOS_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({
-  id: "native-macos",
-  name: "macOS native inspection utilities",
-  version: null,
-});
-const IDENTITY = NATIVE_MACOS_PROVIDER_IDENTITY;
-
 /** Read-only semantic provider composed from Xcode command-line utilities. */
 export class NativeMacOSProvider implements AnalysisProvider {
   readonly #capabilities: readonly CapabilityDescriptor[];
@@ -67,41 +64,7 @@ export class NativeMacOSProvider implements AnalysisProvider {
     private readonly runner: NativeCommandRunner = new XcrunCommandRunner(),
     platform: NodeJS.Platform = process.platform,
   ) {
-    const available = platform === "darwin";
-    this.#capabilities = Object.freeze(
-      [
-        ...NATIVE_TOOL_CONTRACTS,
-        { name: "inspect_native_dispatch_metadata" as const },
-      ].map((contract): CapabilityDescriptor => {
-        const availability = available
-          ? ({ available: true, reason: null } as const)
-          : ({
-              available: false,
-              availabilityCode: "unsupported_host",
-              reason: "Native macOS utilities require macOS.",
-            } as const);
-        return Object.freeze({
-          provider: IDENTITY,
-          operation: contract.name,
-          ...availability,
-          effects: Object.freeze({
-            mutatesArtifact: false,
-            launchesProcess:
-              contract.name !== "inspect_native_dispatch_metadata",
-            mayShowUi: contract.name === "capture_native_ui_scenario",
-            mayAccessNetwork: contract.name === "capture_native_ui_scenario",
-            mayWriteFilesystem:
-              contract.name === "capture_native_ui_scenario" ||
-              contract.name === "observe_native_ui",
-            changesPermissions: false,
-            requiresRoot: false,
-          }),
-          limitations: Object.freeze([
-            "Availability and textual formats depend on the installed macOS/Xcode toolchain.",
-          ]),
-        });
-      }),
-    );
+    this.#capabilities = nativeMacOSCapabilities(platform);
   }
 
   identity(): ProviderIdentity {

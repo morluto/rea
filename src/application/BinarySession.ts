@@ -18,7 +18,8 @@ import type {
   ProviderIdentity,
 } from "./AnalysisProvider.js";
 import type { AnalysisOperation } from "./AnalysisProvider.js";
-import { GENERATED_MCP_TOOL_CATALOG } from "../generatedMcpToolCatalog.js";
+import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
+import { ENHANCED_TOOL_CONTRACTS } from "../contracts/enhancedToolContracts.js";
 import type { BinarySessionPort } from "./BinarySessionPort.js";
 import {
   SessionProviderRouter,
@@ -39,14 +40,10 @@ import {
 import { closeAnalysisClient } from "./AnalysisClientCleanup.js";
 export type { BinarySessionPort } from "./BinarySessionPort.js";
 const OFFICIAL_OPERATIONS: ReadonlySet<string> = new Set(
-  GENERATED_MCP_TOOL_CATALOG.filter(
-    ({ kind }) => kind === "official-proxy",
-  ).map(({ name }) => name),
+  OFFICIAL_TOOL_CONTRACTS.map(({ name }) => name),
 );
 const ENHANCED_OPERATIONS: ReadonlySet<string> = new Set(
-  GENERATED_MCP_TOOL_CATALOG.filter(({ kind }) => kind === "enhanced").map(
-    ({ name }) => name,
-  ),
+  ENHANCED_TOOL_CONTRACTS.map(({ name }) => name),
 );
 
 /**

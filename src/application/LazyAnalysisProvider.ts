@@ -40,12 +40,12 @@ export class LazyAnalysisProvider implements AnalysisProvider {
     this.#loadProvider = options.load;
   }
 
-  /** Return generated provider identity without loading its implementation. */
+  /** Return source-declared provider identity without loading its implementation. */
   identity(): ProviderIdentity {
     return this.#providerIdentity;
   }
 
-  /** Return generated capability metadata without loading its implementation. */
+  /** Return source-declared capability metadata without loading its implementation. */
   capabilities(): readonly CapabilityDescriptor[] {
     return this.#capabilityDescriptors;
   }

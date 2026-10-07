@@ -14,7 +14,7 @@ import {
 } from "../contracts/toolOutputSchemaPrimitives.js";
 import type { ToolKind } from "../contracts/toolContractTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { GENERATED_MCP_TOOL_CATALOG } from "../generatedMcpToolCatalog.js";
+import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
 import {
   clientRequirementsFor,
   NO_CLIENT_FEATURES,
@@ -131,7 +131,7 @@ export const buildCapabilityInventory = (
   const descriptors = new Map<string, ProviderDescriptor>(
     status.capabilities.map((descriptor) => [descriptor.operation, descriptor]),
   );
-  return GENERATED_MCP_TOOL_CATALOG.map((contract): ToolAvailability => {
+  return TOOL_CONTRACTS.map((contract): ToolAvailability => {
     const availability = availabilityFor({
       name: contract.name,
       kind: contract.kind,
