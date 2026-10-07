@@ -97,12 +97,27 @@ export const inspectNativeMacho = async (
   else if (optional.error._tag === "AnalysisCapabilityUnavailableError")
     limitations.push(VTOOL_UNAVAILABLE_LIMITATION);
   else return err(optional.error);
-  const result = normalizeMacho(captures, context.invocation, limitations);
+  const normalized = normalizeMacho(captures, context.invocation, limitations);
+  const segmentOffset = segmentContainerOffset(
+    normalized,
+    selectedArchitecture,
+    /^Non-fat file:/mu.test(lipo.stdout),
+  );
+  const result =
+    segmentOffset === undefined
+      ? inspectMachoSchema.parse({
+          ...normalized,
+          limitations: [
+            ...normalized.limitations,
+            "Segment evidence file offsets are unavailable because the selected Mach-O slice's container offset was not observed.",
+          ],
+        })
+      : normalized;
   return ok({
     result: jsonValueSchema.parse(result),
     provenance: result.provenance,
     limitations: result.limitations,
-    locations: fileOffsetLocations(result),
+    locations: fileOffsetLocations(result, segmentOffset),
   });
 };
 
@@ -246,17 +261,43 @@ const uniqueSymbols = <Value extends { readonly name: string }>(
 
 const fileOffsetLocations = (
   macho: ReturnType<typeof inspectMachoSchema.parse>,
+  segmentOffset: number | undefined,
 ): EvidenceLocation[] => {
   const locations = architectureLocations(macho.architectures.items);
+  if (segmentOffset === undefined) return locations;
   for (const segment of macho.segments.items) {
     if (segment.file_offset === null || segment.file_size === null) continue;
     locations.push({
       kind: "file-offset-range",
-      start: segment.file_offset,
-      end: segment.file_offset + segment.file_size,
+      start: segmentOffset + segment.file_offset,
+      end: segmentOffset + segment.file_offset + segment.file_size,
     });
   }
   return locations;
+};
+
+/** otool segment offsets are slice-relative; evidence addresses the input file. */
+const segmentContainerOffset = (
+  macho: ReturnType<typeof inspectMachoSchema.parse>,
+  selectedArchitecture: string | null,
+  thinInput: boolean,
+): number | undefined => {
+  const architectures = macho.architectures.items;
+  const slice =
+    selectedArchitecture === null
+      ? architectures.length === 1
+        ? architectures[0]
+        : undefined
+      : architectures.find(({ name }) => name === selectedArchitecture);
+  if (slice?.file_offset !== null && slice?.file_offset !== undefined)
+    return slice.file_offset;
+  // A thin lipo observation has no separate slice offset. Unknown FAT slice
+  // offsets must not silently become zero and identify unrelated container bytes.
+  return thinInput &&
+    selectedArchitecture === null &&
+    architectures.length === 1
+    ? 0
+    : undefined;
 };
 
 /** Project architecture slices into evidence file-offset locations. */
