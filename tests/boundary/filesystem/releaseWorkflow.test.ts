@@ -12,6 +12,7 @@ const stepSchema = z.object({
   run: z.string().optional(),
   if: z.string().optional(),
   with: z.record(z.string(), z.unknown()).optional(),
+  env: z.record(z.string(), z.unknown()).optional(),
 });
 const jobSchema = z.object({
   if: z.string().optional(),
@@ -57,9 +58,33 @@ it("requires explicit release preparation or publication instead of main pushes"
     step.uses?.startsWith("googleapis/release-please-action@"),
   );
   expect(release?.with).toMatchObject({
+    token: "${{ secrets.RELEASE_PLEASE_TOKEN }}",
     "target-branch": "${{ inputs.release_branch }}",
     "skip-github-release": "${{ inputs.phase == 'prepare' }}",
     "skip-github-pull-request": "${{ inputs.phase == 'publish' }}",
+  });
+  const catalogCommit = workflow.jobs["release-please"].steps.find(
+    (step) => step.name === "Commit canonical release catalog",
+  );
+  expect(catalogCommit?.env?.GH_TOKEN).toBe(
+    "${{ secrets.RELEASE_PLEASE_TOKEN }}",
+  );
+});
+
+it("stops preparation when the CI-capable release token is missing", async () => {
+  const workflow = await readReleaseWorkflow();
+  const command = z.string().parse(
+    workflow.jobs["release-please"].steps.find(
+      (step) => step.name === "Require a CI-capable release token",
+    )?.run,
+  );
+  await expect(
+    execFileAsync("bash", ["-e", "-o", "pipefail", "-c", command], {
+      env: { ...process.env, RELEASE_PLEASE_TOKEN: "" },
+    }),
+  ).rejects.toMatchObject({
+    code: 1,
+    stderr: expect.stringMatching(/RELEASE_PLEASE_TOKEN/u),
   });
 });
 
