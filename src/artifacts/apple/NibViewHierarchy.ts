@@ -1,5 +1,5 @@
-import type { NibArchiveDocument } from "../artifacts/NibArchive.js";
-import type { JsonValue } from "../domain/jsonValue.js";
+import type { NibArchiveDocument } from "./NibArchive.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 
 export type NibHierarchyNode = {
   objectID: string;

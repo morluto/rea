@@ -2,19 +2,19 @@ import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
 import { parseBinary } from "plist";
 import { z } from "zod";
-import type { JsonValue } from "../domain/jsonValue.js";
-import { projectPlistValue } from "../domain/plistValue.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
+import { projectPlistValue } from "../../domain/apple/plistValue.js";
 import {
   omittedPrototypeKeysLimitation,
   parseXmlPropertyList,
-} from "../domain/propertyListKeys.js";
+} from "../../domain/propertyListKeys.js";
 import {
   keyedArchiveInputSchema,
   keyedArchiveResultSchema,
   projectKeyedArchive,
-} from "../domain/keyedArchive.js";
-import { DirectoryArtifactReader } from "./DirectoryArtifactReader.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+} from "../../domain/apple/keyedArchive.js";
+import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
+import { ArtifactReaderFailure } from "../ArtifactReader.js";
 
 const MAX_BYTES = 64 * 1024 * 1024;
 

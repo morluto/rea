@@ -69,6 +69,7 @@ const failedBoundary = (file, target) => {
     return "provider-construction";
   if (
     (file.startsWith("src/artifacts/javascript/") ||
+      file.startsWith("src/artifacts/apple/") ||
       /^src\/artifacts\/ArtifactHash\.(?:js|ts)$/u.test(file)) &&
     (["application", "composition", "server", "cli", "main"].includes(
       targetLayer,

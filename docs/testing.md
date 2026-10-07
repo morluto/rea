@@ -89,6 +89,12 @@ then checks that `inspect-artifact` plus `project-apple-application-graph`
 report the same bundle anatomy for all three through the CLI, with stdio MCP
 parity. It also checks that the DMG is detached afterwards. It runs in macOS CI.
 
+Apple artifact verifiers live in `scripts/verify/apple/`, with the macOS bundle
+builder under `scripts/fixtures/apple/` and NIB byte fixtures beside the decoder
+in `src/artifacts/apple/`. The npm entrypoints are unchanged. Format-specific
+Swift/XIB/asset sources and goldens retain their locations; real Apple workflows
+resolve them from the verifier file URL and run in the macOS CI lane.
+
 MCP SDK transport tests with recording providers remain integration tests.
 They are useful for schema drift and failure projection but do not prove that
 Hopper, Ghidra or another substituted engine works. `verify:package` proves

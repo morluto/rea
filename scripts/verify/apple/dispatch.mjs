@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
-import { inspectAppleDispatchMetadata } from "../dist/native/AppleDispatchMetadata.js";
+import { parseBinaryTarget } from "../../../dist/application/BinaryTargetResolver.js";
+import { inspectAppleDispatchMetadata } from "../../../dist/native/AppleDispatchMetadata.js";
 
 if (process.platform !== "darwin")
   throw new Error(
@@ -14,7 +14,7 @@ if (process.platform !== "darwin")
 const exec = promisify(execFile);
 const source = (name) =>
   fileURLToPath(
-    new URL(`../tests/conformance/native/${name}`, import.meta.url),
+    new URL(`../../../tests/conformance/native/${name}`, import.meta.url),
   );
 
 /** Both link modes: legacy LC_DYLD_INFO binds and the default chained fixups. */

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { digestSchema, prefixedDigestSchema } from "./digests.js";
+import { digestSchema, prefixedDigestSchema } from "../digests.js";
 
 const pathSchema = z.string().min(1);
 

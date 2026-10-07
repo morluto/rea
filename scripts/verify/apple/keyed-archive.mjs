@@ -10,7 +10,7 @@ import {
   artifactCli,
   artifactMcpResult,
   withArtifactMcp,
-} from "./lib/artifact-e2e.mjs";
+} from "../../lib/artifact-e2e.mjs";
 
 if (process.platform !== "darwin")
   throw new Error(
@@ -25,7 +25,7 @@ try {
     join(root, "modules"),
     fileURLToPath(
       new URL(
-        "../tests/conformance/native/keyed-archive.swift",
+        "../../../tests/conformance/native/keyed-archive.swift",
         import.meta.url,
       ),
     ),
@@ -66,7 +66,7 @@ try {
   const expected = JSON.parse(
     await readFile(
       new URL(
-        "../tests/fixtures/golden/keyed-archive/graph.json",
+        "../../../tests/fixtures/golden/keyed-archive/graph.json",
         import.meta.url,
       ),
       "utf8",
@@ -124,7 +124,7 @@ try {
     join(root, "modules"),
     fileURLToPath(
       new URL(
-        "../tests/conformance/native/keyed-archive-uid-root.swift",
+        "../../../tests/conformance/native/keyed-archive-uid-root.swift",
         import.meta.url,
       ),
     ),

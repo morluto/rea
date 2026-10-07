@@ -1,28 +1,25 @@
 import { createHash } from "node:crypto";
 import { parseBinary } from "plist";
 
-import { DirectoryArtifactReader } from "../artifacts/DirectoryArtifactReader.js";
-import { projectPlistValue } from "../domain/plistValue.js";
+import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
+import { projectPlistValue } from "../../domain/apple/plistValue.js";
 import {
   omittedPrototypeKeysLimitation,
   parseXmlPropertyList,
-} from "../domain/propertyListKeys.js";
-import {
-  decodeNibArchive,
-  type NibArchiveDocument,
-} from "../artifacts/NibArchive.js";
-import type { ArtifactEntry } from "../artifacts/ArtifactReader.js";
+} from "../../domain/propertyListKeys.js";
+import { decodeNibArchive, type NibArchiveDocument } from "./NibArchive.js";
+import type { ArtifactEntry } from "../ArtifactReader.js";
 import {
   buildInterfaceBuilderAnalysis,
   interfaceBuilderLimitsSchema,
   type InterfaceBuilderDocumentInput,
-} from "../domain/interfaceBuilderGraph.js";
+} from "../../domain/apple/interfaceBuilderGraph.js";
 import {
   mergeNibHierarchies,
   projectNibViewHierarchy,
   type NibHierarchyNode,
 } from "./NibViewHierarchy.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 
 const MAX_DOCUMENT_BYTES = 64 * 1024 * 1024;
 

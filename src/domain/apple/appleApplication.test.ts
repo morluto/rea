@@ -3,9 +3,9 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import { projectAppleApplication } from "./appleApplication.js";
-import { canonicalDigest } from "./comparisonSemantics.js";
-import { createEvidence, type Evidence } from "./evidence.js";
-import { jsonValueSchema } from "./jsonValue.js";
+import { canonicalDigest } from "../comparisonSemantics.js";
+import { createEvidence, type Evidence } from "../evidence.js";
+import { jsonValueSchema } from "../jsonValue.js";
 
 type EntryKind = "file" | "directory" | "symlink";
 type RootFormat = "ipa" | "zip" | "dmg" | "directory" | "asar";

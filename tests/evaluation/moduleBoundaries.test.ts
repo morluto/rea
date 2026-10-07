@@ -272,3 +272,22 @@ describe("test lane import boundaries", () => {
     if (!allowed) expect(result.stdout).toContain("no-restricted-imports");
   });
 });
+
+describe("Apple artifact producer ownership", () => {
+  it.each([
+    ["../../application/Workflow.js", false],
+    ["../../composition/android.js", false],
+    ["../../cli.js", false],
+    ["../../domain/apple/plistValue.js", true],
+    ["../DirectoryArtifactReader.js", true],
+  ])("checks the producer dependency %s", (dependency, allowed) => {
+    const violations = inspectModuleBoundaries(
+      "src/artifacts/apple/probe.ts",
+      `import type { Value } from ${JSON.stringify(dependency)};`,
+      process.cwd(),
+    );
+
+    expect(violations.length === 0).toBe(allowed);
+    if (!allowed) expect(violations[0]?.boundary).toBe("artifact-acquisition");
+  });
+});

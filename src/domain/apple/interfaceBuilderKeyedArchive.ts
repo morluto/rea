@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { jsonValueSchema } from "./jsonValue.js";
+import { jsonValueSchema } from "../jsonValue.js";
 
 const recordSchema = z.record(z.string(), z.unknown());
 

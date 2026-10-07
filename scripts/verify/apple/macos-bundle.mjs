@@ -9,11 +9,11 @@ import {
   artifactCliEvidence,
   artifactMcpResult,
   withArtifactMcp,
-} from "./lib/artifact-e2e.mjs";
+} from "../../lib/artifact-e2e.mjs";
 import {
   buildMacosBundleFixture,
   preflightMacosBundleFixture,
-} from "./lib/macos-bundle-fixture.mjs";
+} from "../../fixtures/apple/macos-bundle.mjs";
 
 const exec = promisify(execFile);
 

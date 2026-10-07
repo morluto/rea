@@ -7,12 +7,12 @@ import {
   type ProviderIdentity,
   type ExecutionOptions,
 } from "../application/AnalysisProvider.js";
-import { inspectBundleKeyedArchive } from "./KeyedArchiveReader.js";
+import { inspectBundleKeyedArchive } from "./apple/KeyedArchiveReader.js";
 import { basename, dirname } from "node:path";
 import { inventoryArtifact } from "../application/ArtifactInventory.js";
 import { extractArtifact } from "../application/ArtifactExtraction.js";
-import { analyzeInterfaceBuilderBundle } from "../application/InterfaceBuilderAnalysis.js";
-import { analyzeAppleAssetCatalogs } from "../application/AppleAssetCatalogAnalysis.js";
+import { analyzeInterfaceBuilderBundle } from "./apple/InterfaceBuilderAnalysis.js";
+import { analyzeAppleAssetCatalogs } from "./apple/AppleAssetCatalogAnalysis.js";
 import {
   ARTIFACT_ANALYSIS_OPERATIONS,
   artifactInventoryInputSchema,
@@ -24,7 +24,7 @@ import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { interfaceBuilderLimitsSchema } from "../domain/interfaceBuilderGraph.js";
+import { interfaceBuilderLimitsSchema } from "../domain/apple/interfaceBuilderGraph.js";
 import { err, ok } from "../domain/result.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import {

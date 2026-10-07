@@ -1,4 +1,4 @@
-import type { JsonValue } from "../domain/jsonValue.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 import { TextDecoder } from "node:util";
 
 const MAGIC = Buffer.from("NIBArchive", "ascii");

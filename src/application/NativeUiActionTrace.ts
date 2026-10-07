@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { AnalysisOperationPort } from "./AnalysisProvider.js";
 import type { EnhancedResult } from "./EnhancedToolTypes.js";
 import type { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
-import { interfaceBuilderAnalysisSchema } from "../domain/interfaceBuilderGraph.js";
+import { interfaceBuilderAnalysisSchema } from "../domain/apple/interfaceBuilderGraph.js";
 import {
   nativeInvestigationGraphSchema,
   nativeInvestigationTraceSchema,

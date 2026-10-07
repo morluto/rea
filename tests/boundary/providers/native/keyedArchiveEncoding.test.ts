@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { buildBinary, parse } from "plist";
 import { expect, it } from "vitest";
 
-import { inspectBundleKeyedArchive } from "../../../../src/artifacts/KeyedArchiveReader.js";
+import { inspectBundleKeyedArchive } from "../../../../src/artifacts/apple/KeyedArchiveReader.js";
 import { nativeFixture } from "../../../fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 

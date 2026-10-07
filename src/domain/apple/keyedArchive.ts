@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { jsonValueSchema, type JsonValue } from "./jsonValue.js";
+import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
 
 /** Select one archive within the active bundle and optionally one named root. */
 export const keyedArchiveInputSchema = z.strictObject({

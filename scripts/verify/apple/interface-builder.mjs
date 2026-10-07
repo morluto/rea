@@ -8,8 +8,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
-import { ArtifactProvider } from "../dist/artifacts/ArtifactProvider.js";
+import { parseBinaryTarget } from "../../../dist/application/BinaryTargetResolver.js";
+import { ArtifactProvider } from "../../../dist/artifacts/ArtifactProvider.js";
 
 const exec = promisify(execFile);
 const fixtureRoot = await mkdtemp(join(tmpdir(), "rea-interface-builder-"));
@@ -18,7 +18,7 @@ const resourcesPath = join(appPath, "Contents", "Resources");
 const executablePath = join(appPath, "Contents", "MacOS", "Fixture");
 const nibPath = join(resourcesPath, "Main.nib");
 const sourceRoot = fileURLToPath(
-  new URL("../tests/conformance/interface-builder/", import.meta.url),
+  new URL("../../../tests/conformance/interface-builder/", import.meta.url),
 );
 
 try {

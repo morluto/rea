@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { JsonValue } from "./jsonValue.js";
+import type { JsonValue } from "../jsonValue.js";
 
 const MAX_PLIST_DEPTH = 128;
 

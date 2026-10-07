@@ -10,7 +10,7 @@ import {
   artifactCli,
   artifactMcpResult,
   withArtifactMcp,
-} from "./lib/artifact-e2e.mjs";
+} from "../../lib/artifact-e2e.mjs";
 
 if (process.platform !== "darwin")
   throw new Error(
@@ -30,7 +30,7 @@ try {
     "clang",
     fileURLToPath(
       new URL(
-        "../tests/conformance/interface-builder/fixture.c",
+        "../../../tests/conformance/interface-builder/fixture.c",
         import.meta.url,
       ),
     ),
@@ -44,7 +44,10 @@ try {
   await exec("/usr/bin/xcrun", [
     "actool",
     fileURLToPath(
-      new URL("../tests/conformance/native/Assets.xcassets", import.meta.url),
+      new URL(
+        "../../../tests/conformance/native/Assets.xcassets",
+        import.meta.url,
+      ),
     ),
     "--compile",
     resources,

@@ -7,7 +7,7 @@ import { expect, it } from "vitest";
 import { z } from "zod";
 import { parseConfig } from "../../../src/config.js";
 import { createBinarySession } from "../../../src/application/runtime.js";
-import { keyedArchiveResultSchema } from "../../../src/domain/keyedArchive.js";
+import { keyedArchiveResultSchema } from "../../../src/domain/apple/keyedArchive.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";

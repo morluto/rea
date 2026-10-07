@@ -1,14 +1,14 @@
 import { createHash } from "node:crypto";
 import { lstat } from "node:fs/promises";
-import { DirectoryArtifactReader } from "../artifacts/DirectoryArtifactReader.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
+import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
 import {
   appleAssetCatalogInputSchema,
   parseAppleAssetCatalogRecords,
   projectAppleAssetCatalogPage,
-} from "../domain/appleAssetCatalog.js";
-import { execFileOutput } from "../process/ExecFileOutput.js";
+} from "../../domain/apple/appleAssetCatalog.js";
+import { execFileOutput } from "../../process/ExecFileOutput.js";
 
 const ASSETUTIL = "/usr/bin/assetutil";
 const MAX_CATALOG_BYTES = 64 * 1024 * 1024;
@@ -105,7 +105,7 @@ export const analyzeAppleAssetCatalogs = async (input: {
 
 const inspectAssetCatalogEntry = async (input: {
   readonly reader: DirectoryArtifactReader;
-  readonly entry: import("../artifacts/ArtifactReader.js").ArtifactEntry;
+  readonly entry: import("../ArtifactReader.js").ArtifactEntry;
   readonly runAssetUtil: (
     path: string,
     signal?: AbortSignal,
@@ -237,7 +237,7 @@ const runAssetUtil = async (
 
 const digestBounded = async (
   reader: DirectoryArtifactReader,
-  entry: import("../artifacts/ArtifactReader.js").ArtifactEntry,
+  entry: import("../ArtifactReader.js").ArtifactEntry,
   signal?: AbortSignal,
 ): Promise<string> => {
   if (entry.declaredSize === null || entry.declaredSize > MAX_CATALOG_BYTES)

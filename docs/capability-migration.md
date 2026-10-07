@@ -356,3 +356,32 @@ repository-root default. Both point to `_reference/firmware-integration/generate
 when invoked through the documented npm commands. Optional ext4/Ghidra lanes keep
 their own prerequisites. Source-fixture generation and synthetic producer tests
 do not establish real Binwalk/Unblob analysis or another host's execution support.
+
+## Apple artifact capability ownership
+
+`src/domain/apple/` owns Apple application anatomy/projection, asset catalog
+facts, Interface Builder graphs, keyed archive semantics and plist values.
+`src/application/apple/AppleApplicationService.ts` retains the shared workflow
+that projects authenticated IPA/macOS inventory Evidence.
+
+`src/artifacts/apple/` owns the actual producer boundary: directory acquisition,
+assetutil invocation, plist/NIB decoding, encoded view-parent interpretation and
+keyed archive inspection. These helpers are used by ArtifactProvider, retain
+its existing typed analysis boundary, injected assetutil seam and original reader
+cleanup, and do not require a new port for each helper. Producer code no longer
+lives in the application layer. Guards reject application/composition/caller
+imports from this owner while admitting pure facts and shared artifact readers.
+Adapter-source tests retain their assertions in the existing forked adapter lane.
+
+`scripts/verify/apple/` groups archive, asset catalog, Interface Builder,
+Objective-C/Swift dispatch and macOS bundle verification. The macOS bundle fixture
+builder lives in `scripts/fixtures/apple/`; NIB byte fixtures stay beside their
+artifact decoder. Existing format-specific conformance sources and goldens keep
+their locations, and relocated verifiers resolve them against their own file
+URLs. Public npm entrypoints and CLI/MCP contracts stay stable; generated-document
+cache inputs include the relocated runtime scripts and fixture builder.
+
+Portable decoder and injected producer tests establish their format/boundary
+claims. Actual Swift/Xcode, assetutil, native NIB, bundle signing and DMG lifecycle
+claims require the real Apple lane. Native binary API/value-flow semantics and
+shared cross-domain contract aggregates keep their separate owners.

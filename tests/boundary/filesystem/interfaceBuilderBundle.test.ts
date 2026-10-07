@@ -7,8 +7,8 @@ import { promisify } from "node:util";
 import { buildBinary } from "plist";
 import { describe, expect, it } from "vitest";
 
-import { analyzeInterfaceBuilderBundle } from "../../../src/application/InterfaceBuilderAnalysis.js";
-import { encodeNibArchiveFixture } from "../../../src/artifacts/NibArchive.fixture.js";
+import { analyzeInterfaceBuilderBundle } from "../../../src/artifacts/apple/InterfaceBuilderAnalysis.js";
+import { encodeNibArchiveFixture } from "../../../src/artifacts/apple/NibArchive.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const compile = promisify(execFile);

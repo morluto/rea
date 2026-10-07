@@ -16,9 +16,9 @@ import {
   requireSuccessfulProjection,
 } from "../../support/applicationSessionFixture.js";
 
-import { projectAppleApplicationEvidence } from "../../../src/application/AppleApplicationService.js";
+import { projectAppleApplicationEvidence } from "../../../src/application/apple/AppleApplicationService.js";
 import { runProviderAnalysis } from "../../../src/application/DirectAnalysis.js";
-import { appleApplicationProjectionResultSchema } from "../../../src/domain/appleApplication.js";
+import { appleApplicationProjectionResultSchema } from "../../../src/domain/apple/appleApplication.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 
 // Real ZIP entries cross the former component and bridge-candidate limits.
