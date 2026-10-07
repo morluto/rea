@@ -88,8 +88,24 @@ selected overload. Native/abstract methods with no decompiled body report
 These operations do not execute the APK or provide split APK/AAB handling,
 signature validation, full resource-table semantics, native-library analysis or
 Android runtime capture. Existing artifact inventory/extraction tools can supply
-archive evidence; `project_android_application_graph` remains a separate,
-execution-free inventory projection.
+archive evidence. Project that Evidence with the execution-free inventory tool:
+
+```sh
+rea project-android-application-graph '{"inventory_evidence":[<inventory_artifact Evidence>]}'
+```
+
+```json
+{
+  "name": "project_android_application_graph",
+  "arguments": {
+    "inventory_evidence": ["<inventory_artifact Evidence>"]
+  }
+}
+```
+
+The projection reports exact component paths and hashes, runtime-family hints,
+and path-based bridge hypotheses. It does not decode DEX or claim observed
+runtime calls.
 
 ## Resource and lifecycle limits
 

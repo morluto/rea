@@ -187,7 +187,23 @@ export const providerCatalog = (sources) => {
     {
       identity:
         sources.artifactProviders.JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER,
-      contracts: sources.applicationContracts.APPLICATION_TOOL_CONTRACTS,
+      contracts: sources.applicationContracts.APPLICATION_TOOL_CONTRACTS.filter(
+        ({ name }) =>
+          name !== "project_android_application_graph" &&
+          name !== "project_apple_application_graph",
+      ),
+    },
+    {
+      identity: sources.artifactProviders.ANDROID_APPLICATION_PROVIDER,
+      contracts: sources.applicationContracts.APPLICATION_TOOL_CONTRACTS.filter(
+        ({ name }) => name === "project_android_application_graph",
+      ),
+    },
+    {
+      identity: sources.artifactProviders.APPLE_APPLICATION_PROVIDER,
+      contracts: sources.applicationContracts.APPLICATION_TOOL_CONTRACTS.filter(
+        ({ name }) => name === "project_apple_application_graph",
+      ),
     },
     {
       identity: sources.artifactProviders.WEB_SCRIPT_EXPORT_PROVIDER,

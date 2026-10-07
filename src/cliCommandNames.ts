@@ -82,6 +82,8 @@ export const CLI_COMMANDS = Object.freeze({
   compareJavaScriptExportShapes: "compare-javascript-export-shapes",
   buildReconstructionObligationLedger: "build-reconstruction-obligation-ledger",
   evaluateReconstructionCoverage: "evaluate-reconstruction-coverage",
+  projectAndroidApplicationGraph: "project-android-application-graph",
+  projectAppleApplicationGraph: "project-apple-application-graph",
 });
 
 /** Ordered primary CLI inventory; aliases are intentionally excluded. */

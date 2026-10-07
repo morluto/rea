@@ -137,6 +137,8 @@ const PUBLISHED_TOOL_NAME_FLOOR = [
   "procedure_info",
   "procedure_pseudo_code",
   "procedure_references",
+  "project_android_application_graph",
+  "project_apple_application_graph",
   "project_managed_application_graph",
   "read_bytes",
   "read_function_instructions",

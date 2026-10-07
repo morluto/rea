@@ -181,6 +181,8 @@ kept under ignored `_reference/`. No Gradle build, Android SDK, emulator or
 application execution is required. The lane compares real CLI/MCP package,
 class search, class inventory, method decompilation and incoming references.
 See [Android analysis](android-analysis.md) for boundaries and resource budgets.
+Authenticated IPA inventory projection is documented in
+[Apple application analysis](apple-application-analysis.md).
 
 Synthetic producer regressions run independently:
 

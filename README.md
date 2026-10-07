@@ -163,7 +163,7 @@ Deep native binary analysis requires [Hopper](https://www.hopperapp.com/), [Ghid
 
 Firmware region inspection and explicit extraction use caller-supplied Binwalk and Unblob on Linux. See [Firmware analysis](docs/firmware-analysis.md) for setup, provenance, resource limits and native handoff.
 
-Static APK analysis uses a separately supplied headless JADX JAR and Java, with no emulator or APK execution. See [Android analysis](docs/android-analysis.md) for setup, CLI/MCP operations, coverage and public test fixtures.
+Static APK analysis uses a separately supplied headless JADX JAR and Java, with no emulator or APK execution. See [Android analysis](docs/android-analysis.md) for setup, CLI/MCP operations, coverage and public test fixtures. Authenticated IPA inventory Evidence can be projected with [Apple application analysis](docs/apple-application-analysis.md).
 
 Repository main and npm 4.1.0 include experimental Windows x64 Ghidra support for native x86-64 PE applications on local NTFS, with bundled Job Object, private-DACL, and path-admission controls. Check the [release boundary](docs/installation.md#released-package-and-main) before expecting this from an older npm package. See [Windows Ghidra P0](docs/windows-ghidra-p0.md) for prerequisites and verified scope.
 
@@ -384,20 +384,20 @@ See [native investigation](docs/native-investigation.md) for keyed archives, ins
 
 ## Tool catalog for investigation
 
-| Tool family               | Count | Examples                                                                                                                                                            |
-| ------------------------- | ----: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Native inspection         |    41 | functions, pseudocode, assembly, strings, symbols, calls, references, annotations, byte reads, and file offsets                                                     |
-| Investigation workflows   |    14 | app overviews, function dossiers, native APIs and dispatch, batch decompilation, feature traces, call paths, call graphs, Swift and Objective-C discovery           |
-| Native macOS utilities    |     7 | Mach-O metadata, code signatures, plists, architectures, and Swift demangling without launching Hopper                                                              |
-| Artifact graph            |     5 | directory and package inventories, compiled Interface Builder files, Apple asset catalogs, and extraction                                                           |
-| Managed PE/CLI            |     7 | .NET identity, metadata, CIL instructions, native dependencies, reconstruction imports, and build comparisons                                                       |
-| Firmware                  |     2 | Linux firmware region inspection and explicit extraction                                                                                                            |
-| Android APK               |     5 | package and manifest declarations, class search, member inventories, method decompilation, and incoming static references                                           |
-| Browser observation       |     9 | page structure, network metadata, scripts, source maps, WebMCP discovery, screenshots, and capture comparisons                                                      |
-| Electron analysis         |     5 | renderer observation, static app mapping, and static/runtime reconciliation                                                                                         |
-| JavaScript runtime        |     2 | Node/Electron Inspector target discovery, script locations, and execution-context events                                                                            |
-| Application workflows     |     9 | captured website script export; cross-layer feature traces, build comparisons, historical source mapping, static return-shape comparison, and reconstruction checks |
-| Workspace and observation |    21 | sessions, evidence bundles, navigation context, process/artifact/function comparisons, and open-question tracking                                                   |
+| Tool family               | Count | Examples                                                                                                                                                                                                 |
+| ------------------------- | ----: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Native inspection         |    41 | functions, pseudocode, assembly, strings, symbols, calls, references, annotations, byte reads, and file offsets                                                                                          |
+| Investigation workflows   |    14 | app overviews, function dossiers, native APIs and dispatch, batch decompilation, feature traces, call paths, call graphs, Swift and Objective-C discovery                                                |
+| Native macOS utilities    |     7 | Mach-O metadata, code signatures, plists, architectures, and Swift demangling without launching Hopper                                                                                                   |
+| Artifact graph            |     5 | directory and package inventories, compiled Interface Builder files, Apple asset catalogs, and extraction                                                                                                |
+| Managed PE/CLI            |     7 | .NET identity, metadata, CIL instructions, native dependencies, reconstruction imports, and build comparisons                                                                                            |
+| Firmware                  |     2 | Linux firmware region inspection and explicit extraction                                                                                                                                                 |
+| Android APK               |     5 | package and manifest declarations, class search, member inventories, method decompilation, and incoming static references                                                                                |
+| Browser observation       |     9 | page structure, network metadata, scripts, source maps, WebMCP discovery, screenshots, and capture comparisons                                                                                           |
+| Electron analysis         |     5 | renderer observation, static app mapping, and static/runtime reconciliation                                                                                                                              |
+| JavaScript runtime        |     2 | Node/Electron Inspector target discovery, script locations, and execution-context events                                                                                                                 |
+| Application workflows     |    11 | captured website script export; Android/Apple inventory projections; cross-layer feature traces, build comparisons, historical source mapping, static return-shape comparison, and reconstruction checks |
+| Workspace and observation |    21 | sessions, evidence bundles, navigation context, process/artifact/function comparisons, and open-question tracking                                                                                        |
 
 The public interface describes what the agent is trying to learn. Providers decide how to answer. macOS utilities handle common semantic inspection without launching Hopper; Hopper handles deeper native analysis; the process harness records direct behavioral captures.
 

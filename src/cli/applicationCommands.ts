@@ -1,6 +1,8 @@
 import { reconstructionCoverageEvaluationInputSchema } from "../domain/reconstructionCoverageInput.js";
 import { Cli, z } from "incur";
 
+import { projectAndroidApplicationEvidence } from "../application/AndroidApplicationService.js";
+import { projectAppleApplicationEvidence } from "../application/AppleApplicationService.js";
 import {
   compareApplicationVersionsEvidenceValidated,
   compareJavaScriptExportShapesEvidenceValidated,
@@ -16,6 +18,8 @@ import { logCliCommand } from "../cliLogging.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { type AnalysisError } from "../domain/analysisErrorBase.js";
+import { androidApplicationProjectionInputSchema } from "../domain/androidApplication.js";
+import { appleApplicationProjectionInputSchema } from "../domain/appleApplication.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "../logger.js";
 import { traceApplicationFeatureInputSchema } from "../domain/javascriptFeatureTraceSchemas.js";
@@ -80,6 +84,34 @@ export const registerApplicationCommands = (
   });
   registerObligationLedgerCommand(cli, logger);
   registerCoverageCommand(cli, logger);
+  registerJsonCommand({
+    cli,
+    logger,
+    name: CLI_COMMANDS.projectAndroidApplicationGraph,
+    description:
+      "Project authenticated APK inventory Evidence into an Android application graph",
+    inputSchema: androidApplicationProjectionInputSchema,
+    workflow: (input) => {
+      const result = projectAndroidApplicationEvidence(input);
+      return result.ok
+        ? { ok: true, value: jsonValueSchema.parse(result.value) }
+        : result;
+    },
+  });
+  registerJsonCommand({
+    cli,
+    logger,
+    name: CLI_COMMANDS.projectAppleApplicationGraph,
+    description:
+      "Project authenticated IPA inventory Evidence into an Apple application graph",
+    inputSchema: appleApplicationProjectionInputSchema,
+    workflow: (input) => {
+      const result = projectAppleApplicationEvidence(input);
+      return result.ok
+        ? { ok: true, value: jsonValueSchema.parse(result.value) }
+        : result;
+    },
+  });
 };
 
 const registerObligationLedgerCommand = (

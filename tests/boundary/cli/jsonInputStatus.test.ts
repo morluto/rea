@@ -18,6 +18,8 @@ const JSON_COMMANDS = [
     "build-reconstruction-obligation-ledger",
   ],
   ["evaluate-reconstruction-coverage", "evaluate-reconstruction-coverage"],
+  ["project-android-application-graph", "project-android-application-graph"],
+  ["project-apple-application-graph", "project-apple-application-graph"],
   ["import-managed-reconstruction", "import-managed-reconstruction"],
   ["verify-managed-native-boundaries", "verify-managed-native-boundaries"],
   ["project-managed-application-graph", "project-managed-application-graph"],
