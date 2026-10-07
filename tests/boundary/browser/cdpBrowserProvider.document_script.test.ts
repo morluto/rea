@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
@@ -6,20 +6,9 @@ import { analyzeWebBundleInputSchema } from "../../../src/domain/webBundleAnalys
 import { discoverWebMcpToolsInputSchema } from "../../../src/domain/webMcpDiscovery.js";
 import { captureWebScreenshotInputSchema } from "../../../src/domain/webScreenshot.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
-import { describeBrowser, trackBrowser } from "./cdpBrowserProvider.support.js";
+import { trackBrowser } from "./cdpBrowserProvider.support.js";
 
-describeBrowser("CdpBrowserProvider: document script 1", () => {
-  it("rejects unknown WebMCP discovery fields", () => {
-    expect(
-      discoverWebMcpToolsInputSchema.safeParse({
-        cdp_endpoint: "http://127.0.0.1:9222",
-        allowed_origins: ["https://example.test"],
-        target_id: "target",
-        unknown_field: true,
-      }).success,
-    ).toBe(false);
-  });
-
+describe("CdpBrowserProvider: approved accessibility and source capture", () => {
   it("captures approved accessibility text inline", async () => {
     const browser = await startFakeCdpBrowser();
     trackBrowser(browser);
@@ -120,7 +109,7 @@ describeBrowser("CdpBrowserProvider: document script 1", () => {
   });
 });
 
-describeBrowser("CdpBrowserProvider: transient WebMCP frames", () => {
+describe("CdpBrowserProvider: transient WebMCP frames", () => {
   it("drops stale child tools and reports partial coverage when a blank commit remains", async () => {
     const browser = await startFakeCdpBrowser({
       webMcpTools: true,
@@ -205,7 +194,7 @@ describeBrowser("CdpBrowserProvider: transient WebMCP frames", () => {
   });
 });
 
-describeBrowser("CdpBrowserProvider: document script 2", () => {
+describe("CdpBrowserProvider: WebMCP discovery and completeness", () => {
   it("discovers untrusted WebMCP declarations without registering or invoking them", async () => {
     const browser = await startFakeCdpBrowser({ webMcpTools: true });
     trackBrowser(browser);
@@ -360,7 +349,7 @@ describeBrowser("CdpBrowserProvider: document script 2", () => {
   });
 });
 
-describeBrowser("CdpBrowserProvider WebMCP inventory completeness", () => {
+describe("CdpBrowserProvider WebMCP inventory completeness", () => {
   it("retains every field in a large declared WebMCP input schema", async () => {
     const propertyCount = 5_001;
     const browser = await startFakeCdpBrowser({
@@ -392,7 +381,7 @@ describeBrowser("CdpBrowserProvider WebMCP inventory completeness", () => {
   });
 });
 
-describeBrowser("CdpBrowserProvider: document script 3", () => {
+describe("CdpBrowserProvider: frame scope and screenshots", () => {
   it("removes WebMCP declarations after their child frame leaves scope", async () => {
     const browser = await startFakeCdpBrowser({
       webMcpTools: true,
@@ -474,7 +463,7 @@ describeBrowser("CdpBrowserProvider: document script 3", () => {
   });
 });
 
-describeBrowser("CdpBrowserProvider: document script 4", () => {
+describe("CdpBrowserProvider: complete passive inventories", () => {
   it("returns every frame, resource, worker, accessibility, and storage inventory item", async () => {
     const browser = await startFakeCdpBrowser({ extraCollections: true });
     trackBrowser(browser);
@@ -501,7 +490,7 @@ describeBrowser("CdpBrowserProvider: document script 4", () => {
   });
 });
 
-describeBrowser("CdpBrowserProvider: WebMCP registration owners", () => {
+describe("CdpBrowserProvider: WebMCP registration owners", () => {
   it.each(["retain", "remove-second"] as const)(
     "keeps same-URL frame owners separate: %s",
     async (mode) => {

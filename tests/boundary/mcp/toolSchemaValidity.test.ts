@@ -14,6 +14,7 @@ interface ToolSchemas {
   readonly name: string;
   readonly inputSchema: Record<string, unknown>;
   readonly outputSchema?: Record<string, unknown> | undefined;
+  readonly annotations?: Record<string, unknown> | undefined;
 }
 
 function schemaErrors(tools: readonly ToolSchemas[]): string[] {
@@ -59,6 +60,74 @@ function expectStrictInputSchemaParity(
     expect(ajv.compile(tool.inputSchema)(malformed), name).toBe(false);
   }
 }
+
+function expectKnownAuthorityHints(tools: readonly ToolSchemas[]): void {
+  const advertised = new Map(tools.map((tool) => [tool.name, tool]));
+  const expected = {
+    read_bytes: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    annotate_native_function: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    unset_bookmark: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    open_binary: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    close_binary: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+  } as const;
+
+  for (const [name, annotations] of Object.entries(expected))
+    expect(advertised.get(name), name).toMatchObject({ annotations });
+}
+
+function expectRecursivePropertyDescriptions(
+  schema: unknown,
+  path: string,
+): void {
+  if (!isRecord(schema)) return;
+  if (isRecord(schema.properties)) {
+    for (const [property, child] of Object.entries(schema.properties)) {
+      expect(child, `${path}.${property}`).toMatchObject({
+        description: expect.any(String),
+      });
+      expectRecursivePropertyDescriptions(child, `${path}.${property}`);
+    }
+  }
+
+  for (const key of ["items", "additionalProperties"])
+    if (schema[key] !== undefined)
+      expectRecursivePropertyDescriptions(schema[key], path);
+  for (const key of ["allOf", "anyOf", "oneOf", "prefixItems"]) {
+    const children = schema[key];
+    if (Array.isArray(children))
+      children.forEach((child: unknown, index: number) =>
+        expectRecursivePropertyDescriptions(child, `${path}.${key}[${index}]`),
+      );
+  }
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const advertiseAndEnforceProcessEnvironmentKeyConstraint =
   async (): Promise<void> => {
@@ -150,15 +219,6 @@ describe("MCP JSON Schema validity", () => {
       expect(validate(value)).toBe(false);
   });
 
-  it("uses an oracle that rejects empty prefixItems under Draft 2020-12", () => {
-    const ajv = new Ajv2020({ strict: false, validateFormats: false });
-    expect(ajv.defaultMeta()).toBe(
-      "https://json-schema.org/draft/2020-12/schema",
-    );
-    expect(ajv.validateSchema({ type: "array", prefixItems: [] })).toBe(false);
-    expect(ajv.validateSchema({ type: "array", maxItems: 0 })).toBe(true);
-  });
-
   it("advertises valid input and output schemas for every canonical tool", async () => {
     const server = new McpServer({ name: "schema-validation", version: "0" });
     const client = new Client({ name: "schema-validation", version: "0" });
@@ -180,6 +240,40 @@ describe("MCP JSON Schema validity", () => {
         TOOL_CONTRACTS.map(({ name }) => name).sort(),
       );
       expect(schemaErrors(tools)).toEqual([]);
+      expectKnownAuthorityHints(tools);
+      const byName = new Map(tools.map((tool) => [tool.name, tool]));
+      const catalogProjection = tools.map((tool) => ({
+        name: tool.name,
+        title: tool.title,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        outputSchema: tool.outputSchema,
+        annotations: tool.annotations,
+      }));
+      expect(catalogProjection).toEqual(
+        GENERATED_MCP_TOOL_CATALOG.map((tool) => ({
+          name: tool.name,
+          title: tool.title,
+          description: tool.description,
+          inputSchema: tool.inputSchema,
+          outputSchema: tool.outputSchema,
+          annotations: tool.annotations,
+        })),
+      );
+      for (const contract of TOOL_CONTRACTS) {
+        const tool = byName.get(contract.name);
+        expect(tool?.title?.trim(), contract.name).toBeTruthy();
+        expect(tool?.description?.trim(), contract.name).toBeTruthy();
+        expect(tool?.inputSchema.examples, contract.name).toEqual(
+          contract.examples.map(({ input }) => input),
+        );
+        for (const example of contract.examples)
+          expect(
+            contract.inputSchema.safeParse(example.input).success,
+            `${contract.name}: ${example.title}`,
+          ).toBe(true);
+        expectRecursivePropertyDescriptions(tool?.inputSchema, contract.name);
+      }
     } finally {
       await Promise.allSettled([client.close(), server.close()]);
     }
@@ -253,10 +347,6 @@ describe("MCP JSON Schema validity", () => {
     } finally {
       await Promise.allSettled([client.close(), server.close()]);
     }
-  });
-
-  it("ships valid input and output schemas in the generated catalog", () => {
-    expect(schemaErrors(GENERATED_MCP_TOOL_CATALOG)).toEqual([]);
   });
 });
 

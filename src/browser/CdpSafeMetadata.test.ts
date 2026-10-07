@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { safeResponseMetadata } from "../../../src/browser/CdpSafeMetadata.js";
+import { safeResponseMetadata } from "./CdpSafeMetadata.js";
 
 const origin = "https://app.example.test";
 

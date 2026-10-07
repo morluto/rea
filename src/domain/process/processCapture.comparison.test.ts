@@ -5,36 +5,10 @@ import {
   emptyProcessCapture as emptyCapture,
 } from "./processCapture.fixture.js";
 
-it("classifies missing observations as unknown and one-sided evidence as added", () => {
-  const base = {
-    manifest: emptyCapture().manifest,
-    settlement: emptyCapture().settlement,
-    normalization: {
-      paths: true,
-      pids: true,
-      ports: true,
-      time_bucket_ms: 10,
-      patterns: [],
-    },
-    frames: [],
-    rendered_frames: [],
-    interaction_events: [],
-    exit: { code: 0, signal: null, reason: "exited" as const },
-    process_samples: [],
-    filesystem_checkpoints: emptyCapture().filesystem_checkpoints,
-    files_before: [],
-    files_after: [],
-    filesystem_effects: [],
-    truncated: false,
-    limitations: [],
-    residual_unknowns: [],
-    cleanup: {
-      owned_process_group: "verified" as const,
-      temporary_root: "removed" as const,
-    },
-  };
-  const added = compareProcessCaptures(base, {
-    ...base,
+it("distinguishes added evidence from unknown observations", () => {
+  const capture = emptyCapture();
+  const added = compareProcessCaptures(capture, {
+    ...capture,
     frames: [{ sequence: 0, at_ms: 0, data: "new" }],
     rendered_frames: [
       {
@@ -50,19 +24,30 @@ it("classifies missing observations as unknown and one-sided evidence as added",
       },
     ],
   });
-  expect(added.terminal).toBe("added");
-  expect(added.status).toBe("changed");
-  const unknown = compareProcessCaptures(
-    { ...base, residual_unknowns: [{ scope: "process", reason: "sampled" }] },
-    base,
-  );
-  expect(unknown.process).toBe("unknown");
-  expect(unknown.status).toBe("unknown");
+  expect(added).toMatchObject({ terminal: "added", status: "changed" });
+
+  for (const [scope, dimension] of [
+    ["process", "process"],
+    ["interaction", "interaction"],
+  ] as const) {
+    expect(
+      compareProcessCaptures(
+        {
+          ...capture,
+          residual_unknowns: [{ scope, reason: "observation was partial" }],
+        },
+        capture,
+      ),
+    ).toMatchObject({
+      status: "unknown",
+      [dimension]: "unknown",
+      terminal: "unchanged",
+    });
+  }
 });
 
-it("treats equivalent normalization records as equal regardless of member order", () => {
+it("compares raw terminal and process observations while honoring normalization shape", () => {
   const capture = emptyCapture();
-
   expect(
     compareProcessCaptures(capture, {
       ...capture,
@@ -78,84 +63,61 @@ it("treats equivalent normalization records as equal regardless of member order"
     status: "unchanged",
     first_divergence: { status: "none" },
   });
+
+  const terminal = compareProcessCaptures(
+    { ...capture, frames: [{ sequence: 0, at_ms: 0, data: "bar" }] },
+    { ...capture, frames: [{ sequence: 0, at_ms: 0, data: "foo\rbar" }] },
+  );
+  expect(terminal).toMatchObject({
+    terminal: "changed",
+    first_divergence: { status: "found", dimension: "terminal" },
+  });
+
+  expect(
+    compareProcessCaptures(
+      {
+        ...capture,
+        process_samples: [
+          {
+            at_ms: 10,
+            pid: 1,
+            parent_pid: 0,
+            process_group_id: 1,
+            session_id: 1,
+            command: "worker",
+          },
+        ],
+      },
+      {
+        ...capture,
+        process_samples: [
+          {
+            at_ms: 20,
+            pid: 1,
+            parent_pid: 2,
+            process_group_id: 1,
+            session_id: 1,
+            command: "worker",
+          },
+        ],
+      },
+    ),
+  ).toMatchObject({ process: "changed", status: "changed" });
 });
 
-it("compares raw terminal chunks even when rendered states agree", () => {
-  const capture = {
-    manifest: emptyCapture().manifest,
-    settlement: emptyCapture().settlement,
-    normalization: {
-      paths: true,
-      pids: true,
-      ports: true,
-      time_bucket_ms: 10,
-      patterns: [],
-    },
-    frames: [{ sequence: 0, at_ms: 0, data: "bar" }],
-    rendered_frames: [],
-    interaction_events: [],
-    exit: { code: 0, signal: null, reason: "exited" as const },
-    process_samples: [],
-    filesystem_checkpoints: emptyCapture().filesystem_checkpoints,
-    files_before: [],
-    files_after: [],
-    filesystem_effects: [],
-    truncated: false,
-    limitations: [],
-    residual_unknowns: [],
-    cleanup: {
-      owned_process_group: "verified" as const,
-      temporary_root: "removed" as const,
-    },
-  };
-
-  const comparison = compareProcessCaptures(capture, {
+it("keeps filesystem comparison unknown without coverage and reports observed changes", () => {
+  const capture = emptyCapture();
+  const incomplete = {
     ...capture,
-    frames: [{ sequence: 0, at_ms: 0, data: "foo\rbar" }],
-  });
-  expect(comparison.terminal).toBe("changed");
-  expect(comparison.first_divergence).toMatchObject({
-    status: "found",
-    dimension: "terminal",
-  });
-});
-
-it("keeps filesystem evidence unknown when stable snapshots match", () => {
-  const capture = {
-    manifest: emptyCapture().manifest,
-    settlement: emptyCapture().settlement,
-    normalization: {
-      paths: true,
-      pids: true,
-      ports: true,
-      time_bucket_ms: 10,
-      patterns: [],
-    },
-    frames: [],
-    rendered_frames: [],
-    interaction_events: [],
-    exit: { code: 0, signal: null, reason: "exited" as const },
-    process_samples: [],
-    filesystem_checkpoints: emptyCapture().filesystem_checkpoints,
-    files_before: [],
-    files_after: [],
-    filesystem_effects: [],
-    truncated: false,
-    limitations: [],
     residual_unknowns: [
       { scope: "filesystem" as const, reason: "watcher unavailable" },
     ],
-    cleanup: {
-      owned_process_group: "verified" as const,
-      temporary_root: "removed" as const,
-    },
   };
+  expect(compareProcessCaptures(incomplete, incomplete)).toMatchObject({
+    filesystem: "unknown",
+    status: "unknown",
+  });
 
-  const comparison = compareProcessCaptures(capture, capture);
-  expect(comparison.filesystem).toBe("unknown");
-  expect(comparison.status).toBe("unknown");
-
-  const complete = { ...capture, residual_unknowns: [] };
   const finalFile = {
     path: "root_0:created.txt",
     type: "file" as const,
@@ -164,35 +126,35 @@ it("keeps filesystem evidence unknown when stable snapshots match", () => {
     sha256: "a".repeat(64),
     symlink_target: null,
   };
-  const changed = compareProcessCaptures(complete, {
-    ...complete,
-    filesystem_checkpoints: [
-      { name: "before", at_ms: 0, files: [], effects: [], truncated: false },
-      {
-        name: "after_settlement",
-        at_ms: 10,
-        files: [finalFile],
-        effects: [
-          {
-            path: finalFile.path,
-            status: "created",
-            before: null,
-            after: finalFile,
-          },
-        ],
-        truncated: false,
-      },
-    ],
-    files_after: [finalFile],
-    filesystem_effects: [
-      {
-        path: finalFile.path,
-        status: "created",
-        before: null,
-        after: finalFile,
-      },
-    ],
-  });
-  expect(changed.filesystem).toBe("changed");
-  expect(changed.status).toBe("changed");
+  expect(
+    compareProcessCaptures(capture, {
+      ...capture,
+      filesystem_checkpoints: [
+        { name: "before", at_ms: 0, files: [], effects: [], truncated: false },
+        {
+          name: "after_settlement",
+          at_ms: 10,
+          files: [finalFile],
+          effects: [
+            {
+              path: finalFile.path,
+              status: "created",
+              before: null,
+              after: finalFile,
+            },
+          ],
+          truncated: false,
+        },
+      ],
+      files_after: [finalFile],
+      filesystem_effects: [
+        {
+          path: finalFile.path,
+          status: "created",
+          before: null,
+          after: finalFile,
+        },
+      ],
+    }),
+  ).toMatchObject({ filesystem: "changed", status: "changed" });
 });

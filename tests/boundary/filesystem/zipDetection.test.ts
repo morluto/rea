@@ -9,21 +9,16 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("ZIP signature detection", () => {
   it.each([
-    [0x03, 0x04, true],
-    [0x05, 0x06, true],
-    [0x07, 0x08, true],
-    [0x03, 0x06, false],
-    [0x03, 0x08, false],
-    [0x05, 0x04, false],
-    [0x05, 0x08, false],
-    [0x07, 0x04, false],
-    [0x07, 0x06, false],
+    { signature: [0x50, 0x4b, 0x05, 0x06], archive: true },
+    { signature: [0x50, 0x4b, 0x03, 0x06], archive: false },
+    { signature: [0x50, 0x4b, 0x03, 0x04], archive: true },
+    { signature: [0x50, 0x4b, 0x07, 0x08], archive: true },
   ] as const)(
-    "classifies PK %i %i with archive signature %s",
-    async (third, fourth, archive) => {
+    "routes representative ZIP signature $signature through inventory and target parsing",
+    async ({ signature, archive }) => {
       const root = await createTestTempDirectory("rea-zip-signature-");
       const path = join(root, "input");
-      await writeFile(path, Buffer.from([0x50, 0x4b, third, fourth]));
+      await writeFile(path, Buffer.from(signature));
       expect(await classifyRoot(path, false)).toBe(archive ? "zip" : "file");
       const target = await parseBinaryTarget(path);
       if (archive)

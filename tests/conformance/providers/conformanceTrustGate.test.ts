@@ -4,8 +4,6 @@ import type { VerifierContract } from "../../../src/domain/conformancePackage.js
 import {
   compareDimension,
   evaluateTrustGate,
-  isSemanticDimension,
-  isVolatileDimension,
   trustGateResultSchema,
 } from "../../../src/domain/conformanceTrustGate.js";
 
@@ -35,52 +33,6 @@ const expectDivergenceRejected = (
 };
 
 describe("conformance trust gates", () => {
-  it("classifies volatile dimensions correctly", () => {
-    expect(isVolatileDimension("timing")).toBe(true);
-    expect(isVolatileDimension("timestamp")).toBe(true);
-    expect(isVolatileDimension("pid")).toBe(true);
-    expect(isVolatileDimension("exit_code")).toBe(false);
-  });
-
-  it("classifies semantic dimensions correctly", () => {
-    expect(isSemanticDimension("exit_code")).toBe(true);
-    expect(isSemanticDimension("stdout")).toBe(true);
-    expect(isSemanticDimension("timing")).toBe(false);
-  });
-
-  it("matches identical values", () => {
-    const result = compareDimension("exit_code", 0, 0);
-    expect(result.status).toBe("match");
-  });
-
-  it("detects mismatches", () => {
-    const result = compareDimension("exit_code", 0, 1);
-    expect(result.status).toBe("mismatch");
-  });
-
-  it("ignores volatile dimensions", () => {
-    const result = compareDimension("timing", 100, 200);
-    expect(result.status).toBe("match");
-    expect(result.message).toContain("volatile");
-  });
-
-  it("handles truncated evidence", () => {
-    const result = compareDimension("exit_code", 0, null, {
-      truncated: true,
-    });
-    expect(result.status).toBe("truncated");
-  });
-
-  it("handles undefined values", () => {
-    const result = compareDimension("exit_code", undefined, undefined);
-    expect(result.status).toBe("unknown");
-  });
-
-  it("handles missing actual", () => {
-    const result = compareDimension("exit_code", 0, undefined);
-    expect(result.status).toBe("unknown");
-  });
-
   it("keeps semantic unknown and truncated values out of equivalence", () => {
     expect(
       compareDimension(

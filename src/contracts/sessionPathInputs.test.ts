@@ -12,263 +12,156 @@ import {
 import { importEvidenceBundleInputSchema } from "./sessionToolSchemas.js";
 import { binarySessionInputSchema } from "./sessionStatusContract.js";
 
-const openBinaryAbsolute = (snapshot_path: string) =>
-  openBinaryInputSchema.safeParse({ path: "/tmp/fixture", snapshot_path });
+type PathCase = {
+  readonly name: string;
+  readonly accepts: (value: unknown) => boolean;
+  readonly relative: unknown[];
+  readonly absolute: string;
+  readonly omitted?: () => boolean;
+};
 
-describe("session snapshot path inputs require absolute local paths", () => {
-  it("rejects a relative snapshot path when opening a binary", () => {
-    expect(openBinaryAbsolute("relative/analysis.json").success).toBe(false);
-  });
-
-  it("rejects a parent-relative snapshot path when opening a binary", () => {
-    expect(openBinaryAbsolute("../outside/analysis.json").success).toBe(false);
-  });
-
-  it("accepts an absolute snapshot path when opening a binary", () => {
-    expect(openBinaryAbsolute("/tmp/rea/analysis.json").success).toBe(true);
-  });
-
-  it("still accepts open_binary without a snapshot path", () => {
-    expect(
+const cases: readonly PathCase[] = [
+  {
+    name: "open binary snapshot",
+    accepts: (snapshot_path) =>
+      openBinaryInputSchema.safeParse({ path: "/tmp/fixture", snapshot_path })
+        .success,
+    relative: ["relative/analysis.json", "../outside/analysis.json"],
+    absolute: "/tmp/rea/analysis.json",
+    omitted: () =>
       openBinaryInputSchema.safeParse({ path: "/tmp/fixture" }).success,
-    ).toBe(true);
-  });
-
-  it("rejects a relative snapshot path when closing a binary", () => {
-    expect(
-      closeBinaryInputSchema.safeParse({ snapshot_path: "analysis.json" })
-        .success,
-    ).toBe(false);
-  });
-
-  it("accepts an absolute snapshot path when closing a binary", () => {
-    expect(
-      closeBinaryInputSchema.safeParse({ snapshot_path: "/tmp/analysis.json" })
-        .success,
-    ).toBe(true);
-  });
-
-  it("still accepts close_binary without a snapshot path", () => {
-    expect(closeBinaryInputSchema.safeParse({}).success).toBe(true);
-  });
-});
-
-describe("evidence bundle export path requires an absolute local path", () => {
-  it("rejects a relative export path", () => {
-    expect(
-      exportEvidenceBundleInputSchema.safeParse({ path: "out/bundle.json" })
-        .success,
-    ).toBe(false);
-  });
-
-  it("rejects a parent-relative export path", () => {
-    expect(
-      exportEvidenceBundleInputSchema.safeParse({
-        path: "../../bundle.json",
+  },
+  {
+    name: "close binary snapshot",
+    accepts: (snapshot_path) =>
+      closeBinaryInputSchema.safeParse({ snapshot_path }).success,
+    relative: ["analysis.json"],
+    absolute: "/tmp/analysis.json",
+    omitted: () => closeBinaryInputSchema.safeParse({}).success,
+  },
+  {
+    name: "evidence bundle export",
+    accepts: (path) =>
+      exportEvidenceBundleInputSchema.safeParse({ path }).success,
+    relative: ["out/bundle.json", "../../bundle.json"],
+    absolute: "/tmp/bundle.json",
+  },
+  {
+    name: "managed target",
+    accepts: (path) => managedArtifactInputSchema.safeParse({ path }).success,
+    relative: ["bin/app.dll"],
+    absolute: "/tmp/app.dll",
+    omitted: () => managedArtifactInputSchema.safeParse({}).success,
+  },
+  {
+    name: "open binary target",
+    accepts: (path) => openBinaryInputSchema.safeParse({ path }).success,
+    relative: ["fixtures/app.bin"],
+    absolute: "/tmp/fixture.bin",
+  },
+  {
+    name: "evidence bundle import",
+    accepts: (path) =>
+      importEvidenceBundleInputSchema.safeParse({ path }).success,
+    relative: ["evidence.json"],
+    absolute: "/tmp/evidence.json",
+  },
+  {
+    name: "firmware inspection",
+    accepts: (path) =>
+      firmwareInputSchemas.inspect_firmware_regions.safeParse({ path }).success,
+    relative: ["firmware.bin"],
+    absolute: "/tmp/firmware.bin",
+  },
+  {
+    name: "firmware extraction",
+    accepts: (path) =>
+      firmwareInputSchemas.extract_firmware.safeParse({
+        path,
+        output_directory: "/tmp/firmware-output",
       }).success,
-    ).toBe(false);
-  });
+    relative: ["firmware.bin"],
+    absolute: "/tmp/firmware.bin",
+  },
+  {
+    name: "browser executable",
+    accepts: (executable_path) =>
+      browserScenarioBrowserSchema.safeParse({
+        mode: "launch",
+        executable_path,
+      }).success,
+    relative: ["chrome"],
+    absolute: "/opt/chromium/chrome",
+  },
+  {
+    name: "Electron executable",
+    accepts: (executable_path) =>
+      electronActiveObservationInputSchema.safeParse({
+        executable_path,
+        application_path: "/tmp/electron-app/main.js",
+      }).success,
+    relative: ["Electron"],
+    absolute: "/Applications/Electron.app/Contents/MacOS/Electron",
+  },
+  {
+    name: "Electron application",
+    accepts: (application_path) =>
+      electronActiveObservationInputSchema.safeParse({
+        executable_path: "/Applications/Electron.app/Contents/MacOS/Electron",
+        application_path,
+      }).success,
+    relative: ["main.js"],
+    absolute: "/tmp/electron-app/main.js",
+  },
+  {
+    name: "Electron application root",
+    accepts: (application_root) =>
+      electronActiveObservationInputSchema.safeParse({
+        executable_path: "/Applications/Electron.app/Contents/MacOS/Electron",
+        application_path: "/tmp/electron-app/main.js",
+        application_root,
+      }).success,
+    relative: ["app"],
+    absolute: "/tmp/electron-app",
+    omitted: () =>
+      electronActiveObservationInputSchema.safeParse({
+        executable_path: "/Applications/Electron.app/Contents/MacOS/Electron",
+        application_path: "/tmp/electron-app/main.js",
+      }).success,
+  },
+  {
+    name: "expected server",
+    accepts: (expected_server_path) =>
+      binarySessionInputSchema.safeParse({ expected_server_path }).success,
+    relative: ["dist/main.js"],
+    absolute: "/opt/rea/dist/main.js",
+    omitted: () => binarySessionInputSchema.safeParse({}).success,
+  },
+];
 
-  it("accepts an absolute export path and keeps overwrite semantics", () => {
-    expect(
-      exportEvidenceBundleInputSchema.safeParse({
-        path: "/tmp/bundle.json",
-      }),
-    ).toMatchObject({ success: true, data: { overwrite: false } });
-  });
+it.each(cases)("$name requires an absolute local path", (pathCase) => {
+  for (const relative of pathCase.relative)
+    expect(pathCase.accepts(relative), pathCase.name).toBe(false);
+  expect(pathCase.accepts(pathCase.absolute), pathCase.name).toBe(true);
+  if (pathCase.omitted !== undefined)
+    expect(pathCase.omitted(), pathCase.name).toBe(true);
 });
 
-describe("managed target path requires an absolute local path", () => {
-  it("rejects a relative managed target path", () => {
-    expect(
-      managedArtifactInputSchema.safeParse({ path: "bin/app.dll" }).success,
-    ).toBe(false);
-  });
-
-  it("accepts an absolute managed target path", () => {
-    expect(
-      managedArtifactInputSchema.safeParse({ path: "/tmp/app.dll" }).success,
-    ).toBe(true);
-  });
-
-  it("still accepts omitting the path to reuse the active target", () => {
-    expect(managedArtifactInputSchema.safeParse({}).success).toBe(true);
-  });
+it("keeps evidence bundle export overwrite disabled by default", () => {
+  expect(
+    exportEvidenceBundleInputSchema.safeParse({ path: "/tmp/bundle.json" }),
+  ).toMatchObject({ success: true, data: { overwrite: false } });
 });
 
 describe.runIf(process.platform === "win32")(
-  "windows absolute path forms on windows hosts",
+  "Windows absolute path forms",
   () => {
-    it("accepts drive-letter backslash snapshot paths", () => {
-      expect(
-        closeBinaryInputSchema.safeParse({
-          snapshot_path: "C:\\rea\\analysis.json",
-        }).success,
-      ).toBe(true);
-    });
-
-    it("accepts drive-letter forward-slash snapshot paths", () => {
-      expect(
-        closeBinaryInputSchema.safeParse({
-          snapshot_path: "C:/rea/analysis.json",
-        }).success,
-      ).toBe(true);
-    });
-
-    it("accepts forward-slash export paths", () => {
-      expect(
-        exportEvidenceBundleInputSchema.safeParse({
-          path: "C:/rea/bundle.json",
-        }).success,
-      ).toBe(true);
+    it.each([
+      [closeBinaryInputSchema, { snapshot_path: "C:\\rea\\analysis.json" }],
+      [closeBinaryInputSchema, { snapshot_path: "C:/rea/analysis.json" }],
+      [exportEvidenceBundleInputSchema, { path: "C:/rea/bundle.json" }],
+    ])("accepts %o", (schema, input) => {
+      expect(schema.safeParse(input).success).toBe(true);
     });
   },
 );
-
-describe("open binary target path requires an absolute local path", () => {
-  it("rejects a relative target path", () => {
-    expect(
-      openBinaryInputSchema.safeParse({ path: "fixtures/app.bin" }).success,
-    ).toBe(false);
-  });
-
-  it("accepts an absolute target path", () => {
-    expect(
-      openBinaryInputSchema.safeParse({ path: "/tmp/fixture.bin" }).success,
-    ).toBe(true);
-  });
-});
-
-describe("evidence bundle import path requires an absolute local path", () => {
-  it("rejects a relative bundle path", () => {
-    expect(
-      importEvidenceBundleInputSchema.safeParse({ path: "evidence.json" })
-        .success,
-    ).toBe(false);
-  });
-
-  it("accepts an absolute bundle path", () => {
-    expect(
-      importEvidenceBundleInputSchema.safeParse({ path: "/tmp/evidence.json" })
-        .success,
-    ).toBe(true);
-  });
-});
-
-describe("firmware input path requires an absolute local path", () => {
-  it("rejects a relative firmware path when inspecting regions", () => {
-    expect(
-      firmwareInputSchemas.inspect_firmware_regions.safeParse({
-        path: "firmware.bin",
-      }).success,
-    ).toBe(false);
-  });
-
-  it("rejects a relative firmware path when extracting", () => {
-    expect(
-      firmwareInputSchemas.extract_firmware.safeParse({
-        path: "firmware.bin",
-        output_directory: "/tmp/firmware-output",
-      }).success,
-    ).toBe(false);
-  });
-
-  it("accepts an absolute firmware path", () => {
-    expect(
-      firmwareInputSchemas.inspect_firmware_regions.safeParse({
-        path: "/tmp/firmware.bin",
-      }).success,
-    ).toBe(true);
-  });
-});
-
-describe("browser executable path requires an absolute local path", () => {
-  it("rejects a bare executable name", () => {
-    expect(
-      browserScenarioBrowserSchema.safeParse({
-        mode: "launch",
-        executable_path: "chrome",
-      }).success,
-    ).toBe(false);
-  });
-
-  it("accepts an absolute executable path", () => {
-    expect(
-      browserScenarioBrowserSchema.safeParse({
-        mode: "launch",
-        executable_path: "/opt/chromium/chrome",
-      }).success,
-    ).toBe(true);
-  });
-});
-
-describe("electron observation paths require absolute local paths", () => {
-  const valid = {
-    executable_path: "/Applications/Electron.app/Contents/MacOS/Electron",
-    application_path: "/tmp/electron-app/main.js",
-  };
-
-  it("rejects a relative executable path", () => {
-    expect(
-      electronActiveObservationInputSchema.safeParse({
-        ...valid,
-        executable_path: "Electron",
-      }).success,
-    ).toBe(false);
-  });
-
-  it("rejects a relative application path", () => {
-    expect(
-      electronActiveObservationInputSchema.safeParse({
-        ...valid,
-        application_path: "main.js",
-      }).success,
-    ).toBe(false);
-  });
-
-  it("rejects a relative application root", () => {
-    expect(
-      electronActiveObservationInputSchema.safeParse({
-        ...valid,
-        application_root: "app",
-      }).success,
-    ).toBe(false);
-  });
-
-  it("accepts absolute observation paths", () => {
-    expect(
-      electronActiveObservationInputSchema.safeParse({
-        ...valid,
-        application_root: "/tmp/electron-app",
-      }).success,
-    ).toBe(true);
-  });
-
-  it("still accepts omitting the application root", () => {
-    expect(electronActiveObservationInputSchema.safeParse(valid).success).toBe(
-      true,
-    );
-  });
-});
-
-describe("expected server path requires an absolute local path", () => {
-  it("rejects a relative server path", () => {
-    expect(
-      binarySessionInputSchema.safeParse({
-        expected_server_path: "dist/main.js",
-      }).success,
-    ).toBe(false);
-  });
-
-  it("accepts an absolute server path", () => {
-    expect(
-      binarySessionInputSchema.safeParse({
-        expected_server_path: "/opt/rea/dist/main.js",
-      }).success,
-    ).toBe(true);
-  });
-
-  it("still accepts omitting the server path", () => {
-    expect(binarySessionInputSchema.safeParse({}).success).toBe(true);
-  });
-});

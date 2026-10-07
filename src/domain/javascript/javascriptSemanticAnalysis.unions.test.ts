@@ -18,6 +18,19 @@ const valueOf = (expression: string) =>
     analyzeJavaScriptSemantics(`const answer = ${expression};`),
     "answer",
   ).value;
+const valuesOf = (expressions: readonly string[]) => {
+  const ir = analyzeJavaScriptSemantics(
+    expressions
+      .map(
+        (expression, index) =>
+          `const candidate${String(index)} = ${expression};`,
+      )
+      .join("\n"),
+  );
+  return expressions.map(
+    (_, index) => topLevelBinding(ir, `candidate${String(index)}`).value,
+  );
+};
 
 describe("conditional primitive unions", () => {
   const cases = conditionalCandidates.flatMap((known) =>
@@ -35,11 +48,11 @@ describe("conditional primitive unions", () => {
     ]),
   );
 
-  it.each(cases)("preserves incompatible alternatives in %s", (expression) => {
-    expect(valueOf(expression)).toEqual(incompatibleValue);
+  it("preserves incompatible alternatives across conditional expressions", () => {
+    expect(valuesOf(cases)).toEqual(cases.map(() => incompatibleValue));
   });
 
-  it.each([
+  const exactCases = [
     [
       'condition ? (choice ? "two" : "one") : "three"',
       { status: "union", values: ["one", "three", "two"] },
@@ -69,8 +82,12 @@ describe("conditional primitive unions", () => {
       { status: "union", values: [null, "one", "two"] },
     ],
     ["condition ? null : null", { status: "literal", value: null }],
-  ])("retains exact primitive candidates in %s", (expression, expected) => {
-    expect(valueOf(expression)).toEqual(expected);
+  ] as const;
+
+  it("retains exact primitive candidates across conditional expressions", () => {
+    expect(valuesOf(exactCases.map(([expression]) => expression))).toEqual(
+      exactCases.map(([, expected]) => expected),
+    );
   });
 
   it("propagates an incompatible nested branch through an outer union", () => {
@@ -119,11 +136,11 @@ describe("logical primitive unions", () => {
     ),
   );
 
-  it.each(cases)("preserves unresolved alternatives in %s", (expression) => {
-    expect(valueOf(expression)).toEqual(incompatibleValue);
+  it("preserves unresolved alternatives across logical expressions", () => {
+    expect(valuesOf(cases)).toEqual(cases.map(() => incompatibleValue));
   });
 
-  it.each([
+  const exactCases = [
     [
       '(choice ? "" : "one") || "two"',
       { status: "union", values: ["", "one", "two"] },
@@ -138,19 +155,24 @@ describe("logical primitive unions", () => {
     ],
     ['"one" || "one"', { status: "literal", value: "one" }],
     ["null ?? null", { status: "literal", value: null }],
-  ])(
-    "retains the conservative primitive union in %s",
-    (expression, expected) => {
-      expect(valueOf(expression)).toEqual(expected);
-    },
-  );
+  ] as const;
 
-  it.each([
+  it("retains conservative primitive unions across logical expressions", () => {
+    expect(valuesOf(exactCases.map(([expression]) => expression))).toEqual(
+      exactCases.map(([, expected]) => expected),
+    );
+  });
+
+  const unevaluatedCases = [
     'true ? "one" : missing',
     '"one" || missing',
     "false && missing",
     '"one" ?? missing',
-  ])("does not introduce short-circuit evaluation for %s", (expression) => {
-    expect(valueOf(expression)).toEqual(incompatibleValue);
+  ];
+
+  it("does not introduce short-circuit evaluation", () => {
+    expect(valuesOf(unevaluatedCases)).toEqual(
+      unevaluatedCases.map(() => incompatibleValue),
+    );
   });
 });

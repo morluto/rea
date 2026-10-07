@@ -51,19 +51,6 @@ const VOLATILE_DIMENSIONS = new Set([
   "updated_at",
 ]);
 
-/** Dimension that carries semantic content. */
-const SEMANTIC_DIMENSIONS = new Set([
-  "exit_code",
-  "stdout",
-  "stderr",
-  "filesystem",
-  "process",
-  "process_tree",
-  "shim_events",
-  "protocol_events",
-  "event_journal",
-]);
-
 type IncompleteStatus = "unknown" | "truncated";
 
 type EvidenceView = {
@@ -212,11 +199,6 @@ const comparisonIncompleteStatus = (
 /** Check if a dimension name is volatile (timing/normalization noise). */
 export function isVolatileDimension(name: string): boolean {
   return VOLATILE_DIMENSIONS.has(name);
-}
-
-/** Check if a dimension name carries semantic content. */
-export function isSemanticDimension(name: string): boolean {
-  return SEMANTIC_DIMENSIONS.has(name);
 }
 
 /**

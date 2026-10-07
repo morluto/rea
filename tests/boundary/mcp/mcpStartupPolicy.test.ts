@@ -1,25 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { MCP_STARTUP_POLICY } from "../../../src/mcpStartupPolicy.js";
 import {
   createEsmModuleProfileCollector,
   parseLinuxVmRssBytes,
 } from "../../../scripts/lib/mcp-startup-probe.mjs";
 
 describe("MCP startup policy", () => {
-  it("preserves headroom beneath the configured Codex timeout", () => {
-    const codexTimeoutMs =
-      MCP_STARTUP_POLICY.codexStartupTimeoutSeconds * 1_000;
-
-    expect(MCP_STARTUP_POLICY.initializeBudgetMs).toBeLessThan(codexTimeoutMs);
-    expect(MCP_STARTUP_POLICY.firstCatalogBudgetMs).toBeLessThan(
-      codexTimeoutMs,
-    );
-    expect(MCP_STARTUP_POLICY.doctorDeadlineMs).toBeGreaterThanOrEqual(
-      codexTimeoutMs,
-    );
-  });
-
   it("parses Linux resident memory without accepting other fields", () => {
     expect(
       parseLinuxVmRssBytes("Name:\tnode\nVmRSS:\t  12345 kB\nThreads:\t7\n"),

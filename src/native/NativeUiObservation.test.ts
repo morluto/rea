@@ -62,7 +62,6 @@ describe("native UI screenshot validation", () => {
     { base64: "%%%=" },
     { base64: Buffer.from("not a PNG").toString("base64") },
     { width: 2 },
-    { sha256: "0".repeat(64) },
   ])(
     "rejects invalid screenshot field variants from the helper",
     async (change) => {

@@ -20,37 +20,46 @@ const filesFor = (paths: readonly string[]) =>
     ]),
   );
 
-const cases = ["#", "?"].flatMap((punctuation) =>
-  (["require", "import", undefined] as const).flatMap((moduleKind) =>
-    (["literal", "stripped", "both"] as const).map((layout) => ({
-      punctuation,
-      moduleKind,
-      layout,
-    })),
-  ),
-);
-
 describe("module specifier punctuation", () => {
-  it.each(cases)(
-    "resolves $moduleKind with $punctuation and $layout files",
-    ({ punctuation, moduleKind, layout }) => {
+  it.each(["#", "?"])(
+    "keeps CommonJS punctuation and strips URL suffixes for ESM (%s)",
+    (punctuation) => {
       const literal = `app/dep.cjs${punctuation}literal.cjs`;
       const stripped = "app/dep.cjs";
-      const files = filesFor([
-        ...(layout !== "stripped" ? [literal] : []),
-        ...(layout !== "literal" ? [stripped] : []),
-      ]);
-      const expected = moduleKind === "require" ? literal : stripped;
-      const result = resolveArtifactPathByContext({
+      const commonJs = resolveArtifactPathByContext({
         declaredPath: `./dep.cjs${punctuation}literal.cjs`,
         sourcePath: "app/main.js",
         context: "module-specifier",
-        files,
-        ...(moduleKind === undefined ? {} : { moduleKind }),
+        files: filesFor([literal, stripped]),
+        moduleKind: "require",
       });
-      expect(result).toMatchObject({
-        resolution_status: files.has(expected) ? "resolved" : "not-found",
-        resolved_path: files.has(expected) ? expected : null,
+      expect(commonJs).toMatchObject({
+        resolution_status: "resolved",
+        resolved_path: literal,
+      });
+
+      const esm = resolveArtifactPathByContext({
+        declaredPath: `./dep.cjs${punctuation}literal.cjs`,
+        sourcePath: "app/main.js",
+        context: "module-specifier",
+        files: filesFor([literal, stripped]),
+        moduleKind: "import",
+      });
+      expect(esm).toMatchObject({
+        resolution_status: "resolved",
+        resolved_path: stripped,
+      });
+
+      const noStrippedTarget = resolveArtifactPathByContext({
+        declaredPath: `./dep.cjs${punctuation}literal.cjs`,
+        sourcePath: "app/main.js",
+        context: "module-specifier",
+        files: filesFor([literal]),
+        moduleKind: "import",
+      });
+      expect(noStrippedTarget).toMatchObject({
+        resolution_status: "not-found",
+        resolved_path: null,
       });
     },
   );

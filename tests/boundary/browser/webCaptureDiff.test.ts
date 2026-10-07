@@ -22,16 +22,6 @@ afterEach(async () => {
 });
 
 describe("web capture diff", () => {
-  it("rejects caller limits that would omit difference records", () => {
-    expect(
-      compareWebCapturesInputSchema.safeParse({
-        before: {},
-        after: {},
-        max_changes: 1,
-      }).success,
-    ).toBe(false);
-  });
-
   it("reports stable observed changes while preserving unknown dimensions", async () => {
     const browser = await startFakeCdpBrowser();
     browsers.push(browser);

@@ -5,10 +5,7 @@ import {
   processCaptureSchema,
   type UnverifiedProcessCapture,
 } from "./processCapture.js";
-import {
-  createProcessObservation,
-  projectProcessObservation,
-} from "./processObservation.js";
+import { projectProcessObservation } from "./processObservation.js";
 
 const emptyCapture = processCaptureSchema.parse(EMPTY_PROCESS_CAPTURE_EXAMPLE);
 
@@ -86,25 +83,7 @@ describe("process observation vocabulary", () => {
     expect(observations[4]?.captured_at_ms).toBeNull();
   });
 
-  it("uses the same constructor for live and post-hoc observations", () => {
-    const location = {
-      collection: "frames" as const,
-      index: 0,
-      capture_order: 4,
-    };
-    const projected = projectProcessObservation(capture, location);
-    const live = createProcessObservation({
-      source: "terminal_raw",
-      source_sequence: 0,
-      captured_at_ms: 1,
-      subject_id: null,
-      location,
-      payload: capture.frames[0],
-    });
-    expect(live).toEqual(projected);
-  });
-
-  it("returns no observation for a missing raw record", () => {
+  it("returns no observation for a missing collection record", () => {
     expect(
       projectProcessObservation(capture, {
         collection: "frames",

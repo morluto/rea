@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import {
@@ -6,9 +6,9 @@ import {
   listBrowserTargetsInputSchema,
 } from "../../../src/domain/browserObservation.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
-import { describeBrowser, trackBrowser } from "./cdpBrowserProvider.support.js";
+import { trackBrowser } from "./cdpBrowserProvider.support.js";
 
-describeBrowser("CdpBrowserProvider: discovery authorization 1", () => {
+describe("CdpBrowserProvider: discovery authorization 1", () => {
   it("discovers pages and captures a selected target without an origin list", async () => {
     const browser = await startFakeCdpBrowser();
     trackBrowser(browser);
@@ -158,7 +158,7 @@ describeBrowser("CdpBrowserProvider: discovery authorization 1", () => {
   });
 });
 
-describeBrowser("CdpBrowserProvider: discovery authorization 2", () => {
+describe("CdpBrowserProvider: discovery authorization 2", () => {
   it("rejects empty browser attachment session identifiers", async () => {
     const browser = await startFakeCdpBrowser({ invalidAttachedSession: true });
     trackBrowser(browser);

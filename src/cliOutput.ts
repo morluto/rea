@@ -20,9 +20,11 @@ export type CliOutputArgumentValidation =
 type JsonRecord = Record<string, unknown>;
 
 interface ParsedCliOutputArguments {
-  readonly filterOutput: boolean;
+  readonly filterOutput: string | undefined;
   readonly format: string;
+  readonly fullOutput: boolean;
   readonly parseError: boolean;
+  readonly tokenCount: boolean;
   readonly tokenWindow: boolean;
 }
 
@@ -36,12 +38,23 @@ const validationError = (value: JsonRecord): JsonRecord | undefined => {
   return undefined;
 };
 
-const parseCliOutputArguments = (
+/** Read effective Incur output controls at the executable boundary. */
+export const parseCliOutputArguments = (
   arguments_: readonly string[],
 ): ParsedCliOutputArguments => {
   let format: string = "toon";
-  let filterOutput = false;
+  let filterOutput: string | undefined;
+  let fullOutput = false;
+  let tokenCount = false;
   let tokenWindow = false;
+  const parsed = (parseError: boolean): ParsedCliOutputArguments => ({
+    filterOutput,
+    format,
+    fullOutput,
+    parseError,
+    tokenCount,
+    tokenWindow: parseError ? false : tokenWindow,
+  });
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index];
     // Incur scans builtins across `--` and accepts only spaced value forms.
@@ -55,8 +68,7 @@ const parseCliOutputArguments = (
       if (value) {
         // Incur stops parsing at an invalid format before applying any later
         // output controls. Let it report that malformed flag itself.
-        if (!INCUR_OUTPUT_FORMATS.has(value))
-          return { filterOutput, format, parseError: true, tokenWindow: false };
+        if (!INCUR_OUTPUT_FORMATS.has(value)) return parsed(true);
         format = value;
         index += 1;
       }
@@ -64,7 +76,7 @@ const parseCliOutputArguments = (
     }
     if (argument === "--filter-output") {
       if (arguments_[index + 1]) {
-        filterOutput = true;
+        filterOutput = arguments_[index + 1];
         index += 1;
       }
       continue;
@@ -74,14 +86,16 @@ const parseCliOutputArguments = (
       if (value) {
         const numericValue = Number(value);
         if (!Number.isFinite(numericValue) || value.trim() === "")
-          return { filterOutput, format, parseError: true, tokenWindow: false };
+          return parsed(true);
         tokenWindow = true;
         index += 1;
       }
       continue;
     }
+    if (argument === "--full-output") fullOutput = true;
+    if (argument === "--token-count") tokenCount = true;
   }
-  return { filterOutput, format, parseError: false, tokenWindow };
+  return parsed(false);
 };
 
 /** Reject text-window controls that would corrupt a structured document. */

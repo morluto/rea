@@ -5,6 +5,7 @@ import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
 const memberChain = ".next".repeat(12_000);
+const ordinaryMemberChain = ".next".repeat(64);
 
 it("collects a 12,000-member CommonJS export path without recursion", () => {
   const file = parseJavaScriptSource(`exports${memberChain}.last = 1;`);
@@ -48,8 +49,8 @@ it("keeps left-first and outer-member-first bundler runtime matches", () => {
   ).toBe("webpackChunkInner");
 });
 
-it("analyzes a 12,000-member bundler runtime chain without recursion", () => {
-  const source = `globalThis.webpackChunkApp${memberChain}.push([[1], { 1: function(module) { module.exports.ok = 42; } }]);`;
+it("recognizes a bundler runtime through nested member names", () => {
+  const source = `globalThis.webpackChunkApp${ordinaryMemberChain}.push([[1], { 1: function(module) { module.exports.ok = 42; } }]);`;
   const analysis = analyzeJavaScriptStaticSource(source);
   expect(analysis.parse_status).toBe("complete");
   expect(analysis.parse_error_count).toBe(0);

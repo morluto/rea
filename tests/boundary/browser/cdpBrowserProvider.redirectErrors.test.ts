@@ -1,10 +1,10 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import type { FakeOptions } from "../../fixtures/fakeCdpBrowserTypes.js";
-import { describeBrowser, trackBrowser } from "./cdpBrowserProvider.support.js";
+import { trackBrowser } from "./cdpBrowserProvider.support.js";
 
 const inspectNetwork = async (options: FakeOptions) => {
   const browser = await startFakeCdpBrowser(options);
@@ -22,7 +22,7 @@ const inspectNetwork = async (options: FakeOptions) => {
   return { browser, inspection: result.value };
 };
 
-describeBrowser("CdpBrowserProvider: redirect errors", () => {
+describe("CdpBrowserProvider: redirect errors", () => {
   it.each([
     { label: "missing", url: undefined, reason: "invalid_protocol_value" },
     { label: "malformed", url: "http://%", reason: "invalid_protocol_value" },

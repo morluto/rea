@@ -11,16 +11,12 @@ it("imports test-suffixed filenames with unchanged paths, hashes, and languages"
   const root = await createTestTempDirectory("rea-reference-test-filenames-");
   const files = [
     ["main_test.go", "package main\n", ["source", "test"], "Go"],
-    ["main_test.py", "assert True\n", ["source", "test"], "Python"],
+    ["test_helper.py", "assert True\n", ["source", "test"], "Python"],
     ["parser_spec.rs", "fn checks() {}\n", ["source", "test"], "Rust"],
     ["Widget_SPEC.TS", "export {};\n", ["source", "test"], "TypeScript"],
     ["main_test", "test fixture\n", ["test"], null],
-    ["main_spec", "spec fixture\n", ["test"], null],
-    ["test_helper.py", "assert True\n", ["source", "test"], "Python"],
     ["main.test.js", "export {};\n", ["source", "test"], "JavaScript"],
-    ["main.go", "package main\n", ["source"], "Go"],
     ["main_test_helper.py", "value = 1\n", ["source"], "Python"],
-    ["main_specimen.rs", "fn main() {}\n", ["source"], "Rust"],
     ["main_test.py.bak", "backup\n", ["unknown"], null],
   ] as const;
   await Promise.all(

@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  AnalysisProviderRegistry,
-  type AnalysisProviderBinding,
-} from "./AnalysisProviderRegistry.js";
+import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
 import {
   createAnalysisExecution,
   type AnalysisClient,
@@ -33,132 +30,77 @@ const ARTIFACT_TARGET: BinaryTarget = {
   format: "asar",
 };
 
-describe("analysis provider registry: discovery and selection", () => {
-  it("admits overlapping operations, sorts discovery, and rejects duplicate IDs", () => {
-    const alpha = candidate("alpha");
-    const beta = candidate("beta");
-    const registry = new AnalysisProviderRegistry([
-      beta.provider,
-      alpha.provider,
-    ]);
+it("rejects malformed provider capability declarations", () => {
+  const alpha = candidate("alpha");
+  expect(
+    () => new AnalysisProviderRegistry([alpha.provider, alpha.provider]),
+  ).toThrow(/Duplicate analysis provider ID: alpha/u);
+  expect(
+    () =>
+      new AnalysisProviderRegistry([
+        {
+          ...alpha.provider,
+          capabilities: () => {
+            const descriptor = capability(alpha.provider.identity());
+            return [descriptor, descriptor];
+          },
+        },
+      ]),
+  ).toThrow(/declares operation address_name more than once/u);
+  expect(
+    () =>
+      new AnalysisProviderRegistry([
+        {
+          ...alpha.provider,
+          capabilities: () => [
+            capability({ ...alpha.provider.identity(), name: "forged" }),
+          ],
+        },
+      ]),
+  ).toThrow(/published mismatched capability provenance/u);
+  expect(
+    () => new AnalysisProviderRegistry([candidate("auto").provider]),
+  ).toThrow(/Invalid analysis provider ID: auto/u);
+});
 
-    expect(registry.identities().map(({ id }) => id)).toEqual([
-      "alpha",
-      "beta",
-    ]);
-    expect(
-      registry.candidates().map(({ provider, targetSupport }) => ({
-        id: provider.id,
-        support: targetSupport.status,
-      })),
-    ).toEqual([
-      { id: "alpha", support: "unknown" },
-      { id: "beta", support: "unknown" },
-    ]);
-    expect(alpha.created).toEqual([]);
-    expect(beta.created).toEqual([]);
-    expect(
-      () => new AnalysisProviderRegistry([alpha.provider, alpha.provider]),
-    ).toThrow(/Duplicate analysis provider ID: alpha/u);
-    expect(
-      () =>
-        new AnalysisProviderRegistry([
-          {
-            ...alpha.provider,
-            capabilities: () => {
-              const descriptor = capability(alpha.provider.identity());
-              return [descriptor, descriptor];
-            },
-          },
-        ]),
-    ).toThrow(/declares operation address_name more than once/u);
-    expect(
-      () =>
-        new AnalysisProviderRegistry([
-          {
-            ...alpha.provider,
-            capabilities: () => [
-              capability({
-                ...alpha.provider.identity(),
-                name: "mismatched provider",
-              }),
-            ],
-          },
-        ]),
-    ).toThrow(/published mismatched capability provenance/u);
-    expect(
-      () => new AnalysisProviderRegistry([candidate("auto").provider]),
-    ).toThrow(/Invalid analysis provider ID: auto/u);
+it("selects the sole available provider and honors explicit selection precedence", async () => {
+  const alpha = candidate("alpha");
+  const beta = candidate("beta", { available: false });
+  const sole = await new AnalysisProviderRegistry([
+    beta.provider,
+    alpha.provider,
+  ]).select(DATABASE_TARGET);
+  expect(sole).toMatchObject({
+    ok: true,
+    value: {
+      binding: {
+        identity: { id: "alpha" },
+        selectionSource: "auto-single-candidate",
+      },
+    },
   });
 
-  it("selects the sole usable candidate without creating a client", async () => {
-    const alpha = candidate("alpha");
-    const beta = candidate("beta", { available: false });
-    const registry = new AnalysisProviderRegistry([
-      beta.provider,
-      alpha.provider,
-    ]);
-
-    const selected = await registry.select(DATABASE_TARGET);
-    expect(selected.ok).toBe(true);
-    if (!selected.ok) throw new Error("provider selection failed");
-    if (selected.value.binding === null)
-      throw new Error("expected a bound provider");
-    expect(bindingProjection(selected.value.binding)).toEqual({
-      id: "alpha",
-      source: "auto-single-candidate",
-      version: "1",
-    });
-    expect(selected.value.candidates).toMatchObject([
-      { provider: { id: "alpha", version: "1" }, selected: true },
-      {
-        provider: { id: "beta" },
-        selected: false,
-        availability: { status: "unavailable", code: "runtime_missing" },
+  const selected = new AnalysisProviderRegistry(
+    [alpha.provider, candidate("beta").provider],
+    "beta",
+  );
+  expect(await selected.select(DATABASE_TARGET)).toMatchObject({
+    ok: true,
+    value: {
+      binding: {
+        identity: { id: "beta" },
+        selectionSource: "environment",
       },
-    ]);
-    expect(alpha.created).toEqual([]);
-    expect(beta.created).toEqual([]);
+    },
   });
-
-  it("makes auto ambiguity explicit and honors request over environment", async () => {
-    const alpha = candidate("alpha");
-    const beta = candidate("beta");
-    const registry = new AnalysisProviderRegistry(
-      [alpha.provider, beta.provider],
-      "beta",
-    );
-
-    const environment = await registry.select(DATABASE_TARGET);
-    expect(environment.ok).toBe(true);
-    if (environment.ok)
-      expect(environment.value.binding?.selectionSource).toBe("environment");
-    expect(environment.ok && environment.value.binding?.identity.id).toBe(
-      "beta",
-    );
-
-    const request = await registry.select(DATABASE_TARGET, "alpha");
-    expect(request.ok && request.value.binding?.identity.id).toBe("alpha");
-    if (request.ok)
-      expect(request.value.binding?.selectionSource).toBe("request");
-
-    const automatic = await registry.select(DATABASE_TARGET, "auto");
-    expect(automatic.ok).toBe(false);
-    if (automatic.ok) return;
-    expect(automatic.error).toMatchObject({
-      reason: "ambiguous",
-      requestedProviderId: "auto",
-      candidateIds: ["alpha", "beta"],
-    });
-    expect(projectAnalysisError(automatic.error)).toMatchObject({
-      code: "capability_unavailable",
-      details: {
-        selection_reason: "ambiguous",
-        candidate_ids: ["alpha", "beta"],
+  expect(await selected.select(DATABASE_TARGET, "alpha")).toMatchObject({
+    ok: true,
+    value: {
+      binding: {
+        identity: { id: "alpha" },
+        selectionSource: "request",
       },
-    });
-    expect(alpha.created).toEqual([]);
-    expect(beta.created).toEqual([]);
+    },
   });
 });
 
@@ -413,10 +355,4 @@ const capability = (provider: ProviderIdentity): CapabilityDescriptor => ({
     requiresRoot: false,
   },
   limitations: [],
-});
-
-const bindingProjection = (binding: AnalysisProviderBinding) => ({
-  id: binding.identity.id,
-  source: binding.selectionSource,
-  version: binding.identity.version,
 });

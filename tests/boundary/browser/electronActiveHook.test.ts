@@ -122,8 +122,11 @@ it("retains active hook lifecycle and IPC evidence without a count ceiling", asy
   const script = join(root, "exercise.cjs");
   await writeFile(script, activeCaptureSource);
   const hook = join(process.cwd(), "scripts/electron-active-hook.cjs");
-  const output = await runNode(hook, script, root, root);
-  const result = JSON.parse(output.trim().split("\n").at(-1) ?? "null") as {
+  const execution = await runNode(hook, script, root, root);
+  expect(execution.code).toBe(0);
+  const result = JSON.parse(
+    execution.stdout.trim().split("\n").at(-1) ?? "null",
+  ) as {
     readonly default_popup_decision: { readonly action: string };
     readonly popup_decision: { readonly action: string };
     readonly snapshot: {
@@ -181,7 +184,7 @@ it("preserves fatal process termination after recording uncaught exceptions", as
   const script = join(root, "fatal.cjs");
   await writeFile(script, 'throw new Error("fatal-hook-secret");\n');
   const hook = join(process.cwd(), "scripts/electron-active-hook.cjs");
-  const result = await runNodeStatus(hook, script, root, root);
+  const result = await runNode(hook, script, root, root);
 
   expect(result.code).not.toBe(0);
   expect(result.stderr).toContain("fatal-hook-secret");
@@ -192,7 +195,11 @@ const runNode = (
   script: string,
   moduleRoot: string,
   cwd: string,
-): Promise<string> =>
+): Promise<{
+  readonly code: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+}> =>
   new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["-r", hook, script], {
       cwd,
@@ -207,44 +214,11 @@ const runNode = (
     child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
     child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
     child.once("error", reject);
-    child.once("close", (code) => {
-      if (code === 0) {
-        const text = Buffer.concat(stdout).toString("utf8");
-        if (text.length > 0) resolve(text);
-        else
-          reject(
-            new Error(
-              `hook fixture produced no output: ${Buffer.concat(stderr).toString("utf8")}`,
-            ),
-          );
-      } else
-        reject(
-          new Error(
-            `hook fixture exited with ${String(code)}: ${Buffer.concat(stderr).toString("utf8")}`,
-          ),
-        );
-    });
-  });
-
-const runNodeStatus = (
-  hook: string,
-  script: string,
-  moduleRoot: string,
-  cwd: string,
-): Promise<{ readonly code: number | null; readonly stderr: string }> =>
-  new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ["-r", hook, script], {
-      cwd,
-      env: {
-        ...process.env,
-        NODE_PATH: moduleRoot,
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const stderr: Buffer[] = [];
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-    child.once("error", reject);
     child.once("close", (code) =>
-      resolve({ code, stderr: Buffer.concat(stderr).toString("utf8") }),
+      resolve({
+        code,
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8"),
+      }),
     );
   });

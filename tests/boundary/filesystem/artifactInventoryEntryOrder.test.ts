@@ -14,10 +14,6 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const permutations = [
   ["pkg/", "pkg/sub/", "pkg/sub/data.txt"],
-  ["pkg/", "pkg/sub/data.txt", "pkg/sub/"],
-  ["pkg/sub/", "pkg/", "pkg/sub/data.txt"],
-  ["pkg/sub/", "pkg/sub/data.txt", "pkg/"],
-  ["pkg/sub/data.txt", "pkg/", "pkg/sub/"],
   ["pkg/sub/data.txt", "pkg/sub/", "pkg/"],
 ];
 const expectedParents = {

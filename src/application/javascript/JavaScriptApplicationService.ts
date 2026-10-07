@@ -57,13 +57,27 @@ export const analyzeJavaScriptApplicationValidated = async (
         format: input.format,
       },
       options.signal,
+      options.progress,
     );
     const { electron_summary: summary, ...application } = reconstructed;
+    await options.progress?.report({
+      phase: "validate_javascript_application_result",
+      completed: 0,
+      total: 1,
+      message: "Validating the application analysis result",
+    });
     const result = javascriptApplicationAnalysisResultSchema.parse({
       ...application,
       summary,
       limitations: reconstructed.graph.limitations,
     });
+    await options.progress?.report({
+      phase: "create_javascript_application_evidence",
+      completed: 0,
+      total: 1,
+      message: "Creating and hashing application analysis Evidence",
+    });
+    const evidence = createJavaScriptApplicationEvidence(input, result);
     await options.progress?.report({
       phase: "analyze_javascript_application",
       completed: 1,
@@ -71,7 +85,7 @@ export const analyzeJavaScriptApplicationValidated = async (
       message: "Application graph and Electron boundaries reconstructed",
       terminal: true,
     });
-    return ok(createJavaScriptApplicationEvidence(input, result));
+    return ok(evidence);
   } catch (cause: unknown) {
     if (cause instanceof ArtifactReaderFailure)
       return err(

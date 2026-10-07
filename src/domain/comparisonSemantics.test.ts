@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { absenceClaimable, canonicalDigest } from "./comparisonSemantics.js";
+import { absenceClaimable } from "./comparisonSemantics.js";
 
 describe("shared comparison semantics", () => {
   it("permits absence claims only for complete, non-truncated inventories", () => {
@@ -26,11 +26,5 @@ describe("shared comparison semantics", () => {
       }),
     ).toBe(false);
     expect(absenceClaimable({ status: "partial" })).toBe(false);
-  });
-
-  it("produces one stable SHA-256 for equivalent canonical JSON values", () => {
-    expect(canonicalDigest({ b: 2, a: 1 })).toBe(
-      canonicalDigest({ a: 1, b: 2 }),
-    );
   });
 });

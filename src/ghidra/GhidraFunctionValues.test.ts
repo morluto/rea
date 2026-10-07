@@ -299,23 +299,6 @@ describe("Ghidra jump-table mapping contract", () => {
       ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
     }
   });
-
-  it("keeps jump-table sources separate from case-to-target mappings", () => {
-    const parsed = parseGhidraFunctionResult(
-      "analyze_function",
-      ghidraFunctionDossier(),
-    );
-    if (!parsed.ok) throw parsed.error;
-    const boundary = functionDossierSchema.parse(parsed.value).native_api;
-    if (boundary?.available !== true)
-      throw new TypeError("Ghidra native API fixture is unavailable");
-    const mapping = boundary.jump_tables[0]?.mappings[0];
-    expect(mapping).toMatchObject({
-      case_value: 0,
-      target_address: "0x401020",
-    });
-    expect(mapping).not.toHaveProperty("data_addresses");
-  });
 });
 
 describe("Ghidra function-analysis malformed results", () => {

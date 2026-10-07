@@ -3,7 +3,6 @@ import { join } from "node:path";
 
 import { describe, expect } from "vitest";
 
-import { parseCliJsonInput } from "../../../src/cliJsonInput.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -30,46 +29,63 @@ const JSON_COMMANDS = [
 
 describe("compiled CLI JSON input failure status", () => {
   for (const [command, operation] of JSON_COMMANDS)
-    for (const kind of ["inline", "file", "missing"] as const)
-      cliTest(
-        `${command} rejects malformed or unreadable ${kind} input before dispatch`,
-        async ({ cli }) => {
-          const root = await createTestTempDirectory("rea-cli-json-status-");
-          const input = kind === "inline" ? "{" : join(root, "input.json");
-          if (kind === "file") await writeFile(input, "{");
-          const parsed = await parseCliJsonInput(input, operation);
-          if (parsed.ok)
-            throw new Error("Expected JSON input to fail before dispatch");
+    cliTest(
+      `${command} rejects malformed inline input before dispatch`,
+      async ({ cli }) => {
+        const root = await createTestTempDirectory("rea-cli-json-status-");
+        const input = "{";
+        const result = await cli.run({
+          arguments: [command, input, "--json"],
+          environment: {
+            HOME: root,
+            XDG_CONFIG_HOME: root,
+            XDG_CACHE_HOME: root,
+          },
+        });
 
-          const result = await cli.run({
-            arguments: [command, input, "--json"],
-            environment: {
-              HOME: root,
-              XDG_CONFIG_HOME: root,
-              XDG_CACHE_HOME: root,
-            },
-          });
+        expect(result.json).toMatchObject({
+          code: "invalid_request",
+          category: "invalid_input",
+          details: { operation },
+        });
+        expect(result.stderr).toBe("");
+        expect(result.exitCode).toBe(1);
+      },
+    );
 
-          expect(result.stdout).toBe(
-            `${JSON.stringify(parsed.error, null, 2)}\n`,
-          );
-          expect(result.json).toMatchObject({
-            code: "invalid_request",
-            category: "invalid_input",
-            ...(kind === "missing" ? {} : { details: { operation } }),
-            ...(kind === "inline"
-              ? {}
-              : {
-                  input_path: input,
-                  input_reason:
-                    kind === "file" ? "invalid-json" : "read-failed",
-                }),
-          });
-          expect(result.stderr).toBe("");
-          expect(result.exitCode).toBe(1);
-        },
-      );
+  for (const kind of ["file", "missing"] as const)
+    cliTest(
+      `preserves ${kind} JSON input diagnostics through a real command`,
+      async ({ cli }) => {
+        const root = await createTestTempDirectory("rea-cli-json-status-");
+        const input = join(root, "input.json");
+        if (kind === "file") await writeFile(input, "{");
 
+        const result = await cli.run({
+          arguments: ["compare-javascript-export-shapes", input, "--json"],
+          environment: {
+            HOME: root,
+            XDG_CONFIG_HOME: root,
+            XDG_CACHE_HOME: root,
+          },
+        });
+
+        expect(result.json).toMatchObject({
+          code: "invalid_request",
+          category: "invalid_input",
+          input_path: input,
+          input_reason: kind === "file" ? "invalid-json" : "read-failed",
+          ...(kind === "file"
+            ? { details: { operation: "compare-javascript-export-shapes" } }
+            : {}),
+        });
+        expect(result.stderr).toBe("");
+        expect(result.exitCode).toBe(1);
+      },
+    );
+});
+
+describe("compiled CLI JSON input diagnostic preservation", () => {
   for (const [format, flags] of [
     ["JSON", ["--json"]],
     ["JSONL", ["--format", "jsonl"]],

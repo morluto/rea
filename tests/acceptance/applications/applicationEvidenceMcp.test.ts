@@ -1,9 +1,7 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import type { Client } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
 
-import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
-import { createServer } from "../../../src/server/createServer.js";
 import {
   JAVASCRIPT_FEATURE_TRACE_FULL_EVIDENCE_EXAMPLE,
   JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
@@ -11,39 +9,10 @@ import {
   SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE,
 } from "../../../src/contracts/javascript/javascriptApplicationWorkflowExamples.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
-import { observed } from "../../fixtures/analysisExecution.js";
-
-interface TestHarness {
-  readonly client: Client;
-  readonly session: BinarySession;
-  readonly close: () => Promise<void>;
-}
-
-async function createTestHarness(): Promise<TestHarness> {
-  const session = createTestBinarySession(() => ({
-    execute: () => Promise.resolve(observed(null)),
-    close: () => Promise.resolve(),
-  }));
-  const server = createServer(session, session);
-  const client = new Client({
-    name: "application-workflow-test",
-    version: "1",
-  });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-
-  return {
-    client,
-    session,
-    close: async () => {
-      await client.close();
-      await server.close();
-      await session.close();
-    },
-  };
-}
+import {
+  createApplicationMcpHarness,
+  type ApplicationMcpHarness,
+} from "./mcpHarness.js";
 
 async function runInlineEvidenceScenarios(
   client: Client,
@@ -103,7 +72,9 @@ async function runInlineEvidenceScenarios(
   expect(session.exportEvidenceBundle().records.length).toBeGreaterThan(2);
 }
 
-async function runInlineWorkflowScenarios(harness: TestHarness): Promise<void> {
+async function runInlineWorkflowScenarios(
+  harness: ApplicationMcpHarness,
+): Promise<void> {
   const tracedInline = await harness.client.callTool({
     name: "trace_application_feature",
     arguments: {
@@ -250,7 +221,7 @@ async function assertRejectedInlineEvidence(client: Client): Promise<void> {
 
 describe("application workflow MCP parity", () => {
   it("traces and compares authenticated graph Evidence in the session", async () => {
-    const harness = await createTestHarness();
+    const harness = await createApplicationMcpHarness();
     try {
       await runInlineEvidenceScenarios(harness.client, harness.session);
       await runInlineWorkflowScenarios(harness);

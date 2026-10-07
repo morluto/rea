@@ -7,7 +7,6 @@ export const objcMethodTypeSchema = z.enum([
   "ivar_getter",
   "ivar_setter",
 ]);
-export type ObjcMethodType = z.infer<typeof objcMethodTypeSchema>;
 
 /** Objective-C property attribute. */
 export const objcPropertyAttributeSchema = z.strictObject({
@@ -27,7 +26,7 @@ export const objcMethodSchema = z.strictObject({
   is_required: z.boolean().default(false),
   is_optional: z.boolean().default(false),
 });
-export type ObjcMethod = z.infer<typeof objcMethodSchema>;
+type ObjcMethod = z.infer<typeof objcMethodSchema>;
 
 /** Objective-C property metadata. */
 export const objcPropertySchema = z.strictObject({
@@ -87,7 +86,7 @@ export const objcClassSchema = z.strictObject({
     )
     .optional(),
 });
-export type ObjcClass = z.infer<typeof objcClassSchema>;
+type ObjcClass = z.infer<typeof objcClassSchema>;
 
 /** Exact location of a decoded native metadata value when the provider knows it. */
 export const nativeMetadataLocationSchema = z.strictObject({
@@ -162,7 +161,7 @@ export const objcDispatchImplementationSchema = z.strictObject({
   decode: nativeMetadataDecodeSchema,
   evidence: z.array(nativeMetadataEvidenceSchema).min(1),
 });
-export type ObjcDispatchImplementation = z.infer<
+type ObjcDispatchImplementation = z.infer<
   typeof objcDispatchImplementationSchema
 >;
 
@@ -224,7 +223,7 @@ export const swiftSymbolSchema = z.strictObject({
   decode: nativeMetadataDecodeSchema,
   evidence: z.array(nativeMetadataEvidenceSchema).min(1),
 });
-export type SwiftSymbol = z.infer<typeof swiftSymbolSchema>;
+type SwiftSymbol = z.infer<typeof swiftSymbolSchema>;
 
 /** Per-facet coverage; empty arrays are meaningful only with this record. */
 export const nativeMetadataCoverageSchema = z.strictObject({
@@ -246,7 +245,6 @@ export const swiftDeclKindSchema = z.enum([
   "global_var",
   "global_func",
 ]);
-export type SwiftDeclKind = z.infer<typeof swiftDeclKindSchema>;
 
 /** Swift access level. */
 export const swiftAccessLevelSchema = z.enum([
@@ -269,7 +267,6 @@ export const swiftDeclSchema = z.strictObject({
   is_convenience_init: z.boolean().default(false),
   is_override: z.boolean().default(false),
 });
-export type SwiftDecl = z.infer<typeof swiftDeclSchema>;
 
 /** Database save/read operation type. */
 export const dbOperationSchema = z.enum([
@@ -290,7 +287,6 @@ export const dbSaveResultSchema = z.strictObject({
   database_path: z.string().nullable(),
   error: z.string().nullable(),
 });
-export type DbSaveResult = z.infer<typeof dbSaveResultSchema>;
 
 /** Result of deeper ObjC/Swift metadata extraction. */
 export const objcSwiftMetadataSchema = z.strictObject({
@@ -479,60 +475,3 @@ const parseMetadataAddress = (address: string | null): number | null => {
   const value = Number.parseInt(match[1], 16);
   return Number.isSafeInteger(value) ? value : null;
 };
-
-/** Check if a selector name looks like a getter. */
-export function isGetterSelector(selector: string): boolean {
-  return /^[a-z][a-zA-Z0-9_]*$/u.test(selector) && !selector.includes(":");
-}
-
-/** Check if a selector name looks like a setter. */
-export function isSetterSelector(selector: string): boolean {
-  return selector.startsWith("set") && selector.endsWith(":");
-}
-
-/** Extract property name from a getter/setter selector. */
-export function propertyNameFromSelector(selector: string): string | null {
-  if (isSetterSelector(selector)) {
-    const inner = selector.slice(3, -1);
-    return inner.charAt(0).toLowerCase() + inner.slice(1);
-  }
-  if (isGetterSelector(selector)) {
-    return selector;
-  }
-  return null;
-}
-
-/** Count ObjC methods by type. */
-export function countMethodsByType(
-  methods: readonly ObjcMethod[],
-): Record<ObjcMethodType, number> {
-  return {
-    instance: methods.filter((m) => m.method_type === "instance").length,
-    class: methods.filter((m) => m.method_type === "class").length,
-    ivar_getter: methods.filter((m) => m.method_type === "ivar_getter").length,
-    ivar_setter: methods.filter((m) => m.method_type === "ivar_setter").length,
-  };
-}
-
-/** Get all Swift declarations of a specific kind. */
-export function swiftDeclsByKind(
-  decls: readonly SwiftDecl[],
-  kind: SwiftDeclKind,
-): SwiftDecl[] {
-  return decls.filter((d) => d.kind === kind);
-}
-
-/** Check if a database save preserved all expected items. */
-export function isDbSaveComplete(
-  result: DbSaveResult,
-  expectedNames: number,
-  expectedComments: number,
-  expectedBookmarks: number,
-): boolean {
-  return (
-    result.succeeded &&
-    result.preserved_names >= expectedNames &&
-    result.preserved_comments >= expectedComments &&
-    result.preserved_bookmarks >= expectedBookmarks
-  );
-}

@@ -114,30 +114,13 @@ const unknownLimitation = (graphId: string, nodeId: string): string =>
   `Application graph ${graphId} contains unresolved node ${nodeId}; reconstruction obligations remain unknown.`;
 
 describe("reconstruction obligation candidates", () => {
-  it("preserves admitted unknown application nodes as limitations", () => {
-    const { graph, unknownNodes, generated } = applicationWithUnknowns([
-      "unclassified-boundary",
-    ]);
-    const unknownNode = unknownNodes[0];
-    if (unknownNode === undefined) throw new Error("Expected one unknown node");
-
-    expect(generated.candidates.length).toBeGreaterThan(0);
-    expect(
-      generated.candidates.some(
-        ({ target }) => target.application_node_id === unknownNode.node_id,
-      ),
-    ).toBe(false);
-    expect(generated.limitations).toEqual([
-      unknownLimitation(graph.graph_id, unknownNode.node_id),
-    ]);
-  });
-
-  it("emits one deterministic limitation per unknown node", () => {
+  it("preserves unresolved application nodes as deterministic limitations", () => {
     const { graph, unknownNodes, generated } = applicationWithUnknowns([
       "unclassified-first",
       "unclassified-second",
     ]);
 
+    expect(generated.candidates.length).toBeGreaterThan(0);
     expect([...generated.limitations].sort()).toEqual(
       unknownNodes
         .map((node) => unknownLimitation(graph.graph_id, node.node_id))

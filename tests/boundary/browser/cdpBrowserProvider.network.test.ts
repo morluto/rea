@@ -1,11 +1,11 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
-import { describeBrowser, trackBrowser } from "./cdpBrowserProvider.support.js";
+import { trackBrowser } from "./cdpBrowserProvider.support.js";
 
-describeBrowser("CdpBrowserProvider: network 1", () => {
+describe("CdpBrowserProvider: network 1", () => {
   it("retains same-origin redirect hops on the one final request", async () => {
     const browser = await startFakeCdpBrowser({ redirectWithinOrigin: true });
     trackBrowser(browser);

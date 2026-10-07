@@ -6,10 +6,27 @@ from real captured inputs. Keep focused module tests for distinct failure or
 semantic cases that these workflows cannot reliably reproduce. A test's path
 or suite name does not establish its behavioral depth.
 
+Avoid tests that mirror getters, enum mappings, fixture helpers, or prescribed
+call sequences. Prefer one representative workflow over a Cartesian matrix
+when every row crosses the same boundary. Keep distinct command handlers,
+producer representations, failure reasons, and lifecycle states covered.
+Consolidate their shared setup without hiding the inputs or expected evidence.
+
 Tests are grouped into Vitest projects so ownership, allowed dependencies and
-runtime cost are visible from their paths. Before pruning a test, identify the
-replacement scenario and its assertions; passing success journeys do not
-replace malformed input, cancellation, permission or cleanup coverage.
+runtime cost are visible from their paths. Before pruning a distinct boundary
+regression, identify the replacement scenario and its assertions; passing
+success journeys do not replace malformed input, cancellation, permission or
+cleanup coverage. Trivial helper checks do not need a replacement. If only
+tests consume a production module, trace CLI/MCP and verifier imports,
+including imports of compiled files, and remove abandoned scaffolding with its
+tests when it has no runtime consumer.
+
+Measure slow files before removing capacity regressions. Optimize repeated
+process startup, fixture construction, and production algorithms when they
+dominate runtime. Keep at least one input beyond each formerly failing size or
+depth; smaller fixtures do not establish that truncation or stack exhaustion
+has been fixed. Record the toolchain, coverage mode, and cache conditions when
+comparing durations.
 
 ## Behavioral depths
 
@@ -560,6 +577,18 @@ checks an installed package after building the verifier dependencies. The separa
 conditional `real-web-source-map` CI job supplies Chrome and an isolated pinned
 fixture compiler; static/unit checks do not acquire a browser. See
 [the source location guide](web-source-location.md) for the verified decoder profile.
+
+### JavaScript large-output lane
+
+`npm run verify:javascript:output` exercises the CLI JSON result surface beyond
+the running Node engine's single-string limit. Shared input leaves keep the
+fixture's graph small; the verifier writes one temporary output file, checks its
+complete byte count and an independent digest, then removes it. It requires only
+Node and the built REA runtime, with space for the output plus a 1 GiB reserve.
+Run `npm run verify:javascript:output -- jsonl` for compact JSONL coverage. This
+opt-in lane is separate from routine tests and the canonical hash check
+`npm run verify:javascript:digests`. It verifies serialization rather than an
+arbitrary third-party application's parsing cost or MCP client capacity.
 
 ### Website runtime attribution lane
 

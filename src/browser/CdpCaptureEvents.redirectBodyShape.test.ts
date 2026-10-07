@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 
-import { CdpCaptureEvents } from "../../../src/browser/CdpCaptureEvents.js";
-import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
+import { CdpCaptureEvents } from "./CdpCaptureEvents.js";
+import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
 
 it("preserves an already captured response shape without marking it unavailable", () => {
   const origin = "http://127.0.0.1:43127";

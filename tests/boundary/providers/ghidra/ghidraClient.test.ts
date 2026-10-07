@@ -36,6 +36,7 @@ const HOST_TRANSPORT: GhidraTransportKind =
 type FixtureMode =
   | "success"
   | "fragmented"
+  | "oversized_result"
   | "wrong_identity"
   | "malformed"
   | "contradictory"
@@ -188,6 +189,32 @@ describe("GhidraClient", () => {
         108,
       );
     else expect(launcher.endpointPaths[0]).toMatch(/bridge-endpoint\.json$/u);
+
+    await expect(
+      client.callTool("list_strings", { document: null }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: [{ address: "0x2000", value: "fixture 雪🦊" }],
+    });
+  });
+
+  it("accepts an owned-socket result above the former 64 MiB ceiling", async () => {
+    const client = clientFor(new FixtureLauncher("oversized_result"));
+    const result = await client.callTool("list_strings", { document: null });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    if (!Array.isArray(result.value))
+      throw new TypeError("Ghidra fixture result was not an inventory array");
+    const first = result.value[0];
+    if (typeof first !== "object" || first === null || Array.isArray(first))
+      throw new TypeError("Ghidra fixture inventory item was not an object");
+    const value = first.value;
+    if (typeof value !== "string")
+      throw new TypeError("Ghidra fixture string value was missing");
+    expect(value.length).toBe(64 * 1024 * 1024 + 1);
+    expect(value.slice(0, 4)).toBe("xxxx");
+    expect(value.slice(-4)).toBe("xxxx");
   });
 
   it("completes the same authenticated handshake over loopback TCP", async () => {

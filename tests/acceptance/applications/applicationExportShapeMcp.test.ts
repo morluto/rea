@@ -1,15 +1,14 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
-import { copyFile, mkdir, rm } from "node:fs/promises";
+import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { createServer } from "../../../src/server/createServer.js";
-import { observed } from "../../fixtures/analysisExecution.js";
 import { analyzeJavaScriptApplication } from "../../../src/application/javascript/JavaScriptApplicationService.js";
+import { compareJavaScriptExportShapesEvidence } from "../../../src/application/javascript/JavaScriptApplicationWorkflowService.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
+import { javaScriptExportShapeComparisonResultSchema } from "../../../src/domain/javascript/javascriptExportShapeComparisonSchemas.js";
+import { createApplicationMcpHarness } from "./mcpHarness.js";
 
 describe("application workflow MCP parity", () => {
   it("compares exact parser export shapes with inline Evidence", async () => {
@@ -40,14 +39,8 @@ describe("application workflow MCP parity", () => {
     const leftAnalysis = javascriptApplicationAnalysisResultSchema.parse(
       left.value.normalized_result,
     );
-    const session = createTestBinarySession(() => ({
-      execute: () => Promise.resolve(observed(null)),
-      close: () => Promise.resolve(),
-    }));
-    const server = createServer(session, session);
-    const client = new Client({ name: "export-shape-test", version: "1" });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
+    const harness = await createApplicationMcpHarness();
+    const { client, session } = harness;
     const selectors = {
       left_module_path: "parser.mjs",
       left_export_name: "default",
@@ -55,8 +48,6 @@ describe("application workflow MCP parity", () => {
       right_export_name: "default",
     };
     try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
       const relativeApplication = await client.callTool({
         name: "analyze_javascript_application",
         arguments: { input_path: relative(process.cwd(), leftRoot) },
@@ -121,10 +112,110 @@ describe("application workflow MCP parity", () => {
         },
       });
     } finally {
-      await client.close();
-      await server.close();
-      await session.close();
+      await harness.close();
       await rm(root, { recursive: true, force: true });
     }
   });
 });
+
+describe("source-produced export comparison inventories", () => {
+  it("retains large source-produced export inventories through comparison schemas", async () => {
+    const fields = Array.from(
+      { length: 64 },
+      (_, index) => `field${String(index)}: ${String(index)}`,
+    ).join(", ");
+    const returnSites = Array.from(
+      { length: 33 },
+      (_, index) =>
+        `if (value === ${String(index)}) return { type: "variant-${String(index)}", ${fields} };`,
+    ).join("\n");
+    const extraExports = Array.from(
+      { length: 1_000 },
+      (_, index) =>
+        `export const candidate${String(index)} = ${String(index)};`,
+    ).join("\n");
+    const inventorySource = `export default function parse(value) {\n${returnSites}\n  throw new Error("no match");\n}\n${extraExports}`;
+    const [inventoryLeft, inventoryRight] = await Promise.all([
+      analyzeSourceEvidence(inventorySource),
+      analyzeSourceEvidence(inventorySource),
+    ]);
+    const variants = compareEvidence(inventoryLeft, inventoryRight);
+    expect(variants.left).toMatchObject({ status: "selected" });
+    expect(variants.coverage).toMatchObject({
+      paired_variants: 33,
+      unpaired_left_variants: 0,
+      unpaired_right_variants: 0,
+      left_source_omitted_variants: 0,
+      right_source_omitted_variants: 0,
+      left_omitted_fields: 0,
+      right_omitted_fields: 0,
+    });
+
+    const missing = compareEvidence(inventoryLeft, inventoryRight, {
+      leftExportName: "missing",
+    });
+    expect(missing.left).toMatchObject({
+      status: "missing",
+      omitted_candidates: 0,
+    });
+    expect(missing.left.candidates).toHaveLength(1_001);
+
+    const changedFieldsLeft = Array.from(
+      { length: 10_001 },
+      (_, index) => `field${String(index)}: ${String(index)}`,
+    ).join(", ");
+    const changedFieldsRight = Array.from(
+      { length: 10_001 },
+      (_, index) => `field${String(index)}: ${String(index + 1)}`,
+    ).join(", ");
+    const [changeLeft, changeRight] = await Promise.all([
+      analyzeSourceEvidence(
+        `export default () => ({ type: "record", ${changedFieldsLeft} });`,
+      ),
+      analyzeSourceEvidence(
+        `export default () => ({ type: "record", ${changedFieldsRight} });`,
+      ),
+    ]);
+    const changes = compareEvidence(changeLeft, changeRight);
+    expect(changes.changes).toHaveLength(10_001);
+    expect(changes.summary).toEqual({
+      added: 0,
+      removed: 0,
+      changed: 10_001,
+      unknown: 0,
+    });
+    expect(changes.coverage).toMatchObject({
+      status: "complete-within-inputs",
+      omitted_changes: 0,
+      left_omitted_fields: 0,
+      right_omitted_fields: 0,
+    });
+  }, 30_000);
+});
+
+const analyzeSourceEvidence = async (source: string) => {
+  const root = await createTestTempDirectory("rea-export-shape-inventory-");
+  await writeFile(join(root, "parser.mjs"), source);
+  const analyzed = await analyzeJavaScriptApplication({ input_path: root });
+  if (!analyzed.ok) throw analyzed.error;
+  return analyzed.value;
+};
+
+const compareEvidence = (
+  left: Awaited<ReturnType<typeof analyzeSourceEvidence>>,
+  right: Awaited<ReturnType<typeof analyzeSourceEvidence>>,
+  selectors: { readonly leftExportName?: string } = {},
+) => {
+  const compared = compareJavaScriptExportShapesEvidence({
+    left,
+    right,
+    left_module_path: "parser.mjs",
+    left_export_name: selectors.leftExportName ?? "default",
+    right_module_path: "parser.mjs",
+    right_export_name: "default",
+  });
+  if (!compared.ok) throw compared.error;
+  return javaScriptExportShapeComparisonResultSchema.parse(
+    compared.value.normalized_result,
+  );
+};

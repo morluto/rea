@@ -4,8 +4,6 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { createCli } from "./cli.js";
-import { createSystemDoctorHost } from "./doctorRuntime.js";
 import { captureProcessScenarioFile } from "./application/process/ProcessCli.js";
 import { runCapabilityStatus } from "./composition/directAnalysis.js";
 import { probeProcessCaptureCapability } from "./process/capture/ProcessHarness.js";
@@ -13,17 +11,6 @@ import { parseEvidence } from "./domain/evidence.js";
 import { parseProcessCapture } from "./domain/process/processCapture.js";
 
 describe("the CLI takes its environment as an input", () => {
-  it("builds from an explicitly supplied environment", () => {
-    expect(createCli({ REA_LOG_LEVEL: "debug" })).toBeDefined();
-    expect(createCli({})).toBeDefined();
-  });
-
-  it("still builds with no environment supplied", () => {
-    // The default keeps production behaviour identical.
-    expect(createCli()).toBeDefined();
-    expect(createSystemDoctorHost()).toBeDefined();
-  });
-
   it("resolves from injected PATH and inherits injected env with scenario overrides", async ({
     skip,
   }) => {

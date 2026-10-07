@@ -2,12 +2,9 @@ import { expect, it } from "vitest";
 
 import { snapshotRoots } from "./FilesystemSnapshot.js";
 import { buildCaptureResult } from "./ProcessCaptureLifecycle.js";
-import { normalizeProcessSamples } from "./ProcessNormalization.js";
 import { isInitializedPtyRoot, readLinuxChildren } from "./ProcessSampling.js";
 import { TerminalRenderer } from "./TerminalRenderer.js";
 import {
-  compareProcessCaptures,
-  parseProcessCapture,
   parseProcessScenario,
   type ProcessCapture,
 } from "../../domain/process/processCapture.js";
@@ -139,33 +136,6 @@ it("marks redacted scripted input as an interaction unknown", () => {
   });
 });
 
-it("normalizes every sampled process identifier in command text", () => {
-  const samples = normalizeProcessSamples(
-    [
-      {
-        at_ms: 0,
-        pid: 101,
-        parent_pid: 0,
-        process_group_id: 101,
-        session_id: 101,
-        command: "root 101",
-      },
-      {
-        at_ms: 10,
-        pid: 202,
-        parent_pid: 101,
-        process_group_id: 101,
-        session_id: 101,
-        command: "child 202 peer=101 unrelated 1202",
-      },
-    ],
-    parseProcessScenario(base),
-    101,
-  );
-
-  expect(samples[1]?.command).toBe("child <pid> peer=<pid> unrelated 1202");
-});
-
 it("collects and deduplicates children from every Linux thread", async () => {
   const signal = new AbortController().signal;
   expect(
@@ -225,35 +195,6 @@ it("admits PTY samples only after stable session and token setup", () => {
   ).toBe(true);
 });
 
-it("keeps interaction and process residual uncertainty in separate scopes", () => {
-  const baseCapture = emptyCapture();
-  const interaction = parseProcessCapture({
-    ...baseCapture,
-    residual_unknowns: [
-      { scope: "interaction", reason: "Interaction capture was partial." },
-    ],
-  });
-  const process = parseProcessCapture({
-    ...baseCapture,
-    residual_unknowns: [
-      { scope: "process", reason: "Process sampling was partial." },
-    ],
-  });
-
-  expect(compareProcessCaptures(interaction, baseCapture)).toMatchObject({
-    status: "unknown",
-    terminal: "unchanged",
-    interaction: "unknown",
-    process: "unchanged",
-  });
-  expect(compareProcessCaptures(process, baseCapture)).toMatchObject({
-    status: "unknown",
-    terminal: "unchanged",
-    interaction: "unchanged",
-    process: "unknown",
-  });
-});
-
 it("cancels filesystem snapshots before traversing declared roots", async () => {
   const controller = new AbortController();
   controller.abort();
@@ -266,29 +207,4 @@ it("cancels filesystem snapshots before traversing declared roots", async () => 
       controller.signal,
     ),
   ).rejects.toMatchObject({ name: "AbortError" });
-});
-
-it("parses bounded scenarios and rejects unordered events", () => {
-  const timeoutMs = parseProcessScenario(base).timeout_ms;
-  expect(() =>
-    parseProcessScenario({
-      ...base,
-      events: [
-        { type: "input", at_ms: 2, data: "a" },
-        { type: "input", at_ms: 1, data: "b" },
-      ],
-    }),
-  ).toThrow(/ordered/);
-  expect(
-    parseProcessScenario({
-      ...base,
-      environment: { HOME: "/caller-selected-home" },
-    }).environment.HOME,
-  ).toBe("/caller-selected-home");
-  expect(() =>
-    parseProcessScenario({
-      ...base,
-      events: [{ type: "input", at_ms: timeoutMs + 1, data: "late" }],
-    }),
-  ).toThrow(/after the scenario timeout/);
 });
