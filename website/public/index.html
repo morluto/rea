@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>REA — Reverse Engineer Anything</title>
+    <meta
+      name="description"
+      content="Inspect apps, binaries and runtime behavior with your coding agent or terminal. REA connects local analysis tools through CLI and MCP."
+    />
+    <meta name="theme-color" content="#ffffff" />
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="assets/styles.css" />
+    <script src="assets/main.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="./" aria-label="REA home"
+          ><span class="brand-name">REA</span
+          ><span class="brand-caption">Reverse Engineer Anything</span></a
+        >
+        <nav class="navigation" aria-label="Main navigation">
+          <a href="showcase/dx-ball/">DX-Ball</a>
+          <a class="nav-start" href="get-started/">Get started</a>
+          <a href="https://github.com/morluto/rea/tree/main/docs">Docs</a>
+          <a href="https://github.com/morluto/rea">GitHub</a>
+        </nav>
+      </div>
+    </header>
+    <main id="main">
+      <section class="container hero">
+        <p class="eyebrow">Software analysis · CLI &amp; MCP</p>
+        <h1>Find out how<br />software works.</h1>
+        <p class="lede">
+          REA gives your coding agent tools to inspect apps, binaries and
+          runtime behavior. Ask a question, follow the code, and use what you
+          learn in your own project.
+        </p>
+        <div class="actions">
+          <a class="button" href="get-started/">Get started</a>
+          <a class="text-link" href="showcase/dx-ball/"
+            >Read the DX-Ball case study</a
+          >
+        </div>
+        <div class="hero-command">
+          <div class="code-block code-inline">
+            <code id="setup-command">npx rea-agents@latest setup</code>
+            <button
+              class="copy-button"
+              type="button"
+              data-copy="setup-command"
+              aria-label="Copy setup command"
+            >
+              Copy
+            </button>
+          </div>
+          <p class="caption">
+            Connects REA to your agent and installs its investigation workflow.
+          </p>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container feature-case">
+          <div>
+            <p class="eyebrow">Case study</p>
+            <h2>Rebuilding DX-Ball</h2>
+            <p>
+              DX-Ball is a 1996 Windows game. The project is reconstructing it
+              in C, using REA and Ghidra to inspect the executable and
+              independent tests to check the recovered behavior.
+            </p>
+            <p>
+              One investigation found a sound-pan calculation missing from the
+              decompiler output. Following the instructions and callers led to a
+              C function that matches the original behavior and all 63 compiled
+              bytes.
+            </p>
+            <p>
+              <a class="text-link" href="showcase/dx-ball/"
+                >Follow the investigation</a
+              >
+            </p>
+            <p class="case-note">
+              Work so far covers boards, resources, brick hits, animations,
+              particles and bonus production. The playable game is still in
+              progress.
+            </p>
+          </div>
+          <dl class="stats case-stats">
+            <div>
+              <dt>55</dt>
+              <dd>functions in maintained C</dd>
+            </div>
+            <div>
+              <dt>45,380</dt>
+              <dd>original-x86 differential cases</dd>
+            </div>
+            <div>
+              <dt>33</dt>
+              <dd>complete functions with matching compiled bytes</dd>
+            </div>
+          </dl>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container">
+          <div class="section-heading">
+            <h2>Bring a target. Ask a question.</h2>
+            <p>
+              Start with a local app or file, then narrow the investigation to
+              the feature or behavior you want to understand.
+            </p>
+          </div>
+          <div class="workflows">
+            <div>
+              <h3>Native applications</h3>
+              <p>
+                Inspect functions, strings, references and call relationships
+                through Hopper, Ghidra or IDA.
+              </p>
+              <a
+                href="https://github.com/morluto/rea/blob/main/docs/native-investigation.md"
+                >Native analysis guide</a
+              >
+            </div>
+            <div>
+              <h3>JavaScript &amp; Electron</h3>
+              <p>
+                Map modules, routes, IPC and native dependencies from an
+                application folder or ASAR archive.
+              </p>
+              <a
+                href="https://github.com/morluto/rea/blob/main/docs/javascript-application-workflows.md"
+                >Application workflows</a
+              >
+            </div>
+            <div>
+              <h3>Runtime behavior</h3>
+              <p>
+                Capture selected browser or process activity, then compare the
+                results across runs.
+              </p>
+              <a
+                href="https://github.com/morluto/rea/blob/main/docs/browser-observation.md"
+                >Browser observation guide</a
+              >
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container feature-case">
+          <div>
+            <h2>Keep the investigation in your workflow.</h2>
+            <p>
+              Use REA from your terminal or through your agent's MCP connection.
+              Analysis runs locally, and results include the source locations,
+              evidence and open questions you need to continue.
+            </p>
+          </div>
+          <div>
+            <h3>Use your analysis tools</h3>
+            <p>
+              Connect an existing Ghidra or IDA setup, or use Hopper. Static
+              JavaScript analysis runs with Node.js and npm.
+            </p>
+            <a class="text-link" href="get-started/#native"
+              >Choose a native provider</a
+            >
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container start-row">
+          <div>
+            <h2>What would you like to understand?</h2>
+            <p>
+              Connect your agent, or get your first result from the terminal.
+            </p>
+          </div>
+          <a class="button" href="get-started/">Get started</a>
+        </div>
+      </section>
+    </main>
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <p>REA · Reverse Engineer Anything</p>
+        <div class="footer-links">
+          <a href="https://github.com/morluto/rea">Source</a
+          ><a href="https://github.com/morluto/rea/blob/main/LICENSE"
+            >MIT license</a
+          ><a href="https://discord.gg/GkcryMnJDM">Community</a>
+        </div>
+      </div>
+    </footer>
+    <p class="sr-only" id="copy-status" role="status" aria-live="polite"></p>
+  </body>
+</html>

@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rebuilding DX-Ball — REA</title>
+    <meta
+      name="description"
+      content="Follow a DX-Ball reconstruction from binary analysis through REA and Ghidra to maintained C, original-x86 tests and matching compiled function bytes."
+    />
+    <meta name="theme-color" content="#ffffff" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../assets/styles.css" />
+    <script src="../../assets/main.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="../../" aria-label="REA home"
+          ><span class="brand-name">REA</span
+          ><span class="brand-caption">Reverse Engineer Anything</span></a
+        >
+        <nav class="navigation" aria-label="Main navigation">
+          <a href="./" aria-current="page">DX-Ball</a>
+          <a class="nav-start" href="../../get-started/">Get started</a>
+          <a href="https://github.com/morluto/rea/tree/main/docs">Docs</a>
+          <a href="https://github.com/morluto/rea">GitHub</a>
+        </nav>
+      </div>
+    </header>
+    <main id="main" class="container">
+      <div class="page-heading">
+        <p class="breadcrumb"><a href="../../">Home</a> / DX-Ball</p>
+        <p class="eyebrow">Case study · DX-Ball 1.07</p>
+        <h1>Rebuilding DX-Ball<br />from its executable.</h1>
+        <p class="lede">
+          The goal is a maintainable C version of the 1996 Windows game. REA and
+          Ghidra help inspect the original, one function at a time.
+        </p>
+        <p class="page-meta">Windows i386 · C · REA + Ghidra</p>
+      </div>
+      <div class="article-layout">
+        <nav class="contents" aria-label="On this page">
+          <p>In this case study</p>
+          <ul>
+            <li><a href="#progress">The project</a></li>
+            <li><a href="#sound-pan">Sound pan</a></li>
+            <li><a href="#checking">Checking the result</a></li>
+            <li><a href="#continue">Continue the work</a></li>
+          </ul>
+        </nav>
+        <article class="article" aria-label="DX-Ball reconstruction case study">
+          <section class="article-section" id="progress">
+            <dl class="stats">
+              <div>
+                <dt>55</dt>
+                <dd>maintained C functions</dd>
+              </div>
+              <div>
+                <dt>45,380</dt>
+                <dd>original-x86 differential cases</dd>
+              </div>
+              <div>
+                <dt>33</dt>
+                <dd>byte-exact functions</dd>
+              </div>
+            </dl>
+            <p class="caption">
+              Project checkpoint: 7 October 2026.
+              <a
+                href="https://github.com/N0zoM1z0/dx-ball/blob/a55dca27ec0a07018c1b2c95ae2be027f7d8c3c4/docs/PROGRESS.md"
+                >Progress ledger</a
+              >
+              ·
+              <a
+                href="https://github.com/N0zoM1z0/dx-ball/blob/a55dca27ec0a07018c1b2c95ae2be027f7d8c3c4/docs/ORACLES.md"
+                >Test coverage</a
+              >
+            </p>
+            <h2>The project so far</h2>
+            <p>
+              The recovered code covers board and resource handling, brick hits,
+              animations, particles and bonus production. Current builds provide
+              inspection utilities and an analysis library. Work on the playable
+              game continues with ball and paddle physics, power-up handling and
+              Windows integration.
+            </p>
+            <p>
+              The analysis starts from the DX-Ball 1.07 executable. REA returns
+              function code, instructions, callers and state references through
+              its Ghidra provider. These findings guide the C implementation;
+              execution of the original x86 functions and compiler replay check
+              the result.
+            </p>
+          </section>
+
+          <section class="article-section" id="sound-pan">
+            <h2>Finding the sound-pan calculation</h2>
+            <p>
+              When a brick is hit, its horizontal position is passed to the
+              sound code. The investigation needed to recover how that screen
+              coordinate becomes a left/right panning value.
+            </p>
+            <p>
+              The decompiler output for the function at
+              <code>0x00406400</code> was missing both the argument and the
+              floating-point expression. The instructions and callers supplied
+              the missing pieces.
+            </p>
+            <ol class="numbered-notes">
+              <li>
+                <h3>Read the input from the instructions</h3>
+                <p>
+                  The function reads its integer input from
+                  <code>[EBP+8]</code> and loads it onto the x87 stack. This
+                  establishes the parameter that was absent from the pseudocode.
+                </p>
+              </li>
+              <li>
+                <h3>Follow the caller</h3>
+                <p>
+                  The brick-hit routine passes <code>20 + 30 × tile_x</code>.
+                  The input is the brick's horizontal screen position.
+                </p>
+              </li>
+              <li>
+                <h3>Check the constants and operation order</h3>
+                <p>
+                  Byte reads identify the constants <code>1.5625</code> and
+                  <code>500.0</code>. The instructions multiply, subtract and
+                  apply the stored pan scale before converting the result to an
+                  integer.
+                </p>
+              </li>
+            </ol>
+            <div class="code-block">
+              <div class="code-header">
+                <span>Reconstructed C · src/gameplay.c</span
+                ><button
+                  class="copy-button"
+                  type="button"
+                  data-copy="pan-source"
+                  aria-label="Copy sound-pan function"
+                >
+                  Copy
+                </button>
+              </div>
+              <pre><code id="pan-source">DxBallInt dxball_screen_pan(DxBallInt x)
+{
+    double pan;
+    pan = (double)x;
+    pan = pan * 1.5625;
+    pan = pan - 500.0;
+    pan = pan * dxball_pan_scale;
+    return (DxBallInt)pan;
+}</code></pre>
+            </div>
+            <p class="caption">
+              <a
+                href="https://github.com/N0zoM1z0/dx-ball/blob/a55dca27ec0a07018c1b2c95ae2be027f7d8c3c4/src/gameplay.c#L41"
+                >Maintained source</a
+              >
+              ·
+              <a
+                href="https://github.com/N0zoM1z0/dx-ball/blob/a55dca27ec0a07018c1b2c95ae2be027f7d8c3c4/docs/GAMEPLAY_OWNER.md"
+                >Investigation notes and evidence references</a
+              >
+            </p>
+          </section>
+
+          <section class="article-section" id="checking">
+            <h2>Checking the recovered function</h2>
+            <p>
+              The project checks behavior and compiled code separately. For this
+              function, both checks pass.
+            </p>
+            <div class="verification">
+              <div>
+                <h3>3,205 behavior cases</h3>
+                <p>
+                  The tests execute the original x86 function and compare its
+                  return value with the maintained C. They cover every integer
+                  position from 0 to 640 at five pan scales: 0, 0.5, 1, 20 and
+                  −1.
+                </p>
+              </div>
+              <div>
+                <h3>63 matching bytes</h3>
+                <p>
+                  The C function is compiled with the pinned VC4.0 toolchain.
+                  Compiler replay matches the complete function after applying
+                  the reviewed relocations and checking the referenced
+                  constants.
+                </p>
+              </div>
+            </div>
+            <p class="small-heading">
+              At a scale of 1, the recovered calculation returns −500 at the
+              left edge, 0 at the center and 500 at the right edge. The next
+              part of the audio work is integrating that value with the game's
+              sound backend.
+            </p>
+            <p>
+              <a
+                href="https://github.com/N0zoM1z0/dx-ball/blob/a55dca27ec0a07018c1b2c95ae2be027f7d8c3c4/docs/BUILD_MATCHING.md"
+                >Read the compiler replay details</a
+              >
+            </p>
+          </section>
+
+          <section class="article-section" id="continue">
+            <h2>Continue the investigation</h2>
+            <p>
+              The same approach is being used for particle updates, explosion
+              queues and bonus generation: inspect the relevant functions,
+              recover their state and dependencies, then compare the
+              implementation with the original.
+            </p>
+            <p>
+              To inspect the sound-pan function yourself, follow the DX-Ball
+              project's setup instructions and supply its matching original
+              target. Then run:
+            </p>
+            <div class="code-block">
+              <div class="code-header">
+                <span>In the DX-Ball checkout</span
+                ><button
+                  class="copy-button"
+                  type="button"
+                  data-copy="pan-command"
+                  aria-label="Copy DX-Ball analysis command"
+                >
+                  Copy
+                </button>
+              </div>
+              <pre><code id="pan-command">scripts/rea function original/DXBALL.EXE 0x00406400 \
+  --provider ghidra \
+  --snapshot .analysis/rea/dxball.snapshot.json --json</code></pre>
+            </div>
+            <ul class="reading-list">
+              <li>
+                <a href="https://github.com/N0zoM1z0/dx-ball"
+                  >DX-Ball repository</a
+                ><span>Current source, progress and local setup.</span>
+              </li>
+              <li>
+                <a
+                  href="https://github.com/N0zoM1z0/dx-ball/blob/a55dca27ec0a07018c1b2c95ae2be027f7d8c3c4/docs/REA.md"
+                  >REA analysis workflow</a
+                ><span>Pinned tools, MCP sessions and retained evidence.</span>
+              </li>
+              <li>
+                <a
+                  href="https://github.com/N0zoM1z0/dx-ball/blob/a55dca27ec0a07018c1b2c95ae2be027f7d8c3c4/docs/ENTITIES_OWNER.md"
+                  >Particles and bonus production</a
+                ><span
+                  >A larger investigation into state, queues and pixel
+                  writes.</span
+                >
+              </li>
+            </ul>
+            <div class="actions">
+              <a class="button" href="../../get-started/"
+                >Start with your own target</a
+              >
+            </div>
+          </section>
+        </article>
+      </div>
+    </main>
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <p>REA · Reverse Engineer Anything</p>
+        <div class="footer-links">
+          <a href="https://github.com/morluto/rea">Source</a
+          ><a href="https://github.com/morluto/rea/blob/main/LICENSE"
+            >MIT license</a
+          ><a href="https://discord.gg/GkcryMnJDM">Community</a>
+        </div>
+      </div>
+    </footer>
+    <p class="sr-only" id="copy-status" role="status" aria-live="polite"></p>
+  </body>
+</html>
