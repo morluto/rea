@@ -117,62 +117,130 @@ export const parseInterfaceBuilderRecords = (
   };
 };
 
+/**
+ * A UID decodes as a one-key `UID` (binary) or `CF$UID` (XML) dictionary with
+ * an integer value. Any other dictionary is ordinary archive data.
+ */
+const archiveUid = (value: unknown): number | undefined => {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return undefined;
+  if (Object.keys(value).length !== 1) return undefined;
+  const item = record(value);
+  const marker = Object.hasOwn(item, "UID") ? item.UID : item["CF$UID"];
+  return typeof marker === "number" && Number.isInteger(marker)
+    ? marker
+    : undefined;
+};
+
+const HIERARCHY_KEY =
+  /(?:subviews|contentview|childviewcontrollers|children|views)$/iu;
+
+/**
+ * Read an NSKeyedArchiver object table without expanding it into a tree.
+ * Archived objects reference each other freely, including cycles such as a
+ * view and its superview, so inlining every reference grows exponentially.
+ * A reference instead resolves to the referenced string, or to a stub that
+ * names the referenced object; the hierarchy walk visits each object once.
+ */
+const keyedArchiveTable = (objectTable: readonly unknown[]) => {
+  const classNameOf = (value: unknown): string | null => {
+    const classReference = record(value).$class;
+    const uid = archiveUid(classReference);
+    return firstString(
+      record(uid === undefined ? classReference : objectTable[uid]).$classname,
+    );
+  };
+  /** The string an archived string object holds, if it is one. */
+  const archivedString = (target: unknown): string | undefined => {
+    if (typeof target === "string") return target;
+    const text = record(target)["NS.string"];
+    return typeof text === "string" &&
+      /^NS(?:Mutable)?String$/u.test(classNameOf(target) ?? "")
+      ? text
+      : undefined;
+  };
+  const text = (value: unknown): string | null => {
+    const uid = archiveUid(value);
+    return firstString(
+      uid === undefined ? value : archivedString(objectTable[uid]),
+    );
+  };
+  const authoredId = (item: Record<string, unknown>): string | null =>
+    firstString(text(item.objectID), text(item["object-id"]));
+  const reference = (uid: number): unknown => {
+    // UID 0 is the archived nil.
+    const target = uid === 0 ? null : objectTable[uid];
+    if (target === undefined || target === null) return null;
+    if (typeof target !== "object") return target;
+    const string = archivedString(target);
+    if (string !== undefined) return string;
+    const objectId = authoredId(record(target));
+    return {
+      archiveUID: uid,
+      ...(objectId === null ? {} : { objectID: objectId }),
+      className: classNameOf(target),
+    };
+  };
+  /** Resolve one object's own fields, leaving references to other objects as stubs. */
+  const resolve = (value: unknown): unknown => {
+    const uid = archiveUid(value);
+    if (uid !== undefined) return reference(uid);
+    if (Array.isArray(value)) return value.map(resolve);
+    if (typeof value !== "object" || value === null) return value;
+    const output: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value)) {
+      if (key === "$class") output.className = classNameOf(value);
+      else output[key] = resolve(child);
+    }
+    return output;
+  };
+  const hierarchy = (start: unknown): unknown[] => {
+    const visited = new Set<number>();
+    const node = (
+      item: Record<string, unknown>,
+      uid: number | undefined,
+      depth: number,
+    ): unknown[] => {
+      const objectId = firstString(
+        authoredId(item),
+        text(item.id),
+        uid === undefined ? null : String(uid),
+      );
+      const children = Object.entries(item)
+        .filter(([key]) => HIERARCHY_KEY.test(key))
+        .flatMap(([, child]) => visit(child, depth + 1));
+      return objectId === null ? children : [{ objectID: objectId, children }];
+    };
+    const visit = (value: unknown, depth: number): unknown[] => {
+      if (depth > 32) return [];
+      const uid = archiveUid(value);
+      if (uid !== undefined) {
+        if (visited.has(uid)) return [];
+        visited.add(uid);
+        const target = objectTable[uid];
+        if (Array.isArray(target)) return visit(target, depth + 1);
+        return typeof target === "object" && target !== null
+          ? node(record(target), uid, depth)
+          : [];
+      }
+      if (Array.isArray(value))
+        return value.flatMap((item) => visit(item, depth + 1));
+      if (typeof value !== "object" || value === null) return [];
+      return node(record(value), undefined, depth);
+    };
+    return visit(start, 0);
+  };
+  return { resolve, hierarchy };
+};
+
 /** Project class and connection objects from an NSKeyedArchiver object table. */
 const parseKeyedArchive = (
   root: Record<string, unknown>,
 ): ReturnType<typeof parseInterfaceBuilderRecords> | null => {
   if (root.$archiver !== "NSKeyedArchiver" || !Array.isArray(root.$objects))
     return null;
-  const objectTable = root.$objects;
-  const resolve = (value: unknown, depth = 0): unknown => {
-    if (depth > 16) return null;
-    const uid = record(value).UID;
-    if (typeof uid === "number") {
-      const target = objectTable[uid];
-      const resolved = target === undefined ? null : resolve(target, depth + 1);
-      return typeof resolved === "object" &&
-        resolved !== null &&
-        !Array.isArray(resolved)
-        ? { ...resolved, archiveUID: uid }
-        : resolved;
-    }
-    if (Array.isArray(value))
-      return value.map((item) => resolve(item, depth + 1));
-    if (typeof value !== "object" || value === null) return value;
-    const output: Record<string, unknown> = {};
-    for (const [key, child] of Object.entries(value)) {
-      if (key === "$class") {
-        const classObject = record(
-          typeof record(child).UID === "number"
-            ? objectTable[record(child).UID as number]
-            : child,
-        );
-        output.className = firstString(classObject.$classname);
-      } else output[key] = resolve(child, depth + 1);
-    }
-    return output;
-  };
-  const toHierarchy = (value: unknown, depth = 0): unknown[] => {
-    if (depth > 32) return [];
-    if (Array.isArray(value))
-      return value.flatMap((item) => toHierarchy(item, depth + 1));
-    if (typeof value !== "object" || value === null) return [];
-    const item = record(value);
-    const objectId = firstString(
-      item.objectID,
-      item["object-id"],
-      item.id,
-      typeof item.archiveUID === "number" ? String(item.archiveUID) : null,
-    );
-    const children = Object.entries(item)
-      .filter(([key]) =>
-        /(?:subviews|contentview|childviewcontrollers|children|views)$/iu.test(
-          key,
-        ),
-      )
-      .flatMap(([, child]) => toHierarchy(child, depth + 1));
-    return objectId === null ? children : [{ objectID: objectId, children }];
-  };
+  const objectTable: readonly unknown[] = root.$objects;
+  const { resolve, hierarchy: toHierarchy } = keyedArchiveTable(objectTable);
   const objects: InterfaceBuilderObject[] = [];
   const connections: InterfaceBuilderConnection[] = [];
   let objectCount = 0;
@@ -252,8 +320,7 @@ const parseKeyedArchive = (
     }
   }
   const top = record(root.$top);
-  const topObject = resolve(top.root ?? top.UITopLevelObjectsKey);
-  const hierarchy = toHierarchy(topObject);
+  const hierarchy = toHierarchy(top.root ?? top.UITopLevelObjectsKey);
   const classes = Object.fromEntries(
     objectTable.flatMap((raw) => {
       const item = record(raw);
@@ -327,7 +394,11 @@ const classifyObject = (
   const value = className?.toLowerCase() ?? "";
   if (value.includes("constraint")) return "constraint";
   if (value.includes("layoutguide")) return "layout_guide";
-  if (value.includes("placeholder") || value.includes("firstresponder"))
+  if (
+    value.includes("placeholder") ||
+    value.includes("firstresponder") ||
+    value === "uiproxyobject"
+  )
     return "placeholder";
   if (
     value.includes("image") ||

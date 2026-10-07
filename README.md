@@ -163,7 +163,7 @@ Deep native binary analysis requires [Hopper](https://www.hopperapp.com/), [Ghid
 
 Firmware region inspection and explicit extraction use caller-supplied Binwalk and Unblob on Linux. See [Firmware analysis](docs/firmware-analysis.md) for setup, provenance, resource limits and native handoff.
 
-Static APK analysis uses a separately supplied headless JADX JAR and a full JDK, with no emulator or APK execution. See [Android analysis](docs/android-analysis.md) for setup, CLI/MCP operations, coverage and public test fixtures. Authenticated IPA inventory Evidence can be projected with [Apple application analysis](docs/apple-application-analysis.md).
+Static APK analysis uses a separately supplied headless JADX JAR and a full JDK, with no emulator or APK execution. See [Android analysis](docs/android-analysis.md) for setup, CLI/MCP operations, coverage and public test fixtures. Authenticated IPA and macOS `.app`, ZIP, or DMG inventory Evidence can be projected into bundle anatomy, such as XPC services, app extensions, login items, privileged helpers, and launchd plists, with [Apple application analysis](docs/apple-application-analysis.md).
 
 Repository main and npm 4.1.0 include experimental Windows x64 Ghidra support for native x86-64 PE applications on local NTFS, with bundled Job Object, private-DACL, and path-admission controls. Check the [release boundary](docs/installation.md#released-package-and-main) before expecting this from an older npm package. See [Windows Ghidra P0](docs/windows-ghidra-p0.md) for prerequisites and verified scope.
 

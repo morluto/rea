@@ -3,6 +3,17 @@ import { createHash } from "node:crypto";
 import canonicalize from "canonicalize";
 import { z } from "zod";
 
+import {
+  appleBundleSchema,
+  appleComponentSchema,
+  applicationRoots,
+  detectBundles,
+  isMachOFormat,
+  isSidecar,
+  isWithin,
+  platformsOf,
+  type AppleInventoryEntry,
+} from "./appleBundleAnatomy.js";
 import { parseArtifactInventoryEvidence } from "./artifactInventoryEvidence.js";
 import { evidenceSchema } from "./evidence.js";
 import { digestSchema } from "./../domain/digests.js";
@@ -11,12 +22,7 @@ import { prefixedDigestSchema } from "./../domain/digests.js";
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const pathSchema = z.string().min(1);
 
-const componentSchema = z.strictObject({
-  path: pathSchema,
-  artifact_id: prefixedDigestSchema("art"),
-  sha256: digestSchema,
-  format: z.string().min(1),
-});
+const APPLE_ROOT_FORMATS = ["ipa", "directory", "zip", "dmg"] as const;
 
 /** Authenticated artifact inventory pages projected as one Apple application. */
 export const appleApplicationProjectionInputSchema = z.strictObject({
@@ -27,17 +33,25 @@ export const appleApplicationProjectionInputSchema = z.strictObject({
 export const appleApplicationProjectionResultSchema = z.strictObject({
   projection_id: prefixedDigestSchema("aap"),
   root_sha256: digestSchema,
-  root_format: z.literal("ipa"),
+  root_format: z.enum(APPLE_ROOT_FORMATS),
+  platforms: z.array(z.enum(["ios", "macos"])),
   source_evidence_ids: z.array(evidenceIdSchema).min(1),
   application_roots: z.array(pathSchema),
+  bundles: z.array(appleBundleSchema),
   components: z.strictObject({
-    bundle_metadata: z.array(componentSchema),
-    executables: z.array(componentSchema),
-    frameworks: z.array(componentSchema),
-    native_libraries: z.array(componentSchema),
-    javascript: z.array(componentSchema),
-    signing: z.array(componentSchema),
+    bundle_metadata: z.array(appleComponentSchema),
+    executables: z.array(appleComponentSchema),
+    frameworks: z.array(appleComponentSchema),
+    native_libraries: z.array(appleComponentSchema),
+    javascript: z.array(appleComponentSchema),
+    signing: z.array(appleComponentSchema),
+    privileged_helpers: z.array(appleComponentSchema),
+    launchd_plists: z.array(
+      appleComponentSchema.extend({ domain: z.enum(["agent", "daemon"]) }),
+    ),
+    helpers: z.array(appleComponentSchema),
   }),
+  symlinks: z.array(pathSchema),
   runtime_families: z.array(
     z.enum([
       "native",
@@ -74,9 +88,10 @@ export type AppleApplicationProjectionResult = z.infer<
   typeof appleApplicationProjectionResultSchema
 >;
 
-type Component = z.infer<typeof componentSchema>;
+type Component = z.infer<typeof appleComponentSchema>;
+type RootFormat = (typeof APPLE_ROOT_FORMATS)[number];
 
-/** Project exact IPA paths and hashes without parsing or executing target code. */
+/** Project exact Apple application paths and hashes without parsing or executing target code. */
 export const projectAppleApplication = (
   input: AppleApplicationProjectionInput,
 ): AppleApplicationProjectionResult => {
@@ -84,38 +99,49 @@ export const projectAppleApplication = (
   const { evidence, inventory } = parseArtifactInventoryEvidence(
     parsed.inventory_evidence,
   );
-  if (inventory.manifest.root_format !== "ipa")
-    throw new TypeError("Apple application projection requires IPA Evidence");
+  const rootFormat = appleRootFormat(inventory.manifest.root_format);
   const nodes = new Map(
     inventory.nodes.map((node) => [node.artifact_id, node]),
   );
-  const all = inventory.occurrences
-    .filter(
-      (occurrence) =>
-        occurrence.artifact_id !== null && occurrence.logical_path !== ".",
-    )
+  const entries: AppleInventoryEntry[] = inventory.occurrences
+    .filter(({ logical_path: path }) => path !== ".")
     .map((occurrence) => {
-      const node = nodes.get(occurrence.artifact_id ?? "");
+      if (occurrence.artifact_id === null)
+        return {
+          path: occurrence.logical_path,
+          kind: occurrence.entry_kind,
+          component: undefined,
+        };
+      const node = nodes.get(occurrence.artifact_id);
       if (node === undefined)
         throw new TypeError(
           "Apple application occurrence has no artifact node",
         );
       return {
         path: occurrence.logical_path,
-        artifact_id: node.artifact_id,
-        sha256: node.sha256,
-        format: node.format,
-      } satisfies Component;
+        kind: occurrence.entry_kind,
+        component: {
+          path: occurrence.logical_path,
+          artifact_id: node.artifact_id,
+          sha256: node.sha256,
+          format: node.format,
+        },
+      };
     });
-  const roots = [
-    ...new Set(
-      inventory.occurrences.flatMap(({ logical_path: path }) => {
-        const match = /^(Payload\/[^/]+\.app)(?:\/|$)/u.exec(path);
-        return match?.[1] === undefined ? [] : [match[1]];
-      }),
-    ),
-  ].sort(compare);
-  const classified = classifyComponents(all, roots);
+  const inventoried = entries.flatMap(({ component }) =>
+    component === undefined ? [] : [component],
+  );
+  const roots = applicationRoots(entries, {
+    name: evidence[0]?.subject?.name ?? "",
+    format: rootFormat,
+  });
+  const { all, unattributed } = attributeComponents(
+    inventoried,
+    roots,
+    rootFormat,
+  );
+  const bundles = detectBundles(entries, roots);
+  const classified = classifyComponents(entries, all, roots);
   const runtimeFamilies = identifyRuntimeFamilies(all);
   const bridgeProjection = identifyBridgeCandidates(
     classified.javascript,
@@ -124,19 +150,36 @@ export const projectAppleApplication = (
       ...classified.native_libraries,
     ]),
   );
-  const limitations = projectionLimitations(inventory.complete, roots);
+  const uninventoriedImage =
+    rootFormat === "dmg" && inventory.occurrences.length === 1;
+  const complete = inventory.complete && !uninventoriedImage;
+  const limitations = projectionLimitations({
+    complete: inventory.complete,
+    uninventoriedImage,
+    roots,
+    bundles,
+    sidecars: entries.some(({ path }) => isSidecar(path)),
+    symlinks: entries.some(({ kind }) => kind === "symlink"),
+    unattributed,
+  });
   const withoutId = {
     root_sha256: inventory.manifest.root_sha256,
-    root_format: "ipa" as const,
+    root_format: rootFormat,
+    platforms: platformsOf(bundles),
     source_evidence_ids: evidence
       .map(({ evidence_id: id }) => id)
       .sort(compare),
     application_roots: roots,
+    bundles,
     components: classified,
+    symlinks: entries
+      .filter(({ kind }) => kind === "symlink")
+      .map(({ path }) => path)
+      .sort(compare),
     runtime_families: runtimeFamilies,
     bridge_candidates: bridgeProjection.candidates,
     coverage: {
-      status: inventory.complete
+      status: complete
         ? ("complete-within-inventory" as const)
         : ("partial" as const),
       inventory_complete: inventory.complete,
@@ -149,28 +192,77 @@ export const projectAppleApplication = (
   });
 };
 
+/**
+ * IPA projection keeps every archive component, as before. Directory, ZIP,
+ * and DMG inventories can hold installers and other siblings, so only
+ * components inside an application root are attributed to it.
+ */
+const attributeComponents = (
+  inventoried: readonly Component[],
+  roots: readonly string[],
+  rootFormat: RootFormat,
+): { readonly all: Component[]; readonly unattributed: number } => {
+  if (rootFormat === "ipa") return { all: [...inventoried], unattributed: 0 };
+  const visible = inventoried.filter(({ path }) => !isSidecar(path));
+  const all = visible.filter(({ path }) =>
+    roots.some((root) => isWithin(path, root)),
+  );
+  return { all, unattributed: visible.length - all.length };
+};
+
+const appleRootFormat = (format: string): RootFormat => {
+  const root = APPLE_ROOT_FORMATS.find((candidate) => candidate === format);
+  if (root === undefined)
+    throw new TypeError(
+      `Apple application projection requires IPA, directory, ZIP, or DMG inventory Evidence (got ${format})`,
+    );
+  return root;
+};
+
 const classifyComponents = (
+  entries: readonly AppleInventoryEntry[],
   all: readonly Component[],
   roots: readonly string[],
 ) => {
   const withinApp = (path: string): boolean =>
-    roots.some((root) => path.startsWith(`${root}/`));
+    roots.some((root) => isWithin(path, root));
+  const anatomy = (pattern: RegExp): Component[] =>
+    entries.flatMap(({ path, kind, component }) =>
+      kind === "file" &&
+      component !== undefined &&
+      !isSidecar(path) &&
+      withinApp(path) &&
+      pattern.test(path)
+        ? [component]
+        : [],
+    );
   return {
     bundle_metadata: all.filter(({ path }) =>
       /(?:^|\/)Info\.plist$/u.test(path),
     ),
     executables: all.filter(
-      ({ path, format }) =>
-        withinApp(path) && ["mach-o", "mach-o-universal"].includes(format),
+      ({ path, format }) => withinApp(path) && isMachOFormat(format),
     ),
     frameworks: all.filter(({ path }) => /\.framework\//u.test(path)),
     native_libraries: all.filter(({ path }) => /\.(?:dylib|so)$/iu.test(path)),
     javascript: all.filter(({ format }) => format === "javascript-bundle"),
     signing: all.filter(({ path }) =>
-      /(?:^|\/)(?:embedded\.mobileprovision|_CodeSignature\/CodeResources)$/u.test(
+      /(?:^|\/)(?:embedded\.(?:mobileprovision|provisionprofile)|_CodeSignature\/CodeResources)$/u.test(
         path,
       ),
     ),
+    privileged_helpers: anatomy(
+      /(?:^|\/)Contents\/Library\/LaunchServices\/[^/]+$/u,
+    ),
+    launchd_plists: anatomy(
+      /(?:^|\/)Contents\/Library\/Launch(?:Agents|Daemons)\/[^/]+\.plist$/u,
+    ).map((component) => ({
+      ...component,
+      domain: component.path.includes("/LaunchDaemons/")
+        ? ("daemon" as const)
+        : ("agent" as const),
+    })),
+    helpers: anatomy(/(?:^|\/)Contents\/Helpers\/[^/]+$/u),
   };
 };
 
@@ -241,18 +333,52 @@ const bridgeBasis = (
   return "javascript-and-native-content";
 };
 
-const projectionLimitations = (
-  complete: boolean,
-  roots: readonly string[],
-): string[] => [
-  ...(!complete
+const projectionLimitations = (facts: {
+  readonly complete: boolean;
+  readonly uninventoriedImage: boolean;
+  readonly roots: readonly string[];
+  readonly bundles: readonly z.infer<typeof appleBundleSchema>[];
+  readonly sidecars: boolean;
+  readonly symlinks: boolean;
+  readonly unattributed: number;
+}): string[] => [
+  ...(!facts.complete
     ? ["Source inventory pages are incomplete; absence is unknown."]
     : []),
-  ...(roots.length === 0
+  ...(facts.uninventoriedImage
     ? [
-        "No Payload/*.app directory was present in the supplied inventory pages.",
+        "The DMG's contents were not inventoried on this host; bundle absence is unknown.",
       ]
     : []),
+  ...(facts.roots.length === 0
+    ? [
+        "No application bundle (Payload/*.app or *.app/Contents) was present in the supplied inventory pages.",
+      ]
+    : []),
+  ...(facts.bundles.some(
+    ({ layout, info_plist_path: plist }) =>
+      layout === "versioned-framework" && plist === null,
+  )
+    ? [
+        "A versioned framework has zero or several Versions/*/Resources/Info.plist files; the one Versions/Current selects is unknown because symlink targets are not inventoried.",
+      ]
+    : []),
+  ...(facts.symlinks
+    ? [
+        "Symlinks are reported by path only; their targets are not inventoried, so bundles are reported at their real paths.",
+      ]
+    : []),
+  ...(facts.unattributed > 0
+    ? [
+        `${facts.unattributed} inventoried entries outside every application root are not attributed to the application.`,
+      ]
+    : []),
+  ...(facts.sidecars
+    ? [
+        "AppleDouble sidecar entries (._* files and __MACOSX/) describe neighbouring files and are excluded from bundle roles.",
+      ]
+    : []),
+  "Bundle roles follow path conventions. Read each info_plist_path with inspect_plist for CFBundleExecutable, identifiers, and declared services.",
   "Bundle identifiers and signing claims require dedicated plist and CMS parsing; this projection reports only exact paths and hashes.",
   "Bridge candidates are path-based hypotheses, not observed runtime calls.",
 ];

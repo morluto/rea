@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -289,6 +289,122 @@ describe("app executable filename fidelity", () => {
           format: "mach-o",
         });
       }
+    },
+  );
+});
+
+describe("iOS-style app bundle targets", () => {
+  const plist = (name: string) =>
+    `<plist><dict><key>CFBundleExecutable</key><string>${name}</string></dict></plist>`;
+
+  it("resolves a flat bundle's program file beside its Info.plist", async () => {
+    const directory = await createTestTempDirectory("rea-target-");
+    const app = join(directory, "Flat.app");
+    await mkdir(app);
+    await writeFile(join(app, "Info.plist"), plist("Flat"));
+    await writeFile(join(app, "Flat"), thinMach(0xfeedfacf, 0x0100000c));
+    const result = await parseBinaryTarget(app, directory, "arm64");
+    expect(result.ok && result.value).toMatchObject({
+      path: await realpath(join(app, "Flat")),
+      bundleInfoPlist: join(await realpath(app), "Info.plist"),
+      format: "mach-o",
+    });
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "keeps the declaring Info.plist for a symlinked program file",
+    async () => {
+      const directory = await createTestTempDirectory("rea-target-");
+      const app = join(directory, "Linked.app");
+      await mkdir(join(app, "bin"), { recursive: true });
+      await writeFile(join(app, "Info.plist"), plist("Linked"));
+      await writeFile(
+        join(app, "bin", "real"),
+        thinMach(0xfeedfacf, 0x0100000c),
+      );
+      await symlink("bin/real", join(app, "Linked"));
+      const result = await parseBinaryTarget(app, directory, "arm64");
+      expect(result.ok && result.value).toMatchObject({
+        path: await realpath(join(app, "bin", "real")),
+        bundleInfoPlist: join(await realpath(app), "Info.plist"),
+      });
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "follows a readable Contents/Info.plist symlink",
+    async () => {
+      const directory = await createTestTempDirectory("rea-target-");
+      const app = join(directory, "Linked.app");
+      const contents = join(app, "Contents");
+      await mkdir(join(contents, "MacOS"), { recursive: true });
+      await writeFile(join(contents, "Real.plist"), plist("Linked"));
+      await symlink("Real.plist", join(contents, "Info.plist"));
+      await writeFile(
+        join(contents, "MacOS", "Linked"),
+        thinMach(0xfeedfacf, 0x0100000c),
+      );
+      const result = await parseBinaryTarget(app, directory, "arm64");
+      expect(result.ok && result.value).toMatchObject({
+        path: await realpath(join(contents, "MacOS", "Linked")),
+      });
+    },
+  );
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "reports a wrapper it cannot read as a permission denial",
+    async () => {
+      const directory = await createTestTempDirectory("rea-target-");
+      const app = join(directory, "Locked.app");
+      const wrapper = join(app, "Wrapper");
+      await mkdir(join(wrapper, "Locked.app"), { recursive: true });
+      await chmod(wrapper, 0o000);
+      try {
+        const result = await parseBinaryTarget(app, directory, "arm64");
+        expect(result.ok).toBe(false);
+        if (result.ok) throw new Error("Expected a permission denial");
+        expect(result.error.message).toContain("permission denied");
+      } finally {
+        await chmod(wrapper, 0o755);
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "resolves an iOS-on-Mac wrapper through its single Wrapper bundle",
+    async () => {
+      const directory = await createTestTempDirectory("rea-target-");
+      const app = join(directory, "Phone.app");
+      const wrapped = join(app, "Wrapper", "Phone.app");
+      await mkdir(wrapped, { recursive: true });
+      await writeFile(join(wrapped, "Info.plist"), plist("Phone"));
+      await writeFile(join(wrapped, "Phone"), thinMach(0xfeedfacf, 0x0100000c));
+      await symlink("Wrapper/Phone.app", join(app, "WrappedBundle"));
+      const result = await parseBinaryTarget(app, directory, "arm64");
+      expect(result.ok && result.value).toMatchObject({
+        path: await realpath(join(wrapped, "Phone")),
+        format: "mach-o",
+      });
+
+      await mkdir(join(app, "Wrapper", "Second.app"));
+      expect((await parseBinaryTarget(app, directory, "arm64")).ok).toBe(false);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "rejects a flat bundle program symlink that leaves the bundle",
+    async () => {
+      const directory = await createTestTempDirectory("rea-target-");
+      const app = join(directory, "Escaping.app");
+      const outside = join(directory, "outside");
+      await mkdir(app);
+      await writeFile(outside, thinMach(0xfeedfacf, 0x0100000c));
+      await writeFile(join(app, "Info.plist"), plist("Escaping"));
+      await symlink(outside, join(app, "Escaping"));
+      const result = await parseBinaryTarget(app, directory, "arm64");
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("Expected an escaping program file");
+      expect(result.error.message).toContain("leaves the bundle root");
     },
   );
 });

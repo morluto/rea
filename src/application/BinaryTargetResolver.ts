@@ -3,22 +3,19 @@ import { createHash } from "node:crypto";
 import {
   access,
   open,
-  readFile,
   realpath,
   stat,
   type FileHandle,
 } from "node:fs/promises";
-import { execFile } from "node:child_process";
-import { extname, isAbsolute, join, resolve } from "node:path";
-import { promisify } from "node:util";
+import { extname, isAbsolute, resolve } from "node:path";
 
-import { z } from "zod";
-
-import { isPathWithinRoot } from "../domain/localPath.js";
-import { parseXmlPropertyList } from "../domain/propertyListKeys.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
+import {
+  resolveAppBundleExecutable,
+  type ResolvedAppBundle,
+} from "./AppBundleExecutable.js";
 import {
   validateDosComLength,
   type ExecutableFormatHint,
@@ -34,8 +31,6 @@ import {
   parsePeRecord,
   type ExecutableMetadata,
 } from "../domain/binaryTarget.js";
-
-const execFileAsync = promisify(execFile);
 
 /**
  * Resolve and classify a readable local target before a provider is selected.
@@ -55,7 +50,9 @@ export const parseBinaryTarget = async (
     const canonical = await realpath(candidate);
     const resolved = await resolveAppBundle(canonical);
     if (!resolved.ok) return err(resolved.error);
-    const path = resolved.value;
+    const { executable: path, infoPlist } = resolved.value;
+    const bundle =
+      infoPlist === undefined ? {} : { bundleInfoPlist: infoPlist };
     const handle = await open(path, "r");
     try {
       if (!(await handle.stat()).isFile())
@@ -107,6 +104,7 @@ export const parseBinaryTarget = async (
       return ok({
         path,
         sourcePath: process.platform === "win32" ? candidate : canonical,
+        ...bundle,
         sha256: await sha256Handle(handle),
         kind: "executable",
         ...detected.value,
@@ -216,88 +214,21 @@ const sha256Handle = async (handle: FileHandle): Promise<string> => {
 
 const resolveAppBundle = async (
   path: string,
-): Promise<Result<string, BinaryTargetError>> => {
+): Promise<Result<ResolvedAppBundle, BinaryTargetError>> => {
   const metadata = await stat(path);
-  if (!metadata.isDirectory()) return ok(path);
+  if (!metadata.isDirectory()) return ok({ executable: path });
   if (extname(path).toLowerCase() !== ".app")
     return err(
       new BinaryTargetError(
         path,
-        "this opening route requires a file or macOS app bundle",
+        "this opening route requires a file or app bundle",
         {
           constraint: "directory_requires_file",
         },
       ),
     );
-  const plistPath = join(path, "Contents", "Info.plist");
-  let name: string;
-  try {
-    const plist = await readFile(plistPath);
-    name =
-      plist.subarray(0, 6).toString("ascii") === "bplist"
-        ? await readBinaryPlistExecutable(plistPath)
-        : parseXmlPlistExecutable(plist.toString("utf8"));
-  } catch (cause: unknown) {
-    return err(
-      new BinaryTargetError(path, "app has no readable CFBundleExecutable", {
-        cause,
-      }),
-    );
-  }
-  if (!isSafeExecutableName(name))
-    return err(
-      new BinaryTargetError(path, "app has an unsafe CFBundleExecutable"),
-    );
-  const programs = join(path, "Contents", "MacOS");
-  const executable = join(programs, name);
-  try {
-    const [canonicalPrograms, canonicalExecutable] = await Promise.all([
-      realpath(programs),
-      realpath(executable),
-    ]);
-    if (!isPathWithinRoot(canonicalPrograms, canonicalExecutable))
-      return err(
-        new BinaryTargetError(path, "app program file leaves Contents/MacOS"),
-      );
-    return ok(canonicalExecutable);
-  } catch (cause: unknown) {
-    return err(
-      new BinaryTargetError(path, "app program file is missing", { cause }),
-    );
-  }
+  return resolveAppBundleExecutable(path);
 };
-
-/** Decode the top-level executable name with an XML parser, not a pattern. */
-const parseXmlPlistExecutable = (plist: string): string => {
-  // An unrelated `__proto__` entry must not make the bundle unreadable.
-  const { value } = parseXmlPropertyList(plist);
-  const executable = executableEntrySchema.safeParse(value);
-  if (!executable.success) throw new Error("CFBundleExecutable is missing");
-  return executable.data.CFBundleExecutable;
-};
-
-const executableEntrySchema = z.looseObject({ CFBundleExecutable: z.string() });
-
-const readBinaryPlistExecutable = async (plistPath: string): Promise<string> =>
-  // `-n` strips only the newline plutil appends; it requires macOS 12+.
-  (
-    await execFileAsync("/usr/bin/plutil", [
-      "-extract",
-      "CFBundleExecutable",
-      "raw",
-      "-n",
-      "-o",
-      "-",
-      plistPath,
-    ])
-  ).stdout;
-
-const isSafeExecutableName = (name: string): boolean =>
-  name.length > 0 &&
-  name !== "." &&
-  name !== ".." &&
-  !name.includes("\0") &&
-  !/[/\\]/u.test(name);
 
 const readExecutableMetadata = async (
   handle: FileHandle,

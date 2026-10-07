@@ -4,6 +4,8 @@ export type BinaryArchitecture = "x86" | "x86_64" | "arm" | "arm64";
 interface BinaryTargetIdentity {
   readonly path: string;
   readonly sourcePath?: string;
+  /** Info.plist of the app bundle the target was resolved from. */
+  readonly bundleInfoPlist?: string;
   readonly sha256: string;
 }
 

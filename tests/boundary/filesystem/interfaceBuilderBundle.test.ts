@@ -164,6 +164,50 @@ describe("compiled Interface Builder bundle reader", () => {
   });
 });
 
+describe("flat Interface Builder plist values", () => {
+  it("decodes flat nib archives that hold data and date values", async () => {
+    const root = await createTestTempDirectory("rea-ib-test-");
+    const bundle = join(root, "Example.app");
+    const resources = join(bundle, "Contents", "Resources", "English.lproj");
+    await mkdir(resources, { recursive: true });
+    await writeFile(
+      join(resources, "Binary.nib"),
+      buildBinary({
+        $archiver: "NSKeyedArchiver",
+        $version: 100000,
+        $objects: [
+          "$null",
+          { $class: { UID: 2 }, title: "Build", NSColor: { UID: 3 } },
+          { $classname: "NSButton", $classes: ["NSButton", "NSObject"] },
+          { $class: { UID: 4 }, NSWhite: Buffer.from("0.5\0", "ascii") },
+          { $classname: "NSColor", $classes: ["NSColor", "NSObject"] },
+        ],
+        $top: { root: { UID: 1 } },
+      }),
+    );
+    await writeFile(
+      join(resources, "Xml.nib"),
+      '<?xml version="1.0"?><plist version="1.0"><dict><key>$archiver</key><string>NSKeyedArchiver</string><key>$objects</key><array><string>$null</string><dict><key>NSWhite</key><data>MC41AA==</data><key>NSDate</key><date>2026-10-07T00:00:00Z</date></dict></array><key>$top</key><dict/></dict></plist>',
+    );
+
+    const analysis = await analyzeInterfaceBuilderBundle({
+      bundlePath: bundle,
+      targetSha256: "d".repeat(64),
+    });
+
+    expect(
+      analysis.documents.map(({ relative_path }) => relative_path).sort(),
+    ).toEqual([
+      "Contents/Resources/English.lproj/Binary.nib",
+      "Contents/Resources/English.lproj/Xml.nib",
+    ]);
+    expect(analysis.graph.coverage).toContainEqual(
+      expect.objectContaining({ facet: "archive_decode", status: "complete" }),
+    );
+    expect(analysis.graph.nodes.map(({ name }) => name)).toContain("Build");
+  });
+});
+
 describe("bounded Interface Builder archive decoding", () => {
   it("counts malformed archives against the document limit", async () => {
     const root = await createTestTempDirectory("rea-ib-test-");
@@ -295,4 +339,93 @@ describe("bounded Interface Builder archive decoding", () => {
       );
     },
   );
+});
+
+describe("compiled UIKit NIB connections", () => {
+  it("projects UIKit runtime outlet and event connections", async () => {
+    const root = await createTestTempDirectory("rea-ib-test-");
+    const bundle = join(root, "Example.app");
+    await mkdir(bundle, { recursive: true });
+    await writeFile(
+      join(bundle, "Cell.nib"),
+      encodeNibArchiveFixture({
+        classes: [
+          "UIProxyObject",
+          "UIClassSwapper",
+          "UIButton",
+          "UIRuntimeEventConnection",
+          "UIRuntimeOutletConnection",
+          "NSString",
+        ],
+        objects: [
+          { classIndex: 0, values: { UIProxiedObjectIdentifier: { ref: 5 } } },
+          { classIndex: 1, values: { UIClassName: { ref: 6 } } },
+          { classIndex: 2, values: {} },
+          {
+            classIndex: 3,
+            values: {
+              UISource: { ref: 2 },
+              UIDestination: { ref: 1 },
+              UILabel: { ref: 7 },
+              UIEventMask: 64,
+            },
+          },
+          {
+            classIndex: 4,
+            values: {
+              UISource: { ref: 1 },
+              UIDestination: { ref: 2 },
+              UILabel: { ref: 8 },
+            },
+          },
+          { classIndex: 5, values: { "NS.bytes": "IBFilesOwner" } },
+          { classIndex: 5, values: { "NS.bytes": "BuildCell" } },
+          { classIndex: 5, values: { "NS.bytes": "buildTapped:" } },
+          { classIndex: 5, values: { "NS.bytes": "buildButton" } },
+        ],
+      }),
+    );
+
+    const analysis = await analyzeInterfaceBuilderBundle({
+      bundlePath: bundle,
+      targetSha256: "e".repeat(64),
+    });
+    const byId = new Map(analysis.graph.nodes.map((node) => [node.id, node]));
+    const named = (id: string | null) =>
+      id === null ? null : (byId.get(id)?.name ?? null);
+    const action = analysis.graph.nodes.find(({ kind }) => kind === "action");
+    expect(action).toMatchObject({
+      name: "buildTapped:",
+      attributes: { ui_event_mask: 64 },
+    });
+    const actionEdges = analysis.graph.edges.filter(
+      ({ relation }) => relation === "target_action",
+    );
+    expect(
+      actionEdges
+        .filter(({ to }) => to === action?.id)
+        .map(({ from }) => named(from)),
+    ).toEqual(["UIButton"]);
+    expect(
+      actionEdges
+        .filter(({ from }) => from === action?.id)
+        .map(({ to }) => named(to)),
+    ).toEqual(expect.arrayContaining(["BuildCell"]));
+    const outlet = analysis.graph.nodes.find(({ kind }) => kind === "outlet");
+    expect(outlet?.name).toBe("buildButton");
+    expect(
+      analysis.graph.edges
+        .filter(
+          ({ relation, from }) =>
+            relation === "outlet_to" && from === outlet?.id,
+        )
+        .map(({ to }) => named(to)),
+    ).toEqual(["UIButton"]);
+    expect(
+      analysis.graph.nodes.find(({ name }) => name === "IBFilesOwner")?.kind,
+    ).toBe("placeholder");
+    expect(analysis.graph.nodes.map(({ name }) => name)).not.toContain(
+      "UIRuntimeEventConnection",
+    );
+  });
 });
