@@ -282,6 +282,133 @@ const emitSessionTimeline = (
   }
 };
 
+const emitSameOriginRedirectEvents = (
+  socket: WebSocket,
+  command: FakeCdpCommand,
+  port: number,
+  url: string,
+): string => {
+  const intermediate = `http://127.0.0.1:${String(port)}/intermediate`;
+  const finalUrl = `http://127.0.0.1:${String(port)}/redirected?token=final-secret`;
+  event(socket, "Network.requestWillBeSent", command.sessionId, {
+    requestId: "request-1",
+    type: "Fetch",
+    request: { url: intermediate, method: "GET" },
+    redirectResponse: {
+      url,
+      status: 301,
+      mimeType: "text/plain",
+      encodedDataLength: 23,
+      headers: { "X-Private": "redirect-header-secret" },
+    },
+    timestamp: 8,
+  });
+  event(socket, "Network.requestWillBeSent", command.sessionId, {
+    requestId: "request-1",
+    type: "Fetch",
+    request: { url: finalUrl, method: "GET" },
+    redirectResponse: {
+      url: intermediate,
+      status: 302,
+      mimeType: "text/plain",
+      encodedDataLength: 27,
+    },
+    timestamp: 9,
+  });
+  return finalUrl;
+};
+
+const emitReturnFromDisallowedRedirect = (
+  socket: WebSocket,
+  command: FakeCdpCommand,
+  port: number,
+): string => {
+  const finalUrl = `http://127.0.0.1:${String(port)}/returned`;
+  event(socket, "Network.requestWillBeSent", command.sessionId, {
+    requestId: "request-1",
+    type: "Fetch",
+    request: { url: finalUrl, method: "GET" },
+    redirectResponse: {
+      url: "https://private.example.test/outside?token=redirect-url-secret",
+      status: 302,
+      mimeType: "text/plain",
+      encodedDataLength: 31,
+      headers: { "X-Private": "redirect-header-secret" },
+      postData: "redirect-body-secret",
+    },
+    timestamp: 8,
+  });
+  return finalUrl;
+};
+
+const emitMalformedRedirectPriorResponse = (
+  socket: WebSocket,
+  command: FakeCdpCommand,
+  port: number,
+  initialUrl: string,
+): void => {
+  const priorUrl = `http://127.0.0.1:${String(port)}/malformed-redirect-prior`;
+  event(socket, "Network.requestWillBeSent", command.sessionId, {
+    requestId: "request-1",
+    type: "Fetch",
+    request: {
+      url: priorUrl,
+      method: "POST",
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+      postData: JSON.stringify({
+        operation: "preserve-prior",
+        token: "prior-body",
+      }),
+    },
+    redirectResponse: {
+      url: initialUrl,
+      status: 307,
+      mimeType: "text/plain",
+      encodedDataLength: 23,
+    },
+    timestamp: 8,
+  });
+  event(socket, "Network.responseReceived", command.sessionId, {
+    requestId: "request-1",
+    response: {
+      url: priorUrl,
+      status: 201,
+      mimeType: "application/json",
+      headers: {
+        "Content-Length": "123",
+        "Content-Encoding": "gzip",
+        "Content-Security-Policy": "default-src 'self'",
+        "X-Model-Context": "prior-context-hint",
+      },
+    },
+  });
+};
+
+const emitMalformedRedirect = (
+  socket: WebSocket,
+  command: FakeCdpCommand,
+  port: number,
+  options: FakeOptions,
+): string => {
+  const finalUrl = `http://127.0.0.1:${String(port)}/malformed-redirect-final`;
+  const redirectResponse = Object.hasOwn(options, "redirectResponseEnvelope")
+    ? options.redirectResponseEnvelope
+    : {
+        ...(options.redirectResponseUrl === undefined
+          ? {}
+          : { url: options.redirectResponseUrl }),
+        status: 302,
+      };
+  event(socket, "Network.requestWillBeSent", command.sessionId, {
+    requestId: "request-1",
+    type: "Fetch",
+    request: { url: finalUrl, method: "GET" },
+    redirectResponse,
+    timestamp: 9,
+  });
+  return finalUrl;
+};
+
 const emitNetworkEvents = (
   socket: WebSocket,
   command: FakeCdpCommand,
@@ -297,11 +424,15 @@ const emitNetworkEvents = (
       },
     });
   const url = `http://127.0.0.1:${String(port)}/api?token=network-secret`;
+  const requestUrl =
+    options.redirectFromDisallowedOrigin === true
+      ? "https://private.example.test/start?token=initial-url-secret"
+      : url;
   event(socket, "Network.requestWillBeSent", command.sessionId, {
     requestId: "request-1",
     type: "Fetch",
     request: {
-      url,
+      url: requestUrl,
       method: "POST",
       headers: {
         Authorization: "Bearer request-secret",
@@ -313,6 +444,7 @@ const emitNetworkEvents = (
         filters: { active: true },
       }),
     },
+    timestamp: 7,
     initiator: {
       type: "script",
       stack: {
@@ -326,6 +458,16 @@ const emitNetworkEvents = (
       },
     },
   });
+  if (options.malformedRedirectResponse === true)
+    emitMalformedRedirectPriorResponse(socket, command, port, url);
+  const responseUrl =
+    options.redirectFromDisallowedOrigin === true
+      ? emitReturnFromDisallowedRedirect(socket, command, port)
+      : options.malformedRedirectResponse === true
+        ? emitMalformedRedirect(socket, command, port, options)
+        : options.redirectWithinOrigin === true
+          ? emitSameOriginRedirectEvents(socket, command, port, url)
+          : url;
   if (options.redirectToDisallowedOrigin === true)
     event(socket, "Network.requestWillBeSent", command.sessionId, {
       requestId: "request-1",
@@ -334,14 +476,22 @@ const emitNetworkEvents = (
         url: "https://private.example.test/redirected",
         method: "GET",
       },
+      redirectResponse: {
+        url,
+        status: 302,
+        mimeType: "text/plain",
+        encodedDataLength: 23,
+        headers: { "X-Private": "redirect-header-secret" },
+      },
     });
   event(socket, "Network.responseReceived", command.sessionId, {
     requestId: "request-1",
     response: {
       url:
-        options.redirectToDisallowedOrigin === true
+        options.responseAfterMalformedUrl ??
+        (options.redirectToDisallowedOrigin === true
           ? "https://private.example.test/redirected"
-          : url,
+          : responseUrl),
       status: 200,
       mimeType: "application/json",
       headers: {
