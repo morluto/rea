@@ -288,15 +288,28 @@ try {
         readbackRuntime.readFile("snapshot.bin"),
         await readFile(source, "utf8"),
       );
-      await assert.rejects(
-        writeFile(
-          join(readbackRuntime.observation.path, "written.txt"),
-          "replace",
-        ),
+      const writtenPath = join(readbackRuntime.observation.path, "written.txt");
+      await assert.rejects(writeFile(writtenPath, "replace"));
+      await assert.rejects(rename(writtenPath, `${writtenPath}.renamed`));
+      await assert.rejects(rm(writtenPath));
+      assert.equal(
+        readbackRuntime.readFile("written.txt"),
+        "runtime-write-readback",
+      );
+      const snapshotPath = join(
+        readbackRuntime.observation.path,
+        "snapshot.bin",
+      );
+      await assert.rejects(rename(snapshotPath, `${snapshotPath}.renamed`));
+      await assert.rejects(rm(snapshotPath));
+      assert.equal(
+        readbackRuntime.readFile("snapshot.bin"),
+        await readFile(source, "utf8"),
       );
       report.controls = {
         ...report.controls,
         completedRuntimeFileReadback: true,
+        completedRuntimeFileMutationDenied: true,
       };
     } finally {
       await readbackRuntime.close();
