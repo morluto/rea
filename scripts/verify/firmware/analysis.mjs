@@ -14,12 +14,12 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { firmwareResultSchemas } from "../dist/domain/firmwareAnalysis.js";
-import { parseEvidence } from "../dist/domain/evidence.js";
-import { hashFirmwareFile } from "../dist/firmware/FirmwareFiles.js";
+import { firmwareResultSchemas } from "../../../dist/domain/firmware/firmwareAnalysis.js";
+import { parseEvidence } from "../../../dist/domain/evidence.js";
+import { hashFirmwareFile } from "../../../dist/firmware/FirmwareFiles.js";
 
 const exec = promisify(execFile);
-const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const entrypoint = resolve(
   process.env.REA_FIRMWARE_TEST_ENTRYPOINT ??
     join(repository, "scripts/rea.mjs"),

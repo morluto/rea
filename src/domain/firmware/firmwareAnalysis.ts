@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { digestSchema } from "./digests.js";
-import { jsonValueSchema } from "./jsonValue.js";
+import { digestSchema } from "../digests.js";
+import { jsonValueSchema } from "../jsonValue.js";
 
 const bytes = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const range = z.strictObject({ offset: bytes, length: bytes.positive() });

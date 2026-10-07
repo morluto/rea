@@ -4,8 +4,8 @@ import {
   firmwareFixture,
   assertFirmwareCleanup,
 } from "../../fixtures/firmware/provider.js";
-import { firmwareResultSchemas } from "../../../src/domain/firmwareAnalysis.js";
-import { FirmwareAnalysisService } from "../../../src/application/FirmwareAnalysisService.js";
+import { firmwareResultSchemas } from "../../../src/domain/firmware/firmwareAnalysis.js";
+import { FirmwareAnalysisService } from "../../../src/application/firmware/FirmwareAnalysisService.js";
 import { FirmwareProvider } from "../../../src/firmware/FirmwareProvider.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";

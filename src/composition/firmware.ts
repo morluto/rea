@@ -1,4 +1,4 @@
-import type { FirmwareAnalysisPort } from "../application/FirmwareAnalysisPort.js";
+import type { FirmwareAnalysisPort } from "../application/firmware/FirmwareAnalysisPort.js";
 import type { FirmwareLauncher } from "../firmware/FirmwareCommand.js";
 import { FirmwareProvider } from "../firmware/FirmwareProvider.js";
 

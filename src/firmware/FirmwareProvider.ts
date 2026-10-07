@@ -1,6 +1,6 @@
 import { join, isAbsolute } from "node:path";
 import { z } from "zod";
-import type { FirmwareAnalysisPort } from "../application/FirmwareAnalysisPort.js";
+import type { FirmwareAnalysisPort } from "../application/firmware/FirmwareAnalysisPort.js";
 import {
   createAnalysisExecution,
   type ExecutionOptions,
@@ -8,7 +8,7 @@ import {
 import {
   firmwareResultSchemas,
   type FirmwareRequest,
-} from "../domain/firmwareAnalysis.js";
+} from "../domain/firmware/firmwareAnalysis.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,

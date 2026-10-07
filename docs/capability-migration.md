@@ -224,3 +224,20 @@ explicit downloader and fixed manifest belong to `scripts/fixtures/android/`.
 `tests/fixtures/android/`, with matching boundary and composition ownership. Real
 JADX CLI/MCP parity requires the fixed APK and existing audited JAR; synthetic
 protocol/cancellation success does not establish that engine or an unverified host.
+
+## Firmware layer and verification ownership
+
+Firmware workflows and their existing typed port live in
+`src/application/firmware/`, pure request/result semantics in
+`src/domain/firmware/`, and named contracts in `src/contracts/firmware/`.
+`src/firmware/` keeps producer commands, report parsing, source copies, publication
+and cleanup; `src/composition/firmware.ts` supplies a fresh typed factory.
+
+The real lane belongs to `scripts/verify/firmware/analysis.mjs`; the fixture runner
+and its unchanged Python producer belong together in `scripts/fixtures/firmware/`.
+The npm command names and selected `REA_FIRMWARE_FIXTURE_ROOT` are unchanged. The
+runner retains its working-directory-relative default; the verifier retains its
+repository-root default. Both point to `_reference/firmware-integration/generated`
+when invoked through the documented npm commands. Optional ext4/Ghidra lanes keep
+their own prerequisites. Source-fixture generation and synthetic producer tests
+do not establish real Binwalk/Unblob analysis or another host's execution support.

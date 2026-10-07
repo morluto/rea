@@ -1,10 +1,10 @@
 import {
   firmwareInputSchemas,
   firmwareResultSchemas,
-} from "../domain/firmwareAnalysis.js";
-import type { ToolContract } from "./toolContractTypes.js";
-import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
-import { toolContractMetadata } from "./toolEffects.js";
+} from "../../domain/firmware/firmwareAnalysis.js";
+import type { ToolContract } from "../toolContractTypes.js";
+import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
+import { toolContractMetadata } from "../toolEffects.js";
 
 /** Explicit local firmware observations and extraction, backed by caller-supplied tools. */
 export const FIRMWARE_TOOL_CONTRACTS = [

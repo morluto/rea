@@ -34,7 +34,7 @@ const ext4 =
     : [];
 for (const command of ext4) await exec(command, ["-V"]);
 const generated = await exec(process.env.REA_FIRMWARE_PYTHON ?? "python3", [
-  fileURLToPath(new URL("./lib/generate-firmware-fixture.py", import.meta.url)),
+  fileURLToPath(new URL("./generate.py", import.meta.url)),
   root,
   process.env.REA_FIRMWARE_CC ?? "cc",
   ...ext4,

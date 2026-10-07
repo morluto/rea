@@ -429,6 +429,12 @@ unknown chunks, depth limits and extracted child digests. The optional
 Neither optional toolchain is a base-lane prerequisite. See
 [firmware analysis](firmware-analysis.md) for limits and unverified formats.
 
+The real entrypoint is `scripts/verify/firmware/analysis.mjs`; the fixture runner
+and unchanged Python producer belong together in `scripts/fixtures/firmware/`.
+Producer fixtures and boundaries remain in `tests/fixtures/firmware/` and
+`tests/boundary/firmware/`. Source-fixture generation proves the runner and
+independent oracle; actual Binwalk/Unblob CLI/MCP proof requires selected tools.
+
 ### JavaScript source recovery
 
 Build once with `npm run build:cached`, then run `npm run verify:javascript:recovery`.

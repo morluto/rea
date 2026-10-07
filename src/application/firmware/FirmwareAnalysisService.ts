@@ -1,18 +1,18 @@
-import type { ExecutionOptions } from "./AnalysisProvider.js";
+import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { FirmwareAnalysisPort } from "./FirmwareAnalysisPort.js";
 import {
   firmwareRequestSchema,
   type FirmwareOperation,
-} from "../domain/firmwareAnalysis.js";
+} from "../../domain/firmware/firmwareAnalysis.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
-} from "../domain/analysisErrorCore.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { createEvidence, type Evidence } from "../domain/evidence.js";
-import { jsonObjectSchema } from "../domain/jsonValue.js";
-import { err, ok, type Result } from "../domain/result.js";
+} from "../../domain/analysisErrorCore.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import { jsonObjectSchema } from "../../domain/jsonValue.js";
+import { err, ok, type Result } from "../../domain/result.js";
 
 /** Shared CLI/MCP validation and Evidence composition for arbitrary firmware files. */
 export class FirmwareAnalysisService {
