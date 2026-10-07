@@ -5,7 +5,8 @@ import { webTextArtifactSchema } from "./webContentArtifact.js";
 import { jsonShapeSchema } from "./jsonShape.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const browserVersionSchema = z.object({
+/** Shared CDP/browser version identity carried on observation Evidence. */
+export const browserVersionSchema = z.object({
   product: z.string(),
   protocol_version: z.string(),
   revision: z.string(),

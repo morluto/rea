@@ -1,6 +1,9 @@
 import { homedir } from "node:os";
 
-import { supportsNodeVersion } from "../domain/runtimeVersion.js";
+import {
+  SUPPORTED_NODE_VERSION_PROSE,
+  supportsNodeVersion,
+} from "../domain/runtimeVersion.js";
 import { linuxHopperLauncherPath } from "./LinuxHopper.js";
 import type {
   DoctorCheck,
@@ -92,7 +95,7 @@ export const doctorHealthy = (
 
 const nodeCheck = (host: DoctorHost): DoctorCheck =>
   check("node", supportsNodeVersion(host.nodeVersion), host.nodeVersion, {
-    remediation: "Install Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+.",
+    remediation: `Install ${SUPPORTED_NODE_VERSION_PROSE}.`,
     classification: "missing_dependency",
   });
 

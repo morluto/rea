@@ -3,7 +3,10 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
-import { supportsNodeVersion } from "../domain/runtimeVersion.js";
+import {
+  SUPPORTED_NODE_VERSION_PROSE,
+  supportsNodeVersion,
+} from "../domain/runtimeVersion.js";
 import { runDoctor, systemDoctorHost, type DoctorHost } from "./Doctor.js";
 import { installLinuxHopper, readLinuxDistribution } from "./LinuxHopper.js";
 import { installMacHopper } from "./MacHopper.js";
@@ -63,7 +66,7 @@ export const hostRemediation = async (
   installHopper: boolean,
 ): Promise<string | undefined> => {
   if (!supportsNodeVersion(host.nodeVersion))
-    return "Install Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+ and rerun setup.";
+    return `Install ${SUPPORTED_NODE_VERSION_PROSE} and rerun setup.`;
   if (!installHopper) return undefined;
   if (host.platform !== "darwin" && host.platform !== "linux")
     return "REA supports Hopper on macOS and selected 64-bit Linux distributions.";

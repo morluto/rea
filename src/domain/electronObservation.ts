@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { browserCompletenessSchema } from "./browserCompleteness.js";
 import { browserEndpointSchema } from "./browserObservation.js";
+import { browserVersionSchema } from "./browserObservationSchemas.js";
 import { webTextArtifactSchema } from "./webContentArtifact.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 
@@ -37,13 +38,6 @@ export type InspectElectronPageInput = z.infer<
   typeof inspectElectronPageInputSchema
 >;
 
-const browserVersionSchema = z.object({
-  product: z.string(),
-  protocol_version: z.string(),
-  revision: z.string(),
-  user_agent: z.string(),
-  js_version: z.string(),
-});
 const electronTargetSchema = z.object({
   target_id: z.string(),
   type: z.string(),

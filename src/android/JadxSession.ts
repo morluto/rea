@@ -20,6 +20,7 @@ import {
   parseJadxJson,
 } from "./JadxProtocol.js";
 import {
+  JADX_HEAP_LIMIT_MIB,
   JADX_RELEASE,
   JADX_PROVIDER_IDENTITY,
   JADX_LIMITATIONS,
@@ -84,7 +85,7 @@ export class JadxSession {
         source_revision:
           jarHash === JADX_RELEASE.sha256 ? JADX_RELEASE.revision : null,
         worker_count: 1,
-        heap_limit_mib: 512,
+        heap_limit_mib: JADX_HEAP_LIMIT_MIB,
       } as const;
       const result = await analyzeJadxRequest(tools, request, loaded, engine);
       return createAnalysisExecution(result, JADX_PROVIDER_IDENTITY, {

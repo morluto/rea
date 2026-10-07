@@ -153,7 +153,8 @@ const observeWithHelper = async (
               cause,
               diagnostics: {
                 helper_path: helper,
-                reason:
+                reason: cause instanceof Error ? cause.message : String(cause),
+                remediation:
                   "Native helper failed, timed out, or returned malformed capture data; install compatible Xcode command-line tools and inspect local OS permissions",
               },
             }),

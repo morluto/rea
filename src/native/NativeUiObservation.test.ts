@@ -223,6 +223,24 @@ describe("native UI target and cancellation failures", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.message).toContain(code);
   });
+  it("preserves the underlying helper failure reason in diagnostics", async () => {
+    const result = await observeNativeUi(target, "observe_native_ui", scope, {
+      invoke: async () => {
+        throw new Error(
+          "Native helper returned invalid JSON: Unexpected token",
+        );
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      diagnostics: {
+        reason: "Native helper returned invalid JSON: Unexpected token",
+        remediation:
+          "Native helper failed, timed out, or returned malformed capture data; install compatible Xcode command-line tools and inspect local OS permissions",
+      },
+    });
+  });
   it("stops on a failed action and returns ordered before/capture-gap evidence", async () => {
     const calls: Readonly<Record<string, unknown>>[] = [];
     const result = await observeNativeUi(

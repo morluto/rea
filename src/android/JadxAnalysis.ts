@@ -16,6 +16,7 @@ import {
   jadxXrefsSchema,
   normalizeJadxText,
 } from "./JadxProtocol.js";
+import { JADX_RELEASE } from "./JadxRelease.js";
 
 /** The adapter consumes tool payloads, never provider RPC details outside this layer. */
 export interface JadxToolPort {
@@ -246,7 +247,7 @@ const inspectMethod = async (
     throw new AnalysisCapabilityUnavailableError(
       "jadx",
       request.operation,
-      `JADX 0.7.1 smali fallback joins all same-name overloads for ${summary.full_name}.${request.input.method_name}; it cannot establish source for only overload ${index}.`,
+      `JADX ${JADX_RELEASE.version} smali fallback joins all same-name overloads for ${summary.full_name}.${request.input.method_name}; it cannot establish source for only overload ${index}.`,
     );
   return androidResultSchemas.inspect_android_method.parse({
     engine,
@@ -306,7 +307,7 @@ const traceReferences = async (
     throw new AnalysisCapabilityUnavailableError(
       "jadx",
       request.operation,
-      `JADX 0.7.1 references select the first same-name method; ${summary.full_name}.${methodName} has ${candidates.length} overloads. No unambiguous reference result is available.`,
+      `JADX ${JADX_RELEASE.version} references select the first same-name method; ${summary.full_name}.${methodName} has ${candidates.length} overloads. No unambiguous reference result is available.`,
     );
   const expectedTarget =
     methodName === undefined

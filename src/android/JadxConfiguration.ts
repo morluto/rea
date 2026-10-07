@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import type { AndroidOperation } from "../domain/androidAnalysis.js";
+import { JADX_JAR_CONFIGURATION_REMEDIATION } from "./JadxRelease.js";
 
 /** Caller-supplied tools, resolved only when an Android operation is selected. */
 export interface JadxConfiguration {
@@ -27,9 +28,7 @@ export const resolveJadxConfiguration = async (
       "JAVA_HOME must select an existing JDK by absolute path; omit it to use java on PATH.",
     );
   if (jar === undefined || !isAbsolute(jar))
-    throw unavailable(
-      "Set REA_JADX_MCP_JAR to the absolute path of a caller-supplied jadx-headless-mcp 0.7.1 JAR. REA does not download or install it.",
-    );
+    throw unavailable(JADX_JAR_CONFIGURATION_REMEDIATION);
   const java =
     environment.JAVA_HOME === undefined
       ? "java"

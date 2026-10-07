@@ -20,6 +20,7 @@ import {
 } from "./AndroidTargetSnapshot.js";
 import { resolveJadxConfiguration } from "./JadxConfiguration.js";
 import type { JadxLauncher } from "./JadxMcpTransport.js";
+import { JADX_HEAP_XMX_ARGUMENT } from "./JadxRelease.js";
 import { JadxSession } from "./JadxSession.js";
 
 const OPERATION_TIMEOUT_MS = 120_000;
@@ -203,7 +204,7 @@ export class JadxProvider implements AndroidAnalysisPort {
         {
           command: configuration.java,
           arguments: [
-            "-Xmx512m",
+            JADX_HEAP_XMX_ARGUMENT,
             "-XX:ActiveProcessorCount=1",
             "-jar",
             engine.path,
@@ -216,7 +217,9 @@ export class JadxProvider implements AndroidAnalysisPort {
           ],
           cwd: root.path,
           hostEnvironment: this.environment,
-          env: { _JAVA_OPTIONS: "-Xmx512m -XX:ActiveProcessorCount=1" },
+          env: {
+            _JAVA_OPTIONS: `${JADX_HEAP_XMX_ARGUMENT} -XX:ActiveProcessorCount=1`,
+          },
         },
         this.launcher,
       );
