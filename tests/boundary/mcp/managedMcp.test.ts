@@ -20,6 +20,8 @@ import { ManagedStaticProvider } from "../../../src/dotnet/ManagedStaticProvider
 import { createServer } from "../../../src/server/createServer.js";
 import { buildManagedPeFixture } from "../../../src/dotnet/ManagedPe.fixture.js";
 
+type ManagedOutputAssertion = Awaited<ReturnType<typeof createOutputAssertion>>;
+
 it("runs every managed static inspection independently of an active native target", async () => {
   const directory = await createTestTempDirectory(
     "rea-managed-independent-mcp-",
@@ -128,9 +130,19 @@ it("opens a managed PE and executes the managed static provider through MCP", as
   try {
     await server.connect(serverTransport);
     await client.connect(clientTransport);
-    await verifyManagedCatalogAndNativeWorkflow(client, session);
-    const members = await inspectManagedStaticWorkflow(client, path);
-    await verifyManagedComparisonAndReconstruction(client, members, rightPath);
+    const assertOutput = await createOutputAssertion(client);
+    await verifyManagedCatalogAndNativeWorkflow(client, session, assertOutput);
+    const members = await inspectManagedStaticWorkflow(
+      client,
+      path,
+      assertOutput,
+    );
+    await verifyManagedComparisonAndReconstruction(
+      client,
+      members,
+      rightPath,
+      assertOutput,
+    );
   } finally {
     await Promise.all([client.close(), server.close()]);
     await session.close();
@@ -140,9 +152,9 @@ it("opens a managed PE and executes the managed static provider through MCP", as
 const verifyManagedCatalogAndNativeWorkflow = async (
   client: Client,
   session: BinarySession,
+  outputAssertion: ManagedOutputAssertion,
 ): Promise<void> => {
-  const names = (await client.listTools()).tools.map(({ name }) => name);
-  expect(names).toEqual(
+  expect(outputAssertion.names).toEqual(
     expect.arrayContaining([
       "inspect_managed_artifact",
       "inspect_managed_members",
@@ -168,11 +180,7 @@ const verifyManagedCatalogAndNativeWorkflow = async (
       },
     }),
   );
-  await assertAdvertisedOutput(
-    client,
-    "verify_managed_native_boundaries",
-    verified,
-  );
+  await outputAssertion.assert("verify_managed_native_boundaries", verified);
   expect(verified).toMatchObject({
     evidence_id: expect.stringMatching(/^ev_[a-f0-9]{64}$/u),
     result: {
@@ -202,6 +210,7 @@ const verifyManagedCatalogAndNativeWorkflow = async (
 const inspectManagedStaticWorkflow = async (
   client: Client,
   path: string,
+  outputAssertion: ManagedOutputAssertion,
 ): Promise<Record<string, unknown>> => {
   const inspected = structured(
     await client.callTool({
@@ -209,7 +218,7 @@ const inspectManagedStaticWorkflow = async (
       arguments: { path },
     }),
   );
-  await assertAdvertisedOutput(client, "inspect_managed_artifact", inspected);
+  await outputAssertion.assert("inspect_managed_artifact", inspected);
   expect(inspected).toMatchObject({
     result: {
       classification: { status: "managed", runtime_family: "modern-dotnet" },
@@ -229,7 +238,7 @@ const inspectManagedStaticWorkflow = async (
       }),
     ),
   );
-  await assertAdvertisedOutput(client, "inspect_managed_members", {
+  await outputAssertion.assert("inspect_managed_members", {
     result: members.normalized_result,
     evidence_id: members.evidence_id,
     evidence: members,
@@ -255,11 +264,7 @@ const inspectManagedStaticWorkflow = async (
       arguments: { path },
     }),
   );
-  await assertAdvertisedOutput(
-    client,
-    "inspect_managed_native_boundaries",
-    boundaries,
-  );
+  await outputAssertion.assert("inspect_managed_native_boundaries", boundaries);
   expect(boundaries).toMatchObject({
     result: {
       identity_scope: { token_identity: "build-local" },
@@ -310,6 +315,7 @@ const verifyManagedComparisonAndReconstruction = async (
   client: Client,
   members: Record<string, unknown>,
   rightPath: string,
+  outputAssertion: ManagedOutputAssertion,
 ): Promise<void> => {
   await client.callTool({
     name: "open_binary",
@@ -334,7 +340,7 @@ const verifyManagedComparisonAndReconstruction = async (
       }),
     ),
   );
-  await assertAdvertisedOutput(client, "compare_managed_members", {
+  await outputAssertion.assert("compare_managed_members", {
     result: compared.normalized_result,
     evidence_id: compared.evidence_id,
     evidence: compared,
@@ -417,23 +423,29 @@ const structured = (result: CallToolResult): Record<string, unknown> => {
   return z.record(z.string(), z.unknown()).parse(result.structuredContent);
 };
 
-const assertAdvertisedOutput = async (
-  client: Client,
-  name: Parameters<typeof toolContract>[0],
-  output: Record<string, unknown>,
-): Promise<void> => {
-  const contract = toolContract(name);
-  const wire = (await client.listTools()).tools.find(
-    (tool) => tool.name === name,
-  );
-  if (wire?.outputSchema === undefined)
-    throw new Error(`Missing advertised output schema for ${name}`);
-  const valid = new Ajv2020({
+const createOutputAssertion = async (client: Client) => {
+  const tools = (await client.listTools()).tools;
+  const ajv = new Ajv2020({
     strict: false,
     validateFormats: false,
-  }).compile(z.record(z.string(), z.unknown()).parse(wire.outputSchema));
-  expect(valid(output), `${name} advertised output`).toBe(true);
-  expect(contract.outputSchema.safeParse(output).success).toBe(true);
+  });
+  return {
+    names: tools.map(({ name }) => name),
+    assert: (
+      name: Parameters<typeof toolContract>[0],
+      output: Record<string, unknown>,
+    ): void => {
+      const contract = toolContract(name);
+      const wire = tools.find((tool) => tool.name === name);
+      if (wire?.outputSchema === undefined)
+        throw new Error(`Missing advertised output schema for ${name}`);
+      const valid = ajv.compile(
+        z.record(z.string(), z.unknown()).parse(wire.outputSchema),
+      );
+      expect(valid(output), `${name} advertised output`).toBe(true);
+      expect(contract.outputSchema.safeParse(output).success).toBe(true);
+    },
+  };
 };
 
 const inlineEvidence = (
