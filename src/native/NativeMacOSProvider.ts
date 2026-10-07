@@ -34,7 +34,10 @@ import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
-import { parseXmlPropertyList } from "../domain/propertyListKeys.js";
+import {
+  omittedPrototypeKeysLimitation,
+  parseXmlPropertyList,
+} from "../domain/propertyListKeys.js";
 import {
   demangleSwiftSchema,
   inspectPlistSchema,
@@ -333,7 +336,14 @@ class NativeMacOSClient implements AnalysisClient {
     // Entitlements XML is printed to stdout; stderr echoes the path.
     const entitlementValue = parseEntitlements(entitlements.value.stdout);
     const captures = [display.value, requirements.value, entitlements.value];
-    const limitations = [...parsed.limitations];
+    const limitations = [
+      ...parsed.limitations,
+      ...(entitlementValue.omittedPrototypeKeys === 0
+        ? []
+        : [
+            `Entitlements: ${omittedPrototypeKeysLimitation(entitlementValue.omittedPrototypeKeys)}`,
+          ]),
+    ];
     const mixedSigning =
       !unsigned &&
       (isNonzeroUnsignedObservation(requirements.value) ||
@@ -355,7 +365,7 @@ class NativeMacOSClient implements AnalysisClient {
     const result = inspectSignatureSchema.parse({
       ...parsed,
       designated_requirement: requirementText,
-      entitlements: entitlementValue,
+      entitlements: entitlementValue.value,
       provenance,
       limitations,
     });
@@ -640,13 +650,16 @@ const invocation = (
   stderr_bytes: capture.stderrBytes,
 });
 
-const parseEntitlements = (output: string): JsonValue | null => {
+const parseEntitlements = (
+  output: string,
+): { readonly value: JsonValue; readonly omittedPrototypeKeys: number } => {
   const start = output.indexOf("<?xml");
   const end = output.lastIndexOf("</plist>");
-  if (start < 0 || end < start) return null;
-  return jsonValueSchema.parse(
-    parseXmlPropertyList(output.slice(start, end + "</plist>".length)).value,
+  if (start < 0 || end < start) return { value: null, omittedPrototypeKeys: 0 };
+  const { value, omittedPrototypeKeys } = parseXmlPropertyList(
+    output.slice(start, end + "</plist>".length),
   );
+  return { value: jsonValueSchema.parse(value), omittedPrototypeKeys };
 };
 
 /**

@@ -5,10 +5,10 @@ on:
     paths:
       - ".github/workflows/real-javascript-recovery.yml"
       - "src/javascript/recovery/**"
-      - "src/domain/javascript*.ts"
+      - "src/domain/javascript/**"
       - "src/application/javascript/JavaScriptRecovery*.ts"
       - "src/composition/javascriptRecovery.ts"
-      - "src/contracts/javascriptRecoveryToolContracts.ts"
+      - "src/contracts/javascript/javascriptRecoveryToolContracts.ts"
       - "src/cli/javascriptRecoveryCommands.ts"
       - "src/cli/javascriptApplicationAnalysis.ts"
       - "src/server/registerJavaScriptRecoveryTool.ts"

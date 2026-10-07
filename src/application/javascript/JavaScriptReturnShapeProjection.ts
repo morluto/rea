@@ -2,14 +2,14 @@ import { jsonObjectSchema, jsonValueSchema } from "../../domain/jsonValue.js";
 import {
   partialApplicationCoverage,
   truncatedApplicationCoverage,
-} from "../../domain/javascriptApplicationEvidenceSchemas.js";
+} from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import type {
   JavaScriptSemanticIr,
   JavaScriptSemanticCallable,
   JavaScriptSemanticModuleLink,
-} from "../../domain/javascriptSemanticIr.js";
-import { flattenSemanticReturnValue } from "../../domain/javascriptSemanticReturns.js";
-import type { JavaScriptSourceRange } from "../../domain/javascriptStaticAnalysisTypes.js";
+} from "../../domain/javascript/javascriptSemanticIr.js";
+import { flattenSemanticReturnValue } from "../../domain/javascript/javascriptSemanticReturns.js";
+import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactGraphCoverage } from "./JavaScriptArtifactGraphContext.js";
 
 export interface JavaScriptReturnShapeProjection {

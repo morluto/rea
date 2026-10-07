@@ -5,7 +5,7 @@ import { createEvidence } from "../../domain/evidence.js";
 import type {
   ElectronActiveObservationInput,
   ElectronActiveObservationResult,
-} from "../../domain/electronActiveObservation.js";
+} from "../../domain/javascript/electronActiveObservation.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 
 type CanonicalElectronActiveObservationInput =

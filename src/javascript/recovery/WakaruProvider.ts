@@ -9,7 +9,7 @@ import {
 import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
-import type { JavaScriptRecoveryInput } from "../../domain/javascriptRecovery.js";
+import type { JavaScriptRecoveryInput } from "../../domain/javascript/javascriptRecovery.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../../domain/result.js";

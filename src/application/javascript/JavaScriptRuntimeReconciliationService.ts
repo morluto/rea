@@ -8,8 +8,8 @@ import {
 import { type AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { projectInputIssues } from "../../domain/inputIssueProjection.js";
-import { reconcileJavaScriptRuntime } from "../../domain/javascriptRuntimeReconciliation.js";
-import { reconcileJavaScriptRuntimeInputSchema } from "../../domain/javascriptRuntimeReconciliationSchemas.js";
+import { reconcileJavaScriptRuntime } from "../../domain/javascript/javascriptRuntimeReconciliation.js";
+import { reconcileJavaScriptRuntimeInputSchema } from "../../domain/javascript/javascriptRuntimeReconciliationSchemas.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { createJavaScriptRuntimeReconciliationEvidence } from "./JavaScriptRuntimeReconciliationEvidence.js";
 

@@ -2,7 +2,7 @@ import type { JsonValue } from "../../domain/jsonValue.js";
 import type {
   JavaScriptSemanticBinding,
   JavaScriptSemanticValue,
-} from "../../domain/javascriptSemanticIr.js";
+} from "../../domain/javascript/javascriptSemanticIr.js";
 import {
   addSemanticGraphNode,
   addSemanticGraphRelation,

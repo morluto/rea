@@ -4,7 +4,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 
 import { compareApplicationVersionsEvidenceValidated } from "../../application/javascript/JavaScriptApplicationWorkflowService.js";
 import { applicationToolContract } from "../../contracts/applicationToolContracts.js";
-import { applicationVersionComparisonResultSchema } from "../../domain/javascriptApplicationVersionComparisonSchemas.js";
+import { applicationVersionComparisonResultSchema } from "../../domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { toCallToolResult } from "../toolResult.js";

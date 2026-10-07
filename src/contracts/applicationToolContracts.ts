@@ -1,15 +1,15 @@
-import { applicationVersionComparisonResultSchema } from "../domain/javascriptApplicationVersionComparisonSchemas.js";
-import { applicationFeatureTraceResultSchema } from "../domain/javascriptFeatureTraceSchemas.js";
-import { javaScriptSemanticTraceResultSchema } from "../domain/javascriptSemanticTraceSchemas.js";
-import { javaScriptExportShapeComparisonResultSchema } from "../domain/javascriptExportShapeComparisonSchemas.js";
-import { sourceToBundleComparisonResultSchema } from "../domain/sourceToBundleComparisonSchemas.js";
+import { applicationVersionComparisonResultSchema } from "../domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
+import { applicationFeatureTraceResultSchema } from "../domain/javascript/javascriptFeatureTraceSchemas.js";
+import { javaScriptSemanticTraceResultSchema } from "../domain/javascript/javascriptSemanticTraceSchemas.js";
+import { javaScriptExportShapeComparisonResultSchema } from "../domain/javascript/javascriptExportShapeComparisonSchemas.js";
+import { sourceToBundleComparisonResultSchema } from "../domain/javascript/sourceToBundleComparisonSchemas.js";
 import {
   compareApplicationVersionsRequestSchema,
   compareJavaScriptExportShapesRequestSchema,
   compareSourceToBundleRequestSchema,
   traceApplicationFeatureRequestSchema,
   traceJavaScriptSemanticsRequestSchema,
-} from "./applicationWorkflowInputContracts.js";
+} from "./javascript/applicationWorkflowInputContracts.js";
 import { reconstructionCoverageEvaluationInputSchema } from "../domain/reconstructionCoverageInput.js";
 import { reconstructionClosureResultSchema } from "../domain/reconstructionCoverage.js";
 import {
@@ -32,7 +32,7 @@ import {
   JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE,
   JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
   SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE,
-} from "./javascriptApplicationWorkflowExamples.js";
+} from "./javascript/javascriptApplicationWorkflowExamples.js";
 import {
   ANDROID_APPLICATION_GRAPH_EXAMPLE,
   APPLE_APPLICATION_GRAPH_EXAMPLE,

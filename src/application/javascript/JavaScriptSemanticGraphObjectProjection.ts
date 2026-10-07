@@ -1,6 +1,6 @@
-import { createJavaScriptSemanticGraphUnknown } from "../../domain/javascriptSemanticGraph.js";
-import type { JavaScriptSemanticGraphNode } from "../../domain/javascriptSemanticGraph.js";
-import type { JavaScriptSemanticObjectOperation } from "../../domain/javascriptSemanticIr.js";
+import { createJavaScriptSemanticGraphUnknown } from "../../domain/javascript/javascriptSemanticGraph.js";
+import type { JavaScriptSemanticGraphNode } from "../../domain/javascript/javascriptSemanticGraph.js";
+import type { JavaScriptSemanticObjectOperation } from "../../domain/javascript/javascriptSemanticIr.js";
 import {
   addSemanticGraphNode,
   addSemanticGraphRelation,

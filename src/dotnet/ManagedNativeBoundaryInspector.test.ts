@@ -101,4 +101,60 @@ describe("managed native boundaries", () => {
       expect.objectContaining({ code: "invalid-metadata-root" }),
     ]);
   });
+
+  it("reports unavailable boundaries for native and malformed PE files", () => {
+    const nativeBytes = buildNativePeFixture();
+    const native = inspectManagedNativeBoundariesBytes(
+      nativeBytes,
+      managedPeFixtureTarget(nativeBytes),
+    );
+    expect(native).toMatchObject({
+      metadata: { status: "absent" },
+      pinvoke_imports: [],
+      coverage: { state: "unavailable", issues: [] },
+    });
+
+    const malformedBytes = buildManagedPeFixture({
+      corruptMetadataSignature: true,
+      readyToRun: true,
+    });
+    const malformed = inspectManagedNativeBoundariesBytes(
+      malformedBytes,
+      managedPeFixtureTarget(malformedBytes),
+    );
+    expect(malformed).toMatchObject({
+      metadata: { status: "malformed" },
+      cli_native: {
+        il_only: true,
+        ready_to_run_signature: true,
+        managed_native_header_rva: 0x2700,
+        managed_native_header_size: 4,
+      },
+      summary: { ready_to_run: true, mixed_mode_or_native_header: true },
+      coverage: {
+        state: "unavailable",
+        issues: [expect.objectContaining({ code: "invalid-metadata-root" })],
+      },
+    });
+    expect(malformed.limitations).not.toContainEqual(
+      expect.stringContaining("CLI header was not admitted"),
+    );
+  });
+
+  it("marks CLI header facets as defaults when the CLI header is unreadable", () => {
+    const bytes = buildManagedPeFixture();
+    bytes.writeUInt32LE(0x7fff_0000, 0x84 + 20 + 96 + 14 * 8);
+    const result = inspectManagedNativeBoundariesBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    expect(result).toMatchObject({
+      metadata: { status: "malformed" },
+      cli_native: { il_only: false },
+      coverage: { state: "unavailable", issues: [expect.anything()] },
+    });
+    expect(result.limitations).toContainEqual(
+      expect.stringContaining("CLI header was not admitted"),
+    );
+  });
 });

@@ -6,7 +6,7 @@ import type {
   ApplicationEdge,
   ApplicationNode,
   JavaScriptApplicationGraph,
-} from "../../src/domain/javascriptApplicationGraph.js";
+} from "../../src/domain/javascript/javascriptApplicationGraph.js";
 
 /** Write text fixture files, creating parent directories as needed. */
 export const writeFixtureFiles = async (

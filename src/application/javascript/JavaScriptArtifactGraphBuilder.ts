@@ -2,7 +2,7 @@ import type { ArtifactInventorySnapshot } from "../ArtifactInventory.js";
 import {
   createJavaScriptApplicationGraph,
   type JavaScriptApplicationGraph,
-} from "../../domain/javascriptApplicationGraph.js";
+} from "../../domain/javascript/javascriptApplicationGraph.js";
 import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
 import type { JavaScriptArtifactFileSet } from "./JavaScriptArtifactFiles.js";
 import { JavaScriptArtifactGraphAccumulator } from "./JavaScriptArtifactGraphAccumulator.js";
@@ -19,7 +19,7 @@ import {
 import {
   completeApplicationCoverage,
   partialApplicationCoverage,
-} from "../../domain/javascriptApplicationEvidenceSchemas.js";
+} from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import {
   addJavaScriptArtifactContainers,
   addJavaScriptArtifactFiles,

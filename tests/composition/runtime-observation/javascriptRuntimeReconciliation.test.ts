@@ -8,12 +8,12 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createElectronEvidence } from "../../../src/application/javascript/ElectronEvidence.js";
 import { createElectronActiveEvidence } from "../../../src/application/javascript/ElectronActiveEvidence.js";
 import { analyzeJavaScriptApplication } from "../../../src/application/javascript/JavaScriptApplicationService.js";
-import { reconcileJavaScriptRuntime } from "../../../src/domain/javascriptRuntimeReconciliation.js";
-import { javascriptRuntimeReconciliationResultSchema } from "../../../src/domain/javascriptRuntimeReconciliationSchemas.js";
-import { electronActiveObservationInputSchema } from "../../../src/domain/electronActiveObservation.js";
-import { inspectElectronPageInputSchema } from "../../../src/domain/electronObservation.js";
+import { reconcileJavaScriptRuntime } from "../../../src/domain/javascript/javascriptRuntimeReconciliation.js";
+import { javascriptRuntimeReconciliationResultSchema } from "../../../src/domain/javascript/javascriptRuntimeReconciliationSchemas.js";
+import { electronActiveObservationInputSchema } from "../../../src/domain/javascript/electronActiveObservation.js";
+import { inspectElectronPageInputSchema } from "../../../src/domain/javascript/electronObservation.js";
 import { createWebTextArtifact } from "../../../src/domain/webContentArtifact.js";
-import { createElectronActiveObservationFixtureResult } from "../../../src/domain/electronActiveObservation.fixture.js";
+import { createElectronActiveObservationFixtureResult } from "../../../src/domain/javascript/electronActiveObservation.fixture.js";
 
 const SOURCE = `const worker = new Worker("./worker.js");\nexport const observed = worker;\n`;
 

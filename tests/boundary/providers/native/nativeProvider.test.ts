@@ -278,6 +278,41 @@ describe("native macOS provider inspection", () => {
   });
 });
 
+/** Emit entitlements whose dictionary also holds a legal `__proto__` key. */
+class PrototypeEntitlementsRunner extends FixtureRunner {
+  override async run(tool: string, arguments_: readonly string[]) {
+    const result = await super.run(tool, arguments_);
+    if (!result.ok || !arguments_.includes("--entitlements")) return result;
+    const stdout =
+      '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>com.apple.security.app-sandbox</key><true/><key>__proto__</key><dict><key>com.apple.security.get-task-allow</key><true/></dict></dict></plist>';
+    return ok({
+      ...result.value,
+      stdout,
+      stdoutBytes: Buffer.byteLength(stdout),
+    });
+  }
+}
+
+describe("native signature entitlements", () => {
+  it("reports entitlement entries keyed __proto__ that the result omits", async () => {
+    const client = new NativeMacOSProvider(
+      new PrototypeEntitlementsRunner(),
+      "darwin",
+    ).createClient(machoTarget("/private/fixture"));
+
+    const signature = await client.execute("inspect_signature", {});
+
+    expect(signature.ok).toBe(true);
+    if (!signature.ok) return;
+    expect(signature.value.result).toMatchObject({
+      entitlements: { "com.apple.security.app-sandbox": true },
+    });
+    expect(signature.value.limitations).toContain(
+      "Entitlements: 1 dictionary entry keyed __proto__ was omitted because REA results cannot represent that key.",
+    );
+  });
+});
+
 describe("native dispatch metadata error results", () => {
   it("preserves tagged cancellation and integrity failures", async () => {
     directory = await createTestTempDirectory("rea-dispatch-errors-");

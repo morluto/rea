@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { PlaywrightElectronActiveProvider } from "../dist/browser/PlaywrightElectronActiveProvider.js";
-import { electronActiveObservationInputSchema } from "../dist/domain/electronActiveObservation.js";
+import { electronActiveObservationInputSchema } from "../dist/domain/javascript/electronActiveObservation.js";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 
 const executable = process.env.REA_ELECTRON_EXECUTABLE;

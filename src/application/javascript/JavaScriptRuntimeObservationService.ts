@@ -7,7 +7,7 @@ import { type AnalysisError } from "../../domain/analysisErrorBase.js";
 import type {
   ListJavaScriptRuntimeTargetsInput,
   ObserveJavaScriptRuntimeInput,
-} from "../../domain/javascriptRuntimeObservation.js";
+} from "../../domain/javascript/javascriptRuntimeObservation.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
 /** List targets exposed by the explicitly selected loopback Inspector. */

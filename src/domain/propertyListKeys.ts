@@ -56,13 +56,23 @@ const XML_ENTITIES: Readonly<Record<string, string>> = {
   quot: '"',
 };
 
+/**
+ * Expand XML character and predefined entity references. A reference beyond
+ * Unicode stays as written: comments and CDATA may hold such text literally,
+ * and the XML decoder rejects it anywhere else.
+ */
 const decodeXmlText = (text: string): string =>
   text.replace(
     /&(?:#x([\da-f]+)|#(\d+)|([a-z]+));/giu,
     (entity, hex?: string, decimal?: string, name?: string) => {
-      if (hex !== undefined) return String.fromCodePoint(parseInt(hex, 16));
-      if (decimal !== undefined)
-        return String.fromCodePoint(parseInt(decimal, 10));
+      const codePoint =
+        hex !== undefined
+          ? parseInt(hex, 16)
+          : decimal !== undefined
+            ? parseInt(decimal, 10)
+            : undefined;
+      if (codePoint !== undefined)
+        return codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : entity;
       return (name === undefined ? undefined : XML_ENTITIES[name]) ?? entity;
     },
   );
@@ -75,8 +85,12 @@ const decodeXmlText = (text: string): string =>
 export const parseXmlPropertyList = (
   text: string,
 ): PropertyListWithoutPrototypeKeys => {
+  // The decoded text holds every key the decoder can produce, including
+  // entity-encoded spellings of the placeholder, so no source key aliases it.
+  // Decoding comment or CDATA text too can only lengthen the placeholder.
+  const decoded = decodeXmlText(text);
   let placeholder = "__rea_prototype_key__";
-  while (text.includes(placeholder)) placeholder = `_${placeholder}`;
+  while (decoded.includes(placeholder)) placeholder = `_${placeholder}`;
   const substituted = text.replace(
     KEY_TOKEN,
     (token, plain?: string, cdata?: string) =>

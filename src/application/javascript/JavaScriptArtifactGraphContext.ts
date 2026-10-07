@@ -3,9 +3,9 @@ import {
   completeApplicationCoverage,
   partialApplicationCoverage,
   type ApplicationGraphEvidence,
-} from "../../domain/javascriptApplicationEvidenceSchemas.js";
-import type { ApplicationNode } from "../../domain/javascriptApplicationGraph.js";
-import type { JavaScriptSourceRange } from "../../domain/javascriptStaticAnalysisTypes.js";
+} from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
+import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraph.js";
+import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
 import type {
   JavaScriptArtifactFile,

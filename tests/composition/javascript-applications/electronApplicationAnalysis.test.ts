@@ -8,8 +8,8 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { analyzeJavaScriptApplication } from "../../../src/application/javascript/JavaScriptApplicationService.js";
 import { reconstructJavaScriptArtifact } from "../../../src/application/javascript/JavaScriptArtifactReconstruction.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
-import { parseJavaScriptApplicationGraph } from "../../../src/domain/javascriptApplicationGraph.js";
-import { analyzeJavaScriptApplicationInputSchema } from "../../../src/domain/javascriptApplicationAnalysis.js";
+import { parseJavaScriptApplicationGraph } from "../../../src/domain/javascript/javascriptApplicationGraph.js";
+import { analyzeJavaScriptApplicationInputSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { writeElectronBoundaryFixture } from "../../fixtures/electronBoundaryApplication.js";
 
 describe("static Electron application analysis", () => {

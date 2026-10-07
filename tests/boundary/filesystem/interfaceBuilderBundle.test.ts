@@ -111,6 +111,34 @@ describe("bounded Interface Builder archive decoding", () => {
     expect(result.graph.truncated).toBe(true);
   });
 
+  it("marks archive decoding partial when __proto__ entries are omitted", async () => {
+    const root = await createTestTempDirectory("rea-ib-test-");
+    const bundle = join(root, "Example.app");
+    const resources = join(bundle, "Contents", "Resources");
+    await mkdir(resources, { recursive: true });
+    await writeFile(
+      join(resources, "Prototype.nib"),
+      '<?xml version="1.0"?><plist version="1.0"><dict><key>$archiver</key><string>NSKeyedArchiver</string><key>__proto__</key><string>hidden</string><key>$objects</key><array><string>$null</string></array><key>$top</key><dict/></dict></plist>',
+    );
+
+    const result = await analyzeInterfaceBuilderBundle({
+      bundlePath: bundle,
+      targetSha256: "f".repeat(64),
+    });
+
+    expect(result.graph.coverage).toContainEqual(
+      expect.objectContaining({
+        facet: "archive_decode",
+        status: "partial",
+        reason: "dictionary_entries_omitted",
+      }),
+    );
+    expect(result.graph.truncated).toBe(true);
+    expect(result.limitations).toContain(
+      "Contents/Resources/Prototype.nib: 1 dictionary entry keyed __proto__ was omitted because REA results cannot represent that key.",
+    );
+  });
+
   it.skipIf(process.platform !== "darwin" || !existsSync("/usr/bin/ibtool"))(
     "decodes an Xcode-compiled storyboard NIB and recovers its UI routes",
     async () => {

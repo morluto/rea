@@ -6,10 +6,10 @@ import { expect, it } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { javascriptApplicationAnalysisResultSchema } from "../../domain/javascriptApplicationAnalysis.js";
-import { matchJavaScriptApplicationVersions } from "../../domain/javascriptApplicationVersionKeys.js";
-import { findApplicationFeatureSeeds } from "../../domain/javascriptFeatureSeed.js";
-import { traceApplicationFeatureInputSchema } from "../../domain/javascriptFeatureTraceSchemas.js";
+import { javascriptApplicationAnalysisResultSchema } from "../../domain/javascript/javascriptApplicationAnalysis.js";
+import { matchJavaScriptApplicationVersions } from "../../domain/javascript/javascriptApplicationVersionKeys.js";
+import { findApplicationFeatureSeeds } from "../../domain/javascript/javascriptFeatureSeed.js";
+import { traceApplicationFeatureInputSchema } from "../../domain/javascript/javascriptFeatureTraceSchemas.js";
 import { analyzeJavaScriptApplication } from "./JavaScriptApplicationService.js";
 
 const analyzeSource = async (

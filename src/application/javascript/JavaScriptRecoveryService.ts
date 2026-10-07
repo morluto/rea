@@ -10,7 +10,7 @@ import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   javascriptRecoveryInputSchema,
   javascriptRecoveryResultSchema,
-} from "../../domain/javascriptRecovery.js";
+} from "../../domain/javascript/javascriptRecovery.js";
 import { jsonObjectSchema } from "../../domain/jsonValue.js";
 import { projectInputIssues } from "../../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";

@@ -11,10 +11,10 @@ import { ANDROID_TOOL_CONTRACTS } from "./android/androidToolContracts.js";
 import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "./managedWorkflowToolContracts.js";
 import { NATIVE_TOOL_CONTRACTS } from "./nativeToolContracts.js";
 import { BROWSER_PROVIDER_TOOL_CONTRACTS } from "./browserProviderToolContracts.js";
-import { ELECTRON_TOOL_CONTRACTS } from "./electronToolContracts.js";
-import { JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS } from "./javascriptRuntimeObservationToolContracts.js";
+import { ELECTRON_TOOL_CONTRACTS } from "./javascript/electronToolContracts.js";
+import { JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS } from "./javascript/javascriptRuntimeObservationToolContracts.js";
 import { APPLICATION_TOOL_CONTRACTS } from "./applicationToolContracts.js";
-import { JAVASCRIPT_RECOVERY_TOOL_CONTRACTS } from "./javascriptRecoveryToolContracts.js";
+import { JAVASCRIPT_RECOVERY_TOOL_CONTRACTS } from "./javascript/javascriptRecoveryToolContracts.js";
 import { WEB_SCRIPT_TOOL_CONTRACTS } from "./webScriptToolContracts.js";
 
 const GROUPS = {

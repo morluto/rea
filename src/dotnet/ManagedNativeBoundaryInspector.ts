@@ -20,6 +20,8 @@ import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
 import {
   buildNativeBoundaryInspection,
   cliNative,
+  NO_CLI_NATIVE,
+  nativeBoundarySummary,
   nativeImplementations,
   parseFields,
   parseImplMaps,
@@ -29,13 +31,25 @@ import {
 
 type Inventory = ReturnType<typeof readManagedMetadataInventory>;
 
+/**
+ * Report a PE whose CLI metadata is absent or cannot be admitted. `native`
+ * holds the CLI header facts when the header itself was admitted; otherwise
+ * the header is absent (`not-managed`) or unreadable (`malformed`).
+ */
 const emptyInspection = (
   target: BinaryTarget,
   bytes: Buffer,
-  classification: "not-managed" | "malformed" | "not-available" | "managed",
-  issues: readonly ManagedParseIssue[] = [],
-): ManagedNativeBoundaryInspection =>
-  managedNativeBoundaryInspectionSchema.parse({
+  classification: "not-managed" | "malformed",
+  {
+    native = null,
+    issues = [],
+  }: {
+    readonly native?: ManagedNativeBoundaryInspection["cli_native"] | null;
+    readonly issues?: readonly ManagedParseIssue[];
+  } = {},
+): ManagedNativeBoundaryInspection => {
+  const header = native ?? NO_CLI_NATIVE;
+  return managedNativeBoundaryInspectionSchema.parse({
     artifact: {
       path: target.path,
       sha256: target.sha256,
@@ -44,10 +58,7 @@ const emptyInspection = (
     },
     module: null,
     metadata: {
-      status:
-        classification === "malformed" || classification === "not-available"
-          ? "malformed"
-          : "absent",
+      status: classification === "malformed" ? "malformed" : "absent",
       version: null,
       table_row_counts: {},
     },
@@ -56,31 +67,27 @@ const emptyInspection = (
       requires_artifact_sha256: target.sha256,
       requires_mvid: null,
     },
-    cli_native: {
-      il_only: false,
-      requires_32bit: false,
-      strong_name_signed: false,
-      native_entry_point: false,
-      ready_to_run_signature: false,
-      managed_native_header_rva: 0,
-      managed_native_header_size: 0,
-    },
+    cli_native: header,
     module_refs: [],
     pinvoke_imports: [],
     native_implementations: [],
-    summary: {
+    summary: nativeBoundarySummary(header, {
       module_ref_count: 0,
       pinvoke_import_count: 0,
       native_implementation_count: 0,
-      ready_to_run: false,
-      mixed_mode_or_native_header: false,
-    },
-    coverage: { state: classification, issues },
+    }),
+    coverage: { state: "unavailable", issues },
     limitations: [
-      "No CLI data was admitted; native boundary declarations are unavailable.",
+      "No CLI metadata was admitted; native boundary declarations are unavailable.",
+      ...(native === null && classification === "malformed"
+        ? [
+            "The CLI header was not admitted, so cli_native and the summary's ready_to_run and mixed_mode_or_native_header values are defaults, not observations.",
+          ]
+        : []),
       "Static inspection does not load or execute target code, so native export resolution is not performed.",
     ],
   });
+};
 
 const readBoundaryInventory = (
   bytes: Buffer,
@@ -126,14 +133,16 @@ export const inspectManagedNativeBoundariesBytes = (
     pe = readManagedPeLayout(bytes);
   } catch (cause: unknown) {
     if (!(cause instanceof ManagedReaderFailure)) throw cause;
-    return emptyInspection(target, bytes, "malformed", [cause.issue]);
+    return emptyInspection(target, bytes, "malformed", {
+      issues: [cause.issue],
+    });
   }
   if (pe.cli === null)
     return emptyInspection(
       target,
       bytes,
       pe.cliDirectoryPresent ? "malformed" : "not-managed",
-      pe.cliIssue === null ? [] : [pe.cliIssue],
+      { issues: pe.cliIssue === null ? [] : [pe.cliIssue] },
     );
   let layout: ManagedMetadataLayout;
   let inventory: Inventory;
@@ -141,7 +150,10 @@ export const inspectManagedNativeBoundariesBytes = (
     ({ layout, inventory } = readBoundaryInventory(bytes, pe, pe.cli));
   } catch (cause: unknown) {
     if (!(cause instanceof ManagedReaderFailure)) throw cause;
-    return emptyInspection(target, bytes, "malformed", [cause.issue]);
+    return emptyInspection(target, bytes, "malformed", {
+      native: cliNative(pe),
+      issues: [cause.issue],
+    });
   }
   const heapExtent = Math.max(layout.strings.size, layout.blob.size);
   const moduleRefs = parseModuleRefs(bytes, layout, heapExtent);

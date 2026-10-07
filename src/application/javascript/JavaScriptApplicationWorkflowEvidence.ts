@@ -3,12 +3,12 @@ import {
   type Evidence,
   type EvidenceObservation,
 } from "../../domain/evidence.js";
-import type { ApplicationVersionComparisonResult } from "../../domain/javascriptApplicationVersionComparisonSchemas.js";
-import type { JavaScriptExportShapeComparisonResult } from "../../domain/javascriptExportShapeComparisonSchemas.js";
-import type { ApplicationFeatureTraceResult } from "../../domain/javascriptFeatureTraceSchemas.js";
-import type { JavaScriptSemanticTraceResult } from "../../domain/javascriptSemanticTraceSchemas.js";
+import type { ApplicationVersionComparisonResult } from "../../domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
+import type { JavaScriptExportShapeComparisonResult } from "../../domain/javascript/javascriptExportShapeComparisonSchemas.js";
+import type { ApplicationFeatureTraceResult } from "../../domain/javascript/javascriptFeatureTraceSchemas.js";
+import type { JavaScriptSemanticTraceResult } from "../../domain/javascript/javascriptSemanticTraceSchemas.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
-import type { SourceToBundleComparisonResult } from "../../domain/sourceToBundleComparisonSchemas.js";
+import type { SourceToBundleComparisonResult } from "../../domain/javascript/sourceToBundleComparisonSchemas.js";
 import { JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER } from "../InvestigationProviders.js";
 
 /** Create derived Evidence for one bounded application-graph feature trace. */

@@ -50,13 +50,13 @@ const SOURCE_PATHS = {
   managedWorkflowContracts: "dist/contracts/managedWorkflowToolContracts.js",
   browserContracts: "dist/contracts/browserToolContracts.js",
   browserScenarioContracts: "dist/contracts/browserScenarioToolContracts.js",
-  electronContracts: "dist/contracts/electronToolContracts.js",
+  electronContracts: "dist/contracts/javascript/electronToolContracts.js",
   javascriptRuntimeObservationContracts:
-    "dist/contracts/javascriptRuntimeObservationToolContracts.js",
+    "dist/contracts/javascript/javascriptRuntimeObservationToolContracts.js",
   applicationContracts: "dist/contracts/applicationToolContracts.js",
   webScriptContracts: "dist/contracts/webScriptToolContracts.js",
   javascriptRecoveryContracts:
-    "dist/contracts/javascriptRecoveryToolContracts.js",
+    "dist/contracts/javascript/javascriptRecoveryToolContracts.js",
   javascriptRecoveryProvider: "dist/javascript/recovery/WakaruRelease.js",
   supportedClients: "dist/application/SupportedClients.js",
   hopperProvider: "dist/hopper/HopperProviderCapabilities.js",
@@ -81,9 +81,11 @@ const SOURCE_PATHS = {
   browserScenarioCapture: "dist/domain/browserScenarioCapture.js",
   browserScenarioDiff: "dist/domain/browserScenarioDiff.js",
   browserSession: "dist/domain/browserSession.js",
-  electronObservation: "dist/domain/electronObservation.js",
-  electronActiveObservation: "dist/domain/electronActiveObservation.js",
-  javascriptRuntimeObservation: "dist/domain/javascriptRuntimeObservation.js",
+  electronObservation: "dist/domain/javascript/electronObservation.js",
+  electronActiveObservation:
+    "dist/domain/javascript/electronActiveObservation.js",
+  javascriptRuntimeObservation:
+    "dist/domain/javascript/javascriptRuntimeObservation.js",
   webBundleAnalysis: "dist/domain/webBundleAnalysis.js",
   webCaptureDiff: "dist/domain/webCaptureDiff.js",
   managedArtifact: "dist/domain/managedArtifact.js",
@@ -91,14 +93,19 @@ const SOURCE_PATHS = {
   managedNativeVerification: "dist/domain/managedNativeVerification.js",
   webMcpDiscovery: "dist/domain/webMcpDiscovery.js",
   webScreenshot: "dist/domain/webScreenshot.js",
-  javascriptApplicationGraph: "dist/domain/javascriptApplicationGraph.js",
-  javascriptApplicationAnalysis: "dist/domain/javascriptApplicationAnalysis.js",
-  javascriptSemanticGraph: "dist/domain/javascriptSemanticGraph.js",
-  javascriptSemanticQuery: "dist/domain/javascriptSemanticQuerySchemas.js",
-  javascriptSemanticTrace: "dist/domain/javascriptSemanticTraceSchemas.js",
-  javascriptFeatureTrace: "dist/domain/javascriptFeatureTraceSchemas.js",
+  javascriptApplicationGraph:
+    "dist/domain/javascript/javascriptApplicationGraph.js",
+  javascriptApplicationAnalysis:
+    "dist/domain/javascript/javascriptApplicationAnalysis.js",
+  javascriptSemanticGraph: "dist/domain/javascript/javascriptSemanticGraph.js",
+  javascriptSemanticQuery:
+    "dist/domain/javascript/javascriptSemanticQuerySchemas.js",
+  javascriptSemanticTrace:
+    "dist/domain/javascript/javascriptSemanticTraceSchemas.js",
+  javascriptFeatureTrace:
+    "dist/domain/javascript/javascriptFeatureTraceSchemas.js",
   javascriptVersionComparison:
-    "dist/domain/javascriptApplicationVersionComparisonSchemas.js",
+    "dist/domain/javascript/javascriptApplicationVersionComparisonSchemas.js",
   reconstructionVerification:
     "dist/domain/reconstructionVerificationSchemas.js",
   residualUnknown: "dist/domain/residualUnknown.js",

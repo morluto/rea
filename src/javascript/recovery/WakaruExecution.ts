@@ -8,7 +8,7 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
-import type { JavaScriptRecoveryInput } from "../../domain/javascriptRecovery.js";
+import type { JavaScriptRecoveryInput } from "../../domain/javascript/javascriptRecovery.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import {
   fingerprintRecoveryFile,

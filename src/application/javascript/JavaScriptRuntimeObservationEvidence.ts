@@ -10,7 +10,7 @@ import type {
   JavaScriptRuntimeTargetList,
   ListJavaScriptRuntimeTargetsInput,
   ObserveJavaScriptRuntimeInput,
-} from "../../domain/javascriptRuntimeObservation.js";
+} from "../../domain/javascript/javascriptRuntimeObservation.js";
 
 type RuntimeObservationOperation =
   | "list_javascript_runtime_targets"

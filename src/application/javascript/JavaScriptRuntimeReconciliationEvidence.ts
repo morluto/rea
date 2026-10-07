@@ -6,7 +6,7 @@ import {
 import type {
   JavaScriptRuntimeReconciliationResult,
   ReconcileJavaScriptRuntimeInput,
-} from "../../domain/javascriptRuntimeReconciliationSchemas.js";
+} from "../../domain/javascript/javascriptRuntimeReconciliationSchemas.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER } from "../InvestigationProviders.js";
 

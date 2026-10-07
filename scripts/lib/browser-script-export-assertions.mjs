@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { webScriptExportResultSchema } from "../../dist/domain/webScriptExport.js";
-import { javascriptApplicationAnalysisResultSchema } from "../../dist/domain/javascriptApplicationAnalysis.js";
+import { javascriptApplicationAnalysisResultSchema } from "../../dist/domain/javascript/javascriptApplicationAnalysis.js";
 
 /** Verify exact exported bytes and the independently authored source manifest. */
 export const assertWebScriptExport = async (evidence, capture, assets) => {

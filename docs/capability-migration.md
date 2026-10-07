@@ -255,6 +255,21 @@ analysis and public schemas keep their existing domain/contract ownership;
 shared artifact inventory, investigation records and execution types remain
 shared. CLI, MCP and production factories import the owning workflow directly.
 
+`src/domain/javascript/` owns static parsing and semantic IR, application and
+semantic graphs, Electron facts, runtime reconciliation, recovery result
+semantics, and source-to-bundle comparisons. Shared Evidence, digests, ordering,
+comparison semantics and historical-source graphs stay at their existing owners.
+Native handoffs link exact-subject Evidence without selecting or executing a
+provider.
+
+`src/contracts/javascript/` owns the JavaScript/Electron observation and recovery
+contracts, JavaScript-specific workflow requests, and their examples. The shared
+`applicationToolContracts.ts` aggregate stays at the contract root because it also
+owns reconstruction and Android/Apple projection operations. Canonical tool
+aggregation, named handler binding and SDK schema presentation remain unchanged.
+Catalog source paths, compiled verifier/SDK fixtures and recovery CI filters
+follow the domain/contract owners.
+
 `scripts/verify/javascript/` groups application-workflow, runtime-reconciliation,
 large-digest and real-recovery entrypoints. Their existing npm commands retain
 their invocation semantics. Recovery fixture compilation lives beside its

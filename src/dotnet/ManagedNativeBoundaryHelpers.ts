@@ -320,19 +320,21 @@ const boundaryKind = (
   return "mixed-or-unknown";
 };
 
+/** CLI header facets of a PE without an admitted CLI header. */
+export const NO_CLI_NATIVE: ManagedNativeBoundaryInspection["cli_native"] = {
+  il_only: false,
+  requires_32bit: false,
+  strong_name_signed: false,
+  native_entry_point: false,
+  ready_to_run_signature: false,
+  managed_native_header_rva: 0,
+  managed_native_header_size: 0,
+};
+
 export const cliNative = (
   pe: ManagedPeLayout,
 ): ManagedNativeBoundaryInspection["cli_native"] => {
-  if (pe.cli === null)
-    return {
-      il_only: false,
-      requires_32bit: false,
-      strong_name_signed: false,
-      native_entry_point: false,
-      ready_to_run_signature: false,
-      managed_native_header_rva: 0,
-      managed_native_header_size: 0,
-    };
+  if (pe.cli === null) return NO_CLI_NATIVE;
   return {
     il_only: (pe.cli.flags & 0x0000_0001) !== 0,
     requires_32bit: (pe.cli.flags & 0x0000_0002) !== 0,
@@ -343,6 +345,22 @@ export const cliNative = (
     managed_native_header_size: pe.cli.managedNativeHeader.size,
   };
 };
+
+/** Summarize declaration counts with the native facets of the CLI header. */
+export const nativeBoundarySummary = (
+  native: ManagedNativeBoundaryInspection["cli_native"],
+  counts: Pick<
+    ManagedNativeBoundaryInspection["summary"],
+    "module_ref_count" | "pinvoke_import_count" | "native_implementation_count"
+  >,
+): ManagedNativeBoundaryInspection["summary"] => ({
+  ...counts,
+  ready_to_run: native.ready_to_run_signature,
+  mixed_mode_or_native_header:
+    native.managed_native_header_rva !== 0 ||
+    native.managed_native_header_size !== 0 ||
+    native.native_entry_point,
+});
 
 interface BoundaryInspectionContext {
   readonly target: BinaryTarget;
@@ -390,16 +408,11 @@ export const buildNativeBoundaryInspection = ({
     module_refs: moduleRefs,
     pinvoke_imports: imports,
     native_implementations: implementations,
-    summary: {
+    summary: nativeBoundarySummary(native, {
       module_ref_count: moduleRefs.length,
       pinvoke_import_count: imports.length,
       native_implementation_count: implementations.length,
-      ready_to_run: native.ready_to_run_signature,
-      mixed_mode_or_native_header:
-        native.managed_native_header_rva !== 0 ||
-        native.managed_native_header_size !== 0 ||
-        native.native_entry_point,
-    },
+    }),
     coverage: {
       state: issues.length === 0 ? "complete" : "partial",
       issues,

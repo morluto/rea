@@ -4,7 +4,7 @@ import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   analyzeJavaScriptApplicationInputSchema,
   javascriptApplicationAnalysisResultSchema,
-} from "../../domain/javascriptApplicationAnalysis.js";
+} from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import {
   AnalysisInputError,
   AnalysisOutputError,

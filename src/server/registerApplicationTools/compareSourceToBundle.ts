@@ -4,7 +4,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 
 import { compareSourceToBundleEvidenceValidated } from "../../application/javascript/JavaScriptApplicationWorkflowService.js";
 import { applicationToolContract } from "../../contracts/applicationToolContracts.js";
-import { sourceToBundleComparisonResultSchema } from "../../domain/sourceToBundleComparisonSchemas.js";
+import { sourceToBundleComparisonResultSchema } from "../../domain/javascript/sourceToBundleComparisonSchemas.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { toCallToolResult } from "../toolResult.js";

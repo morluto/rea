@@ -4,7 +4,7 @@ import type { Evidence } from "../../domain/evidence.js";
 import type {
   InspectElectronPageInput,
   ListElectronTargetsInput,
-} from "../../domain/electronObservation.js";
+} from "../../domain/javascript/electronObservation.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import { type AnalysisError } from "../../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../../domain/result.js";

@@ -3,7 +3,7 @@ import type { ProgressReporter } from "../application/ProgressReporter.js";
 import type {
   ElectronPageInspection,
   InspectElectronPageInput,
-} from "../domain/electronObservation.js";
+} from "../domain/javascript/electronObservation.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { CdpConnection, CdpEvent } from "./CdpConnection.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";

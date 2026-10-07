@@ -10,7 +10,7 @@ import type {
   ElectronTargetList,
   InspectElectronPageInput,
   ListElectronTargetsInput,
-} from "../../domain/electronObservation.js";
+} from "../../domain/javascript/electronObservation.js";
 
 type ElectronOperation = "list_electron_targets" | "inspect_electron_page";
 

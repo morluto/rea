@@ -2,8 +2,8 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 
 import { BROWSER_TOOL_CONTRACTS } from "../../dist/contracts/browserToolContracts.js";
 import { BROWSER_SCENARIO_TOOL_CONTRACTS } from "../../dist/contracts/browserScenarioToolContracts.js";
-import { ELECTRON_TOOL_CONTRACTS } from "../../dist/contracts/electronToolContracts.js";
-import { JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS } from "../../dist/contracts/javascriptRuntimeObservationToolContracts.js";
+import { ELECTRON_TOOL_CONTRACTS } from "../../dist/contracts/javascript/electronToolContracts.js";
+import { JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS } from "../../dist/contracts/javascript/javascriptRuntimeObservationToolContracts.js";
 import { TOOL_CONTRACTS } from "../../dist/contracts/toolContracts.js";
 import { parseConfig } from "../../dist/config.js";
 import { createBinarySession } from "../../dist/application/runtime.js";

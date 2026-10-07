@@ -9,7 +9,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import {
   javaScriptExportShapeComparisonResultSchema,
   projectedExportReturnShapesSchema,
-} from "../../../src/domain/javascriptExportShapeComparisonSchemas.js";
+} from "../../../src/domain/javascript/javascriptExportShapeComparisonSchemas.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
 

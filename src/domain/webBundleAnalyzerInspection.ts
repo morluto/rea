@@ -4,12 +4,12 @@ import * as t from "@babel/types";
 import { sanitizeEndpointCandidate } from "./browserObservation.js";
 import type { WebPageInspection } from "./browserObservation.js";
 import type { WebBundleAnalysis } from "./webBundleAnalysis.js";
-import { semanticStaticPropertyName } from "./javascriptAstValues.js";
+import { semanticStaticPropertyName } from "./javascript/javascriptAstValues.js";
 import {
   calleeName,
   endpointArgument,
   stringValue,
-} from "./javascriptStaticAnalysisHelpers.js";
+} from "./javascript/javascriptStaticAnalysisHelpers.js";
 import {
   location,
   locationFields,

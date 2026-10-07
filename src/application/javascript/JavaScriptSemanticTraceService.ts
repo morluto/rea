@@ -7,11 +7,11 @@ import {
 import { type AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
-import { queryJavaScriptSemanticGraph } from "../../domain/javascriptSemanticQuery.js";
+import { queryJavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticQuery.js";
 import {
   javaScriptSemanticTraceResultSchema,
   traceJavaScriptSemanticsInputSchema,
-} from "../../domain/javascriptSemanticTraceSchemas.js";
+} from "../../domain/javascript/javascriptSemanticTraceSchemas.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { parseApplicationGraphEvidence } from "./JavaScriptApplicationEvidenceGraph.js";
 import { createJavaScriptSemanticTraceEvidence } from "./JavaScriptApplicationWorkflowEvidence.js";

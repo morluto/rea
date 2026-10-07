@@ -1,7 +1,7 @@
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { javascriptRecoveryResultSchema } from "../../../src/domain/javascriptRecovery.js";
+import { javascriptRecoveryResultSchema } from "../../../src/domain/javascript/javascriptRecovery.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {

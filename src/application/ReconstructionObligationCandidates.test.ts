@@ -7,11 +7,11 @@ import {
   artifactEvidence,
   buildSyntheticJavaScriptApplicationGraph,
   completeCoverage,
-} from "../domain/javascriptApplicationGraph.fixture.js";
+} from "../domain/javascript/javascriptApplicationGraph.fixture.js";
 import {
   createJavaScriptApplicationGraph,
   createJavaScriptApplicationNode,
-} from "../domain/javascriptApplicationGraph.js";
+} from "../domain/javascript/javascriptApplicationGraph.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { MANAGED_WORKFLOW_PROVIDER } from "./InvestigationProviders.js";
 import { deriveReconstructionObligationCandidates } from "./ReconstructionObligationCandidates.js";

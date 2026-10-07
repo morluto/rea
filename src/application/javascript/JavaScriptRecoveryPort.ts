@@ -1,5 +1,5 @@
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import type { JavaScriptRecoveryInput } from "../../domain/javascriptRecovery.js";
+import type { JavaScriptRecoveryInput } from "../../domain/javascript/javascriptRecovery.js";
 import type { Result } from "../../domain/result.js";
 import type {
   AnalysisExecution,

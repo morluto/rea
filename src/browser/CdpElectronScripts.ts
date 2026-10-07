@@ -1,7 +1,7 @@
 import type {
   ElectronPageInspection,
   InspectElectronPageInput,
-} from "../domain/electronObservation.js";
+} from "../domain/javascript/electronObservation.js";
 import { canonicalDigest } from "../domain/comparisonSemantics.js";
 import { createWebTextArtifact } from "../domain/webContentArtifact.js";
 import type { CdpConnection } from "./CdpConnection.js";

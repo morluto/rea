@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 import { parseBinary } from "plist";
 
 import { DirectoryArtifactReader } from "../artifacts/DirectoryArtifactReader.js";
-import { parseXmlPropertyList } from "../domain/propertyListKeys.js";
+import {
+  omittedPrototypeKeysLimitation,
+  parseXmlPropertyList,
+} from "../domain/propertyListKeys.js";
 import {
   decodeNibArchive,
   type NibArchiveDocument,
@@ -34,6 +37,7 @@ export const analyzeInterfaceBuilderBundle = async (input: {
   const documents: InterfaceBuilderDocumentInput[] = [];
   const invalid: string[] = [];
   const incompleteHierarchies = new Map<string, number>();
+  const prototypeKeyOmissions = new Map<string, number>();
   let omitted = 0;
   let attempted = 0;
   try {
@@ -51,9 +55,14 @@ export const analyzeInterfaceBuilderBundle = async (input: {
           bytes.subarray(0, 10).toString("ascii") === "NIBArchive"
             ? projectNibArchive(decodeNibArchive(bytes))
             : null;
-        const raw = nib === null ? decodePlist(bytes) : nib.raw;
+        const { value: raw, omittedPrototypeKeys } =
+          nib === null
+            ? decodePlist(bytes)
+            : { value: nib.raw, omittedPrototypeKeys: 0 };
         if (nib !== null && nib.omitted > 0)
           incompleteHierarchies.set(entry.path, nib.omitted);
+        if (omittedPrototypeKeys > 0)
+          prototypeKeyOmissions.set(entry.path, omittedPrototypeKeys);
         const documentHash = createHash("sha256").update(bytes).digest("hex");
         documents.push({
           relativePath: entry.path,
@@ -81,6 +90,7 @@ export const analyzeInterfaceBuilderBundle = async (input: {
   });
   return finalizeHierarchyCoverage(result, {
     incompleteHierarchies,
+    prototypeKeyOmissions,
     invalid,
     attempted,
     omitted,
@@ -91,12 +101,15 @@ const finalizeHierarchyCoverage = (
   result: ReturnType<typeof buildInterfaceBuilderAnalysis>,
   counts: {
     incompleteHierarchies: ReadonlyMap<string, number>;
+    prototypeKeyOmissions: ReadonlyMap<string, number>;
     invalid: readonly string[];
     attempted: number;
     omitted: number;
   },
 ) => {
-  const { incompleteHierarchies, invalid } = counts;
+  const { incompleteHierarchies, prototypeKeyOmissions, invalid } = counts;
+  const archiveDecodePartial =
+    invalid.length > 0 || prototypeKeyOmissions.size > 0;
   return {
     ...result,
     documents: result.documents.map((document) => ({
@@ -123,9 +136,15 @@ const finalizeHierarchyCoverage = (
         }),
         {
           facet: "archive_decode",
-          status:
-            invalid.length > 0 ? ("partial" as const) : ("complete" as const),
-          reason: invalid.length > 0 ? "one_or_more_archives_invalid" : null,
+          status: archiveDecodePartial
+            ? ("partial" as const)
+            : ("complete" as const),
+          reason:
+            invalid.length > 0
+              ? "one_or_more_archives_invalid"
+              : prototypeKeyOmissions.size > 0
+                ? "dictionary_entries_omitted"
+                : null,
           examined: counts.attempted,
           omitted: counts.omitted,
         },
@@ -133,7 +152,7 @@ const finalizeHierarchyCoverage = (
       truncated:
         result.graph.truncated ||
         counts.omitted > 0 ||
-        invalid.length > 0 ||
+        archiveDecodePartial ||
         incompleteHierarchies.size > 0,
     },
     limitations: [
@@ -149,6 +168,9 @@ const finalizeHierarchyCoverage = (
         : [
             `Some Interface Builder archives could not be decoded: ${invalid.slice(0, 16).join("; ")}`,
           ]),
+      ...[...prototypeKeyOmissions].map(
+        ([path, count]) => `${path}: ${omittedPrototypeKeysLimitation(count)}`,
+      ),
     ],
   };
 };
@@ -370,10 +392,12 @@ const readEntry = async (
   return Buffer.concat(chunks, length);
 };
 
-const decodePlist = (bytes: Buffer): JsonValue => {
-  const parsed =
+const decodePlist = (
+  bytes: Buffer,
+): { readonly value: JsonValue; readonly omittedPrototypeKeys: number } => {
+  const { value, omittedPrototypeKeys } =
     bytes.subarray(0, 8).toString("ascii") === "bplist00"
-      ? parseBinary(bytes)
-      : parseXmlPropertyList(bytes.toString("utf8")).value;
-  return jsonValueSchema.parse(parsed);
+      ? { value: parseBinary(bytes), omittedPrototypeKeys: 0 }
+      : parseXmlPropertyList(bytes.toString("utf8"));
+  return { value: jsonValueSchema.parse(value), omittedPrototypeKeys };
 };

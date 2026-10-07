@@ -6,7 +6,7 @@ import {
 import type {
   AnalyzeJavaScriptApplicationInput,
   JavaScriptApplicationAnalysisResult,
-} from "../../domain/javascriptApplicationAnalysis.js";
+} from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { JAVASCRIPT_APPLICATION_PROVIDER } from "../InvestigationProviders.js";
 

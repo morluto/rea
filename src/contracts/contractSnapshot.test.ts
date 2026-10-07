@@ -12,11 +12,11 @@ import { MANAGED_TOOL_CONTRACTS } from "./managedToolContracts.js";
 import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "./managedWorkflowToolContracts.js";
 import { BROWSER_TOOL_CONTRACTS } from "./browserToolContracts.js";
 import { BROWSER_SCENARIO_TOOL_CONTRACTS } from "./browserScenarioToolContracts.js";
-import { ELECTRON_TOOL_CONTRACTS } from "./electronToolContracts.js";
-import { JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS } from "./javascriptRuntimeObservationToolContracts.js";
+import { ELECTRON_TOOL_CONTRACTS } from "./javascript/electronToolContracts.js";
+import { JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS } from "./javascript/javascriptRuntimeObservationToolContracts.js";
 import { APPLICATION_TOOL_CONTRACTS } from "./applicationToolContracts.js";
 import { WEB_SCRIPT_TOOL_CONTRACTS } from "./webScriptToolContracts.js";
-import { JAVASCRIPT_RECOVERY_TOOL_CONTRACTS } from "./javascriptRecoveryToolContracts.js";
+import { JAVASCRIPT_RECOVERY_TOOL_CONTRACTS } from "./javascript/javascriptRecoveryToolContracts.js";
 import { TOOL_EFFECTS } from "./toolEffects.js";
 import { toolContract } from "./toolContracts.js";
 const contractJsonSchema = (schema: z.ZodType) =>

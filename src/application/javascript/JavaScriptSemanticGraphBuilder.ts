@@ -2,17 +2,17 @@ import {
   createJavaScriptSemanticGraph,
   type JavaScriptSemanticGraph,
   type JavaScriptSemanticGraphNode,
-} from "../../domain/javascriptSemanticGraph.js";
+} from "../../domain/javascript/javascriptSemanticGraph.js";
 import {
   JAVASCRIPT_SEMANTIC_RELATION_FAMILIES,
   JAVASCRIPT_SEMANTIC_RELATION_FAMILY,
-} from "../../domain/javascriptSemanticGraphSchemas.js";
+} from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 import type {
   JavaScriptSemanticCallArgument,
   JavaScriptSemanticIr,
-} from "../../domain/javascriptSemanticIr.js";
-import { sourceRangesEqual as rangesEqual } from "../../domain/javascriptStaticAnalysisHelpers.js";
-import type { JavaScriptApplicationGraph } from "../../domain/javascriptApplicationGraph.js";
+} from "../../domain/javascript/javascriptSemanticIr.js";
+import { sourceRangesEqual as rangesEqual } from "../../domain/javascript/javascriptStaticAnalysisHelpers.js";
+import type { JavaScriptApplicationGraph } from "../../domain/javascript/javascriptApplicationGraph.js";
 import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "./JavaScriptArtifactFiles.js";
 import {

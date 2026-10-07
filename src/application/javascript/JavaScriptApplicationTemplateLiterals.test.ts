@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { javascriptApplicationAnalysisResultSchema } from "../../domain/javascriptApplicationAnalysis.js";
+import { javascriptApplicationAnalysisResultSchema } from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import { analyzeJavaScriptApplication } from "./JavaScriptApplicationService.js";
 
 const graphIdentities = async (source: string) => {
