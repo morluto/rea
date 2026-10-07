@@ -461,6 +461,11 @@ const cleanupValidationFailure = (
 
 const sanitizedTokenReadFailure = (diagnostic: string | undefined): string => {
   if (diagnostic === "environment_unavailable") return diagnostic;
+  const environmentErrno = /^(EACCES|EPERM|ENOENT|ESRCH):/u.exec(
+    diagnostic ?? "",
+  );
+  if (environmentErrno?.[1] !== undefined)
+    return `environment_errno_${environmentErrno[1]}`;
   if (diagnostic === "apple_vector_unavailable") return diagnostic;
   if (diagnostic === "ambiguous_environment_boundary") return diagnostic;
   if (diagnostic === "malformed_procargs") return diagnostic;

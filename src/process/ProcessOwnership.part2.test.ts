@@ -209,3 +209,38 @@ describe("owned process-group cleanup discovery", () => {
     });
   });
 });
+
+describe("process environment permission diagnostics", () => {
+  it.each(["EACCES", "EPERM"])(
+    "preserves %s while refusing to signal an unverifiable live process",
+    async (code) => {
+      const signalGroup = vi.fn();
+      const diagnostic = `${code}: permission denied, open '/proc/900/environ'`;
+      const adapter: ProcessOwnershipHost = {
+        listProcesses: () =>
+          Promise.resolve([
+            {
+              pid: 900,
+              parentPid: 1,
+              processGroupId: 900,
+              state: "S",
+              command: "unverifiable-process",
+            },
+          ]),
+        environment: () => Promise.reject(new Error(diagnostic)),
+        signalGroup,
+      };
+      await expect(
+        cleanupOwnedProcessGroup(
+          { ...ownership, sweepTokenOwnedProcesses: true },
+          adapter,
+        ),
+      ).resolves.toMatchObject({
+        cleaned: false,
+        reason: `process ownership token could not be read for 1 live process(es): environment_errno_${code}=1`,
+        failures: [{ pid: 900, reason: "environment-unreadable", diagnostic }],
+      });
+      expect(signalGroup).not.toHaveBeenCalled();
+    },
+  );
+});
