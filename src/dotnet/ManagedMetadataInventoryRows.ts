@@ -381,6 +381,7 @@ export const readCustomAttribute = (
       6, 4, 1, 2, 8, 9, 10, 0, 14, 23, 20, 17, 26, 27, 32, 35, 38, 39, 40, 42,
       44, 43,
     ],
+    layout.rowCounts,
   );
   if (parent === null)
     throw managedFailure(
@@ -392,12 +393,12 @@ export const readCustomAttribute = (
   const typeName = attributeTypeName(bytes, layout, typeRaw, heapExtent);
   return {
     parent_token: parent,
-    constructor_token: metadataCodedToken(typeRaw, 3, [
-      undefined,
-      undefined,
-      6,
-      10,
-    ]),
+    constructor_token: metadataCodedToken(
+      typeRaw,
+      3,
+      [undefined, undefined, 6, 10],
+      layout.rowCounts,
+    ),
     type_name: typeName,
     value_length: value.length,
     value_sha256: sha256Bytes(value),
@@ -441,6 +442,7 @@ export const readResource = ({
     implementationRaw,
     2,
     [38, 35, 39],
+    layout.rowCounts,
   );
   let dataLength: number | null = null;
   let dataSha256: string | null = null;

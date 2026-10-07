@@ -114,6 +114,35 @@ describe("managed artifact inventory", () => {
     expect(result.classification.runtime_family).toBe("unity-mono");
   });
 
+  it("keeps ReadyToRun metadata and resources intact with large metadata", () => {
+    const resource = Buffer.alloc(2_048, 0x52);
+    const fieldSignature = Buffer.concat([
+      Buffer.from([0x06]),
+      Buffer.alloc(8_000, 0x0f),
+      Buffer.from([0x08]),
+    ]);
+    const bytes = buildManagedPeFixture({
+      fieldSignature,
+      readyToRun: true,
+      resourceData: resource,
+    });
+    const result = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.classification).toMatchObject({
+      status: "managed",
+      implementation: "cil-and-ready-to-run",
+    });
+    expect(result.resources[0]).toMatchObject({
+      embedded: true,
+      data_length: resource.length,
+      data_sha256: createHash("sha256").update(resource).digest("hex"),
+    });
+    expect(result.coverage).toMatchObject({ state: "complete", issues: [] });
+  });
+
   it("accepts CLI metadata GUIDs without RFC UUID version or variant bits", () => {
     const bytes = buildManagedPeFixture({
       mvid: Buffer.from("3aebc60edc4a544b1f458b4ed40b33b1", "hex"),

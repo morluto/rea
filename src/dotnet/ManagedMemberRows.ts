@@ -1,4 +1,5 @@
 import type { ManagedPeLayout } from "./ManagedPeReader.js";
+import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
 import {
   createDeclaringTypeLookup,
@@ -17,6 +18,7 @@ import {
   metadataToken,
   metadataRowCursor,
   metadataCodedToken,
+  metadataCodedTokenIsInvalid,
   readMetadataBlob,
   readMetadataString,
 } from "./ManagedMetadataHeaps.js";
@@ -71,9 +73,11 @@ export const parseMemberRefs = (
 ): {
   readonly refs: readonly ManagedMemberRef[];
   readonly core: ReadonlyMap<string, MemberRefCore>;
+  readonly issues: readonly ManagedParseIssue[];
 } => {
   const refs: ManagedMemberRef[] = [];
   const core = new Map<string, MemberRefCore>();
+  const issues: ManagedParseIssue[] = [];
   const table = layout.table(10);
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
     const cursor = metadataRowCursor(bytes, layout, 10, row);
@@ -93,16 +97,36 @@ export const parseMemberRefs = (
       layout.blob.size,
     );
     const token = metadataToken(10, row);
+    if (
+      metadataCodedTokenIsInvalid(
+        parentRaw,
+        3,
+        [2, 1, 26, 6, 27],
+        layout.rowCounts,
+      )
+    )
+      issues.push({
+        code: "invalid-row",
+        scope: `metadata.MemberRef:${token}`,
+        offset: cursor.start,
+        detail:
+          "MemberRef parent coded index references a row outside its table",
+      });
     refs.push({
       token,
       row_offset: cursor.start,
-      parent_token: metadataCodedToken(parentRaw, 3, [2, 1, 26, 6, 27]),
+      parent_token: metadataCodedToken(
+        parentRaw,
+        3,
+        [2, 1, 26, 6, 27],
+        layout.rowCounts,
+      ),
       name,
       signature: signature(sig),
     });
     core.set(token, { token, name });
   }
-  return { refs, core };
+  return { refs, core, issues };
 };
 
 interface ParseMethodsInput {

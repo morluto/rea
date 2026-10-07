@@ -2,7 +2,10 @@ import {
   managedFailure,
   ManagedReaderFailure,
 } from "./ManagedReaderFailure.js";
-import type { ManagedMemberInspection } from "../domain/managed/managedArtifact.js";
+import type {
+  ManagedMemberInspection,
+  ManagedParseIssue,
+} from "../domain/managed/managedArtifact.js";
 import {
   type ManagedMetadataLayout,
   type MetadataTableLayout,
@@ -10,6 +13,7 @@ import {
 import {
   metadataRowCursor,
   metadataCodedToken,
+  metadataCodedTokenIsInvalid,
   metadataToken,
   readMetadataString,
   sha256Bytes,
@@ -190,11 +194,15 @@ export const parseTypes = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
   ranges: readonly TypeRange[],
-): readonly ManagedType[] => {
+): {
+  readonly types: readonly ManagedType[];
+  readonly issues: readonly ManagedParseIssue[];
+} => {
   const typeTable = layout.table(2);
   const fields = layout.table(4);
   const methods = layout.table(6);
   const items: ManagedType[] = [];
+  const issues: ManagedParseIssue[] = [];
   for (let row = 1; row <= (typeTable?.rowCount ?? 0); row += 1) {
     const cursor = metadataRowCursor(bytes, layout, 2, row);
     const flags = cursor.readUInt32();
@@ -220,6 +228,16 @@ export const parseTypes = (
       methodStart,
       nextRange?.methodStart ?? 0,
     );
+    if (
+      metadataCodedTokenIsInvalid(extendsRaw, 2, [2, 1, 27], layout.rowCounts)
+    )
+      issues.push({
+        code: "invalid-row",
+        scope: `metadata.TypeDef:${metadataToken(2, row)}`,
+        offset: cursor.start,
+        detail:
+          "TypeDef Extends coded index references a row outside its table",
+      });
     items.push({
       token: metadataToken(2, row),
       row_offset: cursor.start,
@@ -227,7 +245,12 @@ export const parseTypes = (
       name,
       full_name: fullName(namespace, name),
       flags,
-      extends_token: metadataCodedToken(extendsRaw, 2, [2, 1, 27]),
+      extends_token: metadataCodedToken(
+        extendsRaw,
+        2,
+        [2, 1, 27],
+        layout.rowCounts,
+      ),
       field_list: {
         first_row: fieldRange.first,
         last_row: fieldRange.last,
@@ -240,7 +263,7 @@ export const parseTypes = (
       },
     });
   }
-  return items;
+  return { types: items, issues };
 };
 
 const readCompressed = (
@@ -301,55 +324,48 @@ const ELEMENT_TYPES = new Map<number, string>([
   [0x1c, "object"],
 ]);
 
-const ELEMENT_TYPE_SUFFIXES = new Map<number, string>([
-  [0x0f, "*"],
-  [0x10, "&"],
-]);
-
 const readTypeSignature = (
   blob: Buffer,
   offset: number,
 ): { readonly value: string; readonly next: number } => {
-  const kind = blob[offset];
+  const suffixes: string[] = [];
+  let cursor = offset;
+  let kind = blob[cursor];
+  while (kind === 0x0f || kind === 0x10 || kind === 0x1d) {
+    suffixes.push(kind === 0x0f ? "*" : kind === 0x10 ? "&" : "[]");
+    cursor += 1;
+    kind = blob[cursor];
+  }
   if (kind === undefined)
     throw managedFailure(
       "invalid-blob",
       "signature",
       "truncated type signature",
-      offset,
+      cursor,
     );
   const named = ELEMENT_TYPES.get(kind);
-  if (named !== undefined) return { value: named, next: offset + 1 };
-  const suffix = ELEMENT_TYPE_SUFFIXES.get(kind);
-  if (suffix !== undefined) {
-    const inner = readTypeSignature(blob, offset + 1);
-    return { value: `${inner.value}${suffix}`, next: inner.next };
+  let value: string;
+  let next: number;
+  if (named !== undefined) {
+    value = named;
+    next = cursor + 1;
+  } else if (kind === 0x11 || kind === 0x12) {
+    const token = readCompressed(blob, cursor + 1);
+    value = `${kind === 0x11 ? "valuetype" : "class"}:${String(token.value)}`;
+    next = token.next;
+  } else if (kind === 0x1e || kind === 0x13) {
+    const variable = readCompressed(blob, cursor + 1);
+    value = `${kind === 0x1e ? "mvar" : "var"}:${String(variable.value)}`;
+    next = variable.next;
+  } else {
+    throw managedFailure(
+      "unsupported-signature",
+      "signature",
+      `unsupported element type 0x${kind.toString(16)}`,
+      cursor,
+    );
   }
-  if (kind === 0x11 || kind === 0x12) {
-    const token = readCompressed(blob, offset + 1);
-    return {
-      value: `${kind === 0x11 ? "valuetype" : "class"}:${String(token.value)}`,
-      next: token.next,
-    };
-  }
-  if (kind === 0x1d) {
-    const inner = readTypeSignature(blob, offset + 1);
-    return { value: `${inner.value}[]`, next: inner.next };
-  }
-  if (kind === 0x1e) {
-    const variable = readCompressed(blob, offset + 1);
-    return { value: `mvar:${String(variable.value)}`, next: variable.next };
-  }
-  if (kind === 0x13) {
-    const variable = readCompressed(blob, offset + 1);
-    return { value: `var:${String(variable.value)}`, next: variable.next };
-  }
-  throw managedFailure(
-    "unsupported-signature",
-    "signature",
-    `unsupported element type 0x${kind.toString(16)}`,
-    offset,
-  );
+  return { value: value + suffixes.reverse().join(""), next };
 };
 
 const callingConvention = (value: number): string => {

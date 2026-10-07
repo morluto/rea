@@ -4,6 +4,7 @@ import {
   decodeInstructions,
   parseExceptionRegions,
 } from "./ManagedMemberInstructionDecoder.js";
+import { validateExceptionRegionRanges } from "./ManagedExceptionRegionValidation.js";
 import { sha256Bytes } from "./ManagedMetadataHeaps.js";
 
 const bodyStatus = (
@@ -59,6 +60,17 @@ const readMethodBodyHeader = (
     localSig: bytes.readUInt32LE(offset + 8),
   };
 };
+
+const readExceptionRegions = (
+  bytes: Buffer,
+  sectionOffset: number,
+  methodEnd: number,
+  ilSize: number,
+): ReturnType<typeof parseExceptionRegions> =>
+  validateExceptionRegionRanges(
+    parseExceptionRegions(bytes, sectionOffset, methodEnd),
+    ilSize,
+  );
 
 /** Decode admitted managed CIL, retaining unavailable implementation metadata as partial. */
 export const methodBody = (
@@ -120,7 +132,12 @@ export const methodBody = (
     const sectionOffset = (methodEnd + 3) & ~3;
     const exceptionRegions =
       header.format === "fat" && (header.flags & 8) !== 0
-        ? parseExceptionRegions(bytes, sectionOffset, offset + methodExtent)
+        ? readExceptionRegions(
+            bytes,
+            sectionOffset,
+            offset + methodExtent,
+            header.ilSize,
+          )
         : null;
     const status = bodyStatus(
       decoded.issue,

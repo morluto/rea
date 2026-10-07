@@ -478,24 +478,21 @@ export const parseExceptionRegions = (
   return { status: "complete", regions };
 };
 
-interface ExceptionRegionParseSuccess {
-  readonly status: "complete";
-  readonly regions: ManagedExceptionRegion[];
-}
-
-interface ExceptionRegionParseFailure {
-  readonly status: "malformed";
-  readonly regions: [];
-  readonly issue: string;
-}
-
-type ExceptionRegionParseResult =
-  | ExceptionRegionParseSuccess
-  | ExceptionRegionParseFailure;
+export type ExceptionRegionParseResult =
+  | {
+      readonly status: "complete";
+      readonly regions: ManagedExceptionRegion[];
+    }
+  | {
+      readonly status: "malformed";
+      readonly regions: ManagedExceptionRegion[];
+      readonly issue: string;
+    };
 
 const malformedExceptionRegions = (
   issue: string,
-): ExceptionRegionParseFailure => ({ status: "malformed", regions: [], issue });
+  regions: ManagedExceptionRegion[] = [],
+): ExceptionRegionParseResult => ({ status: "malformed", regions, issue });
 
 const readExceptionClauses = (
   bytes: Buffer,

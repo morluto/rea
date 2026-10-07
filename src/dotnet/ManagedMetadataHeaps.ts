@@ -253,10 +253,27 @@ export const metadataCodedToken = (
   raw: number,
   bits: number,
   tables: readonly (number | undefined)[],
+  rowCounts: readonly number[],
 ): string | null => {
   if (raw === 0) return null;
   const tag = raw & (2 ** bits - 1);
   const row = Math.floor(raw / 2 ** bits);
   const table = tables[tag];
-  return table === undefined || row === 0 ? null : metadataToken(table, row);
+  return table === undefined || row === 0 || row > (rowCounts[table] ?? 0)
+    ? null
+    : metadataToken(table, row);
+};
+
+/** Identify non-null coded indexes that cannot name a row in the admitted tables. */
+export const metadataCodedTokenIsInvalid = (
+  raw: number,
+  bits: number,
+  tables: readonly (number | undefined)[],
+  rowCounts: readonly number[],
+): boolean => {
+  if (raw === 0) return false;
+  const tag = raw & (2 ** bits - 1);
+  const row = Math.floor(raw / 2 ** bits);
+  const table = tables[tag];
+  return table === undefined || row === 0 || row > (rowCounts[table] ?? 0);
 };

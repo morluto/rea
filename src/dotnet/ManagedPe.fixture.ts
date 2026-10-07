@@ -5,6 +5,7 @@ import type { BinaryTarget } from "../domain/binaryTarget.js";
 interface ManagedPeFixtureOptions {
   readonly cliFlags?: number;
   readonly corruptMetadataSignature?: boolean;
+  readonly extendsRaw?: number;
   readonly fieldName?: string;
   readonly fieldSignature?: Buffer;
   readonly ilBody?: Buffer;
@@ -13,6 +14,7 @@ interface ManagedPeFixtureOptions {
   readonly metadataValidMaskExtra?: bigint;
   readonly methodName?: string;
   readonly methodSignature?: Buffer;
+  readonly memberRefParentRaw?: number;
   readonly mvid?: Buffer;
   readonly pinvoke?: {
     readonly importName?: string;
@@ -65,11 +67,20 @@ class BlobHeap {
 
   add(value: Buffer): number {
     if (value.length === 0) return 0;
-    if (value.length > 0x7f)
-      throw new RangeError("Managed PE fixture blob is too large");
     const index = this.#size;
-    this.#chunks.push(Buffer.from([value.length]), value);
-    this.#size += value.length + 1;
+    const prefix =
+      value.length <= 0x7f
+        ? Buffer.from([value.length])
+        : value.length <= 0x3fff
+          ? Buffer.from([0x80 | (value.length >> 8), value.length & 0xff])
+          : Buffer.from([
+              0xc0 | (value.length >> 24),
+              (value.length >> 16) & 0xff,
+              (value.length >> 8) & 0xff,
+              value.length & 0xff,
+            ]);
+    this.#chunks.push(prefix, value);
+    this.#size += value.length + prefix.length;
     return index;
   }
 
@@ -154,21 +165,32 @@ const typeRefRow = (
     metadataIndex(namespace, stringSize),
   ]);
 
-const typeDefRow = (
-  name: number,
-  namespace: number,
-  fieldList: number,
-  methodList: number,
-  stringSize: MetadataIndexSize,
-  typeDefOrRefSize: MetadataIndexSize,
-  fieldListSize: MetadataIndexSize,
-  methodListSize: MetadataIndexSize,
-): Buffer =>
+const typeDefRow = ({
+  name,
+  namespace,
+  fieldList,
+  methodList,
+  stringSize,
+  typeDefOrRefSize,
+  fieldListSize,
+  methodListSize,
+  extendsRaw = (1 << 2) | 1,
+}: {
+  readonly name: number;
+  readonly namespace: number;
+  readonly fieldList: number;
+  readonly methodList: number;
+  readonly stringSize: MetadataIndexSize;
+  readonly typeDefOrRefSize: MetadataIndexSize;
+  readonly fieldListSize: MetadataIndexSize;
+  readonly methodListSize: MetadataIndexSize;
+  readonly extendsRaw?: number;
+}): Buffer =>
   Buffer.concat([
     u32(0x0010_0001),
     metadataIndex(name, stringSize),
     metadataIndex(namespace, stringSize),
-    metadataIndex((1 << 2) | 1, typeDefOrRefSize),
+    metadataIndex(extendsRaw, typeDefOrRefSize),
     metadataIndex(fieldList, fieldListSize),
     metadataIndex(methodList, methodListSize),
   ]);
@@ -215,15 +237,23 @@ const methodDefRow = ({
     metadataIndex(0, parameterSize),
   ]);
 
-const memberRefRow = (
-  name: number,
-  signature: number,
-  stringSize: MetadataIndexSize,
-  blobSize: MetadataIndexSize,
-  parentSize: MetadataIndexSize,
-): Buffer =>
+const memberRefRow = ({
+  name,
+  signature,
+  stringSize,
+  blobSize,
+  parentSize,
+  parentRaw = (1 << 3) | 1,
+}: {
+  readonly name: number;
+  readonly signature: number;
+  readonly stringSize: MetadataIndexSize;
+  readonly blobSize: MetadataIndexSize;
+  readonly parentSize: MetadataIndexSize;
+  readonly parentRaw?: number;
+}): Buffer =>
   Buffer.concat([
-    metadataIndex((1 << 3) | 1, parentSize),
+    metadataIndex(parentRaw, parentSize),
     metadataIndex(name, stringSize),
     metadataIndex(signature, blobSize),
   ]);
@@ -520,16 +550,19 @@ const fixtureMetadataRows = ({
     [
       2,
       [
-        typeDefRow(
-          indexes.typeName,
-          indexes.typeNamespace,
-          1,
-          1,
-          heapSizes.strings,
-          widths.typeDefOrRef,
-          widths.table(4),
-          widths.table(6),
-        ),
+        typeDefRow({
+          name: indexes.typeName,
+          namespace: indexes.typeNamespace,
+          fieldList: 1,
+          methodList: 1,
+          stringSize: heapSizes.strings,
+          typeDefOrRefSize: widths.typeDefOrRef,
+          fieldListSize: widths.table(4),
+          methodListSize: widths.table(6),
+          ...(options.extendsRaw === undefined
+            ? {}
+            : { extendsRaw: options.extendsRaw }),
+        }),
       ],
     ],
     [
@@ -560,13 +593,16 @@ const fixtureMetadataRows = ({
     [
       10,
       [
-        memberRefRow(
-          indexes.constructorName,
-          indexes.constructorSignature,
-          heapSizes.strings,
-          heapSizes.blobs,
-          widths.memberRefParent,
-        ),
+        memberRefRow({
+          name: indexes.constructorName,
+          signature: indexes.constructorSignature,
+          stringSize: heapSizes.strings,
+          blobSize: heapSizes.blobs,
+          parentSize: widths.memberRefParent,
+          ...(options.memberRefParentRaw === undefined
+            ? {}
+            : { parentRaw: options.memberRefParentRaw }),
+        }),
       ],
     ],
     [

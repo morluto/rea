@@ -25,6 +25,48 @@ const managedBodyWithSections = (...sections: Buffer[]) => {
     .methods[0]?.body;
 };
 
+const managedBodyWithRegion = ({
+  il,
+  flags = 0,
+  tryOffset = 0,
+  tryLength = 1,
+  handlerOffset,
+  handlerLength = 1,
+  extra = 0x0200_0001,
+}: {
+  readonly il: Buffer;
+  readonly flags?: number;
+  readonly tryOffset?: number;
+  readonly tryLength?: number;
+  readonly handlerOffset: number;
+  readonly handlerLength?: number;
+  readonly extra?: number;
+}) => {
+  const header = Buffer.alloc(12);
+  header.writeUInt16LE(0x300b, 0);
+  header.writeUInt16LE(8, 2);
+  header.writeUInt32LE(il.length, 4);
+  const section = Buffer.alloc(16);
+  section[0] = 0x01;
+  section[1] = section.length;
+  section.writeUInt16LE(flags, 4);
+  section.writeUInt16LE(tryOffset, 6);
+  section[8] = tryLength;
+  section.writeUInt16LE(handlerOffset, 9);
+  section[11] = handlerLength;
+  section.writeUInt32LE(extra, 12);
+  const bytes = buildManagedPeFixture({
+    ilBody: Buffer.concat([
+      header,
+      il,
+      Buffer.alloc((4 - (il.length % 4)) % 4),
+      section,
+    ]),
+  });
+  return inspectManagedMembersBytes(bytes, managedPeFixtureTarget(bytes))
+    .methods[0]?.body;
+};
+
 describe("managed CIL decoding", () => {
   it("reads fat method header size from the full flags-and-size word", () => {
     const il = Buffer.from([
@@ -175,6 +217,112 @@ describe("managed CIL decoding", () => {
       local_var_sig_token: "0x11000001",
       il_sha256: tiny.methods[0]?.body.il_sha256,
       normalized_il_sha256: tiny.methods[0]?.body.normalized_il_sha256,
+    });
+  });
+});
+
+describe("managed exception region bounds", () => {
+  it("marks out-of-method ranges malformed and preserves the raw EH clause", () => {
+    expect(
+      managedBodyWithRegion({
+        il: Buffer.from([0x2a]),
+        tryOffset: 0,
+        tryLength: 2,
+        handlerOffset: 0,
+      }),
+    ).toMatchObject({
+      status: "malformed",
+      il_size: 1,
+      exception_regions: [
+        {
+          flags: 0,
+          try_offset: 0,
+          try_length: 2,
+          handler_offset: 0,
+          handler_length: 1,
+          class_token: "0x02000001",
+        },
+      ],
+      issue: "Exception clause try range leaves the method IL body",
+    });
+  });
+
+  it("uses half-open method bounds and permits zero-length ranges", () => {
+    expect(
+      managedBodyWithRegion({
+        il: Buffer.from([0x00, 0x00, 0x2a]),
+        tryOffset: 0,
+        tryLength: 1,
+        handlerOffset: 1,
+        handlerLength: 2,
+      }),
+    ).toMatchObject({ status: "present", il_size: 3, issue: null });
+    expect(
+      managedBodyWithRegion({
+        il: Buffer.from([0x2a]),
+        tryOffset: 0,
+        tryLength: 0,
+        handlerOffset: 0,
+        handlerLength: 0,
+      }),
+    ).toMatchObject({ status: "present", il_size: 1, issue: null });
+  });
+
+  it("marks reserved clause flags malformed without dropping its bytes", () => {
+    expect(
+      managedBodyWithRegion({
+        il: Buffer.from([0x00, 0x2a]),
+        flags: 8,
+        tryLength: 1,
+        handlerOffset: 1,
+      }),
+    ).toMatchObject({
+      status: "malformed",
+      exception_regions: [expect.objectContaining({ flags: 8 })],
+      issue: "Exception clause has unsupported flags 0x8",
+    });
+  });
+
+  it.each([2, 4])(
+    "accepts the defined finally/fault clause flag %s",
+    (flags) => {
+      expect(
+        managedBodyWithRegion({
+          il: Buffer.from([0x00, 0x00, 0x2a]),
+          flags,
+          tryOffset: 0,
+          tryLength: 1,
+          handlerOffset: 1,
+          handlerLength: 2,
+        }),
+      ).toMatchObject({ status: "present", issue: null });
+    },
+  );
+
+  it("validates filter ordering", () => {
+    expect(
+      managedBodyWithRegion({
+        il: Buffer.from([0x00, 0x00, 0xfe, 0x11, 0x2a]),
+        flags: 1,
+        tryOffset: 0,
+        tryLength: 1,
+        handlerOffset: 4,
+        extra: 1,
+      }),
+    ).toMatchObject({ status: "present", il_size: 5, issue: null });
+    expect(
+      managedBodyWithRegion({
+        il: Buffer.from([0x00, 0x00, 0x2a]),
+        flags: 1,
+        tryOffset: 0,
+        tryLength: 1,
+        handlerOffset: 1,
+        extra: 1,
+      }),
+    ).toMatchObject({
+      status: "malformed",
+      issue:
+        "Exception clause filter must start before its handler within the method IL body",
     });
   });
 });

@@ -146,6 +146,7 @@ export const parseImplMaps = ({
       cursor.readIndex(layout.codedIndexSize("MemberForwarded")),
       1,
       [4, 6],
+      layout.rowCounts,
     );
     const importName = readMetadataString(
       bytes,
