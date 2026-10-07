@@ -1,3 +1,11 @@
+let zero = captureChildCount(status: 0, success: 0, value: 0)
+precondition(zero.value == 0, "A successful empty child list must remain a known zero")
+precondition(zero.error == nil, "A successful child count must not report an error")
+
+let failedCount = captureChildCount(status: -25204, success: 0, value: 0)
+precondition(failedCount.value == nil, "A failed count must not be reported as zero")
+precondition(failedCount.error == -25204, "A failed count must retain its AX error")
+
 let failed: ChildBatch<Int> = captureChildValues(requestedCount: 2) { nil }
 precondition(failed.values.isEmpty, "AX retrieval failure must return no values")
 precondition(!failed.complete, "AX retrieval failure must mark traversal incomplete")

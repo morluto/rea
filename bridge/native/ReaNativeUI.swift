@@ -22,9 +22,10 @@ func attribute(_ element: AXUIElement, _ key: String) -> CFTypeRef? {
   var value: CFTypeRef?
   return AXUIElementCopyAttributeValue(element, key as CFString, &value) == .success ? value : nil
 }
-func childCount(_ element: AXUIElement) -> Int {
+func childCount(_ element: AXUIElement) -> ChildCount {
   var count = 0
-  return AXUIElementGetAttributeValueCount(element, kAXChildrenAttribute as CFString, &count) == .success ? count : 0
+  let status = AXUIElementGetAttributeValueCount(element, kAXChildrenAttribute as CFString, &count)
+  return captureChildCount(status: status.rawValue, success: AXError.success.rawValue, value: count)
 }
 func children(_ element: AXUIElement, count: Int) -> ChildBatch<AXUIElement> {
   captureChildValues(requestedCount: count) {
@@ -88,7 +89,11 @@ func observe(_ request: Request) async throws -> [String: Any] {
     var element = root
     for index in action.path ?? [] {
       var selectedChild: CFArray?
-      guard index >= 0 && index < childCount(element),
+      let count = childCount(element)
+      guard let available = count.value else {
+        try fail("element-count-unavailable", "Cannot validate selected accessibility path because child count failed with AXError \(count.error ?? -1)")
+      }
+      guard index >= 0 && index < available,
         AXUIElementCopyAttributeValues(element, kAXChildrenAttribute as CFString, index, 1, &selectedChild) == .success,
         let item = (selectedChild as? [AXUIElement])?.first else { try fail("element-missing", "Selected accessibility path no longer exists") }
       element = item
@@ -104,15 +109,20 @@ func observe(_ request: Request) async throws -> [String: Any] {
     }
     guard outcome == .success else { try fail("action-failed", "Accessibility action failed with AXError \(outcome.rawValue)") }
   }
-  var nodes: [[String: Any]] = []; var truncated = false
+  var nodes: [[String: Any]] = []; var truncated = false; var gaps: [String] = []
   if request.accessibility, let root = selected {
     var pending: [(AXUIElement, [Int])] = [(root, [])]
     while let (element, path) = pending.popLast() {
       if nodes.count >= request.max_nodes { truncated = true; break }
-      let totalChildren = childCount(element)
+      let childCountResult = childCount(element)
       var actions: CFArray?
       AXUIElementCopyActionNames(element, &actions)
-      nodes.append(["path": path, "role": text(element, kAXRoleAttribute), "title": text(element, kAXTitleAttribute), "value": text(element, kAXValueAttribute), "actions": actions as? [String] ?? [], "children_count": totalChildren])
+      nodes.append(["path": path, "role": text(element, kAXRoleAttribute), "title": text(element, kAXTitleAttribute), "value": text(element, kAXValueAttribute), "actions": actions as? [String] ?? [], "children_count": childCountResult.value.map { $0 as Any } ?? NSNull()])
+      guard let totalChildren = childCountResult.value else {
+        truncated = true
+        gaps.append("AX child count unavailable at path \(path): AXError \(childCountResult.error ?? -1)")
+        continue
+      }
       if path.count >= 32 { if totalChildren > 0 { truncated = true }; continue }
       let available = max(0, request.max_nodes - nodes.count - pending.count)
       let count = min(available, totalChildren)
@@ -143,7 +153,7 @@ func observe(_ request: Request) async throws -> [String: Any] {
     }
     screenshot = ["mime_type": "image/png", "base64": png.base64EncodedString(), "sha256": SHA256.hash(data: png).map({ String(format: "%02x", $0) }).joined(), "width": image.width, "height": image.height]
   }
-  return ["window": ["pid": request.pid, "window_id": request.window_id, "executable": request.executable, "launch_time": launch, "title": window[kCGWindowName as String] as? String ?? ""], "nodes": nodes, "truncated": truncated, "screenshot": screenshot, "gaps": request.accessibility ? [] : ["Accessibility capture was disabled"]]
+  return ["window": ["pid": request.pid, "window_id": request.window_id, "executable": request.executable, "launch_time": launch, "title": window[kCGWindowName as String] as? String ?? ""], "nodes": nodes, "truncated": truncated, "screenshot": screenshot, "gaps": request.accessibility ? gaps : ["Accessibility capture was disabled"]]
 }
 Task { @MainActor in
   do {
