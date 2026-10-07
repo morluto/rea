@@ -50,30 +50,36 @@ export const collectJavaScriptSemanticFingerprints = (
     resourceOperations,
     parserPartial,
   } = input;
+  const callSitesByCaller = groupByOwner(
+    calls.callSites,
+    ({ callerCallableId }) => callerCallableId,
+  );
+  const captureCountByCallable = countByOwner(
+    calls.closureCaptures,
+    ({ callableId }) => callableId,
+  );
+  const promiseEffectsByOwner = groupByOwner(promises, ownerId);
+  const eventEffectsByOwner = groupByOwner(events, ownerId);
+  const timerEffectsByOwner = groupByOwner(timers, ownerId);
+  const childProcessEffectsByOwner = groupByOwner(
+    [...childProcessSpawns, ...childProcessInteractions],
+    ownerId,
+  );
+  const networkEffectsByOwner = groupByOwner(requestOperations, ownerId);
+  const resourceEffectsByOwner = groupByOwner(resourceOperations, ownerId);
   return callables.flatMap((callable) => {
     if (callable.kind === "class") return [];
     const node = state.callableNodesById.get(callable.callableId);
     if (node === undefined) return [];
     const syntax = fingerprintSyntax(node, callable.callableId);
-    const promiseEffects = promises.filter(
-      ({ ownerCallableId }) => ownerCallableId === callable.callableId,
-    );
-    const eventEffects = events.filter(
-      ({ ownerCallableId }) => ownerCallableId === callable.callableId,
-    );
-    const timerEffects = timers.filter(
-      ({ ownerCallableId }) => ownerCallableId === callable.callableId,
-    );
-    const childProcessEffects = [
-      ...childProcessSpawns,
-      ...childProcessInteractions,
-    ].filter(({ ownerCallableId }) => ownerCallableId === callable.callableId);
-    const networkEffects = requestOperations.filter(
-      ({ ownerCallableId }) => ownerCallableId === callable.callableId,
-    );
-    const resourceEffects = resourceOperations.filter(
-      ({ ownerCallableId }) => ownerCallableId === callable.callableId,
-    );
+    const promiseEffects = promiseEffectsByOwner.get(callable.callableId) ?? [];
+    const eventEffects = eventEffectsByOwner.get(callable.callableId) ?? [];
+    const timerEffects = timerEffectsByOwner.get(callable.callableId) ?? [];
+    const childProcessEffects =
+      childProcessEffectsByOwner.get(callable.callableId) ?? [];
+    const networkEffects = networkEffectsByOwner.get(callable.callableId) ?? [];
+    const resourceEffects =
+      resourceEffectsByOwner.get(callable.callableId) ?? [];
     return [
       {
         callableId: callable.callableId,
@@ -86,7 +92,12 @@ export const collectJavaScriptSemanticFingerprints = (
           normalizedAstSha256: digest(syntax.normalizedTokens),
           controlFlowSha256: digest(syntax.controlFlowTokens),
           relationShapeSha256: digest(
-            relationShape(callable, calls, promiseEffects),
+            relationShape(
+              callable,
+              callSitesByCaller.get(callable.callableId) ?? [],
+              captureCountByCallable.get(callable.callableId) ?? 0,
+              promiseEffects,
+            ),
           ),
           literalSetSha256: digest(
             [...new Set(syntax.literals)].sort(compareCodePoints),
@@ -112,6 +123,36 @@ export const collectJavaScriptSemanticFingerprints = (
       },
     ];
   });
+};
+
+const ownerId = <T extends { readonly ownerCallableId: string | null }>(
+  value: T,
+): string | null => value.ownerCallableId;
+
+const groupByOwner = <T, K extends string | null>(
+  values: readonly T[],
+  getOwner: (value: T) => K,
+): Map<K, T[]> => {
+  const grouped = new Map<K, T[]>();
+  for (const value of values) {
+    const owner = getOwner(value);
+    const ownedValues = grouped.get(owner);
+    if (ownedValues === undefined) grouped.set(owner, [value]);
+    else ownedValues.push(value);
+  }
+  return grouped;
+};
+
+const countByOwner = <T, K extends string | null>(
+  values: readonly T[],
+  getOwner: (value: T) => K,
+): Map<K, number> => {
+  const counts = new Map<K, number>();
+  for (const value of values) {
+    const owner = getOwner(value);
+    counts.set(owner, (counts.get(owner) ?? 0) + 1);
+  }
+  return counts;
 };
 
 interface FingerprintSyntax {
@@ -229,21 +270,16 @@ const semanticLiteral = (node: t.Node): string | null => {
 
 const relationShape = (
   callable: JavaScriptSemanticCallable,
-  calls: JavaScriptSemanticCallAnalysis,
+  callSites: JavaScriptSemanticCallAnalysis["callSites"],
+  captureCount: number,
   promises: readonly JavaScriptSemanticPromiseOperation[],
 ): string[] => [
   `returns:${String(callable.returnSites.length)}:${callable.returnCoverage.status}`,
-  ...calls.callSites
-    .filter(({ callerCallableId }) => callerCallableId === callable.callableId)
-    .map(
-      ({ kind, resolution, arguments: args, calleeCallableIds }) =>
-        `call:${kind}:${resolution}:${String(args.length)}:${String(calleeCallableIds.length)}`,
-    ),
-  `captures:${String(
-    calls.closureCaptures.filter(
-      ({ callableId }) => callableId === callable.callableId,
-    ).length,
-  )}`,
+  ...callSites.map(
+    ({ kind, resolution, arguments: args, calleeCallableIds }) =>
+      `call:${kind}:${resolution}:${String(args.length)}:${String(calleeCallableIds.length)}`,
+  ),
+  `captures:${String(captureCount)}`,
   ...promises.map(
     ({ kind, method, ownership, sourceResolution }) =>
       `promise:${kind}:${method}:${ownership}:${sourceResolution}`,

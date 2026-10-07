@@ -192,6 +192,51 @@ describe("JavaScript semantic analysis: calls 2", () => {
     ).not.toBe(left.functionFingerprints[0]?.components.literalSetSha256);
   });
 
+  it("keeps fingerprint relations ordered and effects scoped to their owner", () => {
+    const ordered = analyzeJavaScriptSemantics(`
+      function first() {}
+      function second(one, two) {}
+      function ordered() { first(); second(1, 2); }
+      function timerOwner() { setTimeout(work, 10); }
+      function networkOwner() { fetch('/data'); }
+      function noEffects() { return 1; }
+    `);
+    const reversed = analyzeJavaScriptSemantics(`
+      function first() {}
+      function second(one, two) {}
+      function ordered() { second(1, 2); first(); }
+      function timerOwner() { setTimeout(work, 10); }
+      function networkOwner() { fetch('/data'); }
+      function noEffects() { return 1; }
+    `);
+    const fingerprint = (ir: typeof ordered, name: string) =>
+      ir.functionFingerprints.find((value) =>
+        ir.callables.some(
+          (callable) =>
+            callable.callableId === value.callableId && callable.name === name,
+        ),
+      );
+
+    expect(
+      fingerprint(ordered, "ordered")?.components.relationShapeSha256,
+    ).not.toBe(
+      fingerprint(reversed, "ordered")?.components.relationShapeSha256,
+    );
+    expect(fingerprint(ordered, "timerOwner")?.components.effects).toContain(
+      "timer",
+    );
+    expect(fingerprint(ordered, "networkOwner")?.components.effects).toContain(
+      "network",
+    );
+    expect(fingerprint(ordered, "noEffects")?.components.effects).toEqual([]);
+    expect(
+      fingerprint(ordered, "timerOwner")?.components.effects,
+    ).not.toContain("network");
+    expect(
+      fingerprint(ordered, "networkOwner")?.components.effects,
+    ).not.toContain("timer");
+  });
+
   it("retains ambiguous local callees and explicit dynamic frontiers", () => {
     const ir = analyzeJavaScriptSemantics(`
       function left(value) { return value; }
