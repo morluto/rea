@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
+import { buffer } from "node:stream/consumers";
 import { createPackageWithOptions } from "@electron/asar";
 import { describe, expect, it } from "vitest";
 import { scanArtifactInventory } from "../../../src/application/ArtifactInventory.js";
@@ -149,6 +150,114 @@ describe("ASAR entry streaming", () => {
       await reader.close();
     }
   });
+});
+
+describe("ASAR entry producer identity", () => {
+  it.each([false, true] as const)(
+    "rejects a copied entry with a changed unpacked flag for unpacked=%s",
+    async (unpacked) => {
+      const root = await createTestTempDirectory("rea-asar-entry-identity-");
+      const source = join(root, "source");
+      const archive = join(root, "fixture.asar");
+      await mkdir(source);
+      await writeFile(join(source, "small.js"), "module.exports = 1;\n");
+      await createPackageWithOptions(
+        source,
+        archive,
+        unpacked ? { unpack: "small.js" } : {},
+      );
+      const selectedPath = unpacked
+        ? join(`${archive}.unpacked`, "small.js")
+        : archive;
+      const identity = await lstat(selectedPath);
+      const reader = new AsarArtifactReader(archive);
+
+      try {
+        const entries = [];
+        for await (const entry of reader.entries()) entries.push(entry);
+        const entry = entries.find(({ path }) => path === "small.js");
+        if (entry === undefined) throw new Error("Expected ASAR file entry");
+        expect(entry.unpacked).toBe(unpacked);
+        expect(await matchingDescriptorCount(identity)).toBe(0);
+        if (entry.declaredSize === null)
+          throw new Error("Expected ASAR file size metadata");
+
+        for (const changedEntry of [
+          { ...entry, unpacked: !entry.unpacked },
+          { ...entry, path: `stale/${entry.path}` },
+          { ...entry, declaredSize: entry.declaredSize + 1 },
+        ])
+          await expect(reader.open(changedEntry)).rejects.toMatchObject({
+            name: "ArtifactReaderFailure",
+            reason: "integrity",
+            message: expect.stringContaining(
+              `ASAR entry metadata changed since inventory: ${entry.path}`,
+            ),
+          });
+        await waitForNoMatchingDescriptor(identity);
+      } finally {
+        await reader.close();
+      }
+    },
+  );
+
+  it.each([
+    ["packed to unpacked", false],
+    ["unpacked to packed", true],
+  ] as const)(
+    "rejects a retained %s entry after a new entries pass",
+    async (_transition, wasUnpacked) => {
+      const root = await createTestTempDirectory("rea-asar-entry-refresh-");
+      const source = join(root, "source");
+      const archive = join(root, "fixture.asar");
+      const memberContents = "module.exports = 1;\n";
+      await mkdir(source);
+      await writeFile(join(source, "small.js"), memberContents);
+      const reader = new AsarArtifactReader(archive);
+
+      try {
+        await createPackageWithOptions(
+          source,
+          archive,
+          wasUnpacked ? { unpack: "small.js" } : {},
+        );
+        const firstEntries = [];
+        for await (const entry of reader.entries()) firstEntries.push(entry);
+        const retained = firstEntries.find(({ path }) => path === "small.js");
+        if (retained === undefined)
+          throw new Error("Expected first ASAR file entry");
+        const copiedRetained = {
+          ...retained,
+          limitations: [...retained.limitations],
+        };
+
+        await createPackageWithOptions(
+          source,
+          archive,
+          wasUnpacked ? {} : { unpack: "small.js" },
+        );
+        const currentEntries = [];
+        for await (const entry of reader.entries()) currentEntries.push(entry);
+        const current = currentEntries.find(({ path }) => path === "small.js");
+        if (current === undefined)
+          throw new Error("Expected refreshed ASAR file entry");
+        expect(current.unpacked).toBe(!wasUnpacked);
+
+        await expect(reader.open(copiedRetained)).rejects.toMatchObject({
+          name: "ArtifactReaderFailure",
+          reason: "integrity",
+          message: expect.stringContaining(
+            "ASAR entry metadata changed since inventory",
+          ),
+        });
+        expect((await buffer(await reader.open(current))).toString()).toBe(
+          memberContents,
+        );
+      } finally {
+        await reader.close();
+      }
+    },
+  );
 });
 
 describe("ASAR read failures", () => {

@@ -23,7 +23,7 @@ export class AsarArtifactReader implements ArtifactReader {
   readonly format = "asar" as const;
   #archiveSize: number | undefined;
   #headerSize: number | undefined;
-  readonly #entries = new Map<string, AsarFileMetadata>();
+  readonly #entries = new Map<string, AsarEntryState>();
 
   constructor(
     private readonly path: string,
@@ -74,9 +74,7 @@ export class AsarArtifactReader implements ArtifactReader {
           : "link" in metadata
             ? "symlink"
             : "file";
-      if (kind === "file" && isAsarFileMetadata(metadata))
-        this.#entries.set(providerPath, metadata);
-      yield {
+      const entry: ArtifactEntry = {
         path,
         kind,
         declaredSize: "size" in metadata ? metadata.size : null,
@@ -97,35 +95,48 @@ export class AsarArtifactReader implements ArtifactReader {
             : [],
         adapterKey: providerPath,
       };
+      if (kind === "file" && isAsarFileMetadata(metadata))
+        this.#entries.set(providerPath, {
+          metadata,
+          entry: copyArtifactEntry(entry),
+        });
+      yield entry;
     }
   }
 
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
     abortIfNeeded(signal);
-    if (entry.kind !== "file")
+    const state = this.#entries.get(entry.adapterKey);
+    if (state === undefined && entry.kind !== "file")
       throw new ArtifactReaderFailure(
         "format",
         "ASAR entry is not a regular file",
       );
-    const metadata = this.#entries.get(entry.adapterKey);
-    if (metadata === undefined)
+    if (state === undefined)
       throw new ArtifactReaderFailure(
         "integrity",
         `ASAR entry was not produced by this reader: ${entry.path}`,
       );
-    if (entry.unpacked) {
-      const handle = await this.#openUnpackedEntry(entry);
+    if (!sameArtifactEntry(entry, state.entry))
+      throw new ArtifactReaderFailure(
+        "integrity",
+        `ASAR entry metadata changed since inventory: ${state.entry.path}`,
+      );
+    const { metadata } = state;
+    const producedEntry = state.entry;
+    if (producedEntry.unpacked) {
+      const handle = await this.#openUnpackedEntry(producedEntry);
       try {
         const observed = await handle.stat();
         abortIfNeeded(signal);
         if (!observed.isFile())
           throw new ArtifactReaderFailure(
             "path",
-            `ASAR unpacked entry is not a regular file: ${entry.path}`,
+            `ASAR unpacked entry is not a regular file: ${producedEntry.path}`,
           );
       } catch (cause: unknown) {
         await handle.close().catch(() => undefined);
-        throw asarFailure(this.path, `read ${entry.path}`, cause);
+        throw asarFailure(this.path, `read ${producedEntry.path}`, cause);
       }
       const source = handle.createReadStream({
         start: 0,
@@ -134,7 +145,7 @@ export class AsarArtifactReader implements ArtifactReader {
       return readValidatedAsarEntry(
         source,
         undefined,
-        entry.path,
+        producedEntry.path,
         this.path,
         signal,
       );
@@ -160,7 +171,7 @@ export class AsarArtifactReader implements ArtifactReader {
     )
       throw new ArtifactReaderFailure(
         "format",
-        `ASAR entry range is outside its container: ${entry.path}`,
+        `ASAR entry range is outside its container: ${producedEntry.path}`,
       );
     let handle: FileHandle | undefined;
     try {
@@ -174,7 +185,7 @@ export class AsarArtifactReader implements ArtifactReader {
       if (!observed.isFile() || observed.size !== archiveSize)
         throw new ArtifactReaderFailure(
           "integrity",
-          `ASAR container changed before read: ${entry.path}`,
+          `ASAR container changed before read: ${producedEntry.path}`,
         );
       if (metadata.size === 0) {
         await closeAsarHandle(() => openedHandle.close(), signal);
@@ -189,13 +200,13 @@ export class AsarArtifactReader implements ArtifactReader {
       return readValidatedAsarEntry(
         source,
         metadata.size,
-        entry.path,
+        producedEntry.path,
         this.path,
         signal,
       );
     } catch (cause: unknown) {
       await handle?.close().catch(() => undefined);
-      throw asarFailure(this.path, `read ${entry.path}`, cause);
+      throw asarFailure(this.path, `read ${producedEntry.path}`, cause);
     }
   }
 
@@ -298,6 +309,10 @@ export class AsarArtifactReader implements ArtifactReader {
 }
 
 type AsarFileMetadata = Extract<ReturnType<typeof statFile>, { size: number }>;
+type AsarEntryState = {
+  readonly metadata: AsarFileMetadata;
+  readonly entry: ArtifactEntry;
+};
 type UnpackedFileHandle = {
   stat(): Promise<Stats>;
   close(): Promise<void>;
@@ -307,6 +322,35 @@ type OpenAsarUnpackedFile = (
   path: string,
   flags: number,
 ) => Promise<UnpackedFileHandle>;
+
+const copyArtifactEntry = (entry: ArtifactEntry): ArtifactEntry => ({
+  ...entry,
+  limitations: [...entry.limitations],
+  ...(entry.sourceIdentity === undefined
+    ? {}
+    : { sourceIdentity: { ...entry.sourceIdentity } }),
+});
+
+const sameArtifactEntry = (
+  entry: ArtifactEntry,
+  produced: ArtifactEntry,
+): boolean =>
+  entry.path === produced.path &&
+  entry.kind === produced.kind &&
+  entry.declaredSize === produced.declaredSize &&
+  entry.compressedSize === produced.compressedSize &&
+  entry.executable === produced.executable &&
+  entry.encrypted === produced.encrypted &&
+  entry.byteOffset === produced.byteOffset &&
+  entry.declaredSha256 === produced.declaredSha256 &&
+  entry.unpacked === produced.unpacked &&
+  entry.adapterKey === produced.adapterKey &&
+  entry.limitations.length === produced.limitations.length &&
+  entry.limitations.every(
+    (limitation, index) => limitation === produced.limitations[index],
+  ) &&
+  entry.sourceIdentity?.device === produced.sourceIdentity?.device &&
+  entry.sourceIdentity?.inode === produced.sourceIdentity?.inode;
 
 const isAsarFileMetadata = (
   metadata: ReturnType<typeof statFile>,
