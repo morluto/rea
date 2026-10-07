@@ -312,6 +312,36 @@ describe("headless IDA lifecycle boundaries", () => {
 });
 
 describe("headless IDA session ownership and cleanup", () => {
+  it("shares an in-flight close across concurrent cleanup callers", async () => {
+    const { producer, client } = await fixture("headless");
+    expect((await client.execute("health", {})).ok).toBe(true);
+
+    let release: (() => void) | undefined;
+    let notify: (() => void) | undefined;
+    const closeStarted = new Promise<void>((resolve) => {
+      notify = resolve;
+    });
+    producer.beforeCall = async (name) => {
+      if (name !== "idb_close") return;
+      notify?.();
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    };
+
+    const first = client.closeWithOutcome();
+    await closeStarted;
+    const second = client.closeWithOutcome();
+    release?.();
+    const results = await Promise.all([first, second]);
+
+    expect(results.every((result) => result.ok)).toBe(true);
+    expect(
+      producer.calls.filter(({ name }) => name === "idb_close"),
+    ).toHaveLength(1);
+    expect(producer.closes).toBe(1);
+  });
+
   it("retains the workspace after an unconfirmed open, even when inventory is empty, and never retries startup implicitly", async () => {
     const { producer, client, root } = await fixture("headless");
     producer.beforeCall = async (name) => {
