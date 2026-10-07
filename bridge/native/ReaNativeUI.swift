@@ -159,12 +159,12 @@ Task { @MainActor in
   do {
     let request = try JSONDecoder().decode(Request.self, from: Data(CommandLine.arguments[1].utf8))
     let result = try await observe(request)
-    let output = try JSONSerialization.data(withJSONObject: ["ok": true, "result": result], options: [.sortedKeys])
+    let output = try serializeHelperOutput(["ok": true, "result": result])
     FileHandle.standardOutput.write(output)
   } catch {
     let failure = error as? BoundaryFailure
     let output: [String: Any] = ["ok": false, "code": failure?.code ?? "capture-failed", "message": failure?.message ?? error.localizedDescription]
-    if let data = try? JSONSerialization.data(withJSONObject: output, options: [.sortedKeys]) { FileHandle.standardOutput.write(data) }
+    if let data = try? serializeHelperOutput(output) { FileHandle.standardOutput.write(data) }
   }
   exit(0)
 }

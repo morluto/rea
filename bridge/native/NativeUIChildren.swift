@@ -1,3 +1,5 @@
+import Foundation
+
 struct ChildBatch<Element> {
   let values: [Element]
   let complete: Bool
@@ -6,6 +8,10 @@ struct ChildBatch<Element> {
 struct ChildCount {
   let value: Int?
   let error: Int32?
+}
+
+func serializeHelperOutput(_ value: Any) throws -> Data {
+  try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys, .withoutEscapingSlashes])
 }
 
 func captureChildCount(status: Int32, success: Int32, value: Int) -> ChildCount {

@@ -30,7 +30,19 @@ try {
     "-o",
     childRetrievalTest,
   ]);
-  await promisify(execFile)(childRetrievalTest, []);
+  const childRetrieval = await promisify(execFile)(childRetrievalTest, []);
+  const producerJson = childRetrieval.stdout.split("\n")[0];
+  if (producerJson === undefined) {
+    throw new Error(
+      "Native UI serializer seam did not emit its producer bytes",
+    );
+  }
+  const consumerJson = JSON.stringify(JSON.parse(producerJson));
+  if (producerJson !== consumerJson) {
+    throw new Error(
+      "Swift helper JSON bytes differ from the normalized JavaScript consumer representation",
+    );
+  }
 
   const contents = join(root, "Fixture.app", "Contents");
   await mkdir(join(contents, "MacOS"), { recursive: true });
