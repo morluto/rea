@@ -54,10 +54,22 @@ it("rejects a same-size rewrite even when its modification time is restored", as
   const directory = await mkdtemp(join(tmpdir(), "rea-snapshot-ctime-"));
   const path = join(directory, "observed-file");
   try {
+    const fixedMtime = new Date("2020-01-02T03:04:05.000Z");
     await writeFile(path, "before\n");
+    await utimes(path, fixedMtime, fixedMtime);
     const expected = await lstat(path);
     await writeFile(path, "after!\n");
-    await utimes(path, expected.atime, expected.mtime);
+    await utimes(path, fixedMtime, fixedMtime);
+    const rewritten = await lstat(path);
+
+    expect(rewritten).toMatchObject({
+      dev: expected.dev,
+      ino: expected.ino,
+      mode: expected.mode,
+      size: expected.size,
+      mtimeMs: expected.mtimeMs,
+    });
+    expect(rewritten.ctimeMs).not.toBe(expected.ctimeMs);
 
     await expect(hashFile(path, expected, 1_000)).resolves.toBeNull();
   } finally {
