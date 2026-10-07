@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { createCli } from "./cli.js";
 import { createSystemDoctorHost } from "./doctorRuntime.js";
 import { captureProcessScenarioFile } from "./application/ProcessCli.js";
-import { runCapabilityStatus } from "./application/DirectAnalysisStatus.js";
+import { runCapabilityStatus } from "./composition/directAnalysis.js";
 import { probeProcessCaptureCapability } from "./application/ProcessHarness.js";
 import { parseEvidence } from "./domain/evidence.js";
 import { parseProcessCapture } from "./domain/processCapture.js";

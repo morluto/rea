@@ -2,7 +2,7 @@ import type { StdioServerHandle } from "@modelcontextprotocol/server/stdio";
 import pino from "pino";
 import { expect, it } from "vitest";
 
-import { createManagedBinarySession } from "../../../src/application/runtime.js";
+import { createManagedBinarySession } from "../../../src/composition/binary.js";
 import { MCP_SHUTDOWN_FAILED } from "../../../src/main/messages.js";
 import { createShutdown } from "../../../src/main/shutdown.js";
 import type { RuntimeDependencies } from "../../../src/main/types.js";

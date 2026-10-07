@@ -10,7 +10,7 @@ import {
 } from "@zip.js/zip.js";
 import { afterEach, expect, it } from "vitest";
 
-import { runProviderAnalysis } from "../../../src/application/DirectAnalysis.js";
+import { runProviderAnalysis } from "../../../src/composition/directAnalysis.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
