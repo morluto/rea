@@ -96,9 +96,11 @@ The components also list:
 
 Symlinks are reported by path in `symlinks`. Their targets are not inventoried,
 so a versioned framework is described through its real `Versions/<version>/`
-directories rather than `Versions/Current`. When a framework has zero or several
-`Versions/*/Resources/Info.plist` files, its `info_plist_path` is `null` and a
-limitation explains why.
+directories rather than `Versions/Current`. A framework's `info_plist_path` is
+`null`, with a limitation explaining why, when it has more than one real
+`Versions/<version>/` directory (even if only one of them holds a plist,
+because `Versions/Current` decides which one applies) or when its single
+version directory has no `Resources/Info.plist`.
 
 AppleDouble sidecar files (`._*` and `__MACOSX/`) are inventory facts, but they
 describe neighbouring files. They are excluded from roots, bundle roles, and the

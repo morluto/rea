@@ -9,6 +9,8 @@ import {
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
+import { pushDispatchCoverage } from "./AppleDispatchCoverage.js";
+import { parsePointerFixups } from "./AppleMachoFixups.js";
 import { parseMachoLayout } from "./AppleMachoSelection.js";
 import { decodeObjcDispatchFacets } from "./AppleObjcDispatchFacets.js";
 import {
@@ -25,10 +27,26 @@ export const decodeAppleDispatchMetadata = (
   provenance: { path: string; sha256: string },
   architecture = "arm64",
 ): ObjcSwiftMetadata => {
-  const { segments, sections, offset } = parseMachoLayout(bytes, architecture);
+  const layout = parseMachoLayout(bytes, architecture);
+  const { segments, sections, offset } = layout;
+  const fixups = parsePointerFixups(
+    bytes,
+    layout.fixups,
+    segments,
+    layout.baseAddress,
+  );
   const u32 = (address: bigint) => bytes.readUInt32LE(offset(address, 4));
-  const pointer = (address: bigint) =>
-    bytes.readBigUInt64LE(offset(address, 8));
+  const decodePointer = (address: bigint) =>
+    fixups.decode(address, bytes.readBigUInt64LE(offset(address, 8)));
+  /** Rebased target of a pointer; a bind to another image reads as 0. */
+  const pointer = (address: bigint) => {
+    const decodedPointer = decodePointer(address);
+    return decodedPointer.kind === "rebase" ? decodedPointer.target : 0n;
+  };
+  const bound = (address: bigint) => {
+    const decodedPointer = decodePointer(address);
+    return decodedPointer.kind === "bind" ? decodedPointer : undefined;
+  };
   const location = (address: bigint) => ({
     address: `0x${address.toString(16)}`,
     file_offset: offset(address),
@@ -73,13 +91,15 @@ export const decodeAppleDispatchMetadata = (
   const readers = {
     u32,
     i32: (address: bigint) => bytes.readInt32LE(offset(address, 4)),
+    u64: (address: bigint) => bytes.readBigUInt64LE(offset(address, 8)),
     pointer,
+    bound,
     string,
     location,
     evidence,
     offset,
   };
-  const { failures, examined } = decodeObjcDispatchFacets({
+  const { failures, examined, categoriesExamined } = decodeObjcDispatchFacets({
     bytes,
     sections,
     segments,
@@ -130,47 +150,14 @@ export const decodeAppleDispatchMetadata = (
         ),
     },
   });
-  result.coverage.push({
-    facet: "objc_class_method_ivar_metadata",
-    status: failures.length > 0 || budget.truncated ? "partial" : "complete",
-    reason:
-      [...failures, ...(budget.truncated ? ["max_records_reached"] : [])].join(
-        "; ",
-      ) || null,
+  pushDispatchCoverage({
+    result,
+    failures,
     examined,
-    decoded: result.objc_classes.length,
+    categoriesExamined,
+    truncated: budget.truncated,
+    fixups,
   });
-  result.coverage.push({
-    facet: "binary_relative_pointers",
-    status:
-      budget.truncated ||
-      result.relative_pointers.some((item) => item.decode.status !== "decoded")
-        ? "partial"
-        : "complete",
-    reason: budget.truncated
-      ? "max_records_reached"
-      : result.relative_pointers.some(
-            (item) => item.decode.status !== "decoded",
-          )
-        ? "relative_pointer_targets_unresolved"
-        : null,
-    examined: result.relative_pointers.length,
-    decoded: result.relative_pointers.filter(
-      (item) => item.decode.status === "decoded",
-    ).length,
-  });
-  for (const facet of [
-    "objc_properties_categories",
-    "swift_generic_resilient_witnesses_overrides_async_coroutines",
-  ])
-    result.coverage.push({
-      facet,
-      status: "unsupported",
-      reason:
-        "This reader admits validated 64-bit Objective-C class/ivar/method lists and simple Swift conformance/static witness records; chained fixups, generic/resilient tables and other metadata families are not decoded",
-      examined: 0,
-      decoded: 0,
-    });
   return objcSwiftMetadataSchema.parse(result);
 };
 

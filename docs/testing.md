@@ -463,17 +463,24 @@ that explicit lane, not the routine iteration requirement.
 
 ## Apple native metadata and UI
 
-`npm run verify:apple-dispatch` compiles Objective-C class/protocol and Swift
-conformance/vtable fixtures, inspects their bytes and repeats after stripping
-local symbols. It requires macOS and the host Xcode toolchain; targets are not
-executed. `npm run verify:native-ui` launches exactly one source-owned fixture
-window and requires successful selected-window capture and selected actions.
-An OS permission denial fails the positive lane. `npm run verify:native-ui:permissions`
-allows a host-permission-boundary-only result and explicitly reports
-`positive_e2e: false`; it must not be reported as capture/action proof.
-Both commands reject a changed executable digest and clean up the fixture
-process and helper. These lanes require an interactive macOS desktop. See [native investigation](native-investigation.md)
-for the exact ABI, authority, graph and observation boundaries.
+`npm run verify:apple-dispatch` compiles the Objective-C fixture (classes,
+protocols, a property and an `NSString` category) and the Swift
+conformance/vtable fixture.
+
+- Each fixture is linked with legacy `LC_DYLD_INFO` binds and with chained
+  fixups; on Apple silicon the ObjC fixture is also built as arm64e, which uses
+  authenticated pointers.
+- The lane inspects the bytes and repeats after stripping local symbols.
+- It requires the bound `NSObject` superclass, the external category, and the
+  matching `pointer_fixups` coverage. It requires macOS and the host Xcode toolchain; targets are not
+  executed. `npm run verify:native-ui` launches exactly one source-owned fixture
+  window and requires successful selected-window capture and selected actions.
+  An OS permission denial fails the positive lane. `npm run verify:native-ui:permissions`
+  allows a host-permission-boundary-only result and explicitly reports
+  `positive_e2e: false`; it must not be reported as capture/action proof.
+  Both commands reject a changed executable digest and clean up the fixture
+  process and helper. These lanes require an interactive macOS desktop. See [native investigation](native-investigation.md)
+  for the exact ABI, authority, graph and observation boundaries.
 
 ### Firmware adapters
 
