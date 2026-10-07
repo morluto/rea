@@ -6,6 +6,7 @@ import { executeFunctionAnalysisEvidence } from "./FunctionAnalysisEvidence.js";
 import type { DirectAnalysisDependencies } from "./DirectAnalysisDependencies.js";
 import type { BinarySession } from "./binary/BinarySession.js";
 import type { SessionProviderRoute } from "./binary/SessionProviderRouter.js";
+import type { ResolvedSessionOpen } from "./binary/BinarySessionOpen.js";
 import { silentLogger, type Logger } from "../logger.js";
 import { createEvidence } from "../domain/evidence.js";
 import type { Evidence } from "../domain/evidence.js";
@@ -202,6 +203,7 @@ const runAnalysis = async (
     });
     if (!prepared.ok) return cliError(prepared.error);
     const { snapshot } = prepared.value;
+    let resolvedTarget: ResolvedSessionOpen | undefined;
     if (snapshot !== undefined && prepared.value.target !== undefined) {
       const preview = await session.previewTarget(prepared.value.target, {
         signal,
@@ -214,6 +216,7 @@ const runAnalysis = async (
           : { providerId: options.providerId }),
       });
       if (!preview.ok) return cliError(preview.error);
+      resolvedTarget = preview.value;
       const route = preview.value.route;
       const bindingProfile = route.profile ?? undefined;
       const evidenceProfile = analysisProfileForRoute(route, tool);
@@ -235,7 +238,7 @@ const runAnalysis = async (
         if (cached !== undefined) return cached;
       }
     }
-    const opened = await session.open(path, {
+    const openOptions = {
       signal,
       ...(options.formatHint === undefined
         ? {}
@@ -244,7 +247,11 @@ const runAnalysis = async (
       ...(options.providerId === undefined
         ? {}
         : { providerId: options.providerId }),
-    });
+    };
+    const opened =
+      resolvedTarget === undefined
+        ? await session.open(path, openOptions)
+        : await session.openResolvedTarget(resolvedTarget, openOptions);
     if (!opened.ok) return cliError(opened.error);
     const evidenceProfile = analysisProfileForEvidence(session, tool);
     const { output, evidence } = await executeAnalysisTool({

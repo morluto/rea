@@ -83,6 +83,7 @@ const makeProvider = (
   profile = createAnalysisProfile(IDENTITY, { fixture: true }),
   identity: ProviderIdentity = profile.provider,
   supportedOperations: readonly CapabilityDescriptor["operation"][] = operations,
+  resolutions: string[] = [],
 ): AnalysisProvider => {
   const capabilities: CapabilityDescriptor[] = supportedOperations.map(
     (operation) => ({
@@ -106,7 +107,10 @@ const makeProvider = (
   return {
     identity: () => identity,
     capabilities: () => capabilities,
-    resolveAnalysisProfile: async () => ok({ profile, compatibility: {} }),
+    resolveAnalysisProfile: async () => {
+      resolutions.push(profile.digest);
+      return ok({ profile, compatibility: {} });
+    },
     createClient: () => {
       starts.push("start");
       return {
@@ -228,6 +232,72 @@ const withEarlierHistoricalEvidence = (
 };
 
 describe("direct analysis composed snapshot replay", () => {
+  it.each([
+    {
+      tool: "search_strings",
+      arguments: { pattern: "uncached", document: "fixture" },
+    },
+    { tool: "inspect_native_api", arguments: { procedure: "0x2000" } },
+  ] as const)(
+    "reuses the previewed profile on a $tool snapshot miss",
+    async (scenario) => {
+      const directory = await createTestTempDirectory(
+        "rea-snapshot-miss-route-",
+      );
+      const path = join(directory, "fixture.hop");
+      const snapshotPath = join(directory, "snapshot.json");
+      await writeFile(path, "fixture");
+      const starts: string[] = [];
+      const calls: string[] = [];
+      const resolutions: string[] = [];
+      const profile = createAnalysisProfile(IDENTITY, { fixture: true });
+      const provider = makeProvider(
+        starts,
+        calls,
+        profile,
+        IDENTITY,
+        workflowProviderOperations,
+        resolutions,
+      );
+      const dependencies: DirectAnalysisDependencies = {
+        createBinarySession: () => createTestBinarySession(provider),
+        createManagedBinarySession: () => createTestBinarySession(provider),
+      };
+      await runDirectAnalysis(
+        dependencies,
+        path,
+        "binary_overview",
+        {},
+        { snapshotPath },
+      );
+      expect(resolutions).toHaveLength(1);
+
+      const first = await runDirectAnalysis(
+        dependencies,
+        path,
+        scenario.tool,
+        scenario.arguments,
+        { snapshotPath },
+      );
+      expect(first).toMatchObject({ operation: scenario.tool });
+      expect(resolutions).toHaveLength(2);
+      expect(starts).toHaveLength(2);
+      const callsAfterMiss = [...calls];
+
+      const replay = await runDirectAnalysis(
+        dependencies,
+        path,
+        scenario.tool,
+        scenario.arguments,
+        { snapshotPath },
+      );
+      expect(replay).toEqual(first);
+      expect(resolutions).toHaveLength(3);
+      expect(starts).toHaveLength(2);
+      expect(calls).toEqual(callsAfterMiss);
+    },
+  );
+
   for (const scenario of [
     {
       tool: "inspect_native_api",

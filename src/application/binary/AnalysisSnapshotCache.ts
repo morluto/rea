@@ -56,6 +56,9 @@ const DOCUMENT_SCOPED_OPERATIONS: ReadonlySet<string> = new Set(
   ),
 );
 
+/** Maximum duplicated result bindings retained across direct and workflow queries. */
+export const SNAPSHOT_CACHE_ENTRY_CEILING = 10_000;
+
 /** Whether an operation is immutable and independent of provider UI state. */
 export const isSnapshotCacheable = (
   operation: AnalysisOperation,
@@ -117,11 +120,15 @@ export class AnalysisSnapshotCache {
     this.#binding = structuredClone(snapshot.binding);
     let imported = 0;
     for (const entry of snapshot.entries) {
+      if (!this.#entries.has(entry.query_id) && !this.#hasCapacity()) continue;
       if (!this.#entries.has(entry.query_id)) imported += 1;
       this.#entries.set(entry.query_id, structuredClone(entry));
     }
-    for (const entry of snapshot.workflow_entries ?? [])
+    for (const entry of snapshot.workflow_entries ?? []) {
+      if (!this.#workflowEntries.has(entry.query_id) && !this.#hasCapacity())
+        continue;
       this.#workflowEntries.set(entry.query_id, structuredClone(entry));
+    }
     return imported;
   }
 
@@ -208,7 +215,7 @@ export class AnalysisSnapshotCache {
       .map((entry) => structuredClone(entry));
   }
 
-  /** Record one exact derived workflow result for snapshot replay. */
+  /** Record one exact derived workflow result unless the shared cache is full. */
   recordWorkflow(input: {
     readonly target: BinaryTarget;
     readonly profile: AnalysisProfileCommitment;
@@ -225,6 +232,13 @@ export class AnalysisSnapshotCache {
     };
   }): void {
     this.select(input.target, input.profile);
+    const queryId = analysisQueryId(
+      snapshotTarget(input.target),
+      snapshotBinding(input.profile),
+      input.operation,
+      input.parameters,
+    );
+    if (!this.#workflowEntries.has(queryId) && !this.#hasCapacity()) return;
     const entry = createAnalysisSnapshotWorkflowEntry({
       target: snapshotTarget(input.target),
       binding: snapshotBinding(input.profile),
@@ -288,8 +302,14 @@ export class AnalysisSnapshotCache {
     readonly execution: AnalysisExecution;
   }): void {
     const { target, profile, operation, parameters, execution } = input;
-    if (this.#entries.size >= 10_000) return;
     this.select(target, profile);
+    const queryId = analysisQueryId(
+      snapshotTarget(target),
+      snapshotBinding(profile),
+      operation,
+      parameters,
+    );
+    if (!this.#entries.has(queryId) && !this.#hasCapacity()) return;
     const entry = createAnalysisSnapshotEntry({
       target: snapshotTarget(target),
       binding: snapshotBinding(profile),
@@ -310,5 +330,12 @@ export class AnalysisSnapshotCache {
   #clearEntries(): void {
     this.#entries.clear();
     this.#workflowEntries.clear();
+  }
+
+  #hasCapacity(): boolean {
+    return (
+      this.#entries.size + this.#workflowEntries.size <
+      SNAPSHOT_CACHE_ENTRY_CEILING
+    );
   }
 }

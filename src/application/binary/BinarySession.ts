@@ -31,6 +31,7 @@ import { binarySessionStatus } from "./BinarySessionStatus.js";
 import {
   resolveSessionOpen,
   resolveSessionTarget,
+  validateResolvedSessionTarget,
   type BinarySessionOpenOptions,
   type ResolvedSessionOpen,
 } from "./BinarySessionOpen.js";
@@ -181,17 +182,48 @@ export class BinarySession
     path: string,
     options: BinarySessionOpenOptions = {},
   ): Promise<Result<BinaryTarget, AnalysisError>> {
+    return this.#open(
+      () =>
+        resolveSessionOpen({
+          router: this.#providerRouter,
+          current: this.#active,
+          path,
+          options,
+          stagedSnapshotMatches: (target, profile) =>
+            this.matchesSnapshot(target, profile),
+        }),
+      options,
+    );
+  }
+
+  /** Open a previewed target without repeating parsing or provider profile discovery. */
+  openResolvedTarget(
+    resolved: Pick<ResolvedSessionOpen, "target" | "route">,
+    options: Pick<BinarySessionOpenOptions, "signal" | "snapshot"> = {},
+  ): Promise<Result<BinaryTarget, AnalysisError>> {
+    return this.#open(
+      () =>
+        Promise.resolve(
+          validateResolvedSessionTarget({
+            ...resolved,
+            current: this.#active,
+            options,
+            stagedSnapshotMatches: (target, profile) =>
+              this.matchesSnapshot(target, profile),
+          }),
+        ),
+      options,
+    );
+  }
+
+  #open(
+    resolve: () => Promise<Result<ResolvedSessionOpen, AnalysisError>>,
+    options: Pick<BinarySessionOpenOptions, "signal" | "snapshot">,
+  ): Promise<Result<BinaryTarget, AnalysisError>> {
     return this.#serialize(async () => {
       if (isAborted(options.signal))
         return err(new AnalysisCancelledError("open_binary"));
-      const resolved = await resolveSessionOpen({
-        router: this.#providerRouter,
-        current: this.#active,
-        path,
-        options,
-        stagedSnapshotMatches: (target, profile) =>
-          this.matchesSnapshot(target, profile),
-      });
+      const resolved = await resolve();
       if (!resolved.ok) return resolved;
       const { target, route, sameTarget } = resolved.value;
       const { profile, compatibility } = route;

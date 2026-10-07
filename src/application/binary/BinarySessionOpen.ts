@@ -61,7 +61,7 @@ interface ResolveSessionTargetInput {
 export const resolveSessionOpen = async (
   input: ResolveSessionOpenInput,
 ): Promise<Result<ResolvedSessionOpen, AnalysisError>> => {
-  const { router, current, path, options, stagedSnapshotMatches } = input;
+  const { path, options } = input;
   const parsed = await parseBinaryTarget(
     path,
     process.cwd(),
@@ -77,7 +77,7 @@ export const resolveSessionOpen = async (
 export const resolveSessionTarget = async (
   input: ResolveSessionTargetInput,
 ): Promise<Result<ResolvedSessionOpen, AnalysisError>> => {
-  const { router, current, target, options, stagedSnapshotMatches } = input;
+  const { router, current, target, options } = input;
   const sameTarget =
     current?.target.path === target.path &&
     snapshotMatchesTarget(snapshotTarget(current.target), target);
@@ -86,7 +86,22 @@ export const resolveSessionTarget = async (
       ? ({ ok: true, value: current.route } as const)
       : await router.resolve(target, options.providerId, options.signal);
   if (!resolvedRoute.ok) return resolvedRoute;
-  const route = resolvedRoute.value;
+  return validateResolvedSessionTarget({
+    ...input,
+    route: resolvedRoute.value,
+  });
+};
+
+/** Revalidate a previewed route against the current session and snapshot binding. */
+export const validateResolvedSessionTarget = (
+  input: Omit<ResolveSessionTargetInput, "router"> & {
+    readonly route: SessionProviderRoute;
+  },
+): Result<ResolvedSessionOpen, AnalysisError> => {
+  const { current, target, route, options, stagedSnapshotMatches } = input;
+  const sameTarget =
+    current?.target.path === target.path &&
+    snapshotMatchesTarget(snapshotTarget(current.target), target);
   const snapshotError = validateSnapshot({
     snapshot: options.snapshot,
     target,
