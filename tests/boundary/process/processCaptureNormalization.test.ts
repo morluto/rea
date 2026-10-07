@@ -41,7 +41,6 @@ itWithLinuxCaptureCapability.each([false, true])(
       idle_timeout_ms: 10_000,
     });
     const result = await captureProcessScenario(scenario);
-    expect(result.ok).toBe(true);
     if (!result.ok) throw result.error;
     const capture = result.value;
     const identity = identitySchema.parse(

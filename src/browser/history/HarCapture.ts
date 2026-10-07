@@ -148,9 +148,16 @@ const projectHar = (
         parent?.encoding === "base64"
       ) {
         const bytes = decodeHarBase64(item, pointer);
+        const contentBase64 = bytes.toString("base64");
+        const sha256 = createHash("sha256").update(bytes).digest("hex");
         const hidden =
           redactor.sensitiveBytes(bytes) ||
-          sensitiveValues.some((literal) => item.includes(literal));
+          sensitiveValues.some(
+            (literal) =>
+              item.includes(literal) ||
+              contentBase64.includes(literal) ||
+              sha256.includes(literal),
+          );
         binary_fields.push(
           hidden
             ? {
@@ -165,9 +172,9 @@ const projectHar = (
                 pointer,
                 representation: "har-base64-content",
                 state: "retained",
-                content_base64: bytes.toString("base64"),
+                content_base64: contentBase64,
                 bytes: bytes.length,
-                sha256: createHash("sha256").update(bytes).digest("hex"),
+                sha256,
               },
         );
         if (hidden) {

@@ -91,7 +91,9 @@ def project_record(state, secrets):
             return None
         if isinstance(value, bytes):
             safe_bytes, credential_url = transport_value(value, path, transport_url)
-            hidden = any(secret in value or secret in safe_bytes for secret in byte_secrets)
+            content_base64 = base64.b64encode(value).decode("ascii")
+            digest = hashlib.sha256(value).hexdigest()
+            hidden = any(secret in value or secret in safe_bytes for secret in byte_secrets) or any(secret in content_base64 or secret in digest for secret in secrets)
             safe_text = None
             try:
                 safe_text = safe_bytes.decode("utf-8", errors="strict")
@@ -100,7 +102,7 @@ def project_record(state, secrets):
             if hidden:
                 redactions.append({"pointer": path, "reason": "explicit-sensitive-value"})
             exclude = hidden or credential_url
-            binaries.append({"pointer": path, "representation": "producer-bytes", "state": "redacted" if exclude else "retained", "content_base64": None if exclude else base64.b64encode(value).decode("ascii"), "bytes": None if exclude else len(value), "sha256": None if exclude else hashlib.sha256(value).hexdigest()})
+            binaries.append({"pointer": path, "representation": "producer-bytes", "state": "redacted" if exclude else "retained", "content_base64": None if exclude else content_base64, "bytes": None if exclude else len(value), "sha256": None if exclude else digest})
             if hidden:
                 return None
             return safe_text

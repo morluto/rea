@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { expect, it } from "vitest";
 import {
   OwnedCommandFailure,
@@ -14,6 +15,29 @@ const command = (script: string) => ({
   runId: `rea-owned-command-test-${randomUUID()}`,
 });
 
+it("includes ownership preparation in the command deadline before provider creation", async () => {
+  let prepared = false;
+  await expect(
+    runOwnedCommand(
+      command("process.exit(0)"),
+      {
+        timeoutMs: 20,
+        diagnosticBytes: 1024,
+      },
+      {
+        launcher: async (input) => {
+          await delay(80, undefined, { signal: input.signal });
+          prepared = true;
+          throw new Error(
+            "Slow preparation must be aborted before provider creation",
+          );
+        },
+      },
+    ),
+  ).rejects.toMatchObject({ reason: "timeout", snapshot: null });
+  expect(prepared).toBe(false);
+});
+
 it("passes cancellation into native ownership preparation before provider creation", async () => {
   const controller = new AbortController();
   await expect(
@@ -23,7 +47,7 @@ it("passes cancellation into native ownership preparation before provider creati
       {
         signal: controller.signal,
         launcher: async (input) => {
-          expect(input.signal).toBe(controller.signal);
+          expect(input.signal?.aborted).toBe(false);
           controller.abort();
           input.signal?.throwIfAborted();
           throw new Error("Cancelled preparation must not launch a provider");

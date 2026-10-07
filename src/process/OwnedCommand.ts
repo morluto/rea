@@ -8,7 +8,10 @@ import {
   spawnOwnedProviderProcess,
 } from "./ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "./ProcessOwnership.js";
-import { waitForAbortableDelay } from "./ProviderDeadline.js";
+import {
+  ProviderStartupDeadline,
+  waitForAbortableDelay,
+} from "./ProviderDeadline.js";
 
 /** A short-lived command failed its lifecycle or complete-output contract. */
 export class OwnedCommandFailure extends Error {
@@ -35,23 +38,50 @@ export const runOwnedCommand = async (
     ) => Promise<SpawnedOwnedProviderProcess>;
   } = {},
 ): Promise<ProviderProcessSnapshot> => {
-  const signal = options.signal ?? spawn.signal;
-  if (signal?.aborted)
+  const callerSignal = options.signal ?? spawn.signal;
+  if (callerSignal?.aborted)
     throw new OwnedCommandFailure(
       "cancelled",
       "Command cancelled before launch.",
     );
+  const deadline = new ProviderStartupDeadline(limits.timeoutMs, callerSignal);
+  try {
+    return await collectOwnedCommand(
+      spawn,
+      limits,
+      options.launcher ?? spawnOwnedProviderProcess,
+      deadline,
+      callerSignal,
+    );
+  } finally {
+    deadline.dispose();
+  }
+};
+
+const collectOwnedCommand = async (
+  spawn: OwnedProviderProcessSpawnOptions,
+  limits: { readonly diagnosticBytes: number },
+  launcher: (
+    input: OwnedProviderProcessSpawnOptions,
+  ) => Promise<SpawnedOwnedProviderProcess>,
+  deadline: ProviderStartupDeadline,
+  callerSignal?: AbortSignal,
+): Promise<ProviderProcessSnapshot> => {
+  const signal = deadline.signal;
   let launched: SpawnedOwnedProviderProcess;
   try {
-    launched = await (options.launcher ?? spawnOwnedProviderProcess)({
+    launched = await launcher({
       ...spawn,
-      ...(signal === undefined ? {} : { signal }),
+      signal,
     });
   } catch (cause: unknown) {
-    if (signal?.aborted)
+    const interruption = deadline.interruption;
+    if (interruption !== undefined)
       throw new OwnedCommandFailure(
-        "cancelled",
-        "Command cancelled during ownership preparation.",
+        interruption,
+        interruption === "cancelled"
+          ? "Command cancelled during ownership preparation."
+          : "Command deadline elapsed during ownership preparation.",
         null,
         null,
         { cause },
@@ -77,14 +107,17 @@ export const runOwnedCommand = async (
       },
     },
   );
-  const deadline = Date.now() + limits.timeoutMs;
   let failure: OwnedCommandFailure | undefined;
   try {
     while (!(await supervisor.waitForOutputClose(10))) {
-      if (signal?.aborted)
-        throw new OwnedCommandFailure("cancelled", "Command cancelled.");
-      if (Date.now() >= deadline)
-        throw new OwnedCommandFailure("timeout", "Command deadline elapsed.");
+      const interruption = deadline.interruption;
+      if (interruption !== undefined)
+        throw new OwnedCommandFailure(
+          interruption,
+          interruption === "cancelled"
+            ? "Command cancelled."
+            : "Command deadline elapsed.",
+        );
       if (exceeded)
         throw new OwnedCommandFailure(
           "output-limit",
@@ -95,22 +128,19 @@ export const runOwnedCommand = async (
       await waitForAbortableDelay(25, signal);
     }
     const snapshot = supervisor.snapshot();
-    if (Date.now() >= deadline)
+    const interruption = deadline.interruption;
+    if (interruption !== undefined)
       throw new OwnedCommandFailure(
-        "timeout",
-        "Command deadline elapsed.",
+        interruption,
+        interruption === "cancelled"
+          ? "Command cancelled."
+          : "Command deadline elapsed.",
         snapshot,
       );
     if (exceeded)
       throw new OwnedCommandFailure(
         "output-limit",
         "Command diagnostic output exceeded its complete-output budget.",
-        snapshot,
-      );
-    if (signal?.aborted)
-      throw new OwnedCommandFailure(
-        "cancelled",
-        "Command cancelled.",
         snapshot,
       );
     if (
@@ -162,7 +192,7 @@ export const runOwnedCommand = async (
       { cause: failure },
       failure.resources,
     );
-  if (signal?.aborted)
+  if (callerSignal?.aborted)
     throw new OwnedCommandFailure("cancelled", "Command cancelled.", snapshot);
   return snapshot;
 };

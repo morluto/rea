@@ -558,6 +558,49 @@ try {
       cases++;
     }
   }
+  const encodedHar = JSON.parse(
+    await readFile(join(runtime.path, "producer.har"), "utf8"),
+  );
+  encodedHar.log.entries[0].response.content = {
+    size: 6,
+    mimeType: "application/octet-stream",
+    encoding: "base64",
+    text: "c2 VjcmV0",
+  };
+  const encodedHarPath = join(runtime.path, "encoded-sensitive.har");
+  await writeFile(encodedHarPath, JSON.stringify(encodedHar));
+  for (const mode of ["cli", "mcp"]) {
+    for (const format of ["har", "mitmproxy"]) {
+      const bytes =
+        format === "har"
+          ? Buffer.from("secret")
+          : Buffer.from([0, 255, ...Buffer.from("body")]);
+      for (const literal of [
+        bytes.toString("base64"),
+        bytes.toString("base64").slice(0, 4),
+        createHash("sha256").update(bytes).digest("hex"),
+      ]) {
+        const value = await inspect(mode, {
+          capture_path:
+            format === "har"
+              ? encodedHarPath
+              : join(runtime.path, "flows.mitm"),
+          format,
+          sensitive_values: [literal],
+        });
+        const pointer =
+          format === "har" ? "/response/content/text" : "/request/content";
+        const field = value.records[0].binary_fields.find(
+          (field) => field.pointer === pointer,
+        );
+        assert.equal(field?.state, "redacted");
+        assert.equal(field.content_base64, null);
+        assert.equal(field.sha256, null);
+        assert.ok(!JSON.stringify(value).includes(literal));
+        cases++;
+      }
+    }
+  }
   const oversizedPath = join(runtime.path, "oversized-capture");
   for (const mode of ["cli", "mcp"]) {
     for (const literal of ["log", "entries"]) {

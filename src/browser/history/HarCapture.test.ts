@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 import { historicalHar } from "../../../tests/fixtures/historicalHar.js";
 import { decodeHarCapture } from "./HarCapture.js";
@@ -383,6 +384,52 @@ it("preserves observed SaveHar null post-data without broadening arbitrary HAR p
     ),
   ).toThrow("HAR schema validation failed");
 });
+
+it.each([
+  "c2VjcmV0",
+  "c2Vj",
+  createHash("sha256").update("secret").digest("hex"),
+])(
+  "excludes sensitive derived byte representations from spaced HAR text: %s",
+  (literal) => {
+    const fixture = historicalHar();
+    const first = fixture.log.entries[0];
+    if (first === undefined) throw new Error("fixture missing");
+    const result = decodeHarCapture(
+      JSON.stringify({
+        log: {
+          ...fixture.log,
+          entries: [
+            {
+              ...first,
+              response: {
+                ...first.response,
+                content: {
+                  size: 6,
+                  mimeType: "application/octet-stream",
+                  encoding: "base64",
+                  text: "c2 VjcmV0",
+                },
+              },
+            },
+          ],
+        },
+      }),
+      [literal],
+    );
+    expect(result.records[0]?.reported).toMatchObject({
+      response: { content: { text: null } },
+    });
+    expect(result.records[0]?.binary_fields).toContainEqual({
+      pointer: "/response/content/text",
+      representation: "har-base64-content",
+      state: "redacted",
+      content_base64: null,
+      bytes: null,
+      sha256: null,
+    });
+  },
+);
 
 it("excludes a declared literal in encoded HAR text from its binary sidecar too", () => {
   const fixture = historicalHar();
