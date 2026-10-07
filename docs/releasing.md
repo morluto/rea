@@ -64,8 +64,11 @@ Publication creates the release from the merged bot PR without preparing or
 updating another PR. Both npm and MCP Registry jobs check out Release Please's
 exact release SHA. They do not build the current main tip or a mutable branch.
 The publish dispatch runs from the frozen release branch so npm's provenance
-records the actual release commit. The workflow rejects a mismatch between
-the tagged release SHA and the dispatch SHA before either registry publish.
+records the actual release commit. Before Release Please creates a tag, the
+workflow accepts only `prepare` or `publish` and requires the selected branch
+tip to equal the dispatch SHA. Registry jobs run only during `publish`. After
+a tag exists, a mismatch between that tag's SHA and the dispatch SHA stops
+both registry publishes.
 See [npm's provenance implementation](https://github.com/npm/cli/blob/v11.16.0/workspaces/libnpmpublish/lib/provenance.js)
 for the use of GitHub's workflow ref and commit SHA.
 
@@ -92,6 +95,9 @@ tag remains in main's ancestry. Keep the released tag unchanged.
 
 Close any superseded rolling release PR. Future releases repeat the checkpoint
 procedure from main; never resume automatic release-PR refreshes on main pushes.
+The generated-metadata workflow stays limited to pull requests into main so it
+does not push commits onto a frozen candidate. Preparation normalizes
+`docs/product-catalog.json` on the bot pull request.
 
 ## Partial publication and retries
 
@@ -101,7 +107,8 @@ publishing it again. Re-run failed jobs in the original publication run so its
 release SHA and outputs stay fixed. If only MCP publication failed, retry that
 job after checking that the npm canary succeeded.
 
-Do not dispatch a fresh publish phase to repair an already-created release:
-Release Please will not create the same release again. Do not move the tag,
-delete the release, or unpublish npm as a retry. A defective public package
-requires a reviewed correction and a new version.
+A branch tip that moved after dispatch fails before Release Please creates a
+tag. Do not dispatch a fresh publish phase to repair an already-created
+release: Release Please will not create the same release again. Do not move
+the tag, delete the release, or unpublish npm as a retry. A defective public
+package requires a reviewed correction and a new version.

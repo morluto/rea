@@ -10,9 +10,11 @@ const stepSchema = z.object({
   name: z.string().optional(),
   uses: z.string().optional(),
   run: z.string().optional(),
+  if: z.string().optional(),
   with: z.record(z.string(), z.unknown()).optional(),
 });
 const jobSchema = z.object({
+  if: z.string().optional(),
   outputs: z.record(z.string(), z.string()).optional(),
   steps: z.array(stepSchema),
 });
@@ -63,8 +65,15 @@ it("requires explicit release preparation or publication instead of main pushes"
 
 it("binds npm and MCP publication to the same immutable release SHA", async () => {
   const workflow = await readReleaseWorkflow();
-  expect(workflow.jobs["release-please"].outputs?.sha).toBe(
-    "${{ steps.release.outputs.sha }}",
+  expect(workflow.jobs["release-please"].outputs).toEqual({
+    release_created: "${{ steps.release.outputs.release_created }}",
+    sha: "${{ steps.release.outputs.sha }}",
+  });
+  expect(workflow.jobs.publish.if).toBe(
+    "inputs.phase == 'publish' && needs.release-please.outputs.release_created == 'true'",
+  );
+  expect(workflow.jobs["publish-mcp"].if).toBe(
+    "inputs.phase == 'publish' && needs.release-please.outputs.release_created == 'true' && needs.publish.result == 'success'",
   );
   for (const job of [workflow.jobs.publish, workflow.jobs["publish-mcp"]]) {
     const checkout = job.steps.find((step) =>
@@ -74,6 +83,21 @@ it("binds npm and MCP publication to the same immutable release SHA", async () =
       ref: "${{ needs.release-please.outputs.sha }}",
       "persist-credentials": false,
     });
+  }
+  const preparation = [
+    "Check out release pull request",
+    "Set up Node.js for generated documentation",
+    "Install dependencies",
+    "Regenerate release documentation",
+    "Commit canonical release catalog",
+  ];
+  for (const name of preparation) {
+    expect(
+      workflow.jobs["release-please"].steps.find((step) => step.name === name)
+        ?.if,
+    ).toBe(
+      "inputs.phase == 'prepare' && steps.release.outputs.prs_created == 'true'",
+    );
   }
 });
 
@@ -137,6 +161,109 @@ it.skipIf(process.platform === "win32").each([
   },
 );
 
+it.skipIf(process.platform === "win32")(
+  "checks the checkpoint locally and resolves the branch tip separately",
+  async () => {
+    const workflow = await readReleaseWorkflow();
+    const validate = z
+      .string()
+      .parse(
+        workflow.jobs["release-please"].steps.find(
+          (step) => step.name === "Validate release selection",
+        )?.run,
+      );
+    expect(validate).not.toMatch(/\bgh\b/u);
+    const resolve = z
+      .string()
+      .parse(
+        workflow.jobs["release-please"].steps.find(
+          (step) => step.name === "Resolve release branch tip",
+        )?.run,
+      );
+    expect(resolve).toContain("gh api");
+    for (const releaseBranch of ["release/5.0.0", "release/5.0.0-rc.1"]) {
+      await expect(
+        execFileAsync("bash", ["-e", "-o", "pipefail", "-c", validate], {
+          env: {
+            ...process.env,
+            GITHUB_REF: "refs/heads/main",
+            RELEASE_BRANCH: releaseBranch,
+            RELEASE_PHASE: "prepare",
+          },
+        }),
+      ).resolves.toMatchObject({ stderr: "" });
+    }
+  },
+);
+
+it
+  .skipIf(process.platform === "win32")
+  .each(["", "release", "prepare ", "true"])(
+  "rejects phase %j before contacting GitHub",
+  async (phase) => {
+    const workflow = await readReleaseWorkflow();
+    const command = z
+      .string()
+      .parse(
+        workflow.jobs["release-please"].steps.find(
+          (step) => step.name === "Validate release selection",
+        )?.run,
+      );
+    await expect(
+      execFileAsync("bash", ["-e", "-o", "pipefail", "-c", command], {
+        env: {
+          ...process.env,
+          GITHUB_REF: "refs/heads/main",
+          RELEASE_BRANCH: "release/5.0.0",
+          RELEASE_PHASE: phase,
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("phase must be prepare or publish"),
+    });
+  },
+);
+
+it.skipIf(process.platform === "win32").each([true, false])(
+  "creates a release only when the branch tip is the dispatched checkpoint (match: %s)",
+  async (match) => {
+    const workflow = await readReleaseWorkflow();
+    const command = z
+      .string()
+      .parse(
+        workflow.jobs["release-please"].steps.find(
+          (step) =>
+            step.name ===
+            "Require the publish dispatch to match the branch tip",
+        )?.run,
+      );
+    const result = execFileAsync(
+      "bash",
+      ["-e", "-o", "pipefail", "-c", command],
+      {
+        env: {
+          ...process.env,
+          GITHUB_SHA: "1111111111111111111111111111111111111111",
+          BRANCH_SHA: match
+            ? "1111111111111111111111111111111111111111"
+            : "2222222222222222222222222222222222222222",
+        },
+      },
+    );
+    if (match) {
+      await expect(result).resolves.toMatchObject({ stderr: "" });
+    } else {
+      await expect(result).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining(
+          "refusing to create a release for a moved source",
+        ),
+      });
+    }
+  },
+);
+
 it.skipIf(process.platform === "win32").each([true, false])(
   "publishes only when the tag and provenance source match (match: %s)",
   async (match) => {
@@ -195,6 +322,27 @@ it("runs release PR CI without enabling implementation pushes on release branche
   expect(workflow.on.pull_request.branches).toEqual(
     expect.arrayContaining(["main", "release/*"]),
   );
+});
+
+it("checks website changes on release-branch pull requests", async () => {
+  const workflow = z
+    .object({
+      on: z.object({
+        pull_request: z.object({ branches: z.array(z.string()) }),
+      }),
+    })
+    .parse(
+      parse(
+        await readFile(
+          new URL(
+            "../../../.github/workflows/website-check.yml",
+            import.meta.url,
+          ),
+          "utf8",
+        ),
+      ),
+    );
+  expect(workflow.on.pull_request.branches).toEqual(["main", "release/*"]);
 });
 
 // Publishing is irreversible. Keep the release authority invariant as a static
