@@ -251,6 +251,152 @@ describe("managed member comparison uncertainty", () => {
   });
 });
 
+describe("managed member comparison of undecoded signatures", () => {
+  it("pairs undecoded signatures by exact declared type, name, and raw bytes", () => {
+    const undecoded = {
+      methodSignature: Buffer.from([0x00, 0x00, 0x7f]),
+      fieldSignature: Buffer.from([0x06, 0x15]),
+    };
+    const left = inspect(
+      buildManagedPeFixture(undecoded),
+      "/tmp/undecoded-left.dll",
+    );
+    const right = inspect(
+      buildManagedPeFixture(undecoded),
+      "/tmp/undecoded-right.dll",
+    );
+    expect(left.result.coverage.state).toBe("complete");
+    expect(left.result.methods[0]?.signature.parse_status).toBe("unsupported");
+    expect(left.result.fields[0]?.signature.parse_status).toBe("unsupported");
+    const result = compareManagedMembers(left, right);
+    expect(result.summary).toMatchObject({
+      unchanged: 2,
+      added: 0,
+      removed: 0,
+      unknown: 0,
+    });
+    for (const item of [...result.methods, ...result.fields])
+      expect(item.match).toMatchObject({
+        status: "matched",
+        basis: "exact-signature",
+      });
+  });
+
+  it("keeps unmatched undecoded members unknown in complete inventories", () => {
+    const left = inspect(
+      buildManagedPeFixture({
+        methodSignature: Buffer.from([0x00, 0x00, 0x7f]),
+        fieldSignature: Buffer.from([0x06, 0x15]),
+      }),
+      "/tmp/undecoded-before.dll",
+    );
+    const right = inspect(
+      buildManagedPeFixture({
+        methodSignature: Buffer.from([0x00, 0x00, 0x7e]),
+        fieldSignature: Buffer.from([0x06, 0x7e]),
+      }),
+      "/tmp/undecoded-after.dll",
+    );
+    expect(right.result.coverage.state).toBe("complete");
+    const result = compareManagedMembers(left, right);
+    expect(result.summary).toMatchObject({ added: 0, removed: 0, unknown: 4 });
+    for (const item of [...result.methods, ...result.fields])
+      expect(item).toMatchObject({
+        status: "unknown",
+        match: { status: "unmatched" },
+        limitations: [expect.stringContaining("signature-not-decoded")],
+      });
+  });
+
+  it("keeps a decoded member unknown beside a same-named undecoded counterpart", () => {
+    const left = inspect(buildManagedPeFixture(), "/tmp/decoded-before.dll");
+    const right = inspect(
+      buildManagedPeFixture({
+        methodSignature: Buffer.from([0x00, 0x00, 0x7f]),
+        fieldSignature: Buffer.from([0x06, 0x15]),
+      }),
+      "/tmp/undecoded-after.dll",
+    );
+    expect(left.result.methods[0]?.signature.parse_status).toBe("decoded");
+    expect(left.result.fields[0]?.signature.parse_status).toBe("decoded");
+    expect(right.result.coverage.state).toBe("complete");
+    const result = compareManagedMembers(left, right);
+    expect(result.summary).toMatchObject({ added: 0, removed: 0, unknown: 4 });
+    for (const item of [...result.methods, ...result.fields])
+      expect(item).toMatchObject({
+        status: "unknown",
+        match: { status: "unmatched" },
+        limitations: [
+          expect.stringMatching(
+            item.left === null
+              ? /^signature-not-decoded:/
+              : /^counterpart-signature-not-decoded: The right (method|field) inventory/,
+          ),
+        ],
+      });
+  });
+});
+
+describe("managed member comparison of ambiguous undecoded signatures", () => {
+  it("keeps a decoded member unknown beside an ambiguous same-named undecoded group", () => {
+    const undecoded = { methodSignature: Buffer.from([0x00, 0x00, 0x7f]) };
+    const decoded = inspect(buildManagedPeFixture(), "/tmp/decoded.dll");
+    const left = inspect(buildManagedPeFixture(undecoded), "/tmp/left.dll");
+    const right = inspect(buildManagedPeFixture(undecoded), "/tmp/right.dll");
+    const [undecodedMethod] = left.result.methods;
+    const [decodedMethod] = decoded.result.methods;
+    if (undecodedMethod === undefined || decodedMethod === undefined)
+      throw new Error("Expected fixture methods");
+    expect(decodedMethod.name).toBe(undecodedMethod.name);
+    // One undecoded T.M on the left meets two identical undecoded T.M on the
+    // right, so that group stays ambiguous; the left also has a decoded T.M.
+    const result = compareManagedMembers(
+      {
+        ...left,
+        result: {
+          ...left.result,
+          methods: [undecodedMethod, { ...decodedMethod, token: "0x06000002" }],
+        },
+      },
+      {
+        ...right,
+        result: {
+          ...right.result,
+          methods: [
+            undecodedMethod,
+            { ...undecodedMethod, token: "0x06000002" },
+          ],
+        },
+      },
+    );
+
+    expect(result.methods).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "unknown",
+          match: expect.objectContaining({
+            status: "ambiguous",
+            basis: "exact-signature",
+          }),
+          limitations: [
+            "Multiple managed methods share the same declared type, name, and raw signature; REA did not guess a token remap.",
+          ],
+        }),
+        expect.objectContaining({
+          status: "unknown",
+          left: expect.objectContaining({ token: "0x06000002" }),
+          limitations: [
+            expect.stringMatching(
+              /^counterpart-signature-not-decoded: The right method inventory has an unpaired member/u,
+            ),
+          ],
+        }),
+      ]),
+    );
+    expect(result.summary).toMatchObject({ removed: 0, added: 0 });
+  });
+});
+
 const inspect = (bytes: Buffer, path: string) => {
   const target = managedPeFixtureTarget(bytes, path);
   const result = inspectManagedMembersBytes(bytes, target);

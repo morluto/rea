@@ -58,15 +58,13 @@ const keyMethod = (item: Method): Keyed<Method> => ({
           item.body.normalized_il_sha256,
         ])
       : null,
-  signatureKey:
-    item.signature.parse_status === "decoded"
-      ? stableKey([
-          "method-signature",
-          item.declaring_type,
-          item.name,
-          item.signature.raw_sha256,
-        ])
-      : null,
+  // The raw blob is the exact signature; decoding only feeds shape keys.
+  signatureKey: stableKey([
+    "method-signature",
+    item.declaring_type,
+    item.name,
+    item.signature.raw_sha256,
+  ]),
   structuralKey:
     item.signature.parse_status === "decoded" && item.body.status === "present"
       ? stableKey([
@@ -104,7 +102,14 @@ const keyField = (item: Field): Keyed<Field> => ({
     item.signature.parse_status === "decoded"
       ? stableKey(["field-exact", item.signature.raw_sha256])
       : null,
-  signatureKey: null,
+  // Only an undecoded field reaches this round: a decoded field with the
+  // same raw signature already met its counterpart in the exact round.
+  signatureKey: stableKey([
+    "field-signature",
+    item.declaring_type,
+    item.name,
+    item.signature.raw_sha256,
+  ]),
   structuralKey: stableKey([
     "field-structural",
     item.signature.kind,
@@ -143,7 +148,12 @@ const matchFields = (
     left,
     right,
     exactBasis: "field-signature",
-    fallbackBases: [],
+    fallbackBases: [
+      {
+        basis: "exact-signature",
+        key: ({ signatureKey }) => signatureKey,
+      },
+    ],
   });
 
 export type ManagedMethodMatches = ReturnType<typeof matchMethods>;

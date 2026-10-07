@@ -24,7 +24,7 @@ import type {
   AnalysisOperation,
   CapabilityDescriptor,
 } from "../AnalysisProvider.js";
-import { GENERATED_MCP_TOOL_CATALOG } from "../../generatedMcpToolCatalog.js";
+import { OFFICIAL_TOOL_CONTRACTS } from "../../contracts/officialToolContracts.js";
 
 const STATEFUL_OPERATIONS: ReadonlySet<AnalysisOperation> = new Set([
   "health",
@@ -46,14 +46,12 @@ const CURSOR_DEFAULT_OPERATIONS: ReadonlySet<AnalysisOperation> = new Set([
 ]);
 
 const DOCUMENT_SCOPED_OPERATIONS: ReadonlySet<string> = new Set(
-  GENERATED_MCP_TOOL_CATALOG.filter(({ kind }) => kind === "official-proxy")
-    .map(({ name }) => name)
-    .filter(
-      (name) =>
-        name !== "current_document" &&
-        name !== "list_documents" &&
-        name !== "set_current_document",
-    ),
+  OFFICIAL_TOOL_CONTRACTS.map(({ name }) => name).filter(
+    (name) =>
+      name !== "current_document" &&
+      name !== "list_documents" &&
+      name !== "set_current_document",
+  ),
 );
 
 /** Whether an operation is immutable and independent of provider UI state. */

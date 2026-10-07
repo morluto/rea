@@ -68,7 +68,7 @@ export const buildComparisonMatching = (
   exact_il_signature: methodItems.filter(
     ({ match }) => match.basis === "exact-il-signature",
   ).length,
-  exact_signature: methodItems.filter(
+  exact_signature: [...methodItems, ...fieldItems].filter(
     ({ match }) => match.basis === "exact-signature",
   ).length,
   structural_method_shape: methodItems.filter(
@@ -92,6 +92,7 @@ export const comparisonLimitations = (
   const limitations: string[] = [
     "Metadata tokens are build-local coordinates; matched pairs are remaps, not persistent identities.",
     "Methods pair by exact CIL/signature, then declared type, name, and signature, then structural shape; names alone are never a matching basis.",
+    "Fields pair by exact signature, then declared type, name, and signature; an undecoded signature is compared only by its raw bytes, and an unmatched member with one stays unknown.",
   ];
   if (left.coverage.state !== "complete" || right.coverage.state !== "complete")
     limitations.push("At least one managed member observation is partial.");

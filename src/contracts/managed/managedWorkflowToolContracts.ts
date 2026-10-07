@@ -126,7 +126,7 @@ export const MANAGED_WORKFLOW_TOOL_CONTRACTS = [
     name: "compare_managed_members",
     ...toolContractMetadata("compare_managed_members"),
     description:
-      "Compare two authenticated inspect_managed_members Evidence records using unique-only decoded-CIL/signature and structural method-shape tiers. Names are reported as observations but are not used as a matching basis; metadata tokens remain build-local coordinates bound to each artifact SHA-256 and MVID, and the tuple digest does not itself remap them.",
+      "Compare two authenticated inspect_managed_members Evidence records using unique-only tiers: exact CIL/signature, exact declared type, name, and raw signature (decoded or not), and decoded structural method shape. Names alone are never a matching basis; a member whose signature was not decoded, or whose same-named counterpart's was not, stays unknown rather than added or removed. Metadata tokens remain build-local coordinates bound to each artifact SHA-256 and MVID, and the tuple digest does not itself remap them.",
     kind: "application",
     inputSchema: compareManagedMembersReferenceInputSchema,
     outputSchema: comparisonOutputSchema,
