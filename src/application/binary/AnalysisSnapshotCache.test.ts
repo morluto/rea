@@ -10,14 +10,136 @@ import { createEvidence } from "../../domain/evidence.js";
 import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
 import { ok } from "../../domain/result.js";
 import { createAnalysisExecution } from "../AnalysisProvider.js";
+import {
+  createAnalysisSnapshotWorkflowEntry,
+  parseAnalysisSnapshot,
+  snapshotBinding,
+  snapshotTarget,
+} from "../../domain/analysisSnapshot.js";
+import {
+  REA_WORKFLOW_PROVIDER,
+  workflowAnalysisProfile,
+} from "../InvestigationProviders.js";
 import type {
   AnalysisOperation,
   CapabilityDescriptor,
 } from "../AnalysisProvider.js";
 import {
   AnalysisSnapshotCache,
+  SNAPSHOT_CACHE_ENTRY_CEILING,
   isSnapshotCacheable,
 } from "./AnalysisSnapshotCache.js";
+
+describe("analysis snapshot cache capacity", () => {
+  it("shares capacity across query kinds while allowing replacements and fresh partitions", () => {
+    const cache = new AnalysisSnapshotCache();
+    const target = ANALYSIS_SNAPSHOT_TARGET;
+    const profile = ANALYSIS_SNAPSHOT_PROFILE;
+    const execution = {
+      ...createAnalysisExecution("workflow", REA_WORKFLOW_PROVIDER, {
+        subject: target,
+      }),
+      analysisProfile: workflowAnalysisProfile(profile),
+    };
+    const workflowInput = {
+      target,
+      profile,
+      operation: "trace_feature",
+      parameters: { query: "existing" },
+      execution,
+    };
+    for (let index = 0; index < SNAPSHOT_CACHE_ENTRY_CEILING - 1; index += 1)
+      cache.recordWorkflow({
+        ...workflowInput,
+        parameters: { query: String(index) },
+      });
+    // Staging and recording both spend the same budget; an existing query can
+    // still be refreshed when no space remains for a new binding.
+    const directInput = {
+      target,
+      profile,
+      operation: "address_name" as const,
+      parameters: { address: "0x1000", document: "fixture" },
+      execution: createAnalysisExecution(
+        "initial",
+        ANALYSIS_SNAPSHOT_PROVIDER,
+        { subject: target, analysisProfile: profile },
+      ),
+    };
+    cache.record(directInput);
+    cache.record({
+      ...directInput,
+      parameters: { address: "0x2000", document: "fixture" },
+    });
+    cache.recordWorkflow(workflowInput);
+    expect(cache.entries()).toHaveLength(1);
+    expect(cache.workflowEntries()).toHaveLength(
+      SNAPSHOT_CACHE_ENTRY_CEILING - 1,
+    );
+
+    cache.record({
+      ...directInput,
+      execution: { ...directInput.execution, result: "updated" },
+    });
+    cache.recordWorkflow({
+      ...workflowInput,
+      parameters: { query: "0" },
+      execution: { ...execution, result: "updated" },
+    });
+    expect(
+      cache.lookup(target, profile, "address_name", directInput.parameters)
+        ?.result,
+    ).toBe("updated");
+    expect(
+      cache.workflowEntries().find(({ parameters }) => parameters.query === "0")
+        ?.execution.result,
+    ).toBe("updated");
+
+    const incoming = createAnalysisSnapshotWorkflowEntry({
+      ...workflowInput,
+      target: snapshotTarget(target),
+      binding: snapshotBinding(profile),
+    });
+    const evidence = createEvidence(target, REA_WORKFLOW_PROVIDER, {
+      operation: workflowInput.operation,
+      parameters: workflowInput.parameters,
+      result: execution.result,
+      rawResult: execution.rawResult,
+      analysisProfile: execution.analysisProfile,
+      limitations: execution.limitations,
+      locations: execution.locations,
+    });
+    cache.stage(
+      parseAnalysisSnapshot({
+        target: snapshotTarget(target),
+        binding: snapshotBinding(profile),
+        entries: [],
+        workflow_entries: [incoming],
+        evidence_bundle: createEvidenceBundle([evidence]),
+      }),
+    );
+    expect(cache.workflowEntries()).toHaveLength(
+      SNAPSHOT_CACHE_ENTRY_CEILING - 1,
+    );
+
+    const otherTarget = { ...target, sha256: "b".repeat(64) };
+    cache.recordWorkflow({
+      ...workflowInput,
+      target: otherTarget,
+      execution: { ...execution, subject: otherTarget },
+    });
+    expect(cache.entries()).toEqual([]);
+    expect(cache.workflowEntries()).toHaveLength(1);
+    cache.clear();
+    cache.record({
+      ...directInput,
+      target: otherTarget,
+      execution: { ...directInput.execution, subject: otherTarget },
+    });
+    expect(cache.entries()).toHaveLength(1);
+    expect(cache.workflowEntries()).toEqual([]);
+  });
+});
 
 describe("analysis snapshot cache partitioning", () => {
   it.each<{

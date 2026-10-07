@@ -249,6 +249,13 @@ const networkMap = (
       status: request.status,
       mime_type: request.mime_type,
       encoded_data_length: request.encoded_data_length,
+      redirects: (request.redirects ?? []).map(
+        ({
+          request_timestamp: _requestTimestamp,
+          redirect_event_timestamp: _redirectEventTimestamp,
+          ...redirect
+        }) => redirect,
+      ),
       initiator: request.initiator,
       body_shapes: request.body_shapes,
     });

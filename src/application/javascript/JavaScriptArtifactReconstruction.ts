@@ -15,6 +15,7 @@ import {
 import { scanCanonicalArtifactInventory } from "../ArtifactInventory.js";
 import { summarizeElectronBoundaries } from "./ElectronBoundaryAnalysis.js";
 import { buildJavaScriptSemanticGraph } from "./JavaScriptSemanticGraphBuilder.js";
+import type { ProgressReporter } from "../ProgressReporter.js";
 
 /** Application-layer result retaining local diagnostics outside the canonical graph. */
 export interface JavaScriptArtifactReconstructionResult {
@@ -45,7 +46,11 @@ export interface JavaScriptArtifactReconstructionResult {
 export const reconstructJavaScriptArtifact = async (
   rawInput: unknown,
   signal?: AbortSignal,
+  progress?: ProgressReporter,
 ): Promise<JavaScriptArtifactReconstructionResult> => {
+  const reportPhase = async (phase: string, message: string): Promise<void> => {
+    await progress?.report({ phase, completed: 0, total: 1, message });
+  };
   const input = javascriptArtifactReconstructionInputSchema.parse(rawInput);
   abortIfNeeded(signal);
   const path = await realpath(input.input_path);
@@ -58,10 +63,26 @@ export const reconstructJavaScriptArtifact = async (
     );
   const reader = createReader(path, format);
   try {
+    await reportPhase(
+      "read_javascript_artifacts",
+      "Reading inventoried JavaScript application sources",
+    );
     const files = await readJavaScriptArtifactFiles(reader, snapshot, signal);
+    await reportPhase(
+      "parse_javascript_sources",
+      `Parsing ${String(files.files.length)} application source files`,
+    );
     const analysis = analyzeJavaScriptArtifactFiles(files);
     abortIfNeeded(signal);
+    await reportPhase(
+      "build_javascript_application_graph",
+      "Constructing application and Electron boundary relationships",
+    );
     const graph = buildJavaScriptArtifactGraph(snapshot, files, analysis);
+    await reportPhase(
+      "build_javascript_semantic_graph",
+      "Constructing static semantic relationships",
+    );
     const semanticGraph = buildJavaScriptSemanticGraph({
       rootArtifactSha256: snapshot.manifest.root_sha256,
       applicationGraph: graph,

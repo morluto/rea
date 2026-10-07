@@ -31,6 +31,11 @@ command and the generic route return their complete results inline. Native
 targets, single JavaScript files, `.app` bundles, and explicit deep-provider or
 snapshot requests retain the native deep-analysis route.
 
+Both CLI routes emit `rea_progress` JSON lines on stderr as inventory, source
+parsing, graph construction, validation, and Evidence hashing begin. Stdout
+remains the selected result document. Completion is reported after Evidence
+creation; a failed analysis retains its typed diagnostic result.
+
 Configure an MCP client with the ordinary REA setup command:
 
 ```bash

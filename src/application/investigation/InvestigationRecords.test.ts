@@ -101,9 +101,18 @@ describe("investigation record ownership", () => {
     );
     if (!created.ok) throw created.error;
     const input = updateUnknownInputSchema.parse({
-      ...created.value,
+      unknown_id: created.value.unknown_id,
       expected_revision: created.value.revision,
       status: "investigating",
+      severity: created.value.severity,
+      supporting_evidence_ids: created.value.supporting_evidence_ids,
+      contradicting_evidence_ids: created.value.contradicting_evidence_ids,
+      required_authority: created.value.required_authority,
+      required_confidence: created.value.required_confidence,
+      required_environment: created.value.required_environment,
+      recommended_probes: created.value.recommended_probes,
+      relationships: created.value.relationships,
+      resolution: created.value.resolution,
     });
     const updated = records.updateUnknown(input, target);
     expect(updated).toMatchObject({
