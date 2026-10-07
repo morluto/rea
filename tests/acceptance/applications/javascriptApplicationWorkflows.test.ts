@@ -6,12 +6,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { compareApplicationVersionsRequestSchema } from "../../../src/contracts/applicationWorkflowInputContracts.js";
-import { analyzeJavaScriptApplication } from "../../../src/application/JavaScriptApplicationService.js";
+import { analyzeJavaScriptApplication } from "../../../src/application/javascript/JavaScriptApplicationService.js";
 import {
   compareApplicationVersionsEvidence,
   traceApplicationFeatureEvidence,
-} from "../../../src/application/JavaScriptApplicationWorkflowService.js";
-import { reconcileJavaScriptRuntimeEvidence } from "../../../src/application/JavaScriptRuntimeReconciliationService.js";
+} from "../../../src/application/javascript/JavaScriptApplicationWorkflowService.js";
+import { reconcileJavaScriptRuntimeEvidence } from "../../../src/application/javascript/JavaScriptRuntimeReconciliationService.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
 import { jsonValueSchema } from "../../../src/domain/jsonValue.js";

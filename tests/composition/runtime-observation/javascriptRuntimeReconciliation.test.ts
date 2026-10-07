@@ -5,9 +5,9 @@ import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { createElectronEvidence } from "../../../src/application/ElectronEvidence.js";
-import { createElectronActiveEvidence } from "../../../src/application/ElectronActiveEvidence.js";
-import { analyzeJavaScriptApplication } from "../../../src/application/JavaScriptApplicationService.js";
+import { createElectronEvidence } from "../../../src/application/javascript/ElectronEvidence.js";
+import { createElectronActiveEvidence } from "../../../src/application/javascript/ElectronActiveEvidence.js";
+import { analyzeJavaScriptApplication } from "../../../src/application/javascript/JavaScriptApplicationService.js";
 import { reconcileJavaScriptRuntime } from "../../../src/domain/javascriptRuntimeReconciliation.js";
 import { javascriptRuntimeReconciliationResultSchema } from "../../../src/domain/javascriptRuntimeReconciliationSchemas.js";
 import { electronActiveObservationInputSchema } from "../../../src/domain/electronActiveObservation.js";

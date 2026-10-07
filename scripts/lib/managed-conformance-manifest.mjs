@@ -5,7 +5,7 @@ import { parseBinaryTarget } from "../../dist/application/BinaryTargetResolver.j
 import { inspectManagedArtifactBytes } from "../../dist/dotnet/ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "../../dist/dotnet/ManagedMemberInspector.js";
 import { projectManagedApplicationGraphEvidence } from "../../dist/application/ManagedApplicationGraphService.js";
-import { traceApplicationFeatureEvidence } from "../../dist/application/JavaScriptApplicationWorkflowService.js";
+import { traceApplicationFeatureEvidence } from "../../dist/application/javascript/JavaScriptApplicationWorkflowService.js";
 import { createEvidence } from "../../dist/domain/evidence.js";
 import { MANAGED_STATIC_PROVIDER } from "../../dist/application/InvestigationProviders.js";
 import {

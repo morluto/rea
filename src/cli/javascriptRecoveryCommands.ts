@@ -1,5 +1,5 @@
 import { z } from "incur";
-import { JavaScriptRecoveryService } from "../application/JavaScriptRecoveryService.js";
+import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
 import { createJavaScriptRecoveryProvider } from "../composition/javascriptRecovery.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";

@@ -1,4 +1,4 @@
-import { analyzeJavaScriptApplication } from "../application/JavaScriptApplicationService.js";
+import { analyzeJavaScriptApplication } from "../application/javascript/JavaScriptApplicationService.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 

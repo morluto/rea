@@ -4,8 +4,8 @@ import { join, relative, sep } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptApplication } from "../../../src/application/JavaScriptApplicationService.js";
-import { parseApplicationGraphEvidence } from "../../../src/application/JavaScriptApplicationEvidenceGraph.js";
+import { analyzeJavaScriptApplication } from "../../../src/application/javascript/JavaScriptApplicationService.js";
+import { parseApplicationGraphEvidence } from "../../../src/application/javascript/JavaScriptApplicationEvidenceGraph.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascriptApplicationAnalysis.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 

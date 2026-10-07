@@ -1,0 +1,141 @@
+import { lstat, realpath } from "node:fs/promises";
+
+import { AsarArtifactReader } from "../../artifacts/AsarArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactReader,
+} from "../../artifacts/ArtifactReader.js";
+import { DirectoryArtifactReader } from "../../artifacts/DirectoryArtifactReader.js";
+import type { JavaScriptApplicationGraph } from "../../domain/javascriptApplicationGraph.js";
+import type { JavaScriptSemanticGraph } from "../../domain/javascriptSemanticGraph.js";
+import type { ElectronBoundarySummary } from "../../domain/javascriptApplicationAnalysis.js";
+import { analyzeJavaScriptArtifactFiles } from "./JavaScriptArtifactAnalysis.js";
+import { readJavaScriptArtifactFiles } from "./JavaScriptArtifactFiles.js";
+import { buildJavaScriptArtifactGraph } from "./JavaScriptArtifactGraphBuilder.js";
+import {
+  javascriptArtifactReconstructionInputSchema,
+  type JavaScriptArtifactReconstructionInput,
+} from "./JavaScriptArtifactReconstructionInput.js";
+import { scanCanonicalArtifactInventory } from "../ArtifactInventory.js";
+import { summarizeElectronBoundaries } from "./ElectronBoundaryAnalysis.js";
+import { buildJavaScriptSemanticGraph } from "./JavaScriptSemanticGraphBuilder.js";
+
+/** Application-layer result retaining local diagnostics outside the canonical graph. */
+export interface JavaScriptArtifactReconstructionResult {
+  readonly input_path: string;
+  readonly format: "asar" | "directory";
+  readonly root_artifact_sha256: string;
+  readonly inventory_manifest_id: string;
+  readonly inventory_graph_sha256: string;
+  readonly graph: JavaScriptApplicationGraph;
+  readonly semantic_graph: JavaScriptSemanticGraph;
+  readonly electron_summary: ElectronBoundarySummary;
+  readonly statistics: {
+    readonly relevant_files: number;
+    readonly nested_asar_containers: number;
+    readonly text_bytes_read: number;
+    readonly invalid_utf8_files: number;
+    readonly parsed_javascript_files: number;
+    readonly visited_ast_nodes: number;
+    readonly findings: number;
+    readonly modules: number;
+    readonly parse_failures: number;
+    readonly truncated_scopes: number;
+  };
+  readonly limitations: readonly string[];
+}
+
+/** Reconstruct one local ASAR or extracted directory without executing code. */
+export const reconstructJavaScriptArtifact = async (
+  rawInput: unknown,
+  signal?: AbortSignal,
+): Promise<JavaScriptArtifactReconstructionResult> => {
+  const input = javascriptArtifactReconstructionInputSchema.parse(rawInput);
+  abortIfNeeded(signal);
+  const path = await realpath(input.input_path);
+  const format = await resolveFormat(path, input);
+  const snapshot = await scanCanonicalArtifactInventory(path, { signal });
+  if (snapshot.manifest.root_format !== format)
+    throw new ArtifactReaderFailure(
+      "format",
+      `Artifact inventory classified ${path} as ${snapshot.manifest.root_format}, not ${format}`,
+    );
+  const reader = createReader(path, format);
+  try {
+    const files = await readJavaScriptArtifactFiles(reader, snapshot, signal);
+    const analysis = analyzeJavaScriptArtifactFiles(files);
+    abortIfNeeded(signal);
+    const graph = buildJavaScriptArtifactGraph(snapshot, files, analysis);
+    const semanticGraph = buildJavaScriptSemanticGraph({
+      rootArtifactSha256: snapshot.manifest.root_sha256,
+      applicationGraph: graph,
+      analysis,
+    });
+    return {
+      input_path: path,
+      format,
+      root_artifact_sha256: snapshot.manifest.root_sha256,
+      inventory_manifest_id: snapshot.manifest.manifest_id,
+      inventory_graph_sha256: snapshot.manifest.graph_sha256,
+      graph,
+      semantic_graph: semanticGraph,
+      electron_summary: summarizeElectronBoundaries(analysis),
+      statistics: {
+        relevant_files: files.files.length,
+        nested_asar_containers: files.containers.length,
+        text_bytes_read: files.text_bytes_read,
+        invalid_utf8_files: files.invalid_utf8_files,
+        parsed_javascript_files: analysis.files.filter(
+          ({ javascript }) => javascript !== null,
+        ).length,
+        visited_ast_nodes: analysis.visited_ast_nodes,
+        findings: analysis.findings,
+        modules: analysis.modules,
+        parse_failures: analysis.parse_failures,
+        truncated_scopes: analysis.truncated_scopes,
+      },
+      limitations: analysis.limitations,
+    };
+  } finally {
+    await reader.close();
+  }
+};
+
+const resolveFormat = async (
+  path: string,
+  input: JavaScriptArtifactReconstructionInput,
+): Promise<"asar" | "directory"> => {
+  const metadata = await lstat(path);
+  const observed = metadata.isDirectory()
+    ? "directory"
+    : metadata.isFile() && path.toLowerCase().endsWith(".asar")
+      ? "asar"
+      : undefined;
+  if (observed === undefined)
+    throw new ArtifactReaderFailure(
+      "format",
+      `JavaScript artifact reconstruction accepts only a directory or .asar file: ${path}`,
+    );
+  if (input.format !== "auto" && input.format !== observed)
+    throw new ArtifactReaderFailure(
+      "format",
+      `Requested ${input.format} input but observed ${observed}: ${path}`,
+    );
+  return observed;
+};
+
+const createReader = (
+  path: string,
+  format: "asar" | "directory",
+): ArtifactReader =>
+  format === "asar"
+    ? new AsarArtifactReader(path)
+    : new DirectoryArtifactReader(path);
+
+const abortIfNeeded = (signal?: AbortSignal): void => {
+  if (signal?.aborted === true)
+    throw new ArtifactReaderFailure(
+      "cancelled",
+      "JavaScript artifact reconstruction cancelled",
+    );
+};

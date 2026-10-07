@@ -5,8 +5,8 @@ import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { analyzeJavaScriptApplication } from "../../../src/application/JavaScriptApplicationService.js";
-import { reconstructJavaScriptArtifact } from "../../../src/application/JavaScriptArtifactReconstruction.js";
+import { analyzeJavaScriptApplication } from "../../../src/application/javascript/JavaScriptApplicationService.js";
+import { reconstructJavaScriptArtifact } from "../../../src/application/javascript/JavaScriptArtifactReconstruction.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { parseJavaScriptApplicationGraph } from "../../../src/domain/javascriptApplicationGraph.js";
 import { analyzeJavaScriptApplicationInputSchema } from "../../../src/domain/javascriptApplicationAnalysis.js";

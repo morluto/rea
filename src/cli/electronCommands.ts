@@ -3,9 +3,9 @@ import { Cli, z } from "incur";
 import {
   inspectElectronPage,
   listElectronTargets,
-} from "../application/ElectronObservationService.js";
-import { captureElectronScenario } from "../application/ElectronActiveObservationService.js";
-import { reconcileJavaScriptRuntimeEvidence } from "../application/JavaScriptRuntimeReconciliationService.js";
+} from "../application/javascript/ElectronObservationService.js";
+import { captureElectronScenario } from "../application/javascript/ElectronActiveObservationService.js";
+import { reconcileJavaScriptRuntimeEvidence } from "../application/javascript/JavaScriptRuntimeReconciliationService.js";
 import { logCliCommand } from "../cliLogging.js";
 import {
   inspectElectronPageInputSchema,

@@ -9,7 +9,7 @@ import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import type { ElectronActiveObservationPort } from "../../../src/application/ElectronActiveObservationPort.js";
+import type { ElectronActiveObservationPort } from "../../../src/application/javascript/ElectronActiveObservationPort.js";
 import { CdpElectronProvider } from "../../../src/browser/CdpElectronProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";

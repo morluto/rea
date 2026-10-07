@@ -5,7 +5,7 @@ import { createPackage } from "@electron/asar";
 import { describe, expect, it } from "vitest";
 
 import { scanArtifactInventory } from "../../../src/application/ArtifactInventory.js";
-import { readJavaScriptArtifactFiles } from "../../../src/application/JavaScriptArtifactFiles.js";
+import { readJavaScriptArtifactFiles } from "../../../src/application/javascript/JavaScriptArtifactFiles.js";
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
 import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";

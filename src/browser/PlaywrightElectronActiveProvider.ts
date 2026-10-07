@@ -9,7 +9,7 @@ import type {
   ExecutionOptions,
   ProviderIdentity,
 } from "../application/AnalysisProvider.js";
-import type { ElectronActiveObservationPort } from "../application/ElectronActiveObservationPort.js";
+import type { ElectronActiveObservationPort } from "../application/javascript/ElectronActiveObservationPort.js";
 import {
   electronActiveObservationResultSchema,
   type ElectronActiveObservationInput,

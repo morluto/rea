@@ -2,7 +2,7 @@ import { resolvePairedEvidenceRequest } from "../../application/EvidenceInputRes
 import { recordSessionEvidenceSources } from "../sessionEvidence.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 
-import { compareJavaScriptExportShapesEvidenceValidated } from "../../application/JavaScriptApplicationWorkflowService.js";
+import { compareJavaScriptExportShapesEvidenceValidated } from "../../application/javascript/JavaScriptApplicationWorkflowService.js";
 import { applicationToolContract } from "../../contracts/applicationToolContracts.js";
 import { javaScriptExportShapeComparisonResultSchema } from "../../domain/javascriptExportShapeComparisonSchemas.js";
 import { logToolExecution } from "../toolLogging.js";

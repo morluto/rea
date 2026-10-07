@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { reconstructJavaScriptArtifact } from "../../src/application/JavaScriptArtifactReconstruction.js";
+import { reconstructJavaScriptArtifact } from "../../src/application/javascript/JavaScriptArtifactReconstruction.js";
 import type {
   ApplicationEdge,
   ApplicationNode,

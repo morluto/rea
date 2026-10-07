@@ -10,7 +10,7 @@ import { compareManagedMemberPaths } from "../dist/application/ManagedMemberComp
 import { verifyManagedNativeBoundariesEvidence } from "../dist/application/ManagedNativeVerificationService.js";
 import { importManagedReconstructionEvidence } from "../dist/application/ManagedReconstructionService.js";
 import { projectManagedApplicationGraphEvidence } from "../dist/application/ManagedApplicationGraphService.js";
-import { traceApplicationFeatureEvidence } from "../dist/application/JavaScriptApplicationWorkflowService.js";
+import { traceApplicationFeatureEvidence } from "../dist/application/javascript/JavaScriptApplicationWorkflowService.js";
 import { MANAGED_STATIC_PROVIDER } from "../dist/application/InvestigationProviders.js";
 import { createEvidence } from "../dist/domain/evidence.js";
 import {

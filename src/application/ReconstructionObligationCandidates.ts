@@ -12,7 +12,7 @@ import type {
   ReconstructionObligation,
   ReviewedReconstructionObligation,
 } from "../domain/reconstructionObligationLedgerSchemas.js";
-import { parseApplicationGraphEvidence } from "./JavaScriptApplicationEvidenceGraph.js";
+import { parseApplicationGraphEvidence } from "./javascript/JavaScriptApplicationEvidenceGraph.js";
 import {
   applicationObligationPolicy,
   semanticObligationPolicy,

@@ -6,15 +6,15 @@ import {
 import { err } from "../domain/result.js";
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 
-import type { ElectronActiveObservationPort } from "../application/ElectronActiveObservationPort.js";
-import { captureElectronScenario } from "../application/ElectronActiveObservationService.js";
-import type { ElectronObservationPort } from "../application/ElectronObservationPort.js";
+import type { ElectronActiveObservationPort } from "../application/javascript/ElectronActiveObservationPort.js";
+import { captureElectronScenario } from "../application/javascript/ElectronActiveObservationService.js";
+import type { ElectronObservationPort } from "../application/javascript/ElectronObservationPort.js";
 import {
   inspectElectronPage,
   listElectronTargets,
-} from "../application/ElectronObservationService.js";
-import { analyzeJavaScriptApplicationValidated } from "../application/JavaScriptApplicationService.js";
-import { reconcileJavaScriptRuntimeEvidenceValidated } from "../application/JavaScriptRuntimeReconciliationService.js";
+} from "../application/javascript/ElectronObservationService.js";
+import { analyzeJavaScriptApplicationValidated } from "../application/javascript/JavaScriptApplicationService.js";
+import { reconcileJavaScriptRuntimeEvidenceValidated } from "../application/javascript/JavaScriptRuntimeReconciliationService.js";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
 import { toolContract, type ToolContract } from "../contracts/toolContracts.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";

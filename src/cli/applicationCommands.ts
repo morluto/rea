@@ -8,8 +8,8 @@ import {
   compareJavaScriptExportShapesEvidenceValidated,
   compareSourceToBundleEvidenceValidated,
   traceApplicationFeatureEvidenceValidated,
-} from "../application/JavaScriptApplicationWorkflowService.js";
-import { traceJavaScriptSemanticsEvidenceValidated } from "../application/JavaScriptSemanticTraceService.js";
+} from "../application/javascript/JavaScriptApplicationWorkflowService.js";
+import { traceJavaScriptSemanticsEvidenceValidated } from "../application/javascript/JavaScriptSemanticTraceService.js";
 import { evaluateReconstructionCoverage } from "../application/ReconstructionCoverageService.js";
 import { buildReconstructionObligationLedgerEvidenceValidated } from "../application/ReconstructionObligationLedgerService.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";

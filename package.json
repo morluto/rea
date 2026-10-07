@@ -136,9 +136,9 @@
     "verify:browser:network": "npm run build:cached && node scripts/verify-browser-network.mjs",
     "verify:electron": "npm run build:cached && node scripts/verify-real-electron.mjs",
     "verify:inspector": "npm run build:cached && node scripts/verify/inspector/runtime-observation.mjs",
-    "verify:javascript-runtime": "npm run build:cached && node scripts/verify-local-javascript-runtime.mjs",
-    "verify:javascript:digests": "npm run build:cached && node scripts/verify-large-javascript-digests.mjs",
-    "verify:application-workflows": "npm run build:cached && node scripts/verify-local-application-workflows.mjs",
+    "verify:javascript-runtime": "npm run build:cached && node scripts/verify/javascript/runtime-observation.mjs",
+    "verify:javascript:digests": "npm run build:cached && node scripts/verify/javascript/digests.mjs",
+    "verify:application-workflows": "npm run build:cached && node scripts/verify/javascript/application-workflows.mjs",
     "verify:managed": "npm run build:cached && node scripts/verify-managed-conformance.mjs",
     "verify:firmware": "npm run build:cached && node scripts/verify/firmware/analysis.mjs",
     "fixtures:firmware": "node scripts/fixtures/firmware/generate.mjs",
@@ -179,7 +179,7 @@
     "verify:browser:scripts": "npm run build:cached && node scripts/verify-browser-scripts.mjs",
     "verify:browser:modules": "npm run build:cached && node scripts/verify-browser-modules.mjs",
     "verify:test-discovery": "node scripts/verify-test-discovery.mjs",
-    "verify:javascript:recovery": "node scripts/verify-javascript-recovery.mjs",
+    "verify:javascript:recovery": "node scripts/verify/javascript/recovery.mjs",
     "verify:module-boundaries": "node scripts/verify-module-boundaries.mjs"
   },
   "lint-staged": {

@@ -246,6 +246,28 @@ Hopper's GUI and mutation effects, Ghidra's experimental Windows authority and
 mutation restrictions, and IDA's attached/headless effects and live observations.
 This source increment introduces no common provider lifecycle or new interface.
 
+## JavaScript application ownership
+
+`src/application/javascript/` owns JavaScript/Electron artifact analysis and
+graph projection, feature/version/export/source comparisons, runtime Evidence
+and reconciliation, observation ports, and source recovery workflows. Pure
+analysis and public schemas keep their existing domain/contract ownership;
+shared artifact inventory, investigation records and execution types remain
+shared. CLI, MCP and production factories import the owning workflow directly.
+
+`scripts/verify/javascript/` groups application-workflow, runtime-reconciliation,
+large-digest and real-recovery entrypoints. Their existing npm commands retain
+their invocation semantics. Recovery fixture compilation lives beside its
+unchanged sources under `scripts/fixtures/javascript-recovery/`. Its default
+REA entrypoint still resolves to `scripts/rea.mjs`. Managed conformance imports
+the relocated compiled workflow; owning CI source filters follow the new paths.
+
+This application move preserves the current directory/ASAR reader boundary,
+including root/nested byte checks, UTF-8 diagnostics, cancellation and owned
+close. Reader selection requires a separately traced increment. Runtime ports
+retain their distinct Inspector, passive Electron and active Electron effects;
+shipped Electron hooks remain at their existing provider boundary.
+
 ## Binary application ownership
 
 `src/application/binary/` owns the active session, deep-provider registry and

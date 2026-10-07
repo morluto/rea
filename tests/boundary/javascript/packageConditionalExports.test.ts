@@ -7,8 +7,8 @@ import { z } from "zod";
 import {
   resolveArtifactPathByContext,
   type ArtifactPathResolution,
-} from "../../../src/application/JavaScriptArtifactPathResolution.js";
-import type { JavaScriptArtifactFile } from "../../../src/application/JavaScriptArtifactFiles.js";
+} from "../../../src/application/javascript/JavaScriptArtifactPathResolution.js";
+import type { JavaScriptArtifactFile } from "../../../src/application/javascript/JavaScriptArtifactFiles.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 const execute = promisify(execFile);
 const TARGETS = [

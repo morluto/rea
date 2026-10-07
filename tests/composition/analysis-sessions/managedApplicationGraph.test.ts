@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { projectManagedApplicationGraphEvidence } from "../../../src/application/ManagedApplicationGraphService.js";
 import { managedApplicationGraphReferenceInputSchema } from "../../../src/contracts/managedWorkflowToolContracts.js";
 import { MANAGED_APPLICATION_GRAPH_EXAMPLE } from "../../../src/contracts/managedWorkflowExamples.js";
-import { traceApplicationFeatureEvidence } from "../../../src/application/JavaScriptApplicationWorkflowService.js";
+import { traceApplicationFeatureEvidence } from "../../../src/application/javascript/JavaScriptApplicationWorkflowService.js";
 import { MANAGED_STATIC_PROVIDER } from "../../../src/application/InvestigationProviders.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { parseJavaScriptApplicationGraph } from "../../../src/domain/javascriptApplicationGraph.js";

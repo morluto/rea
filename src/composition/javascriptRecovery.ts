@@ -1,4 +1,4 @@
-import type { JavaScriptRecoveryPort } from "../application/JavaScriptRecoveryPort.js";
+import type { JavaScriptRecoveryPort } from "../application/javascript/JavaScriptRecoveryPort.js";
 import { WakaruProvider } from "../javascript/recovery/WakaruProvider.js";
 import type { WakaruLauncher } from "../javascript/recovery/WakaruCommand.js";
 

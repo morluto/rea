@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
-import { reconstructJavaScriptArtifact } from "../../../src/application/JavaScriptArtifactReconstruction.js";
+import { reconstructJavaScriptArtifact } from "../../../src/application/javascript/JavaScriptArtifactReconstruction.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it.each(["\n", "\r\n", "\r", "\u2028", "\u2029"])(

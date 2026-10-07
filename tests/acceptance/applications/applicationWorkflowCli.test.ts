@@ -12,7 +12,7 @@ import {
   JAVASCRIPT_VERSION_COMPARISON_FULL_EVIDENCE_EXAMPLE,
   SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE,
 } from "../../../src/contracts/javascriptApplicationWorkflowExamples.js";
-import { analyzeJavaScriptApplication } from "../../../src/application/JavaScriptApplicationService.js";
+import { analyzeJavaScriptApplication } from "../../../src/application/javascript/JavaScriptApplicationService.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascriptApplicationAnalysis.js";
 
 const execute = promisify(execFile);

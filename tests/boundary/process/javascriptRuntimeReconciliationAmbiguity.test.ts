@@ -7,8 +7,8 @@ import { afterEach, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { createElectronEvidence } from "../../../src/application/ElectronEvidence.js";
-import { analyzeJavaScriptApplication } from "../../../src/application/JavaScriptApplicationService.js";
+import { createElectronEvidence } from "../../../src/application/javascript/ElectronEvidence.js";
+import { analyzeJavaScriptApplication } from "../../../src/application/javascript/JavaScriptApplicationService.js";
 import { reconcileJavaScriptRuntime } from "../../../src/domain/javascriptRuntimeReconciliation.js";
 import { inspectElectronPageInputSchema } from "../../../src/domain/electronObservation.js";
 import { createWebTextArtifact } from "../../../src/domain/webContentArtifact.js";
@@ -167,7 +167,7 @@ it("runs the local verifier from operator-provided paths without emitting source
   const { stdout } = await execute(
     process.execPath,
     [
-      "scripts/verify-local-javascript-runtime.mjs",
+      "scripts/verify/javascript/runtime-observation.mjs",
       "--application",
       fixture,
       "--runtime-evidence",

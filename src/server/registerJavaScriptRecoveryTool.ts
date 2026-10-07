@@ -1,5 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/server";
-import type { JavaScriptRecoveryService } from "../application/JavaScriptRecoveryService.js";
+import type { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { Logger } from "../logger.js";

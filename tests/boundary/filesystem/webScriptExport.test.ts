@@ -10,7 +10,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptApplication } from "../../../src/application/JavaScriptApplicationService.js";
+import { analyzeJavaScriptApplication } from "../../../src/application/javascript/JavaScriptApplicationService.js";
 import { exportWebScripts } from "../../../src/application/WebScriptExportService.js";
 import { publishWebScripts } from "../../../src/browser/assets/PublishWebScripts.js";
 import { selectScriptCapture } from "../../../src/browser/assets/ScriptCaptureAdapters.js";

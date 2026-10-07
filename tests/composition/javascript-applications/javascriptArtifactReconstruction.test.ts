@@ -6,7 +6,7 @@ import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { reconstructJavaScriptArtifact } from "../../../src/application/JavaScriptArtifactReconstruction.js";
+import { reconstructJavaScriptArtifact } from "../../../src/application/javascript/JavaScriptArtifactReconstruction.js";
 import { scanArtifactInventory } from "../../../src/application/ArtifactInventory.js";
 import { parseJavaScriptApplicationGraph } from "../../../src/domain/javascriptApplicationGraph.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascriptApplicationAnalysis.js";

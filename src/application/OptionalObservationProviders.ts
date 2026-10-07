@@ -1,8 +1,8 @@
 import type { BrowserObservationPort } from "./BrowserObservationPort.js";
 import type { BrowserScenarioCapturePort } from "./BrowserScenarioCapturePort.js";
-import type { ElectronObservationPort } from "./ElectronObservationPort.js";
-import type { ElectronActiveObservationPort } from "./ElectronActiveObservationPort.js";
-import type { JavaScriptRuntimeObservationPort } from "./JavaScriptRuntimeObservationPort.js";
+import type { ElectronObservationPort } from "./javascript/ElectronObservationPort.js";
+import type { ElectronActiveObservationPort } from "./javascript/ElectronActiveObservationPort.js";
+import type { JavaScriptRuntimeObservationPort } from "./javascript/JavaScriptRuntimeObservationPort.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 
 /** Existing observation ports loaded independently at MCP startup. */

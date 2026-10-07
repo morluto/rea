@@ -3,7 +3,7 @@ import { Cli, z } from "incur";
 import {
   listJavaScriptRuntimeTargets,
   observeJavaScriptRuntime,
-} from "./application/JavaScriptRuntimeObservationService.js";
+} from "./application/javascript/JavaScriptRuntimeObservationService.js";
 import { createJavaScriptRuntimeObservationProvider } from "./composition/javascriptRuntimeObservation.js";
 import { CLI_COMMANDS } from "./cliCommandNames.js";
 import { logCliCommand } from "./cliLogging.js";
