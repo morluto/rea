@@ -27,6 +27,7 @@ export interface EvidenceImportDelta {
   readonly recordsAdded: number;
   readonly unknownsAdded: number;
   readonly changed: boolean;
+  readonly metadataChanged: boolean;
 }
 
 type ImportResult = Result<EvidenceImportDelta, EvidenceLedgerFailure>;
@@ -100,6 +101,7 @@ export class EvidenceLedger {
         recordsAdded: additions.size,
         unknownsAdded: 0,
         changed: additions.size > 0 || metadataChanged,
+        metadataChanged,
       });
     }
     const pending = new Map(this.#records);
@@ -147,6 +149,7 @@ export class EvidenceLedger {
       recordsAdded: added,
       unknownsAdded,
       changed: added > 0 || unknownsAdded > 0 || metadataChanged,
+      metadataChanged,
     });
   }
 

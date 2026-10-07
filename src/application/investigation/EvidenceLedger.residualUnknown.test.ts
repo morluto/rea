@@ -90,15 +90,27 @@ describe("residual unknown registry reads and identity", () => {
 
     expect(store.import(bundle)).toEqual({
       ok: true,
-      value: { recordsAdded: 1, unknownsAdded: 0, changed: true },
+      value: {
+        recordsAdded: 1,
+        unknownsAdded: 0,
+        changed: true,
+        metadataChanged: false,
+      },
     });
     expect(store.export().unknowns).toEqual(originalUnknowns);
     expect(store.import(bundle)).toEqual({
       ok: true,
-      value: { recordsAdded: 0, unknownsAdded: 0, changed: false },
+      value: {
+        recordsAdded: 0,
+        unknownsAdded: 0,
+        changed: false,
+        metadataChanged: false,
+      },
     });
   });
+});
 
+describe("residual unknown dependency histories", () => {
   it("imports a valid dependency chain deeper than the JavaScript call stack", () => {
     const records = [];
     const unknowns: ResidualUnknown[] = [];
@@ -127,7 +139,12 @@ describe("residual unknown registry reads and identity", () => {
 
     expect(store.import(bundle)).toEqual({
       ok: true,
-      value: { recordsAdded: 10_000, unknownsAdded: 10_000, changed: true },
+      value: {
+        recordsAdded: 10_000,
+        unknownsAdded: 10_000,
+        changed: true,
+        metadataChanged: false,
+      },
     });
     expect(store.export()).toEqual(bundle);
   });

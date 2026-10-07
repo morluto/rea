@@ -11,6 +11,7 @@ import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.j
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
+import { createEvidence } from "../../../src/domain/evidence.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import {
   ControllableAnalysisClient,
@@ -269,6 +270,72 @@ describe("fresh run identity", () => {
 });
 
 describe("evidence metadata imports and snapshot cache", () => {
+  it("retains cached queries and exports after additive evidence imports", async () => {
+    const [target] = await createBinarySessionTargets();
+    const calls: string[] = [];
+    const session = createTestBinarySession(createCacheProvider(calls));
+    expect((await session.open(target)).ok).toBe(true);
+    expect(
+      (
+        await session.execute("address_name", {
+          address: "0x1000",
+          document: "first",
+        })
+      ).ok,
+    ).toBe(true);
+    const before = session.exportAnalysisSnapshot();
+    expect(before.ok).toBe(true);
+    if (!before.ok) {
+      await session.close();
+      return;
+    }
+    const existing = session.exportEvidenceBundle().records[0];
+    expect(existing?.subject).not.toBeNull();
+    if (existing?.subject === null || existing === undefined) {
+      await session.close();
+      return;
+    }
+    const addition = createEvidence(
+      {
+        path: existing.subject.local_path,
+        sha256: existing.subject.digest.sha256,
+        format: existing.subject.format,
+        ...(existing.subject.architecture === null
+          ? {}
+          : { architecture: existing.subject.architecture }),
+      },
+      { id: "fixture", name: "Fixture", version: "1" },
+      {
+        predicateType: "rea.analysis",
+        operation: "health",
+        parameters: { source: "additive-import" },
+        result: true,
+      },
+    );
+    expect(
+      session.importEvidenceBundle(createEvidenceBundle([addition])),
+    ).toEqual({ ok: true, value: 1 });
+    expect(session.exportAnalysisSnapshot()).toMatchObject({
+      ok: true,
+      value: {
+        entries: before.value.entries,
+        evidence_bundle: { records: expect.arrayContaining([addition]) },
+      },
+    });
+    const callsAfterInitialRead = [...calls];
+    expect(
+      (
+        await session.execute("address_name", {
+          address: "0x1000",
+          document: "first",
+        })
+      ).ok,
+    ).toBe(true);
+    expect(calls).toEqual(callsAfterInitialRead);
+    expect(session.exportAnalysisSnapshot().ok).toBe(true);
+    await session.close();
+  });
+
   it("invalidates cached analysis when an import changes evidence path metadata", async () => {
     const [target] = await createBinarySessionTargets();
     const calls: string[] = [];

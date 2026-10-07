@@ -68,7 +68,8 @@ export abstract class BinarySessionRecords {
   ): Result<number, EvidenceIntegrityError> {
     const imported = this.#records.mergeEvidenceBundle(bundle);
     if (!imported.ok) return imported;
-    if (imported.value.changed) this.invalidateSnapshot();
+    if (imported.value.metadataChanged) this.invalidateSnapshot();
+    else if (imported.value.changed) this.#emitSnapshotChanged();
     return ok(imported.value.recordsAdded);
   }
 

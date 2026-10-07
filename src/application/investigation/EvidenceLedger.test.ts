@@ -38,7 +38,12 @@ describe("evidence ledger recording", () => {
     });
     expect(ledger.import(createEvidenceBundle([evidence]))).toEqual({
       ok: true,
-      value: { recordsAdded: 0, unknownsAdded: 0, changed: false },
+      value: {
+        recordsAdded: 0,
+        unknownsAdded: 0,
+        changed: false,
+        metadataChanged: false,
+      },
     });
     expect(ledger.export().records).toEqual([evidence]);
     const relocatedBundleRecord = createEvidence(
@@ -50,7 +55,12 @@ describe("evidence ledger recording", () => {
       ledger.import(createEvidenceBundle([relocatedBundleRecord])),
     ).toEqual({
       ok: true,
-      value: { recordsAdded: 0, unknownsAdded: 0, changed: true },
+      value: {
+        recordsAdded: 0,
+        unknownsAdded: 0,
+        changed: true,
+        metadataChanged: true,
+      },
     });
     expect(ledger.get(evidence.evidence_id)).toEqual(relocatedBundleRecord);
     expect(ledger.export().records).toEqual([relocatedBundleRecord]);
@@ -58,7 +68,12 @@ describe("evidence ledger recording", () => {
       ledger.import(createEvidenceBundle([relocatedBundleRecord])),
     ).toEqual({
       ok: true,
-      value: { recordsAdded: 0, unknownsAdded: 0, changed: false },
+      value: {
+        recordsAdded: 0,
+        unknownsAdded: 0,
+        changed: false,
+        metadataChanged: false,
+      },
     });
     const conflictingBundle = createEvidenceBundle([
       evidence,
@@ -66,6 +81,12 @@ describe("evidence ledger recording", () => {
     ]);
     expect(ledger.import(conflictingBundle).ok).toBe(false);
     expect(ledger.get(evidence.evidence_id)).toEqual(relocatedBundleRecord);
+    ledger.clear();
+    expect(ledger.export().records).toEqual([]);
+  });
+
+  it("ignores JSON object key order during imported identity checks", () => {
+    const ledger = new EvidenceLedger();
     const ordered = createEvidence(TARGET, PROVIDER, {
       operation: "health",
       parameters: { alpha: 1, beta: 2 },
@@ -85,12 +106,19 @@ describe("evidence ledger recording", () => {
     );
     expect(ledger.import(reorderedBundle)).toEqual({
       ok: true,
-      value: { recordsAdded: 0, unknownsAdded: 0, changed: false },
+      value: {
+        recordsAdded: 0,
+        unknownsAdded: 0,
+        changed: false,
+        metadataChanged: false,
+      },
     });
     ledger.clear();
     expect(ledger.export().records).toEqual([]);
   });
+});
 
+describe("evidence ledger metadata imports", () => {
   it("reports and commits metadata replacement when importing unknown history", () => {
     const ledger = new EvidenceLedger();
     const mutation = createEvidence(TARGET, PROVIDER, {
@@ -132,12 +160,22 @@ describe("evidence ledger recording", () => {
 
     expect(ledger.import(bundle)).toEqual({
       ok: true,
-      value: { recordsAdded: 0, unknownsAdded: 0, changed: true },
+      value: {
+        recordsAdded: 0,
+        unknownsAdded: 0,
+        changed: true,
+        metadataChanged: true,
+      },
     });
     expect(ledger.get(mutation.evidence_id)).toEqual(relocatedMutation);
     expect(ledger.import(bundle)).toEqual({
       ok: true,
-      value: { recordsAdded: 0, unknownsAdded: 0, changed: false },
+      value: {
+        recordsAdded: 0,
+        unknownsAdded: 0,
+        changed: false,
+        metadataChanged: false,
+      },
     });
   });
 
