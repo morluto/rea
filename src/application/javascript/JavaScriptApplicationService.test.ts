@@ -47,6 +47,8 @@ describe("JavaScript application failure diagnostics", () => {
     const inputPath = await createTestTempDirectory("rea-js-failure-");
     await writeFile(join(inputPath, "main.js"), "export const value = 1;\n");
     const cause = new RangeError("Invalid string length");
+    // Retain the original failure locally, but never serialize its object graph.
+    cause.cause = cause;
     const result = await analyzeJavaScriptApplication(
       { input_path: inputPath, format: "directory" },
       {
@@ -72,6 +74,8 @@ describe("JavaScript application failure diagnostics", () => {
         },
       },
     });
+    const projection = projectAnalysisError(result.error);
+    expect(JSON.parse(JSON.stringify(projection))).toEqual(projection);
   });
 
   it("keeps filesystem failures distinct from engine failures", async () => {
@@ -117,6 +121,37 @@ describe("JavaScript application failure diagnostics", () => {
           },
         },
       });
+    },
+  );
+
+  it.each([new Error("x".repeat(10_000)), "y".repeat(10_000)])(
+    "preserves long failure messages through JSON projection (%#)",
+    async (cause) => {
+      const inputPath = await createTestTempDirectory("rea-js-oversized-");
+      await writeFile(join(inputPath, "main.js"), "export const value = 1;\n");
+      const message = cause instanceof Error ? cause.message : cause;
+      const result = await analyzeJavaScriptApplication(
+        { input_path: inputPath, format: "directory" },
+        {
+          progress: {
+            report: async (event) => {
+              if (event.terminal) throw cause;
+            },
+          },
+        },
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("Expected analysis failure");
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "execution_failure",
+        details: {
+          diagnostics: {
+            error_message: message,
+          },
+        },
+      });
+      const projection = projectAnalysisError(result.error);
+      expect(JSON.parse(JSON.stringify(projection))).toEqual(projection);
     },
   );
 });

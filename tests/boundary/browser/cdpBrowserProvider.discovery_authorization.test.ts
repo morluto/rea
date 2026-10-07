@@ -73,9 +73,12 @@ describeBrowser("CdpBrowserProvider: discovery authorization 1", () => {
       const browser = await startFakeCdpBrowser({ urlShapedAllowedTitle });
       trackBrowser(browser);
       const provider = new CdpBrowserProvider();
-      const input = {
+      const listInput = {
         cdp_endpoint: browser.endpoint,
         allowed_origins: [browser.allowedOrigin],
+      };
+      const input = {
+        ...listInput,
         target_id: "allowed-page",
       };
       const authority = browser.allowedOrigin.replace(/^https?:\/\//u, "");
@@ -86,7 +89,7 @@ describeBrowser("CdpBrowserProvider: discovery authorization 1", () => {
             ? "/app?startup=title-secret#fragment"
             : `${prefix}${authority}/app?startup=title-secret#fragment`;
       const listed = await provider.listTargets(
-        listBrowserTargetsInputSchema.parse(input),
+        listBrowserTargetsInputSchema.parse(listInput),
       );
       if (!listed.ok) throw listed.error;
       expect(listed.value.targets[0]?.title).toBe(expected);

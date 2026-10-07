@@ -18,6 +18,8 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
   readonly scripts = new Map<string, CapturedScript>();
   readonly executionContextFrames = new Map<string, string>();
   readonly network = new Map<string, NetworkState>();
+  readonly networkRequestTimestamps = new Map<string, number>();
+  readonly malformedRedirectRequestIds = new Set<string>();
   readonly allowedWebSockets = new Set<string>();
   console: WebPageInspection["console"]["events"] = [];
   websockets: WebPageInspection["network"]["websocket_events"] = [];
@@ -51,6 +53,8 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
     this.scripts.clear();
     this.executionContextFrames.clear();
     this.network.clear();
+    this.networkRequestTimestamps.clear();
+    this.malformedRedirectRequestIds.clear();
     this.allowedWebSockets.clear();
     this.console.length = 0;
     this.websockets.length = 0;
@@ -135,16 +139,21 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
   responseBodyRequestIds(): readonly string[] {
     if (!this.input.include_json_body_shapes) return [];
     return [...this.network.values()]
+      .filter(
+        (request) => !this.malformedRedirectRequestIds.has(request.request_id),
+      )
       .filter((request) => isJsonMediaType(request.mime_type))
       .map((request) => request.request_id);
   }
 
   responseBodyUnavailable(requestId: string): void {
+    if (this.malformedRedirectRequestIds.has(requestId)) return;
     bodyShapes.updateResponseBodyShape(this, requestId, null);
     this.completeness.unavailable("json_body_shapes");
   }
 
   ingestResponseBody(requestId: string, value: unknown): void {
+    if (this.malformedRedirectRequestIds.has(requestId)) return;
     bodyShapes.ingestResponseBodyShape(this, requestId, value);
   }
 }

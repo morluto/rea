@@ -1,14 +1,24 @@
 name: Release
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_branch:
+        description: Frozen release branch (release/VERSION)
+        required: true
+        type: string
+      phase:
+        description: Prepare the release PR, or publish its reviewed merge
+        required: true
+        default: prepare
+        type: choice
+        options: [prepare, publish]
 
 env:
   HUSKY: "0"
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.release_branch }}
   cancel-in-progress: false
 
 jobs:
@@ -20,39 +30,111 @@ jobs:
       pull-requests: write
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
+      sha: ${{ steps.release.outputs.sha }}
     steps:
+      - name: Validate release selection
+        shell: bash
+        env:
+          RELEASE_BRANCH: ${{ inputs.release_branch }}
+          RELEASE_PHASE: ${{ inputs.phase }}
+        run: |
+          if [[ "${RELEASE_PHASE}" != prepare && "${RELEASE_PHASE}" != publish ]]; then
+            echo "phase must be prepare or publish." >&2
+            exit 1
+          fi
+          if [[ "${RELEASE_PHASE}" == prepare && "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Run prepare from main; release_branch selects the frozen source." >&2
+            exit 1
+          fi
+          if [[ "${RELEASE_PHASE}" == publish && "${GITHUB_REF}" != "refs/heads/${RELEASE_BRANCH}" ]]; then
+            echo "Run publish from the selected frozen release branch so npm provenance records its source." >&2
+            exit 1
+          fi
+          if [[ ! "${RELEASE_BRANCH}" =~ ^release/[^/]+$ ]]; then
+            echo "release_branch must select a release/ branch; main is not a release checkpoint." >&2
+            exit 1
+          fi
+          if ! git check-ref-format "refs/heads/${RELEASE_BRANCH}"; then
+            echo "Invalid release_branch: ${RELEASE_BRANCH}" >&2
+            exit 1
+          fi
+
+      - name: Resolve release branch tip
+        id: branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_BRANCH: ${{ inputs.release_branch }}
+        run: |
+          sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${RELEASE_BRANCH}" --jq '.object | select(.type == "commit") | .sha')"
+          if [[ ! "${sha}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "The release branch tip is not a commit." >&2
+            exit 1
+          fi
+          echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
+
+      - name: Require the publish dispatch to match the branch tip
+        if: inputs.phase == 'publish'
+        shell: bash
+        env:
+          BRANCH_SHA: ${{ steps.branch.outputs.sha }}
+        run: |
+          if [[ "${BRANCH_SHA}" != "${GITHUB_SHA}" ]]; then
+            echo "The release branch tip differs from the dispatched checkpoint; refusing to create a release for a moved source." >&2
+            exit 1
+          fi
+
       - uses: googleapis/release-please-action@v4
         id: release
         with:
-          # A dedicated credential lets release-PR updates trigger CI. GitHub
-          # requires manual approval for pull_request events from GITHUB_TOKEN.
+          # A dedicated credential starts PR CI automatically; the built-in
+          # token creates approval-required PR runs for maintainers to approve.
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          target-branch: ${{ inputs.release_branch }}
+          skip-github-release: ${{ inputs.phase == 'prepare' }}
+          skip-github-pull-request: ${{ inputs.phase == 'publish' }}
+
+      - name: Require a merged release PR for publication
+        if: inputs.phase == 'publish' && steps.release.outputs.release_created != 'true'
+        run: |
+          echo "No new release was created. Merge the reviewed release PR into its frozen branch before publishing. For a partial publication, re-run failed jobs in the original run." >&2
+          exit 1
+
+      - name: Bind publication to the dispatched checkpoint
+        if: inputs.phase == 'publish' && steps.release.outputs.release_created == 'true'
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
+        run: |
+          if [[ "${RELEASE_SHA}" != "${GITHUB_SHA}" ]]; then
+            echo "The tagged release SHA differs from the dispatched checkpoint; refusing to publish mismatched source provenance. The GitHub release already exists; do not dispatch publish again." >&2
+            exit 1
+          fi
 
       - name: Check out release pull request
-        if: steps.release.outputs.prs_created == 'true'
+        if: inputs.phase == 'prepare' && steps.release.outputs.prs_created == 'true'
         uses: actions/checkout@v6
         with:
           ref: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
           persist-credentials: false
 
       - name: Set up Node.js for generated documentation
-        if: steps.release.outputs.prs_created == 'true'
+        if: inputs.phase == 'prepare' && steps.release.outputs.prs_created == 'true'
         uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
 
       - name: Install dependencies
-        if: steps.release.outputs.prs_created == 'true'
+        if: inputs.phase == 'prepare' && steps.release.outputs.prs_created == 'true'
         run: npm ci
 
       - name: Regenerate release documentation
-        if: steps.release.outputs.prs_created == 'true'
+        if: inputs.phase == 'prepare' && steps.release.outputs.prs_created == 'true'
         run: npm run docs:generate
 
       - name: Commit canonical release catalog
-        if: steps.release.outputs.prs_created == 'true'
+        if: inputs.phase == 'prepare' && steps.release.outputs.prs_created == 'true'
         shell: bash
         env:
           # Use the same identity for the follow-up commit so it also triggers CI.
@@ -92,13 +174,16 @@ jobs:
   publish:
     name: Publish to npm
     needs: release-please
-    if: needs.release-please.outputs.release_created == 'true'
+    if: inputs.phase == 'publish' && needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.release-please.outputs.sha }}
+          persist-credentials: false
 
       - uses: actions/setup-node@v6
         with:
@@ -160,7 +245,7 @@ jobs:
   publish-mcp:
     name: Publish to MCP Registry
     needs: [release-please, publish]
-    if: needs.release-please.outputs.release_created == 'true' && needs.publish.result == 'success'
+    if: inputs.phase == 'publish' && needs.release-please.outputs.release_created == 'true' && needs.publish.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -168,7 +253,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
+          ref: ${{ needs.release-please.outputs.sha }}
           persist-credentials: false
 
       - name: Verify package and registry metadata versions

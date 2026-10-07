@@ -9,6 +9,7 @@ import { err, ok, type Result } from "../../domain/result.js";
 import {
   analysisQueryId,
   createAnalysisSnapshotEntry,
+  createAnalysisSnapshotWorkflowEntry,
   snapshotBinding,
   snapshotMatchesProfile,
   snapshotMatchesTarget,
@@ -16,6 +17,7 @@ import {
   parseAnalysisSnapshot,
   type AnalysisSnapshot,
   type AnalysisSnapshotEntry,
+  type AnalysisSnapshotWorkflowEntry,
   type AnalysisSnapshotBinding,
   type AnalysisSnapshotTarget,
 } from "../../domain/analysisSnapshot.js";
@@ -54,6 +56,9 @@ const DOCUMENT_SCOPED_OPERATIONS: ReadonlySet<string> = new Set(
   ),
 );
 
+/** Maximum duplicated result bindings retained across direct and workflow queries. */
+export const SNAPSHOT_CACHE_ENTRY_CEILING = 10_000;
+
 /** Whether an operation is immutable and independent of provider UI state. */
 export const isSnapshotCacheable = (
   operation: AnalysisOperation,
@@ -73,6 +78,7 @@ export const isSnapshotCacheable = (
 /** Bounded in-memory cache for one immutable binary identity. */
 export class AnalysisSnapshotCache {
   readonly #entries = new Map<string, AnalysisSnapshotEntry>();
+  readonly #workflowEntries = new Map<string, AnalysisSnapshotWorkflowEntry>();
   #target: AnalysisSnapshotTarget | undefined;
   #binding: AnalysisSnapshotBinding | undefined;
 
@@ -93,7 +99,7 @@ export class AnalysisSnapshotCache {
 
   /** Replace cache state when the target or selected profile changes. */
   select(target: BinaryTarget, profile: AnalysisProfileCommitment): void {
-    if (!this.matches(target, profile)) this.#entries.clear();
+    if (!this.matches(target, profile)) this.#clearEntries();
     this.#target = snapshotTarget(target);
     this.#binding = snapshotBinding(profile);
   }
@@ -109,13 +115,19 @@ export class AnalysisSnapshotCache {
           snapshot.binding.analysis_profile,
         ))
     )
-      this.#entries.clear();
+      this.#clearEntries();
     this.#target = structuredClone(snapshot.target);
     this.#binding = structuredClone(snapshot.binding);
     let imported = 0;
     for (const entry of snapshot.entries) {
+      if (!this.#entries.has(entry.query_id) && !this.#hasCapacity()) continue;
       if (!this.#entries.has(entry.query_id)) imported += 1;
       this.#entries.set(entry.query_id, structuredClone(entry));
+    }
+    for (const entry of snapshot.workflow_entries ?? []) {
+      if (!this.#workflowEntries.has(entry.query_id) && !this.#hasCapacity())
+        continue;
+      this.#workflowEntries.set(entry.query_id, structuredClone(entry));
     }
     return imported;
   }
@@ -137,6 +149,9 @@ export class AnalysisSnapshotCache {
           target: snapshotTargetIdentity,
           binding,
           entries: this.entries(),
+          ...(this.workflowEntries().length === 0
+            ? {}
+            : { workflow_entries: this.workflowEntries() }),
           evidence_bundle: retainedEvidence,
         }),
       );
@@ -193,6 +208,47 @@ export class AnalysisSnapshotCache {
       .map((entry) => structuredClone(entry));
   }
 
+  /** Return canonical composed-workflow entries for persistence. */
+  workflowEntries(): AnalysisSnapshotWorkflowEntry[] {
+    return [...this.#workflowEntries.values()]
+      .sort((left, right) => left.query_id.localeCompare(right.query_id))
+      .map((entry) => structuredClone(entry));
+  }
+
+  /** Record one exact derived workflow result unless the shared cache is full. */
+  recordWorkflow(input: {
+    readonly target: BinaryTarget;
+    readonly profile: AnalysisProfileCommitment;
+    readonly operation: string;
+    readonly parameters: Readonly<Record<string, JsonValue>>;
+    readonly execution: {
+      readonly result: JsonValue;
+      readonly rawResult: JsonValue | null;
+      readonly provider: AnalysisExecution["provider"];
+      readonly analysisProfile: AnalysisProfileCommitment;
+      readonly limitations: readonly string[];
+      readonly locations: AnalysisExecution["locations"];
+      readonly subject: AnalysisExecution["subject"];
+    };
+  }): void {
+    this.select(input.target, input.profile);
+    const queryId = analysisQueryId(
+      snapshotTarget(input.target),
+      snapshotBinding(input.profile),
+      input.operation,
+      input.parameters,
+    );
+    if (!this.#workflowEntries.has(queryId) && !this.#hasCapacity()) return;
+    const entry = createAnalysisSnapshotWorkflowEntry({
+      target: snapshotTarget(input.target),
+      binding: snapshotBinding(input.profile),
+      operation: input.operation,
+      parameters: input.parameters,
+      execution: input.execution,
+    });
+    this.#workflowEntries.set(entry.query_id, entry);
+  }
+
   /** Replay an exact provider-specific query, marking its cached provenance. */
   lookup(
     target: BinaryTarget,
@@ -246,8 +302,14 @@ export class AnalysisSnapshotCache {
     readonly execution: AnalysisExecution;
   }): void {
     const { target, profile, operation, parameters, execution } = input;
-    if (this.#entries.size >= 10_000) return;
     this.select(target, profile);
+    const queryId = analysisQueryId(
+      snapshotTarget(target),
+      snapshotBinding(profile),
+      operation,
+      parameters,
+    );
+    if (!this.#entries.has(queryId) && !this.#hasCapacity()) return;
     const entry = createAnalysisSnapshotEntry({
       target: snapshotTarget(target),
       binding: snapshotBinding(profile),
@@ -260,8 +322,20 @@ export class AnalysisSnapshotCache {
 
   /** Forget all target-bound entries. */
   clear(): void {
-    this.#entries.clear();
+    this.#clearEntries();
     this.#target = undefined;
     this.#binding = undefined;
+  }
+
+  #clearEntries(): void {
+    this.#entries.clear();
+    this.#workflowEntries.clear();
+  }
+
+  #hasCapacity(): boolean {
+    return (
+      this.#entries.size + this.#workflowEntries.size <
+      SNAPSHOT_CACHE_ENTRY_CEILING
+    );
   }
 }
