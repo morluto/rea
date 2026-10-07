@@ -70,6 +70,7 @@ it("reuses immutable engine state while keeping each Evidence observation separa
 
 it("bounds output per operation across a retained session rather than accumulating earlier captures", async () => {
   const { service, apk, launches, provider } = await setup("large-manifest");
+  const expectedManifest = "x".repeat(1024 * 1024);
   for (let index = 0; index < 34; index += 1) {
     const result = await service.execute("inspect_android_package", {
       path: apk,
@@ -78,8 +79,8 @@ it("bounds output per operation across a retained session rather than accumulati
     expect(
       androidResultSchemas.inspect_android_package.parse(
         result.value.normalized_result,
-      ).manifest.text.length,
-    ).toBe(1024 * 1024);
+      ).manifest.text,
+    ).toBe(expectedManifest);
   }
   expect(launches).toHaveLength(1);
   await provider.close();

@@ -32,7 +32,8 @@ export class JadxMcpTransport implements Transport {
   readonly runId = randomUUID();
   #spawned: SpawnedOwnedProviderProcess | undefined;
   #supervisor: ProviderProcessSupervisor | undefined;
-  #buffer = Buffer.alloc(0);
+  #frameFragments: Buffer[] = [];
+  #frameBytes = 0;
   #bytes = 0;
   #started = false;
   #closed = false;
@@ -161,18 +162,24 @@ export class JadxMcpTransport implements Transport {
       );
       return;
     }
-    this.#buffer = Buffer.concat([this.#buffer, bytes]);
     try {
-      let newline: number;
-      while ((newline = this.#buffer.indexOf(10)) !== -1) {
-        if (newline > MAX_FRAME_BYTES)
+      let offset = 0;
+      while (offset < bytes.length) {
+        const newline = bytes.indexOf(10, offset);
+        const end = newline === -1 ? bytes.length : newline;
+        const fragment = bytes.subarray(offset, end);
+        const frameBytes = this.#frameBytes + fragment.length;
+        if (frameBytes > MAX_FRAME_BYTES)
           throw new Error(`JADX MCP frame exceeds ${MAX_FRAME_BYTES} bytes`);
-        const line = this.#buffer.subarray(0, newline).toString("utf8");
-        this.#buffer = this.#buffer.subarray(newline + 1);
-        this.onmessage?.(deserializeMessage(line));
+        if (fragment.length > 0) this.#frameFragments.push(fragment);
+        this.#frameBytes = frameBytes;
+        if (newline === -1) return;
+        const frame = Buffer.concat(this.#frameFragments, this.#frameBytes);
+        this.#frameFragments = [];
+        this.#frameBytes = 0;
+        this.onmessage?.(deserializeMessage(frame.toString("utf8")));
+        offset = newline + 1;
       }
-      if (this.#buffer.length > MAX_FRAME_BYTES)
-        throw new Error(`JADX MCP frame exceeds ${MAX_FRAME_BYTES} bytes`);
     } catch (cause) {
       this.#fail(cause instanceof Error ? cause : new Error(String(cause)));
     }
