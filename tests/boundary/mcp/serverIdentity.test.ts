@@ -77,6 +77,17 @@ const statusCapability = (
 });
 
 describe("server and catalog identity", () => {
+  it("retains all catalog identity fields through transport serialization and detached clones", () => {
+    const serialized = JSON.parse(JSON.stringify(CATALOG_IDENTITY));
+    expect(structuredClone(CATALOG_IDENTITY)).toEqual(serialized);
+    expect(serialized.digests).toEqual(CATALOG_IDENTITY.digests);
+    expect(serialized.tools).toHaveLength(TOOL_CONTRACTS.length);
+    const identity = createServerIdentity({
+      startedAt: "2026-07-13T00:00:00.000Z",
+    });
+    expect(JSON.parse(JSON.stringify(identity)).catalog).toEqual(serialized);
+  });
+
   it("derives package and SDK versions from canonical package metadata", async () => {
     const packageJson = JSON.parse(await readFile("package.json", "utf8"));
     const packageLock = JSON.parse(await readFile("package-lock.json", "utf8"));

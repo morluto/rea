@@ -9,26 +9,31 @@ import { CLI_COMMAND_NAMES } from "./cliCommandNames.js";
 
 export { CLI_COMMAND_NAMES } from "./cliCommandNames.js";
 
-const toolCatalog = TOOL_CONTRACTS.map((contract) => ({
-  name: contract.name,
-  title: contract.title,
-  surface: contract.kind,
-  description: contract.description,
-  effects: { ...contract.effects },
-  annotations: contract.annotations,
-  input_schema: {
-    type: "object",
-    ...z.toJSONSchema(contract.inputSchema, {
-      unrepresentable: "any",
-    }),
-  },
-  output_schema: {
-    type: "object",
-    ...z.toJSONSchema(contract.outputSchema, {
-      unrepresentable: "any",
-    }),
-  },
-})).sort((left, right) => left.name.localeCompare(right.name));
+const sortedToolContracts = [...TOOL_CONTRACTS].sort((left, right) =>
+  left.name.localeCompare(right.name),
+);
+
+const createToolCatalog = () =>
+  sortedToolContracts.map((contract) => ({
+    name: contract.name,
+    title: contract.title,
+    surface: contract.kind,
+    description: contract.description,
+    effects: { ...contract.effects },
+    annotations: contract.annotations,
+    input_schema: {
+      type: "object",
+      ...z.toJSONSchema(contract.inputSchema, {
+        unrepresentable: "any",
+      }),
+    },
+    output_schema: {
+      type: "object",
+      ...z.toJSONSchema(contract.outputSchema, {
+        unrepresentable: "any",
+      }),
+    },
+  }));
 
 const promptCatalog = PROMPT_CONTRACTS.map((contract) => ({
   name: contract.name,
@@ -45,26 +50,35 @@ const digest = (value: unknown): string => {
   return createHash("sha256").update(encoded).digest("hex");
 };
 
-/** Stable, schema-sensitive identity for every public REA surface. */
-export const CATALOG_IDENTITY = {
-  counts: {
-    cli_commands: CLI_COMMAND_NAMES.length,
-    mcp_tools: toolCatalog.length,
-    mcp_prompts: promptCatalog.length,
-  },
-  digests: {
-    tools_sha256: digest(toolCatalog),
+const createCatalogDigests = () => {
+  const tools = createToolCatalog();
+  return {
+    tools_sha256: digest(tools),
     prompts_sha256: digest(promptCatalog),
     combined_sha256: digest({
       cli: CLI_COMMAND_NAMES,
-      tools: toolCatalog,
+      tools,
       prompts: promptCatalog,
     }),
+  } as const;
+};
+
+let catalogDigests: ReturnType<typeof createCatalogDigests> | undefined;
+
+/** Stable, schema-sensitive identity; schema digests are computed on first use. */
+export const CATALOG_IDENTITY = {
+  counts: {
+    cli_commands: CLI_COMMAND_NAMES.length,
+    mcp_tools: sortedToolContracts.length,
+    mcp_prompts: promptCatalog.length,
   },
-  tools: toolCatalog.map(({ name, surface, effects, annotations }) => ({
+  get digests() {
+    return (catalogDigests ??= createCatalogDigests());
+  },
+  tools: sortedToolContracts.map(({ name, kind, effects, annotations }) => ({
     name,
-    surface,
-    effects,
+    surface: kind,
+    effects: { ...effects },
     annotations: {
       read_only: annotations.readOnlyHint ?? false,
       destructive: annotations.destructiveHint ?? false,
