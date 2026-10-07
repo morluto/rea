@@ -3,7 +3,8 @@ import { AnyMap, eachMapping } from "@jridgewell/trace-mapping";
 
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import { isUrlLikeModuleSpecifier } from "../domain/webBundleAnalyzerAst.js";
-import { analyzeParsedJavaScriptSemantics } from "../domain/javascript/javascriptSemanticAnalysis.js";
+import { analyzeParsedJavaScriptReferences } from "../domain/javascript/javascriptSemanticAnalysis.js";
+import { traverseJavaScriptAst } from "../domain/javascript/javascriptSemanticTraversal.js";
 import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
 import { hasValidSourceMapContents } from "../domain/sourceMapContents.js";
 import type {
@@ -237,42 +238,42 @@ const originalModuleEdges = (
     // after an unrecoverable point are missing, so the edges are a subset.
     if (parsed.errors.length > 0) incomplete.push(source.source);
     let unboundRequires: ReadonlySet<string> | undefined;
-    t.traverseFast(parsed, (node) => {
-      const dependency = originalDependency(node);
-      if (dependency === null) return;
-      const { kind, specifier } = dependency;
-      if (kind === "require" && t.isCallExpression(node)) {
-        unboundRequires ??= new Set(
-          analyzeParsedJavaScriptSemantics(parsed)
-            .references.filter(
-              ({ name, role, resolution }) =>
-                name === "require" &&
-                role === "read" &&
-                resolution === "unbound",
+    traverseJavaScriptAst(parsed, {
+      enter: (node) => {
+        const dependency = originalDependency(node);
+        if (dependency === null) return;
+        const { kind, specifier } = dependency;
+        if (kind === "require" && t.isCallExpression(node)) {
+          unboundRequires ??= new Set(
+            analyzeParsedJavaScriptReferences(parsed, "require")
+              .filter(
+                ({ role, resolution }) =>
+                  role === "read" && resolution === "unbound",
+              )
+              .map(
+                ({ location }) =>
+                  `${String(location.start.line)}:${String(location.start.column)}`,
+              ),
+          );
+          const location = node.callee.loc?.start;
+          if (
+            location === undefined ||
+            !unboundRequires.has(
+              `${String(location.line)}:${String(location.column)}`,
             )
-            .map(
-              ({ location }) =>
-                `${String(location.start.line)}:${String(location.start.column)}`,
-            ),
-        );
-        const location = node.callee.loc?.start;
-        if (
-          location === undefined ||
-          !unboundRequires.has(
-            `${String(location.line)}:${String(location.column)}`,
           )
-        )
-          return;
-      }
-      const key = `${source.source}\0${kind}\0${specifier}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-      edges.push({
-        from_source: source.source,
-        kind,
-        specifier,
-        resolved_source: resolveOriginalSource(specifier, source.source),
-      });
+            return;
+        }
+        const key = `${source.source}\0${kind}\0${specifier}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        edges.push({
+          from_source: source.source,
+          kind,
+          specifier,
+          resolved_source: resolveOriginalSource(specifier, source.source),
+        });
+      },
     });
   }
   return { edges, incomplete };

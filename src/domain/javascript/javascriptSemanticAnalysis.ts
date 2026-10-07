@@ -5,6 +5,7 @@ import {
   type JavaScriptModuleOrigin,
   type JavaScriptSemanticDefinition,
   type JavaScriptSemanticIr,
+  type JavaScriptSemanticReference,
 } from "./javascriptSemanticIr.js";
 import {
   collectSemanticModuleLink,
@@ -69,6 +70,16 @@ export const analyzeJavaScriptSemantics = (
   return file === null
     ? failedJavaScriptSemanticIr()
     : analyzeParsedJavaScriptSemantics(file);
+};
+
+/** Recover lexical references, optionally for one name, without evaluating values or provenance. */
+export const analyzeParsedJavaScriptReferences = (
+  file: ParsedJavaScriptSource,
+  name?: string,
+): readonly JavaScriptSemanticReference[] => {
+  const state = createState(file.program);
+  collectDefinitions(file.program, state);
+  return collectSemanticReferences(file.program, state, name);
 };
 
 /** Recover semantics from an already parsed JavaScript artifact. */
