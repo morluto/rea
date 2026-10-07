@@ -1,13 +1,13 @@
-import { canonicalDigest } from "../domain/comparisonSemantics.js";
-import type { ArtifactEntry } from "../artifacts/ArtifactReader.js";
+import { canonicalDigest } from "../../domain/comparisonSemantics.js";
+import type { ArtifactEntry } from "../ArtifactReader.js";
 import type {
   ArtifactCommand,
   ArtifactEdge,
   ArtifactNode,
   ArtifactOccurrence,
-} from "../domain/artifactGraph.js";
-import { zipPackageFormatForPath } from "../domain/zipPackageFormat.js";
-import { mzWindowsHeaderOffset, parseDosMzHeader } from "../domain/dosMz.js";
+} from "../../domain/artifactGraph.js";
+import { zipPackageFormatForPath } from "../../domain/zipPackageFormat.js";
+import { mzWindowsHeaderOffset, parseDosMzHeader } from "../../domain/dosMz.js";
 
 /** Mutable internal occurrence used until root-bound IDs are known. */
 export interface MutableOccurrence {

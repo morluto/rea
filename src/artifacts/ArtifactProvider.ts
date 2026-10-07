@@ -9,8 +9,8 @@ import {
 } from "../application/AnalysisProvider.js";
 import { inspectBundleKeyedArchive } from "./apple/KeyedArchiveReader.js";
 import { basename, dirname } from "node:path";
-import { inventoryArtifact } from "../application/ArtifactInventory.js";
-import { extractArtifact } from "../application/ArtifactExtraction.js";
+import { inventoryArtifact } from "./inventory/ArtifactInventory.js";
+import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import { analyzeInterfaceBuilderBundle } from "./apple/InterfaceBuilderAnalysis.js";
 import { analyzeAppleAssetCatalogs } from "./apple/AppleAssetCatalogAnalysis.js";
 import {
@@ -33,7 +33,7 @@ import {
 } from "./ArtifactProviderMetadata.js";
 import { createEvidence } from "../domain/evidence.js";
 import { createArtifactInspection } from "../domain/artifactInspection.js";
-import { resolveArtifactIntegrityPolicy } from "../application/ArtifactInventory/policy.js";
+import { resolveArtifactIntegrityPolicy } from "./inventory/policy.js";
 
 /** Read-only inventory and exclusively owned extraction provider. */
 export class ArtifactProvider implements AnalysisProvider {

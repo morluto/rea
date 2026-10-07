@@ -12,7 +12,7 @@ import {
   javascriptArtifactReconstructionInputSchema,
   type JavaScriptArtifactReconstructionInput,
 } from "./JavaScriptArtifactReconstructionInput.js";
-import { scanCanonicalArtifactInventory } from "../ArtifactInventory.js";
+import { scanCanonicalArtifactInventory } from "../../artifacts/inventory/ArtifactInventory.js";
 import { summarizeElectronBoundaries } from "./ElectronBoundaryAnalysis.js";
 import { buildJavaScriptSemanticGraph } from "./JavaScriptSemanticGraphBuilder.js";
 import type { ProgressReporter } from "../ProgressReporter.js";

@@ -385,6 +385,30 @@ claims. Actual Swift/Xcode, assetutil, native NIB, bundle signing and DMG lifecy
 claims require the real Apple lane. Native binary API/value-flow semantics and
 shared cross-domain contract aggregates keep their separate owners.
 
+## Artifact inventory and extraction ownership
+
+`src/artifacts/inventory/` owns format classification, reader selection, inventory
+policy, canonical scanning and artifact graph construction. The shared artifact
+provider and JavaScript reconstruction workflow consume this owner. Snapshot
+semantics remain in `src/domain/artifactInventorySnapshot.ts`.
+
+`src/artifacts/extraction/` owns member selection, integrity checks and transactional
+materialization through the existing readers and safe output tree. Reader cleanup,
+cancellation, rollback, archive containment and caller-visible results retain their
+existing behavior. Acquisition guards reject imports from these producer owners
+into application workflows, production composition or CLI/MCP adapters.
+
+`src/application/artifacts/ArtifactExtractionDestination.ts` owns the caller's
+default temporary output-root choice for both CLI and MCP. The adapters pass this
+destination to the existing provider operation; format handling and member writes
+remain in the artifact owner.
+
+Add format-specific acquisition behavior beside the inventory readers and exercise
+its actual producer representation in filesystem boundary tests. Add caller
+workflow behavior in the application owner and verify both adapters. The installed
+package lane checks inventory identity and extraction through CLI and MCP; the
+real Apple bundle lane separately establishes DMG mount and detach behavior.
+
 ## Binary production composition closure
 
 `src/composition/binary.ts` is the shared production owner for deep candidate

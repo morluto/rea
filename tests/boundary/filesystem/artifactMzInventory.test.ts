@@ -3,10 +3,10 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { classifyArtifactContent } from "../../../src/application/ArtifactGraphConstruction.js";
-import { classifyRoot } from "../../../src/application/ArtifactInventory/classify.js";
+import { classifyArtifactContent } from "../../../src/artifacts/inventory/ArtifactGraphConstruction.js";
+import { classifyRoot } from "../../../src/artifacts/inventory/classify.js";
 import { ARTIFACT_CLASSIFICATION_PREFIX_BYTES } from "../../../src/artifacts/ArtifactHash.js";
-import { scanCanonicalArtifactInventory } from "../../../src/application/ArtifactInventory/scanCanonical.js";
+import { scanCanonicalArtifactInventory } from "../../../src/artifacts/inventory/scanCanonical.js";
 import { targetFormatSchema } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";

@@ -1,29 +1,29 @@
 import { lstat, realpath } from "node:fs/promises";
 
-import { canonicalDigest } from "../domain/comparisonSemantics.js";
-import { AsarArtifactReader } from "../artifacts/AsarArtifactReader.js";
+import { canonicalDigest } from "../../domain/comparisonSemantics.js";
+import { AsarArtifactReader } from "../AsarArtifactReader.js";
 import {
   ArtifactPathRegistry,
   normalizeArtifactPath,
-} from "../artifacts/ArtifactPaths.js";
+} from "../ArtifactPaths.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
-} from "../artifacts/ArtifactReader.js";
-import { DirectoryArtifactReader } from "../artifacts/DirectoryArtifactReader.js";
-import { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
-import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
-import { MachOSliceArtifactReader } from "../artifacts/MachOSliceArtifactReader.js";
+} from "../ArtifactReader.js";
+import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
+import { SafeOutputTree } from "../SafeOutputTree.js";
+import { ZipArtifactReader } from "../ZipArtifactReader.js";
+import { MachOSliceArtifactReader } from "../MachOSliceArtifactReader.js";
 import {
   artifactExtractionResultSchema,
   type ArtifactExtractionResult,
   type ArtifactGraphManifest,
   type ArtifactNode,
   type ArtifactOccurrence,
-} from "../domain/artifactGraph.js";
-import type { BinaryTarget } from "../domain/binaryTarget.js";
-import { scanArtifactInventory } from "./ArtifactInventory.js";
+} from "../../domain/artifactGraph.js";
+import type { BinaryTarget } from "../../domain/binaryTarget.js";
+import { scanArtifactInventory } from "../inventory/ArtifactInventory.js";
 
 /** Local extraction input with the output root chosen by the adapter. */
 export interface ArtifactExtractionInput {

@@ -25,10 +25,12 @@ if (process.platform !== "win32" || process.arch !== "x64")
   );
 const workspace = await mkdtemp(join(tmpdir(), "rea-packaged-ghidra-"));
 const exec = promisify(execFile);
-let packageRoot = resolve(process.argv[2] ?? ".");
+const x86Fixture = process.argv[2] === "--x86";
+const packageRootArgument = x86Fixture ? undefined : process.argv[2];
+let packageRoot = resolve(packageRootArgument ?? ".");
 // The default lane verifies the npm artifact in an isolated prefix. Explicit
 // package roots support an already-installed artifact without a second install.
-if (process.argv[2] === undefined) {
+if (packageRootArgument === undefined) {
   try {
     const npmEntry =
       process.env.npm_execpath ??
@@ -77,7 +79,10 @@ if (process.argv[2] === undefined) {
   }
 }
 const target = resolve(
-  process.argv[3] ?? "build/fixtures/rea-ghidra-windows.exe",
+  process.argv[3] ??
+    (x86Fixture
+      ? "build/fixtures/rea-ghidra-windows-x86.exe"
+      : "build/fixtures/rea-ghidra-windows.exe"),
 );
 let TOOL_CONTRACTS, native, token, sha256;
 try {
@@ -215,7 +220,8 @@ try {
   };
   try {
     await client.connect(transport);
-    await call("open_binary", { path: target, provider_id: "ghidra" });
+    await call("open_binary", { path: target });
+    await call("binary_overview", {});
     assert.equal((await call("list_documents", {})).length, 1);
     await call("list_names", {});
     const procedures = await call("list_procedures", {});

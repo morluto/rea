@@ -5,7 +5,7 @@ import type { Stats } from "node:fs";
 import {
   ArtifactReaderFailure,
   type ArtifactReader,
-} from "../../artifacts/ArtifactReader.js";
+} from "../ArtifactReader.js";
 import {
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,
@@ -20,10 +20,10 @@ import {
   rekeyOccurrences,
   rootOccurrenceFor,
   type MutableOccurrence,
-} from "../ArtifactGraphConstruction.js";
+} from "./ArtifactGraphConstruction.js";
 import { canonicalDigest } from "../../domain/comparisonSemantics.js";
 import { classifyRoot } from "./classify.js";
-import { hashReadable, type HashResult } from "../../artifacts/ArtifactHash.js";
+import { hashReadable, type HashResult } from "../ArtifactHash.js";
 import { createReader, inventoryLimitations } from "./reader.js";
 import {
   scanReader,

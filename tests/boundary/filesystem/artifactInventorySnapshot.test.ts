@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { scanArtifactInventory } from "../../../src/application/ArtifactInventory.js";
+import { scanArtifactInventory } from "../../../src/artifacts/inventory/ArtifactInventory.js";
 
 describe("artifact inventory snapshot", () => {
   it("retains the complete scan after the source directory changes", async () => {
