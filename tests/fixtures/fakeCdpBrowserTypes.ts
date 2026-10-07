@@ -61,6 +61,7 @@ export interface FakeOptions {
   readonly cachedResponseBody?: string;
   readonly invalidResponseBodyBase64?: boolean;
   readonly webMcpTools?: boolean;
+  readonly webMcpSameUrlRegistrations?: "retain" | "remove-second";
   readonly webMcpFrameCount?: number;
   readonly webMcpSchemaPropertyCount?: number;
   readonly webMcpChildLeavesScope?: boolean;
