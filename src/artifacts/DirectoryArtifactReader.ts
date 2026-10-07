@@ -85,7 +85,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
       );
     const handle = await open(
       entry.adapterKey,
-      constants.O_RDONLY | constants.O_NOFOLLOW,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
     );
     try {
       const observed = await handle.stat();
