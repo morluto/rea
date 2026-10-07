@@ -138,6 +138,9 @@ describe("managed member reference bounds", () => {
         },
       ],
     });
+    expect(result.coverage.issues[0]?.offset).toBe(
+      (result.types[0]?.row_offset ?? 0) + 8,
+    );
   });
 
   it("retains a MemberRef with an out-of-range parent as an unknown partial reference", () => {
@@ -164,6 +167,9 @@ describe("managed member reference bounds", () => {
         },
       ],
     });
+    expect(result.coverage.issues[0]?.offset).toBe(
+      result.member_refs[0]?.row_offset,
+    );
   });
 
   it("reports a null required MemberRef parent without dropping the reference", () => {

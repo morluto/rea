@@ -15,6 +15,8 @@ interface ManagedPeFixtureOptions {
   readonly metadataValidMaskExtra?: bigint;
   readonly methodName?: string;
   readonly methodSignature?: Buffer;
+  readonly moduleRowCount?: number;
+  readonly assemblyRowCount?: number;
   readonly memberRefParentRaw?: number;
   readonly mvid?: Buffer;
   readonly pinvoke?: {
@@ -27,7 +29,7 @@ interface ManagedPeFixtureOptions {
   readonly references?: readonly string[];
   readonly resourceImplementationRaw?: number;
   readonly resourceData?: Buffer;
-  readonly targetFramework?: string;
+  readonly targetFramework?: string | null;
   readonly typeName?: string;
   readonly typeNamespace?: string;
 }
@@ -493,22 +495,48 @@ interface FixtureIndexWidths {
   readonly implementation: MetadataIndexSize;
 }
 
+const repeatedRows = (
+  count: number,
+  createRow: () => Buffer,
+): readonly Buffer[] => Array.from({ length: count }, createRow);
+
+const customAttributeRows = (
+  {
+    options,
+    indexes,
+    heapSizes,
+  }: Pick<FixtureMetadataRowContext, "options" | "indexes" | "heapSizes">,
+  widths: FixtureIndexWidths,
+): readonly Buffer[] =>
+  options.targetFramework === null
+    ? []
+    : [
+        customAttributeRow(
+          indexes.attributeBlob,
+          options,
+          widths.hasCustomAttribute,
+          widths.customAttributeType,
+          heapSizes.blobs,
+        ),
+      ];
+
 const fixtureIndexWidths = ({
+  options,
   referenceStringIndexes,
   indexes,
 }: FixtureMetadataRowContext): FixtureIndexWidths => {
   const rowCounts = new Map<number, number>([
-    [0, 1],
+    [0, options.moduleRowCount ?? 1],
     [1, 1],
     [2, 1],
     [4, 1],
     [6, 1],
     [8, 0],
     [10, 1],
-    [12, 1],
+    [12, options.targetFramework === null ? 0 : 1],
     ...(indexes.pinvokeModuleName === null ? [] : ([[26, 1]] as const)),
     ...(indexes.pinvokeImportName === null ? [] : ([[28, 1]] as const)),
-    [32, 1],
+    [32, options.assemblyRowCount ?? 1],
     [35, referenceStringIndexes.length],
     [40, 1],
   ]);
@@ -551,7 +579,12 @@ const fixtureMetadataRows = ({
     heapSizes,
   });
   const rows = new Map<number, readonly Buffer[]>([
-    [0, [moduleRow(indexes.moduleName, heapSizes.strings, heapSizes.guids)]],
+    [
+      0,
+      repeatedRows(options.moduleRowCount ?? 1, () =>
+        moduleRow(indexes.moduleName, heapSizes.strings, heapSizes.guids),
+      ),
+    ],
     [
       1,
       [
@@ -621,18 +654,7 @@ const fixtureMetadataRows = ({
         }),
       ],
     ],
-    [
-      12,
-      [
-        customAttributeRow(
-          indexes.attributeBlob,
-          options,
-          widths.hasCustomAttribute,
-          widths.customAttributeType,
-          heapSizes.blobs,
-        ),
-      ],
-    ],
+    [12, customAttributeRows({ options, indexes, heapSizes }, widths)],
     ...(indexes.pinvokeModuleName === null
       ? []
       : ([
@@ -658,7 +680,9 @@ const fixtureMetadataRows = ({
         ] as const)),
     [
       32,
-      [assemblyRow(indexes.assemblyName, heapSizes.strings, heapSizes.blobs)],
+      repeatedRows(options.assemblyRowCount ?? 1, () =>
+        assemblyRow(indexes.assemblyName, heapSizes.strings, heapSizes.blobs),
+      ),
     ],
     [
       35,
@@ -725,7 +749,9 @@ const buildManagedFixtureMetadata = (
   const constructorSignature = blobs.add(Buffer.from([0x20, 0x01, 0x01, 0x0e]));
   const attributeBlob = blobs.add(
     fixedStringAttributeBlob(
-      options.targetFramework ?? ".NETCoreApp,Version=v8.0",
+      options.targetFramework === null
+        ? ".NETCoreApp,Version=v8.0"
+        : (options.targetFramework ?? ".NETCoreApp,Version=v8.0"),
     ),
   );
   const stringSize = indexSize(strings.size);

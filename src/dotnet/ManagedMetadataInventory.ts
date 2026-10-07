@@ -73,6 +73,29 @@ const uniqueIssues = (
 const heapExtent = (layout: ManagedMetadataLayout): number =>
   Math.max(layout.strings.size, layout.blob.size);
 
+const validateIdentityTableCounts = (
+  layout: ManagedMetadataLayout,
+  issues: ManagedParseIssue[],
+): void => {
+  const moduleRows = layout.table(0)?.rowCount ?? 0;
+  if (moduleRows !== 1)
+    issues.push({
+      code: "invalid-row",
+      scope: "metadata.Module",
+      offset: layout.table(0)?.offset ?? null,
+      detail: `Module table must contain exactly one row; found ${String(moduleRows)}`,
+    });
+
+  const assemblyRows = layout.table(32)?.rowCount ?? 0;
+  if (assemblyRows > 1)
+    issues.push({
+      code: "invalid-row",
+      scope: "metadata.Assembly",
+      offset: layout.table(32)?.offset ?? null,
+      detail: `Assembly table can contain at most one row; found ${String(assemblyRows)}`,
+    });
+};
+
 const readReferences = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
@@ -152,6 +175,7 @@ export const readManagedMetadataInventory = (
   resourceDirectory: ManagedResourceDirectory | null,
 ): ManagedMetadataInventory => {
   const issues: ManagedParseIssue[] = [];
+  validateIdentityTableCounts(layout, issues);
   const module =
     safeRead(() => readModule(bytes, layout, heapExtent(layout)), issues) ??
     null;

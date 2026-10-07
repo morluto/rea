@@ -218,6 +218,7 @@ export const parseTypes = (
       cursor.readIndex(layout.stringIndexSize),
       layout.strings.size,
     );
+    const extendsOffset = cursor.offset;
     const extendsRaw = cursor.readIndex(layout.codedIndexSize("TypeDefOrRef"));
     const fieldStart = cursor.readIndex(layout.tableIndexSize(4));
     const methodStart = cursor.readIndex(layout.tableIndexSize(6));
@@ -238,7 +239,7 @@ export const parseTypes = (
       issues.push({
         code: "invalid-row",
         scope: `metadata.TypeDef:${metadataToken(2, row)}`,
-        offset: cursor.start,
+        offset: extendsOffset,
         detail: `TypeDef Extends coded index 0x${extendsRaw.toString(16)} is invalid: ${extendsReason}`,
       });
     items.push({

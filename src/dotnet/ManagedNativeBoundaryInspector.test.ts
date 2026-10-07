@@ -108,6 +108,9 @@ describe("managed native boundary coded indexes", () => {
         }),
       ],
     });
+    expect(result.coverage.issues[0]?.offset).toBe(
+      (result.pinvoke_imports[0]?.row_offset ?? 0) + 2,
+    );
   });
 
   it("reports null for the required MemberForwarded index", () => {

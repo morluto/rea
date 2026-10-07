@@ -366,6 +366,7 @@ export const readCustomAttribute = (
   const parentRaw = cursor.readIndex(
     layout.codedIndexSize("HasCustomAttribute"),
   );
+  const typeOffset = cursor.offset;
   const typeRaw = cursor.readIndex(
     layout.codedIndexSize("CustomAttributeType"),
   );
@@ -413,7 +414,7 @@ export const readCustomAttribute = (
       typeReason === null
         ? "CustomAttribute constructor coded index 0x0 is null, but Type must reference a MethodDef or MemberRef row"
         : `CustomAttribute constructor coded index 0x${typeRaw.toString(16)} is invalid: ${typeReason}`,
-      cursor.start,
+      typeOffset,
     );
   const typeName = attributeTypeName(bytes, layout, typeRaw, heapExtent);
   return {

@@ -9,8 +9,66 @@ import {
   buildManagedPeFixture,
   managedPeFixtureTarget,
 } from "./ManagedPe.fixture.js";
+import { readManagedMetadataLayout } from "./ManagedMetadataLayout.js";
+import { readManagedPeLayout } from "./ManagedPeReader.js";
+
+const metadataLayoutFor = (bytes: Buffer) => {
+  const pe = readManagedPeLayout(bytes);
+  if (pe.cli === null) throw new Error("fixture omitted CLI metadata");
+  return readManagedMetadataLayout(
+    bytes,
+    pe.rvaToOffset(pe.cli.metadata.rva, pe.cli.metadata.size, "cli.metadata"),
+    pe.cli.metadata.size,
+  );
+};
 
 describe("managed artifact inventory", () => {
+  it.each([
+    { moduleRowCount: 0, assemblyRowCount: 1, scope: "metadata.Module" },
+    { moduleRowCount: 2, assemblyRowCount: 1, scope: "metadata.Module" },
+    { moduleRowCount: 1, assemblyRowCount: 2, scope: "metadata.Assembly" },
+  ])("marks invalid identity table cardinality partial: %j", (options) => {
+    const bytes = buildManagedPeFixture(options);
+    const target = managedPeFixtureTarget(bytes);
+    const results = [
+      inspectManagedArtifactBytes(bytes, target),
+      inspectManagedMembersBytes(bytes, target),
+      inspectManagedNativeBoundariesBytes(bytes, target),
+    ];
+
+    for (const result of results) {
+      expect(result.metadata.status).toBe("partial");
+      expect(result.coverage).toMatchObject({
+        state: "partial",
+        issues: [
+          expect.objectContaining({
+            code: "invalid-row",
+            scope: options.scope,
+          }),
+        ],
+      });
+    }
+    if (options.moduleRowCount === 0) expect(results[0]?.module).toBeNull();
+    else expect(results[0]?.module?.name).toBe("Fixture.dll");
+  });
+
+  it.each([
+    { moduleRowCount: 1, assemblyRowCount: 0, targetFramework: null },
+    { moduleRowCount: 1, assemblyRowCount: 1 },
+  ])("keeps valid identity table cardinalities complete: %j", (options) => {
+    const bytes = buildManagedPeFixture(options);
+    const result = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.metadata.status).toBe("complete");
+    expect(result.coverage).toMatchObject({ state: "complete", issues: [] });
+    expect(result.assembly?.name ?? null).toBe(
+      options.assemblyRowCount === 0 ? null : "Fixture.Managed",
+    );
+  });
+
   it("statically inspects PE files with more than 96 sections", () => {
     const fixture = buildManagedPeFixture();
     const peOffset = fixture.readUInt32LE(0x3c);
@@ -105,6 +163,10 @@ describe("managed artifact coded indexes", () => {
         }),
       ],
     });
+    const layout = metadataLayoutFor(bytes);
+    expect(result.coverage.issues[0]?.offset).toBe(
+      (result.resources[0]?.row_offset ?? 0) + 8 + layout.stringIndexSize,
+    );
     expect(boundaries.coverage).toMatchObject({
       state: "partial",
       issues: [
@@ -155,6 +217,47 @@ describe("managed artifact coded indexes", () => {
         }),
       ],
     });
+  });
+
+  it("reports coded-index column offsets after widened string and coded-index columns", () => {
+    const references = Array.from(
+      { length: 2_500 },
+      (_, index) => `Reference.${"r".repeat(24)}.${String(index)}`,
+    );
+    const bytes = buildManagedPeFixture({
+      references,
+      extendsRaw: 9,
+      customAttributeTypeRaw: 19,
+    });
+    const layout = metadataLayoutFor(bytes);
+    const artifact = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    const members = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    const extendsIssue = members.coverage.issues.find((issue) =>
+      issue.scope.startsWith("metadata.TypeDef:"),
+    );
+    const attributeIssue = artifact.coverage.issues.find((issue) =>
+      issue.scope.startsWith("metadata.CustomAttribute:"),
+    );
+    const typeDef = members.types[0];
+    const attributeTable = layout.table(12);
+
+    expect(layout.stringIndexSize).toBe(4);
+    expect(layout.codedIndexSize("HasCustomAttribute")).toBe(4);
+    expect(typeDef).toBeDefined();
+    expect(extendsIssue?.offset).toBe(
+      (typeDef?.row_offset ?? 0) + 4 + 2 * layout.stringIndexSize,
+    );
+    expect(attributeTable).toBeDefined();
+    expect(attributeIssue?.offset).toBe(
+      (attributeTable?.offset ?? 0) +
+        layout.codedIndexSize("HasCustomAttribute"),
+    );
   });
 });
 
