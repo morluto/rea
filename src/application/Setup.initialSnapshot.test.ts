@@ -29,3 +29,23 @@ it("uses the shared initial host snapshot for setup planning", async () => {
   );
   expect(host.doctorCalls).toBe(1);
 });
+
+it("refreshes doctor after approved setup changes", async () => {
+  const host = new FakeSetupHost();
+  host.doctorHealthy = false;
+  host.skill = "unchanged";
+  host.clients = [{ name: "codex", configPath: "/codex.json" }];
+  const configureClient = host.configureClient;
+  host.configureClient = (client, providerEnvironment, command) => {
+    host.doctorHealthy = true;
+    return configureClient(client, providerEnvironment, command);
+  };
+
+  const result = await runSetup(
+    { ...options(true), clientIds: ["codex"], installSkill: false },
+    host,
+  );
+
+  expect(result.doctor.healthy).toBe(true);
+  expect(host.doctorCalls).toBe(2);
+});
