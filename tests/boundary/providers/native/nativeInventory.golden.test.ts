@@ -303,10 +303,20 @@ const signatureRunner = (outputs: {
       toolVersion: null,
       versionReason: "fixture",
       arguments: [...arguments_],
-      stdout: "",
-      stderr: response.output,
-      stdoutBytes: 0,
-      stderrBytes: Buffer.byteLength(response.output),
+      // Entitlements XML is printed to stdout; diagnostics to stderr.
+      ...(arguments_.includes("--entitlements")
+        ? {
+            stdout: response.output,
+            stderr: "",
+            stdoutBytes: Buffer.byteLength(response.output),
+            stderrBytes: 0,
+          }
+        : {
+            stdout: "",
+            stderr: response.output,
+            stdoutBytes: 0,
+            stderrBytes: Buffer.byteLength(response.output),
+          }),
       exitCode: response.exitCode,
       signal: null,
     };

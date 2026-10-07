@@ -55,6 +55,27 @@ const outputFor = async (
   throw new Error(`Unexpected fixture tool ${tool}`);
 };
 
+/**
+ * codesign prints display diagnostics to stderr and requirements or
+ * entitlements to stdout.
+ */
+const fixtureStreams = (
+  tool: string,
+  arguments_: readonly string[],
+  output: string,
+) => {
+  const stderr =
+    tool === "codesign" &&
+    !arguments_.includes("-r-") &&
+    !arguments_.includes("--entitlements");
+  return {
+    stdout: stderr ? "" : output,
+    stderr: stderr ? output : "",
+    stdoutBytes: Buffer.byteLength(stderr ? "" : output),
+    stderrBytes: Buffer.byteLength(stderr ? output : ""),
+  };
+};
+
 const capture = (
   tool: string,
   arguments_: readonly string[],
@@ -66,10 +87,7 @@ const capture = (
   toolVersion: null,
   versionReason: "fixture",
   arguments: [...arguments_],
-  stdout: tool === "codesign" ? "" : output,
-  stderr: tool === "codesign" ? output : "",
-  stdoutBytes: Buffer.byteLength(tool === "codesign" ? "" : output),
-  stderrBytes: Buffer.byteLength(tool === "codesign" ? output : ""),
+  ...fixtureStreams(tool, arguments_, output),
   exitCode: 0,
   signal: null,
 });

@@ -33,7 +33,7 @@ describe("native macOS provider discovery and inspection", () => {
     "preserves the exact signing identifier %j reported by codesign",
     (identifier) => {
       const parsed = parseCodeSignature(
-        `Identifier=${identifier}\nTeamIdentifier=not set\nFormat=Mach-O thin (arm64)\n`,
+        `Identifier=${identifier}\nFormat=Mach-O thin (arm64)\nTeamIdentifier=not set\n`,
         false,
       );
       expect(parsed.identifier).toBe(identifier);
@@ -41,6 +41,32 @@ describe("native macOS provider discovery and inspection", () => {
       expect(parsed.format).toBe("Mach-O thin (arm64)");
     },
   );
+
+  it("separates echoed path and identifier text from signature fields", () => {
+    const path = "/apps/x\nAuthority=Forged\nIdentifier=forged";
+    const identifier = "x\nFormat=forged\nAuthority=Forged-5555";
+    const parsed = parseCodeSignature(
+      [
+        `Executable=${path}`,
+        `Identifier=${identifier}`,
+        "Format=Mach-O thin (arm64)",
+        "CodeDirectory v=20400 size=342 flags=0x2(adhoc) hashes=2+2",
+        "CDHash=6aee90e6",
+        "Signature=adhoc",
+        "TeamIdentifier=not set",
+        "",
+      ].join("\r\n"),
+      false,
+      ["/elsewhere", path],
+    );
+    expect(parsed).toMatchObject({
+      identifier,
+      format: "Mach-O thin (arm64)",
+      authorities: [],
+      cdhashes: ["6aee90e6"],
+      team_identifier: null,
+    });
+  });
 
   it("retries a failed native tool resolution and caches only success", async () => {
     let resolutions = 0;

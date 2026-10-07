@@ -6,7 +6,7 @@ export { NATIVE_MACOS_PROVIDER_IDENTITY } from "./NativeMacOSProviderMetadata.js
 import { inspectAppleDispatchMetadata } from "./AppleDispatchMetadata.js";
 import { observeNativeUi } from "./NativeUiObservation.js";
 import { dirname, isAbsolute, resolve } from "node:path";
-import { stat } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 
 import { parse as parseXmlPlist } from "plist";
 import { z } from "zod";
@@ -298,8 +298,7 @@ class NativeMacOSClient implements AnalysisClient {
       { signal, acceptNonZero: true },
     );
     if (!display.ok) return display;
-    const displayOutput = commandOutput(display.value);
-    const unsigned = isUnsignedCodeSignObservation(display.value);
+    const unsigned = isNonzeroUnsignedObservation(display.value);
     const displayFailure = codeSignCaptureFailure(display.value);
     if (displayFailure !== null) return err(displayFailure);
     const requirements = await this.#run(
@@ -320,14 +319,16 @@ class NativeMacOSClient implements AnalysisClient {
     if (!entitlements.ok) return entitlements;
     const entitlementsFailure = codeSignCaptureFailure(entitlements.value);
     if (entitlementsFailure !== null) return err(entitlementsFailure);
-    const parsed = parseCodeSignature(displayOutput, unsigned);
+    // codesign echoes the resolved executable path in its diagnostics.
+    const parsed = parseCodeSignature(display.value.stderr, unsigned, [
+      this.target.path,
+      ...(await canonicalPath(this.target.path)),
+    ]);
+    // The requirement is printed to stdout; stderr echoes the path.
     const requirementText =
-      /designated\s*=>\s*(.+)$/mu.exec(
-        commandOutput(requirements.value),
-      )?.[1] ?? null;
-    const entitlementValue = parseEntitlements(
-      commandOutput(entitlements.value),
-    );
+      /designated\s*=>\s*(.+)$/mu.exec(requirements.value.stdout)?.[1] ?? null;
+    // Entitlements XML is printed to stdout; stderr echoes the path.
+    const entitlementValue = parseEntitlements(entitlements.value.stdout);
     const captures = [display.value, requirements.value, entitlements.value];
     const limitations = [...parsed.limitations];
     const mixedSigning =
@@ -336,7 +337,7 @@ class NativeMacOSClient implements AnalysisClient {
         isNonzeroUnsignedObservation(entitlements.value));
     if (mixedSigning) {
       const slices = await this.#inspectMixedSignatureSlices(
-        displayOutput,
+        parsed.format,
         requirements.value.exitCode !== 0,
         entitlements.value.exitCode !== 0,
         signal,
@@ -364,7 +365,7 @@ class NativeMacOSClient implements AnalysisClient {
   }
 
   async #inspectMixedSignatureSlices(
-    displayOutput: string,
+    format: string | null,
     requirementsUnavailable: boolean,
     entitlementsUnavailable: boolean,
     signal?: AbortSignal,
@@ -372,10 +373,7 @@ class NativeMacOSClient implements AnalysisClient {
     const captures: NativeCommandCapture[] = [];
     const unsigned: string[] = [];
     const unclassified: string[] = [];
-    for (const architecture of codeSignArchitectures(
-      displayOutput,
-      this.target,
-    )) {
+    for (const architecture of codeSignArchitectures(format, this.target)) {
       const slice = await this.#run(
         "inspect_signature",
         "codesign",
@@ -564,15 +562,22 @@ const translateCodeSignExitFailure = (
 const commandOutput = (capture: NativeCommandCapture): string =>
   `${capture.stdout}\n${capture.stderr}`;
 
-const isUnsignedCodeSignObservation = (
-  capture: NativeCommandCapture,
-): boolean =>
-  /not signed at all|code object is not signed/iu.test(commandOutput(capture));
-
+/**
+ * A signed artifact exits zero; its diagnostics can still contain this text
+ * through the echoed path or identifier.
+ */
 const isNonzeroUnsignedObservation = (capture: NativeCommandCapture): boolean =>
   capture.exitCode !== null &&
   capture.exitCode !== 0 &&
-  isUnsignedCodeSignObservation(capture);
+  /not signed at all|code object is not signed/iu.test(commandOutput(capture));
+
+const canonicalPath = async (path: string): Promise<string[]> => {
+  try {
+    return [await realpath(path)];
+  } catch {
+    return [];
+  }
+};
 
 const codeSignCaptureFailure = (
   capture: NativeCommandCapture,
@@ -582,11 +587,11 @@ const codeSignCaptureFailure = (
     : translateCodeSignExitFailure(capture);
 
 const codeSignArchitectures = (
-  displayOutput: string,
+  format: string | null,
   target: BinaryTarget,
 ): string[] => {
-  const universal = /^Format=Mach-O universal \(([^)\r\n]+)\)$/mu.exec(
-    displayOutput,
+  const universal = /^Mach-O universal \(([^)\r\n]+)\)$/u.exec(
+    format ?? "",
   )?.[1];
   if (universal !== undefined) {
     const architectures = universal
