@@ -8,6 +8,7 @@ import type { BrowserScenarioCapturePort } from "../application/BrowserScenarioC
 import type { ElectronActiveObservationPort } from "../application/ElectronActiveObservationPort.js";
 import type { ElectronObservationPort } from "../application/ElectronObservationPort.js";
 import type { JavaScriptRuntimeObservationPort } from "../application/JavaScriptRuntimeObservationPort.js";
+import type { OptionalProviderLoadFailures } from "../application/OptionalObservationProviders.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { silentLogger, type Logger } from "../logger.js";
 import { registerApplicationTools } from "./registerApplicationTools.js";
@@ -51,6 +52,7 @@ export interface CreateServerOptions {
   readonly electronActiveObservation?: ElectronActiveObservationPort;
   readonly javascriptRuntimeObservation?: JavaScriptRuntimeObservationPort;
   readonly availabilityPolicy?: () => SessionAvailability;
+  readonly optionalProviderLoadFailures?: OptionalProviderLoadFailures;
 }
 
 const installSessionToolAvailability = (
@@ -60,6 +62,7 @@ const installSessionToolAvailability = (
 ) => {
   if (session === undefined) return undefined;
   const policy = sessionAvailabilityPolicy(options.availabilityPolicy, {
+    optionalProviderLoadFailures: options.optionalProviderLoadFailures,
     optionalFeatures: {
       firmwareInspectionEnabled:
         options.firmwareAnalysis !== undefined ||
@@ -259,19 +262,27 @@ const registerObservationTools = ({
   registerBrowserTools(server, {
     ...common,
     browser: options.browserObservation,
+    loadFailure: options.optionalProviderLoadFailures?.browserObservation,
   });
   registerBrowserScenarioTool(server, {
     ...common,
     provider: options.browserScenarioCapture,
+    loadFailure: options.optionalProviderLoadFailures?.browserScenarioCapture,
   });
   registerElectronTools(server, {
     ...common,
     electron: options.electronObservation,
     electronActive: options.electronActiveObservation,
+    observationLoadFailure:
+      options.optionalProviderLoadFailures?.electronObservation,
+    activeLoadFailure:
+      options.optionalProviderLoadFailures?.electronActiveObservation,
   });
   registerJavaScriptRuntimeObservationTools(server, {
     ...common,
     runtime: options.javascriptRuntimeObservation,
+    loadFailure:
+      options.optionalProviderLoadFailures?.javascriptRuntimeObservation,
   });
   registerApplicationTools(server, {
     evidenceById,

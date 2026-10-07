@@ -4,7 +4,7 @@ import {
   listJavaScriptRuntimeTargets,
   observeJavaScriptRuntime,
 } from "./application/JavaScriptRuntimeObservationService.js";
-import { V8InspectorProvider } from "./browser/V8InspectorProvider.js";
+import { createJavaScriptRuntimeObservationProvider } from "./composition/javascriptRuntimeObservation.js";
 import { CLI_COMMANDS } from "./cliCommandNames.js";
 import { logCliCommand } from "./cliLogging.js";
 import {
@@ -89,7 +89,9 @@ export const registerJavaScriptRuntimeObservationCommands = (
   });
 };
 
-const runtimeContext = () => ({ provider: new V8InspectorProvider() });
+const runtimeContext = () => ({
+  provider: createJavaScriptRuntimeObservationProvider(),
+});
 
 const inputError = (operation: string): JsonValue =>
   cliError(new AnalysisInputError(operation));

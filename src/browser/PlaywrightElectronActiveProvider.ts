@@ -42,12 +42,8 @@ const OPERATION = "capture_electron_scenario" as const;
 const STARTUP_TIMEOUT_MS = 60_000;
 
 /** Public identity for provider-owned Electron runtime experiments. */
-export const PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY: ProviderIdentity =
-  Object.freeze({
-    id: "rea-playwright-electron-active",
-    name: "REA Playwright active Electron observation provider",
-    version: "1",
-  });
+export { PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY } from "./providerIdentities.js";
+import { PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY } from "./providerIdentities.js";
 
 const hookPath = fileURLToPath(
   new URL("../../scripts/electron-active-hook.cjs", import.meta.url),

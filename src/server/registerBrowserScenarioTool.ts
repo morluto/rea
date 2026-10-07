@@ -1,3 +1,8 @@
+import {
+  optionalProviderUnavailable,
+  type OptionalProviderLoadFailure,
+} from "../application/OptionalObservationProviders.js";
+import { err } from "../domain/result.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
@@ -12,6 +17,7 @@ import { toCallToolResult } from "./toolResult.js";
 
 interface BrowserScenarioToolRegistration {
   readonly logger: Logger;
+  readonly loadFailure?: OptionalProviderLoadFailure | undefined;
   readonly provider: BrowserScenarioCapturePort | undefined;
   readonly recordEvidence: BinarySessionPort["recordEvidence"] | undefined;
 }
@@ -27,6 +33,11 @@ export const registerBrowserScenarioTool = (
     toolRegistrationOptions(contract),
     async (input, context) => {
       const scenario = browserScenarioSchema.parse(input);
+      if (options.loadFailure !== undefined)
+        return toCallToolResult(
+          err(optionalProviderUnavailable(options.loadFailure, contract.name)),
+          contract,
+        );
       const result = await logToolExecution(options.logger, contract.name, () =>
         captureBrowserScenario(options.provider, scenario, {
           signal: context.mcpReq.signal,

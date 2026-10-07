@@ -6,8 +6,6 @@ import {
 } from "../application/ElectronObservationService.js";
 import { captureElectronScenario } from "../application/ElectronActiveObservationService.js";
 import { reconcileJavaScriptRuntimeEvidence } from "../application/JavaScriptRuntimeReconciliationService.js";
-import { CdpElectronProvider } from "../browser/CdpElectronProvider.js";
-import { PlaywrightElectronActiveProvider } from "../browser/PlaywrightElectronActiveProvider.js";
 import { logCliCommand } from "../cliLogging.js";
 import {
   inspectElectronPageInputSchema,
@@ -61,9 +59,10 @@ const registerElectronActiveCommand = (
           input.value,
         );
         if (!parsed.success) return inputError("capture_electron_scenario");
-        const context = await electronContext();
+        const { createElectronScenarioProvider } =
+          await import("../composition/electronScenario.js");
         const result = await captureElectronScenario(
-          context.activeProvider,
+          createElectronScenarioProvider(),
           parsed.data,
         );
         return result.ok ? result.value : cliError(result.error);
@@ -181,15 +180,11 @@ const registerJavaScriptApplicationCommand = (
   });
 };
 
-const electronContext = async () => {
-  return {
-    ok: true as const,
-    provider: new CdpElectronProvider(),
-    activeProvider: new PlaywrightElectronActiveProvider(),
-  };
+const electronObservationContext = async () => {
+  const { createElectronObservationProvider } =
+    await import("../composition/electronObservation.js");
+  return { provider: createElectronObservationProvider() };
 };
-
-const electronObservationContext = electronContext;
 
 const inputError = (operation: string): JsonValue =>
   cliError(new AnalysisInputError(operation));

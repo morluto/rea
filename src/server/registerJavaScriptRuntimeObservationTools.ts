@@ -1,3 +1,8 @@
+import {
+  optionalProviderUnavailable,
+  type OptionalProviderLoadFailure,
+} from "../application/OptionalObservationProviders.js";
+import { err } from "../domain/result.js";
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
@@ -19,6 +24,7 @@ import { toCallToolResult } from "./toolResult.js";
 
 interface RuntimeToolRegistration {
   readonly logger: Logger;
+  readonly loadFailure?: OptionalProviderLoadFailure | undefined;
   readonly runtime: JavaScriptRuntimeObservationPort | undefined;
   readonly recordEvidence: BinarySessionPort["recordEvidence"] | undefined;
 }
@@ -68,6 +74,11 @@ const runRuntimeTool = async <Input>(
   ) => Promise<Result<Evidence, AnalysisError>>,
 ) => {
   const { input, context } = request;
+  if (options.loadFailure !== undefined)
+    return toCallToolResult(
+      err(optionalProviderUnavailable(options.loadFailure, contract.name)),
+      contract,
+    );
   const result = await logToolExecution(options.logger, contract.name, () =>
     execute(input, context.mcpReq.signal),
   );

@@ -36,11 +36,8 @@ import {
 } from "./V8InspectorEndpoint.js";
 
 /** Public identity committed by passive V8 Inspector observations. */
-export const V8_INSPECTOR_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({
-  id: "rea-v8-inspector",
-  name: "REA passive Node/Electron V8 Inspector provider",
-  version: "1",
-});
+export { V8_INSPECTOR_PROVIDER_IDENTITY } from "./providerIdentities.js";
+import { V8_INSPECTOR_PROVIDER_IDENTITY } from "./providerIdentities.js";
 
 export interface ScriptDraft {
   readonly rawUrl: string;

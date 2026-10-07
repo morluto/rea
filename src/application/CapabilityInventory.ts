@@ -1,4 +1,8 @@
 import { z } from "zod";
+import type {
+  OptionalProviderLoadFailures,
+  OptionalProviderLoadFailure,
+} from "./OptionalObservationProviders.js";
 
 import {
   providerCapability,
@@ -28,6 +32,7 @@ type ToolAvailabilityReason = "available" | ToolUnavailabilityReason;
 type ProviderDescriptor = ProviderCapability;
 export type AvailabilityPolicy = {
   readonly processCaptureEnabled: boolean;
+  readonly optionalProviderLoadFailures?: OptionalProviderLoadFailures;
   readonly firmwareInspectionEnabled?: boolean;
   readonly firmwareExtractionEnabled?: boolean;
   readonly androidAnalysisEnabled?: boolean;
@@ -186,11 +191,34 @@ const availabilityFor = (context: AvailabilityContext): Availability => {
     return navigationContextAvailability(context.descriptors);
   const javascriptApplication = javascriptApplicationAvailability(context);
   if (javascriptApplication !== null) return javascriptApplication;
+  const failure = optionalProviderFailureFor(context);
+  if (failure !== undefined)
+    return {
+      reason: "provider_unavailable",
+      remediation: `Adapter ${failure.providerId} could not load: ${failure.reason}. Repair the adapter installation and restart REA; other capabilities remain available.`,
+    };
   const workflowAvailability = workflowAvailabilityFor(context);
   if (workflowAvailability !== null) return workflowAvailability;
   const targetDecision = targetAvailability(context);
   if (targetDecision !== null) return targetDecision;
   return providerAvailability(context);
+};
+
+const optionalProviderFailureFor = ({
+  name,
+  kind,
+  policy,
+}: AvailabilityContext): OptionalProviderLoadFailure | undefined => {
+  const failures = policy.optionalProviderLoadFailures;
+  if (name === "capture_browser_scenario")
+    return failures?.browserScenarioCapture;
+  if (kind === "browser-provider") return failures?.browserObservation;
+  if (name === "capture_electron_scenario")
+    return failures?.electronActiveObservation;
+  if (kind === "electron-provider") return failures?.electronObservation;
+  if (kind === "runtime-provider")
+    return failures?.javascriptRuntimeObservation;
+  return undefined;
 };
 
 const javascriptApplicationAvailability = ({

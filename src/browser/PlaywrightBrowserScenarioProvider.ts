@@ -41,12 +41,8 @@ const lazyPlaywrightFactory: BrowserScenarioSessionFactory = {
   },
 };
 
-export const PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY: ProviderIdentity =
-  Object.freeze({
-    id: "rea-playwright-browser-scenario",
-    name: "REA Playwright browser scenario capture provider",
-    version: "1",
-  });
+export { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "./providerIdentities.js";
+import { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "./providerIdentities.js";
 
 type SnapshotKind = BrowserScenario["capture"]["after_each_step"][number];
 const SNAPSHOT_KINDS = [

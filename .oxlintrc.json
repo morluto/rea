@@ -51,7 +51,8 @@
                   "**/hopper/**",
                   "**/ida/**",
                   "**/android/**",
-                  "**/firmware/**"
+                  "**/firmware/**",
+                  "**/browser/*Provider.*"
                 ],
                 "message": "Provider imports belong behind typed ports or in production composition."
               }
@@ -111,6 +112,7 @@
                   "**/ida/**",
                   "**/android/**",
                   "**/firmware/**",
+                  "**/browser/*Provider.*",
                   "**/composition/**"
                 ],
                 "message": "Application workflows use typed ports; production construction belongs in composition."

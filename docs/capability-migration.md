@@ -93,3 +93,27 @@ providers. Composition may import their implementations. Binary composition is
 still at its existing entrypoint while its direct-analysis callers are investigated.
 This concrete pilot does not introduce a shared provider interface or module
 manifest.
+
+## Independent optional observation adapters
+
+Browser observation, browser scenarios, Electron observation, Electron scenarios
+and V8 Inspector observation now have separate factories in `src/composition/`.
+CLI commands reuse them; MCP startup dynamically imports each factory independently.
+`OptionalObservationProviders` describes these five existing typed ports only. It
+is provisional startup wiring, not an extensible plugin manifest or a universal
+provider interface.
+
+A failed import or constructor retains the successful peers. The complete tool
+catalog remains advertised. Session availability reports the failed adapter and
+its actual reason, and affected handlers return the existing capability-unavailable
+error. Explicit loading failures take precedence over configured availability.
+Passive Electron and active Electron failures are independent; static JavaScript
+analysis and runtime reconciliation remain usable without either adapter. CLI
+Electron commands also load only their selected runtime factory at execution.
+
+Source identities are available without importing the optional implementations.
+Registration acquires no engines, probes no endpoints, changes no permissions and
+installs nothing. Core transport failures and shutdown still use their existing
+lifecycle. Fault-injection coverage uses the production loading/startup path and
+actual MCP SDK calls; recording ports establish composition behavior, while the
+real Inspector lane separately establishes runtime behavior.

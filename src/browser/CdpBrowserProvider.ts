@@ -64,11 +64,8 @@ import { captureCdpScreenshot } from "./CdpScreenshot.js";
 import { comparePngScreenshots } from "./PngVisualDiff.js";
 
 /** Public identity committed by passive browser observations. */
-export const CDP_BROWSER_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({
-  id: "rea-cdp-browser",
-  name: "REA Chrome DevTools Protocol observation provider",
-  version: "2",
-});
+export { CDP_BROWSER_PROVIDER_IDENTITY } from "./providerIdentities.js";
+import { CDP_BROWSER_PROVIDER_IDENTITY } from "./providerIdentities.js";
 const IDENTITY = CDP_BROWSER_PROVIDER_IDENTITY;
 const CLEANUP_DOMAINS = ["Network", "Debugger", "Runtime", "Page"] as const;
 

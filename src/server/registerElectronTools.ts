@@ -1,3 +1,8 @@
+import {
+  optionalProviderUnavailable,
+  type OptionalProviderLoadFailure,
+} from "../application/OptionalObservationProviders.js";
+import { err } from "../domain/result.js";
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 
 import type { BinarySessionPort } from "../application/BinarySession.js";
@@ -25,6 +30,8 @@ import { toCallToolResult } from "./toolResult.js";
 
 interface ElectronToolRegistration {
   readonly logger: Logger;
+  readonly observationLoadFailure?: OptionalProviderLoadFailure | undefined;
+  readonly activeLoadFailure?: OptionalProviderLoadFailure | undefined;
   readonly electron: ElectronObservationPort | undefined;
   readonly electronActive: ElectronActiveObservationPort | undefined;
   readonly recordEvidence: BinarySessionPort["recordEvidence"] | undefined;
@@ -134,6 +141,18 @@ const runElectronTool = async <Input>(
   ) => Promise<Result<Evidence, AnalysisError>>,
 ) => {
   const { input, context } = request;
+  const failure =
+    contract.name === "capture_electron_scenario"
+      ? options.activeLoadFailure
+      : contract.name === "list_electron_targets" ||
+          contract.name === "inspect_electron_page"
+        ? options.observationLoadFailure
+        : undefined;
+  if (failure !== undefined)
+    return toCallToolResult(
+      err(optionalProviderUnavailable(failure, contract.name)),
+      contract,
+    );
   const result = await logToolExecution(options.logger, contract.name, () =>
     execute(input, {
       signal: context.mcpReq.signal,

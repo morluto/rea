@@ -14,6 +14,7 @@ import { SERVER_START_FAILED } from "./main/messages.js";
 import { createRuntimeState } from "./main/state.js";
 import { openInitialTarget } from "./main/startup.js";
 import { startMcpTransport } from "./main/transport.js";
+import { loadOptionalObservationProviders } from "./composition/optionalObservationProviders.js";
 import { registerConfigReload } from "./main/reload.js";
 import { createShutdown } from "./main/shutdown.js";
 
@@ -70,29 +71,7 @@ export const run = async (
     logger,
     serverLogger,
     loadOptionalProviders:
-      dependencies.loadOptionalProviders ??
-      (async () => {
-        const [
-          { CdpBrowserProvider },
-          { PlaywrightBrowserScenarioProvider },
-          { CdpElectronProvider },
-          { PlaywrightElectronActiveProvider },
-          { V8InspectorProvider },
-        ] = await Promise.all([
-          import("./browser/CdpBrowserProvider.js"),
-          import("./browser/PlaywrightBrowserScenarioProvider.js"),
-          import("./browser/CdpElectronProvider.js"),
-          import("./browser/PlaywrightElectronActiveProvider.js"),
-          import("./browser/V8InspectorProvider.js"),
-        ]);
-        return {
-          browserObservation: new CdpBrowserProvider(),
-          browserScenarioCapture: new PlaywrightBrowserScenarioProvider(),
-          electronObservation: new CdpElectronProvider(),
-          electronActiveObservation: new PlaywrightElectronActiveProvider(),
-          javascriptRuntimeObservation: new V8InspectorProvider(),
-        };
-      }),
+      dependencies.loadOptionalProviders ?? loadOptionalObservationProviders,
   });
   if (!transport.ok) return 1;
   const unregisterReload = registerConfigReload({

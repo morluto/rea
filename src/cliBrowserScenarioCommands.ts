@@ -2,7 +2,7 @@ import { Cli } from "incur";
 import { z } from "zod";
 
 import { captureBrowserScenario } from "./application/BrowserScenarioCaptureService.js";
-import { PlaywrightBrowserScenarioProvider } from "./browser/PlaywrightBrowserScenarioProvider.js";
+import { createBrowserScenarioProvider } from "./composition/browserScenario.js";
 import { CLI_COMMANDS } from "./cliCommandNames.js";
 import { parseCliJsonInput } from "./cliJsonInput.js";
 import { logCliCommand } from "./cliLogging.js";
@@ -35,7 +35,7 @@ export const registerBrowserScenarioCommands = (
         if (!scenario.success)
           return cliError(new AnalysisInputError(OPERATION));
         const result = await captureBrowserScenario(
-          new PlaywrightBrowserScenarioProvider(),
+          createBrowserScenarioProvider(),
           scenario.data,
         );
         return result.ok ? result.value : cliError(result.error);

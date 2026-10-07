@@ -1,9 +1,11 @@
-import { CdpBrowserProvider } from "./browser/CdpBrowserProvider.js";
+import { createBrowserObservationProvider } from "./composition/browserObservation.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 
 /** Build the passive browser provider; scope is supplied on each request. */
-export const browserContext = () => ({ provider: new CdpBrowserProvider() });
+export const browserContext = () => ({
+  provider: createBrowserObservationProvider(),
+});
 
 /** Project a browser operation failure consistently across CLI command groups. */
 export const browserCliError = (

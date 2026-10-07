@@ -2,25 +2,16 @@ import type { StdioServerHandle } from "@modelcontextprotocol/server/stdio";
 
 import type { BinarySession } from "../application/BinarySession.js";
 import type { Logger } from "../logger.js";
-import {
-  createServer,
-  type CreateServerOptions,
-} from "../server/createServer.js";
+import { createServer } from "../server/createServer.js";
 import type { RuntimeDependencies } from "./types.js";
+import type { OptionalProviderLoadResult } from "../application/OptionalObservationProviders.js";
 import {
   MCP_CONNECTION_LOST,
   MCP_CONNECTION_START_FAILED,
 } from "./messages.js";
 
 /** Optional adapters whose absence must not prevent the core MCP server. */
-export type OptionalProviders = Pick<
-  CreateServerOptions,
-  | "browserObservation"
-  | "browserScenarioCapture"
-  | "electronObservation"
-  | "electronActiveObservation"
-  | "javascriptRuntimeObservation"
->;
+export type OptionalProviders = OptionalProviderLoadResult;
 
 interface ServerContext {
   readonly logger: Logger;
@@ -49,6 +40,14 @@ export const startMcpTransport = async (
         error: cause instanceof Error ? cause.message : String(cause),
       },
       "Optional MCP providers could not load; affected tools remain unavailable",
+    );
+  }
+  for (const failure of Object.values(
+    optionalProviders.optionalProviderLoadFailures ?? {},
+  )) {
+    serverLogger.warn(
+      { providerId: failure.providerId, error: failure.reason },
+      "Optional MCP adapter could not load; its peers remain available",
     );
   }
   let handle: StdioServerHandle;
