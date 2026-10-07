@@ -1,8 +1,9 @@
-import { createReadStream } from "node:fs";
-import { sep } from "node:path";
+import { constants, createReadStream } from "node:fs";
+import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
+import { isAbsolute, join, relative, sep } from "node:path";
 import { Readable } from "node:stream";
 
-import { extractFile, listPackage, statFile, uncache } from "@electron/asar";
+import { getRawHeader, listPackage, statFile, uncache } from "@electron/asar";
 
 import {
   ArtifactReaderFailure,
@@ -11,7 +12,7 @@ import {
 } from "./ArtifactReader.js";
 
 /**
- * Official Electron ASAR adapter. Individual files remain caller-bounded.
+ * Official Electron ASAR adapter with range-streamed member reads.
  *
  * An entry marked `unpacked` is metadata, not an integrity exemption: Electron
  * stores its bytes beside the archive in `<archive>.unpacked`, and callers must
@@ -19,6 +20,9 @@ import {
  */
 export class AsarArtifactReader implements ArtifactReader {
   readonly format = "asar" as const;
+  #archiveSize: number | undefined;
+  #headerSize: number | undefined;
+  readonly #entries = new Map<string, AsarFileMetadata>();
 
   constructor(private readonly path: string) {}
 
@@ -26,10 +30,20 @@ export class AsarArtifactReader implements ArtifactReader {
     let paths: string[];
     try {
       // ASAR caches headers by path even after the archive has been replaced.
+      this.#resetArchiveState();
+      this.#entries.clear();
       uncache(this.path);
       paths = listPackage(this.path, { isPack: false }).sort((left, right) =>
         left.localeCompare(right, "en"),
       );
+      this.#headerSize = getRawHeader(this.path).headerSize;
+      const archiveMetadata = await lstat(this.path);
+      if (!archiveMetadata.isFile() || archiveMetadata.isSymbolicLink())
+        throw new ArtifactReaderFailure(
+          "format",
+          "ASAR container is not a regular file",
+        );
+      this.#archiveSize = archiveMetadata.size;
     } catch (cause: unknown) {
       throw asarFailure(this.path, "inventory", cause);
     }
@@ -56,6 +70,8 @@ export class AsarArtifactReader implements ArtifactReader {
           : "link" in metadata
             ? "symlink"
             : "file";
+      if (kind === "file" && isAsarFileMetadata(metadata))
+        this.#entries.set(providerPath, metadata);
       yield {
         path,
         kind,
@@ -74,43 +90,101 @@ export class AsarArtifactReader implements ArtifactReader {
         limitations:
           kind === "symlink"
             ? ["ASAR symlink target was not followed or disclosed."]
-            : [
-                "Official ASAR extraction buffers each individually bounded file.",
-              ],
+            : [],
         adapterKey: providerPath,
       };
     }
   }
 
-  open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
+  async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
     abortIfNeeded(signal);
     if (entry.kind !== "file")
-      return Promise.reject(
-        new ArtifactReaderFailure("format", "ASAR entry is not a regular file"),
+      throw new ArtifactReaderFailure(
+        "format",
+        "ASAR entry is not a regular file",
       );
-    try {
-      return Promise.resolve(
-        Readable.from(extractFile(this.path, entry.adapterKey, false)),
+    const metadata = this.#entries.get(entry.adapterKey);
+    if (metadata === undefined)
+      throw new ArtifactReaderFailure(
+        "integrity",
+        `ASAR entry was not produced by this reader: ${entry.path}`,
       );
-    } catch (cause: unknown) {
-      if (entry.unpacked && isMissingFile(cause))
-        return Promise.reject(
-          new ArtifactReaderFailure(
-            "unavailable",
-            `ASAR unpacked entry bytes are unavailable: ${entry.path}`,
-            { cause },
+    if (entry.unpacked) {
+      const handle = await this.#openUnpackedEntry(entry, metadata);
+      try {
+        const observed = await handle.stat();
+        if (!observed.isFile() || observed.size !== metadata.size)
+          throw new ArtifactReaderFailure(
+            "integrity",
+            `ASAR unpacked entry changed before read: ${entry.path}`,
+            {},
             {
               logicalPath: entry.path,
               declaredSha256: entry.declaredSha256,
               calculatedSha256: null,
               unpacked: true,
             },
-          ),
-        );
-      return Promise.reject(
-        asarFailure(this.path, `read ${entry.path}`, cause),
+          );
+      } catch (cause: unknown) {
+        await handle.close().catch(() => undefined);
+        throw cause;
+      }
+      if (metadata.size === 0) {
+        await handle.close();
+        return Readable.from([]);
+      }
+      const source = handle.createReadStream({
+        start: 0,
+        end: metadata.size - 1,
+        autoClose: true,
+      });
+      return readExactEntry(source, metadata.size, entry.path, signal);
+    }
+    const archiveSize = this.#archiveSize;
+    const headerSize = this.#headerSize;
+    const offset =
+      metadata.offset === undefined
+        ? undefined
+        : parseArchiveOffset(metadata.offset);
+    const start =
+      offset === undefined || headerSize === undefined
+        ? undefined
+        : 8 + headerSize + offset;
+    if (
+      archiveSize === undefined ||
+      start === undefined ||
+      !Number.isSafeInteger(start) ||
+      metadata.size < 0 ||
+      !Number.isSafeInteger(metadata.size) ||
+      start > archiveSize ||
+      metadata.size > archiveSize - start
+    )
+      throw new ArtifactReaderFailure(
+        "format",
+        `ASAR entry range is outside its container: ${entry.path}`,
+      );
+    if (metadata.size === 0) return Readable.from([]);
+    const handle = await open(
+      this.path,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    const observed = await handle.stat().catch(async (cause: unknown) => {
+      await handle.close().catch(() => undefined);
+      throw cause;
+    });
+    if (!observed.isFile() || observed.size !== archiveSize) {
+      await handle.close();
+      throw new ArtifactReaderFailure(
+        "integrity",
+        `ASAR container changed before read: ${entry.path}`,
       );
     }
+    const source = handle.createReadStream({
+      start,
+      end: start + metadata.size - 1,
+      autoClose: true,
+    });
+    return readExactEntry(source, metadata.size, entry.path, signal);
   }
 
   /** Open raw container bytes to verify the inventory identity before analysis. */
@@ -121,13 +195,169 @@ export class AsarArtifactReader implements ArtifactReader {
 
   close(): Promise<void> {
     uncache(this.path);
+    this.#resetArchiveState();
+    this.#entries.clear();
     return Promise.resolve();
   }
 
   provenance(): readonly [] {
     return [];
   }
+
+  async #openUnpackedEntry(
+    entry: ArtifactEntry,
+    metadata: AsarFileMetadata,
+  ): Promise<FileHandle> {
+    const unpackedRoot = `${this.path}.unpacked`;
+    try {
+      const rootMetadata = await lstat(unpackedRoot);
+      if (!rootMetadata.isDirectory() || rootMetadata.isSymbolicLink())
+        throw new ArtifactReaderFailure(
+          "path",
+          "ASAR unpacked companion is not a regular directory",
+        );
+      const canonicalRoot = await realpath(unpackedRoot);
+      const candidate = join(unpackedRoot, entry.adapterKey);
+      const canonical = await realpath(candidate);
+      const relativePath = relative(canonicalRoot, canonical);
+      if (
+        relativePath === ".." ||
+        relativePath.startsWith(`..${sep}`) ||
+        isAbsolute(relativePath)
+      )
+        throw new ArtifactReaderFailure(
+          "path",
+          `ASAR unpacked entry escaped its companion directory: ${entry.path}`,
+        );
+      const pathMetadata = await lstat(candidate);
+      if (!pathMetadata.isFile() || pathMetadata.isSymbolicLink())
+        throw new ArtifactReaderFailure(
+          "path",
+          `ASAR unpacked entry is not a regular file: ${entry.path}`,
+        );
+      const handle = await open(
+        canonical,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+      );
+      const openedMetadata = await handle
+        .stat()
+        .catch(async (cause: unknown) => {
+          await handle.close().catch(() => undefined);
+          throw cause;
+        });
+      if (
+        !openedMetadata.isFile() ||
+        openedMetadata.dev !== pathMetadata.dev ||
+        openedMetadata.ino !== pathMetadata.ino ||
+        openedMetadata.size !== metadata.size
+      ) {
+        await handle.close();
+        throw new ArtifactReaderFailure(
+          "integrity",
+          `ASAR unpacked entry changed before read: ${entry.path}`,
+          {},
+          {
+            logicalPath: entry.path,
+            declaredSha256: entry.declaredSha256,
+            calculatedSha256: null,
+            unpacked: true,
+          },
+        );
+      }
+      return handle;
+    } catch (cause: unknown) {
+      if (cause instanceof ArtifactReaderFailure) throw cause;
+      if (entry.unpacked && isMissingFile(cause))
+        throw new ArtifactReaderFailure(
+          "unavailable",
+          `ASAR unpacked entry bytes are unavailable: ${entry.path}`,
+          { cause },
+          {
+            logicalPath: entry.path,
+            declaredSha256: entry.declaredSha256,
+            calculatedSha256: null,
+            unpacked: true,
+          },
+        );
+      throw asarFailure(this.path, `read ${entry.path}`, cause);
+    }
+  }
+
+  #resetArchiveState(): void {
+    this.#archiveSize = undefined;
+    this.#headerSize = undefined;
+  }
 }
+
+type AsarFileMetadata = Extract<ReturnType<typeof statFile>, { size: number }>;
+
+const isAsarFileMetadata = (
+  metadata: ReturnType<typeof statFile>,
+): metadata is AsarFileMetadata =>
+  "size" in metadata &&
+  typeof metadata.size === "number" &&
+  !("files" in metadata) &&
+  !("link" in metadata);
+
+const parseArchiveOffset = (value: string): number | undefined => {
+  if (!/^(?:0|[1-9][0-9]*)$/u.test(value)) return undefined;
+  const offset = Number(value);
+  return Number.isSafeInteger(offset) ? offset : undefined;
+};
+
+const readExactEntry = (
+  source: Readable,
+  expectedBytes: number,
+  path: string,
+  signal?: AbortSignal,
+): Readable =>
+  Readable.from(
+    (async function* () {
+      let observedBytes = 0;
+      const iterator = source[Symbol.asyncIterator]();
+      const onAbort = (): void => {
+        source.destroy(
+          new ArtifactReaderFailure("cancelled", "ASAR operation cancelled"),
+        );
+      };
+      try {
+        while (true) {
+          abortIfNeeded(signal);
+          const pending = iterator.next();
+          signal?.addEventListener("abort", onAbort, { once: true });
+          if (signal?.aborted === true) onAbort();
+          const next = await pending.finally(() =>
+            signal?.removeEventListener("abort", onAbort),
+          );
+          if (next.done) break;
+          const chunk: unknown = next.value;
+          if (!Buffer.isBuffer(chunk) && !(chunk instanceof Uint8Array))
+            throw new ArtifactReaderFailure(
+              "format",
+              `ASAR entry did not return bytes: ${path}`,
+            );
+          observedBytes += Buffer.isBuffer(chunk)
+            ? chunk.length
+            : chunk.byteLength;
+          if (observedBytes > expectedBytes)
+            throw new ArtifactReaderFailure(
+              "integrity",
+              `ASAR entry exceeded its declared size: ${path}`,
+            );
+          yield chunk;
+        }
+        if (observedBytes !== expectedBytes)
+          throw new ArtifactReaderFailure(
+            "integrity",
+            `ASAR entry size disagrees with its header: ${path}`,
+          );
+      } finally {
+        signal?.removeEventListener("abort", onAbort);
+        await iterator.return?.();
+        if (!source.destroyed) source.destroy();
+      }
+    })(),
+  );
 
 const abortIfNeeded = (signal?: AbortSignal): void => {
   if (signal?.aborted === true)
