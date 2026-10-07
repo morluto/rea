@@ -118,10 +118,9 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
         resource_type: string;
         effect: "fulfilled" | "blocked";
       }[] = [];
-      const documentUrl = new URL(
-        input.importMap?.baseUrl ?? "https://rea-module-resolution.invalid/",
-      ).href;
       const importerUrl = new URL(input.importerUrl).href;
+      const documentUrl = new URL("/.rea-module-resolver/document", importerUrl)
+        .href;
       const transportUrl = new URL(importerUrl);
       transportUrl.hash = "";
       let stubSent = false;
@@ -139,7 +138,7 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
           await route.fulfill({
             status: 200,
             contentType: "text/html",
-            body: `<!doctype html>${input.importMap === null ? "" : `<script type="importmap">${scriptJson(input.importMap.value)}</script>`}`,
+            body: `<!doctype html>${input.importMap === null ? "" : `<base href="${htmlAttribute(new URL(input.importMap.baseUrl).href)}"><script type="importmap">${scriptJson(input.importMap.value)}</script>`}`,
           });
         } else if (
           !stubSent &&
@@ -196,6 +195,14 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
       const raw: unknown = await page.evaluate(
         () => Reflect.get(globalThis, "__reaModuleResult") as unknown,
       );
+      const failure: unknown = await page.evaluate(
+        () => Reflect.get(globalThis, "__reaModuleFailure") as unknown,
+      );
+      if (typeof failure === "string")
+        throw new AnalysisOutputError(
+          OPERATION,
+          `${failure} Native diagnostics: ${diagnostics.join("\n")}`,
+        );
       const parsed = reportSchema.safeParse(raw);
       if (
         !parsed.success ||
@@ -266,3 +273,10 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
 
 const scriptJson = (value: unknown): string =>
   JSON.stringify(value).replaceAll("<", "\\u003c");
+
+const htmlAttribute = (value: string): string =>
+  value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");

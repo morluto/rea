@@ -202,11 +202,93 @@ export async function verifyBrowserModules(
       false,
       "Cancelled native resolver left its owned browser connected",
     );
+    const syntheticImporter = "http://app.invalid/main.js?build=1#entry";
+    const syntheticMapBase = "https://maps.invalid/maps/map.json?x=1&y=2#base";
+    for (const useMap of [false, true])
+      for (const surface of ["cli", "stdio_mcp"]) {
+        let evidence;
+        if (surface === "cli")
+          evidence = await cli(
+            "trace-web-module-imports",
+            input.manifest_path,
+            String(scriptIndex),
+            "--importer-url",
+            syntheticImporter,
+            ...(useMap
+              ? [
+                  "--import-map-path",
+                  mapPath,
+                  "--import-map-base-url",
+                  syntheticMapBase,
+                ]
+              : []),
+          );
+        else {
+          const response = await client.callTool({
+            name: "trace_web_module_imports",
+            arguments: {
+              manifest_path: input.manifest_path,
+              script_index: scriptIndex,
+              importer_url: syntheticImporter,
+              ...(useMap
+                ? { import_map: { path: mapPath, base_url: syntheticMapBase } }
+                : {}),
+            },
+          });
+          assert.notEqual(response.isError, true, mcpTextValue(response));
+          evidence = parseEvidence(JSON.parse(mcpTextValue(response)).evidence);
+        }
+        const result = webModuleTraceResultSchema.parse(
+          evidence.normalized_result,
+        );
+        if (useMap)
+          assert.deepEqual(result.imports[0].resolution, {
+            state: "resolved",
+            url: "https://maps.invalid/maps/global.js",
+          });
+        else assert.equal(result.imports[0].resolution.state, "rejected");
+        assert.equal(
+          result.imports[2].resolution.url,
+          "http://app.invalid/query.js?v=1#one",
+        );
+        assert.equal(
+          evidence.raw_result.native_report.importer_url,
+          syntheticImporter,
+        );
+        assert.equal(
+          result.source.script.url,
+          `${site.origin}/scoped/main.js?build=2`,
+        );
+      }
+    const escapedBase = await new NativeModuleResolver(env).resolve({
+      importerUrl: syntheticImporter,
+      importMap: {
+        baseUrl: "https://maps.invalid/maps/a&amp;b/map.json?x=1&y=2#base",
+        value: { imports: { alias: "./alias.js" } },
+      },
+      specifiers: ["alias"],
+    });
+    assert.equal(
+      escapedBase.ok,
+      true,
+      escapedBase.ok ? "" : escapedBase.error.message,
+    );
+    assert.deepEqual(escapedBase.value.resolutions[0], {
+      state: "resolved",
+      url: "https://maps.invalid/maps/a&amp;b/alias.js",
+    });
+    assert.deepEqual(
+      site.requests,
+      before,
+      "Synthetic-context tracing refetched or executed a website asset",
+    );
     return {
+      independent_http_importer_and_https_map_base: true,
       cancellation_cleanup: true,
       native_warnings_retained: true,
       cli: true,
       stdio_mcp: true,
+      public_trace_cases: 8,
       literal_imports: 11,
       computed_unknowns: 1,
       native_loading_oracle: true,

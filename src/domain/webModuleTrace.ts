@@ -1,7 +1,10 @@
 import { z } from "zod";
 
 import { digestSchema } from "./digests.js";
-import { exportedWebScriptSchema } from "./webScriptExport.js";
+import {
+  exportedWebScriptSchema,
+  webScriptExportManifestSchema,
+} from "./webScriptExport.js";
 
 /** Inspect one captured script's native ES module relationships. */
 export const webModuleTraceInputSchema = z.strictObject({
@@ -77,7 +80,13 @@ const candidateSchema = z.strictObject({
 export const webModuleTraceResultSchema = z.strictObject({
   manifest: webModuleFileSchema.extend({
     reported_output_directory: z.string(),
-    capture_sha256: digestSchema,
+    ...webScriptExportManifestSchema.pick({
+      capture_path: true,
+      capture_sha256: true,
+      capture_kind: true,
+      capture_completeness: true,
+      source_evidence_id: true,
+    }).shape,
   }),
   source: webModuleFileSchema.extend({
     script_index: z.number().int().min(0),

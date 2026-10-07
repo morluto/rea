@@ -12,6 +12,43 @@ import {
 } from "../../tests/fixtures/webModuleTrace.js";
 
 const args = { manifest_path: "/analysis/manifest.json", script_index: 0 };
+it.each([
+  { ...args, importer_url: "file:///tmp/main.js" },
+  { ...args, import_map: { path: "/map.json", base_url: "file:///tmp/maps/" } },
+])(
+  "distinguishes valid unsupported URL contexts from malformed input: %j",
+  async (input) => {
+    const result = await new WebModuleTraceService(
+      {
+        load: () => {
+          throw new Error("must not acquire artifacts");
+        },
+      },
+      webModuleResolverFixture,
+    ).trace(input);
+    if (result.ok) throw new Error("expected unsupported context");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "capability_unavailable",
+      message: expect.stringContaining("file:"),
+    });
+  },
+);
+it("rejects source text changed across the artifact port while retaining the original digest", async () => {
+  const artifacts = {
+    ...webModuleArtifactsFixture("import(name)"),
+    source: "import(other)",
+  };
+  const result = await new WebModuleTraceService(
+    { load: () => Promise.resolve(ok(artifacts)) },
+    {
+      resolve: () => {
+        throw new Error("must not acquire engine");
+      },
+    },
+  ).trace(args);
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error._tag).toBe("AnalysisOutputError");
+});
 it("rejects sparse resolver arrays rather than relabeling literal imports as computed unknowns", async () => {
   const artifacts = webModuleArtifactsFixture('import "./dep.js";');
   const service = new WebModuleTraceService(
@@ -48,6 +85,9 @@ describe("selected module trace workflow", () => {
       url: artifacts.manifest.scripts[0]?.url,
       basis: "reported-source-url",
     });
+    expect(result.manifest.capture_completeness).toEqual(
+      artifacts.manifest.capture_completeness,
+    );
     expect(result.imports[0]?.resolution).toEqual({
       state: "resolved",
       url: "https://app.test/dep.js",
@@ -70,7 +110,7 @@ describe("selected module trace workflow", () => {
       ...args,
       import_map: { path: "relative.json", base_url: "https://app.test/" },
     },
-    { ...args, importer_url: "file:///tmp/main.js" },
+    { ...args, importer_url: "not a URL" },
     { ...args, import_map: { path: "/map.json", base_url: "relative" } },
   ])(
     "rejects malformed context before acquiring artifacts: %j",

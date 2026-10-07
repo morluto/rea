@@ -1,8 +1,10 @@
 import { isAbsolute } from "node:path";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
@@ -97,11 +99,10 @@ export class WebModuleTraceService {
       ["importer_url", input.importer_url],
       ["import_map.base_url", input.import_map?.base_url],
     ] as const)
-      if (value !== undefined && !httpUrl(value))
-        return invalid(
-          path.split("."),
-          "Expected an absolute HTTP(S) module context URL without username/password userinfo.",
-        );
+      if (value !== undefined) {
+        const admission = admitContext(value, path.split("."));
+        if (!admission.ok) return admission;
+      }
     const loaded = await this.artifacts.load(input, options);
     if (!loaded.ok) return loaded;
     const verified = artifactsSchema.safeParse(loaded.value);
@@ -130,6 +131,9 @@ export class WebModuleTraceService {
       selected.content.state !== "exported" ||
       selected.content.sha256 !== data.sourceFile.sha256 ||
       selected.content.bytes !== data.sourceFile.bytes ||
+      Buffer.byteLength(data.source) !== data.sourceFile.bytes ||
+      createHash("sha256").update(data.source, "utf8").digest("hex") !==
+        data.sourceFile.sha256 ||
       data.manifestFile.path !== input.manifest_path
     )
       return err(
@@ -139,11 +143,8 @@ export class WebModuleTraceService {
         ),
       );
     const importerUrl = input.importer_url ?? selected.url;
-    if (!httpUrl(importerUrl))
-      return invalid(
-        ["importer_url"],
-        "Selected source has no supported HTTP(S) importer URL without userinfo; supply importer_url explicitly.",
-      );
+    const importerAdmission = admitContext(importerUrl, ["importer_url"]);
+    if (!importerAdmission.ok) return importerAdmission;
     const syntax = collectWebModuleImports(data.source);
     const literals = syntax.imports
       .filter((reference) => reference.specifier !== null)
@@ -218,6 +219,10 @@ export class WebModuleTraceService {
         ...data.manifestFile,
         reported_output_directory: data.manifest.output_directory,
         capture_sha256: data.manifest.capture_sha256,
+        capture_path: data.manifest.capture_path,
+        capture_kind: data.manifest.capture_kind,
+        capture_completeness: data.manifest.capture_completeness,
+        source_evidence_id: data.manifest.source_evidence_id,
       },
       source: {
         ...data.sourceFile,
@@ -281,18 +286,37 @@ export class WebModuleTraceService {
   }
 }
 
-const httpUrl = (value: string): boolean => {
+const admitContext = (
+  value: string,
+  path: readonly string[],
+): Result<null, AnalysisError> => {
+  let url: URL;
   try {
-    const url = new URL(value);
-    return (
-      (url.protocol === "https:" || url.protocol === "http:") &&
-      url.username === "" &&
-      url.password === ""
-    );
+    url = new URL(value);
   } catch (cause: unknown) {
     void cause;
-    return false;
+    return invalid(
+      path,
+      "Expected an absolute context URL. Select importer_url explicitly when the reported source URL is unknown.",
+    );
   }
+  if (url.username !== "" || url.password !== "")
+    return invalid(
+      path,
+      "Module context URLs must not contain username/password userinfo.",
+    );
+  if (url.protocol !== "http:" && url.protocol !== "https:")
+    return err(
+      new AnalysisCapabilityUnavailableError(
+        "web-module-resolution",
+        OPERATION,
+        "unsupported_context_scheme",
+        {
+          userMessage: `${path.join(".")} ${value} uses unsupported ${url.protocol} context. This trace currently supports HTTP(S) importer/map contexts; select a supported context explicitly when appropriate.`,
+        },
+      ),
+    );
+  return ok(null);
 };
 const isAborted = (signal?: AbortSignal): boolean => signal?.aborted === true;
 const invalid = (path: readonly string[], message: string) =>
