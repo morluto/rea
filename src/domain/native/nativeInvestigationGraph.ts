@@ -5,7 +5,7 @@ import {
   nativeMetadataLocationSchema,
   type ObjcSwiftMetadata,
 } from "./objcSwiftMetadata.js";
-import { jsonValueSchema } from "./jsonValue.js";
+import { jsonValueSchema } from "../jsonValue.js";
 
 /** Entity kinds shared by decoded Interface Builder archives and native code. */
 export const nativeInvestigationNodeKindSchema = z.enum([

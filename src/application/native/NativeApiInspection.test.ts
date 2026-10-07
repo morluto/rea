@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { functionDossierSchema } from "../domain/hopperValues.js";
-import { ghidraFunctionDossier } from "../domain/ghidraValues.fixture.js";
-import { nativeApiBoundarySchema } from "../domain/nativeApiBoundary.js";
+import { functionDossierSchema } from "../../domain/hopperValues.js";
+import { ghidraFunctionDossier } from "../../domain/ghidraValues.fixture.js";
+import { nativeApiBoundarySchema } from "../../domain/native/nativeApiBoundary.js";
 import { projectNativeApiInspection } from "./NativeApiInspection.js";
 
 describe("native API switch uncertainty", () => {

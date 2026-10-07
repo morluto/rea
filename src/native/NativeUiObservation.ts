@@ -6,7 +6,7 @@ import {
   nativeUiScenarioInputSchema,
   nativeUiSnapshotSchema,
   nativeUiResultSchema,
-} from "../domain/nativeUiObservation.js";
+} from "../domain/native/nativeUiObservation.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,

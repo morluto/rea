@@ -8,7 +8,7 @@ import type { BinarySession } from "./binary/BinarySession.js";
 import { silentLogger, type Logger } from "../logger.js";
 import { createEvidence } from "../domain/evidence.js";
 import type { Evidence } from "../domain/evidence.js";
-import type { NativeToolName } from "../contracts/nativeToolContracts.js";
+import type { NativeToolName } from "../contracts/native/nativeToolContracts.js";
 import type { ArtifactAnalysisOperation } from "../contracts/artifactToolContracts.js";
 import {
   isManagedToolName,

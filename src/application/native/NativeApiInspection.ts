@@ -1,9 +1,9 @@
-import type { FunctionDossier } from "../domain/hopperValues.js";
+import type { FunctionDossier } from "../../domain/hopperValues.js";
 import {
   nativeApiInspectionResultSchema,
   type NativeApiBoundary,
   type NativeApiInspectionResult,
-} from "../domain/nativeApiBoundary.js";
+} from "../../domain/native/nativeApiBoundary.js";
 
 const unavailableBoundary = (): NativeApiBoundary => ({
   available: false,

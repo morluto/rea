@@ -95,6 +95,14 @@ in `src/artifacts/apple/`. The npm entrypoints are unchanged. Format-specific
 Swift/XIB/asset sources and goldens retain their locations; real Apple workflows
 resolve them from the verifier file URL and run in the macOS CI lane.
 
+Portable native semantics and their tests live in `src/domain/native/`; shared
+analyst workflows and service-lane tests live in `src/application/native/`.
+Named native contracts live in `src/contracts/native/`. Provider protocol and
+host UI tests retain their adapter/boundary lanes, and real verifier command
+names remain unchanged.
+The existing Apple CI job also runs the host Swift-demangling CLI/MCP regression
+suites, including option-like symbols, carriage returns and multiline rejection.
+
 MCP SDK transport tests with recording providers remain integration tests.
 They are useful for schema drift and failure projection but do not prove that
 Hopper, Ghidra or another substituted engine works. `verify:package` proves

@@ -2,12 +2,12 @@ import { z } from "zod";
 import {
   nativeFunctionAnnotationsInputSchema,
   nativeFunctionAnnotationsSchema,
-} from "../domain/nativeFunctionAnnotations.js";
-import { nativeDataTypeSchema } from "../domain/nativeDataType.js";
+} from "../domain/native/nativeFunctionAnnotations.js";
+import { nativeDataTypeSchema } from "../domain/native/nativeDataType.js";
 import {
   nativeInstructionSchema,
   nativeCallTargetsSchema,
-} from "../domain/nativeInstruction.js";
+} from "../domain/native/nativeInstruction.js";
 
 import {
   AnalysisInputError,
@@ -24,8 +24,8 @@ import {
   jsonValueSchema,
   type JsonValue,
 } from "../domain/jsonValue.js";
-import { nativeApiBoundarySchema } from "../domain/nativeApiBoundary.js";
-import { nativeValueFlowSchema } from "../domain/nativeValueFlow.js";
+import { nativeApiBoundarySchema } from "../domain/native/nativeApiBoundary.js";
+import { nativeValueFlowSchema } from "../domain/native/nativeValueFlow.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   ghidraIdentifierSchema,

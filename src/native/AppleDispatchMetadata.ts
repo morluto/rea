@@ -5,7 +5,7 @@ import {
   objcSwiftMetadataSchema,
   nativeDispatchMetadataResultSchema,
   type ObjcSwiftMetadata,
-} from "../domain/objcSwiftMetadata.js";
+} from "../domain/native/objcSwiftMetadata.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";

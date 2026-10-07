@@ -1,4 +1,4 @@
-import type { ObjcSwiftMetadata } from "../domain/objcSwiftMetadata.js";
+import type { ObjcSwiftMetadata } from "../domain/native/objcSwiftMetadata.js";
 import type { Segment, Section } from "./AppleMachoSelection.js";
 import { boundClassName, decodeObjcCategories } from "./AppleObjcCategories.js";
 import { readObjcPropertiesOf } from "./AppleObjcProperties.js";

@@ -3,7 +3,7 @@ import {
   nativeMetadataRecoverySchema,
   nativeMetadataRecoverySummarySchema,
 } from "./nativeMetadataRecovery.js";
-import { jsonValueSchema } from "./jsonValue.js";
+import { jsonValueSchema } from "../jsonValue.js";
 
 const metadata = {
   format: "dotnet-nativeaot",

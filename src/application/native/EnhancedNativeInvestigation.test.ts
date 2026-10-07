@@ -7,19 +7,19 @@ import {
   createAnalysisExecution,
   type AnalysisExecution,
   type AnalysisOperation,
-} from "./AnalysisProvider.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+} from "../AnalysisProvider.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
-} from "../domain/analysisErrorCore.js";
-import { EnhancedTools } from "./EnhancedTools.js";
+} from "../../domain/analysisErrorCore.js";
+import { EnhancedTools } from "../EnhancedTools.js";
 import {
   nativeInvestigationGraphSchema,
   nativeInvestigationTraceSchema,
-} from "../domain/nativeInvestigationGraph.js";
-import { err, ok } from "../domain/result.js";
-import type { Result } from "../domain/result.js";
+} from "../../domain/native/nativeInvestigationGraph.js";
+import { err, ok } from "../../domain/result.js";
+import type { Result } from "../../domain/result.js";
 
 const target = "a".repeat(64);
 const provider = { id: "fixture", name: "Fixture", version: "1" };

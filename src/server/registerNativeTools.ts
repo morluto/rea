@@ -2,7 +2,7 @@ import type { EvidenceWriter } from "../application/investigation/InvestigationR
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
-import { NATIVE_TOOL_CONTRACTS } from "../contracts/nativeToolContracts.js";
+import { NATIVE_TOOL_CONTRACTS } from "../contracts/native/nativeToolContracts.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import type { Logger } from "../logger.js";
 import { registerEvidenceTools } from "./registerEvidenceTools.js";
