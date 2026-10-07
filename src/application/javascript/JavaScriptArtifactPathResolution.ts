@@ -126,7 +126,7 @@ const contextualCandidate = (
   input: ResolveArtifactPathInput,
 ): string | ArtifactPathResolution => {
   const { context } = input;
-  const declared =
+  let declared =
     context === "html-reference" ||
     context === "url-reference" ||
     (context === "module-specifier" && input.moduleKind !== "require")
@@ -142,6 +142,20 @@ const contextualCandidate = (
       ]);
     if (!declared.startsWith(".") && !declared.startsWith("/"))
       return bareModuleCandidate(input, declared);
+    if (input.moduleKind !== "require") {
+      try {
+        declared = decodeURIComponent(declared);
+      } catch (cause: unknown) {
+        void cause;
+        return unresolvedOutcome(input, "rejected", [
+          "The module URL path contains malformed percent encoding.",
+        ]);
+      }
+      if (declared.includes("\0"))
+        return unresolvedOutcome(input, "rejected", [
+          "The decoded module URL path contains NUL.",
+        ]);
+    }
   } else if (looksExternal(declared))
     return unresolvedOutcome(input, "external", [
       "URL schemes and protocol-relative URLs are outside this local artifact path context.",
