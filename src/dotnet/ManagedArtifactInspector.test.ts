@@ -113,7 +113,9 @@ describe("managed artifact inventory", () => {
     ]);
     expect(result.classification.runtime_family).toBe("unity-mono");
   });
+});
 
+describe("managed fixture data layout", () => {
   it("keeps ReadyToRun metadata and resources intact with large metadata", () => {
     const resource = Buffer.alloc(2_048, 0x52);
     const fieldSignature = Buffer.concat([
@@ -142,7 +144,9 @@ describe("managed artifact inventory", () => {
     });
     expect(result.coverage).toMatchObject({ state: "complete", issues: [] });
   });
+});
 
+describe("managed artifact metadata identity", () => {
   it("accepts CLI metadata GUIDs without RFC UUID version or variant bits", () => {
     const bytes = buildManagedPeFixture({
       mvid: Buffer.from("3aebc60edc4a544b1f458b4ed40b33b1", "hex"),
