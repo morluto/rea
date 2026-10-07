@@ -20,8 +20,11 @@ export const excludeCaptureCoordinates = (
     });
   const records = value.records.map((record) => {
     const location =
-      record.location.kind === "json-pointer" &&
-      sensitive(record.location.pointer)
+      (record.location.kind === "json-pointer" &&
+        sensitive(record.location.pointer)) ||
+      (record.location.kind === "byte-range" &&
+        (sensitive(String(record.location.offset)) ||
+          sensitive(String(record.location.bytes))))
         ? {
             kind: "unknown" as const,
             reason: "explicit-sensitive-value" as const,

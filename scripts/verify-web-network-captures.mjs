@@ -414,6 +414,30 @@ try {
     }
     cases++;
   }
+  const nativeCoordinateInput = {
+    capture_path: join(runtime.path, "flows.mitm"),
+    format: "mitmproxy",
+  };
+  const nativeCoordinates = await inspect("mcp", nativeCoordinateInput);
+  const originalLocation = nativeCoordinates.records[1].location;
+  assert.equal(originalLocation.kind, "byte-range");
+  for (const literal of [
+    String(originalLocation.offset),
+    String(originalLocation.bytes),
+  ]) {
+    for (const mode of ["cli", "mcp"]) {
+      const excluded = await inspect(mode, {
+        ...nativeCoordinateInput,
+        sensitive_values: [literal],
+      });
+      assert.deepEqual(excluded.records[1].location, {
+        kind: "unknown",
+        reason: "explicit-sensitive-value",
+      });
+      cases++;
+    }
+  }
+  cases++;
   const deniedPath = join(runtime.path, "unreadable.har");
   await copyFile(join(runtime.path, "producer.har"), deniedPath);
   await chmod(deniedPath, 0o000);

@@ -311,3 +311,30 @@ it.each([
     );
   },
 );
+
+it.each(["12345", "67890", "234", "789"])(
+  "excludes sensitive native byte-range coordinates: %s",
+  async (literal) => {
+    const report = fixture();
+    report.format = "mitmproxy";
+    report.artifact.path = "/capture.mitm";
+    const record = report.records[0];
+    if (record === undefined) throw new Error("record missing");
+    record.location = { kind: "byte-range", offset: 12345, bytes: 67890 };
+    const result = await new WebNetworkCaptureService({
+      inspect: () => Promise.resolve(ok(report)),
+    }).inspect({
+      capture_path: report.artifact.path,
+      format: "mitmproxy",
+      sensitive_values: [literal],
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value.normalized_result).toMatchObject({
+      records: [
+        { location: { kind: "unknown", reason: "explicit-sensitive-value" } },
+      ],
+    });
+    expect(result.value.raw_result).toBeNull();
+    expect(parseEvidence(result.value)).toEqual(result.value);
+  },
+);
