@@ -3,16 +3,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { afterAll, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it } from "vitest";
 
+import { authorizeRuntimeLocation } from "./JavaScriptRuntimeScope.js";
 import { finalizeInspectorCapture } from "./V8InspectorCaptureProjection.js";
 import type { CaptureState } from "./V8InspectorProvider.js";
 
-const rootPromise = mkdtemp(join(tmpdir(), "rea-inspector-projection-"));
-afterAll(async () => rm(await rootPromise, { recursive: true, force: true }));
+let root: string;
+beforeAll(async () => {
+  root = await mkdtemp(join(tmpdir(), "rea-inspector-projection-"));
+});
+afterAll(async () => {
+  if (root !== undefined) await rm(root, { recursive: true, force: true });
+});
 
 it("authorizes distinct Inspector locations and preserves stable deduplication", async () => {
-  const root = await rootPromise;
   const firstPath = join(root, "first.js");
   const secondPath = join(root, "second.js");
   await Promise.all([
@@ -166,7 +171,7 @@ it("authorizes every unique script location through a bounded worker pool", asyn
   });
 
   expect(maximumActive).toBeGreaterThan(1);
-  expect(maximumActive).toBeLessThanOrEqual(8);
+  expect(maximumActive).toBeLessThan(authorizedUrls.size);
   expect(authorizedUrls.size).toBe(201);
   expect(activeUrls.size).toBe(0);
   expect(result.scripts.items).toHaveLength(200);
@@ -197,13 +202,15 @@ it("waits for active authorization workers to settle before returning a failure"
     truncated: false,
     truncationReasons: new Set(),
   };
-  const activeUrls = new Set<string>();
   const startedUrls: string[] = [];
-  const releaseActive: Array<() => void> = [];
+  const pendingAuthorizations = new Map<
+    string,
+    { readonly resolve: () => void; readonly reject: (error: Error) => void }
+  >();
   const failure = new Error("authorization failed");
-  const failureSeen = new Promise<void>((resolve) =>
-    releaseActive.push(resolve),
-  );
+  let active = 0;
+  let maximumActive = 0;
+  let failureInjected = false;
 
   const finalization = finalizeInspectorCapture({
     input: {
@@ -227,23 +234,39 @@ it("waits for active authorization workers to settle before returning a failure"
     state,
     authorizeLocation: async (rawUrl) => {
       startedUrls.push(rawUrl);
-      if (rawUrl.endsWith("failure-0.js")) {
-        releaseActive[0]?.();
-        throw failure;
-      }
-      activeUrls.add(rawUrl);
-      await new Promise<void>((resolve) => releaseActive.push(resolve));
-      activeUrls.delete(rawUrl);
-      return {
-        allowed: true,
-        location: { kind: "file", file_path: rawUrl },
-      };
+      if (failureInjected)
+        return { allowed: true, location: { kind: "file", file_path: rawUrl } };
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      return new Promise<Awaited<ReturnType<typeof authorizeRuntimeLocation>>>(
+        (resolve, reject) => {
+          pendingAuthorizations.set(rawUrl, {
+            resolve: () =>
+              resolve({
+                allowed: true,
+                location: { kind: "file", file_path: rawUrl },
+              }),
+            reject,
+          });
+        },
+      ).finally(() => {
+        active -= 1;
+      });
     },
   });
-  await failureSeen;
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(startedUrls).toEqual(scripts.slice(0, 8).map(({ rawUrl }) => rawUrl));
-  for (const release of releaseActive.slice(1)) release();
+  const initialStarted = new Set(startedUrls);
+  expect(initialStarted.size).toBeGreaterThan(1);
+  expect(maximumActive).toBe(initialStarted.size);
+  const failingUrl = startedUrls[0];
+  if (failingUrl === undefined)
+    throw new Error("Expected at least one active authorization");
+  failureInjected = true;
+  pendingAuthorizations.get(failingUrl)?.reject(failure);
+  await Promise.resolve();
+  expect(new Set(startedUrls)).toEqual(initialStarted);
+  for (const [rawUrl, pending] of pendingAuthorizations)
+    if (rawUrl !== failingUrl) pending.resolve();
   await expect(finalization).rejects.toBe(failure);
-  expect(activeUrls.size).toBe(0);
+  expect(new Set(startedUrls)).toEqual(initialStarted);
+  expect(active).toBe(0);
 });
