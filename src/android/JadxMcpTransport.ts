@@ -62,12 +62,16 @@ export class JadxMcpTransport implements Transport {
       stdin: "pipe",
     });
     this.#spawned = spawned;
-    this.#supervisor = new ProviderProcessSupervisor({
-      ...spawned,
-      ownsProcessLifetime: true,
-      cleanup:
-        spawned.cleanup ?? (() => cleanupOwnedProcessGroup(spawned.ownership)),
-    }, { captureStdout: false });
+    this.#supervisor = new ProviderProcessSupervisor(
+      {
+        ...spawned,
+        ownsProcessLifetime: true,
+        cleanup:
+          spawned.cleanup ??
+          (() => cleanupOwnedProcessGroup(spawned.ownership)),
+      },
+      { captureStdout: false },
+    );
     if (
       spawned.process.stdin === undefined ||
       spawned.process.stdin === null ||

@@ -6,7 +6,10 @@ import {
 } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 import type { ProviderProcessHandle } from "../../../src/process/ProviderProcess.js";
-import { JadxMcpTransport, type JadxLauncher } from "../../../src/android/JadxMcpTransport.js";
+import {
+  JadxMcpTransport,
+  type JadxLauncher,
+} from "../../../src/android/JadxMcpTransport.js";
 
 class FixtureProcess extends EventEmitter implements ProviderProcessHandle {
   readonly pid = 1;
