@@ -268,6 +268,46 @@ describe("managed exception region bounds", () => {
     ).toMatchObject({ status: "present", il_size: 1, issue: null });
   });
 
+  it.each([
+    ["try start", { tryOffset: 1, tryLength: 4, handlerOffset: 5 }],
+    ["try end", { tryOffset: 0, tryLength: 1, handlerOffset: 5 }],
+    ["handler start", { tryLength: 5, handlerOffset: 1, handlerLength: 5 }],
+    ["handler end", { tryLength: 5, handlerOffset: 0, handlerLength: 1 }],
+  ] as const)(
+    "preserves clauses with a mid-instruction %s",
+    (_label, region) => {
+      const body = managedBodyWithRegion({
+        il: Buffer.from([0x20, 0, 0, 0, 0, 0x2a]),
+        ...region,
+      });
+      expect(body).toMatchObject({
+        status: "malformed",
+        exception_regions: [expect.any(Object)],
+        issue:
+          "Exception clause " +
+          (_label.startsWith("try") ? "try" : "handler") +
+          " range does not align with CIL instruction boundaries",
+      });
+    },
+  );
+
+  it("rejects a filter start inside an instruction and retains the clause", () => {
+    expect(
+      managedBodyWithRegion({
+        il: Buffer.from([0x20, 0, 0, 0, 0, 0x2a]),
+        flags: 1,
+        tryLength: 5,
+        handlerOffset: 5,
+        extra: 1,
+      }),
+    ).toMatchObject({
+      status: "malformed",
+      exception_regions: [expect.objectContaining({ filter_offset: 1 })],
+      issue:
+        "Exception clause filter range does not align with CIL instruction boundaries",
+    });
+  });
+
   it("marks reserved clause flags malformed without dropping its bytes", () => {
     expect(
       managedBodyWithRegion({

@@ -66,10 +66,12 @@ const readExceptionRegions = (
   sectionOffset: number,
   methodEnd: number,
   ilSize: number,
+  instructionOffsets: readonly number[],
 ): ReturnType<typeof parseExceptionRegions> =>
   validateExceptionRegionRanges(
     parseExceptionRegions(bytes, sectionOffset, methodEnd),
     ilSize,
+    instructionOffsets,
   );
 
 /** Decode admitted managed CIL, retaining unavailable implementation metadata as partial. */
@@ -137,6 +139,7 @@ export const methodBody = (
             sectionOffset,
             offset + methodExtent,
             header.ilSize,
+            decoded.parsed.map((instruction) => instruction.offset),
           )
         : null;
     const status = bodyStatus(
