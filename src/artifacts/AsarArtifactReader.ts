@@ -162,21 +162,10 @@ const isFilesystemFailure = (
   cause: unknown,
 ): cause is NodeJS.ErrnoException & Error =>
   cause instanceof Error &&
-  "code" in cause &&
-  typeof cause.code === "string" &&
-  [
-    "EACCES",
-    "EBADF",
-    "EBUSY",
-    "EIO",
-    "EMFILE",
-    "ENFILE",
-    "ENOENT",
-    "ENOTDIR",
-    "ENOSPC",
-    "EPERM",
-    "EROFS",
-  ].includes(cause.code);
+  "errno" in cause &&
+  typeof cause.errno === "number" &&
+  "syscall" in cause &&
+  typeof cause.syscall === "string";
 
 const isMissingFile = (cause: unknown): boolean =>
   typeof cause === "object" &&
