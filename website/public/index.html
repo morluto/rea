@@ -72,7 +72,7 @@
               aria-label="REA investigation flow; scroll horizontally on smaller screens"
             >
               <img
-                src="assets/figures/rea-investigation-flow.png"
+                src="assets/figures/rea-investigation-flow.svg"
                 width="1774"
                 height="887"
                 alt="Ask a question about a local app, binary or browser. Your agent uses REA through CLI or MCP to inspect and trace with analysis tools. REA returns code, references and unknowns. Your agent uses the evidence to explain, implement and test, and can ask follow-up questions."
@@ -82,7 +82,7 @@
             <figcaption>
               REA connects your agent to analysis tools. The findings guide the
               next question, explanation or implementation.
-              <a href="assets/figures/rea-investigation-flow.png"
+              <a href="assets/figures/rea-investigation-flow.svg"
                 >Open figure</a
               >
             </figcaption>
@@ -97,14 +97,14 @@
             <h2>Rebuilding DX-Ball</h2>
             <p>
               DX-Ball is a 1996 Windows game. The project is reconstructing it
-              in C, using REA and Ghidra to inspect the executable and
-              independent tests to check the recovered behavior.
+              in C, using REA to inspect the executable and independent tests to
+              check the recovered behavior.
             </p>
             <p>
-              One investigation found a sound-pan calculation missing from the
-              decompiler output. Following the instructions and callers led to a
-              C function that matches the original behavior and all 63 compiled
-              bytes.
+              To recover a sound-pan calculation, the agent used REA to inspect
+              the instructions, follow a caller and read the constants. Those
+              findings led to a C function checked against the original behavior
+              and all 63 compiled bytes.
             </p>
             <p>
               <a class="text-link" href="showcase/dx-ball/"
@@ -147,8 +147,8 @@
             <div>
               <h3>Native applications</h3>
               <p>
-                Inspect functions, strings, references and call relationships
-                through Hopper, Ghidra or IDA.
+                Inspect functions, strings, references and call relationships in
+                executables and libraries.
               </p>
               <a
                 href="https://github.com/morluto/rea/blob/main/docs/native-investigation.md"
@@ -194,7 +194,7 @@
           <div>
             <h3>Use your analysis tools</h3>
             <p>
-              Connect an existing Ghidra or IDA setup, or use Hopper. Static
+              Connect a local analysis provider for native binaries. Static
               JavaScript analysis runs with Node.js and npm.
             </p>
             <a class="text-link" href="get-started/#native"

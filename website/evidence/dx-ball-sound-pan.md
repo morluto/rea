@@ -38,6 +38,26 @@ call, omitting the stack input and x87 expression. The website's pseudocode
 excerpt preserves that body and omits only its leading provider warning/comment
 and blank lines.
 
+## Displayed REA requests
+
+The page shows the actual tool names with compact input excerpts:
+
+- `analyze_function` at procedure `0x406400` returns the pan dossier, including
+  its instruction view and the caller entry at `0x411f40`.
+- `analyze_function` at procedure `0x411f40` returns the brick-hit dossier.
+  The visible caller excerpt preserves the ADD/PUSH/CALL instructions verbatim;
+  the full supporting excerpt also shows the preceding ×30 calculation.
+- `read_bytes` at `0x420068`, length 16, returns
+  `000000000000f93f0000000000407f40`.
+- `read_bytes` at `0x4210a0`, length 8, returns `000000000000f03f`.
+
+The page splits the first byte read into two eight-byte values and shows their
+little-endian double interpretations beside the observed hex. These are decoded
+values, not additional fields in the raw REA result. Query groups present the
+reasoning sequence rather than reproducing an entire chronological session.
+Provider details are recorded here; the product narrative uses REA to describe
+the CLI/MCP operations the agent called.
+
 ## Complete recorded instruction listing
 
 Transcribed verbatim from the pan dossier's normalized assembly facet:

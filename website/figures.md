@@ -1,21 +1,31 @@
 # REA website figures
 
-Built-in `image_gen.imagegen` was used for both assets. Exactly two final raster figures were generated, with no CLI fallback and no image editing.
+The published diagrams are SVG source assets:
 
-## Final assets
+- `public/assets/figures/rea-investigation-flow.svg` — 1774 × 887 viewBox.
+- `public/assets/figures/dx-ball-sound-pan-investigation.svg` — 1774 × 887 viewBox.
 
-- `public/assets/figures/rea-investigation-flow.png` — 1774 × 887 px, RGB PNG
-- `public/assets/figures/dx-ball-sound-pan-investigation.png` — 1774 × 887 px, RGB PNG
+Two original layout references were generated with the built-in image generation
+tool and reviewed visually. Their prompts are retained below. The final SVGs
+preserve the white background, charcoal/slate/blue palette and layout while
+using REA as the reader-facing subject. Provider details remain in configuration
+guides and the evidence provenance document. The SVGs keep text sharp when
+zoomed and can be maintained without committing raster binaries.
 
-Both project-bound assets are saved in this website workspace and referenced by relative paths.
+The REA figure shows the agent's question, inspection through REA, evidence and
+follow-up work. The DX-Ball figure shows the ordered input/arithmetic evidence,
+the maintained C and separate execution/compiler checks. Recorded tool requests,
+instruction excerpts and decoded byte reads appear as HTML text in the case
+study; source reconstruction is the agent's work informed by REA results.
 
-## Visual and text validation
+## Review
 
-Both figures were inspected visually at original resolution. White background, charcoal text, slate outlines, restrained blue accent, no gradients, shadows, screenshots, icons, assembly or source code. Labels are correct and legible at the intended 1080px width. Both assets use a 2:1 landscape composition.
+Check spelling, arithmetic order, arrow directions and the separate verification
+branches when changing these figures. Match progress claims to the pinned
+reconstruction checkpoint. Validate the SVG as XML and inspect its browser
+rendering at desktop and mobile widths.
 
-REA figure: stage order and labels are correct; adapters support stage 2 only; the feedback arrow goes from the user agent back to REA. REA supplies analysis evidence; the user's agent explains, implements and tests.
-
-DX-Ball figure: source address is 0x00406400; evidence order is Stack input x → × 1.5625 → − 500.0 → × pan_scale → Integer return. The Brick-hit caller supplies 20 + 30 × tile_x into Stack input x. Maintained C branches to two separate checks: Original-x86 comparison (3,205 cases) and VC4.0 compiler replay (63 matching bytes). There is no complete-game claim.
+## Original image generation prompts
 
 ## Prompt 1
 

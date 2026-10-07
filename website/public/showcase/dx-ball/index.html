@@ -6,7 +6,7 @@
     <title>Rebuilding DX-Ball — REA</title>
     <meta
       name="description"
-      content="Follow a DX-Ball reconstruction from binary analysis through REA and Ghidra to maintained C, original-x86 tests and matching compiled function bytes."
+      content="Follow a DX-Ball reconstruction from binary analysis through REA to maintained C, original-x86 tests and matching compiled function bytes."
     />
     <meta name="theme-color" content="#ffffff" />
     <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
@@ -35,10 +35,10 @@
         <p class="eyebrow">Case study · DX-Ball 1.07</p>
         <h1>Rebuilding DX-Ball<br />from its executable.</h1>
         <p class="lede">
-          The goal is a maintainable C version of the 1996 Windows game. REA and
-          Ghidra help inspect the original, one function at a time.
+          The goal is a maintainable C version of the 1996 Windows game. REA
+          helps the agent inspect the original, one function at a time.
         </p>
-        <p class="page-meta">Windows i386 · C · REA + Ghidra</p>
+        <p class="page-meta">Windows i386 · C · REA</p>
       </div>
       <figure class="explanatory-figure case-figure">
         <div
@@ -48,10 +48,10 @@
           aria-label="DX-Ball sound-pan investigation; scroll horizontally on smaller screens"
         >
           <img
-            src="../../assets/figures/dx-ball-sound-pan-investigation.png"
+            src="../../assets/figures/dx-ball-sound-pan-investigation.svg"
             width="1774"
             height="887"
-            alt="DXBALL.EXE function 0x00406400 is inspected with REA and Ghidra. A brick-hit caller supplies 20 plus 30 times tile_x. Instructions load x, multiply by 1.5625, subtract 500.0, apply pan_scale and return an integer. The maintained C is checked independently against the original x86 in 3,205 cases and by VC4.0 compiler replay matching 63 bytes."
+            alt="DXBALL.EXE function 0x00406400 is inspected with REA. A brick-hit caller supplies 20 plus 30 times tile_x. Instructions load x, multiply by 1.5625, subtract 500.0, apply pan_scale and return an integer. The maintained C is checked independently against the original x86 in 3,205 cases and by VC4.0 compiler replay matching 63 bytes."
             decoding="async"
           />
         </div>
@@ -59,7 +59,7 @@
           One function, from executable to checked C. REA supplies the
           instructions, callers and data reads; the reconstruction project
           implements and tests the result.
-          <a href="../../assets/figures/dx-ball-sound-pan-investigation.png"
+          <a href="../../assets/figures/dx-ball-sound-pan-investigation.svg"
             >Open figure</a
           >
         </figcaption>
@@ -112,10 +112,9 @@
             </p>
             <p>
               The analysis starts from the DX-Ball 1.07 executable. REA returns
-              function code, instructions, callers and state references through
-              its Ghidra provider. These findings guide the C implementation;
-              execution of the original x86 functions and compiler replay check
-              the result.
+              function code, instructions, callers and state references. These
+              findings guide the C implementation; execution of the original x86
+              functions and compiler replay check the result.
             </p>
           </section>
 
@@ -127,16 +126,23 @@
               coordinate becomes a left/right panning value.
             </p>
             <p>
-              The decompiler output for the function at
-              <code>0x00406400</code> was missing both the argument and the
-              floating-point expression. The instructions and callers supplied
-              the missing pieces.
+              The agent used REA to inspect the function, follow its brick-hit
+              caller and read the constants from the executable. Those results
+              supplied the input and arithmetic needed to write the C function
+              below.
+            </p>
+            <p>
+              The first function result for <code>0x406400</code> included
+              pseudocode declaring <code>FUN_00406400(void)</code> and calling
+              <code>__ftol()</code>. Its instruction view showed a stack input
+              and floating-point operations. That discrepancy gave the agent a
+              concrete reason to keep investigating.
             </p>
             <details class="evidence-details">
               <summary>The first decompiler view</summary>
               <div class="code-block">
                 <div class="code-header">
-                  <span>REA / Ghidra · pseudocode excerpt</span>
+                  <span>REA result · pseudocode excerpt</span>
                 </div>
                 <pre><code>longlong FUN_00406400(void)
 {
@@ -152,7 +158,93 @@
               </p>
             </details>
 
-            <h3 class="small-heading">From instructions to C</h3>
+            <h3 class="small-heading">Three questions answered through REA</h3>
+            <ol class="rea-queries">
+              <li>
+                <h4>Recover the missing input</h4>
+                <div class="rea-query-pair">
+                  <div class="code-block">
+                    <div class="code-header">
+                      <span>Agent → REA · <code>analyze_function</code></span>
+                    </div>
+                    <pre><code>{"procedure": "0x406400"}</code></pre>
+                  </div>
+                  <div class="code-block">
+                    <div class="code-header">
+                      <span>REA → agent · instruction excerpt</span>
+                    </div>
+                    <pre><code>0x406409: MOV EAX, dword ptr [EBP + 0x8]
+0x40640c: MOV dword ptr [EBP + -0xc], EAX
+0x40640f: FILD dword ptr [EBP + -0xc]</code></pre>
+                  </div>
+                </div>
+                <p>
+                  The function result includes instructions alongside pseudocode
+                  and callers. Here, <code>[EBP+8]</code> exposes the integer
+                  input missing from the decompiler view.
+                </p>
+              </li>
+              <li>
+                <h4>Follow the caller to understand the input</h4>
+                <div class="rea-query-pair">
+                  <div class="code-block">
+                    <div class="code-header">
+                      <span>Agent → REA · <code>analyze_function</code></span>
+                    </div>
+                    <pre><code>{"procedure": "0x411f40"}</code></pre>
+                  </div>
+                  <div class="code-block">
+                    <div class="code-header">
+                      <span>REA → agent · caller excerpt</span>
+                    </div>
+                    <pre><code>0x411f5b: ADD EAX, 0x14
+0x411f5e: PUSH EAX
+0x411f5f: CALL 0x00406400</code></pre>
+                  </div>
+                </div>
+                <p>
+                  REA identified this caller in the first result. Its preceding
+                  instructions scale <code>tile_x</code> by 30; adding 20 gives
+                  the brick's screen coordinate, <code>20 + 30 × tile_x</code>.
+                </p>
+              </li>
+              <li>
+                <h4>Read the values behind the memory addresses</h4>
+                <div class="rea-query-pair">
+                  <div class="code-block">
+                    <div class="code-header">
+                      <span
+                        >Agent → REA · two
+                        <code>read_bytes</code> requests</span
+                      >
+                    </div>
+                    <pre><code>{"address": "0x420068", "length": 16}
+{"address": "0x4210a0", "length": 8}</code></pre>
+                  </div>
+                  <div class="code-block">
+                    <div class="code-header">
+                      <span>REA byte results · decoded as doubles</span>
+                    </div>
+                    <pre><code>000000000000f93f → 1.5625
+0000000000407f40 → 500.0
+000000000000f03f → 1.0</code></pre>
+                  </div>
+                </div>
+                <p>
+                  The returned bytes establish the two arithmetic constants and
+                  initial pan scale. The agent now has the values needed for the
+                  C expression.
+                </p>
+              </li>
+            </ol>
+            <p>
+              REA exposes these operations through CLI and MCP, with target
+              identity and Evidence IDs in the results. The agent can follow up
+              on a caller or data address directly, then use the findings to
+              write maintained C.
+            </p>
+
+            <h3 class="small-heading">From REA's findings to C</h3>
             <p>
               Follow the five steps below. Each selection highlights the
               original instructions and the C lines they informed.
@@ -257,34 +349,34 @@
               >
                 <p data-step-note="1">
                   <strong>01 · Read the input.</strong>
-                  <code>[EBP+8]</code> holds the first stack argument.
-                  <code>FILD</code> loads that integer onto the x87 stack. The
-                  caller passes a brick's screen coordinate,
-                  <code>20 + 30 × tile_x</code>, establishing the meaning of
-                  <code>x</code>.
+                  The instruction view in REA's function result reads
+                  <code>[EBP+8]</code> and uses <code>FILD</code> to load the
+                  integer. Following its caller through REA establishes the
+                  screen-coordinate meaning of the C parameter <code>x</code>.
                 </p>
                 <p data-step-note="2" hidden>
                   <strong>02 · Multiply by 1.5625.</strong>
                   <code>FMUL</code> reads the double at <code>0x420068</code>.
-                  REA's <code>read_bytes</code> result decodes to
+                  The bytes returned by REA's <code>read_bytes</code> decode to
                   <code>1.5625</code>; the C uses the same constant.
                 </p>
                 <p data-step-note="3" hidden>
                   <strong>03 · Subtract 500.0.</strong> <code>FSUB</code> reads
-                  the double at <code>0x420070</code>. The data read identifies
-                  <code>500.0</code>, shifting the calculation's center to
+                  the double at <code>0x420070</code>. REA's byte result decodes
+                  to <code>500.0</code>, shifting the calculation's center to
                   screen coordinate <code>320</code>.
                 </p>
                 <p data-step-note="4" hidden>
                   <strong>04 · Apply the stored scale.</strong> The second
                   <code>FMUL</code> reads <code>0x4210a0</code>. That global is
                   named <code>dxball_pan_scale</code> in the maintained source.
-                  Its initial value is <code>1.0</code>.
+                  REA's second byte read establishes its initial value of
+                  <code>1.0</code>.
                 </p>
                 <p data-step-note="5" hidden>
                   <strong>05 · Return an integer.</strong> The call at
-                  <code>0x406430</code> reaches the conversion helper
-                  <code>__ftol</code>. The C casts the result to
+                  <code>0x406430</code> reaches <code>__ftol</code>, identified
+                  in REA's callee results. The C casts the result to
                   <code>DxBallInt</code>; original-x86 comparisons check the
                   returned value.
                 </p>
@@ -299,7 +391,7 @@
               <summary>Full assembly and supporting evidence</summary>
               <div class="code-block">
                 <div class="code-header">
-                  <span>REA / Ghidra · 0x406400–0x40643e</span
+                  <span>REA result · 0x406400–0x40643e</span
                   ><button
                     class="copy-button"
                     type="button"
@@ -381,9 +473,8 @@
                 </table>
               </div>
               <p class="caption">
-                Recorded with REA 4.1.0 and Ghidra 12.1.4 for the hash-pinned
-                DX-Ball 1.07 target. The linked investigation notes retain the
-                Evidence IDs.
+                Recorded with REA 4.1.0 for the hash-pinned DX-Ball 1.07 target.
+                The linked investigation notes retain the Evidence IDs.
               </p>
             </details>
             <p class="caption">
@@ -402,8 +493,10 @@
           <section class="article-section" id="checking">
             <h2>Checking the recovered function</h2>
             <p>
-              The project checks behavior and compiled code separately. For this
-              function, both checks pass.
+              The input, caller context and constant values returned through REA
+              guided the maintained C implementation. The project then checked
+              it against the original x86 function and the pinned compiler. For
+              this function, both checks pass.
             </p>
             <div class="verification">
               <div>
@@ -465,7 +558,6 @@
                 </button>
               </div>
               <pre><code id="pan-command">scripts/rea function original/DXBALL.EXE 0x00406400 \
-  --provider ghidra \
   --snapshot .analysis/rea/dxball.snapshot.json --json</code></pre>
             </div>
             <ul class="reading-list">

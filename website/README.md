@@ -41,9 +41,10 @@ Evidence. [evidence/dx-ball-sound-pan.md](evidence/dx-ball-sound-pan.md) records
 their provenance and the scope of the validation claims. The original executable
 and complete private Evidence records are not website assets.
 
-Both raster figures were generated with the built-in image generation tool.
-[figures.md](figures.md) retains their final prompts and review notes. Figures
-provide an overview; assembly and C remain selectable HTML text. On narrow
+The diagrams are maintained as SVG source. Initial layout references were
+created with the built-in image generation tool; [figures.md](figures.md) retains
+their prompts and the current asset notes. Figures provide an overview;
+REA requests, assembly and C remain selectable HTML text. On narrow
 screens, the diagrams scroll horizontally and can also be opened at full size.
 
 ## GitHub Pages
