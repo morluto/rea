@@ -74,6 +74,68 @@ describe("firmware producer boundaries", () => {
     ]);
     expect(normalized.coverage).toBe("partial");
   });
+});
+
+describe("Unblob multi-file extraction diagnostics", () => {
+  it("retains nested MultiFile extraction failures in partial coverage", () => {
+    const outputPath = `${context.outputRoot}/multi`;
+    const childTask = {
+      path: outputPath,
+      depth: 1,
+      blob_id: "multi-id",
+      is_multi_file: true,
+    };
+    const extractionFailure = {
+      __typename__: "ExtractorDependencyNotFoundReport",
+      severity: "ERROR",
+      dependencies: ["sasquatch"],
+    };
+    const multiFileReport = {
+      __typename__: "MultiFileReport",
+      id: "multi-id",
+      handler_name: "multipart-firmware",
+      name: "rootfs",
+      paths: [`${outputPath}/part-a`, `${outputPath}/part-b`],
+      extraction_reports: [extractionFailure],
+    };
+    const parent = root();
+    const normalized = normalizeUnblobReport(
+      [
+        {
+          ...parent,
+          reports: parent.reports.filter(
+            (item) => item.__typename__ !== "UnknownChunkReport",
+          ),
+          subtasks: [childTask],
+        },
+        {
+          task: childTask,
+          reports: [
+            {
+              __typename__: "StatReport",
+              path: outputPath,
+              size: 0,
+              is_dir: true,
+              is_file: false,
+              is_link: false,
+              link_target: null,
+            },
+            multiFileReport,
+          ],
+          subtasks: [],
+        },
+      ],
+      context,
+    );
+
+    expect(normalized.coverage).toBe("partial");
+    expect(normalized.diagnostics).toEqual([
+      { input_path: "$output/multi", report: multiFileReport },
+    ]);
+  });
+});
+
+describe("firmware producer boundaries", () => {
   it("rejects unknown tasks outside the owned output and disconnected task graphs", () => {
     const record = root();
     for (const path of [

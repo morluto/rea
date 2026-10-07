@@ -118,6 +118,7 @@ export const projectAndroidApplication = (
       ? ["Source inventory pages are incomplete; absence is unknown."]
       : []),
     "Manifest, resource, signing, and bytecode semantics require a dedicated Android provider; this projection reports exact inventory paths and hashes only.",
+    "Runtime families are inferred from inventory formats and paths; filename suffixes do not establish valid DEX or JVM class bytes.",
     "Bridge candidates are path-based hypotheses, not decoded JNI declarations or observed runtime calls.",
   ];
   const withoutId = {
@@ -176,11 +177,17 @@ const runtimeFamilies = (all: readonly Component[]) => {
   const families = new Set<
     AndroidApplicationProjectionResult["runtime_families"][number]
   >();
-  if (all.some(({ path, format }) => format === "dex" || path.endsWith(".dex")))
+  if (
+    all.some(
+      ({ path, format }) =>
+        format === "dex" || path.toLowerCase().endsWith(".dex"),
+    )
+  )
     families.add("dalvik-art");
   if (
     all.some(
-      ({ path, format }) => format === "jvm-class" || path.endsWith(".class"),
+      ({ path, format }) =>
+        format === "jvm-class" || path.toLowerCase().endsWith(".class"),
     )
   )
     families.add("java-kotlin");
