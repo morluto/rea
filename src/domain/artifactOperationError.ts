@@ -14,6 +14,7 @@ export class ArtifactOperationError extends AnalysisError {
       | "inspect_keyed_archive"
       | "export_web_scripts"
       | "trace_web_module_imports"
+      | "trace_web_source_location"
       | "analyze_javascript_application",
     readonly reason:
       | "cancelled"
