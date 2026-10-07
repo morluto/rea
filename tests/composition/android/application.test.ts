@@ -103,7 +103,12 @@ describe("Android application projection", () => {
     const root = await createTestTempDirectory("rea-android-suffixes-");
     const path = join(root, "Suffixes.apk");
     const writer = new ZipWriter(new Uint8ArrayWriter());
-    for (const entry of ["classes.DEX", "extra.dex", "Main.CLASS", "Other.class"])
+    for (const entry of [
+      "classes.DEX",
+      "extra.dex",
+      "Main.CLASS",
+      "Other.class",
+    ])
       await writer.add(entry, new TextReader("unrecognized bytes"));
     await writeFile(path, await writer.close());
 
@@ -128,12 +133,11 @@ describe("Android application projection", () => {
       projection.components.dex.every(({ format }) => format === "file"),
     ).toBe(true);
     expect(
-      projection.components.jvm_classes.every(({ format }) => format === "file"),
+      projection.components.jvm_classes.every(
+        ({ format }) => format === "file",
+      ),
     ).toBe(true);
-    expect(projection.runtime_families).toEqual([
-      "dalvik-art",
-      "java-kotlin",
-    ]);
+    expect(projection.runtime_families).toEqual(["dalvik-art", "java-kotlin"]);
     expect(projection.limitations).toContain(
       "Runtime families are inferred from inventory formats and paths; filename suffixes do not establish valid DEX or JVM class bytes.",
     );
