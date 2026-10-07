@@ -307,7 +307,73 @@ describe("managed exception region bounds", () => {
         "Exception clause filter range does not align with CIL instruction boundaries",
     });
   });
+});
 
+describe("managed exception region prefix boundaries", () => {
+  it("treats a CIL prefix chain and its opcode as one boundary", () => {
+    expect(
+      managedBodyWithRegion({
+        il: Buffer.from([0xfe, 0x12, 1, 0xfe, 0x13, 0x4a, 0x2a]),
+        tryOffset: 0,
+        tryLength: 6,
+        handlerOffset: 6,
+      }),
+    ).toMatchObject({ status: "present", issue: null, il_size: 7 });
+  });
+
+  it("keeps constrained callvirt as a single region boundary", () => {
+    const il = Buffer.from([0xfe, 0x16, 1, 0, 0, 1, 0x6f, 1, 0, 0, 6, 0x2a]);
+    expect(
+      managedBodyWithRegion({
+        il,
+        tryOffset: 0,
+        tryLength: 11,
+        handlerOffset: 11,
+      }),
+    ).toMatchObject({ status: "present", issue: null, il_size: 12 });
+    expect(
+      managedBodyWithRegion({
+        il,
+        tryOffset: 6,
+        tryLength: 1,
+        handlerOffset: 11,
+      }),
+    ).toMatchObject({
+      status: "malformed",
+      issue:
+        "Exception clause try range does not align with CIL instruction boundaries",
+    });
+  });
+
+  it.each([
+    ["start", { tryOffset: 5, tryLength: 1, handlerOffset: 6 }],
+    [
+      "end after first prefix",
+      { tryOffset: 0, tryLength: 3, handlerOffset: 6 },
+    ],
+    [
+      "end after second prefix",
+      { tryOffset: 0, tryLength: 5, handlerOffset: 6 },
+    ],
+  ] as const)(
+    "rejects a region %s between a prefix and its opcode",
+    (_edge, region) => {
+      expect(
+        managedBodyWithRegion({
+          il: Buffer.from([0xfe, 0x12, 1, 0xfe, 0x13, 0x4a, 0x2a]),
+          ...region,
+        }),
+      ).toMatchObject({
+        status: "malformed",
+        exception_regions: [expect.any(Object)],
+        issue:
+          "Exception clause try range does not align with CIL instruction boundaries",
+      });
+    },
+  );
+});
+
+describe("managed exception region flags and filters", () => {
   it("marks reserved clause flags malformed without dropping its bytes", () => {
     expect(
       managedBodyWithRegion({
@@ -397,15 +463,31 @@ describe("managed exception section decoding", () => {
     });
   });
 
-  it("reports malformed data in a chained section", () => {
+  it("preserves decoded clauses when a chained section has an unsupported kind", () => {
     const first = Buffer.alloc(16);
     first[0] = 0x81;
     first[1] = first.length;
     const second = Buffer.from([0x02, 0x04, 0x00, 0x00]);
     expect(managedBodyWithSections(first, second)).toMatchObject({
       status: "malformed",
-      exception_regions: [],
+      exception_regions: [expect.objectContaining({ flags: 0 })],
       issue: "Unsupported method data section kind 2",
+    });
+  });
+
+  it("preserves decoded clauses when a later section has a partial clause", () => {
+    const first = Buffer.alloc(16);
+    first[0] = 0x81;
+    first[1] = first.length;
+    first.writeUInt16LE(2, 4);
+    const later = Buffer.alloc(17);
+    later[0] = 0x01;
+    later[1] = later.length;
+
+    expect(managedBodyWithSections(first, later)).toMatchObject({
+      status: "malformed",
+      exception_regions: [expect.objectContaining({ flags: 2 })],
+      issue: "Exception section size does not contain whole clauses",
     });
   });
 

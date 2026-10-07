@@ -139,7 +139,7 @@ export const methodBody = (
             sectionOffset,
             offset + methodExtent,
             header.ilSize,
-            decoded.parsed.map((instruction) => instruction.offset),
+            decoded.instructionStarts,
           )
         : null;
     const status = bodyStatus(
