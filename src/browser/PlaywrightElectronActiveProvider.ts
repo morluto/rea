@@ -165,7 +165,7 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
       const startupDeadline = Date.now() + STARTUP_TIMEOUT_MS;
       const paths = await canonicalPaths(input);
       const captureBaseline =
-        await systemProcessOwnershipHost.captureBaseline?.();
+        await systemProcessOwnershipHost.captureBaseline?.(options.signal);
       if (options.signal?.aborted)
         throw new BrowserObservationError(OPERATION, "cancelled");
       application = await electron.launch({

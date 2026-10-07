@@ -86,18 +86,20 @@ export interface ProcessOwnershipHost {
   prepare?(signal?: AbortSignal): Promise<void>;
   /** Release owned native inspection helpers and their temporary files. */
   close?(): Promise<void>;
-  listProcesses(): Promise<readonly ProcessTableEntry[]>;
+  /** List current processes; startup inspection may be cancelled by the caller. */
+  listProcesses(signal?: AbortSignal): Promise<readonly ProcessTableEntry[]>;
   environment(pid: number): Promise<Readonly<Record<string, string>>>;
   /** Read only run-token values in one host operation when the OS supports it. */
   runTokens?(
     processes: readonly ProcessTableEntry[],
   ): Promise<ReadonlyMap<number, ProcessRunTokenObservation>>;
-  /** Read stable per-process identities in one host operation when available. */
+  /** Read stable identities; omit the signal during cleanup so it can finish. */
   processIdentities?(
     processes: readonly ProcessTableEntry[],
+    signal?: AbortSignal,
   ): Promise<ReadonlyMap<number, ProcessIdentityObservation>>;
-  /** Snapshot identities before a capture launches its selected process. */
-  captureBaseline?(): Promise<ProcessOwnershipBaseline>;
+  /** Snapshot identities before launch, honoring startup cancellation. */
+  captureBaseline?(signal?: AbortSignal): Promise<ProcessOwnershipBaseline>;
   signalGroup(processGroupId: number, signal: NodeJS.Signals): void;
 }
 

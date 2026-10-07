@@ -55,6 +55,28 @@ if (state.calls === 1) {
   return { executable, statePath };
 };
 
+const writeBlockingIdentityCompiler = async (directory: string) => {
+  const executable = join(directory, "fake-identity-xcrun");
+  const statePath = join(directory, "identity-helper-state.json");
+  const helperSource = `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify({
+  root: __dirname,
+}));
+setInterval(() => {}, 1000);
+`;
+  const compilerSource = `#!/usr/bin/env node
+const fs = require("node:fs");
+const outputIndex = process.argv.indexOf("-o");
+const output = process.argv[outputIndex + 1];
+fs.writeFileSync(output, ${JSON.stringify(helperSource)});
+fs.chmodSync(output, 0o755);
+`;
+  await writeFile(executable, compilerSource);
+  await chmod(executable, 0o755);
+  return { executable, statePath };
+};
+
 const waitForCompileState = async (statePath: string) => {
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
@@ -80,6 +102,25 @@ const waitForCompileState = async (statePath: string) => {
     }
   }
   throw new Error("fake compiler did not start");
+};
+
+const waitForIdentityHelper = async (statePath: string) => {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    try {
+      const parsed: unknown = JSON.parse(await readFile(statePath, "utf8"));
+      if (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        "root" in parsed &&
+        typeof parsed.root === "string"
+      )
+        return { root: parsed.root };
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  throw new Error("fake identity helper did not start");
 };
 
 type ElectronCaptureResult = Awaited<
@@ -201,6 +242,119 @@ it.skipIf(process.platform === "win32")(
       if (!controller.signal.aborted) controller.abort();
       if (captureOutcome !== undefined) await captureOutcome;
       prepareSpy.mockRestore();
+      launchSpy.mockRestore();
+      await reader.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "preserves cancellation through system-host baseline identity inspection",
+  async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), "rea-process-baseline-abort-test-"),
+    );
+    const fakeCompiler = await writeBlockingIdentityCompiler(directory);
+    const host = createSystemProcessOwnershipHost("darwin", process.env, {
+      darwinXcrun: fakeCompiler.executable,
+    });
+    const controller = new AbortController();
+    let helperRoot: string | undefined;
+    const baseline =
+      host.captureBaseline?.(controller.signal).then(
+        () => ({ state: "fulfilled" as const }),
+        (cause: unknown) => ({ state: "rejected" as const, cause }),
+      ) ?? Promise.resolve({ state: "missing" as const });
+    try {
+      if (host.captureBaseline === undefined)
+        throw new Error("Darwin host did not expose process baselines");
+      const helper = await waitForIdentityHelper(fakeCompiler.statePath);
+      helperRoot = helper.root;
+      controller.abort();
+      const outcome = await baseline;
+
+      expect(outcome.state).toBe("rejected");
+      if (outcome.state !== "rejected")
+        throw new Error("aborted identity inspection unexpectedly succeeded");
+      expect(outcome.cause).toMatchObject({ name: "AbortError" });
+      expect(
+        normalizeCaptureFailure(outcome.cause, controller.signal),
+      ).toMatchObject({ reason: "cancelled", userCategory: "cancelled" });
+      await expect(access(helper.root)).resolves.toBeUndefined();
+    } finally {
+      if (!controller.signal.aborted) controller.abort();
+      await baseline;
+      await host.close?.();
+      if (helperRoot !== undefined)
+        await expect(access(helperRoot)).rejects.toThrow();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "passes Electron cancellation into capture-local baseline inspection",
+  async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), "rea-electron-baseline-abort-test-"),
+    );
+    const fakeCompiler = await writeBlockingIdentityCompiler(directory);
+    const reader = createDarwinProcessRunTokenReader({
+      xcrun: fakeCompiler.executable,
+    });
+    const prepareSpy = vi
+      .spyOn(systemProcessOwnershipHost, "prepare")
+      .mockResolvedValue();
+    const baselineSpy = vi
+      .spyOn(systemProcessOwnershipHost, "captureBaseline")
+      .mockImplementation(async (signal) => {
+        await reader.identities(
+          [
+            {
+              pid: process.pid,
+              parentPid: process.ppid,
+              processGroupId: process.pid,
+              state: "S",
+              command: process.execPath,
+            },
+          ],
+          signal,
+        );
+        return [];
+      });
+    const launchSpy = vi.spyOn(electron, "launch");
+    const controller = new AbortController();
+    let captureOutcome: Promise<ElectronCaptureOutcome> | undefined;
+    try {
+      const input = electronActiveObservationInputSchema.parse({
+        executable_path: process.execPath,
+        application_path: fileURLToPath(import.meta.url),
+        application_root: process.cwd(),
+      });
+      captureOutcome = new PlaywrightElectronActiveProvider()
+        .capture(input, { signal: controller.signal })
+        .then(
+          (value) => ({ state: "result" as const, value }),
+          (cause: unknown) => ({ state: "rejected" as const, cause }),
+        );
+      const helper = await waitForIdentityHelper(fakeCompiler.statePath);
+      controller.abort();
+      const outcome = await captureOutcome;
+
+      expect(outcome.state).toBe("result");
+      if (outcome.state !== "result") throw outcome.cause;
+      expect(outcome.value).toMatchObject({
+        ok: false,
+        error: { reason: "cancelled", userCategory: "cancelled" },
+      });
+      expect(launchSpy).not.toHaveBeenCalled();
+      await expect(access(helper.root)).resolves.toBeUndefined();
+    } finally {
+      if (!controller.signal.aborted) controller.abort();
+      if (captureOutcome !== undefined) await captureOutcome;
+      prepareSpy.mockRestore();
+      baselineSpy.mockRestore();
       launchSpy.mockRestore();
       await reader.close();
       await rm(directory, { recursive: true, force: true });

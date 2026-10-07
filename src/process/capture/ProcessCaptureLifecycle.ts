@@ -918,7 +918,8 @@ export const prepareProcessCapture = async (
   try {
     assertNotCancelled(signal);
     const runId = randomUUID();
-    const ownershipBaseline = (await host.captureOwnershipBaseline?.()) ?? [];
+    const ownershipBaseline =
+      (await host.captureOwnershipBaseline?.(signal)) ?? [];
     assertNotCancelled(signal);
     return { temporaryRoot, runId, ownershipBaseline, before };
   } catch (cause: unknown) {
@@ -930,15 +931,18 @@ export const prepareProcessCapture = async (
 /** Filesystem seam for allocating and cleaning a capture's temporary root. */
 export interface ProcessPreparationHost {
   prepareOwnershipInspector?(signal?: AbortSignal): Promise<void>;
-  captureOwnershipBaseline?(): Promise<ProcessOwnershipBaseline>;
+  /** Capture the process baseline with the caller's startup cancellation. */
+  captureOwnershipBaseline?(
+    signal?: AbortSignal,
+  ): Promise<ProcessOwnershipBaseline>;
   createTemporaryRoot(): Promise<string>;
   cleanup(path: string): Promise<void>;
 }
 
 const systemProcessPreparationHost: ProcessPreparationHost = {
   prepareOwnershipInspector: prepareProcessOwnershipInspection,
-  captureOwnershipBaseline: () =>
-    systemProcessOwnershipHost.captureBaseline?.() ?? Promise.resolve([]),
+  captureOwnershipBaseline: (signal) =>
+    systemProcessOwnershipHost.captureBaseline?.(signal) ?? Promise.resolve([]),
   createTemporaryRoot: () => mkdtemp(join(tmpdir(), "rea-process-")),
   cleanup: (path) => rm(path, { recursive: true, force: true }),
 };

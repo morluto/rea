@@ -38,7 +38,8 @@ it("cleans the temporary root when cancellation arrives during identity capture"
   const cleanup = vi.fn(async () => undefined);
   const host = {
     createTemporaryRoot: vi.fn(async () => temporaryRoot),
-    captureOwnershipBaseline: vi.fn(async () => {
+    captureOwnershipBaseline: vi.fn(async (signal?: AbortSignal) => {
+      expect(signal).toBe(controller.signal);
       controller.abort();
       return [];
     }),
@@ -56,5 +57,6 @@ it("cleans the temporary root when cancellation arrives during identity capture"
       host,
     ),
   ).rejects.toThrow(/cancelled/u);
+  expect(host.captureOwnershipBaseline).toHaveBeenCalledWith(controller.signal);
   expect(cleanup).toHaveBeenCalledWith(temporaryRoot);
 });
