@@ -39,11 +39,18 @@ export const collectSemanticMemberMutations = (
       return;
     }
     if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
-      markValue(
-        node.object,
-        [semanticStaticPropertyKey(node.property, node.computed), ...path],
-        bindings,
-      );
+      const members: (string | null)[] = [];
+      let current: t.Node = node;
+      while (
+        t.isMemberExpression(current) ||
+        t.isOptionalMemberExpression(current)
+      ) {
+        members.push(
+          semanticStaticPropertyKey(current.property, current.computed),
+        );
+        current = current.object;
+      }
+      markValue(current, [...members.reverse(), ...path], bindings);
       return;
     }
     for (const value of referencedValues(node, path))
