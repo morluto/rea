@@ -1,11 +1,21 @@
 import { z } from "zod";
 import { digestSchema } from "../digests.js";
 import { jsonValueSchema } from "../jsonValue.js";
+import { isAbsoluteLocalPath } from "../localPath.js";
 
 const bytes = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const range = z.strictObject({ offset: bytes, length: bytes.positive() });
 const target = {
-  path: z.string().min(1).describe("Local firmware file; never executed"),
+  path: z
+    .string()
+    .min(1)
+    .refine(isAbsoluteLocalPath, {
+      message:
+        "path must be an absolute local filesystem path (for example /tmp/firmware.bin or C:\\firmware\\firmware.bin)",
+    })
+    .describe(
+      "Absolute local firmware file; never executed. Relative paths are rejected.",
+    ),
 };
 
 /** Explicit firmware inspection and extraction intent, independent of engines. */

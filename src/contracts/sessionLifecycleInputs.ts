@@ -15,9 +15,21 @@ const snapshotPathSchema = z
     "Absolute local filesystem path for the analysis snapshot; relative paths are rejected.",
   );
 
+/** Caller-supplied analysis target path; must name the target absolutely. */
+const binaryTargetPathSchema = z
+  .string()
+  .min(1)
+  .refine(isAbsoluteLocalPath, {
+    message:
+      "path must be an absolute local filesystem path (for example /tmp/fixture.bin or C:\\analysis\\fixture.bin)",
+  })
+  .describe(
+    "Absolute local filesystem path for the analysis target; relative paths are rejected.",
+  );
+
 /** Input contract for opening a target with an optional staged snapshot. */
 export const openBinaryInputSchema = z.object({
-  path: z.string().min(1),
+  path: binaryTargetPathSchema,
   format: executableFormatHintSchema
     .optional()
     .describe(
