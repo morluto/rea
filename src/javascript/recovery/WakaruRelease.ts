@@ -5,6 +5,13 @@ export const WAKARU_RELEASE = {
   repository: "https://github.com/pionxzh/wakaru",
 } as const;
 
+/** Exact provider identity shared by executions and the generated catalog. */
+export const WAKARU_PROVIDER_IDENTITY = {
+  id: "wakaru",
+  name: "Wakaru",
+  version: WAKARU_RELEASE.version,
+} as const;
+
 /** Per-operation resource bounds for the verified Linux adapter. */
 export const RECOVERY_LIMITS = {
   inputBytes: 64 * 1024 * 1024,

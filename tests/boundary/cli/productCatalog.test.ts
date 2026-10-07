@@ -27,6 +27,7 @@ import {
   BINWALK_PROVIDER_IDENTITY,
   UNBLOB_PROVIDER_IDENTITY,
 } from "../../../src/firmware/FirmwareRelease.js";
+import { WAKARU_PROVIDER_IDENTITY } from "../../../src/javascript/recovery/WakaruRelease.js";
 import { JADX_PROVIDER_IDENTITY } from "../../../src/android/JadxRelease.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import {
@@ -102,6 +103,7 @@ describe("canonical product catalog", () => {
         JADX_PROVIDER_IDENTITY,
         BINWALK_PROVIDER_IDENTITY,
         UNBLOB_PROVIDER_IDENTITY,
+        WAKARU_PROVIDER_IDENTITY,
         GHIDRA_PROVIDER_IDENTITY,
         IDA_PROVIDER_IDENTITY,
         NATIVE_MACOS_PROVIDER_IDENTITY,

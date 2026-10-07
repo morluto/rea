@@ -97,18 +97,16 @@ describe("JavaScript recovery workflow", () => {
             mode === "engine-mismatch"
               ? { ...providerIdentity, id: "another-engine" }
               : providerIdentity,
-            (mode === "missing-subject"
-                ? {}
-                : {
-                    subject: {
-                      path:
-                        mode === "subject-mismatch"
-                          ? "/wrong.js"
-                          : artifact.path,
-                      sha256: artifact.sha256,
-                      format: "javascript" as const,
-                    },
-                  }),
+            mode === "missing-subject"
+              ? {}
+              : {
+                  subject: {
+                    path:
+                      mode === "subject-mismatch" ? "/wrong.js" : artifact.path,
+                    sha256: artifact.sha256,
+                    format: "javascript" as const,
+                  },
+                },
           ),
         ),
     });

@@ -194,11 +194,7 @@ export const providerCatalog = (sources) => {
       contracts: sources.webScriptContracts.WEB_SCRIPT_TOOL_CONTRACTS,
     },
     {
-      identity: {
-        id: "wakaru",
-        name: "Wakaru",
-        version: sources.javascriptRecoveryProvider.WAKARU_RELEASE.version,
-      },
+      identity: sources.javascriptRecoveryProvider.WAKARU_PROVIDER_IDENTITY,
       contracts:
         sources.javascriptRecoveryContracts.JAVASCRIPT_RECOVERY_TOOL_CONTRACTS,
     },

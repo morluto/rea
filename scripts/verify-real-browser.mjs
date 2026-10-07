@@ -413,9 +413,16 @@ async function verifyPageScopedTransport(provider, proxy, origin) {
       target_id: target,
       observation_ms: 5_000,
     }),
+    {
+      progress: {
+        report(event) {
+          if (event.phase === "browser_observation" && event.completed === 1)
+            proxy.disconnectClients();
+          return Promise.resolve();
+        },
+      },
+    },
   );
-  await delay(100);
-  proxy.disconnectClients();
   const disconnected = await disconnectedPromise;
   if (
     !disconnected.ok ||

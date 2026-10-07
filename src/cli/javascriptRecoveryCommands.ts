@@ -29,8 +29,16 @@ export const registerJavaScriptRecoveryCommands = (
     options: z.object({
       extractionMode: z
         .enum(["structural", "heuristic", "inspection"])
-        .optional(),
-      rewriteLevel: z.enum(["minimal", "standard", "aggressive"]).optional(),
+        .optional()
+        .describe(
+          "Structural boundaries, heuristic fallback, or inspection-only regions",
+        ),
+      rewriteLevel: z
+        .enum(["minimal", "standard", "aggressive"])
+        .optional()
+        .describe(
+          "Upstream syntax recovery level; runtime equivalence remains unknown",
+        ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>

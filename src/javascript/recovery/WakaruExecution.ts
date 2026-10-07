@@ -24,7 +24,11 @@ import {
 } from "./WakaruCommand.js";
 import { parseWakaruReports } from "./WakaruReport.js";
 import { publishWakaruArtifacts } from "./WakaruPublication.js";
-import { RECOVERY_LIMITS, WAKARU_RELEASE } from "./WakaruRelease.js";
+import {
+  RECOVERY_LIMITS,
+  WAKARU_RELEASE,
+  WAKARU_PROVIDER_IDENTITY,
+} from "./WakaruRelease.js";
 
 const OPERATION = "recover_javascript_sources";
 const MODES = {
@@ -142,29 +146,25 @@ export const prepareWakaruExecution = async (context: RecoveryWorkspace) => {
       OPERATION,
       "Configured engine bytes changed during recovery",
     );
-  return createAnalysisExecution(
-    result,
-    { id: "wakaru", name: "Wakaru", version: WAKARU_RELEASE.version },
-    {
-      rawResult: jsonValueSchema.parse({
-        version,
-        execution: run,
-        report: parsed.report,
-        provenance: parsed.provenance,
-      }),
-      subject: {
-        path: source.path,
-        sha256: source.sha256,
-        format: "javascript",
-      },
-      locations: [
-        { kind: "artifact-path", path: source.path },
-        ...result.modules.map((module) => ({
-          kind: "artifact-path" as const,
-          path: module.artifact.path,
-        })),
-      ],
-      limitations: result.limitations,
+  return createAnalysisExecution(result, WAKARU_PROVIDER_IDENTITY, {
+    rawResult: jsonValueSchema.parse({
+      version,
+      execution: run,
+      report: parsed.report,
+      provenance: parsed.provenance,
+    }),
+    subject: {
+      path: source.path,
+      sha256: source.sha256,
+      format: "javascript",
     },
-  );
+    locations: [
+      { kind: "artifact-path", path: source.path },
+      ...result.modules.map((module) => ({
+        kind: "artifact-path" as const,
+        path: module.artifact.path,
+      })),
+    ],
+    limitations: result.limitations,
+  });
 };
