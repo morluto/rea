@@ -1,3 +1,5 @@
+import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+
 /** One REA MCP invocation observed in a Codex JSONL transcript. */
 interface CodexMcpCall {
   readonly id: string | null;
@@ -47,7 +49,7 @@ const canonicalValue = (value: unknown): unknown => {
   if (object === undefined) return value;
   return Object.fromEntries(
     Object.entries(object)
-      .sort(([left], [right]) => left.localeCompare(right))
+      .sort(([left], [right]) => compareUnicodeCodePoints(left, right))
       .map(([key, child]) => [key, canonicalValue(child)]),
   );
 };
