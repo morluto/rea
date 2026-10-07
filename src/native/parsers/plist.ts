@@ -27,34 +27,81 @@ export interface ParsedPlist {
   readonly limitations: readonly string[];
 }
 
-/** Parse plutil JSON output and project stable bundle metadata. */
-export const parsePlistJson = (
+/** Digits of a JSON number literal that has no fraction or exponent. */
+const INTEGRAL_LITERAL = /^-?\d+$/u;
+
+/**
+ * Decode plutil JSON, passing each integral number literal beyond the exact
+ * range of a JavaScript number, with its source digits, to `unsafe`.
+ */
+const decodePlistJson = (
   output: string,
-): Result<ParsedPlist, AnalysisOutputError> => {
+  unsafe: (item: number, digits: string) => unknown,
+): unknown => {
   // plutil output can carry a UTF-8 BOM, which JSON.parse rejects outright.
   const text = output.replace(/^\uFEFF/u, "");
-  let exactIntegerCount = 0;
-  // A plist integer can exceed the exact range of a JavaScript number; keep
-  // its decimal text from the JSON source instead of a rounded value.
-  const keepExactIntegers = (
-    _key: string,
-    item: unknown,
-    context?: { readonly source?: string },
-  ): unknown => {
-    const source = context?.source;
-    if (
-      typeof item !== "number" ||
-      Number.isSafeInteger(item) ||
-      source === undefined ||
-      !/^-?\d+$/u.test(source)
-    )
+  return JSON.parse(
+    text,
+    (_key: string, item: unknown, context?: { readonly source?: string }) => {
+      const source = context?.source;
+      return typeof item !== "number" ||
+        Number.isSafeInteger(item) ||
+        source === undefined ||
+        !INTEGRAL_LITERAL.test(source)
+        ? item
+        : unsafe(item, source);
+    },
+  );
+};
+
+/**
+ * Whether plutil JSON holds an integral number beyond the exact range of a
+ * JSON number. JSON prints an integral `<real>` and an `<integer>` alike, so
+ * such a number's element type must be read from plutil's XML conversion.
+ */
+export const plistJsonNeedsNumberTypes = (output: string): boolean => {
+  let found = false;
+  try {
+    decodePlistJson(output, (item) => {
+      found = true;
       return item;
-    exactIntegerCount += 1;
-    return { $plist_type: "integer", decimal: source };
+    });
+  } catch {
+    // Malformed JSON is reported by `parsePlistJson`.
+  }
+  return found;
+};
+
+/**
+ * Parse plutil JSON output and project stable bundle metadata. An integer
+ * beyond the exact range of a JSON number keeps its decimal text when
+ * `xmlConversion`, plutil's XML form of the same plist, shows that it came
+ * from an `<integer>` rather than a `<real>`.
+ */
+export const parsePlistJson = (
+  output: string,
+  xmlConversion?: string,
+): Result<ParsedPlist, AnalysisOutputError> => {
+  const literals =
+    xmlConversion === undefined ? undefined : xmlNumberLiterals(xmlConversion);
+  let exactIntegerCount = 0;
+  let ambiguousNumberCount = 0;
+  const classify = (item: number, digits: string): unknown => {
+    const exact = BigInt(digits).toString();
+    const integer = literals?.integers.get(item)?.has(exact) === true;
+    const real = literals?.reals.has(item) === true;
+    if (integer && !real) {
+      exactIntegerCount += 1;
+      return { $plist_type: "integer", decimal: digits };
+    }
+    // An integral <real> decodes exactly; only its JSON spelling is integral.
+    if (real && !integer) return item;
+    ambiguousNumberCount += 1;
+    return item;
   };
   let value: unknown;
   try {
-    value = JSON.parse(text, keepExactIntegers);
+    value = decodePlistJson(output, classify);
   } catch (cause: unknown) {
     return err(
       new AnalysisOutputError(
@@ -67,10 +114,7 @@ export const parsePlistJson = (
   return ok({
     value,
     bundle: projectPlistBundle(value),
-    limitations:
-      exactIntegerCount === 0
-        ? []
-        : [largeIntegerLimitation(exactIntegerCount)],
+    limitations: numberLimitations(exactIntegerCount, ambiguousNumberCount),
   });
 };
 
@@ -94,32 +138,19 @@ export const parsePlistXml = (
     );
   }
   // The XML decoder turns <integer> and <real> into numbers before REA sees
-  // them, rounding integers beyond the exact range. plutil escapes "<" in keys
-  // and strings, so the element literals can be read from the XML text.
-  const unsafeIntegers = new Map<number, Set<string>>();
-  for (const [, decimal = ""] of output.matchAll(
-    /<integer>\s*([+-]?\d+)\s*<\/integer>/gu,
-  )) {
-    const rounded = Number(decimal);
-    if (Number.isSafeInteger(rounded)) continue;
-    const exact = BigInt(decimal).toString();
-    unsafeIntegers.set(
-      rounded,
-      (unsafeIntegers.get(rounded) ?? new Set()).add(exact),
-    );
-  }
-  const reals = new Set(
-    [...output.matchAll(/<real>([^<]*)<\/real>/gu)].map(([, text = ""]) =>
-      Number.parseFloat(text),
-    ),
-  );
+  // them, rounding integers beyond the exact range.
+  const literals = xmlNumberLiterals(output);
   let exactIntegerCount = 0;
   let ambiguousNumberCount = 0;
   const value = mapJsonNumbers(projected.value, (item) => {
-    const decimals = unsafeIntegers.get(item);
+    const decimals = literals.integers.get(item);
     if (decimals === undefined) return item;
     const [decimal] = decimals;
-    if (decimals.size !== 1 || decimal === undefined || reals.has(item)) {
+    if (
+      decimals.size !== 1 ||
+      decimal === undefined ||
+      literals.reals.has(item)
+    ) {
       ambiguousNumberCount += 1;
       return item;
     }
@@ -136,20 +167,55 @@ export const parsePlistXml = (
         : [
             `${String(projected.unknownRealCount)} non-finite real value(s) are reported as { "$plist_type": "real", "value": null } because the XML decoder does not distinguish NaN from infinity.`,
           ]),
-      ...(exactIntegerCount === 0
-        ? []
-        : [largeIntegerLimitation(exactIntegerCount)]),
-      ...(ambiguousNumberCount === 0
-        ? []
-        : [
-            `${String(ambiguousNumberCount)} number(s) beyond the exact range of a JSON number are reported as decoded because the XML literal they came from, a rounded <integer> or a <real>, cannot be identified.`,
-          ]),
+      ...numberLimitations(exactIntegerCount, ambiguousNumberCount),
     ],
   });
 };
 
-const largeIntegerLimitation = (count: number): string =>
-  `${String(count)} integer value(s) exceed the exact range of a JSON number and are reported as { "$plist_type": "integer", "decimal": "<exact digits>" }.`;
+/** `<integer>` and `<real>` element literals in plutil's XML conversion. */
+interface XmlNumberLiterals {
+  /** Exact integer literals beyond the safe range, keyed by decoded number. */
+  readonly integers: ReadonlyMap<number, ReadonlySet<string>>;
+  readonly reals: ReadonlySet<number>;
+}
+
+// plutil escapes "<" in keys and strings, so these element literals can be
+// read from the XML text.
+const xmlNumberLiterals = (xml: string): XmlNumberLiterals => {
+  const integers = new Map<number, Set<string>>();
+  for (const [, decimal = ""] of xml.matchAll(
+    /<integer>\s*([+-]?\d+)\s*<\/integer>/gu,
+  )) {
+    const rounded = Number(decimal);
+    if (Number.isSafeInteger(rounded)) continue;
+    integers.set(
+      rounded,
+      (integers.get(rounded) ?? new Set()).add(BigInt(decimal).toString()),
+    );
+  }
+  const reals = new Set(
+    [...xml.matchAll(/<real>([^<]*)<\/real>/gu)].map(([, text = ""]) =>
+      Number.parseFloat(text),
+    ),
+  );
+  return { integers, reals };
+};
+
+const numberLimitations = (
+  exactIntegerCount: number,
+  ambiguousNumberCount: number,
+): string[] => [
+  ...(exactIntegerCount === 0
+    ? []
+    : [
+        `${String(exactIntegerCount)} integer value(s) exceed the exact range of a JSON number and are reported as { "$plist_type": "integer", "decimal": "<exact digits>" }.`,
+      ]),
+  ...(ambiguousNumberCount === 0
+    ? []
+    : [
+        `${String(ambiguousNumberCount)} number(s) beyond the exact range of a JSON number are reported as decoded because the XML literal they came from, a rounded <integer> or a <real>, cannot be identified.`,
+      ]),
+];
 
 const mapJsonNumbers = (
   value: JsonValue,

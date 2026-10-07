@@ -50,7 +50,11 @@ import {
 import { parseCodeSignature } from "./parsers/codesign.js";
 import { parseDemangledSymbols } from "./parsers/demangle.js";
 import { parseLipoArchitectures } from "./parsers/lipo.js";
-import { parsePlistJson, parsePlistXml } from "./parsers/plist.js";
+import {
+  parsePlistJson,
+  parsePlistXml,
+  plistJsonNeedsNumberTypes,
+} from "./parsers/plist.js";
 import {
   architectureLocations,
   inspectNativeMacho,
@@ -431,9 +435,12 @@ class NativeMacOSClient implements AnalysisClient {
     );
     if (!json.ok) return json;
     // JSON cannot express data, dates, or non-finite reals; plutil rejects
-    // such plists, so decode its lossless XML conversion instead.
+    // such plists, so decode its lossless XML conversion instead. JSON also
+    // prints an integral <real> like an <integer>, so a number beyond the
+    // exact JSON range takes its element type from the XML conversion.
+    const jsonDecoded = json.value.exitCode === 0;
     const xml =
-      json.value.exitCode === 0
+      jsonDecoded && !plistJsonNeedsNumberTypes(json.value.stdout)
         ? undefined
         : await this.#run(
             "inspect_plist",
@@ -445,7 +452,9 @@ class NativeMacOSClient implements AnalysisClient {
     const parsed =
       xml === undefined
         ? parsePlistJson(json.value.stdout)
-        : parsePlistXml(xml.value.stdout);
+        : jsonDecoded
+          ? parsePlistJson(json.value.stdout, xml.value.stdout)
+          : parsePlistXml(xml.value.stdout);
     if (!parsed.ok) return parsed;
     const provenance = [
       classified.value,
