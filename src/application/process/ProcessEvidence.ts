@@ -13,7 +13,8 @@ export { PROCESS_PROVIDER } from "../../domain/process/processEvidenceProvider.j
 const processEvidenceParameters = (
   scenario: ProcessScenario,
 ): Readonly<Record<string, JsonValue>> => ({
-  executable_name: scenario.executable.split("/").at(-1) ?? scenario.executable,
+  executable_name:
+    scenario.executable.split(/[/\\]/u).at(-1) ?? scenario.executable,
   argument_count: scenario.arguments.length,
   event_count: scenario.events.length,
   filesystem_observation_path_count:
