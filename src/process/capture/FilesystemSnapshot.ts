@@ -165,6 +165,7 @@ export const snapshotRoots = async (
       await visit(root, rootAlias, join(path, child), depth + 1);
   };
   for (const [index, root] of scenario.filesystem_observation_paths.entries()) {
+    signal?.throwIfAborted();
     if ((await lstatIfPresent(root)) === undefined) {
       truncated = true;
       continue;

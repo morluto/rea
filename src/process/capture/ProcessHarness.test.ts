@@ -57,11 +57,13 @@ it("waits for terminal observations delivered after the exit callback", async ()
     setTimeout(() => {
       journal.push({ capture_order: 1, collection: "frames", index: 1 });
       resolve();
-    }, 12);
+    }, 8);
   });
 
   let settled = false;
-  const wait = settleProcessCaptureJournal(journal, 20, 200).then(() => {
+  // The quiet window must dwarf timer slop: Windows timers can fire ~16ms late,
+  // so a 20ms quiet window could elapse before a nominally earlier push lands.
+  const wait = settleProcessCaptureJournal(journal, 150, 1000).then(() => {
     settled = true;
   });
   await lateFrame;
