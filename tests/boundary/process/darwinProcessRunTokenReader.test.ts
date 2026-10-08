@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { _electron as electron } from "playwright-core";
 import { expect, it, vi } from "vitest";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import {
   createSystemProcessOwnershipHost,
@@ -168,8 +169,8 @@ it("reports an actionable missing Swift compiler without installing it", async (
 it.skipIf(process.platform === "win32")(
   "uses the compiler-managed module cache instead of rebuilding system modules per REA process",
   async () => {
-    const directory = await mkdtemp(
-      join(tmpdir(), "rea-process-token-module-cache-test-"),
+    const directory = await createTestTempDirectory(
+      "rea-process-token-module-cache-test-",
     );
     const fakeCompiler = await writeBlockingCompiler(directory);
     const reader = createDarwinProcessRunTokenReader({
@@ -182,9 +183,7 @@ it.skipIf(process.platform === "win32")(
       await writeFile(fakeCompiler.releasePath, "release");
       await preparation;
     } finally {
-      await Promise.allSettled([preparation]);
-      await reader.close();
-      await rm(directory, { recursive: true, force: true });
+      await Promise.all([reader.close(), Promise.allSettled([preparation])]);
     }
   },
 );

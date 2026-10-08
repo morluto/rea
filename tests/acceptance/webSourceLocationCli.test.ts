@@ -104,4 +104,6 @@ cliTest(
       details: { issues: [{ path: ["generated_position"] }] },
     });
   },
+  // Allow cold CLI and MCP ownership preparation across the full parity sequence.
+  180_000,
 );
