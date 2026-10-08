@@ -1,6 +1,6 @@
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join, relative, sep } from "node:path";
 import type { Readable } from "node:stream";
 
 import { parse } from "plist";
@@ -217,15 +217,20 @@ export class NativeDmgArtifactReader implements ArtifactReader {
           "format",
           "hdiutil returned no attached devices",
         );
-      for (const entity of parsed["system-entities"])
+      for (const entity of parsed["system-entities"]) {
+        if (entity["mount-point"] === undefined) continue;
+        const contained = relative(this.#mountRoot, entity["mount-point"]);
         if (
-          entity["mount-point"] !== undefined &&
-          !entity["mount-point"].startsWith(`${this.#mountRoot}/`)
+          contained === "" ||
+          contained === ".." ||
+          contained.startsWith(`..${sep}`) ||
+          isAbsolute(contained)
         )
           throw new ArtifactReaderFailure(
             "path",
             "hdiutil mounted outside the owned root",
           );
+      }
       this.#provenance.push(
         command(
           [
