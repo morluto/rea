@@ -134,3 +134,48 @@ it.each([0, 1])(
     });
   },
 );
+
+it("preserves a successful helper's diagnostics when bridge readiness is never observed", async () => {
+  let token = "";
+  const launcher: BridgeLauncher = {
+    launch(session) {
+      token = session.token;
+      return Promise.resolve(
+        ok({
+          process: spawn(
+            process.execPath,
+            [
+              "-e",
+              `process.stdout.write(${JSON.stringify("source=local-evidence ")} + ${JSON.stringify(session.token)}); process.stderr.write("loader callback pending");`,
+            ],
+            { stdio: ["ignore", "pipe", "pipe"] },
+          ),
+          ownsProcessLifetime: false as const,
+          providerLifetime: "external-application" as const,
+          shutdownMode: "bridge-request" as const,
+        }),
+      );
+    },
+  };
+  const client = new HopperClient({ launcher, startupTimeoutMs: 1500 });
+  onTestFinished(() => client.close());
+  const result = await client.start();
+  if (result.ok)
+    throw new Error("Expected missing bridge readiness to time out");
+  const projected = projectAnalysisError(result.error);
+  expect(projected).toMatchObject({
+    code: "provider_timeout",
+    details: {
+      stage: "startup",
+      launcher: {
+        exit_code: 0,
+        output_closed: true,
+        stdout: { text: expect.stringContaining("source=local-evidence") },
+        stderr: { text: "loader callback pending" },
+      },
+    },
+  });
+  expect(projected.message).toContain("bridge readiness");
+  expect(projected.message).not.toContain("before it started");
+  expect(JSON.stringify(projected)).not.toContain(token);
+});

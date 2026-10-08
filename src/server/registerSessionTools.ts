@@ -35,7 +35,7 @@ import {
 } from "./sessionAvailabilityPolicy.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { toCallToolResult } from "./toolResult.js";
+import { toCallToolResult, toEvidenceToolResult } from "./toolResult.js";
 
 const recordProcessResidualUnknowns = (
   session: BinarySessionPort,
@@ -122,7 +122,7 @@ const registerProcessTools = ({
         captured.value.residual_unknowns,
       );
       if (!unknowns.ok) return toCallToolResult(unknowns, captureContract);
-      return toCallToolResult(ok(evidence), captureContract);
+      return toEvidenceToolResult(evidence, captureContract, recorded);
     },
   );
 };

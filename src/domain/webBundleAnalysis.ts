@@ -99,29 +99,44 @@ export const webSourceMapsSchema = z
     requested: z.number().int().min(0),
     processed: z.number().int().min(0),
     items: z.array(sourceMapSchema),
+    limitation: z.string().min(1).optional(),
   })
   .superRefine((sourceMaps, context) => {
     if (
-      sourceMaps.requested !== sourceMaps.processed ||
+      sourceMaps.processed > sourceMaps.requested ||
       sourceMaps.processed !== sourceMaps.items.length
     )
       context.addIssue({
         code: "custom",
         message: "Source-map coverage counts are inconsistent",
       });
+    if (
+      sourceMaps.processed < sourceMaps.requested &&
+      sourceMaps.limitation === undefined
+    )
+      context.addIssue({
+        code: "custom",
+        message:
+          "Unprocessed source maps require an explicit coverage limitation",
+        path: ["limitation"],
+      });
     const statuses = sourceMaps.items.map(({ status }) => status);
     const retained = statuses.filter(
       (status) => status === "included" || status === "partial",
     ).length;
     const allowedStatuses =
-      sourceMaps.items.length === 0
-        ? ["not_requested", "unavailable"]
-        : retained === 0
+      sourceMaps.processed < sourceMaps.requested
+        ? retained === 0
           ? ["unavailable"]
-          : retained === sourceMaps.items.length &&
-              !statuses.includes("partial")
-            ? ["included"]
-            : ["partial"];
+          : ["partial"]
+        : sourceMaps.items.length === 0
+          ? ["not_requested", "unavailable"]
+          : retained === 0
+            ? ["unavailable"]
+            : retained === sourceMaps.items.length &&
+                !statuses.includes("partial")
+              ? ["included"]
+              : ["partial"];
     if (!allowedStatuses.includes(sourceMaps.status))
       context.addIssue({
         code: "custom",

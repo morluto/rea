@@ -108,6 +108,14 @@ and process residual unknowns. Successful cleanup verifies the owned group;
 it does not attribute those unrelated processes. Related or otherwise unexplained
 unreadable processes still prevent successful cleanup.
 
+On macOS, changing a Node process's `process.title` can make its run token
+unreadable. Node documents that [setting the title overwrites argv memory](https://nodejs.org/download/release/v24.18.0/docs/api/process.html#processtitle).
+With the pinned toolchain, a live child retained a readable start identity
+while its token became unavailable after this change; npm changes its title
+as well. A newly started unreadable process can prevent verified cleanup even
+after the selected command exits. REA preserves this uncertainty and leaves
+that process untouched.
+
 ## Compare two captures
 
 Compare saved capture Evidence with:

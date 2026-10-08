@@ -16,6 +16,7 @@ import {
   EvidenceFileError,
   EvidenceIntegrityError,
   EvidenceReferenceError,
+  AnalysisSnapshotMismatchError,
 } from "./evidenceErrors.js";
 import {
   HopperRemoteError,
@@ -35,20 +36,27 @@ import { type AnalysisErrorProjection } from "./analysisErrorProjection.js";
 export const analysisErrorRemediationAction = (
   error: AnalysisError,
 ): string => {
+  if (error instanceof AnalysisSnapshotMismatchError)
+    return "Run analysis without this snapshot, then save a fresh snapshot using the intended artifact, provider, and analysis profile.";
   if (error instanceof AnalysisUnsupportedTargetError)
     return "Select a target supported by this operation or choose an operation supporting the reported target format.";
   if (error instanceof AnalysisResourceConstraintError)
-    return error.resource === "transport"
-      ? "Use the reported Evidence reference with a focused analysis tool when retained in this session, or export the session through export_evidence_bundle to a caller-selected path. Complete CLI JSON output is also available. The connection remains usable."
-      : error.resource === "cpu"
-        ? "Review the reported worker CPU limits and observed signal. Retry with sufficient CPU time or a smaller artifact; REA retains tighter inherited limits."
-        : error.resource === "file-size"
-          ? "Review the reported worker file-size limits and write failure. Retry with a sufficient file-size allowance for the evidence reply; REA retains tighter inherited limits."
-          : "Review the reported worker memory limits and available host memory. Retry with sufficient memory or a smaller artifact; REA retains tighter inherited limits.";
+    return (
+      error.remediationAction ??
+      (error.resource === "transport"
+        ? "Export retained session evidence through export_evidence_bundle to a caller-selected path, or use complete CLI JSON output. Tools that accept retained-evidence references can inspect compatible records. The connection remains usable."
+        : error.resource === "cpu"
+          ? "Review the reported worker CPU limits and observed signal. Retry with sufficient CPU time or a smaller artifact; REA retains tighter inherited limits."
+          : error.resource === "file-size"
+            ? "Review the reported worker file-size limits and write failure. Retry with a sufficient file-size allowance for the evidence reply; REA retains tighter inherited limits."
+            : "Review the reported worker memory limits and available host memory. Retry with sufficient memory or a smaller artifact; REA retains tighter inherited limits.")
+    );
   if (error instanceof HopperTimeoutError)
-    return error.providerState === "busy"
-      ? "Check binary_session.analysis_activity, wait for the active Hopper request to finish, then retry."
-      : "Check binary_session for Hopper health, then retry the operation.";
+    return error.operation === undefined
+      ? "Inspect Hopper for a loader or license dialog and review details.launcher. Correct the loader configuration or complete Hopper setup, then open the target again."
+      : error.providerState === "busy"
+        ? "Check binary_session.analysis_activity, wait for the active Hopper request to finish, then retry."
+        : "Check binary_session for Hopper health, then retry the operation.";
   if (error instanceof HopperProcessError)
     return hopperProcessRemediation(error);
   if (error instanceof HopperStartError)
@@ -69,7 +77,7 @@ export const analysisErrorRemediationAction = (
   if (error instanceof AnalysisAccessDeniedError)
     return "Check the current process's read access to the selected path. Retry with a readable local file.";
   if (error instanceof AnalysisArtifactChangedError)
-    return "Wait until the selected file is stable, then retry this operation.";
+    return "Wait until the selected file is stable. For an active binary session, reopen the target with open_binary before retrying so REA acquires its current identity; for a CLI command or target-free tool, rerun the operation.";
   if (error instanceof AnalysisInputError)
     return "Correct the listed arguments and retry.";
   if (error instanceof UnknownRegistryError && error.reason === "not-found")
@@ -151,6 +159,7 @@ const STATIC_ERROR_CATEGORIES: Readonly<
 };
 
 export const analysisErrorUserMessage = (error: AnalysisError): string => {
+  if (error instanceof AnalysisSnapshotMismatchError) return error.message;
   if (error instanceof AnalysisUnsupportedTargetError) return error.message;
   if (error instanceof AnalysisResourceConstraintError) return error.reason;
   if (error instanceof AnalysisAccessDeniedError)
@@ -194,7 +203,9 @@ export const analysisErrorUserMessage = (error: AnalysisError): string => {
 
 const hopperErrorUserMessage = (error: AnalysisError): string | undefined => {
   if (error instanceof HopperTimeoutError) {
-    const request = error.operation ?? "startup";
+    if (error.operation === undefined)
+      return "REA timed out waiting for Hopper bridge readiness. Hopper may be waiting for a loader or license dialog; inspect its window and the captured launcher outcome before retrying.";
+    const request = error.operation;
     return error.providerState === "busy"
       ? `Hopper timed out during ${request} while the provider remained busy. Check binary_session.analysis_activity, wait for the active request to finish, then retry.`
       : `Hopper timed out during ${request} before it started. Check binary_session for provider health, then retry.`;

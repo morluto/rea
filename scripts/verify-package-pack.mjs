@@ -1,3 +1,4 @@
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { CATALOG_IDENTITY } from "../dist/catalogIdentity.js";
 
@@ -6,15 +7,23 @@ import { verifyPackedBridge } from "./verify-packed-bridge.mjs";
 
 /** Create a tarball and assert production packaging constraints. */
 export async function verifyPackagePack({ root, workspace }) {
-  const tarball = (
-    await exec("npm", ["pack", "--silent"], { cwd: root })
-  ).stdout.trim();
-  const packedFiles = (
-    await exec("tar", ["-tf", join(root, tarball)])
-  ).stdout.split("\n");
+  const packDirectory = join(workspace, "pack");
+  await mkdir(packDirectory);
+  const tarball = join(
+    packDirectory,
+    (
+      await exec(
+        "npm",
+        ["pack", "--silent", "--pack-destination", packDirectory],
+        {
+          cwd: root,
+        },
+      )
+    ).stdout.trim(),
+  );
+  const packedFiles = (await exec("tar", ["-tf", tarball])).stdout.split("\n");
   const packedManifest = JSON.parse(
-    (await exec("tar", ["-xOf", join(root, tarball), "package/package.json"]))
-      .stdout,
+    (await exec("tar", ["-xOf", tarball, "package/package.json"])).stdout,
   );
   if (
     packedManifest.scripts?.postinstall !== undefined ||
@@ -42,7 +51,7 @@ export async function verifyPackagePack({ root, workspace }) {
   const skill = (
     await exec("tar", [
       "-xOf",
-      join(root, tarball),
+      tarball,
       "package/skills/reverse-engineer-anything/SKILL.md",
     ])
   ).stdout;
@@ -62,6 +71,6 @@ export async function verifyPackagePack({ root, workspace }) {
   ) {
     throw new Error("package contained generated Python bytecode");
   }
-  await verifyPackedBridge({ root, workspace, tarball, packedFiles });
+  await verifyPackedBridge({ workspace, tarball, packedFiles });
   return { tarball };
 }

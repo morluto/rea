@@ -18,9 +18,12 @@ const version = process.argv[2];
 if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(version ?? ""))
   throw new Error("Usage: node scripts/verify-published-package.mjs <version>");
 
-const serverEnvironment = { ...process.env };
-delete serverEnvironment.HOPPER_TARGET_PATH;
 const canaryRoot = await mkdtemp(join(tmpdir(), "rea-published-canary-"));
+const serverEnvironment = {
+  ...process.env,
+  npm_config_cache: join(canaryRoot, "npm-cache"),
+};
+delete serverEnvironment.HOPPER_TARGET_PATH;
 const transport = new StdioClientTransport({
   command: "npm",
   args: [
@@ -91,16 +94,29 @@ process.stdout.write(
 );
 
 async function verifyPublishedUpdate({ version: targetVersion, canaryRoot }) {
-  const previousVersion = await findPreviousPublishedVersion(targetVersion);
   const prefix = join(canaryRoot, "update-prefix");
   const home = join(canaryRoot, "update-home");
   const environment = {
     ...process.env,
     HOME: home,
+    USERPROFILE: home,
+    APPDATA: join(home, "AppData", "Roaming"),
+    CLAUDE_CONFIG_DIR: home,
+    CODEX_HOME: join(home, ".codex"),
+    COPILOT_HOME: join(home, ".copilot"),
+    GROK_HOME: join(home, ".grok"),
+    SAND_DATA_ROOT: join(home, ".grokbot"),
+    XDG_CONFIG_HOME: join(home, ".config"),
+    OPENCODE_CONFIG: join(home, ".config", "opencode", "opencode.json"),
     npm_config_cache: join(canaryRoot, "update-cache"),
     npm_config_prefix: prefix,
     PATH: `${join(prefix, "bin")}${delimiter}${process.env.PATH ?? ""}`,
   };
+  const previousVersion = await findPreviousPublishedVersion(
+    targetVersion,
+    canaryRoot,
+    environment,
+  );
 
   await execFileAsync(
     "npm",
@@ -193,11 +209,11 @@ if (result.status === "failed") process.exitCode = 1;
   };
 }
 
-async function findPreviousPublishedVersion(targetVersion) {
+async function findPreviousPublishedVersion(targetVersion, cwd, environment) {
   const { stdout } = await execFileAsync(
     "npm",
     ["view", "rea-agents", "versions", "--json"],
-    { maxBuffer: 16 * 1024 * 1024 },
+    { cwd, env: environment, maxBuffer: 16 * 1024 * 1024 },
   );
   const versions = JSON.parse(stdout);
   const previous = versions

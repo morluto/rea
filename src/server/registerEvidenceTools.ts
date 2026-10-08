@@ -13,7 +13,7 @@ import type { Logger } from "../logger.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { toCallToolResult } from "./toolResult.js";
+import { toCallToolResult, toEvidenceToolResult } from "./toolResult.js";
 import { createArtifactExtractionDestination } from "../application/artifacts/ArtifactExtractionDestination.js";
 
 interface EvidenceToolRegistration {
@@ -94,9 +94,7 @@ export const registerEvidenceTools = (
             return toCallToolResult(sourceRecorded, contract);
         }
         const recorded = options.recordEvidence?.(evidence);
-        return recorded !== undefined && !recorded.ok
-          ? toCallToolResult(recorded, contract)
-          : toCallToolResult({ ok: true, value: evidence }, contract);
+        return toEvidenceToolResult(evidence, contract, recorded);
       },
     );
   }

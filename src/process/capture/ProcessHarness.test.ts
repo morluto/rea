@@ -320,7 +320,6 @@ it("retains observations and both causes when process cleanup is unverifiable", 
     if (!(cause instanceof ProcessCaptureError)) throw cause;
     error = cause;
   }
-  expect(error).toBeDefined();
   if (error === undefined) throw new Error("expected cleanup-incomplete error");
 
   const projection = projectAnalysisError(error);
@@ -391,7 +390,6 @@ it("projects execution and cleanup failures when capture never completed", () =>
     if (!(cause instanceof ProcessCaptureError)) throw cause;
     error = cause;
   }
-  expect(error).toBeDefined();
   if (error === undefined) throw new Error("expected cleanup-incomplete error");
 
   expect(error.partialObservation).toBeUndefined();
@@ -425,7 +423,6 @@ it("retains completed observations when finalization fails after clean cleanup",
     if (!(cause instanceof ProcessCaptureError)) throw cause;
     error = cause;
   }
-  expect(error).toBeDefined();
   if (error === undefined) throw new Error("expected capture failure");
 
   expect(error).toMatchObject({
@@ -477,7 +474,6 @@ it("preserves cancellation while projecting observations and successful cleanup"
     if (!(cause instanceof ProcessCaptureError)) throw cause;
     error = cause;
   }
-  expect(error).toBeDefined();
   if (error === undefined) throw new Error("expected cancellation");
 
   expect(projectAnalysisError(error)).toMatchObject({

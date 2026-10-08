@@ -69,7 +69,6 @@ it("coarsens format issue pointers without creating replacement coordinates", ()
     ],
   );
   const result = redactExplicitFailure(error, ["private/~", "private"]);
-  expect(result).toBeInstanceOf(AnalysisInputError);
   if (!(result instanceof AnalysisInputError))
     throw new Error("Input error required");
   expect(result.issues[0]?.path).toEqual(["capture_path", "/metadata"]);

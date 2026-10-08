@@ -11,6 +11,7 @@ import WebSocket, { WebSocketServer } from "ws";
  */
 export async function startPageCdpProxy(upstreamEndpoint) {
   const clients = new Set();
+  const upstreams = new Set();
   const server = createServer(async (request, response) => {
     try {
       if (request.url !== "/json/version" && request.url !== "/json/list") {
@@ -43,12 +44,17 @@ export async function startPageCdpProxy(upstreamEndpoint) {
       const upstream = new WebSocket(
         new URL(request.url, upstreamEndpoint).href.replace(/^http/, "ws"),
       );
+      upstreams.add(upstream);
       const pending = [];
       clients.add(client);
-      const close = () => {
+      const closeClient = () => {
         clients.delete(client);
         if (client.readyState < WebSocket.CLOSING) client.close();
         if (upstream.readyState < WebSocket.CLOSING) upstream.close();
+      };
+      const finishUpstream = () => {
+        upstreams.delete(upstream);
+        closeClient();
       };
       client.on("message", (data, binary) => {
         if (upstream.readyState === WebSocket.OPEN)
@@ -63,10 +69,10 @@ export async function startPageCdpProxy(upstreamEndpoint) {
         pending.length = 0;
         webSockets.emit("connection", client, request);
       });
-      client.on("close", close);
-      client.on("error", close);
-      upstream.on("close", close);
-      upstream.on("error", close);
+      client.on("close", closeClient);
+      client.on("error", closeClient);
+      upstream.on("close", finishUpstream);
+      upstream.on("error", closeClient);
     });
   });
   await new Promise((resolve, reject) => {
@@ -81,10 +87,20 @@ export async function startPageCdpProxy(upstreamEndpoint) {
     endpoint,
     disconnectClients() {
       for (const client of clients) client.terminate();
+      for (const upstream of upstreams) upstream.terminate();
     },
     async close() {
-      for (const client of clients) client.terminate();
-      webSockets.close();
+      const activeClients = [...clients];
+      const activeUpstreams = [...upstreams];
+      await Promise.all([
+        terminateSockets(activeClients),
+        terminateSockets(activeUpstreams),
+      ]);
+      await new Promise((resolve, reject) =>
+        webSockets.close((error) =>
+          error === undefined ? resolve() : reject(error),
+        ),
+      );
       await new Promise((resolve, reject) =>
         server.close((error) =>
           error === undefined ? resolve() : reject(error),
@@ -92,6 +108,19 @@ export async function startPageCdpProxy(upstreamEndpoint) {
       );
     },
   };
+}
+
+async function terminateSockets(sockets) {
+  const closing = [...sockets]
+    .filter((socket) => socket.readyState !== WebSocket.CLOSED)
+    .map(
+      (socket) =>
+        new Promise((resolve) => {
+          socket.once("close", resolve);
+          socket.terminate();
+        }),
+    );
+  await Promise.all(closing);
 }
 
 async function pageScopedVersion(upstreamEndpoint, version) {

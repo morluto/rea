@@ -16,7 +16,7 @@ import {
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
 
-import { decodeXmlPlistText } from "./XmlPropertyListText.js";
+import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
 
 const MAX_BYTES = 64 * 1024 * 1024;
 

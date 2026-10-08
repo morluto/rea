@@ -68,6 +68,25 @@ const hookEventSchema = z.strictObject({
 
 const hookSnapshotSchema = z.strictObject({
   events: z.array(hookEventSchema),
+  retention_budget_bytes: z.number().int().min(0),
+  estimated_retained_bytes: z.number().int().min(0),
+  event_serialized_byte_upper_bound: z.number().int().min(0),
+  retained: z.number().int().min(0),
+  dropped: z.number().int().min(0),
+  dropped_ipc: z.number().int().min(0),
+  dropped_runtime: z.number().int().min(0),
+  dropped_event_families: z.array(
+    z.strictObject({
+      family: z.string().min(1),
+      count: z.number().int().min(1),
+    }),
+  ),
+  dropped_event_roles: z.array(
+    z.strictObject({
+      role: z.string().min(1),
+      count: z.number().int().min(1),
+    }),
+  ),
   observed: z.number().int().min(0),
   observed_ipc: z.number().int().min(0),
   observed_runtime: z.number().int().min(0),
@@ -357,6 +376,15 @@ export const readApplicationState = async (
         ? candidate()
         : {
             events: [],
+            retention_budget_bytes: 0,
+            estimated_retained_bytes: 0,
+            event_serialized_byte_upper_bound: 0,
+            retained: 0,
+            dropped: 0,
+            dropped_ipc: 0,
+            dropped_runtime: 0,
+            dropped_event_families: [],
+            dropped_event_roles: [],
             observed: 0,
             observed_ipc: 0,
             observed_runtime: 0,

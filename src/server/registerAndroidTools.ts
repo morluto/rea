@@ -7,7 +7,7 @@ import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { toCallToolResult } from "./toolResult.js";
+import { toCallToolResult, toEvidenceToolResult } from "./toolResult.js";
 
 /** Bind Android handlers to their exact named contracts through shared workflows. */
 export const registerAndroidTools = (
@@ -24,9 +24,7 @@ export const registerAndroidTools = (
       );
       if (!result.ok) return toCallToolResult(result, contract);
       const recorded = recordEvidence?.(result.value);
-      return recorded !== undefined && !recorded.ok
-        ? toCallToolResult(recorded, contract)
-        : toCallToolResult(result, contract);
+      return toEvidenceToolResult(result.value, contract, recorded);
     };
   };
   const packageContract = toolContract("inspect_android_package");

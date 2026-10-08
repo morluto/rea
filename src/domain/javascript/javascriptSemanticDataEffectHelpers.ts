@@ -287,16 +287,3 @@ export const dataEffectMemberObject = (
   (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
     ? node.object
     : null;
-
-/** Compare Babel source offsets for exact containment. */
-export const containsSemanticNode = (outer: t.Node, inner: t.Node): boolean =>
-  outer.start !== null &&
-  outer.start !== undefined &&
-  outer.end !== null &&
-  outer.end !== undefined &&
-  inner.start !== null &&
-  inner.start !== undefined &&
-  inner.end !== null &&
-  inner.end !== undefined &&
-  outer.start <= inner.start &&
-  outer.end >= inner.end;

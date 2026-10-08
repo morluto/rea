@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import { Client } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { CdpBrowserProvider } from "../dist/browser/CdpBrowserProvider.js";
 import { waitForBrowserDevtoolsPort } from "../dist/browser/BrowserProcessStartup.js";
@@ -12,7 +15,6 @@ import {
   inspectWebPageInputSchema,
   listBrowserTargetsInputSchema,
 } from "../dist/domain/browserObservation.js";
-import { analyzeWebBundleInputSchema } from "../dist/domain/webBundleAnalysis.js";
 import { observeWebSessionInputSchema } from "../dist/domain/browserSession.js";
 import { compareWebCapturesInputSchema } from "../dist/domain/webCaptureDiff.js";
 import {
@@ -39,6 +41,8 @@ import { verifyBrowserNetworkEvidence } from "./lib/browser-network-e2e.mjs";
 import { verifyBrowserScriptExport } from "./lib/browser-script-export-e2e.mjs";
 import { verifyBrowserModules } from "./lib/browser-module-e2e.mjs";
 import { verifyBrowserDomDestinations } from "./lib/browser-dom-destinations-e2e.mjs";
+import { verifyBrowserCaptureMetadataBudget } from "./lib/browser-capture-metadata-budget-e2e.mjs";
+import { artifactCliEvidence, artifactMcpResult } from "./lib/artifact-e2e.mjs";
 
 const REAL_BROWSER_STARTUP_TIMEOUT_MS = 60_000;
 const SCENARIO_SECRET_VALUE = "rea-browser-verifier-secret";
@@ -52,6 +56,7 @@ const profile = await mkdtemp(join(tmpdir(), "rea-real-browser-"));
 const site = await startBrowserVerifierSite();
 let browser;
 let pageProxy;
+let report;
 try {
   browser = spawn(
     executable,
@@ -159,17 +164,7 @@ try {
     );
   assertSensitiveShapes(withSource.value);
 
-  const bundle = await provider.analyzeBundle(
-    analyzeWebBundleInputSchema.parse({
-      cdp_endpoint: endpoint,
-      allowed_origins: [site.origin],
-      target_id: target,
-      observation_ms: 200,
-      fetch_source_maps: true,
-    }),
-  );
-  if (!bundle.ok) throw bundle.error;
-  assertBundleAnalysis(bundle.value);
+  const bundle = await verifyPublicBundle(endpoint, target, site.origin);
 
   const captureDiff = await provider.compareCaptures(
     compareWebCapturesInputSchema.parse({
@@ -338,38 +333,41 @@ try {
     target_id: target,
   });
   const moduleTrace = await verifyBrowserModules(executable);
-  process.stdout.write(
-    `${JSON.stringify({
-      verifier_run: await completeVerifierRun(verifierRun),
-      browser: observed.value.browser.product,
-      endpoint,
-      target,
-      domNodes: observed.value.dom.nodes.length,
-      accessibilityNodes: observed.value.accessibility.nodes.length,
-      scripts: observed.value.scripts.items.length,
-      networkRequests: observed.value.network.requests.length,
-      consoleEvents: observed.value.console.events.length,
-      websocketEvents: observed.value.network.websocket_events.length,
-      bundleScripts: bundle.value.capture.scripts_analyzed,
-      sourceMaps: bundle.value.observations.source_maps.processed,
-      sessionEvents: session.value.timeline.length,
-      pageScopedTransport: true,
-      screenshotBytes: screenshot.value.artifact.bytes,
-      largeScreenshot,
-      popupEvents,
-      networkEvidence,
-      scriptExport,
-      moduleTrace,
-      domDestinations,
-      browserScenarioCli: true,
-      browserScenarioAttachCleanup: "disconnected-external",
-      browserScenarioLaunchCleanup: "terminated-owned-process",
-      verified: true,
-    })}\n`,
-  );
+  const captureMetadata = await verifyBrowserCaptureMetadataBudget(endpoint);
+  report = {
+    browser: observed.value.browser.product,
+    endpoint,
+    target,
+    domNodes: observed.value.dom.nodes.length,
+    accessibilityNodes: observed.value.accessibility.nodes.length,
+    scripts: observed.value.scripts.items.length,
+    networkRequests: observed.value.network.requests.length,
+    consoleEvents: observed.value.console.events.length,
+    websocketEvents: observed.value.network.websocket_events.length,
+    bundleScripts: bundle.capture.scripts_analyzed,
+    sourceMaps: bundle.observations.source_maps.processed,
+    bundle_cli_and_stdio_mcp: true,
+    sessionEvents: session.value.timeline.length,
+    pageScopedTransport: true,
+    screenshotBytes: screenshot.value.artifact.bytes,
+    largeScreenshot,
+    popupEvents,
+    networkEvidence,
+    scriptExport,
+    moduleTrace,
+    captureMetadata,
+    domDestinations,
+    browserScenarioCli: true,
+    browserScenarioAttachCleanup: "disconnected-external",
+    browserScenarioLaunchCleanup: "terminated-owned-process",
+    verified: true,
+  };
 } finally {
+  process.stderr.write("Browser verifier cleanup: closing page proxy\n");
   if (pageProxy !== undefined) await pageProxy.close();
+  process.stderr.write("Browser verifier cleanup: stopping owned Chrome\n");
   if (browser !== undefined) await stopProcess(browser);
+  process.stderr.write("Browser verifier cleanup: closing fixture site\n");
   await site.close();
   await rm(profile, {
     recursive: true,
@@ -377,6 +375,49 @@ try {
     maxRetries: 10,
     retryDelay: 100,
   });
+}
+process.stdout.write(
+  `${JSON.stringify({
+    verifier_run: await completeVerifierRun(verifierRun),
+    ...report,
+  })}\n`,
+);
+
+async function verifyPublicBundle(endpoint, target, origin) {
+  const evidence = await artifactCliEvidence("analyze-web-bundle", endpoint, [
+    target,
+    "--allowed-origins",
+    origin,
+    "--fetch-source-maps",
+    "--observation-ms",
+    "200",
+  ]);
+  assertBundleAnalysis(evidence.normalized_result);
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [fileURLToPath(new URL("./rea.mjs", import.meta.url)), "mcp"],
+    env: { PATH: process.env.PATH ?? "", REA_LOG_LEVEL: "silent" },
+    stderr: "pipe",
+  });
+  const client = new Client({ name: "browser-bundle-e2e", version: "1" });
+  try {
+    await client.connect(transport);
+    const result = await artifactMcpResult(client, "analyze_web_bundle", {
+      cdp_endpoint: endpoint,
+      target_id: target,
+      allowed_origins: [origin],
+      fetch_source_maps: true,
+      observation_ms: 200,
+    });
+    assertBundleAnalysis(result);
+  } finally {
+    try {
+      await client.close();
+    } finally {
+      await transport.close();
+    }
+  }
+  return evidence.normalized_result;
 }
 
 async function verifyPageScopedTransport(provider, proxy, origin) {

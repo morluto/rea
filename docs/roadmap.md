@@ -22,7 +22,7 @@ installation changes and requires approval before writing or installing.
 
 ## Planned work
 
-The [website guides](https://morluto.github.io/rea/guides/) and
+The [website guides](https://rea.tools/guides/) and
 [generated catalog](product-catalog.json) describe available workflows.
 Current development priorities are:
 
@@ -67,7 +67,7 @@ REA setup lets you select agent integration and optional Hopper installation.
 It installs the bundled workflow, configures detected agents, and can save
 verified paths for an existing Ghidra installation. It configures Claude Code,
 Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, Devin, OpenCode, Antigravity,
-GitHub Copilot CLI, Command Code, and VS Code using each client's configuration format.
+GitHub Copilot CLI, Command Code, VS Code, and Grok Build using each client's configuration format. Grok Bot is detected locally, but its connector is added from the Grok Bot chat because the signed-in account store is not a data-directory file.
 
 Ghidra analysis supports Linux x64 and macOS x64/arm64 with Ghidra 12.1.x and the
 64-bit full JDK that installation declares. Current 12.1 releases require JDK 21

@@ -7,7 +7,13 @@ import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import Ajv from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
+import { analysisErrorProjectionSchema } from "../../dist/contracts/errorSchemas.js";
 import { mcpTextValue, requireMcpResult } from "./mcp-verifier-results.mjs";
+import { verifyLegacyGhidraReferenceSnapshot } from "./ghidra-reference-snapshot-e2e.mjs";
+import { verifyGhidraSnapshotLifecycle } from "./real-ghidra-snapshot-lifecycle.mjs";
+import { verifyGhidraTargetAdmission } from "./real-ghidra-target-admission.mjs";
+import { verifyGhidraLargeResults } from "./real-ghidra-large-results.mjs";
+import { verifyGhidraNamespaceAnnotations } from "./real-ghidra-namespace-annotations.mjs";
 
 /** Probe real Ghidra location, annotation and error contracts through public adapters. */
 export async function verifyGhidraBoundaries(
@@ -49,6 +55,15 @@ export async function verifyGhidraBoundaries(
       true,
       `${name} accepted ${JSON.stringify(args)}`,
     );
+    // SDK input-schema rejections are text-only; application errors use the
+    // canonical structured error projection, separately from success schemas.
+    if (reply.structuredContent !== undefined) {
+      analysisErrorProjectionSchema.parse(reply.structuredContent.error);
+      assert.deepEqual(
+        reply.structuredContent,
+        JSON.parse(mcpTextValue(reply)),
+      );
+    }
     if (diagnostic !== undefined) {
       const error = reply.structuredContent?.error;
       assert.equal(error?.code, "invalid_request");
@@ -56,6 +71,7 @@ export async function verifyGhidraBoundaries(
       assert.match(JSON.stringify(error.details.issues), diagnostic);
     }
     rejectedCalls++;
+    return reply.structuredContent?.error;
   };
   const cli = async (command, value, flags = []) => {
     const { stdout } = await promisify(execFile)(
@@ -93,6 +109,107 @@ export async function verifyGhidraBoundaries(
   assert.equal((await stat(socketRoot)).mode & 0o777, 0o700);
   const address = original.procedure.address;
   const name = original.procedure.name;
+  const procedures = await call("list_procedures");
+  const external = procedures.find((item) => item.procedure.external);
+  assert.ok(external, "Source fixture lacks an external function");
+  const externalDossier = await call("analyze_function", {
+    procedure: external.address,
+  });
+  const externalEntry = await call("resolve_containing_procedure", {
+    address: external.address,
+  });
+  assert.equal(externalEntry.found, true);
+  assert.equal(externalEntry.procedure.address, external.address);
+  assert.equal(externalEntry.procedure.classification.external, true);
+  assert.deepEqual(
+    externalEntry.procedure.body,
+    externalDossier.procedure.body,
+  );
+  assert.equal(externalEntry.procedure.body.contains_entry, false);
+  assert.deepEqual(externalEntry.procedure.body.ranges, []);
+  const externalSpace = external.address.slice(
+    0,
+    external.address.indexOf(":"),
+  );
+  const lastExternalOffset = procedures
+    .filter((item) => item.procedure.external)
+    .map((item) => BigInt(item.address.slice(item.address.indexOf(":") + 1)))
+    .reduce((maximum, offset) => (offset > maximum ? offset : maximum), 0n);
+  const unknownExternal = `${externalSpace}:0x${(lastExternalOffset + 1n).toString(16)}`;
+  assert.deepEqual(
+    await call("resolve_containing_procedure", { address: unknownExternal }),
+    {
+      query_address: unknownExternal,
+      found: false,
+      procedure: null,
+      reason: "outside_segments",
+    },
+  );
+  assert.deepEqual(
+    (await cli("function", external.address)).procedure,
+    externalDossier.procedure,
+    "CLI and MCP must preserve external identity without inventing body bytes",
+  );
+  await invalid(
+    "annotate_native_function",
+    { procedure: external.address, name: "rea_external_edit" },
+    /Annotations require a local function entry/u,
+  );
+  const names = await call("list_names");
+  const leaf = names.find((item) =>
+    item.value.endsWith("rea_ghidra_inventory_leaf"),
+  );
+  const pointer = names.find((item) =>
+    item.value.endsWith("rea_ghidra_interior_pointer"),
+  );
+  assert.ok(
+    leaf && pointer,
+    "Source fixture lacks the interior function pointer",
+  );
+  const interiorTarget = `0x${(BigInt(leaf.address) + 1n).toString(16)}`;
+  assert.ok(
+    (await call("xrefs", { address: interiorTarget })).includes(
+      pointer.address,
+    ),
+  );
+  const incoming = await call("procedure_references", {
+    procedure: leaf.address,
+    direction: "incoming",
+  });
+  const interiorEdge = incoming.references.find(
+    (edge) =>
+      edge.source_address === pointer.address &&
+      edge.target_address === interiorTarget,
+  );
+  assert.ok(
+    interiorEdge,
+    "Procedure references omitted an observed interior-body edge",
+  );
+  assert.equal(interiorEdge.target_procedure?.address, leaf.address);
+  assert.equal(interiorEdge.source_procedure, null);
+  assert.equal(interiorEdge.kind.data, true);
+  const leafDossier = await call("analyze_function", {
+    procedure: leaf.address,
+  });
+  assert.ok(
+    leafDossier.incoming_references.some(
+      (edge) =>
+        edge.source_address === pointer.address &&
+        edge.target_address === interiorTarget,
+    ),
+  );
+  assert.deepEqual(
+    (await cli("function", leaf.value)).incoming_references,
+    leafDossier.incoming_references,
+    "CLI and MCP must retain the same interior-body references",
+  );
+  await verifyLegacyGhidraReferenceSnapshot(client, {
+    target,
+    procedure: leaf.address,
+    omittedEdge: interiorEdge,
+    entrypoint,
+    env,
+  });
   const baseline = await call("inspect_native_instruction", { address });
   assert.equal(baseline.status, "decoded");
   const bytes = await call("read_bytes", { address, length: baseline.length });
@@ -311,6 +428,79 @@ export async function verifyGhidraBoundaries(
     comment: changes.comment,
     inline_comment: changes.inline_comment,
   });
+  const regexPattern = "^(a|aa)*b$";
+  const regexFailure = await client.callTool(
+    {
+      name: "search_strings",
+      arguments: { pattern: regexPattern, mode: "regex" },
+    },
+    options,
+  );
+  assert.equal(regexFailure.isError, true);
+  const regexError = regexFailure.structuredContent.error;
+  assert.equal(regexError.code, "resource_constraint");
+  assert.equal(regexError.details.operation, "search_strings");
+  assert.equal(regexError.details.resource, "memory");
+  assert.match(
+    regexError.remediation.action,
+    /literal mode or simplify the regex/u,
+  );
+  assert.match(
+    regexError.details.reason,
+    /exhausted its stack.*Use literal mode/u,
+  );
+  rejectedCalls++;
+  const nestedPattern = "(".repeat(12000) + "a" + ")".repeat(12000);
+  const compileFailure = await client.callTool(
+    {
+      name: "search_procedures",
+      arguments: { pattern: nestedPattern, mode: "regex" },
+    },
+    options,
+  );
+  assert.equal(compileFailure.isError, true);
+  const compileError = compileFailure.structuredContent.error;
+  assert.equal(compileError.code, "resource_constraint");
+  assert.equal(compileError.details.operation, "search_procedures");
+  assert.match(compileError.details.reason, /stack while compiling pattern/u);
+  assert.equal(compileError.remediation.action, regexError.remediation.action);
+  rejectedCalls++;
+  assert.deepEqual(
+    await call("analyze_function", { procedure: address }),
+    updated.dossier,
+    "Regex stack exhaustion must preserve the live annotation database",
+  );
+  assert.equal(
+    (await call("binary_session")).capabilities.find(
+      (item) => item.operation === "search_strings",
+    ).available,
+    true,
+  );
+  assert.ok(
+    (await call("search_procedures", { pattern: changes.name })).some(
+      (item) => item.address === address,
+    ),
+    "Regex compiler exhaustion must preserve edited names and search availability",
+  );
+  const longLiteral = "a".repeat(3 * 16 ** 3) + "!";
+  const longString = strings.find((item) => item.value === longLiteral);
+  assert.ok(longString, "The provider must retain the full regression literal");
+  const literalMatches = await call("search_strings", { pattern: longLiteral });
+  assert.deepEqual(literalMatches, [
+    { address: longString.address, value: longLiteral },
+  ]);
+  assert.deepEqual(await cli("search", longLiteral), literalMatches);
+  await assert.rejects(
+    cli("search", regexPattern, ["--mode", "regex"]),
+    (error) => {
+      assert.equal(error.code, 1);
+      const rejected = JSON.parse(error.stdout);
+      assert.equal(rejected.code, regexError.code);
+      assert.equal(rejected.details.reason, regexError.details.reason);
+      assert.equal(rejected.remediation.action, regexError.remediation.action);
+      return true;
+    },
+  );
   assert.deepEqual(updated.effects, {
     scope: "session-analysis-database",
     source_bytes_modified: false,
@@ -442,12 +632,64 @@ export async function verifyGhidraBoundaries(
     );
     assert.equal(await call("address_name", { address }), renamed);
   }
-  await call("close_binary");
+  for (const selected of [address, indirectProcedure.address]) {
+    await call("annotate_native_function", {
+      procedure: selected,
+      name: "rea_ambiguous",
+    });
+  }
+  const ambiguous = await invalid(
+    "procedure_address",
+    { procedure: "rea_ambiguous" },
+    /ambiguous.*select an exact entry address/u,
+  );
+  for (const selected of [address, indirectProcedure.address]) {
+    assert.ok(
+      JSON.stringify(ambiguous.details.issues).includes(selected),
+      "Ambiguity diagnostics must retain every matching entry address",
+    );
+    assert.equal(
+      await call("procedure_address", { procedure: selected }),
+      selected,
+    );
+  }
+  const snapshotLifecycle = await verifyGhidraSnapshotLifecycle(
+    client,
+    target,
+    await call("analyze_function", { procedure: address }),
+    cli,
+  );
+  successfulCalls += snapshotLifecycle.successfulCalls;
+  rejectedCalls += snapshotLifecycle.rejectedCalls;
+  const targetAdmission = await verifyGhidraTargetAdmission({
+    call,
+    reject: invalid,
+    target,
+    entry: address,
+    runtimeRoot: env.TMPDIR,
+  });
+  await verifyGhidraNamespaceAnnotations({
+    call,
+    reject: invalid,
+    target,
+    entrypoint,
+    env,
+  });
+  await verifyGhidraLargeResults({
+    call,
+    reject: invalid,
+    target,
+    entrypoint,
+    env,
+  });
   await assert.rejects(access(socketRoot), { code: "ENOENT" });
   await assert.rejects(access(runtimeRoot), { code: "ENOENT" });
-  await call("open_binary", { path: target.path, provider_id: "ghidra" });
   assert.equal(await call("procedure_address", { procedure: name }), address);
   assert.equal(await call("address_name", { address }), name);
+  assert.equal(
+    await call("procedure_address", { procedure: indirectProcedure.value }),
+    indirectProcedure.address,
+  );
   assert.deepEqual(
     (await call("analyze_function", { procedure: address })).comments,
     original.comments,
@@ -468,6 +710,20 @@ export async function verifyGhidraBoundaries(
     mutation_rollback: true,
     annotation_native_text_validation: true,
     lossless_unicode_transport: true,
+    exact_external_entry_resolution: true,
+    recoverable_regex_stack_exhaustion: true,
+    complete_function_body_references: true,
+    ambiguity_candidates_inline: true,
+    legacy_reference_snapshot_rejected: true,
+    mutation_snapshot_lifecycle: true,
+    concurrent_annotation_snapshot_close: true,
+    changed_source_admission_and_recovery: true,
+    source_permission_denial_verified: targetAdmission.permissionDenied,
+    missing_and_nonregular_source_rejected: true,
+    imported_source_identity_retained: true,
+    equivalent_instruction_address_spellings: true,
+    qualified_annotation_name_roundtrip: true,
+    oversized_result_retention_and_complete_export: true,
     source_immutable: true,
     reopen_discards_edits: true,
     long_tmpdir_private_socket_cleanup: true,

@@ -14,6 +14,7 @@ import { functionDossierSchema } from "../dist/domain/hopperValues.js";
 import { inspectGhidraInstallation } from "../dist/ghidra/GhidraInstallation.js";
 import { buildDosComFixture } from "../tests/conformance/ghidra/dos-com-fixture.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { verifyGhidraAddressBoundaries } from "./lib/real-ghidra-address-boundaries.mjs";
 
 // This lane intentionally has no game paths, binary seeds or compiler dependency.
 if (process.argv.length !== 2)
@@ -228,6 +229,7 @@ try {
   );
   assert.equal(retained.annotations.inline_comment, changes.inline_comment);
   assert.equal(retained.dossier.procedure.name, changes.name);
+  await verifyGhidraAddressBoundaries(client, fixture.entry, cli);
   const cleared = await call("annotate_native_function", {
     procedure: fixture.entry,
     comment: "",
@@ -294,6 +296,7 @@ try {
       cli_mcp_parity: true,
     },
     original_unchanged: true,
+    address_truncation_rejected: true,
     limitations: image.limitations,
   };
 } catch (error) {

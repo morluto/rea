@@ -20,16 +20,27 @@ rea project-apple-application-graph '{"inventory_evidence":[<inventory_artifact 
 }
 ```
 
-The result includes every component in each inventory category and every
-JavaScript-to-native bridge candidate pair. It has no caller-selected component
-budget, prefix truncation, or omitted-count fields. Duplicate inventory pages
-are merged by artifact identity and occurrence path; their Evidence IDs remain
-attached as source Evidence.
+The result includes every component in each inventory category. Bridge
+hypotheses are the path-based JavaScript/native pairs within each application
+root. To keep their Cartesian expansion bounded, the projection limits the
+serialized candidate array to 2 MiB. It computes the pair count and
+exact UTF-8 JSON size before creating candidate objects, then retains a
+deterministic prefix when the byte budget is exceeded. The result's
+`bridge_candidate_coverage` reports total, emitted, and omitted pair counts;
+overall coverage becomes `partial` and a limitation explains the omission.
+Duplicate inventory pages are merged by artifact identity and occurrence path;
+their Evidence IDs remain attached as source Evidence.
+
+For IPA inventories, archive components outside every application root remain
+in the component lists. Their JavaScript and native candidates are grouped with
+other unrooted components, preserving the inventory projection's path pairing
+semantics without attributing them to an application bundle.
 
 Coverage is `complete-within-inventory` when the supplied pages reconstruct the
 complete authenticated inventory, and `partial` otherwise. A partial result
-states that absence is unknown. Component and bridge-candidate arrays are still
-the complete projection of the inventory that was supplied.
+states that absence is unknown. Component arrays remain complete when candidate
+hypotheses are omitted; component arrays still include every component from
+the supplied inventory pages, and overall coverage is `partial` in that case.
 
 ## Application roots
 

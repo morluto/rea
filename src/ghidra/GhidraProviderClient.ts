@@ -11,8 +11,11 @@ import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import {
   AnalysisCancelledError,
+  AnalysisArtifactChangedError,
+  AnalysisAccessDeniedError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import { type AnalysisError } from "../domain/analysisErrorBase.js";
@@ -318,6 +321,20 @@ const projectSessionError = (
   operation: AnalysisOperation,
   failure: GhidraSessionError,
 ): AnalysisError => {
+  if (failure.cause instanceof AnalysisAccessDeniedError)
+    return new AnalysisAccessDeniedError(
+      operation,
+      failure.cause.path,
+      failure.cause.systemCode,
+      { cause: failure },
+    );
+  if (failure.cause instanceof AnalysisArtifactChangedError)
+    return new AnalysisArtifactChangedError(
+      operation,
+      failure.cause.path,
+      failure.cause.reason,
+      { cause: failure },
+    );
   if (
     operation === "annotate_native_function" &&
     failure.kind === "remote" &&
@@ -335,6 +352,21 @@ const projectSessionError = (
     );
   if (failure.kind === "remote" && failure.remoteCode === "decompile_cancelled")
     return new AnalysisCancelledError(operation);
+  if (
+    failure.kind === "remote" &&
+    failure.remoteCode === "regex_stack_exhausted"
+  )
+    return new AnalysisResourceConstraintError(
+      operation,
+      "memory",
+      failure.message,
+      null,
+      {
+        cause: failure,
+        remediationAction:
+          "Retry this search in literal mode or simplify the regex. The active analysis session and annotations remain available.",
+      },
+    );
   if (
     failure.kind === "remote" &&
     ["invalid_request", "not_found", "ambiguous"].includes(

@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 
 import { afterAll, beforeAll, expect, it } from "vitest";
 
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { finalizeInspectorCapture } from "./V8InspectorCaptureProjection.js";
 import type { CaptureState } from "./V8InspectorProvider.js";
 
@@ -213,4 +214,49 @@ it("waits for active authorization workers to settle before returning a failure"
   await expect(finalization).rejects.toBe(failure);
   expect(new Set(startedUrls)).toEqual(initialStarted);
   expect(active).toBe(0);
+});
+
+it("stops finalization when cancellation arrives during location authorization", async () => {
+  const controller = new AbortController();
+  let authorizationStarted = false;
+  const state = stateFor([
+    {
+      rawUrl: "https://example.test/script.js",
+      executionContextKey: null,
+      cdpHash: null,
+      length: 0,
+      isModule: false,
+    },
+  ]);
+
+  const finalization = finalizeInspectorCapture({
+    input: {
+      inspector_endpoint: "http://127.0.0.1:9222",
+      target_id: target.id,
+      observation_ms: 100,
+    },
+    runtime: {
+      product: "Node.js/v24.18.0",
+      protocol_version: "1.3",
+      v8_version: null,
+    },
+    target,
+    state,
+    signal: controller.signal,
+    authorizeLocation: async () => {
+      authorizationStarted = true;
+      controller.abort();
+      return {
+        allowed: true,
+        location: {
+          kind: "url",
+          origin: "https://example.test",
+          sanitized_url: "https://example.test/script.js",
+        },
+      };
+    },
+  });
+
+  await expect(finalization).rejects.toBeInstanceOf(AnalysisCancelledError);
+  expect(authorizationStarted).toBe(true);
 });

@@ -34,6 +34,7 @@ const sampleRss = () => {
 };
 const sampler = setInterval(sampleRss, 25);
 sampler.unref();
+let finalReport;
 
 try {
   const evidence = createEvidence(
@@ -112,17 +113,15 @@ try {
   assert.equal(digest, expectedHash.digest("hex"));
   assert.equal((await stat(path)).size, expectedBytes);
   sampleRss();
-  process.stdout.write(
-    `${JSON.stringify({
-      json_output_verified: true,
-      format,
-      output_bytes: expectedBytes,
-      engine_string_limit: constants.MAX_STRING_LENGTH,
-      output_sha256: digest,
-      evidence_id: evidence.evidence_id,
-      rss: { method: "node-memoryUsage-rss-sampled", peak_bytes: peakRss },
-    })}\n`,
-  );
+  finalReport = {
+    json_output_verified: true,
+    format,
+    output_bytes: expectedBytes,
+    engine_string_limit: constants.MAX_STRING_LENGTH,
+    output_sha256: digest,
+    evidence_id: evidence.evidence_id,
+    rss: { method: "node-memoryUsage-rss-sampled", peak_bytes: peakRss },
+  };
 } finally {
   clearInterval(sampler);
   if (destination !== undefined && !destination.closed) {
@@ -132,3 +131,4 @@ try {
   }
   await rm(workspace, { recursive: true, force: true });
 }
+process.stdout.write(`${JSON.stringify(finalReport)}\n`);

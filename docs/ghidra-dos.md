@@ -1,7 +1,7 @@
 # DOS MZ and COM analysis with Ghidra
 
 REA can analyze DOS MZ executables and explicitly selected COM images through the bring-your-own Ghidra adapter.
-The Linux x64 verification lane exercises actual 16-bit disassembly and
+The Linux x64 and macOS arm64 verification lanes exercise actual 16-bit disassembly and
 decompilation through the CLI and stdio MCP. Provider admission accepts Ghidra
 12.1.x and that installation's declared JDK range. The verification lane uses
 Ghidra 12.1.4 and JDK 21; no DOS emulator or cross-compiler is required.
@@ -87,6 +87,10 @@ address for subsequent lookups and leaves instruction decoding context with
 Ghidra. These coordinates are analysis load addresses, not file offsets or
 observations of a running DOS system.
 
+Offsets that Ghidra would truncate to a different address are rejected before
+reading or annotating a function. This also applies to explicit or encoded
+address-space names; leading zeros preserve the numeric offset.
+
 `procedure_info` and function dossiers include `body` evidence:
 
 ```json
@@ -150,7 +154,7 @@ are separate from the initialized MZ module. Raw COM files and DOS extenders
 without an admitted MZ real-mode entry are outside this import boundary.
 
 DOS MZ is available through Ghidra, with no Hopper support claim. It is outside
-the Windows native PE P0 boundary. macOS DOS verification remains unverified.
+the Windows native PE P0 boundary. macOS x64 DOS verification remains unverified.
 
 ## Real verification
 

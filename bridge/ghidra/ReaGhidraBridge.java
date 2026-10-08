@@ -52,6 +52,8 @@ import ghidra.app.decompiler.ClangCaseToken;
 import ghidra.app.decompiler.ClangNode;
 import ghidra.framework.Application;
 import ghidra.program.model.address.Address;
+import ghidra.program.model.address.AddressIterator;
+import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.address.AddressSpace;
 import ghidra.program.model.address.AddressRange;
 import ghidra.program.model.address.AddressRangeIterator;
@@ -723,8 +725,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (!direction.equals("incoming") && !direction.equals("outgoing")) {
             throw new RequestFailure("invalid_request", "direction must be incoming or outgoing");
         }
-        InstructionScan scan = scanInstructions(function, Integer.MAX_VALUE);
-        List<Reference> references = collectReferences(scan.instructions, direction);
+        List<Reference> references = collectReferences(function, direction);
         JsonArray edges = new JsonArray();
         for (Reference reference : references) {
             edges.add(referenceEdge(reference));
@@ -735,7 +736,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.add("references", edges);
         result.addProperty("reference_kinds_available", true);
         JsonArray unresolvedCalls = new JsonArray();
-        if (direction.equals("outgoing")) for (Instruction instruction : scan.instructions) {
+        if (direction.equals("outgoing")) for (Instruction instruction : scanInstructions(function, Integer.MAX_VALUE).instructions) {
             if (!instruction.getFlowType().isCall()) continue;
             boolean resolved = false;
             for (Reference reference : instruction.getReferencesFrom()) if (reference.getReferenceType().isCall()) resolved = true;
@@ -1010,6 +1011,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         for (String field : List.of("name", "comment", "inline_comment")) {
             if (params.has(field)) validateAnnotationText(requireText(params, field), field);
         }
+        String leafName = params.has("name")
+            ? annotationLeafName(function, requireString(params, "name")) : null;
         int transaction = currentProgram.startTransaction("REA function annotations");
         boolean commit = false;
         try {
@@ -1023,7 +1026,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 }
             }
             if (params.has("name"))
-                function.setName(requireString(params, "name"), SourceType.USER_DEFINED);
+                function.setName(leafName, SourceType.USER_DEFINED);
             monitor.checkCancelled();
             invalidateAnalysisCaches();
             JsonObject readback = annotationReadback(function);
@@ -1031,7 +1034,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 if (!params.has(field)) continue;
                 String requested = requireText(params, field);
                 JsonElement measured = readback.get(field);
-                String expected = !field.equals("name") && requested.isEmpty() ? null : requested;
+                String expected = field.equals("name") ? leafName : requested.isEmpty() ? null : requested;
                 String observed = field.equals("name") ? function.getName() :
                     (measured.isJsonNull() ? null : measured.getAsString());
                 if (!java.util.Objects.equals(expected, observed))
@@ -1059,6 +1062,22 @@ public final class ReaGhidraBridge extends HeadlessScript {
             // Rollback also invalidates inventory and decompiler views.
             invalidateAnalysisCaches();
         }
+    }
+
+    private String annotationLeafName(Function function, String requested) {
+        // Fully qualified readback must be usable as an idempotent rename input.
+        if (requested.equals(procedureName(function))) return function.getName();
+        String namespace = function.getParentNamespace().isGlobal()
+            ? "" : function.getParentNamespace().getName(true);
+        String prefix = namespace + "::";
+        if (!namespace.isEmpty() && requested.startsWith(prefix)) {
+            String leaf = requested.substring(prefix.length());
+            if (!leaf.isEmpty()) return leaf;
+            throw new RequestFailure("invalid_function_name",
+                "Function name has an empty leaf within namespace " + namespace + " at " +
+                canonicalAddress(function.getEntryPoint()) + ": " + requested);
+        }
+        return requested;
     }
 
     private static String requireText(JsonObject params, String field) {
@@ -1092,11 +1111,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (pseudocode == null) {
             pseudocode = "";
         }
-        List<Reference> incomingReferences = collectReferences(scan.instructions, "incoming")
+        List<Reference> incomingReferences = collectReferences(function, "incoming")
             .stream()
             .filter(reference -> !function.getBody().contains(reference.getFromAddress()))
             .toList();
-        List<Reference> outgoingReferences = collectReferences(scan.instructions, "outgoing");
+        List<Reference> outgoingReferences = collectReferences(function, "outgoing");
         JsonArray incoming = referenceEdges(incomingReferences);
         JsonArray outgoing = referenceEdges(outgoingReferences);
         JsonArray comments = comments(scan.instructions);
@@ -1489,6 +1508,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             : regexMatcher(expression, caseSensitive);
         JsonArray items = new JsonArray();
         for (InventoryItem item : inventory) {
+            monitor.checkCancelled();
             if (!matcher.matches(item.value)) {
                 continue;
             }
@@ -1615,7 +1635,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 }
             }
             if (matches.size() > 1)
-                throw new RequestFailure("ambiguous", "Ghidra procedure name is ambiguous: " + value);
+                throw new RequestFailure("ambiguous", "Ghidra procedure name is ambiguous: " + value +
+                    "; select an exact entry address from " + matches.stream()
+                        .map(function -> canonicalAddress(function.getEntryPoint())).toList());
             if (matches.size() == 1) return matches.get(0);
         }
         // Retain legacy bare-hex address input only when no symbol matches.
@@ -2550,21 +2572,32 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private List<Reference> collectReferences(
-            List<Instruction> instructions,
+            Function function,
             String direction) throws Exception {
+        // References can target instruction interiors or originate in embedded
+        // data. Use actual body ownership, including an external's exact entry.
+        AddressSet scope = new AddressSet(function.getBody());
+        scope.add(function.getEntryPoint());
+        boolean outgoing = direction.equals("outgoing");
+        AddressIterator addresses = outgoing
+            ? currentProgram.getReferenceManager().getReferenceSourceIterator(scope, true)
+            : currentProgram.getReferenceManager().getReferenceDestinationIterator(scope, true);
         TreeMap<String, Reference> observed = new TreeMap<>();
-        for (Instruction instruction : instructions) {
+        while (addresses.hasNext()) {
             monitor.checkCancelled();
-            if (direction.equals("outgoing")) {
+            Address address = addresses.next();
+            if (outgoing) {
                 for (Reference reference : currentProgram.getReferenceManager()
-                        .getReferencesFrom(instruction.getAddress())) {
+                        .getReferencesFrom(address)) {
+                    monitor.checkCancelled();
                     addReference(observed, reference);
                 }
             }
             else {
                 ReferenceIterator iterator = currentProgram.getReferenceManager()
-                    .getReferencesTo(instruction.getAddress());
+                    .getReferencesTo(address);
                 while (iterator.hasNext()) {
+                    monitor.checkCancelled();
                     addReference(observed, iterator.next());
                 }
             }
@@ -2990,8 +3023,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
             AddressSpace space = spaceName == null
                 ? currentProgram.getAddressFactory().getDefaultAddressSpace()
                 : currentProgram.getAddressFactory().getAddressSpace(spaceName);
-            return space == null ? null : space.getAddress(offset);
+            if (space == null) return null;
+            Address address = space.getAddress(offset);
+            BigInteger requestedOffset = new BigInteger(offset, 16);
+            BigInteger parsedOffset = new BigInteger(Long.toUnsignedString(address.getOffset()));
+            if (!requestedOffset.equals(parsedOffset))
+                throw new RequestFailure("invalid_request",
+                    "Ghidra address offset cannot be represented without truncation in space " +
+                    space.getName() + ": requested " + value + ", parsed " + canonicalAddress(address));
+            return address;
         }
+        catch (RequestFailure failure) { throw failure; }
         catch (Exception exception) {
             return null;
         }
@@ -3075,9 +3117,29 @@ public final class ReaGhidraBridge extends HeadlessScript {
             );
         }
         catch (PatternSyntaxException exception) {
+            // Java wraps compiler stack exhaustion in PatternSyntaxException
+            // without retaining its cause. This producer reason is not bad syntax.
+            if (exception.getDescription().equals("Stack overflow during pattern compilation"))
+                throw regexStackExhausted(expression, "compiling");
             throw new RequestFailure("invalid_request", "Invalid regex pattern " + expression + ": " + exception.getDescription() + " at index " + exception.getIndex());
         }
-        return value -> pattern.matcher(value).find();
+        catch (StackOverflowError exhausted) {
+            throw regexStackExhausted(expression, "compiling");
+        }
+        return value -> {
+            try {
+                return pattern.matcher(value).find();
+            }
+            catch (StackOverflowError exhausted) {
+                throw regexStackExhausted(expression, "matching");
+            }
+        };
+    }
+
+    private static RequestFailure regexStackExhausted(String expression, String stage) {
+        return new RequestFailure("regex_stack_exhausted",
+            "Ghidra's Java regex engine exhausted its stack while " + stage +
+            " pattern " + expression + ". Use literal mode or simplify the regex; the session remains usable.");
     }
 
     private static SessionDescriptor readDescriptor(Path path) throws IOException {

@@ -86,9 +86,18 @@ rea capture-electron-scenario scenario.json --json
 
 The result records action status and targets, correlated app/window/WebContents,
 preload, session, navigation, shell, permission, popup, download, protocol,
-native-addon, process, and IPC timeline events. IPC channels are capped at
-1,024 characters and argument-shape metadata at 32 entries; values are never
-retained. Renderer crash/restart and deep-link actions are synthetic
+native-addon, process, and IPC timeline events. Event retention has a 16 MiB
+accounting budget for full channel strings, argument-shape arrays, and an
+estimated object-graph cost. Admission computes an exact JSON byte length
+incrementally, then charges twice that size plus 256 bytes per event and 8 bytes
+per argument shape. The doubled JSON charge covers the timeline and IPC views;
+the additional charge estimates their in-process object and array storage. This
+is a resource estimate, not an exact V8 heap measurement. An event that does not
+fit is dropped whole. The result reports the estimate, serialized-byte upper
+bound, dropped event families, and
+observed/dropped totals for IPC and runtime events. Retained sequence numbers
+keep their original capture identities. Payload values are never retained.
+Renderer crash/restart and deep-link actions are synthetic
 scenario controls; their attempted and observed outcomes remain in the
 timeline. The active hook blocks and records external shell/navigation,
 permission, download, popup, updater, and OS-integration effects. The timeline

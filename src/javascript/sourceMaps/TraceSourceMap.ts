@@ -20,6 +20,10 @@ import {
   SourceMapFormatFailure,
   type SourceMapSourceDeclaration,
 } from "./SourceMapFormat.js";
+import {
+  decodeValidatedSourceMapLeaves,
+  isBeforeSourceMapLeafStop,
+} from "./DecodedSourceMap.js";
 
 /** Decode with the pinned upstream codec; preserve every equal-position candidate. */
 export const traceSourceMap = (
@@ -28,7 +32,21 @@ export const traceSourceMap = (
   position: WebSourcePosition,
 ): WebSourceMapReport => {
   const inspected = inspectSourceMap(text);
-  const { map, rows } = decodeValidatedMap(inspected, url);
+  const map = new AnyMap(inspected.jsonText, url);
+  const decodedLeaves = decodeValidatedSourceMapLeaves(inspected.leaves, url);
+  for (const { leaf, rows } of decodedLeaves)
+    for (const [line, row] of rows.entries())
+      for (const segment of row)
+        if (!isBeforeSourceMapLeafStop(leaf, line, segment[0]))
+          throw new SourceMapFormatFailure(
+            "format",
+            "Embedded source-map mappings overlap the following section boundary.",
+          );
+  const rows =
+    inspected.format === "regular"
+      ? (decodedLeaves[0]?.rows ?? [])
+      : decodedMappings(map);
+  validateFlattenedRows(inspected, rows, map);
   const matched = greatestPosition(rows, position);
   const segments =
     matched === null
@@ -77,49 +95,14 @@ export const traceSourceMap = (
   });
 };
 
-const decodeValidatedMap = (
+const validateFlattenedRows = (
   inspected: ReturnType<typeof inspectSourceMap>,
-  url: string,
-) => {
-  let regularRows: ReturnType<typeof decodedMappings> | undefined;
-  for (const leaf of inspected.leaves) {
-    const decoded = decodedMappings(
-      new TraceMap(JSON.stringify(leaf.map), url),
-    );
-    if (inspected.format === "regular") regularRows = decoded;
-    for (const [line, row] of decoded.entries())
-      for (const segment of row) {
-        if (
-          segment.some((value) => !Number.isSafeInteger(value) || value < 0) ||
-          (segment.length !== 1 && segment[1] >= leaf.map.sources.length) ||
-          (segment.length === 5 && segment[4] >= leaf.map.names.length)
-        )
-          throw new SourceMapFormatFailure(
-            "format",
-            "Decoded section-local position, source index or name index is invalid.",
-          );
-        const generatedLine = leaf.offset.line + line;
-        const generatedColumn =
-          segment[0] + (line === 0 ? leaf.offset.column : 0);
-        if (
-          leaf.stop !== null &&
-          (generatedLine > leaf.stop.line ||
-            (generatedLine === leaf.stop.line &&
-              generatedColumn >= leaf.stop.column))
-        )
-          throw new SourceMapFormatFailure(
-            "format",
-            "Embedded source-map mappings overlap the following section boundary.",
-          );
-      }
-  }
-  const map = new AnyMap(inspected.jsonText, url);
-  const rows = regularRows ?? decodedMappings(map);
+  rows: ReturnType<typeof decodedMappings>,
+  map: ReturnType<typeof AnyMap>,
+): void => {
   for (const row of rows)
     for (const segment of row) {
       if (
-        ![1, 4, 5].includes(segment.length) ||
-        segment.some((v) => !Number.isSafeInteger(v) || v < 0) ||
         (segment.length !== 1 && segment[1] >= inspected.declarations.length) ||
         (segment.length === 5 && segment[4] >= map.names.length)
       )
@@ -128,8 +111,6 @@ const decodeValidatedMap = (
           "Decoded mapping has invalid component count, position, source index or name index.",
         );
     }
-
-  return { map, rows };
 };
 
 const greatestPosition = (

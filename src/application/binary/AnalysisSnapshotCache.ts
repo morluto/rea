@@ -2,7 +2,10 @@ import type { BinaryTarget } from "../../domain/binaryTarget.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import type { EvidenceBundle } from "../../domain/evidenceBundle.js";
-import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
+import {
+  EvidenceIntegrityError,
+  AnalysisSnapshotMismatchError,
+} from "../../domain/evidenceErrors.js";
 import { NoBinaryOpenError } from "../../domain/configurationErrors.js";
 import { type AnalysisError } from "../../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -189,7 +192,7 @@ export class AnalysisSnapshotCache {
         !snapshotMatchesProfile(validated.binding, active.profile))
     )
       return err(
-        new EvidenceIntegrityError(
+        new AnalysisSnapshotMismatchError(
           "Analysis snapshot profile_mismatch: target, provider, or analysis profile does not match the active binary",
         ),
       );

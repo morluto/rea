@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { requireFunctionDossierOracle } from "../../dist/application/RealHopperAssertions.js";
 
 /** Require truthful tri-state permissions from real Hopper memory regions. */
@@ -122,6 +123,44 @@ export async function verifyRealHopperFixture({
       require_assembly: true,
     },
   );
+  const calls = entryDossier.outgoing_references.filter(
+    (edge) => edge.call?.classification === "direct",
+  );
+  assert.ok(
+    calls.some((edge) => edge.target_address === branch.address),
+    "Hopper native direct-call classification was discarded",
+  );
+  const observed = normalizedResult(
+    await client.callTool(
+      {
+        name: "procedure_references",
+        arguments: { procedure: entry.address, direction: "outgoing" },
+      },
+      options,
+    ),
+    "procedure_references native calls",
+  );
+  assert.deepEqual(entryDossier.unresolved_calls, observed.unresolved_calls);
+  for (const call of calls) {
+    assert.equal(call.call.provider_type, 2);
+    assert.equal(
+      call.call.provenance,
+      "hopper-public-python-api:CallReference",
+    );
+    assert.equal(
+      call.kind.available,
+      false,
+      "partial call metadata invented detailed reference flags",
+    );
+    assert.deepEqual(
+      observed.references.find(
+        (edge) =>
+          edge.source_address === call.source_address &&
+          edge.target_address === call.target_address,
+      )?.call,
+      call.call,
+    );
+  }
   const branchDossier = requireFunctionDossierOracle(
     await analyzeFixtureProcedure(client, options, branch, normalizedResult),
     {

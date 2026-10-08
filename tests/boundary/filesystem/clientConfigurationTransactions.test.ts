@@ -3,11 +3,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import {
-  configureClientConfiguration,
-  configureJsonClient,
-  configureTomlClient,
-} from "../../../src/application/SetupClientConfiguration.js";
+import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("client configuration write failures", () => {
@@ -58,44 +54,4 @@ describe("TOML client configuration comparison", () => {
       status: "unchanged",
     });
   });
-});
-
-describe("format-specific compatibility entrypoints", () => {
-  it("defaults a missing client format for legacy JSON and TOML calls", async () => {
-    const root = await createTestTempDirectory("rea-client-compat-format-");
-    const jsonPath = join(root, "config.json");
-    const tomlPath = join(root, "config.toml");
-
-    expect(
-      await configureJsonClient({ name: "cursor", configPath: jsonPath }),
-    ).toMatchObject({
-      status: "configured",
-    });
-    expect(await readFile(jsonPath, "utf8")).toContain('"mcpServers"');
-    expect(
-      await configureTomlClient({ name: "codex", configPath: tomlPath }),
-    ).toMatchObject({
-      status: "configured",
-    });
-    expect(await readFile(tomlPath, "utf8")).toContain("[mcp_servers.rea]");
-  });
-
-  it.each([
-    ["JSON", configureJsonClient, "toml"],
-    ["TOML", configureTomlClient, "json"],
-  ] as const)(
-    "rejects a mismatched %s compatibility format",
-    async (_name, configure, format) => {
-      const root = await createTestTempDirectory("rea-client-compat-mismatch-");
-      const configPath = join(root, "config");
-      const original = "keep this file unchanged\n";
-      await writeFile(configPath, original);
-
-      expect(await configure({ name: "fixture", configPath, format })).toEqual({
-        status: "failed",
-        reason: "readback",
-      });
-      expect(await readFile(configPath, "utf8")).toBe(original);
-    },
-  );
 });

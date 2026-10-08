@@ -22,7 +22,7 @@ import type { Logger } from "../logger.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { toCallToolResult } from "./toolResult.js";
+import { toCallToolResult, toEvidenceToolResult } from "./toolResult.js";
 
 /** Optional session services used by direct tool registration. */
 export interface OfficialToolRegistration {
@@ -91,9 +91,7 @@ const registerOfficialTool = (
         },
       );
       const recorded = registration.recordEvidence?.(evidence);
-      if (recorded !== undefined && !recorded.ok)
-        return toCallToolResult(recorded, contract);
-      return toCallToolResult({ ok: true, value: evidence }, contract);
+      return toEvidenceToolResult(evidence, contract, recorded);
     },
   );
 };

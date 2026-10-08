@@ -88,7 +88,10 @@ describe("CLI command outcome classification", () => {
     };
     const updateHost: UpdateHost = {
       installation: () => Promise.resolve(installation),
-      latestVersion: () => Promise.resolve(err("registry unavailable")),
+      latestVersion: () =>
+        Promise.resolve(
+          err({ kind: "unavailable", detail: "registry unavailable" }),
+        ),
       installVersion: () => Promise.resolve(err("not called")),
       installedVersion: () => Promise.resolve(err("not called")),
       planMaintenance: () =>

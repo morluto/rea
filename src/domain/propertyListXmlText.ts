@@ -1,7 +1,5 @@
-import { TextDecoder } from "node:util";
-
 /** Decode BOM-aware XML plist text with fatal byte validation. */
-export const decodeXmlPlistText = (bytes: Buffer): string => {
+export const decodeXmlPlistText = (bytes: Uint8Array): string => {
   const encoding =
     bytes[0] === 0xff && bytes[1] === 0xfe
       ? "utf-16le"

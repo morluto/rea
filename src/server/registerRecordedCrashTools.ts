@@ -5,7 +5,7 @@ import { toolContract } from "../contracts/toolContracts.js";
 import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { toCallToolResult } from "./toolResult.js";
+import { toCallToolResult, toEvidenceToolResult } from "./toolResult.js";
 
 /** Bind recorded crash inspection to its named contract and session Evidence owner. */
 export const registerRecordedCrashTools = (
@@ -24,9 +24,7 @@ export const registerRecordedCrashTools = (
       );
       if (!result.ok) return toCallToolResult(result, contract);
       const recorded = recordEvidence?.(result.value);
-      return recorded !== undefined && !recorded.ok
-        ? toCallToolResult(recorded, contract)
-        : toCallToolResult(result, contract);
+      return toEvidenceToolResult(result.value, contract, recorded);
     },
   );
 };

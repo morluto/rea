@@ -7,6 +7,10 @@ import { parseArtifactInventoryEvidence } from "../artifactInventoryEvidence.js"
 import { evidenceSchema } from "../evidence.js";
 import { digestSchema } from "../digests.js";
 import { prefixedDigestSchema } from "../digests.js";
+import {
+  bridgeCandidateCoverageSchema,
+  projectCartesianCandidates,
+} from "../bridgeCandidateProjection.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const pathSchema = z.string().min(1);
@@ -61,6 +65,7 @@ export const androidApplicationProjectionResultSchema = z.strictObject({
       ]),
     }),
   ),
+  bridge_candidate_coverage: bridgeCandidateCoverageSchema,
   coverage: z.strictObject({
     status: z.enum(["complete-within-inventory", "partial"]),
     inventory_complete: z.boolean(),
@@ -120,6 +125,11 @@ export const projectAndroidApplication = (
     "Manifest, resource, signing, and bytecode semantics require a dedicated Android provider; this projection reports exact inventory paths and hashes only.",
     "Runtime families are inferred from inventory formats and paths; filename suffixes do not establish valid DEX or JVM class bytes.",
     "Bridge candidates are path-based hypotheses, not decoded JNI declarations or observed runtime calls.",
+    ...(bridgeProjection.coverage.status === "partial"
+      ? [
+          `Bridge candidate pairs exceeded the projection safety budget; ${bridgeProjection.coverage.omitted_candidates} hypotheses are omitted. Component arrays still include every component from the supplied inventory pages.`,
+        ]
+      : []),
   ];
   const withoutId = {
     root_sha256: inventory.manifest.root_sha256,
@@ -130,10 +140,12 @@ export const projectAndroidApplication = (
     components,
     runtime_families: runtimeFamilies(all),
     bridge_candidates: bridgeProjection.candidates,
+    bridge_candidate_coverage: bridgeProjection.coverage,
     coverage: {
-      status: inventory.complete
-        ? ("complete-within-inventory" as const)
-        : ("partial" as const),
+      status:
+        inventory.complete && bridgeProjection.coverage.status === "complete"
+          ? ("complete-within-inventory" as const)
+          : ("partial" as const),
       inventory_complete: inventory.complete,
     },
     limitations,
@@ -210,16 +222,14 @@ const bridgeCandidates = (
   managed: readonly Component[],
   native: readonly Component[],
 ) => {
-  const candidates = managed.flatMap((source) =>
-    native.map((target) => ({
-      managed_path: source.path,
+  return projectCartesianCandidates({
+    groups: [{ left: managed, right: native }],
+    createCandidate: (managed_path, target) => ({
+      managed_path,
       native_path: target.path,
       basis: bridgeBasis(target.path),
-    })),
-  );
-  return {
-    candidates,
-  };
+    }),
+  });
 };
 
 const bridgeBasis = (

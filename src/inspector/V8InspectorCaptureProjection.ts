@@ -9,6 +9,7 @@ import type {
 import {
   authorizeRuntimeLocation,
   inspectorExclusionKey,
+  throwIfRuntimeObservationCancelled,
 } from "./JavaScriptRuntimeScope.js";
 import type { CaptureState, ScriptDraft } from "./V8InspectorProvider.js";
 import type { AuthorizedV8InspectorTarget } from "./V8InspectorEndpoint.js";
@@ -38,7 +39,11 @@ interface FinalizeCaptureInput {
   readonly runtime: JavaScriptRuntimeTargetList["runtime"];
   readonly target: AuthorizedV8InspectorTarget;
   readonly state: CaptureState;
-  readonly authorizeLocation?: typeof authorizeRuntimeLocation;
+  readonly authorizeLocation?: (
+    rawUrl: string,
+    signal?: AbortSignal,
+  ) => ReturnType<typeof authorizeRuntimeLocation>;
+  readonly signal?: AbortSignal;
 }
 
 const LOCATION_AUTHORIZATION_WORKERS = 8;
@@ -55,7 +60,9 @@ export const finalizeInspectorCapture = async ({
   target,
   state,
   authorizeLocation = authorizeRuntimeLocation,
+  signal,
 }: FinalizeCaptureInput): Promise<JavaScriptRuntimeObservation> => {
+  throwIfRuntimeObservationCancelled(signal);
   const exclusions = createInspectorExclusionCounts();
   const scripts = new Map<
     string,
@@ -74,6 +81,7 @@ export const finalizeInspectorCapture = async ({
   const worker = async (): Promise<void> => {
     try {
       for (;;) {
+        throwIfRuntimeObservationCancelled(signal);
         if (stopScheduling) return;
         const index = nextGroup;
         nextGroup += 1;
@@ -82,8 +90,9 @@ export const finalizeInspectorCapture = async ({
         const [rawUrl, drafts] = group;
         authorizedGroups[index] = {
           drafts,
-          decision: await authorizeLocation(rawUrl),
+          decision: await authorizeLocation(rawUrl, signal),
         };
+        throwIfRuntimeObservationCancelled(signal);
       }
     } catch (cause: unknown) {
       stopScheduling = true;
@@ -99,6 +108,7 @@ export const finalizeInspectorCapture = async ({
   const failedWorker = workerResults.find(
     (result) => result.status === "rejected",
   );
+  throwIfRuntimeObservationCancelled(signal);
   if (failedWorker?.status === "rejected") throw failedWorker.reason;
   for (const { drafts, decision } of authorizedGroups) {
     for (const draft of drafts) {
@@ -131,6 +141,7 @@ export const finalizeInspectorCapture = async ({
           ? 1
           : 0,
     );
+  throwIfRuntimeObservationCancelled(signal);
   return {
     runtime,
     target: {

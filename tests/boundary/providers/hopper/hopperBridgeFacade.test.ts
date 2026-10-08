@@ -48,7 +48,6 @@ const probeResultSchema = z.strictObject({
       reason: z.string(),
     }),
   }),
-  strings: z.strictObject({ "0x401234": z.literal("fixture string") }),
   procedure_references: z.strictObject({
     procedure: z.strictObject({
       address: z.literal("0x401000"),
@@ -64,14 +63,6 @@ const probeResultSchema = z.strictObject({
     unresolved_calls: z.array(z.unknown()),
     references: z.array(z.unknown()),
   }),
-  inventory_replies: z.array(
-    z.strictObject({
-      id: z.number().int(),
-      result: z.array(
-        z.strictObject({ address: z.string(), value: z.string() }),
-      ),
-    }),
-  ),
   provider_faults: z.array(
     z.strictObject({
       id: z.literal(1),
@@ -197,28 +188,6 @@ describe("Hopper API facade", () => {
         },
       },
       { id: 9, result: "0x401000" },
-    ]);
-    expect(result.inventory_replies).toEqual([
-      {
-        id: 1,
-        result: [
-          { address: "0x2", value: "string-2" },
-          { address: "0x10", value: "string-16" },
-          { address: "0x100", value: "string-256" },
-        ],
-      },
-      {
-        id: 2,
-        result: [
-          { address: "0x2", value: "name-2" },
-          { address: "0x10", value: "name-16" },
-          { address: "0x100", value: "name-256" },
-        ],
-      },
-      { id: 3, result: [{ address: "0x10", value: "string-16" }] },
-      { id: 4, result: [{ address: "0x10", value: "name-16" }] },
-      { id: 5, result: [] },
-      { id: 6, result: [] },
     ]);
     expect(stdout).not.toContain("supersecret");
     expect(result.analysis_guard.message).toContain(

@@ -130,6 +130,84 @@ The mask SVG is drawn from the seventh decoded mask. It selects zero-based
 position 21 and compares its character code with 55 (`7`). Keep the figure,
 solver constants and evidence notes aligned when changing this case.
 
+## Cloudflare Workers
+
+`wrangler.toml` serves `website/public/` through Workers Static Assets. There is
+no Worker script or frontend build. Before a preview or deployment, Wrangler
+runs the existing Python scripts to prepare the example ZIP and verify the
+website. Node.js and Python 3 must be available; the commands below use a pinned
+Wrangler version without adding it to REA's package dependencies.
+
+Cloudflare documents static-asset requests as free and unlimited, with no
+additional storage cost. See [billing and limitations](https://developers.cloudflare.com/workers/static-assets/billing-and-limitations/).
+
+### Preview and deploy
+
+Run these commands from the repository root. `--cwd website` makes the build
+paths consistent with the website configuration. Preview locally first:
+
+```sh
+npx wrangler@4.149.0 dev --cwd website --env ""
+```
+
+If `CLOUDFLARE_API_TOKEN` is already set in your shell, Wrangler uses it for
+authentication; skip `wrangler login`. If you are not using an API token, sign
+in once with `npx wrangler@4.149.0 login`. See Cloudflare's
+[authentication commands](https://developers.cloudflare.com/workers/wrangler/commands/general/).
+
+To publish a preview:
+
+```sh
+npx wrangler@4.149.0 deploy --cwd website --env ""
+```
+
+This creates `rea-website-preview` at the `workers.dev` URL printed by Wrangler.
+It does not attach `rea.tools`. Check the homepage, a nested guide, case studies,
+the Notes browser example and the Electron ZIP at that URL.
+
+### Connect rea.tools
+
+Serving the custom hostname requires an
+[active Cloudflare zone](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/).
+When DNS is managed elsewhere:
+
+1. Add `rea.tools` to your Cloudflare account and choose the Free plan.
+2. Export or save the current DNS records. Review Cloudflare's imported records
+   against them, including subdomains, MX and TXT records for email and domain
+   verification; the automatic scan can miss records.
+3. If DNSSEC is enabled, follow Cloudflare's instructions to disable it at the
+   registrar before changing nameservers.
+4. At the domain registrar, replace the current nameservers with the two assigned
+   by Cloudflare. The domain can remain registered with the current registrar.
+5. Wait for Cloudflare to report the zone as Active. Re-enable DNSSEC through
+   Cloudflare afterward if required.
+
+See Cloudflare's [nameserver setup procedure](https://developers.cloudflare.com/dns/zone-setups/full-setup/setup/)
+for the complete migration steps. A CNAME to the preview's `workers.dev` hostname
+at the current DNS provider does not configure a Workers Custom Domain.
+
+Publish to the production Worker:
+
+```sh
+npx wrangler@4.149.0 deploy --cwd website --env production
+```
+
+This creates or updates `rea-website`, attaches `rea.tools`, and lets Cloudflare
+manage its DNS record and HTTPS certificate. Deployment can succeed while the
+zone is pending; verify public HTTPS after activation and certificate issuance.
+An existing CNAME at `rea.tools` must be resolved before adding the Custom Domain. The production Worker also
+retains its `workers.dev` address for direct checks. Only `rea.tools` is attached;
+`www.rea.tools` is not configured by this file.
+
+Verify <https://rea.tools/>, <https://rea.tools/guides/javascript/>,
+<https://rea.tools/examples/notes-web/> and the Electron ZIP. Unknown paths return
+404, and directory pages retain trailing slashes so relative assets and links
+resolve correctly. The root README and browser guide use `https://rea.tools/`
+as the public website URL.
+
+Deployments are manual. The existing GitHub Pages publisher remains available
+as a separate host; it does not publish to Cloudflare.
+
 ## GitHub Pages
 
 `.github/workflows/website-pages.yml` prepares and deploys only `website/public`.

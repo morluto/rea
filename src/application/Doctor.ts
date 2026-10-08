@@ -215,7 +215,7 @@ const collectDoctorIdentity = async (
       ...registrations
         .filter(
           (registration): registration is UnhealthyClientRegistrationStatus =>
-            registration.state !== "aligned",
+            registration.state !== "aligned" && registration.state !== "manual",
         )
         .map(registrationCheck),
     ],

@@ -1,4 +1,4 @@
-import { BrowserObservationError } from "../domain/browserObservationError.js";
+import { CdpCommandRejection } from "./CdpCommandRejection.js";
 import { CdpConnection } from "./CdpConnection.js";
 
 /** Execute an optional CDP method while preserving transport and cancellation failures. */
@@ -20,10 +20,7 @@ export const optionalCdpCommand = async (
       context.signal,
     );
   } catch (cause: unknown) {
-    if (
-      !(cause instanceof BrowserObservationError) ||
-      cause.reason !== "protocol_error"
-    )
+    if (!(cause instanceof CdpCommandRejection) || cause.code !== -32_601)
       throw cause;
     limitations.push(`${method} was unavailable from this browser target.`);
     return undefined;

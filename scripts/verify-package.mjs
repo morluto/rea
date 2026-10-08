@@ -34,6 +34,7 @@ let tarball;
 let mcpStartup;
 let mcpModuleLoading;
 let update;
+let report;
 
 try {
   ({ tarball } = await verifyPackagePack({ root, workspace }));
@@ -44,7 +45,6 @@ try {
     referenceRoot,
   });
   const { cli, packageRunnerCli } = await verifyPackageInstall({
-    root,
     tarball,
     prefix: environmentData.prefix,
     workspace,
@@ -58,7 +58,7 @@ try {
       "node_modules",
       PRODUCT_IDENTITY.packageName,
     ),
-    tarball: join(root, tarball),
+    tarball,
     workspace,
     environment: environmentData.environment,
   });
@@ -133,10 +133,44 @@ try {
     evidenceRoot,
     artifactArchive,
   });
-  process.stdout.write(
-    `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), cli: true, analysisCli: true, artifactCli: true, managedCli: true, managedReconstructionCli: true, managedNativeVerificationCli: true, managedApplicationGraphCli: true, evidenceCli: true, incurMcpCommand: PRODUCT_IDENTITY.mcpCommand, lifecycleScriptsRequired: false, doctor: "platform-appropriate", setup: supportedSetupHost ? "planned-then-idempotent" : "unsupported-host-rejected", setupPlanReadOnly: supportedSetupHost, existingHopperPreserved: supportedSetupHost, clients: supportedSetupHost ? 4 : 0, backupReadback: supportedSetupHost, failureRecovery: supportedSetupHost, configSymlinkLifecycle: supportedSetupHost, skill: supportedSetupHost, skillReferences: supportedSetupHost, mcpTools: TOOL_CONTRACTS.length, mcpPrompts: prompts.names.length, promptCompletion: true, promptCompletionLifecycle: true, evidenceMcp: true, targetFree: true, targetLifecycle: true, boundedRegexBridge: true, update, mcpStartup, mcpModuleLoading })}\n`,
-  );
+  report = {
+    cli: true,
+    analysisCli: true,
+    artifactCli: true,
+    managedCli: true,
+    managedReconstructionCli: true,
+    managedNativeVerificationCli: true,
+    managedApplicationGraphCli: true,
+    evidenceCli: true,
+    incurMcpCommand: PRODUCT_IDENTITY.mcpCommand,
+    lifecycleScriptsRequired: false,
+    doctor: "platform-appropriate",
+    setup: supportedSetupHost
+      ? "planned-then-idempotent"
+      : "unsupported-host-rejected",
+    setupPlanReadOnly: supportedSetupHost,
+    existingHopperPreserved: supportedSetupHost,
+    clients: supportedSetupHost ? 4 : 0,
+    backupReadback: supportedSetupHost,
+    failureRecovery: supportedSetupHost,
+    configSymlinkLifecycle: supportedSetupHost,
+    skill: supportedSetupHost,
+    skillReferences: supportedSetupHost,
+    mcpTools: TOOL_CONTRACTS.length,
+    mcpPrompts: prompts.names.length,
+    promptCompletion: true,
+    promptCompletionLifecycle: true,
+    evidenceMcp: true,
+    targetFree: true,
+    targetLifecycle: true,
+    boundedRegexBridge: true,
+    update,
+    mcpStartup,
+    mcpModuleLoading,
+  };
 } finally {
-  if (tarball) await rm(join(root, tarball), { force: true });
   await rm(workspace, { recursive: true, force: true });
 }
+process.stdout.write(
+  `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), ...report })}\n`,
+);

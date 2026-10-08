@@ -178,15 +178,28 @@ const replyToCommand = (
   options: FakeOptions,
   frameTreeReads: number,
 ): void => {
+  const result =
+    options.commandResult?.(
+      command,
+      `http://127.0.0.1:${String(port)}`,
+      frameTreeReads,
+    ) ?? resultFor(command, port, options, frameTreeReads);
+  if (result === undefined) {
+    socket.send(
+      JSON.stringify({
+        id: command.id,
+        error: {
+          code: -32_601,
+          message: `Method not found: ${command.method}`,
+        },
+      }),
+    );
+    return;
+  }
   socket.send(
     JSON.stringify({
       id: command.id,
-      result:
-        options.commandResult?.(
-          command,
-          `http://127.0.0.1:${String(port)}`,
-          frameTreeReads,
-        ) ?? resultFor(command, port, options, frameTreeReads),
+      result,
     }),
   );
   if (options.malformedEventOnMethod === command.method)

@@ -20,15 +20,17 @@ export class AnalysisUnsupportedTargetError extends AnalysisError {
 /** An analysis or transport resource failure, distinct from malformed input or unsupported coverage. */
 export class AnalysisResourceConstraintError extends AnalysisError {
   readonly _tag = "AnalysisResourceConstraintError";
+  readonly remediationAction: string | undefined;
 
   constructor(
     readonly operation: string,
     readonly resource: "memory" | "cpu" | "file-size" | "transport",
     readonly reason: string,
     readonly reportedLimits: Readonly<Record<string, JsonValue>> | null,
-    options?: AnalysisErrorOptions,
+    options?: AnalysisErrorOptions & { readonly remediationAction?: string },
   ) {
     super(`Resource constraint during ${operation}: ${reason}`, options);
+    this.remediationAction = options?.remediationAction;
   }
 }
 
@@ -134,7 +136,7 @@ export class AnalysisAccessDeniedError extends AnalysisError {
     readonly operation: string,
     readonly path: string,
     readonly systemCode: "EACCES" | "EPERM",
-    options?: ErrorOptions,
+    options?: AnalysisErrorOptions,
   ) {
     super(
       `Host filesystem read access denied (${systemCode}) for ${path} during ${operation}`,
@@ -150,7 +152,7 @@ export class AnalysisArtifactChangedError extends AnalysisError {
     readonly operation: string,
     readonly path: string,
     readonly reason: string,
-    options?: ErrorOptions,
+    options?: AnalysisErrorOptions,
   ) {
     super(`Selected artifact changed during acquisition: ${reason}`, options);
   }

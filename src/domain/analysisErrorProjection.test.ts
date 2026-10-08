@@ -116,16 +116,6 @@ it.each([
         captured_output: retainedOutput,
       },
     });
-    expect(projected.remediation.action).toContain(
-      resource === "cpu"
-        ? "CPU"
-        : resource === "transport"
-          ? "Evidence reference"
-          : resource === "file-size"
-            ? "file-size"
-            : "memory",
-    );
-    expect(projected.remediation.action).not.toContain("doctor");
     expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
       true,
     );

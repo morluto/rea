@@ -220,8 +220,7 @@ describe("native UI action trace", () => {
     const result = await tools.execute("trace_native_ui_action", {
       action: "buildTapped:",
     });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     const trace = nativeInvestigationTraceSchema.parse(result.value);
     expect(trace.start).toBe("action");
     expect(trace.nodes.map(({ id }) => id)).toContain("native:function:0x1000");
@@ -297,8 +296,7 @@ describe("bounded native UI tracing", () => {
       { action: "buildTapped:", max_depth: 3 },
     );
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     expect(
       nativeInvestigationTraceSchema
         .parse(result.value)
@@ -337,8 +335,7 @@ describe("native UI query outcomes", () => {
     const result = await tools.execute("trace_native_ui_action", {
       action: "button",
     });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     expect(result.value).toMatchObject({ start: "action" });
   });
 
@@ -385,8 +382,7 @@ describe("native UI query outcomes", () => {
     const result = await tools.execute("trace_native_ui_action", {
       action: "buildTapped:",
     });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     expect(result.value).toMatchObject({
       reason: "action_selector_matches_multiple_ui_connections",
       nodes: [{ id: "action" }, { id: "second-action" }],

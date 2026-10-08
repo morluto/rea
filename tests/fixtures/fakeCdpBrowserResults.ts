@@ -6,7 +6,7 @@ export const resultFor = (
   port: number,
   options: FakeOptions,
   frameTreeReads: number,
-): Readonly<Record<string, unknown>> => {
+): Readonly<Record<string, unknown>> | undefined => {
   switch (command.method) {
     case "Target.attachToTarget":
       return attachToTargetResult(options);
@@ -44,8 +44,25 @@ export const resultFor = (
       return cacheEntriesResult(port);
     case "CacheStorage.requestCachedResponse":
       return cachedResponseResult(options);
-    default:
+    case "Page.enable":
+    case "Page.disable":
+    case "Page.setLifecycleEventsEnabled":
+    case "Network.enable":
+    case "Network.disable":
+    case "Debugger.disable":
+    case "Runtime.enable":
+    case "Runtime.disable":
+    case "Runtime.releaseObjectGroup":
+    case "DOM.enable":
+    case "DOM.disable":
       return {};
+    case "Debugger.enable":
+      return { debuggerId: "fake-debugger" };
+    case "Target.detachFromTarget":
+    case "WebMCP.enable":
+      return {};
+    default:
+      return undefined;
   }
 };
 

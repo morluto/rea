@@ -126,7 +126,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "list_strings",
-    "List every provider-defined string, or filter to one address, as address/value pairs. Ghidra also reports encoding, terminator status, and byte length.",
+    "List every provider-defined string object, or filter to one address, as address/value pairs with encoding, terminator status, and byte length when available. Hopper reads complete typed objects and retains its original display text as provider_value; long literals may span adjacent unterminated objects.",
     z.object({ document, address: optionalAddress }),
   ),
   official(
@@ -174,7 +174,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "procedure_references",
-    "Return every raw incoming or outgoing reference edge for one procedure. Endpoint procedures are resolved only from provider containment; Ghidra preserves observed reference kinds while providers without kind authority mark them unavailable.",
+    "Return every raw incoming or outgoing reference edge for one procedure. Endpoint procedures are resolved only from provider containment. Ghidra preserves detailed reference flags. Hopper preserves native CallReference classifications and exact endpoints while leaving unavailable detailed flags explicit.",
     z.object({
       procedure,
       direction: z.enum(["incoming", "outgoing"]).default("outgoing"),
@@ -193,27 +193,27 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "search_procedures",
-    "Search every analyzed procedure name using literal matching by default or regex when requested. Results are deterministic and complete.",
+    "Search every analyzed procedure name using literal matching by default or regex when requested. Results are deterministic and complete. Hopper regex mode uses ECMAScript Unicode syntax in a cancellable worker; a matching deadline leaves its API usable.",
     z.object(analysisSearchInput),
   ),
   official(
     "search_strings",
-    "Search every analyzed string using literal matching by default or regex when requested. Results are deterministic and complete.",
+    "Search every analyzed string object using literal matching by default or regex when requested. Results are deterministic and complete over the native inventory. Hopper retains typed byte decoding, native display, and explicit decoding unknowns. Adjacent long-literal fragments match independently. Hopper regex mode uses ECMAScript Unicode syntax in a cancellable worker; a matching deadline leaves its API usable.",
     z.object(analysisSearchInput),
   ),
   official(
     "set_address_name",
-    "Assign an analyst name to one hexadecimal address and report Hopper's boolean result. Reject names owned by another address; use set_addresses_names to explicitly move or swap labels among selected addresses. This mutates analysis metadata.",
+    "Assign an analyst name to one mapped hexadecimal address and report whether the native edit succeeded and exact readback matched. Hopper rejects symbol names exceeding 1024 UTF-16 code units before mutation, and rejects names owned by another address; use set_addresses_names to explicitly move or swap labels among selected addresses. This mutates analysis metadata.",
     z.object({ address, name: z.string(), document }),
   ),
   official(
     "set_addresses_names",
-    "Assign analyst names to multiple addresses in one call and return per-address success booleans. Hopper validates addresses, native string representations, and unique destinations/names before applying edits. Existing labels may move or swap only among explicitly selected addresses; unselected label owners remain unchanged. This mutates analysis metadata; verify failures individually.",
+    "Assign analyst names to multiple mapped addresses in one call and return per-address edit/readback success booleans. Hopper validates mapped destinations, native string representations, its 1024 UTF-16 code-unit symbol-name limit, and unique destinations/names before applying edits. Existing labels may move or swap only among explicitly selected addresses; unselected label owners remain unchanged. This mutates analysis metadata; verify failures individually.",
     z.object({ names: z.record(z.string(), z.string()), document }),
   ),
   official(
     "set_bookmark",
-    "Create or replace a bookmark at a hexadecimal address and report success. This mutates navigation metadata; bookmarks are analyst-authored navigation aids, not binary evidence.",
+    "Create or replace a bookmark at a mapped hexadecimal address and report success. This mutates navigation metadata; bookmarks are analyst-authored navigation aids, not binary evidence.",
     z.object({ address, name: z.string().optional(), document }),
   ),
   official(
@@ -228,7 +228,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "unset_bookmark",
-    "Remove the bookmark at a hexadecimal address and return whether it is absent. This mutates navigation metadata and does not alter binary bytes.",
+    "Remove the bookmark at a mapped hexadecimal address and return whether it is absent. Hopper also permits removing an existing legacy bookmark outside mapped memory. This mutates navigation metadata and does not alter binary bytes.",
     z.object({ address, document }),
   ),
   official(

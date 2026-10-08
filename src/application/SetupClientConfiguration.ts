@@ -2,6 +2,7 @@ import {
   clientRegistrationEntry,
   clientConfigurationValuesEqual,
   clientServerPath,
+  grokServerListedDisabled,
   legacyClientServerPath,
   parseClientConfiguration,
   serializeClientConfiguration,
@@ -38,37 +39,6 @@ export const configureClientConfiguration = (
   return configureClientDocument(client, environment, command, client.format);
 };
 
-/** @deprecated Use configureClientConfiguration with the client's declared format. */
-export const configureJsonClient = (
-  client: SetupClient,
-  environment: SetupProviderEnvironment = {},
-  command: readonly string[] = defaultCommand(),
-): Promise<ClientConfigurationResult> =>
-  configureClientWithFormat(client, "json", environment, command);
-
-/** @deprecated Use configureClientConfiguration with the client's declared format. */
-export const configureTomlClient = (
-  client: SetupClient,
-  environment: SetupProviderEnvironment = {},
-  command: readonly string[] = defaultCommand(),
-): Promise<ClientConfigurationResult> =>
-  configureClientWithFormat(client, "toml", environment, command);
-
-const configureClientWithFormat = (
-  client: SetupClient,
-  format: "json" | "toml",
-  environment: SetupProviderEnvironment,
-  command: readonly string[],
-): Promise<ClientConfigurationResult> => {
-  if (client.format !== undefined && client.format !== format)
-    return Promise.resolve({ status: "failed", reason: "readback" });
-  return configureClientConfiguration(
-    { ...client, format: client.format ?? format },
-    environment,
-    command,
-  );
-};
-
 const configureClientDocument = async (
   client: SetupClient,
   environment: SetupProviderEnvironment,
@@ -89,7 +59,7 @@ const configureClientDocument = async (
   let parsed: ClientConfigurationDocument;
   try {
     parsed = parseClientConfiguration(
-      original ?? (format === "toml" ? "" : "{}"),
+      original ?? (format === "toml" || format === "grok" ? "" : "{}"),
       format,
     );
   } catch (cause: unknown) {
@@ -265,7 +235,7 @@ const restoreConfig = async (
   }
 };
 
-/** Whether REA's entry matches and no conflicting legacy entry remains. */
+/** Whether REA's entry matches, no legacy entry remains, and Grok is not suppressing it. */
 const registrationCurrent = (
   parsed: ClientConfigurationDocument,
   desired: unknown,
@@ -273,7 +243,12 @@ const registrationCurrent = (
   clientConfigurationValuesEqual(
     parsed.servers[PRODUCT_IDENTITY.mcpServerKey],
     desired,
-  ) && !Object.hasOwn(parsed.legacyServers, PRODUCT_IDENTITY.mcpServerKey);
+  ) &&
+  !Object.hasOwn(parsed.legacyServers, PRODUCT_IDENTITY.mcpServerKey) &&
+  !(
+    parsed.dialect === "grok" &&
+    grokServerListedDisabled(parsed.document, PRODUCT_IDENTITY.mcpServerKey)
+  );
 
 const clientConfigurationDesired = (
   client: SetupClient,
@@ -293,7 +268,7 @@ const clientConfigurationDesired = (
   );
   return {
     ...registration,
-    ...(client.name === "codex"
+    ...(client.name === "codex" || client.name === "grok_build"
       ? {
           startup_timeout_sec: MCP_STARTUP_POLICY.codexStartupTimeoutSeconds,
         }

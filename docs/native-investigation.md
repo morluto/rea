@@ -12,6 +12,27 @@ input file and include the observed lipo slice offset for universal binaries.
 If that offset is unavailable, segment evidence locations are omitted with an
 explicit limitation; architecture inventory locations remain available.
 
+Hopper's `address_to_file_offset` combines the native image-relative mapping with
+original-file coordinates only after checking the source against the session's
+SHA-256. FAT tables and embedded Mach-O headers come from that same hashing pass.
+A changed or nonregular source reports `artifact_changed`; an unreadable or
+missing source reports its access or filesystem failure. Those errors retain the native offset,
+loaded header and provider source path in `details.partial_observation`, with the
+original-file coordinate explicitly unavailable. Restore the original bytes or
+reopen the changed executable to obtain verified coordinates. Snapshot replay
+remains historical evidence for its recorded artifact identity.
+
+A selected Hopper database's digest identifies the database rather than its
+original executable. Original-file mapping is unavailable for that selection;
+native mapping facts remain in partial evidence, and `read_bytes` still reads
+the loaded database. Open the original executable to verify source coordinates.
+
+Native Xcode command execution uses shared process supervision with a 60-second
+deadline and a 64 MiB aggregate stdout/stderr budget. Timeout, cancellation,
+stream failure, and output exhaustion retain the captured output, exit details,
+and cleanup outcome in the error result. Truncated output is never parsed as a
+complete observation.
+
 - `trace_dylib_resolution` / `rea trace-dylib-resolution <app-or-mach-o>`
   parses Mach-O load commands in TypeScript and follows dyld's path expansion
   for every executable in an app bundle, or for one Mach-O within its directory.
@@ -38,11 +59,27 @@ explicit limitation; architecture inventory locations remain available.
   a source-owned AppKit XIB with `ibtool`. Storyboards require an installed
   iOS platform; unsupported archive forms remain explicit.
   XML plist archives accept UTF-8 and BOM-marked UTF-16 in either byte order.
-  The shared keyed-archive and Interface Builder decoder consumes an initial
+  App bundle `Info.plist` executable resolution uses the same decoder as keyed
+  archives and Interface Builder. The decoder consumes an initial
   BOM and rejects malformed byte sequences, unsupported encoding declarations,
   and declarations that disagree with the detected encoding. It never substitutes
   UTF-8 for a declared encoding it cannot process. Archive and evidence digests
-  still identify the original serialized bytes.
+  still identify the original serialized bytes. Bundle resolution reports
+  malformed bytes and unsupported encodings against the original plist path
+  before looking up the executable. Interface Builder decoding
+  limits aggregate input archives to 32 MiB.
+  Before decoding, it also bounds the serialized structure: expanded binary
+  plist references, NIB table records, XML elements and text, plus their
+  projected representations must fit the 256 MiB aggregate decode budget.
+  NIB string values, data, property names and class names are charged at each
+  projected JSON occurrence, including when the archive reuses one source
+  value. Binary plist data projection also accounts for the temporary byte
+  copy made by the pinned decoder projection. These are format-derived
+  representation reservations, not exact heap measurements or a process-wide
+  heap ceiling.
+  Archives beyond either aggregate budget are omitted with their paths and an
+  explicitly partial `archive_decode` facet; previously decoded documents and
+  their identities remain available.
 - `inspect_native_dispatch_metadata` /
   `rea inspect-native-dispatch-metadata <app-or-binary>` prefers a validated macOS Mach-O byte reader. It decodes
   64-bit little-endian Objective-C class/metaclass records, superclass pointers,
@@ -68,6 +105,18 @@ explicit limitation; architecture inventory locations remain available.
   partial coverage. Other providers retain the
   existing symbol-based inventory with its narrower coverage.
 
+## Exact CLI selectors
+
+`function`, `instructions` and `decompile` accept `--procedure=<name-or-address>`;
+`xrefs` accepts `--address=<name-or-address>`. `search` accepts `--pattern=<text>`
+and `trace` accepts `--query=<text>`. These alternatives preserve names and text
+that begin with a dash, including Objective-C names such as
+`rea function ./app '--procedure=-[REAWidget delegate]' --provider hopper --format json`.
+Use the equals form when the value resembles a CLI flag, for example
+`rea trace ./app --query=--help --provider hopper --format json`.
+The existing positional forms remain available. Missing selectors and conflicting
+positional/named values fail before analysis starts; identical selections agree.
+
 ## Native instruction, call and type primitives
 
 Ghidra supplies three exact-object operations:
@@ -79,6 +128,46 @@ an explicit `0x` or address-space prefix selects an address; otherwise an exact
 database symbol name takes precedence over a bare hexadecimal address. Thus a
 function renamed to `dead` remains selectable by name. Use the names returned
 by the inventory, including their namespaces and any platform symbol prefix.
+Overloads can share a fully qualified name; ambiguity errors return every
+matching entry address so the caller can select the intended function directly.
+
+`resolve_containing_procedure` also resolves an exact external entry. Its empty
+body remains explicit; nearby external addresses do not inherit that identity.
+
+Ghidra function references cover the complete function-body AddressSet and its
+exact entry, including references into instruction interiors and references
+from embedded data. Addresses inside an enclosing span but outside the owned
+body are excluded. `procedure_references` returns internal and external edges;
+`analyze_function` omits incoming edges whose sources belong to the same function.
+The reference collector's semantics participate in the analysis profile, so
+older snapshots cannot replay the former incomplete results under this profile.
+
+Ghidra regex searches use Java Pattern semantics. If compiling or matching a
+pattern exhausts the engine's stack, REA returns a resource constraint and
+preserves the active database and annotations. Retry in literal mode or simplify
+the regex; successful literal searches retain complete matching strings.
+Cancelling an active request terminates the ephemeral database and discards its
+annotations. REA retains the selected target and imports the original artifact
+again on the next Ghidra query.
+
+Opening the same target and profile again retains the live database, including
+annotations. It does not make those edits eligible for an immutable snapshot.
+Snapshot closes drain earlier provider requests before saving and keep later
+requests waiting until the save and close finish. A concurrent successful edit
+therefore rejects the snapshot save and leaves the edited session open.
+After metadata edits, snapshot saves and imports remain unavailable in that
+session. Use `export_evidence_bundle` to retain the observations, close without
+`snapshot_path`, and reopen the target before importing or saving a snapshot.
+
+Ghidra checks its private import copy against the artifact digest selected by
+`open_binary`. If the source changes before that copy is acquired, the query
+reports `artifact_changed` with the selected path and both digests. Reopen the
+stable target to acquire its current identity. An already imported database
+continues to describe its captured bytes even if the original path is changed
+or removed; this identity failure does not mark the Ghidra installation unavailable.
+On Linux and macOS, an unreadable source reports `access_denied`; a removed or
+nonregular replacement reports `artifact_changed`. Source copying is cancellable
+and never replaces an existing private snapshot.
 
 ```bash
 rea inspect-native-instruction <binary> <address> --provider ghidra
@@ -262,6 +351,12 @@ unpaired Unicode surrogate; a rejection identifies the field and UTF-16 index
 and leaves every annotation unchanged. CRLF, supplementary Unicode characters,
 and combining characters are preserved. Windows P0 remains read-only. Ghidra has no
 GUI authority, and REA never falls back automatically to Hopper.
+Ghidra name edits preserve the existing namespace. Supply either a leaf name
+such as `renamed` or a fully qualified name in that namespace, such as
+`alpha::renamed`. The returned qualified name can be reused as an idempotent
+rename input. Edits retain the existing namespace; other namespace-like text
+remains literal leaf-name text. A qualified name with an empty leaf is rejected
+before any comment or name is changed.
 
 - `npm run verify:ghidra`: host-native debug/stripped targets, native type layout,
   instruction/call facts, value dependencies and process/project cleanup.

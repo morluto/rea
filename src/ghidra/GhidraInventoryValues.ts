@@ -219,7 +219,11 @@ const containingProcedure = z.discriminatedUnion("found", [
     .strict()
     .superRefine((value, context) => {
       const body = value.procedure.body;
+      const exactExternalEntry =
+        value.procedure.classification.external &&
+        value.query_address === value.procedure.address;
       if (
+        !exactExternalEntry &&
         body.available &&
         !functionBodyEntryAgrees(
           { ...body, contains_entry: true },

@@ -8,7 +8,7 @@ import { toolContract } from "../contracts/toolContracts.js";
 import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { toCallToolResult } from "./toolResult.js";
+import { toCallToolResult, toEvidenceToolResult } from "./toolResult.js";
 
 /** Bind historical inspection to its named contract and caller-owned Evidence writer. */
 export const registerWebNetworkCaptureTool = (
@@ -38,9 +38,7 @@ export const registerWebNetworkCaptureTool = (
       );
       if (!result.ok) return toCallToolResult(result, contract);
       const recorded = recordEvidence?.(result.value);
-      return recorded !== undefined && !recorded.ok
-        ? toCallToolResult(recorded, contract)
-        : toCallToolResult(result, contract);
+      return toEvidenceToolResult(result.value, contract, recorded);
     },
   );
 };

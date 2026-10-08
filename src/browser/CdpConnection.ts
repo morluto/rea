@@ -15,6 +15,7 @@ export interface CdpEvent {
 
 interface PendingCommand {
   readonly method: string;
+  readonly sessionId?: string;
   readonly resolve: (value: unknown) => void;
   readonly reject: (error: AnalysisError) => void;
   readonly removeAbort: () => void;
@@ -24,7 +25,9 @@ interface PendingCommand {
 export class CdpConnection {
   readonly #pending = new Map<number, PendingCommand>();
   readonly #listeners = new Set<(event: CdpEvent) => void>();
-  readonly #disconnectListeners = new Set<() => void>();
+  readonly #disconnectListeners = new Set<
+    (error: BrowserObservationError) => void
+  >();
   readonly #protocolFailureListeners = new Set<
     (error: BrowserObservationError) => void
   >();
@@ -73,9 +76,9 @@ export class CdpConnection {
   }
 
   /** Subscribe to an unexpected transport loss while an operation is active. */
-  onDisconnect(listener: () => void): () => void {
+  onDisconnect(listener: (error: BrowserObservationError) => void): () => void {
     if (this.#closed) {
-      listener();
+      listener(this.#transportError(this.#transportFailure));
       return () => undefined;
     }
     this.#disconnectListeners.add(listener);
@@ -120,6 +123,7 @@ export class CdpConnection {
       signal?.addEventListener("abort", onAbort, { once: true });
       this.#pending.set(id, {
         method,
+        ...(sessionId === undefined ? {} : { sessionId }),
         resolve,
         reject,
         removeAbort: () => signal?.removeEventListener("abort", onAbort),
@@ -211,24 +215,45 @@ export class CdpConnection {
   #receiveResponse(message: Record<string, unknown>, id: number): void {
     const pending = this.#pending.get(id);
     if (pending === undefined) return;
-    this.#complete(id, pending);
-    if ("error" in message) {
-      const reported = message.error;
-      pending.reject(
-        new CdpCommandRejection(
-          this.operation,
-          pending.method,
-          isRecord(reported) && typeof reported.code === "number"
-            ? reported.code
-            : null,
-          isRecord(reported) && typeof reported.message === "string"
-            ? reported.message
-            : null,
-        ),
-      );
+    const hasResult = "result" in message;
+    const hasError = "error" in message;
+    if (
+      ("sessionId" in message &&
+        (typeof message.sessionId !== "string" ||
+          message.sessionId !== pending.sessionId)) ||
+      hasResult === hasError
+    ) {
+      this.#failPending("protocol_error");
       return;
     }
-    pending.resolve("result" in message ? message.result : {});
+    if (hasResult) {
+      if (!isRecord(message.result)) {
+        this.#failPending("protocol_error");
+        return;
+      }
+      this.#complete(id, pending);
+      pending.resolve(message.result);
+      return;
+    }
+    const reported = message.error;
+    if (
+      !isRecord(reported) ||
+      typeof reported.code !== "number" ||
+      !Number.isSafeInteger(reported.code) ||
+      typeof reported.message !== "string"
+    ) {
+      this.#failPending("protocol_error");
+      return;
+    }
+    this.#complete(id, pending);
+    pending.reject(
+      new CdpCommandRejection(
+        this.operation,
+        pending.method,
+        reported.code,
+        reported.message,
+      ),
+    );
   }
 
   #complete(id: number, pending: PendingCommand): void {
@@ -258,7 +283,8 @@ export class CdpConnection {
     if (!wasClosed) this.#transportFailure = reason;
     this.#failPending(reason);
     if (wasClosed) return;
-    for (const listener of this.#disconnectListeners) listener();
+    const error = this.#transportError(reason);
+    for (const listener of this.#disconnectListeners) listener(error);
     this.#disconnectListeners.clear();
   }
 
