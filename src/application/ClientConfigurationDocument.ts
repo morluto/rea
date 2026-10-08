@@ -700,17 +700,18 @@ const rebuildDelimitedEntries = (
   return parts.join("");
 };
 
-/** Decoded single-line TOML string, or undefined for any other value. */
+/**
+ * Decoded TOML string, or undefined when the token is not a string.
+ * The document parser accepts multiline basic and literal strings.
+ */
 const tomlStringValue = (text: string): string | undefined => {
-  const quote = text[0];
-  if (
-    (quote !== '"' && quote !== "'") ||
-    text.startsWith(quote === '"' ? '"""' : "'''")
-  )
+  try {
+    const value = parseToml(`value = ${text}`)["value"];
+    return typeof value === "string" ? value : undefined;
+  } catch (cause: unknown) {
+    void cause;
     return undefined;
-  const parsed = parseQuotedKey(text, 0);
-  if (parsed === undefined || parsed.next !== text.length) return undefined;
-  return parsed.value;
+  }
 };
 
 /**
