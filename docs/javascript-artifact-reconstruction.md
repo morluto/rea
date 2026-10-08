@@ -226,3 +226,7 @@ URI schemes are classified independently of local file names: a reference such
 as `web3:app.js` remains external even when an artifact has that literal name.
 Scheme characters may include digits after the initial letter; a relative path
 such as `./web3:app.js` still names a local artifact.
+
+Package `exports` fallback arrays are supported both at the top level and under
+the root `"."` entry. The resolver selects targets in declared order using the
+same conditional and invalid-entry handling as nested exports arrays.

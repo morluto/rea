@@ -440,12 +440,10 @@ const packageExport = (
   moduleKind: ResolveArtifactPathInput["moduleKind"],
 ): PackageExportOutcome => {
   if (typeof value === "string") return packagePathValue(value);
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    return { status: "invalid" };
+  if (typeof value !== "object" || value === null) return { status: "invalid" };
   const root = Reflect.get(value, ".") ?? value;
   if (typeof root === "string") return packagePathValue(root);
-  if (typeof root !== "object" || root === null || Array.isArray(root))
-    return { status: "invalid" };
+  if (typeof root !== "object" || root === null) return { status: "invalid" };
   const flattened = exportTargets(root, packageExportConditions(moduleKind));
   if (flattened.kind === "invalid") return { status: "invalid" };
   const first =
