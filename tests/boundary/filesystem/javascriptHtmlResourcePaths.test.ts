@@ -77,6 +77,31 @@ it.each(cases)(
     expect(loads.map(({ properties }) => properties.resolved_path)).toEqual(
       expected,
     );
+    if (expected.length === 0) {
+      const reference = result.graph.nodes
+        .flatMap(({ observations }) => observations)
+        .find(
+          ({ properties }) => properties.mechanism === "html-script-reference",
+        );
+      expect(reference).toMatchObject({
+        properties: {
+          script_path: "./app",
+          resolution_context: "html-reference",
+          resolution_status: "not-found",
+          resolved_path: null,
+        },
+        evidence: {
+          authority: "static-relationship-inference",
+          location: {
+            available: true,
+            value: { kind: "source-range", source: "index.html" },
+          },
+          limitations: expect.arrayContaining([
+            expect.stringContaining("exact HTML resource"),
+          ]),
+        },
+      });
+    }
   },
 );
 

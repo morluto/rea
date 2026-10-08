@@ -9,6 +9,42 @@ import { artifactLocalIdentity } from "./JavaScriptArtifactGraphContext.js";
 import { applicationNodeIdentitySchema } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import { analyzeJavaScriptStaticSource } from "../../domain/javascript/javascriptStaticAnalysis.js";
 
+describe("artifact URI scheme classification", () => {
+  it.each(["html-reference", "module-specifier", "url-reference"] as const)(
+    "keeps digit-bearing schemes external in %s even when a local file matches",
+    (context) => {
+      const files = fileMap([
+        file("index.html", "root"),
+        file("web3:app.js", "root"),
+      ]);
+      expect(
+        resolve({
+          declaredPath: "web3:app.js",
+          sourcePath: "index.html",
+          context,
+          files,
+        }),
+      ).toMatchObject({ resolution_status: "external", resolved_path: null });
+    },
+  );
+
+  it("keeps references under a digit-bearing external base href external", () => {
+    const files = fileMap([
+      file("index.html", "root"),
+      file("web3:assets/app.js", "root"),
+    ]);
+    expect(
+      resolve({
+        declaredPath: "app.js",
+        sourcePath: "index.html",
+        context: "html-reference",
+        htmlBaseHref: "web3:assets/",
+        files,
+      }),
+    ).toMatchObject({ resolution_status: "external", resolved_path: null });
+  });
+});
+
 describe("artifact-local graph identity", () => {
   it("preserves complete long namespace and key values", () => {
     const digest = "a".repeat(64);

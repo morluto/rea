@@ -12,6 +12,11 @@ describe("artifact path syntax", () => {
     expect(hasScheme("https://example.test/app.js")).toBe(true);
     expect(hasScheme("file:///app.js")).toBe(true);
     expect(hasScheme("node:fs")).toBe(true);
+    expect(hasScheme("web3:app.js")).toBe(true);
+    expect(hasScheme("h323:user@example.test")).toBe(true);
+    expect(hasScheme("x1+custom.v2-test:asset")).toBe(true);
+    expect(hasScheme("3web:app.js")).toBe(false);
+    expect(hasScheme("./web3:app.js")).toBe(false);
     expect(hasScheme("./relative.js")).toBe(false);
     expect(hasScheme("/absolute.js")).toBe(false);
     expect(hasScheme("app.js")).toBe(false);

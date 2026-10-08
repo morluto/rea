@@ -25,6 +25,26 @@ const cases: readonly {
     metadata: { main: "actual.cjs" },
     index: false,
   },
+  {
+    name: "top-level exports array",
+    metadata: { exports: ["./actual.cjs"] },
+    index: true,
+  },
+  {
+    name: "root subpath exports array",
+    metadata: { exports: { ".": ["./actual.cjs"] } },
+    index: true,
+  },
+  {
+    name: "exports array skips invalid and unmatched entries",
+    metadata: { exports: [42, { browser: "./browser.js" }, "./actual.cjs"] },
+    index: true,
+  },
+  {
+    name: "nested root exports array",
+    metadata: { exports: { ".": [[null, { require: "./actual.cjs" }]] } },
+    index: true,
+  },
   { name: "index fallback", metadata: {}, index: true },
   {
     name: "missing legacy main fallback",

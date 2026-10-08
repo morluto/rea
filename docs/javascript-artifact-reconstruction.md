@@ -57,6 +57,21 @@ manifest and graph commitments, JavaScript Application Graph, static
 Electron summary, reconstruction statistics, and explicit limitations. It does
 not require a live Hopper, Ghidra, browser, or Electron process.
 
+## ASAR integrity
+
+ASAR inventory checks Electron integrity metadata for embedded archive entries
+and supplied `.asar.unpacked` companion files. An integrity failure identifies
+the logical path, declared and calculated SHA-256 values, and whether the entry
+was unpacked. By default, a mismatch is returned as a failure with its artifact
+context. Requests that support `integrity_policy` can explicitly select
+`record-and-continue` to inspect verified siblings while retaining the mismatch.
+
+An unpacked entry whose companion bytes were not supplied remains
+`unavailable`. REA continues analyzing embedded JavaScript and records the
+missing native/resource bytes as unknown. See [what is reconstructed](#what-is-reconstructed)
+for the inventory fields and [MCP integrity handling](mcp-contracts.md#integrity-record-and-continue)
+for the tool-result contract.
+
 ## Large results
 
 Graph and Evidence identifiers hash canonical JSON incrementally, without
@@ -206,3 +221,18 @@ paired, ambiguous, and unpaired IPC, validation candidates, utility processes,
 and native binding requests. These fixtures establish parser and artifact-reader
 claims; they do not replace the later operator-supplied real-application
 benchmark.
+
+URI schemes are classified independently of local file names: a reference such
+as `web3:app.js` remains external even when an artifact has that literal name.
+Scheme characters may include digits after the initial letter; a relative path
+such as `./web3:app.js` still names a local artifact.
+
+Package `exports` fallback arrays are supported both at the top level and under
+the root `"."` entry. The resolver selects targets in declared order using the
+same conditional and invalid-entry handling as nested exports arrays.
+
+HTML script references resolve to exact inventoried files after applying the
+document base and query/fragment rules. CommonJS module lookups retain extension
+and directory resolution.
+Unresolved HTML references retain their declaration, source range, and resolution
+reason in the renderer observations.

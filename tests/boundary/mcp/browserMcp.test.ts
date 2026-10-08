@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
+import { webPageInspectionSchema } from "../../../src/domain/browserObservation.js";
 import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "../../../src/contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -190,6 +191,40 @@ const verifySessionAndComparisonTools = async (
   expect(compared.structuredContent).toMatchObject({
     result: { overall_status: "unknown" },
   });
+  const parsedCapture = webPageInspectionSchema.parse(capture);
+  const socket = parsedCapture.network.websocket_events.find(
+    (event) => event.payload_shape?.json_shape != null,
+  );
+  const payload = socket?.payload_shape;
+  if (socket === undefined || payload == null || payload.json_shape === null)
+    throw new Error("Missing deep WebSocket JSON shape fixture");
+  const malformedCapture = {
+    ...parsedCapture,
+    network: {
+      ...parsedCapture.network,
+      websocket_events: [
+        {
+          ...socket,
+          payload_shape: {
+            ...payload,
+            json_shape: {
+              ...payload.json_shape,
+              properties: [{ path: "/event", types: [42], observations: 1 }],
+            },
+          },
+        },
+      ],
+    },
+  };
+  const malformedComparison = await connected.client.callTool({
+    name: "compare_web_captures",
+    arguments: {
+      before: { inspection: malformedCapture },
+      after: { inspection: capture },
+    },
+  });
+  expect(malformedComparison.isError).toBe(true);
+  expect(JSON.stringify(malformedComparison.content)).toContain("types");
   const incompleteComparison = await connected.client.callTool({
     name: "compare_web_captures",
     arguments: { before: { inspection: capture } },
