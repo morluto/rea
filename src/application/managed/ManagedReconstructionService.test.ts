@@ -219,7 +219,9 @@ describe("managed reconstruction input diagnostics", () => {
       operation: "inspect_managed_members",
       parameters: {},
       result: {
-        ...input.static_members.normalized_result,
+        ...managedMemberInspectionSchema.parse(
+          input.static_members.normalized_result,
+        ),
         artifact: { sha256: 7 },
       },
       rawResult: null,
