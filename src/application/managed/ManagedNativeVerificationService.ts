@@ -1,9 +1,6 @@
 import { z } from "zod";
 
-import {
-  AnalysisInputError,
-  AnalysisProtocolError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisProtocolError } from "../../domain/analysisErrorCore.js";
 import { type AnalysisError } from "../../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
@@ -15,6 +12,10 @@ import {
 } from "../../domain/managed/managedNativeVerification.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { MANAGED_WORKFLOW_PROVIDER } from "../InvestigationProviders.js";
+import {
+  requestInputError,
+  workflowInputError,
+} from "../workflowInputError.js";
 
 const OPERATION = "verify_managed_native_boundaries" as const;
 
@@ -24,14 +25,14 @@ export const verifyManagedNativeBoundariesEvidence = (
 ): Result<Evidence, AnalysisError> => {
   const parsed = managedNativeVerificationInputSchema.safeParse(rawInput);
   if (!parsed.success)
-    return err(new AnalysisInputError(OPERATION, { cause: parsed.error }));
+    return err(requestInputError(OPERATION, parsed.error, rawInput));
   try {
     const result = verifyManagedNativeBoundaries(parsed.data);
     return ok(createManagedNativeVerificationEvidence(parsed.data, result));
   } catch (cause: unknown) {
     return err(
       cause instanceof TypeError || cause instanceof z.ZodError
-        ? new AnalysisInputError(OPERATION, { cause })
+        ? workflowInputError(OPERATION, cause)
         : new AnalysisProtocolError(
             "Managed/native verification produced an invalid result",
             { cause },

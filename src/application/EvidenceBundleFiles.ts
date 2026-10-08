@@ -2,7 +2,6 @@ import {
   describeEvidenceBundleFailure,
   describeValidationFailure,
   parseEvidenceBundle,
-  serializeEvidenceBundle,
   type EvidenceBundle,
 } from "../domain/evidenceBundle.js";
 import {
@@ -11,7 +10,11 @@ import {
 } from "../domain/evidenceErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { parseProcessCapture } from "../domain/process/processCapture.js";
-import { readJsonFile, writeTextFile } from "./JsonFiles.js";
+import {
+  bufferedJsonParts,
+  canonicalJsonParts,
+} from "../domain/jsonSerialization.js";
+import { readJsonFile, writeTextParts } from "./JsonFiles.js";
 
 type EvidenceReadFailure = EvidenceFileError | EvidenceIntegrityError;
 type EvidenceWriteFailure = EvidenceFileError | EvidenceIntegrityError;
@@ -60,9 +63,9 @@ export const writeEvidenceBundle = async (
     EvidenceWriteFailure
   >
 > => {
-  let encoded: string;
+  let checked: EvidenceBundle;
   try {
-    encoded = serializeEvidenceBundle(bundle);
+    checked = parseEvidenceBundle(bundle);
   } catch (cause: unknown) {
     return err(
       new EvidenceIntegrityError("Evidence bundle validation failed", {
@@ -70,5 +73,9 @@ export const writeEvidenceBundle = async (
       }),
     );
   }
-  return writeTextFile(encoded, path, overwrite);
+  return writeTextParts(
+    bufferedJsonParts(canonicalJsonParts(checked)),
+    path,
+    overwrite,
+  );
 };

@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
@@ -62,13 +65,21 @@ export async function verifyLargeScreenshotE2e(endpoint, origin) {
     );
     assert.equal(bytes.readUInt32BE(16), 2048);
     assert.equal(bytes.readUInt32BE(20), 1536);
+    await verifyDefaultScreenshotDelivery({
+      entrypoint,
+      environment: env,
+      endpoint,
+      targetId: target.id,
+      screenshot,
+    });
+    const maxBufferSize = 64 * 1024 * 1024;
     transport = new StdioClientTransport({
       command: process.execPath,
       args: [entrypoint, "mcp"],
-      env,
+      env: { ...env, REA_MCP_MAX_RESPONSE_BYTES: String(maxBufferSize) },
       stderr: "pipe",
       // The SDK defaults to a 10 MiB receive buffer; inline PNG output is larger.
-      maxBufferSize: 64 * 1024 * 1024,
+      maxBufferSize,
     });
     client = new Client({ name: "browser-screenshot-real-e2e", version: "1" });
     await client.connect(transport);
@@ -102,6 +113,9 @@ export async function verifyLargeScreenshotE2e(endpoint, origin) {
       mocked: false,
       cli: true,
       stdio_mcp: true,
+      default_buffer_recovery: true,
+      complete_export: true,
+      matched_large_buffer: true,
       png_bytes: bytes.byteLength,
     };
   } finally {
@@ -117,3 +131,73 @@ export async function verifyLargeScreenshotE2e(endpoint, origin) {
     }
   }
 }
+
+const verifyDefaultScreenshotDelivery = async ({
+  entrypoint,
+  environment,
+  endpoint,
+  targetId,
+  screenshot,
+}) => {
+  const workspace = await mkdtemp(join(tmpdir(), "rea-screenshot-delivery-"));
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [entrypoint, "mcp"],
+    env: environment,
+    stderr: "pipe",
+  });
+  const client = new Client({
+    name: "browser-screenshot-default-e2e",
+    version: "1",
+  });
+  try {
+    await client.connect(transport);
+    const constrained = await client.callTool(
+      {
+        name: "capture_web_screenshot",
+        arguments: { cdp_endpoint: endpoint, target_id: targetId },
+      },
+      { timeout: 60000 },
+    );
+    assert.equal(constrained.isError, true);
+    assert.equal(
+      constrained.structuredContent?.error?.details?.resource,
+      "transport",
+    );
+    const reference =
+      constrained.structuredContent?.error?.details?.reported_limits
+        ?.evidence_reference;
+    assert.equal(reference?.kind, "retained-evidence");
+    await client.ping();
+    const exported = await client.callTool({
+      name: "export_evidence_bundle",
+      arguments: { path: join(workspace, "screenshot-evidence.json") },
+    });
+    assert.notEqual(exported.isError, true, JSON.stringify(exported));
+    const bundle = JSON.parse(
+      await readFile(join(workspace, "screenshot-evidence.json"), "utf8"),
+    );
+    const record = bundle.records.find(
+      (record) => record.evidence_id === reference.evidence_id,
+    );
+    assert.ok(
+      record,
+      "Full screenshot Evidence must remain exportable after the delivery constraint",
+    );
+    const retained = webScreenshotSchema.parse(
+      parseEvidence(record).normalized_result,
+    );
+    assert.deepEqual(retained.artifact, screenshot.artifact);
+    await client.ping();
+  } finally {
+    try {
+      await client.close();
+    } finally {
+      try {
+        await transport.close();
+      } finally {
+        await rm(workspace, { recursive: true, force: true });
+      }
+    }
+  }
+};

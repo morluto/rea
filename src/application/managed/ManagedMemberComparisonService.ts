@@ -9,10 +9,7 @@ import {
   parseManagedMemberEvidence,
   type CompareManagedMembersInput,
 } from "../../domain/managed/managedMemberComparison.js";
-import {
-  AnalysisInputError,
-  AnalysisProtocolError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisProtocolError } from "../../domain/analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import { type AnalysisError } from "../../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
@@ -24,6 +21,7 @@ import {
   MANAGED_STATIC_PROVIDER,
   MANAGED_WORKFLOW_PROVIDER,
 } from "../InvestigationProviders.js";
+import { workflowInputError } from "../workflowInputError.js";
 
 /** Compare managed members from input parsed by a trusted adapter. */
 export const compareManagedMembersEvidenceValidated = (
@@ -67,14 +65,10 @@ export const compareManagedMemberPaths = async (
       dependencies.resolveTarget(input.leftPath),
       dependencies.resolveTarget(input.rightPath),
     ]);
-    if (!leftTarget.ok)
-      return err(
-        new AnalysisInputError(operation, { cause: leftTarget.error }),
-      );
-    if (!rightTarget.ok)
-      return err(
-        new AnalysisInputError(operation, { cause: rightTarget.error }),
-      );
+    // Report an unopenable path like every other path-based command does,
+    // with the failed path and constraint, rather than a bare input error.
+    if (!leftTarget.ok) return err(leftTarget.error);
+    if (!rightTarget.ok) return err(rightTarget.error);
     const [leftBytes, rightBytes] = await Promise.all([
       dependencies.readBytes(leftTarget.value.path),
       dependencies.readBytes(rightTarget.value.path),
@@ -175,7 +169,7 @@ const workflowFailure = (
 ): Result<never, AnalysisError> =>
   err(
     cause instanceof z.ZodError || cause instanceof TypeError
-      ? new AnalysisInputError(operation, { cause })
+      ? workflowInputError(operation, cause)
       : new AnalysisProtocolError(
           "Managed member comparison produced an invalid result",
           { cause },

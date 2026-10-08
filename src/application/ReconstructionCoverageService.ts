@@ -1,9 +1,14 @@
+import { z } from "zod";
+
 import { reconstructionCoverageEvaluationInputSchema } from "../domain/reconstructionCoverageInput.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import { evaluateReconstructionClosure } from "../domain/reconstructionCoverage.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { requestInputError, workflowInputError } from "./workflowInputError.js";
+
+const OPERATION = "evaluate_reconstruction_coverage";
 
 /** Evaluate inline reconstruction coverage against a named boundary. */
 export const evaluateReconstructionCoverage = (
@@ -13,11 +18,7 @@ export const evaluateReconstructionCoverage = (
   const parsed =
     reconstructionCoverageEvaluationInputSchema.safeParse(rawInput);
   if (!parsed.success)
-    return err(
-      new AnalysisInputError("evaluate_reconstruction_coverage", {
-        cause: parsed.error,
-      }),
-    );
+    return err(requestInputError(OPERATION, parsed.error, rawInput));
   try {
     return ok(
       jsonValueSchema.parse(
@@ -30,7 +31,9 @@ export const evaluateReconstructionCoverage = (
     );
   } catch (cause: unknown) {
     return err(
-      new AnalysisInputError("evaluate_reconstruction_coverage", { cause }),
+      cause instanceof TypeError || cause instanceof z.ZodError
+        ? workflowInputError(OPERATION, cause)
+        : new AnalysisInputError(OPERATION, { cause }),
     );
   }
 };

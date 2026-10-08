@@ -16,7 +16,7 @@ import { projectInputIssues } from "../../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
-import { createJavaScriptApplicationEvidence } from "./JavaScriptApplicationEvidence.js";
+import { createOwnedJavaScriptApplicationEvidence } from "./JavaScriptApplicationEvidence.js";
 import { reconstructJavaScriptArtifact } from "./JavaScriptArtifactReconstruction.js";
 import { JAVASCRIPT_APPLICATION_PROVIDER } from "../InvestigationProviders.js";
 
@@ -77,7 +77,7 @@ export const analyzeJavaScriptApplicationValidated = async (
       total: 1,
       message: "Creating and hashing application analysis Evidence",
     });
-    const evidence = createJavaScriptApplicationEvidence(input, result);
+    const evidence = createOwnedJavaScriptApplicationEvidence(input, result);
     await options.progress?.report({
       phase: "analyze_javascript_application",
       completed: 1,

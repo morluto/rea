@@ -51,9 +51,19 @@ export class InvestigationRecords
     return this.#evidence.get(evidenceId);
   }
 
+  /** Borrow an immutable authenticated record for a read-only application workflow. */
+  evidenceForAnalysis(evidenceId: string): Evidence | undefined {
+    return this.#evidence.forAnalysis(evidenceId);
+  }
+
   /** Export a detached deterministic bundle of Evidence and Unknown revisions. */
   exportEvidenceBundle(): EvidenceBundle {
     return this.#evidence.export();
+  }
+
+  /** Borrow a sealed bundle snapshot for complete JSON serialization. */
+  evidenceBundleForSerialization(): EvidenceBundle {
+    return this.#evidence.forSerialization();
   }
 
   /** Atomically merge a bundle and report changes for the owner's post-commit observers. */

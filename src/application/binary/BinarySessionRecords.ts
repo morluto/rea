@@ -69,8 +69,18 @@ export abstract class BinarySessionRecords {
     return this.#records.evidenceById(evidenceId);
   }
 
+  /** Borrow immutable investigation Evidence without copying a complete graph. */
+  evidenceForAnalysis(evidenceId: string): Evidence | undefined {
+    return this.#records.evidenceForAnalysis(evidenceId);
+  }
+
   exportEvidenceBundle(): EvidenceBundle {
     return this.#records.exportEvidenceBundle();
+  }
+
+  /** Borrow a sealed bundle for complete serialization without cloning retained graphs. */
+  evidenceBundleForSerialization(): EvidenceBundle {
+    return this.#records.evidenceBundleForSerialization();
   }
 
   importEvidenceBundle(

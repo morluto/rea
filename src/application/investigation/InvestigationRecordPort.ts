@@ -15,6 +15,10 @@ import type { Result } from "../../domain/result.js";
 export interface EvidenceReader {
   hasEvidence(evidenceId: string): boolean;
   evidenceById(evidenceId: string): Evidence | undefined;
+  /** Optional immutable analysis read; older adapters can keep detached reads. */
+  evidenceForAnalysis?(evidenceId: string): Evidence | undefined;
+  /** Optional immutable bundle snapshot for complete serialization without graph copies. */
+  evidenceBundleForSerialization?(): EvidenceBundle;
   exportEvidenceBundle(): EvidenceBundle;
 }
 

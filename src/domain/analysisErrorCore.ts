@@ -17,13 +17,13 @@ export class AnalysisUnsupportedTargetError extends AnalysisError {
   }
 }
 
-/** Provider reported a resource failure, distinct from malformed input or unsupported coverage. */
+/** An analysis or transport resource failure, distinct from malformed input or unsupported coverage. */
 export class AnalysisResourceConstraintError extends AnalysisError {
   readonly _tag = "AnalysisResourceConstraintError";
 
   constructor(
     readonly operation: string,
-    readonly resource: "memory" | "cpu" | "file-size",
+    readonly resource: "memory" | "cpu" | "file-size" | "transport",
     readonly reason: string,
     readonly reportedLimits: Readonly<Record<string, JsonValue>> | null,
     options?: AnalysisErrorOptions,

@@ -4,9 +4,11 @@ import { isAbsolute } from "node:path";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { analysisProviderSelectorSchema } from "../contracts/providerSelection.js";
+import { mcpResponseBudgetSchema } from "./mcpResponseBudget.js";
 
 const environmentSchema = z.object({
   REA_ANALYSIS_PROVIDER: analysisProviderSelectorSchema.default("auto"),
+  REA_MCP_MAX_RESPONSE_BYTES: mcpResponseBudgetSchema.optional(),
   REA_IDA_MCP_CONFIG: z
     .string()
     .min(1)

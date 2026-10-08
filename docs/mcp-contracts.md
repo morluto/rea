@@ -164,6 +164,26 @@ directly to `compare_functions`, and `inspect_artifact` Evidence to
 `compare_artifacts`. Use `get_evidence_bundle` when the task needs broader
 retained session history or an explicit bundle for transfer.
 
+REA prepares complete MCP results within the pinned stdio client's 10 MiB
+receive-buffer budget, including both text and structured representations and
+room for the JSON-RPC envelope. If a result cannot fit, REA returns
+`resource_constraint` with `details.resource: "transport"` before constructing
+a document-sized string. Analysis Evidence remains complete in the current
+session. Its exact reference is reported in
+`details.reported_limits.evidence_reference`; use it with a focused application
+workflow, or call `export_evidence_bundle` with a destination path. Complete
+bundle exports stream canonical JSON into an atomically published file. A broad
+follow-up or `get_evidence_bundle` can also exceed the response budget; exporting
+preserves the complete session without sending it through a single MCP frame.
+
+Clients that explicitly configure a larger receive buffer can set the REA
+server's `REA_MCP_MAX_RESPONSE_BYTES` environment variable to the same byte
+count. This setting must be a safe decimal integer at least 10485760; REA
+reserves 1024 bytes for the envelope. Raising it restores complete inline
+delivery for responses that fit that buffer and Node's single-string limit.
+It does not change the client's buffer, analysis coverage, or retained content.
+Ordinary responses keep their existing complete result contract.
+
 ## Retained application Evidence inputs
 
 `trace_application_feature`, `trace_javascript_semantics`,

@@ -1,9 +1,6 @@
 import { z } from "zod";
 
-import {
-  AnalysisInputError,
-  AnalysisProtocolError,
-} from "../domain/analysisErrorCore.js";
+import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
 import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   createEvidence,
@@ -13,6 +10,7 @@ import {
 } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { requestInputError, workflowInputError } from "./workflowInputError.js";
 
 interface InventoryProjectionInput {
   readonly inventory_evidence: readonly Evidence[];
@@ -49,7 +47,7 @@ export const projectInventoryEvidence = <
   const parsed = options.schema.safeParse(options.rawInput);
   if (!parsed.success)
     return err(
-      new AnalysisInputError(options.operation, { cause: parsed.error }),
+      requestInputError(options.operation, parsed.error, options.rawInput),
     );
   try {
     const result = options.project(parsed.data);
@@ -86,7 +84,7 @@ export const projectInventoryEvidence = <
   } catch (cause: unknown) {
     return err(
       cause instanceof TypeError || cause instanceof z.ZodError
-        ? new AnalysisInputError(options.operation, { cause })
+        ? workflowInputError(options.operation, cause)
         : new AnalysisProtocolError(options.protocolError, { cause }),
     );
   }

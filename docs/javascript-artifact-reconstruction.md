@@ -100,17 +100,22 @@ a temporary output file larger than the running engine's string limit, verifies
 its bytes and digest, and removes it. Use `-- jsonl` for the compact JSONL check.
 Each check needs space for one output file plus a 1 GiB free-space reserve.
 
-Other CLI formats, `--token-count`, and MCP transport serialization still
-assemble whole strings. Field selection remains useful when the caller needs a
+Other CLI formats and `--token-count` still assemble whole strings.
+Field selection remains useful when the caller needs a
 smaller view, for example `--format json --filter-output
 evidence_id,normalized_result.statistics`. Streaming output does not bound the
 memory needed to construct the analysis graph itself.
-The separate large-response transport work is tracked in
-[#1053](https://github.com/morluto/rea/issues/1053) and
+MCP prepares the complete repeated response incrementally against the pinned
+SDK's 10 MiB stdio receive-buffer budget. Oversized results return an actionable
+transport constraint and the exact same-session Evidence reference. Use
+`trace_application_feature` to inspect a selected module's relationships, or
+`export_evidence_bundle` to write the complete canonical bundle without a
+document-sized allocation. Same-session analysis reads reuse authenticated
+immutable snapshots; foreign inline Evidence is still parsed and authenticated.
+See [MCP tool results](mcp-contracts.md#tool-results) for larger client buffers
+and `REA_MCP_MAX_RESPONSE_BYTES`. Follow-up results remain complete and can also
+exceed the transport budget. Compact result views are tracked separately in
 [#1050](https://github.com/morluto/rea/issues/1050).
-Client framing limits also apply: the pinned Node MCP SDK's stdio transport
-defaults to a 10 MiB buffer. Its caller-selected `maxBufferSize` must accommodate
-the complete response, including text and structured Evidence projections.
 
 ## What is reconstructed
 

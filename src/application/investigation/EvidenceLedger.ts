@@ -2,6 +2,7 @@ import canonicalize from "canonicalize";
 
 import {
   createEvidenceBundle,
+  createImmutableEvidenceBundle,
   describeEvidenceBundleFailure,
   parseEvidenceBundle,
   validateResidualUnknownAddition,
@@ -9,7 +10,11 @@ import {
 } from "../../domain/evidenceBundle.js";
 import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import { UnknownRegistryError } from "../../domain/unknownRegistryError.js";
-import { parseEvidence, type Evidence } from "../../domain/evidence.js";
+import {
+  immutableEvidence,
+  parseEvidence,
+  type Evidence,
+} from "../../domain/evidence.js";
 import {
   createResidualUnknown,
   updateResidualUnknown,
@@ -42,7 +47,7 @@ export class EvidenceLedger {
   record(input: Evidence): RecordResult {
     let evidence: Evidence;
     try {
-      evidence = parseEvidence(input);
+      evidence = immutableEvidence(input);
     } catch (cause: unknown) {
       return err(
         new EvidenceIntegrityError("Evidence record validation failed", {
@@ -52,6 +57,10 @@ export class EvidenceLedger {
     }
     const existing = this.#records.get(evidence.evidence_id);
     if (existing !== undefined) {
+      // A borrowed record is already authenticated and deeply immutable. Its
+      // identity cannot change between reads, so comparing document-sized
+      // canonical strings again would add no integrity check.
+      if (existing === evidence) return ok("duplicate");
       return recordsAgree(existing, evidence)
         ? ok("duplicate")
         : err(new EvidenceIntegrityError("Conflicting evidence record"));
@@ -97,8 +106,9 @@ export class EvidenceLedger {
         additions.set(evidence.evidence_id, evidence);
       }
       for (const [id, evidence] of replacements)
-        this.#records.set(id, evidence);
-      for (const [id, evidence] of additions) this.#records.set(id, evidence);
+        this.#records.set(id, immutableEvidence(evidence));
+      for (const [id, evidence] of additions)
+        this.#records.set(id, immutableEvidence(evidence));
       return ok({
         recordsAdded: additions.size,
         unknownsAdded: 0,
@@ -165,6 +175,14 @@ export class EvidenceLedger {
     );
   }
 
+  /** Borrow a sealed canonical bundle for serialization without copying its records. */
+  forSerialization(): EvidenceBundle {
+    return createImmutableEvidenceBundle(
+      [...this.#records.values()],
+      [...this.#unknownRevisions.values()],
+    );
+  }
+
   /** Check whether one immutable Evidence ID is present in this ledger. */
   has(evidenceId: string): boolean {
     return this.#records.has(evidenceId);
@@ -174,6 +192,11 @@ export class EvidenceLedger {
   get(evidenceId: string): Evidence | undefined {
     const evidence = this.#records.get(evidenceId);
     return evidence === undefined ? undefined : structuredClone(evidence);
+  }
+
+  /** Borrow authenticated immutable Evidence for read-only analysis without a full clone. */
+  forAnalysis(evidenceId: string): Evidence | undefined {
+    return this.#records.get(evidenceId);
   }
 
   /** Create one approved unknown and atomically append its mutation evidence. */
@@ -380,7 +403,8 @@ export class EvidenceLedger {
       } catch (cause: unknown) {
         return err(new UnknownRegistryError("integrity", { cause }));
       }
-    for (const [id, evidence] of additions) this.#records.set(id, evidence);
+    for (const [id, evidence] of additions)
+      this.#records.set(id, immutableEvidence(evidence));
     if (unknown !== undefined && unknownKey !== undefined) {
       this.#unknownRevisions.set(unknownKey, unknown);
       this.#unknownHeads.set(unknown.unknown_id, unknown);
@@ -407,7 +431,8 @@ export class EvidenceLedger {
     unknowns: ReadonlyMap<string, ResidualUnknown>,
   ): void {
     this.#records.clear();
-    for (const [id, evidence] of records) this.#records.set(id, evidence);
+    for (const [id, evidence] of records)
+      this.#records.set(id, immutableEvidence(evidence));
     this.#unknownRevisions.clear();
     this.#unknownHeads.clear();
     for (const [key, unknown] of unknowns) {

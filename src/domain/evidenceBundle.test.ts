@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createEvidence } from "./evidence.js";
 import {
   createEvidenceBundle,
+  createImmutableEvidenceBundle,
   evidenceBundleForTarget,
   parseEvidenceBundle,
 } from "./evidenceBundle.js";
@@ -116,5 +117,28 @@ describe("evidenceBundleForTarget", () => {
     expect(evidenceBundleForTarget(bundle, targetDigest)).toEqual(
       createEvidenceBundle([], []),
     );
+  });
+});
+
+describe("immutable serialization bundles", () => {
+  it("authenticates sealed records while revalidating detached and malformed input", () => {
+    const evidence = createEvidence(undefined, provider, {
+      operation: "health",
+      parameters: {},
+      result: { nested: [true] },
+    });
+    const bundle = createImmutableEvidenceBundle([evidence]);
+    expect(parseEvidenceBundle(bundle)).toBe(bundle);
+    expect(Object.isFrozen(bundle.records[0]?.normalized_result)).toBe(true);
+    const detached: unknown = JSON.parse(JSON.stringify(bundle));
+    expect(parseEvidenceBundle(detached)).toEqual(bundle);
+    expect(parseEvidenceBundle(detached)).not.toBe(bundle);
+    const tampered = {
+      ...bundle,
+      records: [{ ...evidence, normalized_result: false }],
+    };
+    expect(() => parseEvidenceBundle(Object.freeze(tampered))).toThrow();
+    expect(() => createImmutableEvidenceBundle(tampered.records)).toThrow();
+    expect(() => createImmutableEvidenceBundle([evidence, evidence])).toThrow();
   });
 });

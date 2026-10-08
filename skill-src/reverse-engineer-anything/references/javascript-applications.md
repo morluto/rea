@@ -2,9 +2,16 @@
 
 Use `analyze_javascript_application` directly on the operator-supplied ASAR or
 extracted tree. The complete result, graph, and Evidence context are returned
-inline. Source-map contents are part of the static analysis. Start from its
+inline when they fit the MCP frame. Source-map contents are part of the static analysis. Start from its
 findings, coverage, unknowns, and graph context, then make a focused follow-up
 only when a specific question remains unanswered.
+
+An oversized response reports `resource_constraint` and
+`details.resource: "transport"`. Reuse
+`details.reported_limits.evidence_reference` with `trace_application_feature`
+for the module or feature under investigation. `export_evidence_bundle` writes
+the complete canonical session to a caller-selected file. Both workflows keep
+the original Evidence and coverage; a broad follow-up can also exceed framing.
 
 BrowserWindow preferences, preload and contextBridge surfaces, IPC
 registrations, utility processes, and native binding requests are static syntax
