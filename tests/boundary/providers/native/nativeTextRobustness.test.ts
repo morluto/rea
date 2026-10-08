@@ -5,7 +5,8 @@ import { parsePlistJson } from "../../../../src/native/parsers/plist.js";
 import { parseLipoArchitectures } from "../../../../src/native/parsers/lipo.js";
 import { nativeFixture } from "../../../fixtures/nativeCommands.js";
 
-const toCrlf = (value: string): string => value.replaceAll("\n", "\r\n");
+const toCrlf = (value: string): string =>
+  value.replaceAll("\r\n", "\n").replaceAll("\n", "\r\n");
 
 it.each([
   "line\nbreak",

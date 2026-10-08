@@ -1,0 +1,2 @@
+tests/fixtures/** text=auto eol=lf
+tests/fixtures/**/*.cmd text eol=crlf

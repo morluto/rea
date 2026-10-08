@@ -75,7 +75,7 @@ describe("native macOS provider discovery and inspection", () => {
       return Promise.resolve(
         resolutions === 1
           ? err(new NativeCommandFailure(tool, "unavailable"))
-          : ok({ path: "/usr/bin/true", sha256: "a".repeat(64) }),
+          : ok({ path: process.execPath, sha256: "a".repeat(64) }),
       );
     });
     const options = {};
