@@ -23,7 +23,11 @@ describe("client registration status", () => {
       }),
     );
 
-    const statuses = await readClientRegistrationStatuses(home, "/current/rea");
+    const statuses = await readClientRegistrationStatuses(
+      home,
+      "/current/rea",
+      { environment: {} },
+    );
 
     expect(statuses).toEqual([
       expect.objectContaining({
@@ -97,7 +101,11 @@ describe("client registration status", () => {
         join(home, ".cursor/mcp.json"),
         JSON.stringify({ mcpServers: servers }),
       );
-      expect(await readClientRegistrationStatuses(home)).toEqual([
+      expect(
+        await readClientRegistrationStatuses(home, undefined, {
+          environment: {},
+        }),
+      ).toEqual([
         expect.objectContaining({
           client: "cursor",
           state: "invalid",
@@ -115,7 +123,9 @@ describe("client registration status", () => {
       '[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "rea-agents", "mcp"]\n',
     );
 
-    const statuses = await readClientRegistrationStatuses(home);
+    const statuses = await readClientRegistrationStatuses(home, undefined, {
+      environment: {},
+    });
 
     expect(statuses).toEqual([
       expect.objectContaining({
@@ -155,7 +165,11 @@ describe("commandcode registration status", () => {
         args: [...ownedArgs()],
       });
 
-      expect(await readClientRegistrationStatuses(home)).toEqual([
+      expect(
+        await readClientRegistrationStatuses(home, undefined, {
+          environment: {},
+        }),
+      ).toEqual([
         expect.objectContaining({
           client: "commandcode",
           state: "invalid",
@@ -174,7 +188,11 @@ describe("commandcode registration status", () => {
       args: [...ownedArgs()],
     });
 
-    expect(await readClientRegistrationStatuses(home)).toEqual([
+    expect(
+      await readClientRegistrationStatuses(home, undefined, {
+        environment: {},
+      }),
+    ).toEqual([
       expect.objectContaining({
         client: "commandcode",
         state: "stale",
