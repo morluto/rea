@@ -260,3 +260,5 @@ document base and query/fragment rules. CommonJS module lookups retain extension
 and directory resolution.
 Unresolved HTML references retain their declaration, source range, and resolution
 reason in the renderer observations.
+HTML script source ranges follow the HTML parser across LF, CRLF, and bare CR
+line endings, preserving UTF-16 columns.
