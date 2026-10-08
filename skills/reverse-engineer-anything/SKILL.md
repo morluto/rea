@@ -146,6 +146,13 @@ Start with the default result and use its inline Evidence and graph context.
 Do not repeat an identical tool call. Make a focused follow-up only when the
 returned result leaves a specific question unanswered.
 
+If MCP reports `resource_constraint` with `details.resource: "transport"`, use
+its reported same-session Evidence reference with a focused application tool,
+or call `export_evidence_bundle` to write the complete session to a selected
+path. The analysis remains complete in the ledger; avoid repeating it merely
+to request the same oversized response. Complete CLI JSON output also streams
+without a single MCP frame.
+
 Every conclusion must distinguish observations, inferences, and unknowns. Cite
 Evidence IDs, preserve limitations and incomplete coverage, and never imply
 that static analysis observed execution. Runtime requests execute the declared

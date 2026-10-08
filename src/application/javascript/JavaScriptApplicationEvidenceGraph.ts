@@ -3,7 +3,11 @@ import {
   JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
   MANAGED_WORKFLOW_PROVIDER,
 } from "../InvestigationProviders.js";
-import { parseEvidence, type Evidence } from "../../domain/evidence.js";
+import {
+  isImmutableEvidence,
+  parseEvidence,
+  type Evidence,
+} from "../../domain/evidence.js";
 import {
   analyzeJavaScriptApplicationInputSchema,
   javascriptApplicationAnalysisResultSchema,
@@ -26,11 +30,39 @@ export interface ApplicationGraphEvidenceSource {
   readonly semanticGraph: JavaScriptSemanticGraph | null;
 }
 
+const ownedApplicationSources = new WeakMap<
+  Evidence,
+  ApplicationGraphEvidenceSource
+>();
+
+/** Retain the producer-validated meaning of its exact immutable result snapshot. */
+export const rememberOwnedApplicationGraphEvidence = (
+  evidence: Evidence,
+  result: JavaScriptApplicationAnalysisResult,
+): Evidence => {
+  if (
+    !isImmutableEvidence(evidence) ||
+    evidence.normalized_result !== result ||
+    evidence.operation !== "analyze_javascript_application" ||
+    !providerMatches(evidence, JAVASCRIPT_APPLICATION_PROVIDER)
+  )
+    throw new TypeError(
+      "Owned application Evidence must bind its exact validated immutable result",
+    );
+  ownedApplicationSources.set(
+    evidence,
+    Object.freeze(staticApplicationSourceForResult(evidence, result)),
+  );
+  return evidence;
+};
+
 /** Parse and authenticate one REA-produced JavaScript Application Graph Evidence. */
 export const parseApplicationGraphEvidence = (
   input: unknown,
 ): ApplicationGraphEvidenceSource => {
   const evidence = parseEvidence(input);
+  const owned = ownedApplicationSources.get(evidence);
+  if (owned !== undefined) return owned;
   if (
     evidence.operation === "analyze_javascript_application" &&
     evidence.predicate_type === "rea.javascript-application-analysis" &&
@@ -57,6 +89,16 @@ export const parseApplicationGraphEvidence = (
 const staticApplicationSource = (
   evidence: Evidence,
 ): ApplicationGraphEvidenceSource => {
+  const result = javascriptApplicationAnalysisResultSchema.parse(
+    evidence.normalized_result,
+  );
+  return staticApplicationSourceForResult(evidence, result);
+};
+
+const staticApplicationSourceForResult = (
+  evidence: Evidence,
+  result: JavaScriptApplicationAnalysisResult,
+): ApplicationGraphEvidenceSource => {
   if (
     evidence.authority !== "shipped-artifact" ||
     evidence.confidence !== "derived"
@@ -64,9 +106,6 @@ const staticApplicationSource = (
     throw new TypeError(
       "JavaScript application Evidence authority or confidence is invalid",
     );
-  const result = javascriptApplicationAnalysisResultSchema.parse(
-    evidence.normalized_result,
-  );
   if (evidence.predicate_type !== "rea.javascript-application-analysis")
     throw new TypeError(
       "JavaScript application Evidence predicate does not match its result shape",

@@ -3,9 +3,15 @@ import { describe, expect } from "vitest";
 
 import { createAnalysisProfile } from "./analysisProfile.js";
 import type { BinaryTarget } from "./binaryTarget.js";
-import { createEvidence, evidenceSchema, parseEvidence } from "./evidence.js";
+import {
+  createEvidence,
+  evidenceRecordSchema,
+  evidenceSchema,
+  parseEvidence,
+} from "./evidence.js";
 import { MAX_JSON_DEPTH } from "./jsonValue.js";
 import { createEvidenceBundle } from "./evidenceBundle.js";
+import { freezeJsonSnapshot } from "./immutableJson.js";
 
 const TARGET: BinaryTarget = {
   path: "/tmp/fixture",
@@ -17,6 +23,60 @@ const TARGET: BinaryTarget = {
 };
 const PROVIDER = { id: "fixture", name: "Fixture provider", version: "1" };
 const PROFILE = createAnalysisProfile(PROVIDER, { loader: "default" });
+
+it("preserves identity and bytes when reusing an owned immutable result", () => {
+  const value = { nested: { values: ["observed", 1] } };
+  const mutable = createEvidence(TARGET, PROVIDER, {
+    operation: "inspect",
+    parameters: {},
+    result: value,
+  });
+  const frozen = createEvidence(TARGET, PROVIDER, {
+    operation: "inspect",
+    parameters: {},
+    result: freezeJsonSnapshot(value),
+  });
+  expect(JSON.stringify(frozen)).toBe(JSON.stringify(mutable));
+  expect(frozen.normalized_result).toBe(value);
+  expect(Object.isFrozen(frozen)).toBe(true);
+  expect(parseEvidence(frozen)).toEqual(mutable);
+  const wire: unknown = JSON.parse(JSON.stringify(frozen));
+  expect(parseEvidence(wire)).toEqual(mutable);
+  expect(() =>
+    parseEvidence({ ...frozen, normalized_result: { changed: true } }),
+  ).toThrow("semantic identifier");
+});
+
+it("preserves producer envelope admission and profile validation", () => {
+  const legacy = createEvidence(TARGET, PROVIDER, {
+    operation: "inspect",
+    parameters: {},
+    result: { observed: [1, 2, 3] },
+  });
+  const profiled = createEvidence(TARGET, PROVIDER, {
+    operation: "inspect",
+    parameters: {},
+    result: { observed: [1, 2, 3] },
+    analysisProfile: PROFILE,
+  });
+  const candidates: unknown[] = [
+    legacy,
+    profiled,
+    { ...legacy, analysis_profile: undefined },
+    { ...legacy, analysis_profile: null },
+    {
+      ...profiled,
+      analysis_profile: { ...PROFILE, provider: { ...PROVIDER, id: "other" } },
+    },
+    { ...legacy, unexpected: true },
+  ];
+  for (const candidate of candidates) {
+    const canonical = evidenceRecordSchema.safeParse(candidate);
+    if (canonical.success)
+      expect(parseEvidence(candidate)).toEqual(canonical.data);
+    else expect(() => parseEvidence(candidate)).toThrow();
+  }
+});
 
 it("snapshots caller-owned payloads before deriving their identity", () => {
   const result = { nested: { values: ["observed"] } };

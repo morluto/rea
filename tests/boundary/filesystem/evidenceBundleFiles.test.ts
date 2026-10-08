@@ -1,4 +1,11 @@
-import { mkdir, readdir, readFile, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readdir,
+  readFile,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -11,6 +18,7 @@ import {
 } from "../../../src/application/EvidenceBundleFiles.js";
 import { compareEvidenceBundlesCommand } from "../../../src/application/EvidenceBundleCommands.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
+import { writeTextParts } from "../../../src/application/JsonFiles.js";
 import {
   createEvidenceBundle,
   serializeEvidenceBundle,
@@ -26,6 +34,39 @@ const bundle = (result = true) =>
   ]);
 
 describe("evidence bundle publication", () => {
+  it.each([false, true])(
+    "never publishes a partial streamed file (overwrite: %s)",
+    async (overwrite) => {
+      const root = await createTestTempDirectory("rea-stream-publication-");
+      const path = join(root, "bundle.json");
+      if (overwrite) await writeFile(path, "original");
+      function* brokenParts() {
+        yield "partial";
+        throw new Error("Source stream failed");
+      }
+      expect(
+        await writeTextParts(brokenParts(), path, overwrite),
+      ).toMatchObject({
+        ok: false,
+        error: { _tag: "EvidenceFileError", reason: "io" },
+      });
+      expect(await readdir(root)).toEqual(overwrite ? ["bundle.json"] : []);
+      if (overwrite) expect(await readFile(path, "utf8")).toBe("original");
+    },
+  );
+
+  it("counts complete Unicode bytes and publishes a private file", async () => {
+    const root = await createTestTempDirectory("rea-stream-bytes-");
+    const path = join(root, "bundle.json");
+    const parts = ["雪", "😀", "\n"];
+    expect(await writeTextParts(parts, path, false)).toEqual({
+      ok: true,
+      value: { path, bytes: Buffer.byteLength(parts.join("")) },
+    });
+    expect(await readFile(path, "utf8")).toBe(parts.join(""));
+    if (process.platform !== "win32")
+      expect((await stat(path)).mode & 0o777).toBe(0o600);
+  });
   it("allows only one simultaneous export without overwrite approval", async () => {
     const root = await createTestTempDirectory("rea-evidence-exclusive-");
     const path = join(root, "bundle.json");
