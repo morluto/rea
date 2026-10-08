@@ -129,6 +129,19 @@ it("doctor verifies installed instructions and references even when metadata is 
     state: "aligned",
     installed_catalog_digest: null,
   });
+  const legacyDigest = "0".repeat(64);
+  await writeFile(
+    destination,
+    (await readFile(destination, "utf8")).replace(
+      `  tool_count: ${String(TOOL_CONTRACTS.length)}`,
+      `  tool_count: ${String(TOOL_CONTRACTS.length)}\n  catalog_digest: "${legacyDigest}"`,
+    ),
+  );
+  expect((await runDoctor(undefined, host)).identity?.skill).toMatchObject({
+    state: "stale",
+    installed_catalog_digest: legacyDigest,
+  });
+  expect(await installCanonicalSkill(home)).toBe("installed");
   for (const path of [destination, reference]) {
     const canonical = await readFile(path, "utf8");
     await writeFile(path, `${canonical}\nLocally changed instructions.\n`);

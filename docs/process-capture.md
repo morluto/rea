@@ -102,6 +102,12 @@ run the same owned-process cleanup path. Settlement reports whether the
 sampled process group quiesced or whether cleanup was needed or unverifiable;
 sampling cannot prove that every short-lived or detached descendant was seen.
 
+When the host withholds an unrelated process’s ownership token, REA leaves that
+process untouched and records its PID and reason in `cleanup.unverified_processes`
+and process residual unknowns. Successful cleanup verifies the owned group;
+it does not attribute those unrelated processes. Related or otherwise unexplained
+unreadable processes still prevent successful cleanup.
+
 ## Compare two captures
 
 Compare saved capture Evidence with:

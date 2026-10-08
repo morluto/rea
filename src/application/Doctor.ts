@@ -96,7 +96,7 @@ export interface DoctorHost {
   ilspyCmdVersion?(path: string): Promise<string | undefined>;
 }
 
-/** Parsed identity committed by an installed REA skill. */
+/** Observed skill metadata and comparison with the packaged instruction bundle. */
 interface InstalledSkillIdentity {
   readonly version: string | null;
   readonly toolCount: number | null;
@@ -142,6 +142,7 @@ interface DoctorIdentity {
   readonly skill: {
     readonly installed_version: string | null;
     readonly installed_tool_count: number | null;
+    /** Legacy catalog digest observed in older bundles; current bundles omit it. */
     readonly installed_catalog_digest: string | null;
     readonly state: "aligned" | "stale" | "missing";
     readonly remediation: string | null;

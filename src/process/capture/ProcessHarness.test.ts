@@ -142,6 +142,64 @@ it("waits for token-owned processes to exit after one cleanup signal", async () 
   }
 });
 
+it("retains unrelated withheld processes through cleanup, capture, and JSON", async () => {
+  const host: ProcessCaptureCleanupHost = {
+    platform: "darwin",
+    cleanupProcessGroup: async () => ({
+      cleaned: true,
+      signaled: true,
+      unverified: [
+        { pid: 900, diagnostic: "platform_binary_environment_withheld" },
+      ],
+    }),
+    verifyTokenOwnedProcesses: async () => ({
+      cleaned: true,
+      signaled: false,
+      unverified: [{ pid: 901, diagnostic: "foreign uid: EINVAL" }],
+    }),
+    removeTemporaryRoot: async () => undefined,
+  };
+  const report = await releaseProcessResources({
+    timers: new Set(),
+    terminal: { pid: 321 },
+    renderer: undefined,
+    runId: "fixture-run",
+    temporaryRoot: "/fixture/root",
+    host,
+  });
+  const unverified = [
+    { pid: 900, reason: "platform_binary_environment_withheld" },
+    { pid: 901, reason: "foreign uid: EINVAL" },
+  ];
+  expect(report.owned_process_group).toEqual({
+    state: "cleaned",
+    reason: null,
+    unverified_processes: unverified,
+  });
+  const original = emptyProcessCapture();
+  const { cleanup: previousCleanup, ...pending } = original;
+  for (const input of [pending, original]) {
+    const resolved = resolveProcessResult(input, undefined, report);
+    const serialized: unknown = JSON.parse(JSON.stringify(resolved));
+    const capture = parseProcessCapture(serialized);
+    expect(capture.cleanup).toEqual({
+      ...previousCleanup,
+      unverified_processes: unverified,
+    });
+    expect(capture.residual_unknowns).toEqual([
+      ...original.residual_unknowns,
+      {
+        scope: "process",
+        reason: expect.stringContaining("900 could not be verified"),
+      },
+      {
+        scope: "process",
+        reason: expect.stringContaining("901 could not be verified"),
+      },
+    ]);
+  }
+});
+
 it("retains the last ownership failure when the verification grace expires", async () => {
   vi.useFakeTimers();
   try {
@@ -246,6 +304,9 @@ it("retains observations and both causes when process cleanup is unverifiable", 
       state: "unverified" as const,
       reason:
         "process ownership token could not be read for 1 live process(es): environment_unavailable=1",
+      unverified_processes: [
+        { pid: 900, reason: "platform_binary_environment_withheld" },
+      ],
     },
     terminal_renderer: { state: "cleaned" as const, reason: null },
     temporary_root: { state: "cleaned" as const, reason: null },

@@ -41,6 +41,8 @@ export interface ProcessTableEntry {
   readonly pid: number;
   readonly parentPid: number;
   readonly processGroupId: number;
+  /** Effective owner when the process table reports it. */
+  readonly uid?: number;
   readonly state: string;
   readonly command: string;
 }
@@ -123,9 +125,33 @@ interface ProcessOwnershipValidationFailure {
   readonly diagnostic?: string;
 }
 
+/**
+ * One live process the ownership sweep could not attribute or exonerate.
+ * Recorded as evidence instead of failing the capture: the process is not
+ * related to the owned tree, so cleanup cannot act on it and the operating
+ * system withheld or removed its token (for example, macOS strips the
+ * environment of Apple platform binaries, and foreign-uid processes return
+ * EINVAL for KERN_PROCARGS2).
+ */
+export interface OwnershipSweepUnverifiedProcess {
+  readonly pid: number;
+  readonly diagnostic: string;
+}
+
+/** Capture-owned process structures used to classify sweep candidates. */
+export interface OwnershipSweepRelation {
+  readonly leaderPid: number;
+  readonly processGroupId: number;
+  readonly sampledProcessGroupIds?: readonly number[];
+}
+
 /** Cleanup outcome with per-member diagnostics when ownership is uncertain. */
 export type ProcessCleanupResult =
-  | { readonly cleaned: true; readonly signaled: boolean }
+  | {
+      readonly cleaned: true;
+      readonly signaled: boolean;
+      readonly unverified?: readonly OwnershipSweepUnverifiedProcess[];
+    }
   | {
       readonly cleaned: false;
       readonly reason: string;
@@ -137,6 +163,7 @@ export type ProcessCleanupResult =
           | "process-identity-unavailable";
         readonly diagnostic?: string;
       }[];
+      readonly unverified?: readonly OwnershipSweepUnverifiedProcess[];
     };
 
 /** Token-verified liveness result used by post-root-exit settlement. */
@@ -242,8 +269,12 @@ export const cleanupOwnedProcessGroup = async (
     }
   }
   if (plan.unresolved.length > 0)
-    return cleanupValidationFailure(plan.unresolved);
-  return { cleaned: true, signaled };
+    return cleanupValidationFailure(plan.unresolved, plan.unverified);
+  return {
+    cleaned: true,
+    signaled,
+    ...(plan.unverified.length === 0 ? {} : { unverified: plan.unverified }),
+  };
 };
 
 /** Verify that no live process still carries an owned capture run token. */
@@ -251,6 +282,7 @@ export const verifyNoTokenOwnedProcesses = async (
   runId: string,
   host: ProcessOwnershipHost = systemHost,
   captureBaseline?: ProcessOwnershipBaseline,
+  relation?: OwnershipSweepRelation,
 ): Promise<ProcessCleanupResult> => {
   const processTable = await readLiveProcessTable(host);
   if (!processTable.available)
@@ -263,11 +295,21 @@ export const verifyNoTokenOwnedProcesses = async (
     runId,
     host,
     captureBaseline,
+    relation,
   );
-  if (scan.failures.length > 0) return cleanupValidationFailure(scan.failures);
-  return scan.owned.length === 0
-    ? { cleaned: true, signaled: false }
-    : { cleaned: false, reason: "token-owned process remained after cleanup" };
+  if (scan.failures.length > 0)
+    return cleanupValidationFailure(scan.failures, scan.unverified);
+  if (scan.owned.length > 0)
+    return {
+      cleaned: false,
+      reason: "token-owned process remained after cleanup",
+      ...(scan.unverified.length === 0 ? {} : { unverified: scan.unverified }),
+    };
+  return {
+    cleaned: true,
+    signaled: false,
+    ...(scan.unverified.length === 0 ? {} : { unverified: scan.unverified }),
+  };
 };
 
 const readLiveProcessTable = async (
@@ -293,6 +335,7 @@ interface OwnedCleanupPlan {
   readonly signalOrder: readonly number[];
   readonly tokenOwnedIdentities: ReadonlyMap<number, string | null>;
   readonly unresolved: readonly ProcessOwnershipValidationFailure[];
+  readonly unverified: readonly OwnershipSweepUnverifiedProcess[];
 }
 
 const createOwnedCleanupPlan = async (
@@ -313,8 +356,15 @@ const createOwnedCleanupPlan = async (
           ownership.runId,
           host,
           ownership.captureBaseline,
+          {
+            leaderPid: ownership.leaderPid,
+            processGroupId: ownership.processGroupId,
+            ...(sampledProcessGroupIds.size === 0
+              ? {}
+              : { sampledProcessGroupIds: [...sampledProcessGroupIds] }),
+          },
         )
-      : { owned: [], failures: [], identities: new Map() };
+      : { owned: [], failures: [], unverified: [], identities: new Map() };
   const tokenOwnedGroupIds = new Set(
     tokenOwned.owned.map(({ processGroupId }) => processGroupId),
   );
@@ -335,8 +385,15 @@ const createOwnedCleanupPlan = async (
           signalOrder: [],
           tokenOwnedIdentities: tokenOwned.identities,
           unresolved: tokenOwned.failures,
+          unverified: tokenOwned.unverified,
         }
-      : { cleaned: true, signaled: false };
+      : {
+          cleaned: true,
+          signaled: false,
+          ...(tokenOwned.unverified.length === 0
+            ? {}
+            : { unverified: tokenOwned.unverified }),
+        };
   let descendants: readonly ProcessTableEntry[] = [];
   if (launcher !== undefined) {
     const identityFailure = launcherIdentityFailure(launcher, ownership);
@@ -413,7 +470,7 @@ const createOwnedCleanupPlan = async (
       signalableGroups.add(processGroupId);
   }
   if (ownership.sweepTokenOwnedProcesses !== true && unresolved.length > 0)
-    return cleanupValidationFailure(unresolved);
+    return cleanupValidationFailure(unresolved, tokenOwned.unverified);
   return {
     signalOrder: [...signalableGroups]
       .filter((groupId) => processGroupIds.has(groupId))
@@ -426,6 +483,7 @@ const createOwnedCleanupPlan = async (
       ),
     tokenOwnedIdentities: tokenOwned.identities,
     unresolved,
+    unverified: tokenOwned.unverified,
   };
 };
 
@@ -478,7 +536,9 @@ const revalidateOwnedProcessGroup = async (
 
 const cleanupValidationFailure = (
   failures: readonly ProcessOwnershipValidationFailure[],
+  unverified: readonly OwnershipSweepUnverifiedProcess[] = [],
 ): ProcessCleanupResult => {
+  const unverifiedEntry = unverified.length === 0 ? {} : { unverified };
   const unreadable = failures.filter(
     ({ reason }) => reason === "environment-unreadable",
   );
@@ -487,12 +547,14 @@ const cleanupValidationFailure = (
       cleaned: false,
       reason: "process tree contains an unowned or PID-reused process",
       failures,
+      ...unverifiedEntry,
     };
   if (failures.some(({ reason }) => reason === "process-identity-unavailable"))
     return {
       cleaned: false,
       reason: "process identity could not be revalidated",
       failures,
+      ...unverifiedEntry,
     };
   if (unreadable.length > 0) {
     const counts = new Map<string, number>();
@@ -508,17 +570,20 @@ const cleanupValidationFailure = (
       cleaned: false,
       reason: `process ownership token could not be read for ${String(unreadable.length)} live process(es): ${breakdown}`,
       failures,
+      ...unverifiedEntry,
     };
   }
   return {
     cleaned: false,
     reason: "process ownership could not be revalidated",
     failures,
+    ...unverifiedEntry,
   };
 };
 
 const sanitizedTokenReadFailure = (diagnostic: string | undefined): string => {
   if (diagnostic === "environment_unavailable") return diagnostic;
+  if (diagnostic === "platform_binary_environment_withheld") return diagnostic;
   const environmentErrno = /^(EACCES|EPERM|ENOENT|ESRCH):/u.exec(
     diagnostic ?? "",
   );
@@ -630,14 +695,50 @@ const processOwnershipFailures = async (
 interface TokenOwnedProcessScan {
   readonly owned: readonly ProcessTableEntry[];
   readonly failures: readonly ProcessOwnershipValidationFailure[];
+  readonly unverified: readonly OwnershipSweepUnverifiedProcess[];
   readonly identities: ReadonlyMap<number, string | null>;
 }
+
+/** One sweep candidate whose run token could not be read. */
+interface UnreadableTokenCandidate {
+  readonly process: ProcessTableEntry;
+  readonly diagnostic: string;
+}
+
+const TOKEN_READ_RETRY_ATTEMPTS = 3;
+const TOKEN_READ_RETRY_DELAY_MS = 40;
+
+/** Darwin reports this when the kernel withholds a platform binary's environment. */
+const PLATFORM_BINARY_ENVIRONMENT_WITHHELD =
+  "platform_binary_environment_withheld";
+
+const currentProcessUid = (): number | undefined =>
+  typeof process.getuid === "function" ? process.getuid() : undefined;
+
+/**
+ * Whether the operating system provably withheld this candidate's run token:
+ * current macOS omits the environment of Apple platform binaries from
+ * KERN_PROCARGS2 and fails with EINVAL for processes owned by another
+ * account, and neither class can be token-verified by any caller. Such a
+ * candidate is recorded as unverified instead of failing an otherwise clean
+ * capture; every other unreadable candidate stays fail-closed.
+ */
+const environmentWithheldFromInspection = (
+  entry: ProcessTableEntry,
+  diagnostic: string,
+): boolean => {
+  const uid = currentProcessUid();
+  if (uid !== undefined && entry.uid !== undefined && entry.uid !== uid)
+    return true;
+  return diagnostic === PLATFORM_BINARY_ENVIRONMENT_WITHHELD;
+};
 
 const scanTokenOwnedProcesses = async (
   processes: readonly ProcessTableEntry[],
   runId: string,
   host: ProcessOwnershipHost,
   captureBaseline?: ProcessOwnershipBaseline,
+  relation?: OwnershipSweepRelation,
 ): Promise<TokenOwnedProcessScan> => {
   let candidates = processes;
   let candidateIdentities: ReadonlyMap<number, ProcessIdentityObservation> =
@@ -678,60 +779,97 @@ const scanTokenOwnedProcesses = async (
     }
     candidates = stableCandidates;
   }
+  const owned: ProcessTableEntry[] = [];
+  const ownedIdentities = new Map<number, string | null>();
+  const recordOwned = (process: ProcessTableEntry): void => {
+    owned.push(process);
+    const identity = candidateIdentities.get(process.pid);
+    ownedIdentities.set(
+      process.pid,
+      identity?.state === "readable" ? identity.identity : null,
+    );
+  };
   let bulkTokens: ReadonlyMap<number, ProcessRunTokenObservation> | undefined;
   if (host.runTokens !== undefined)
     bulkTokens = await host.runTokens(candidates);
-  const owned: ProcessTableEntry[] = [];
-  const ownedIdentities = new Map<number, string | null>();
+  const unreadable: UnreadableTokenCandidate[] = [];
   for (const process of candidates) {
     const bulkToken = bulkTokens?.get(process.pid);
     if (bulkToken !== undefined) {
       if (bulkToken.state === "readable") {
-        if (bulkToken.runId === runId) {
-          owned.push(process);
-          const identity = candidateIdentities.get(process.pid);
-          ownedIdentities.set(
-            process.pid,
-            identity?.state === "readable" ? identity.identity : null,
-          );
-        }
+        if (bulkToken.runId === runId) recordOwned(process);
         continue;
       }
-      if (!(await processIsGone(host, process.pid)))
-        failures.push({
-          pid: process.pid,
-          reason: "environment-unreadable",
-          diagnostic: bulkToken.reason,
-        });
+      unreadable.push({ process, diagnostic: bulkToken.reason });
       continue;
     }
     try {
-      if ((await host.environment(process.pid)).REA_PROCESS_RUN_ID === runId) {
-        owned.push(process);
-        const identity = candidateIdentities.get(process.pid);
-        ownedIdentities.set(
-          process.pid,
-          identity?.state === "readable" ? identity.identity : null,
-        );
-      }
+      if ((await host.environment(process.pid)).REA_PROCESS_RUN_ID === runId)
+        recordOwned(process);
     } catch (cause: unknown) {
-      try {
-        const live = liveProcesses(await host.listProcesses());
-        if (!live.some(({ pid }) => pid === process.pid)) continue;
-      } catch (recheckCause: unknown) {
-        failures.push({
-          pid: process.pid,
-          reason: "environment-unreadable",
-          diagnostic: `${errorMessage(cause)}; process liveness recheck failed: ${errorMessage(recheckCause)}`,
-        });
-        continue;
-      }
-      failures.push({
-        pid: process.pid,
-        reason: "environment-unreadable",
-        diagnostic: errorMessage(cause),
-      });
+      unreadable.push({ process, diagnostic: errorMessage(cause) });
     }
+  }
+  const remaining = await settleUnreadableTokenCandidates(
+    unreadable,
+    runId,
+    host,
+    recordOwned,
+  );
+  const relatedPids = new Set<number>();
+  const relatedGroupIds = new Set<number>();
+  if (relation !== undefined) {
+    relatedPids.add(relation.leaderPid);
+    for (const descendant of descendantsOf(relation.leaderPid, processes))
+      relatedPids.add(descendant.pid);
+    relatedGroupIds.add(relation.processGroupId);
+    for (const processGroupId of relation.sampledProcessGroupIds ?? [])
+      if (Number.isSafeInteger(processGroupId) && processGroupId > 0)
+        relatedGroupIds.add(processGroupId);
+    for (const process of owned) relatedGroupIds.add(process.processGroupId);
+  }
+  const unverified: OwnershipSweepUnverifiedProcess[] = [];
+  const strict: UnreadableTokenCandidate[] = [];
+  const withheld: UnreadableTokenCandidate[] = [];
+  for (const candidate of remaining) {
+    const isRelated =
+      relation === undefined ||
+      relatedPids.has(candidate.process.pid) ||
+      relatedGroupIds.has(candidate.process.processGroupId);
+    if (
+      !isRelated &&
+      environmentWithheldFromInspection(candidate.process, candidate.diagnostic)
+    ) {
+      withheld.push(candidate);
+      continue;
+    }
+    strict.push(candidate);
+  }
+  let finalLive: ReadonlySet<number> | undefined;
+  try {
+    finalLive = new Set(
+      liveProcesses(await host.listProcesses()).map(({ pid }) => pid),
+    );
+  } catch (cause: unknown) {
+    void cause;
+    finalLive = undefined;
+  }
+  for (const candidate of strict) {
+    if (finalLive !== undefined && !finalLive.has(candidate.process.pid))
+      continue;
+    failures.push({
+      pid: candidate.process.pid,
+      reason: "environment-unreadable",
+      diagnostic: candidate.diagnostic,
+    });
+  }
+  for (const candidate of withheld) {
+    if (finalLive !== undefined && !finalLive.has(candidate.process.pid))
+      continue;
+    unverified.push({
+      pid: candidate.process.pid,
+      diagnostic: candidate.diagnostic,
+    });
   }
   if (candidates.length > 0 && host.processIdentities !== undefined) {
     const afterRead = await host.processIdentities(candidates);
@@ -756,9 +894,91 @@ const scanTokenOwnedProcesses = async (
           "process identity changed or became unavailable during token validation",
       });
     }
-    return { owned: stillOwned, failures, identities: ownedIdentities };
+    return {
+      owned: stillOwned,
+      failures,
+      unverified,
+      identities: ownedIdentities,
+    };
   }
-  return { owned, failures, identities: ownedIdentities };
+  return { owned, failures, unverified, identities: ownedIdentities };
+};
+
+/**
+ * Re-read run tokens for unresolved sweep candidates so transient exec and
+ * exit states settle before classification. Each attempt revalidates
+ * liveness, refreshes the diagnostic, and is bounded by a fixed attempt
+ * budget; a still-unreadable candidate keeps its latest diagnostic.
+ */
+const settleUnreadableTokenCandidates = async (
+  pending: readonly UnreadableTokenCandidate[],
+  runId: string,
+  host: ProcessOwnershipHost,
+  recordOwned: (process: ProcessTableEntry) => void,
+): Promise<readonly UnreadableTokenCandidate[]> => {
+  let remaining = pending;
+  for (
+    let attempt = 0;
+    attempt < TOKEN_READ_RETRY_ATTEMPTS && remaining.length > 0;
+    attempt += 1
+  ) {
+    await new Promise<void>((resolve) =>
+      setTimeout(resolve, TOKEN_READ_RETRY_DELAY_MS),
+    );
+    let live: ReadonlySet<number> | undefined;
+    try {
+      live = new Set(
+        liveProcesses(await host.listProcesses()).map(({ pid }) => pid),
+      );
+    } catch (cause: unknown) {
+      void cause;
+      live = undefined;
+    }
+    let observations:
+      | ReadonlyMap<number, ProcessRunTokenObservation>
+      | undefined;
+    if (host.runTokens !== undefined) {
+      try {
+        observations = await host.runTokens(
+          remaining.map(({ process }) => process),
+        );
+      } catch (cause: unknown) {
+        void cause;
+        observations = undefined;
+      }
+    }
+    const stillUnreadable: UnreadableTokenCandidate[] = [];
+    for (const candidate of remaining) {
+      const pid = candidate.process.pid;
+      if (live !== undefined && !live.has(pid)) continue;
+      const observation =
+        observations?.get(pid) ?? (await readEnvironmentRunToken(host, pid));
+      if (observation.state === "readable") {
+        if (observation.runId === runId) recordOwned(candidate.process);
+        continue;
+      }
+      stillUnreadable.push({
+        process: candidate.process,
+        diagnostic: observation.reason,
+      });
+    }
+    remaining = stillUnreadable;
+  }
+  return remaining;
+};
+
+const readEnvironmentRunToken = async (
+  host: ProcessOwnershipHost,
+  pid: number,
+): Promise<ProcessRunTokenObservation> => {
+  try {
+    return {
+      state: "readable",
+      runId: (await host.environment(pid)).REA_PROCESS_RUN_ID,
+    };
+  } catch (cause: unknown) {
+    return { state: "unavailable", reason: errorMessage(cause) };
+  }
 };
 
 const processIsGone = async (

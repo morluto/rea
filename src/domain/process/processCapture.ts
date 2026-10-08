@@ -223,6 +223,10 @@ export interface UnverifiedProcessCapture {
   readonly cleanup: {
     readonly owned_process_group: "verified";
     readonly temporary_root: "removed";
+    /** Unrelated processes whose ownership token the host could not expose. */
+    readonly unverified_processes?:
+      | readonly UnverifiedCleanupProcess[]
+      | undefined;
   };
 }
 
@@ -232,10 +236,19 @@ const fileStateShape = {
   size: z.number().int().nonnegative(),
 };
 
+/** An unrelated process left untouched because its ownership is unknown. */
+export interface UnverifiedCleanupProcess {
+  readonly pid: number;
+  readonly reason: string;
+}
+
 /** A resource cleanup result retained when observations cannot be verified. */
 export interface ProcessCaptureResourceCleanup {
   readonly state: "cleaned" | "failed" | "unverified" | "not_required";
   readonly reason: string | null;
+  readonly unverified_processes?:
+    | readonly UnverifiedCleanupProcess[]
+    | undefined;
 }
 
 export interface ProcessCaptureCleanupReport {
@@ -347,6 +360,10 @@ const processSettlementSchema = z.discriminatedUnion("state", [
     cleanup_outcome: z.enum(["cleaned", "failed"]),
   }),
 ]);
+
+const unverifiedCleanupProcessesSchema = z.array(
+  z.strictObject({ pid: z.number().int().positive(), reason: z.string() }),
+);
 
 const processCaptureShapeSchema = z.strictObject({
   manifest: z.strictObject({
@@ -478,12 +495,14 @@ const processCaptureShapeSchema = z.strictObject({
   cleanup: z.object({
     owned_process_group: z.literal("verified"),
     temporary_root: z.literal("removed"),
+    unverified_processes: unverifiedCleanupProcessesSchema.optional(),
   }),
 });
 
 const processCleanupResourceSchema = z.strictObject({
   state: z.enum(["cleaned", "failed", "unverified", "not_required"]),
   reason: z.string().nullable(),
+  unverified_processes: unverifiedCleanupProcessesSchema.optional(),
 });
 
 const partialObservationFieldSchema = <Schema extends z.ZodType>(

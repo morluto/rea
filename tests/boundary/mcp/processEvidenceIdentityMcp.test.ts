@@ -31,12 +31,15 @@ const providerNames = [
   "REA deterministic process harness",
 ];
 
-const captureEvidence = (side: "left" | "right") =>
+const captureEvidence = (
+  side: "left" | "right",
+  result: Evidence["normalized_result"] = EMPTY_PROCESS_CAPTURE_EXAMPLE,
+) =>
   createEvidence(undefined, PROCESS_PROVIDER, {
     predicateType: "rea.process-capture",
     operation: "capture_process_scenario",
     parameters: { side },
-    result: EMPTY_PROCESS_CAPTURE_EXAMPLE,
+    result,
     confidence: "observed",
     authority: "controlled-replay",
     environment: {
@@ -334,4 +337,35 @@ it("separately rejects a tampered digest before admission to any consumer or ses
       error: { code: "invalid_request" },
     });
   }
+});
+
+it("keeps withheld ownership unknown through CLI and MCP comparison", async () => {
+  const { client, right } = await connectedComparison();
+  const left = captureEvidence("left", {
+    ...EMPTY_PROCESS_CAPTURE_EXAMPLE,
+    cleanup: {
+      ...EMPTY_PROCESS_CAPTURE_EXAMPLE.cleanup,
+      unverified_processes: [
+        { pid: 900, reason: "platform_binary_environment_withheld" },
+      ],
+    },
+    residual_unknowns: [
+      { scope: "process", reason: "Ownership of process 900 was withheld" },
+    ],
+  });
+  const response = await client.callTool({
+    name: "compare_process_captures",
+    arguments: { left, right },
+  });
+  expect(response.isError, JSON.stringify(response)).not.toBe(true);
+  const comparison = inlineEvidence(response);
+  expect(comparison.normalized_result).toMatchObject({ status: "unknown" });
+  const root = await createTestTempDirectory("rea-withheld-ownership-");
+  const leftPath = join(root, "left.json");
+  const rightPath = join(root, "right.json");
+  await writeFile(leftPath, JSON.stringify(left));
+  await writeFile(rightPath, JSON.stringify(right));
+  expect(
+    parseEvidence(await compareProcessEvidenceFiles(leftPath, rightPath)),
+  ).toEqual(comparison);
 });
