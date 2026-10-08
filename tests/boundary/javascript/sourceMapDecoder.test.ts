@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import type { SourceMapDecoderDependencies } from "../../../src/javascript/sourceMaps/SourceMapDecoder.js";
 import { access } from "node:fs/promises";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { SourceMapDecoder } from "../../../src/javascript/sourceMaps/SourceMapDecoder.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
@@ -40,6 +40,32 @@ const input = {
   path: fixture.sourceMap.file.path,
   position: webSourceLocationArgs.generated_position,
 };
+
+it("starts the codec deadline after cold ownership preparation", async () => {
+  vi.useFakeTimers();
+  try {
+    let prepared = false;
+    const responsePromise = realDecoder({
+      prepareOwnership: async (signal) => {
+        await vi.advanceTimersByTimeAsync(20_001);
+        expect(signal?.aborted).not.toBe(true);
+        prepared = true;
+      },
+      launcher: (options) => {
+        expect(prepared).toBe(true);
+        expect(options.signal?.aborted).not.toBe(true);
+        return Promise.reject(new Error("observed launch after preparation"));
+      },
+    }).trace(input);
+    const response = await responsePromise;
+    if (response.ok) throw new Error("expected launch failure");
+    expect(response.error).toMatchObject({
+      diagnostics: { error_message: "observed launch after preparation" },
+    });
+  } finally {
+    vi.useRealTimers();
+  }
+});
 
 it("runs the real pinned codec with an independent heap and removes its private request directory", async () => {
   let path: string | undefined;

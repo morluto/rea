@@ -152,14 +152,7 @@ export const createDarwinProcessRunTokenReader = (
       try {
         await execFileOutput(
           options.xcrun ?? "/usr/bin/xcrun",
-          [
-            "swiftc",
-            "-module-cache-path",
-            join(operationRoot, "modules"),
-            ...sourceFiles,
-            "-o",
-            output,
-          ],
+          ["swiftc", ...sourceFiles, "-o", output],
           {
             timeout: 60_000,
             maxBuffer: 1024 * 1024,

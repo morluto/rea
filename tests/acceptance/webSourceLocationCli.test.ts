@@ -37,7 +37,7 @@ cliTest(
         REA_LOG_LEVEL: "silent",
         REA_BROWSER_EXECUTABLE: "relative-unconfigured-browser",
       },
-      timeoutMs: 15000,
+      timeoutMs: 45000,
     });
     expect(response.exitCode).toBe(0);
     expect(response.json).toMatchObject({
@@ -96,7 +96,7 @@ cliTest(
         "--json",
       ],
       environment: { REA_LOG_LEVEL: "silent" },
-      timeoutMs: 15000,
+      timeoutMs: 45000,
     });
     expect(invalid.exitCode).toBe(1);
     expect(invalid.json).toMatchObject({

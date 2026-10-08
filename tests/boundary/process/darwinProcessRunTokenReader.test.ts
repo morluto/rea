@@ -41,10 +41,10 @@ const state = fs.existsSync(statePath)
   ? JSON.parse(fs.readFileSync(statePath, "utf8"))
   : { calls: 0 };
 state.calls += 1;
-const moduleIndex = process.argv.indexOf("-module-cache-path");
-state.root = path.dirname(process.argv[moduleIndex + 1]);
 const outputIndex = process.argv.indexOf("-o");
 state.output = process.argv[outputIndex + 1];
+state.root = path.dirname(state.output);
+state.arguments = process.argv.slice(2);
 state.releasePath = releasePath;
 fs.writeFileSync(statePath, JSON.stringify(state));
 if (state.calls === 1) {
@@ -106,6 +106,10 @@ const waitForCompileState = async (statePath: string) => {
           root: parsed.root,
           output: parsed.output,
           releasePath: parsed.releasePath,
+          arguments:
+            "arguments" in parsed && Array.isArray(parsed.arguments)
+              ? parsed.arguments
+              : [],
         };
     } catch {
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -160,6 +164,30 @@ it("reports an actionable missing Swift compiler without installing it", async (
     await reader.close();
   }
 });
+
+it.skipIf(process.platform === "win32")(
+  "uses the compiler-managed module cache instead of rebuilding system modules per REA process",
+  async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), "rea-process-token-module-cache-test-"),
+    );
+    const fakeCompiler = await writeBlockingCompiler(directory);
+    const reader = createDarwinProcessRunTokenReader({
+      xcrun: fakeCompiler.executable,
+    });
+    const preparation = reader.prepare();
+    try {
+      const state = await waitForCompileState(fakeCompiler.statePath);
+      expect(state.arguments).not.toContain("-module-cache-path");
+      await writeFile(fakeCompiler.releasePath, "release");
+      await preparation;
+    } finally {
+      await Promise.allSettled([preparation]);
+      await reader.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 it.skipIf(process.platform === "win32")(
   "rethrows compile cancellation, removes its temporary root, and permits retry",

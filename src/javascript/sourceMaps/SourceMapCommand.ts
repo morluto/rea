@@ -26,6 +26,7 @@ import {
   type OwnedProviderProcessSpawnOptions,
   type SpawnedOwnedProviderProcess,
 } from "../../process/ProviderProcess.js";
+import { prepareProcessOwnershipInspection } from "../../process/ProcessOwnershipObservation.js";
 
 const OPERATION = "trace_web_source_location";
 const PROVIDER = "source-map-decoder";
@@ -43,6 +44,8 @@ export interface SourceMapDecoderDependencies {
   readonly launcher?: SourceMapCodecLauncher;
   readonly createRuntime?: () => Promise<SourceMapCodecRuntime>;
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
+  /** Prepare host ownership inspection outside the codec execution deadline. */
+  readonly prepareOwnership?: (signal?: AbortSignal) => Promise<void>;
 }
 
 /** Run a trusted codec command and release its process/root before returning output. */
@@ -52,6 +55,24 @@ export const runSourceMapCommand = async (
   options: ExecutionOptions | undefined,
   dependencies: SourceMapDecoderDependencies,
 ): Promise<Result<string, AnalysisError>> => {
+  try {
+    await (dependencies.prepareOwnership ?? prepareProcessOwnershipInspection)(
+      options?.signal,
+    );
+  } catch (cause: unknown) {
+    return err(
+      options?.signal?.aborted === true
+        ? new AnalysisCancelledError(OPERATION)
+        : new ProviderAdapterError(PROVIDER, OPERATION, {
+            cause,
+            diagnostics: {
+              map_path: path,
+              error_message: message(cause),
+              phase: "process_ownership_preparation",
+            },
+          }),
+    );
+  }
   const deadline = new ProviderStartupDeadline(
     WEB_SOURCE_MAP_LIMITS.decodeTimeoutMs,
     options?.signal,
