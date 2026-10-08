@@ -482,7 +482,9 @@ for (const extension of ["ts", "tsx", "mts", "cts", "js", "mjs", "cjs"]) {
         input_path: inputPath,
         format,
       });
-      expect(Reflect.get(globalThis, "__rea_nodenext_executed")).toBeUndefined();
+      expect(
+        Reflect.get(globalThis, "__rea_nodenext_executed"),
+      ).toBeUndefined();
       expect(result.statistics).toMatchObject({
         relevant_files: 1,
         parsed_javascript_files: 1,

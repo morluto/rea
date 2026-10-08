@@ -120,6 +120,10 @@ SHA-256 digests, inventory IDs, ASAR container identity, and `.asar.unpacked`
 status. Direct ASAR inputs and filesystem-backed ASAR files nested beneath a
 directory are supported.
 
+JavaScript sources (`.js`, `.jsx`, `.mjs`, and `.cjs`) and TypeScript sources
+(`.ts`, `.tsx`, `.mts`, and `.cts`) are parsed as inert text; analysis does not
+execute them.
+
 If an ASAR declares an unpacked companion entry but the corresponding
 `<archive>.unpacked` file is absent from the operator-supplied artifact set, REA
 keeps the ASAR occurrence with `hash_status: unavailable`, records an explicit

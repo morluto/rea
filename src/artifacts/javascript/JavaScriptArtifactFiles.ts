@@ -325,7 +325,7 @@ const relevantKind = (path: string): JavaScriptArtifactFileKind | undefined => {
   if (lower === "package.json" || lower.endsWith("/package.json"))
     return "package-json";
   if (lower.endsWith(".json")) return "json";
-  if (/\.(?:cjs|mjs|js|jsx|ts|tsx)$/u.test(lower)) return "javascript";
+  if (/\.(?:cjs|cts|mjs|mts|js|jsx|ts|tsx)$/u.test(lower)) return "javascript";
   if (/\.html?$/u.test(lower)) return "html";
   if (lower.endsWith(".map")) return "source-map";
   if (lower.endsWith(".node")) return "native-addon";
