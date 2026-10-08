@@ -15,7 +15,7 @@ import {
   type ProviderProcessSnapshot,
   ProviderProcessSupervisor,
 } from "../process/ProviderProcess.js";
-import { GHIDRA_STARTUP_TIMEOUT_MS } from "./GhidraDefaults.js";
+import { DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS } from "../config/ghidraStartupTimeout.js";
 import type {
   GhidraClientOptions,
   GhidraRequestOptions,
@@ -120,7 +120,8 @@ export class GhidraClient {
   constructor(options: GhidraClientOptions) {
     this.#options = {
       ...options,
-      startupTimeoutMs: options.startupTimeoutMs ?? GHIDRA_STARTUP_TIMEOUT_MS,
+      startupTimeoutMs:
+        options.startupTimeoutMs ?? DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
       platform: options.platform ?? process.platform,
       transport: options.transport ?? "unix-socket",
     };

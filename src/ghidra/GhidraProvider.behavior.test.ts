@@ -26,6 +26,7 @@ import { GHIDRA_SESSION_CAPABILITIES } from "./GhidraSessionValues.js";
 import { err, ok } from "../domain/result.js";
 import { GhidraSessionError } from "./GhidraSessionError.js";
 import { silentLogger } from "../logger.js";
+import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
 
 const INSTALL = "/opt/ghidra_12.1.4_PUBLIC";
 const installationHost = (): GhidraInstallationHost => ({
@@ -380,6 +381,79 @@ describe("Ghidra platform support", () => {
         status: "unsupported",
         code,
       });
+  });
+});
+
+describe("Ghidra startup configuration", () => {
+  it("carries supplied startup settings through configuration, the provider, the timer and timeout diagnostics", async () => {
+    const target = executableTarget("elf", "x86_64");
+    for (const [raw, expected] of [
+      [undefined, 330_000],
+      ["", 330_000],
+      [" ", 330_000],
+      ["900000", 900_000],
+      ["1260000", 1_260_000],
+      ["2147483647", 2_147_483_647],
+      ["2147483648", 330_000],
+      ["9007199254740991", 330_000],
+      ["0", 330_000],
+      ["-5", 330_000],
+      ["abc", 330_000],
+      ["1.5", 330_000],
+    ] as const) {
+      const config = parseConfig({
+        GHIDRA_INSTALL_DIR: INSTALL,
+        ...(raw === undefined ? {} : { REA_GHIDRA_STARTUP_TIMEOUT_MS: raw }),
+      });
+      if (!config.ok) throw config.error;
+      let timeout: number | undefined;
+      const ghidra = new GhidraProvider(
+        config.value,
+        silentLogger,
+        installationHost(),
+        (options) => {
+          timeout = options.startupTimeoutMs;
+          return {
+            start: () =>
+              Promise.resolve(
+                err(
+                  new GhidraSessionError(
+                    "timeout",
+                    "Startup deadline elapsed",
+                    {},
+                  ),
+                ),
+              ),
+            callTool: () => Promise.resolve(ok([])),
+            close: () => Promise.resolve(),
+          };
+        },
+      );
+      const profile = await ghidra.resolveAnalysisProfile(target);
+      if (!profile.ok) throw profile.error;
+      if (profile.value.profile === null)
+        throw new Error("Expected a bound profile");
+      const client = ghidra.createClient(target, profile.value.profile);
+      try {
+        const failure = await client.execute("health", {});
+        expect(timeout, String(raw)).toBe(expected);
+        expect(failure).toMatchObject({
+          ok: false,
+          error: { _tag: "AnalysisTimeoutError", timeoutMs: expected },
+        });
+        if (timeout === undefined)
+          throw new Error("Provider omitted startup deadline");
+        const deadline = new ProviderStartupDeadline(timeout);
+        try {
+          expect(await deadline.wait(20)).toBe("elapsed");
+          expect(deadline.signal.aborted).toBe(false);
+        } finally {
+          deadline.dispose();
+        }
+      } finally {
+        await client.close();
+      }
+    }
   });
 });
 

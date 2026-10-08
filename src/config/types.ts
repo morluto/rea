@@ -7,6 +7,7 @@ export interface AppConfig {
   readonly idaMcpConfigPath?: string;
   readonly ghidraInstallDir: string | undefined;
   readonly ghidraJavaHome: string | undefined;
+  readonly ghidraStartupTimeoutMs: number;
   readonly ghidraNativeAotJar?: string;
   readonly ilspyCmdPath: string | undefined;
   readonly hopperLauncherPath: string;

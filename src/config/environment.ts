@@ -4,6 +4,7 @@ import { isAbsolute } from "node:path";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { analysisProviderSelectorSchema } from "../contracts/providerSelection.js";
+import { ghidraStartupTimeoutSchema } from "./ghidraStartupTimeout.js";
 
 const environmentSchema = z.object({
   REA_ANALYSIS_PROVIDER: analysisProviderSelectorSchema.default("auto"),
@@ -27,6 +28,7 @@ const environmentSchema = z.object({
     .min(1)
     .refine(isAbsolute, "REA_GHIDRA_NATIVEAOT_JAR must be absolute")
     .optional(),
+  REA_GHIDRA_STARTUP_TIMEOUT_MS: ghidraStartupTimeoutSchema,
   REA_ILSPY_CMD_PATH: z
     .string()
     .min(1)

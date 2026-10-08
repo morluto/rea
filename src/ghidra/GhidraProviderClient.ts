@@ -21,7 +21,6 @@ import { err, ok, type Result } from "../domain/result.js";
 import type { Logger } from "../logger.js";
 import { GhidraClient } from "./GhidraClient.js";
 import type { GhidraClientOptions } from "./GhidraClientTypes.js";
-import { GHIDRA_STARTUP_TIMEOUT_MS } from "./GhidraDefaults.js";
 import {
   isGhidraFunctionOperation,
   parseGhidraFunctionInput,
@@ -129,6 +128,7 @@ export const createGhidraProviderClient = (input: {
           ]
         : [];
   const client = clientFactory({
+    startupTimeoutMs: config.ghidraStartupTimeoutMs,
     platform: installation.platform,
     launcher: new GhidraHeadlessLauncher({
       analyzeHeadlessPath: prerequisites.value.analyzeHeadlessPath,
@@ -203,7 +203,13 @@ export const createGhidraProviderClient = (input: {
       if (operation === "health") {
         const started = await client.start(options?.signal);
         if (!started.ok)
-          return err(projectSessionError(operation, started.error));
+          return err(
+            projectSessionError(
+              operation,
+              started.error,
+              config.ghidraStartupTimeoutMs,
+            ),
+          );
         const failed = await checkExtensions(operation, started.value);
         if (failed !== undefined) return err(failed);
         return ok(
@@ -220,7 +226,13 @@ export const createGhidraProviderClient = (input: {
       if (extensions.length > 0) {
         const started = await client.start(options?.signal);
         if (!started.ok)
-          return err(projectSessionError(operation, started.error));
+          return err(
+            projectSessionError(
+              operation,
+              started.error,
+              config.ghidraStartupTimeoutMs,
+            ),
+          );
         const failed = await checkExtensions(operation, started.value);
         if (failed !== undefined) return err(failed);
       }
@@ -229,7 +241,14 @@ export const createGhidraProviderClient = (input: {
         input.value,
         options?.signal === undefined ? {} : { signal: options.signal },
       );
-      if (!called.ok) return err(projectSessionError(operation, called.error));
+      if (!called.ok)
+        return err(
+          projectSessionError(
+            operation,
+            called.error,
+            config.ghidraStartupTimeoutMs,
+          ),
+        );
       const result = isGhidraFunctionOperation(operation)
         ? parseGhidraFunctionResult(operation, called.value)
         : parseGhidraInventoryResult(operation, called.value);
@@ -241,7 +260,12 @@ export const createGhidraProviderClient = (input: {
           operation,
           result.value,
           client,
-          (failure) => projectSessionError(operation, failure),
+          (failure) =>
+            projectSessionError(
+              operation,
+              failure,
+              config.ghidraStartupTimeoutMs,
+            ),
         );
         if (!attested.ok) return attested;
         normalized = attested.value;
@@ -317,6 +341,7 @@ const unavailableClient = (failure: AnalysisError): AnalysisClient => ({
 const projectSessionError = (
   operation: AnalysisOperation,
   failure: GhidraSessionError,
+  startupTimeoutMs: number,
 ): AnalysisError => {
   if (
     operation === "annotate_native_function" &&
@@ -331,7 +356,7 @@ const projectSessionError = (
   if (failure.kind === "timeout" || failure.kind === "analysis_timeout")
     return new AnalysisTimeoutError(
       operation,
-      failure.timeoutMs ?? GHIDRA_STARTUP_TIMEOUT_MS,
+      failure.timeoutMs ?? startupTimeoutMs,
     );
   if (failure.kind === "remote" && failure.remoteCode === "decompile_cancelled")
     return new AnalysisCancelledError(operation);
