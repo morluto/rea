@@ -37,7 +37,7 @@ export const compareManagedMembersEvidenceValidated = (
     );
     return ok(createManagedMemberComparisonEvidence(input, result));
   } catch (cause: unknown) {
-    return workflowFailure(operation, cause, input);
+    return workflowFailure(operation, cause);
   }
 };
 
@@ -137,7 +137,7 @@ export const compareManagedMemberPaths = async (
       ),
     );
   } catch (cause: unknown) {
-    return workflowFailure(operation, cause, input);
+    return workflowFailure(operation, cause);
   }
 };
 
@@ -166,11 +166,10 @@ const createManagedMemberComparisonEvidence = (
 const workflowFailure = (
   operation: string,
   cause: unknown,
-  input: unknown,
 ): Result<never, AnalysisError> =>
   err(
     cause instanceof z.ZodError || cause instanceof TypeError
-      ? managedInputError(operation, cause, input)
+      ? managedInputError(operation, cause)
       : new AnalysisProtocolError(
           "Managed member comparison produced an invalid result",
           { cause },
