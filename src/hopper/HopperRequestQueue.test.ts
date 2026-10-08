@@ -227,7 +227,11 @@ describe("HopperRequestQueue deadline admission and races", () => {
       queue.run(1, "echo", {}, { timeoutMs: 0 }),
     ).resolves.toMatchObject({
       ok: false,
-      error: { _tag: "HopperTimeoutError", timeoutMs: 0 },
+      error: {
+        _tag: "HopperTimeoutError",
+        timeoutMs: 0,
+        providerState: "not_started",
+      },
     });
     expect(send).not.toHaveBeenCalled();
     const controller = new AbortController();
