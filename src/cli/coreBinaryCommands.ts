@@ -42,7 +42,17 @@ const registerOverviewCommands = (cli: CliInstance, logger: Logger): void => {
     args: z.object({
       path: z.string().describe("App, program, or analysis database path"),
     }),
-    options: overviewOptions,
+    options: overviewOptions.extend({
+      integrityPolicy: z
+        .enum(["fail", "record-and-continue"])
+        .default("fail")
+        .describe(
+          "Behavior when a routed JavaScript application declares integrity that does not match",
+        ),
+    }),
+    alias: {
+      integrityPolicy: "integrity-policy",
+    },
     run: ({ args, options }) =>
       logCliCommand(logger, "analyze", () =>
         runRoutedOverview(args.path, options, logger),
@@ -107,6 +117,7 @@ const runRoutedOverview = async (
     readonly snapshot?: string | undefined;
     readonly "target-format"?: "dos-com" | undefined;
     readonly provider?: string | undefined;
+    readonly integrityPolicy?: "fail" | "record-and-continue" | undefined;
   },
   logger: Logger,
 ) => {
@@ -118,6 +129,7 @@ const runRoutedOverview = async (
   )
     return runCliJavaScriptApplicationAnalysis({
       input_path: resolve(path),
+      integrity_policy: options.integrityPolicy ?? "fail",
     });
   return runDirectAnalysis(
     path,

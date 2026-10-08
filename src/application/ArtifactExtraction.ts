@@ -193,6 +193,15 @@ const createExtractionResult = (
   selected: readonly SelectedOccurrence[],
   extracted: readonly ExtractedOccurrence[],
 ): ArtifactExtractionResult => {
+  const materializedIds = new Set(
+    selected.map(({ occurrence }) => occurrence.occurrence_id),
+  );
+  const writtenContradictions = inventory.integrityContradictions.filter(
+    ({ occurrence_id }) => materializedIds.has(occurrence_id),
+  );
+  const nestedContradictions = inventory.integrityContradictions.filter(
+    ({ occurrence_id }) => !materializedIds.has(occurrence_id),
+  );
   const extractionSemantic = {
     source_manifest_id: inventory.manifest.manifest_id,
     selected_occurrence_ids: selected
@@ -212,13 +221,18 @@ const createExtractionResult = (
     containment_verified: true,
     cleanup: { attempted: false, verified: true, residual_paths: [] },
     provenance: [],
-    integrity_contradictions: inventory.integrityContradictions,
+    integrity_contradictions: writtenContradictions,
     limitations: [
       "All regular files in the active artifact were materialized; nested archive contents remain represented by their containing file.",
-      ...(inventory.integrityContradictions.length === 0
+      ...(writtenContradictions.length === 0
         ? []
         : [
-            `${String(inventory.integrityContradictions.length)} extracted file(s) contradict declared integrity; their observed bytes were written and are untrusted.`,
+            `${String(writtenContradictions.length)} extracted file(s) contradict declared integrity; their observed bytes were written and are untrusted.`,
+          ]),
+      ...(nestedContradictions.length === 0
+        ? []
+        : [
+            `${String(nestedContradictions.length)} nested integrity contradiction(s) were not written as their own files (${nestedContradictions.map(({ logical_path }) => logical_path).join(", ")}); the containing archive was materialized instead.`,
           ]),
     ],
   });
