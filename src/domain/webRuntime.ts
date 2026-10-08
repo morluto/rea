@@ -6,15 +6,19 @@ import {
 import { browserVersionSchema } from "./browserObservationSchemas.js";
 import { jsonObjectSchema } from "./jsonValue.js";
 
-// CDP positions are zero-based and relative to the script's enclosing
-// resource: the script file for an external script, or the HTML document for
-// an inline script. trace_web_source_location takes one-based,
+// CDP positions are zero-based and relative to the resource named by url.
+// With a script ID that is the script's enclosing resource: the script file,
+// or the HTML document for an inline script. An empty script ID marks the
+// position a request's initiator reported, such as parser markup, which has
+// no script to convert. trace_web_source_location takes one-based,
 // script-relative lines, so the advertised units keep callers from passing a
 // position off by one or by the inline script's offset.
+const SCRIPT_ID =
+  "CDP session script ID; empty for a position taken from a request initiator rather than a script call frame.";
 const RESOURCE_LINE =
-  "Zero-based line in the script's enclosing resource (the script file for an external script, or the HTML document for an inline script), as reported by CDP.";
+  "Zero-based line in the resource named by url, as reported by CDP. With a script_id this is the script's enclosing resource (the script file, or the HTML document for an inline script); with an empty script_id it is the request initiator's reported position, such as parser markup in a document.";
 const RESOURCE_COLUMN =
-  "Zero-based UTF-16 column on that line of the enclosing resource, as reported by CDP.";
+  "Zero-based UTF-16 column on that line of the resource named by url, as reported by CDP.";
 const START_LINE =
   "Zero-based line where the script text starts in its enclosing resource (the HTML document for an inline script).";
 const START_COLUMN =
@@ -63,7 +67,7 @@ export type WebRuntimeSource = z.infer<typeof webRuntimeSourceSchema>;
 
 /** Producer callsite coordinates are zero-based resource lines and UTF-16 columns. */
 export const webRuntimeLocationSchema = z.object({
-  script_id: z.string(),
+  script_id: z.string().describe(SCRIPT_ID),
   url: z.string().nullable(),
   line_number: z.number().int().min(0).describe(RESOURCE_LINE),
   column_number: z.number().int().min(0).nullable().describe(RESOURCE_COLUMN),

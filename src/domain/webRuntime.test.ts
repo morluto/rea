@@ -16,7 +16,12 @@ describe("web runtime coordinate contract", () => {
     const location = properties(webRuntimeLocationSchema);
     expect(location.line_number).toMatchObject({
       description: expect.stringContaining(
-        "Zero-based line in the script's enclosing resource",
+        "Zero-based line in the resource named by url",
+      ),
+    });
+    expect(location.script_id).toMatchObject({
+      description: expect.stringContaining(
+        "empty for a position taken from a request initiator",
       ),
     });
     expect(location.column_number).toMatchObject({
