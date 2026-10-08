@@ -6,6 +6,7 @@ export type ParsedJavaScriptSource = ReturnType<typeof parse>;
 /** Parse JavaScript or TypeScript once without attaching comments to AST nodes. */
 export const parseJavaScriptSource = (
   source: string,
+  sourcePath?: string,
 ): ParsedJavaScriptSource | null => {
   try {
     return parse(source, {
@@ -16,7 +17,12 @@ export const parseJavaScriptSource = (
       // forms, including parameter decorators. Without it a decorated
       // TypeScript source fails to parse at all rather than reporting
       // recovered syntax, which loses every fact derived from that source.
-      plugins: ["decorators-legacy", "jsx", "typescript"],
+      // Plain .ts artifacts admit angle-bracket type assertions instead of JSX.
+      // Unknown paths retain the existing JSX-capable parser contract.
+      plugins:
+        sourcePath?.toLowerCase().endsWith(".ts") === true
+          ? ["decorators-legacy", "typescript"]
+          : ["decorators-legacy", "jsx", "typescript"],
     });
   } catch (cause: unknown) {
     // Unparseable source is represented by the null return.

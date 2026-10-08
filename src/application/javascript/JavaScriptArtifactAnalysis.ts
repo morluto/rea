@@ -163,7 +163,7 @@ const analyzeArtifactFile = <SemanticIr extends JavaScriptModuleSemanticIr>(
     state.files.push({ file, javascript: null, semantic: null });
     return;
   }
-  const parsed = parseJavaScriptSource(file.text.value);
+  const parsed = parseJavaScriptSource(file.text.value, file.path);
   if (parsed === null) {
     const analysis = failedJavaScriptStaticAnalysis();
     state.files.push({ file, javascript: analysis, semantic: null });

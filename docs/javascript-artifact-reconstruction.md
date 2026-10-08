@@ -133,6 +133,9 @@ missing bytes. This allows static JavaScript/Electron reconstruction to proceed
 for the embedded files while preserving the missing native/resource bytes as an
 unknown instead of silently treating them as absent or verified.
 
+Plain `.ts` artifact sources use TypeScript syntax without JSX, including
+angle-bracket type assertions. `.tsx` and `.jsx` retain JSX parsing.
+
 Selected bounded text is then parsed as inert data to recover:
 
 - `package.json` metadata and declared main or renderer entrypoints;
