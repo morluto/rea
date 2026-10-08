@@ -54,6 +54,8 @@ interface QueuedRequest {
   startedAt: number | undefined;
   heartbeat: NodeJS.Timeout | undefined;
   deadline: NodeJS.Timeout | undefined;
+  readonly deadlineAt: number | undefined;
+  readonly timeoutMs: number | undefined;
 }
 
 /** FIFO that keeps the wire serialized until Hopper actually replies. */
@@ -115,23 +117,16 @@ export class HopperRequestQueue {
         startedAt: undefined,
         heartbeat: undefined,
         deadline: undefined,
+        deadlineAt:
+          timeoutMs === undefined ? undefined : performance.now() + timeoutMs,
+        timeoutMs,
       };
       this.#queue.push(entry);
       if (onAbort !== undefined)
         options.signal?.addEventListener("abort", onAbort, { once: true });
       if (timeoutMs !== undefined)
         entry.deadline = setTimeout(
-          () =>
-            this.#cancel(
-              entry,
-              new HopperTimeoutError(
-                timeoutMs,
-                method,
-                id,
-                "busy",
-                hopperOperationStage(method),
-              ),
-            ),
+          () => this.#cancel(entry, this.#timeoutError(entry, timeoutMs)),
           timeoutMs,
         );
       if (this.#active !== undefined || this.#queue.length > 1)
@@ -147,6 +142,7 @@ export class HopperRequestQueue {
   accept(id: number, result: HopperRequestResult): boolean {
     const entry = this.#active;
     if (entry === undefined || entry.id !== id) return false;
+    this.#expireIfElapsed(entry);
     this.#releaseWire(entry);
     if (!entry.callerSettled)
       this.#settleCaller(
@@ -233,6 +229,10 @@ export class HopperRequestQueue {
     if (this.#active !== undefined) return;
     const entry = this.#queue.shift();
     if (entry === undefined) return;
+    if (this.#expireIfElapsed(entry)) {
+      this.#drain();
+      return;
+    }
     if (entry.signal?.aborted === true) {
       this.#settleCaller(entry, err(new HopperCancelledError()), "cancelled");
       this.#drain();
@@ -241,6 +241,7 @@ export class HopperRequestQueue {
     this.#active = entry;
     entry.startedAt = performance.now();
     this.#report(entry, `${entry.method} started on Hopper's serial bridge`);
+    this.#expireIfElapsed(entry);
     // A progress observer may cancel or tear down synchronously before send.
     // No native work exists yet, so it is safe to release this reserved slot.
     if (this.#active !== entry || entry.callerSettled) {
@@ -251,15 +252,14 @@ export class HopperRequestQueue {
       }
       return;
     }
-    if (!entry.callerSettled)
-      entry.heartbeat = setInterval(() => {
-        if (entry.callerSettled || entry.startedAt === undefined) return;
-        const elapsed = Math.round(performance.now() - entry.startedAt);
-        this.#report(
-          entry,
-          `${entry.method} is still running in Hopper (${String(elapsed)} ms elapsed)`,
-        );
-      }, 1_000);
+    entry.heartbeat = setInterval(() => {
+      if (entry.callerSettled || entry.startedAt === undefined) return;
+      const elapsed = Math.round(performance.now() - entry.startedAt);
+      this.#report(
+        entry,
+        `${entry.method} is still running in Hopper (${String(elapsed)} ms elapsed)`,
+      );
+    }, 1_000);
     try {
       this.send(
         { id: entry.id, method: entry.method, params: entry.params },
@@ -284,6 +284,30 @@ export class HopperRequestQueue {
         err(new HopperProtocolError("Hopper socket write failed", { cause })),
       );
     }
+  }
+
+  #timeoutError(entry: QueuedRequest, timeoutMs: number): HopperTimeoutError {
+    return new HopperTimeoutError(
+      timeoutMs,
+      entry.method,
+      entry.id,
+      "busy",
+      hopperOperationStage(entry.method),
+    );
+  }
+
+  #expireIfElapsed(entry: QueuedRequest): boolean {
+    if (
+      entry.deadlineAt !== undefined &&
+      entry.timeoutMs !== undefined &&
+      performance.now() >= entry.deadlineAt
+    )
+      this.#settleCaller(
+        entry,
+        err(this.#timeoutError(entry, entry.timeoutMs)),
+        "cancelled",
+      );
+    return entry.callerSettled;
   }
 
   #cancel(

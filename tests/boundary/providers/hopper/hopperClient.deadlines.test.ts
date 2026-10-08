@@ -110,3 +110,38 @@ describe("HopperClient request deadlines", () => {
     ).toBe(true);
   });
 });
+
+it("does not send a mutation after its synchronous progress observer consumes the deadline", async () => {
+  const launcher = new HopperFixtureLauncher();
+  const client = await startHopperFixtureClient(launcher);
+  const result = await client.callTool(
+    "set_comment",
+    { comment: "must not reach the native boundary" },
+    {
+      timeoutMs: 10,
+      progress: {
+        report: () => {
+          const started = performance.now();
+          while (performance.now() - started < 30) {
+            // Exercise an observer delaying dispatch of the actual deadline timer.
+          }
+          return Promise.resolve();
+        },
+      },
+    },
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: { _tag: "HopperTimeoutError", operation: "set_comment" },
+  });
+  await expect(
+    client.callTool("echo", { value: "recovered" }),
+  ).resolves.toEqual({
+    ok: true,
+    value: { value: "recovered" },
+  });
+  expect(launcher.requests.some(({ method }) => method === "set_comment")).toBe(
+    false,
+  );
+  expect(client.requestActivity()).toBeNull();
+});

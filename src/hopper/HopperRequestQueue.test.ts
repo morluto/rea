@@ -7,7 +7,10 @@ import {
 import { ok } from "../domain/result.js";
 import { HopperRequestQueue } from "./HopperRequestQueue.js";
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 describe("HopperRequestQueue deadlines", () => {
   it("times out active callers while retaining the wire until the late reply", async () => {
@@ -242,6 +245,47 @@ describe("HopperRequestQueue deadline admission and races", () => {
         error: expect.objectContaining({ _tag: "HopperTimeoutError" }),
       }),
     );
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("Hopper deadlines before timer dispatch", () => {
+  it("does not transmit overdue queued work when the event loop delays its timer", async () => {
+    vi.useFakeTimers();
+    const clock = vi.spyOn(performance, "now").mockReturnValue(0);
+    const sent: number[] = [];
+    const queue = new HopperRequestQueue(({ id }) => sent.push(id));
+    const active = queue.run(1, "active", {}, {});
+    const expired = queue.run(2, "set_comment", {}, { timeoutMs: 10 });
+    clock.mockReturnValue(20);
+    queue.accept(1, ok(null));
+    await expect(expired).resolves.toMatchObject({
+      ok: false,
+      error: { _tag: "HopperTimeoutError", operation: "set_comment" },
+    });
+    await active;
+    expect(sent).toEqual([1]);
+    expect(queue.activity()).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("accepts an overdue active reply without turning elapsed timeout into success", async () => {
+    vi.useFakeTimers();
+    const clock = vi.spyOn(performance, "now").mockReturnValue(0);
+    const sent: number[] = [];
+    const queue = new HopperRequestQueue(({ id }) => sent.push(id));
+    const expired = queue.run(1, "active", {}, { timeoutMs: 10 });
+    const next = queue.run(2, "next", {}, {});
+    clock.mockReturnValue(20);
+    expect(queue.accept(1, ok("late"))).toBe(true);
+    await expect(expired).resolves.toMatchObject({
+      ok: false,
+      error: { _tag: "HopperTimeoutError" },
+    });
+    expect(sent).toEqual([1, 2]);
+    queue.accept(2, ok(null));
+    await next;
+    expect(queue.activity()).toBeNull();
     expect(vi.getTimerCount()).toBe(0);
   });
 });
