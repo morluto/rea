@@ -189,9 +189,13 @@ export const projectAppleApplication = (
   };
   return appleApplicationProjectionResultSchema.parse({
     ...withoutId,
-    projection_id: `aap_${digest(withoutId)}`,
+    projection_id: appleProjectionId(withoutId),
   });
 };
+
+/** Identify the complete projection, including source Evidence provenance. */
+export const appleProjectionId = (projection: unknown): string =>
+  `aap_${digest(projection)}`;
 
 /**
  * IPA projection keeps every archive component, as before. Directory, ZIP,

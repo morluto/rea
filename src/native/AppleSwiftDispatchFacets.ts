@@ -1,5 +1,6 @@
 import type { ObjcSwiftMetadata } from "../domain/native/objcSwiftMetadata.js";
 import type { Segment, Section } from "./AppleMachoSelection.js";
+import { issue, type FacetDecodeFacts } from "./AppleDispatchDecodeFacts.js";
 
 /** Resolved file-backed metadata location from the Mach-O layout. */
 export interface ResolvedMetadataLocation {
@@ -89,10 +90,12 @@ export const decodeSwiftDispatchFacets = (input: {
   relative: (field: bigint, indirectable?: boolean) => bigint;
   budget: DispatchRecordBudget;
   result: ObjcSwiftMetadata;
-}): void => {
+}): FacetDecodeFacts => {
   const { sections, segments, readers: read, relative, budget, result } = input;
   const swiftFailures: string[] = [];
+  const issues = [] as ReturnType<typeof issue>[];
   let swiftExamined = 0;
+  let decodedRecords = 0;
   for (const section of sections.filter(
     ({ name }) => name === "__swift5_proto",
   )) {
@@ -130,6 +133,10 @@ export const decodeSwiftDispatchFacets = (input: {
         if (staticWitness && read.pointer(witness) !== descriptor)
           witnessReason =
             "Witness-table conformance header is unresolved or encoded";
+        const conformanceDecode =
+          witnessReason === null
+            ? { status: "decoded" as const, reason: null }
+            : { status: "partial" as const, reason: witnessReason };
         result.swift_conformances.push({
           type_name: typeName,
           protocol_name: protocolName,
@@ -139,20 +146,23 @@ export const decodeSwiftDispatchFacets = (input: {
               ? { address: null, file_offset: null }
               : read.location(witness),
           location: read.location(descriptor),
-          decode:
-            witnessReason === null
-              ? decoded
-              : {
-                  status: "partial",
-                  reason: witnessReason,
-                },
+          decode: conformanceDecode,
           evidence: read.evidence(
             descriptor,
             "Swift protocol conformance descriptor and directly encoded type/protocol names",
           ),
         });
+        if (conformanceDecode.status === "decoded") decodedRecords++;
         if (witnessReason !== null) {
           swiftFailures.push(`${typeName}: ${witnessReason}`);
+          issues.push(
+            issue(
+              "swift_conformances_static_witness_slots",
+              "conformance_decode_partial",
+              witnessReason,
+              hex(descriptor),
+            ),
+          );
           continue;
         }
         const count = read.u32(protocol + 16n);
@@ -177,6 +187,13 @@ export const decodeSwiftDispatchFacets = (input: {
                 implementation >= segment.address &&
                 implementation < segment.address + segment.size,
             );
+          const slotDecode = executable
+            ? { status: "decoded" as const, reason: null }
+            : {
+                status: "partial" as const,
+                reason:
+                  "Witness slot is non-function, async, nil, external, authenticated or encoded; implementation target is unresolved",
+              };
           result.swift_dispatch_slots.push({
             owner: `${typeName}: ${protocolName}`,
             table_kind: "witness_table",
@@ -186,36 +203,41 @@ export const decodeSwiftDispatchFacets = (input: {
             implementation_address: executable ? hex(implementation) : null,
             thunk_address: null,
             location: read.location(entry),
-            decode: executable
-              ? decoded
-              : {
-                  status: "partial",
-                  reason:
-                    "Witness slot is non-function, async, nil, external, authenticated or encoded; implementation target is unresolved",
-                },
+            decode: slotDecode,
             evidence: read.evidence(
               entry,
               "Static Swift witness slot, indexed after the conformance-descriptor header",
             ),
           });
+          if (slotDecode.status !== "decoded")
+            issues.push(
+              issue(
+                "swift_conformances_static_witness_slots",
+                "witness_slot_unresolved",
+                slotDecode.reason,
+                hex(entry),
+              ),
+            );
         }
       } catch (cause) {
-        swiftFailures.push(
-          `${hex(field)}: ${cause instanceof Error ? cause.message : String(cause)}`,
+        const message = cause instanceof Error ? cause.message : String(cause);
+        swiftFailures.push(`${hex(field)}: ${message}`);
+        issues.push(
+          issue(
+            "swift_conformances_static_witness_slots",
+            "conformance_decode_failed",
+            message,
+            hex(field),
+          ),
         );
       }
     }
   }
-  result.coverage.push({
+  return {
     facet: "swift_conformances_static_witness_slots",
-    status:
-      swiftFailures.length > 0 || budget.truncated ? "partial" : "complete",
-    reason:
-      [
-        ...swiftFailures,
-        ...(budget.truncated ? ["max_records_reached"] : []),
-      ].join("; ") || null,
     examined: swiftExamined,
-    decoded: result.swift_conformances.length,
-  });
+    decoded: decodedRecords,
+    exhaustive: !budget.truncated && issues.length === 0,
+    issues,
+  };
 };

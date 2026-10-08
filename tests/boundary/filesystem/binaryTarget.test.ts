@@ -1,5 +1,12 @@
 import { execFile } from "node:child_process";
-import { chmod, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  realpath,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -7,13 +14,164 @@ import { describe, expect, it } from "vitest";
 
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import {
+  resolveAppBundleExecutable,
+  type AppBundleFileSystem,
+} from "../../../src/application/AppBundleExecutable.js";
+import {
   dosMz,
   pe,
   thinMach,
 } from "../../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-describe("binary target I/O", () => {
+describe("binary target I/O: app plist permissions and decoding", () => {
+  it.each([
+    ["EACCES", "permission denied reading app Info.plist"],
+    ["EPERM", "permission denied reading app Info.plist"],
+  ])("preserves %s while reading an app plist", async (code, message) => {
+    const directory = await createTestTempDirectory("rea-app-permission-");
+    const app = join(directory, "Permission.app");
+    await mkdir(join(app, "Contents"), { recursive: true });
+    await writeFile(join(app, "Contents", "Info.plist"), "placeholder");
+    const denied = Object.assign(new Error("denied"), { code });
+    const fileSystem: AppBundleFileSystem = {
+      readFile: async () => {
+        throw denied;
+      },
+      realpath,
+    };
+    const result = await resolveAppBundleExecutable(app, fileSystem);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "BinaryTargetError",
+        path: join(app, "Contents", "Info.plist"),
+        reason: expect.stringContaining(message),
+        cause: denied,
+      },
+    });
+  });
+
+  it("preserves non-permission plist read failures as read failures", async () => {
+    const directory = await createTestTempDirectory("rea-app-read-error-");
+    const app = join(directory, "ReadError.app");
+    await mkdir(join(app, "Contents"), { recursive: true });
+    await writeFile(join(app, "Contents", "Info.plist"), "placeholder");
+    const readError = Object.assign(new Error("I/O failure"), { code: "EIO" });
+    const result = await resolveAppBundleExecutable(app, {
+      readFile: async () => {
+        throw readError;
+      },
+      realpath,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        path: join(app, "Contents", "Info.plist"),
+        reason: expect.stringContaining("could not read app Info.plist"),
+        cause: readError,
+      },
+    });
+  });
+
+  it("does not label binary plist decoder I/O failures as malformed data", async () => {
+    const directory = await createTestTempDirectory("rea-app-decode-error-");
+    const app = join(directory, "DecodeError.app");
+    await mkdir(join(app, "Contents"), { recursive: true });
+    await writeFile(join(app, "Contents", "Info.plist"), "bplist00");
+    const decodeError = Object.assign(new Error("I/O failure"), {
+      code: "EIO",
+    });
+    const result = await resolveAppBundleExecutable(app, {
+      readFile: async () => Buffer.from("bplist00"),
+      realpath,
+      decodeBinaryPlist: async () => {
+        throw decodeError;
+      },
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        path: join(app, "Contents", "Info.plist"),
+        reason: expect.stringContaining("could not decode app Info.plist"),
+        cause: decodeError,
+      },
+    });
+  });
+
+  it.each(["EACCES", "EPERM", "ENOENT", "ENOTDIR"])(
+    "preserves %s while resolving an app executable",
+    async (code) => {
+      const directory = await createTestTempDirectory("rea-app-permission-");
+      const app = join(directory, "Permission.app");
+      const programs = join(app, "Contents", "MacOS");
+      await mkdir(programs, { recursive: true });
+      await writeFile(
+        join(app, "Contents", "Info.plist"),
+        "<plist><dict><key>CFBundleExecutable</key><string>App</string></dict></plist>",
+      );
+      const denied = Object.assign(new Error("denied"), { code });
+      const fileSystem: AppBundleFileSystem = {
+        readFile,
+        realpath: async (path) => {
+          if (String(path) === join(programs, "App")) throw denied;
+          return realpath(path);
+        },
+      };
+      const result = await resolveAppBundleExecutable(app, fileSystem);
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "BinaryTargetError",
+          path: join(programs, "App"),
+          reason: expect.stringContaining(
+            code === "EACCES" || code === "EPERM"
+              ? "permission denied"
+              : "missing",
+          ),
+          cause: denied,
+        },
+      });
+    },
+  );
+
+  it("keeps missing and malformed plist diagnostics distinct", async () => {
+    const directory = await createTestTempDirectory("rea-app-diagnostics-");
+    const missing = join(directory, "Missing.app");
+    await mkdir(join(missing, "Contents"), { recursive: true });
+    const missingResult = await resolveAppBundleExecutable(missing);
+    expect(missingResult).toMatchObject({
+      ok: false,
+      error: { reason: expect.stringContaining("missing") },
+    });
+
+    const notDirectory = join(directory, "NotDirectory.app");
+    await mkdir(notDirectory, { recursive: true });
+    await writeFile(join(notDirectory, "Contents"), "not a directory");
+    const notDirectoryResult = await resolveAppBundleExecutable(notDirectory);
+    expect(notDirectoryResult).toMatchObject({
+      ok: false,
+      error: { reason: expect.stringContaining("missing") },
+    });
+
+    const malformed = join(directory, "Malformed.app");
+    await mkdir(join(malformed, "Contents", "MacOS"), { recursive: true });
+    await writeFile(
+      join(malformed, "Contents", "Info.plist"),
+      "<plist><dict></dict></plist>",
+    );
+    const malformedResult = await resolveAppBundleExecutable(malformed);
+    expect(malformedResult).toMatchObject({
+      ok: false,
+      error: {
+        path: join(malformed, "Contents", "Info.plist"),
+        reason: expect.stringContaining("malformed"),
+      },
+    });
+  });
+});
+
+describe("binary target I/O: package classification", () => {
   it("classifies ZIP package families and text artifacts without Hopper", async () => {
     const directory = await createTestTempDirectory("rea-artifact-target-");
     const zip = join(directory, "fixture.apk");
@@ -59,7 +217,9 @@ describe("binary target I/O", () => {
       error: { _tag: "BinaryTargetError" },
     });
   });
+});
 
+describe("binary target I/O: filesystem and app bundle target resolution", () => {
   it("resolves relative Hopper databases and rejects unknown or unreadable paths", async () => {
     const directory = await createTestTempDirectory("rea-target-");
     await writeFile(join(directory, "sample.hop"), "database");
@@ -137,7 +297,9 @@ describe("binary target I/O", () => {
       expect((await parseBinaryTarget(app, directory, "arm64")).ok).toBe(false);
     },
   );
+});
 
+describe("binary target I/O: explicit kinds and executable headers", () => {
   it("honors an explicit database kind without relying on the file suffix", async () => {
     const directory = await createTestTempDirectory("rea-target-");
     await writeFile(join(directory, "saved-analysis"), "database");

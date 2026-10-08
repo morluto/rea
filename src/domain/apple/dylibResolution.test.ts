@@ -11,7 +11,23 @@ import {
 
 const slice = (overrides: Partial<MachoSlice> = {}): MachoSlice => ({
   architecture: "arm64",
-  file_type: "dylib",
+  slice_offset: 0,
+  slice_size: 32,
+  cpu_type: 0x0100000c,
+  cpu_subtype: 0,
+  fat_cpu_type: null,
+  fat_cpu_subtype: null,
+  fat_alignment_exponent: null,
+  file_type: overrides.file_type ?? "dylib",
+  file_type_code:
+    overrides.file_type_code ??
+    { execute: 2, dylib: 6, bundle: 8, other: 1 }[
+      overrides.file_type ?? "dylib"
+    ],
+  platform: overrides.platform ?? 1,
+  platforms:
+    overrides.platforms ??
+    (overrides.platform === null ? [] : [overrides.platform ?? 1]),
   install_name: null,
   dependencies: [],
   rpaths: [],
@@ -234,7 +250,7 @@ describe("dyld path expansion", () => {
   });
 });
 
-describe("dyld resolution outcomes", () => {
+describe("dyld resolution outcomes: deriving path and weak-load outcomes", () => {
   it("keeps paths outside the root undetermined and in-root fallbacks conditional", async () => {
     const trace = await traceDylibLoading(
       memoryView({
@@ -308,7 +324,9 @@ describe("dyld resolution outcomes", () => {
       "Contents/MacOS/../Overrides/libfound.dylib",
     );
   });
+});
 
+describe("dyld resolution outcomes: checking candidate format and compatibility", () => {
   it("reports non-Mach-O, malformed and wrong-architecture candidates", async () => {
     const trace = await traceDylibLoading(
       memoryView({
@@ -344,6 +362,101 @@ describe("dyld resolution outcomes", () => {
       "Contents/MacOS/b/lib.dylib",
       "Contents/MacOS/c/lib.dylib",
     ]);
+  });
+
+  it("skips non-loadable and wrong-platform rpath candidates", async () => {
+    const trace = await traceDylibLoading(
+      memoryView({
+        [MAIN]: executable({
+          rpaths: [
+            "@executable_path/a",
+            "@executable_path/b",
+            "@executable_path/c",
+          ],
+          dependencies: [dependency("@rpath/lib.dylib")],
+        }),
+        "Contents/MacOS/a/lib.dylib": parsed(
+          slice({ file_type: "other", file_type_code: 1 }),
+        ),
+        "Contents/MacOS/b/lib.dylib": parsed(slice({ platform: 7 })),
+        "Contents/MacOS/c/lib.dylib": parsed(slice()),
+      }),
+      { roots: [MAIN] },
+    );
+    const edge = edgeFor(trace, MAIN, "@rpath/lib.dylib");
+    expect(edge.candidates.map(({ outcome }) => outcome)).toEqual([
+      "not-loadable",
+      "platform-mismatch",
+      "resolved",
+    ]);
+    expect(edge.resolution).toEqual({
+      status: "resolved",
+      image: "Contents/MacOS/c/lib.dylib",
+    });
+  });
+
+  it("preserves unknown platform compatibility before a later known candidate", async () => {
+    const trace = await traceDylibLoading(
+      memoryView({
+        [MAIN]: executable({
+          rpaths: ["@executable_path/a", "@executable_path/b"],
+          dependencies: [dependency("@rpath/lib.dylib")],
+        }),
+        "Contents/MacOS/a/lib.dylib": parsed(slice({ platform: null })),
+        "Contents/MacOS/b/lib.dylib": parsed(slice()),
+      }),
+      { roots: [MAIN] },
+    );
+    const edge = edgeFor(trace, MAIN, "@rpath/lib.dylib");
+    expect(edge.candidates.map(({ outcome }) => outcome)).toEqual([
+      "undetermined",
+      "resolved",
+    ]);
+    expect(edge.resolution.status).toBe("conditional");
+  });
+
+  it("applies dyld Catalyst and zippered platform compatibility", async () => {
+    const catalystProcess = await traceDylibLoading(
+      memoryView({
+        [MAIN]: executable({
+          platform: 6,
+          platforms: [6],
+          rpaths: ["@executable_path/catalyst"],
+          dependencies: [dependency("@rpath/lib.dylib")],
+        }),
+        "Contents/MacOS/catalyst/lib.dylib": parsed(
+          slice({ platform: 1, platforms: [1] }),
+        ),
+      }),
+      { roots: [MAIN] },
+    );
+    expect(
+      edgeFor(catalystProcess, MAIN, "@rpath/lib.dylib").resolution,
+    ).toEqual({
+      status: "resolved",
+      image: "Contents/MacOS/catalyst/lib.dylib",
+    });
+
+    const zipperedImage = await traceDylibLoading(
+      memoryView({
+        [MAIN]: executable({
+          platform: 1,
+          platforms: [1],
+          rpaths: ["@executable_path/zippered"],
+          dependencies: [dependency("@rpath/lib.dylib")],
+        }),
+        "Contents/MacOS/zippered/lib.dylib": parsed(
+          slice({ platform: null, platforms: [1, 6] }),
+        ),
+      }),
+      { roots: [MAIN] },
+    );
+    expect(
+      edgeFor(zipperedImage, MAIN, "@rpath/lib.dylib").resolution,
+    ).toMatchObject({
+      status: "resolved",
+      image: "Contents/MacOS/zippered/lib.dylib",
+    });
   });
 });
 

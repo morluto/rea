@@ -129,8 +129,10 @@ export const nativeCallEventSchema = z.strictObject({
 
 const capturedOutputSchema = z.strictObject({
   text: z.string(),
+  /** Bytes observed by the bridge, not a total when complete is false. */
   bytes: z.number().int().nonnegative(),
   truncated: z.boolean(),
+  complete: z.boolean(),
 });
 
 /** Observed calls, the process lifecycle, and breakpoint resolution. */
@@ -140,7 +142,21 @@ export const nativeCallObservationResultSchema = z.strictObject({
     sha256: z.string().regex(/^[0-9a-f]{64}$/u),
     architecture: z.string(),
     arguments: z.array(z.string()),
+    environment: z.record(z.string(), z.string()),
     working_directory: z.string().nullable(),
+    launch_identity: z.strictObject({
+      /** A pathname hash does not verify the bytes mapped into the process. */
+      loaded_image_sha256: z.null(),
+      file_device: z.string().nullable(),
+      file_inode: z.string().nullable(),
+      selected_file_sha256: z
+        .string()
+        .regex(/^[0-9a-f]{64}$/u)
+        .nullable(),
+      module_path: z.string().nullable(),
+      module_uuid: z.string().nullable(),
+      stable: z.boolean(),
+    }),
   }),
   debugger: z.strictObject({
     path: z.string(),
@@ -154,6 +170,7 @@ export const nativeCallObservationResultSchema = z.strictObject({
       "duration-elapsed",
       "event-limit",
       "stop-limit",
+      "resource-limit",
     ]),
     exit_status: z.number().int().nullable(),
     exit_description: z.string().nullable(),
@@ -187,6 +204,7 @@ export const nativeCallObservationResultSchema = z.strictObject({
   coverage: z.strictObject({
     status: z.enum(["complete", "partial"]),
     event_limit_reached: z.boolean(),
+    resource_limit_reached: z.boolean(),
     /** Requests that matched no code in any image loaded while observing. */
     unresolved_breakpoints: z.array(z.number().int().nonnegative()),
   }),

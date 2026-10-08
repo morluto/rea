@@ -1,4 +1,9 @@
 import { canonicalDigest } from "../../domain/comparisonSemantics.js";
+import {
+  artifactEdgeId,
+  artifactIdForContent,
+  occurrenceIdForLocation,
+} from "../../domain/artifactIdentity.js";
 import type { ArtifactEntry } from "../ArtifactReader.js";
 import type {
   ArtifactCommand,
@@ -159,7 +164,7 @@ export const createArtifactNode = (input: {
   readonly contentState: ArtifactNode["content_state"];
   readonly limitations?: readonly string[];
 }): ArtifactNode => ({
-  artifact_id: `art_${canonicalDigest({ sha256: input.sha256 }, "Artifact")}`,
+  artifact_id: artifactIdForContent(input.sha256),
   kind: input.kind,
   format: input.format,
   sha256: input.sha256,
@@ -175,7 +180,11 @@ export const rootOccurrenceFor = (
   node: ArtifactNode,
   declaredSize: number,
 ): MutableOccurrence => ({
-  occurrence_id: `occ_${canonicalDigest({ root: node.artifact_id }, "Artifact")}`,
+  occurrence_id: occurrenceIdForLocation({
+    rootArtifactId: node.artifact_id,
+    logicalPath: ".",
+    entryKind: node.format === "directory" ? "directory" : "file",
+  }),
   artifact_id: node.artifact_id,
   parent_occurrence_id: null,
   logical_path: ".",
@@ -197,14 +206,11 @@ export const rekeyOccurrences = (
   for (const occurrence of occurrences)
     replacements.set(
       occurrence.occurrence_id,
-      `occ_${canonicalDigest(
-        {
-          root_artifact_id: rootArtifactId,
-          logical_path: occurrence.logical_path,
-          entry_kind: occurrence.entry_kind,
-        },
-        "Artifact",
-      )}`,
+      occurrenceIdForLocation({
+        rootArtifactId,
+        logicalPath: occurrence.logical_path,
+        entryKind: occurrence.entry_kind,
+      }),
     );
   for (const occurrence of occurrences) {
     occurrence.occurrence_id =
@@ -248,7 +254,7 @@ export const createArtifactEdges = (
       logical_path: occurrence.logical_path,
     };
     edges.push({
-      edge_id: `edge_${canonicalDigest(semantic, "Artifact")}`,
+      edge_id: artifactEdgeId(semantic),
       ...semantic,
       producer: occurrence.entry_kind === "slice" ? (producer ?? null) : null,
       ordinal: edges.length,

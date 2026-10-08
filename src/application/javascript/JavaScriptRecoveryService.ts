@@ -12,7 +12,7 @@ import {
   javascriptRecoveryResultSchema,
 } from "../../domain/javascript/javascriptRecovery.js";
 import { jsonObjectSchema } from "../../domain/jsonValue.js";
-import { projectInputIssues } from "../../domain/inputIssueProjection.js";
+import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { JavaScriptRecoveryPort } from "./JavaScriptRecoveryPort.js";
@@ -33,11 +33,9 @@ export class JavaScriptRecoveryService {
     const parsed = javascriptRecoveryInputSchema.safeParse(input);
     if (!parsed.success)
       return err(
-        new AnalysisInputError(
-          OPERATION,
-          { cause: parsed.error },
-          projectInputIssues(parsed.error.issues, input),
-        ),
+        analysisInputErrorFromIssues(OPERATION, parsed.error.issues, input, {
+          cause: parsed.error,
+        }),
       );
     const invalidPaths = (["path", "output_directory"] as const).filter(
       (field) => !isAbsolute(parsed.data[field]),

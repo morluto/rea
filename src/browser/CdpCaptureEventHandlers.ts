@@ -125,6 +125,13 @@ export const handleRequestWillBeSent = (
     return;
   }
   if (state.malformedRedirectRequestIds.has(requestId)) return;
+  const previous = state.network.get(requestId);
+  if (
+    !Object.hasOwn(params, "redirectResponse") &&
+    previous !== undefined &&
+    preserveMalformedRedirectEvidence(state, requestId, previous)
+  )
+    return;
   if (request === undefined) {
     state.completeness.exclude("network_requests", "invalid_protocol_value");
     state.network.delete(requestId);
@@ -141,7 +148,6 @@ export const handleRequestWillBeSent = (
     state.networkRequestTimestamps.delete(requestId);
     return;
   }
-  const previous = state.network.get(requestId);
   const redirectResponse = recordValue(params.redirectResponse);
   if (
     Object.hasOwn(params, "redirectResponse") &&

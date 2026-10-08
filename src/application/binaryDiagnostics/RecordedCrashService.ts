@@ -12,7 +12,7 @@ import {
   inspectRecordedCrashInputSchema,
   recordedCrashSchema,
 } from "../../domain/native/recordedCrash.js";
-import { projectInputIssues } from "../../domain/inputIssueProjection.js";
+import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
 const OPERATION = "inspect_recorded_crash";
@@ -31,11 +31,9 @@ export class RecordedCrashService {
     const input = inspectRecordedCrashInputSchema.safeParse(rawInput);
     if (!input.success)
       return err(
-        new AnalysisInputError(
-          OPERATION,
-          { cause: input.error },
-          projectInputIssues(input.error.issues, rawInput),
-        ),
+        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
+          cause: input.error,
+        }),
       );
     if (!isAbsolute(input.data.path))
       return err(

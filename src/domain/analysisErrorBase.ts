@@ -39,26 +39,37 @@ export interface AnalysisCapturedOutput {
   readonly truncated: boolean;
 }
 
+/** Cleanup uncertainty attached to the original typed analysis failure. */
+export interface AnalysisCleanupObservation {
+  readonly reason: string;
+  readonly resources: readonly string[];
+}
+
 /** Optional provider-neutral context that must survive typed error projection. */
 export interface AnalysisErrorOptions extends ErrorOptions {
   readonly capturedOutput?: AnalysisCapturedOutput;
+  readonly cleanup?: AnalysisCleanupObservation;
 }
 
 /** Base class for expected analysis, provider, and session failures. */
 export abstract class AnalysisError extends Error {
   readonly capturedOutput: AnalysisCapturedOutput | undefined;
+  readonly cleanup: AnalysisCleanupObservation | undefined;
+  readonly cleanupIncomplete: boolean;
+  readonly cleanupResources: readonly string[];
   constructor(message: string, options?: AnalysisErrorOptions) {
     super(message, options);
     this.capturedOutput =
       options?.capturedOutput === undefined
         ? undefined
         : { ...options.capturedOutput };
+    this.cleanup = options?.cleanup;
+    this.cleanupIncomplete = options?.cleanup !== undefined;
+    this.cleanupResources = options?.cleanup?.resources ?? [];
   }
   abstract readonly _tag: AnalysisErrorTag;
   readonly userMessage: string | undefined = undefined;
   readonly userCategory: "cancelled" | undefined = undefined;
-  readonly cleanupIncomplete: boolean = false;
-  readonly cleanupResources: readonly string[] = [];
   readonly executionFailure: string | undefined = undefined;
   readonly partialObservation: PartialProcessCaptureObservation | undefined =
     undefined;

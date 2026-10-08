@@ -213,7 +213,8 @@ jobs:
           if [ "${published_version}" = "\"${version}\"" ]; then
             echo "rea-agents@${version} is already published; verifying the existing package."
           else
-            npm publish --access public
+            tag="$(node scripts/release-npm-tag.mjs "${version}")"
+            npm publish --access public --tag "${tag}"
           fi
 
       - name: Verify published CLI from npm

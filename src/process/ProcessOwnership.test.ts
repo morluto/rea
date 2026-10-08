@@ -193,6 +193,13 @@ describe("opaque process neighbors during cleanup", () => {
       cleaned: false,
       reason: expect.stringContaining("environment_unavailable=1"),
     });
+    if (result.cleaned)
+      throw new Error("Expected unknown ownership to fail closed");
+    expect(result.reason).toContain(
+      "live candidates 900=environment_unavailable",
+    );
+    expect(result.reason).not.toContain("unowned");
+    expect(result.reason).not.toContain("run-token");
     expect(signalGroup.mock.calls).toEqual([[100, "SIGKILL"]]);
     expect(signalGroup).not.toHaveBeenCalledWith(900, "SIGKILL");
   });

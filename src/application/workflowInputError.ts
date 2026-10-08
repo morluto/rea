@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
-import { projectInputIssues } from "../domain/inputIssueProjection.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 
 /** Project schema issues of the raw request onto their request paths. */
 export const requestInputError = (
@@ -9,11 +9,7 @@ export const requestInputError = (
   cause: z.ZodError,
   input: unknown,
 ): AnalysisInputError =>
-  new AnalysisInputError(
-    operation,
-    { cause },
-    projectInputIssues(cause.issues, input),
-  );
+  analysisInputErrorFromIssues(operation, cause.issues, input, { cause });
 
 /**
  * Keep the failed constraint when a parsed request is rejected later. Nested

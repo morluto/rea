@@ -5,6 +5,8 @@ import { sanitizeEndpointCandidate } from "./browserObservation.js";
 import type { WebPageInspection } from "./browserObservation.js";
 import type { WebBundleAnalysis } from "./webBundleAnalysis.js";
 import { traverseJavaScriptAst } from "./javascript/javascriptSemanticTraversal.js";
+import { classifyParsedJavaScriptOpenReceivers } from "./javascript/javascriptSemanticAnalysis.js";
+import type { JavaScriptOpenReceiverFact } from "./javascript/javascriptSemanticAnalysis.js";
 import { semanticStaticPropertyName } from "./javascript/javascriptAstValues.js";
 import {
   calleeName,
@@ -62,10 +64,11 @@ export const analyzeScript = (
   }
   accumulator.parsedScripts += 1;
   detectVendorFingerprints(script, accumulator);
+  const openReceiverFacts = classifyParsedJavaScriptOpenReceivers(file);
   traverseJavaScriptAst(file, {
     enter: (node) => {
       accumulator.visitedNodes += 1;
-      inspectNode(script, node, accumulator);
+      inspectNode(script, node, accumulator, openReceiverFacts);
     },
   });
 };
@@ -74,6 +77,7 @@ const inspectNode = (
   script: IncludedScript,
   node: t.Node,
   accumulator: AnalysisAccumulator,
+  openReceiverFacts: ReadonlyMap<number, JavaScriptOpenReceiverFact>,
 ): void => {
   if (
     (t.isImportDeclaration(node) || t.isExportAllDeclaration(node)) &&
@@ -103,14 +107,19 @@ const inspectNode = (
       accumulator,
     });
   if (t.isObjectProperty(node)) inspectRouteProperty(script, node, accumulator);
-  if (t.isCallExpression(node) || t.isNewExpression(node))
-    inspectCall(script, node, accumulator);
+  if (
+    t.isCallExpression(node) ||
+    t.isOptionalCallExpression(node) ||
+    t.isNewExpression(node)
+  )
+    inspectCall(script, node, accumulator, openReceiverFacts);
 };
 
 const inspectCall = (
   script: IncludedScript,
-  node: t.CallExpression | t.NewExpression,
+  node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
   accumulator: AnalysisAccumulator,
+  openReceiverFacts: ReadonlyMap<number, JavaScriptOpenReceiverFact>,
 ): void => {
   const name = calleeName(node.callee);
   const first = stringValue(node.arguments[0]);
@@ -149,7 +158,12 @@ const inspectCall = (
       accumulator,
     });
   }
-  const endpoint = endpointArgument(name, node.arguments, node.callee);
+  const endpoint = endpointArgument(
+    name,
+    node.arguments,
+    node.callee,
+    openReceiverFacts.get(node.start ?? -1),
+  );
   if (endpoint !== undefined)
     addFinding({
       collection: accumulator.endpoints,
@@ -160,8 +174,9 @@ const inspectCall = (
       accumulator,
     });
   if (
-    name.endsWith("modelContext.registerTool") ||
-    name === "modelContext.registerTool"
+    (t.isCallExpression(node) || t.isNewExpression(node)) &&
+    (name.endsWith("modelContext.registerTool") ||
+      name === "modelContext.registerTool")
   )
     addWebMcpDeclaration(script, node, accumulator);
 };

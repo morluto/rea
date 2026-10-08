@@ -11,6 +11,7 @@ import {
 import { ArtifactOperationError } from "./artifactOperationError.js";
 import { BinaryTargetError } from "./configurationErrors.js";
 import { BrowserObservationError } from "./browserObservationError.js";
+import { EvidenceIntegrityError } from "./evidenceErrors.js";
 import {
   HopperProcessError,
   HopperRemoteError,
@@ -130,6 +131,53 @@ it.each([
     );
   },
 );
+
+it.each([
+  new AnalysisCancelledError("observe_native_calls", {
+    cleanup: {
+      reason: "target process termination could not be verified",
+      resources: ["native-target:4242"],
+    },
+  }),
+  new AnalysisTimeoutError("observe_native_calls", 65_000, {
+    cleanup: {
+      reason: "target process identity was unavailable",
+      resources: ["native-target:4242"],
+    },
+  }),
+])("retains incomplete cleanup for lifecycle failures: $._tag", (failure) => {
+  expect(projectAnalysisError(failure)).toMatchObject({
+    code: "cleanup_incomplete",
+    details: {
+      cleanup: "incomplete",
+      cleanup_reason: expect.any(String),
+      resources: ["native-target:4242"],
+    },
+  });
+});
+
+it("retains the original failure tag and code when cleanup is incomplete", () => {
+  const error = new EvidenceIntegrityError(
+    "The launched native target did not match its selected digest",
+    {
+      cleanup: {
+        reason: "target survivor identity could not be verified",
+        resources: ["native-target:4242"],
+      },
+    },
+  );
+  expect(error._tag).toBe("EvidenceIntegrityError");
+  expect(projectAnalysisError(error)).toMatchObject({
+    code: "cleanup_incomplete",
+    category: "integrity_mismatch",
+    details: {
+      cleanup: "incomplete",
+      cleanup_reason: "target survivor identity could not be verified",
+      resources: ["native-target:4242"],
+      execution_failure: "evidence_integrity_mismatch",
+    },
+  });
+});
 
 describe("analysis error projection: provider failures", () => {
   it("projects the primary browser failure alongside incomplete cleanup", () => {

@@ -1,4 +1,6 @@
 import type { Segment } from "./AppleMachoSelection.js";
+import { issue } from "./AppleDispatchDecodeFacts.js";
+import type { DecodeIssue } from "./AppleDispatchDecodeFacts.js";
 
 /** Where a Mach-O stores pointer fixups, from its load commands. */
 export interface FixupCommands {
@@ -23,7 +25,8 @@ export type DecodedPointer =
       readonly library: string | null;
       readonly weak: boolean;
       readonly addend: bigint;
-    };
+    }
+  | { readonly kind: "unsupported"; readonly reason: string };
 
 /** Pointer decoding for one Mach-O slice. */
 export interface PointerFixups {
@@ -31,6 +34,7 @@ export interface PointerFixups {
   /** Chained pointer formats in use, such as `DYLD_CHAINED_PTR_64_OFFSET`. */
   readonly formats: readonly string[];
   readonly failures: readonly string[];
+  readonly issues: readonly DecodeIssue[];
   /** Decode the pointer stored at `address` whose raw 64-bit value is `raw`. */
   decode(address: bigint, raw: bigint): DecodedPointer;
 }
@@ -72,7 +76,7 @@ const cString = (bytes: Buffer, offset: number, end: number): string => {
   return bytes.toString("utf8", offset, stop);
 };
 
-const readImports = (
+const readImport = (
   data: {
     readonly bytes: Buffer;
     readonly base: number;
@@ -85,38 +89,42 @@ const readImports = (
     readonly format: number;
     readonly symbols: number;
   },
-): Import[] => {
+  index: number,
+): Import => {
   const { bytes, base, end, dylibs } = data;
   const size = header.format === 3 ? 16 : header.format === 2 ? 8 : 4;
   if (header.format < 1 || header.format > 3)
     throw new RangeError(`Unsupported chained import format ${header.format}`);
-  if (base + header.offset + header.count * size > end)
+  if (
+    !Number.isSafeInteger(header.count) ||
+    base + header.offset + header.count * size > end
+  )
     throw new RangeError("Chained import table exceeds the fixup data");
-  return Array.from({ length: header.count }, (_, index) => {
-    const at = base + header.offset + index * size;
-    if (header.format === 3) {
-      const word = bytes.readBigUInt64LE(at);
-      const ordinal = Number(signed(bits(word, 0, 16), 16));
-      return {
-        symbol: cString(
-          bytes,
-          base + header.symbols + Number(bits(word, 32, 32)),
-          end,
-        ),
-        library: libraryName(ordinal, dylibs),
-        weak: bits(word, 16, 1) === 1n,
-        addend: bytes.readBigInt64LE(at + 8),
-      };
-    }
-    const word = bytes.readUInt32LE(at);
-    const ordinal = Number(signed(BigInt(word & 0xff), 8));
+  if (index < 0 || index >= header.count)
+    throw new RangeError("Chained import index is outside the table");
+  const at = base + header.offset + index * size;
+  if (header.format === 3) {
+    const word = bytes.readBigUInt64LE(at);
+    const ordinal = Number(signed(bits(word, 0, 16), 16));
     return {
-      symbol: cString(bytes, base + header.symbols + (word >>> 9), end),
+      symbol: cString(
+        bytes,
+        base + header.symbols + Number(bits(word, 32, 32)),
+        end,
+      ),
       library: libraryName(ordinal, dylibs),
-      weak: ((word >>> 8) & 1) === 1,
-      addend: header.format === 2 ? BigInt(bytes.readInt32LE(at + 4)) : 0n,
+      weak: bits(word, 16, 1) === 1n,
+      addend: bytes.readBigInt64LE(at + 8),
     };
-  });
+  }
+  const word = bytes.readUInt32LE(at);
+  const ordinal = Number(signed(BigInt(word & 0xff), 8));
+  return {
+    symbol: cString(bytes, base + header.symbols + (word >>> 9), end),
+    library: libraryName(ordinal, dylibs),
+    weak: ((word >>> 8) & 1) === 1,
+    addend: header.format === 2 ? BigInt(bytes.readInt32LE(at + 4)) : 0n,
+  };
 };
 
 /** Decode one raw chained pointer for its segment's pointer format. */
@@ -124,10 +132,13 @@ export const decodeChainedPointer = (
   raw: bigint,
   format: number,
   baseAddress: bigint,
-  imports: readonly Import[],
+  imports: readonly Import[] | ((index: number) => Import),
 ): DecodedPointer => {
   const bind = (ordinal: bigint, addend: bigint): DecodedPointer => {
-    const target = imports[Number(ordinal)];
+    const target =
+      typeof imports === "function"
+        ? imports(Number(ordinal))
+        : imports[Number(ordinal)];
     if (target === undefined)
       throw new RangeError(`Chained bind ordinal ${ordinal} has no import`);
     return { kind: "bind", ...target, addend: target.addend + addend };
@@ -176,15 +187,24 @@ const chainedFixups = (
   if (range.size < 28 || end > bytes.length)
     throw new RangeError("Chained fixup header exceeds the target");
   const startsOffset = bytes.readUInt32LE(base + 4);
-  const imports = readImports(
-    { bytes, base, end, dylibs },
-    {
-      offset: bytes.readUInt32LE(base + 8),
-      symbols: bytes.readUInt32LE(base + 12),
-      count: bytes.readUInt32LE(base + 16),
-      format: bytes.readUInt32LE(base + 20),
-    },
-  );
+  const importHeader = {
+    offset: bytes.readUInt32LE(base + 8),
+    symbols: bytes.readUInt32LE(base + 12),
+    count: bytes.readUInt32LE(base + 16),
+    format: bytes.readUInt32LE(base + 20),
+  };
+  const importSize =
+    importHeader.format === 3 ? 16 : importHeader.format === 2 ? 8 : 4;
+  const importTableEnd =
+    base + importHeader.offset + importHeader.count * importSize;
+  if (importHeader.format < 1 || importHeader.format > 3)
+    throw new RangeError(
+      `Unsupported chained import format ${importHeader.format}`,
+    );
+  if (!Number.isSafeInteger(importHeader.count) || importTableEnd > end)
+    throw new RangeError("Chained import table exceeds the fixup data");
+  const imports = (index: number) =>
+    readImport({ bytes, base, end, dylibs }, importHeader, index);
   if (bytes.readUInt32LE(base + 24) !== 0)
     throw new RangeError(
       "Compressed chained-fixup symbol names are not supported",
@@ -213,10 +233,23 @@ const chainedFixups = (
       ranges.map(({ format }) => POINTER_FORMATS[format] ?? `format-${format}`),
     ),
   ];
+  const issues = ranges.flatMap(({ format, from }) =>
+    POINTER_FORMATS[format] === undefined
+      ? [
+          issue(
+            "pointer_fixups",
+            "unsupported_pointer_format",
+            `Unsupported chained pointer format ${format}`,
+            `0x${from.toString(16)}`,
+          ),
+        ]
+      : [],
+  );
   return {
     kind: "chained",
     formats,
-    failures: [],
+    failures: issues.map(({ message }) => message),
+    issues,
     decode(address, raw) {
       const segment = ranges.find(
         ({ from, to }) => address >= from && address < to,
@@ -224,6 +257,11 @@ const chainedFixups = (
       // Pointers outside fixup segments, such as in __TEXT, are stored plainly.
       if (segment === undefined) return { kind: "rebase", target: raw };
       if (raw === 0n) return { kind: "rebase", target: 0n };
+      if (POINTER_FORMATS[segment.format] === undefined)
+        return {
+          kind: "unsupported",
+          reason: `Unsupported chained pointer format ${segment.format}`,
+        };
       return decodeChainedPointer(raw, segment.format, baseAddress, imports);
     },
   };
@@ -388,6 +426,7 @@ export const parsePointerFixups = (
       kind: "none",
       formats: [],
       failures: [],
+      issues: [],
       decode: (_address, raw) => ({ kind: "rebase", target: raw }),
     };
   const binds = new Map<bigint, Import>();
@@ -404,6 +443,9 @@ export const parsePointerFixups = (
     kind: "dyld-info",
     formats: [],
     failures,
+    issues: failures.map((message) =>
+      issue("pointer_fixups", "bind_stream_decode_failed", message),
+    ),
     decode(address, raw) {
       const bound = binds.get(address);
       return bound === undefined

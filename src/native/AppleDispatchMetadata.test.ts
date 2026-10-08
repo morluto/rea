@@ -102,9 +102,13 @@ describe("Apple dispatch binary metadata", () => {
       implementation_address: null,
       decode: { status: "partial" },
     });
+    const truncated = decodeAppleDispatchMetadata(fixture(), 1, provenance);
+    expect(truncated.coverage[0]?.reason).toContain("max_records_reached");
     expect(
-      decodeAppleDispatchMetadata(fixture(), 1, provenance).coverage[0]?.reason,
-    ).toContain("max_records_reached");
+      truncated.coverage.find(
+        ({ facet }) => facet === "objc_properties_categories",
+      ),
+    ).toMatchObject({ status: "partial", reason: "max_records_reached" });
   });
   it("rejects malformed command and section boundaries", () => {
     const bytes = fixture();
@@ -171,7 +175,7 @@ describe("FAT64 dispatch slice validation", () => {
       const bytes = wrapped();
       bytes.writeBigUInt64BE(0x100000000n, field);
       expect(() => decodeAppleDispatchMetadata(bytes, 100, provenance)).toThrow(
-        "FAT slice exceeds file",
+        "FAT architecture 0 slice range extends beyond the file",
       );
     },
   );
@@ -265,7 +269,7 @@ describe("byte-swapped universal Apple dispatch metadata", () => {
     const bytes = wrapped(true);
     bytes.writeBigUInt64LE(0x100000000n, 16);
     expect(() => decodeAppleDispatchMetadata(bytes, 100, provenance)).toThrow(
-      "FAT slice exceeds file (FAT header byte order: little-endian)",
+      "FAT architecture 0 slice range extends beyond the file (FAT header byte order: little-endian)",
     );
   });
 });

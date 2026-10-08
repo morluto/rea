@@ -3,13 +3,12 @@ import type {
   ExecutionOptions,
 } from "./AnalysisProvider.js";
 import { toolContract } from "../contracts/toolContracts.js";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import { createEvidence } from "../domain/evidence.js";
 import { parseFunctionDossier } from "../domain/hopperValues.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok } from "../domain/result.js";
-import { projectInputIssues } from "../domain/inputIssueProjection.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 
 /** Preserve the provider's observations when presenting a validated function dossier. */
 export const executeFunctionAnalysisEvidence = async (
@@ -22,10 +21,11 @@ export const executeFunctionAnalysisEvidence = async (
     toolContract("analyze_function").inputSchema.safeParse(parameters);
   if (!input.success)
     return err(
-      new AnalysisInputError(
+      analysisInputErrorFromIssues(
         "analyze_function",
+        input.error.issues,
+        parameters,
         { cause: input.error },
-        projectInputIssues(input.error.issues, parameters),
       ),
     );
   const arguments_ = jsonObjectSchema.parse(input.data);

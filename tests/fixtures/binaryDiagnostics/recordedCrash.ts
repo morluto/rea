@@ -139,6 +139,7 @@ export const recordedCrashSignalFixture = (path?: string): RecordedCrash => {
 export const recordedCrashFixtureBytes = (value: RecordedCrash): Buffer => {
   const bytes = Buffer.alloc(value.artifact.bytes);
   bytes.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]);
+  bytes.writeUInt32LE(1, 20);
   bytes.writeUInt16LE(4, 16);
   bytes.writeUInt16LE(62, 18);
   bytes.writeBigUInt64LE(64n, 32);

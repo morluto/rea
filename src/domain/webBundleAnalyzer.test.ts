@@ -233,6 +233,47 @@ describe("web bundle static-analysis parity", () => {
     ]);
   });
 
+  it("uses lexical receiver facts for overloaded open calls", () => {
+    const result = analyzeCapturedWebBundle(
+      inspection(`
+        const popup = window;
+        popup.open(url, "/preview");
+        {
+          const indexedDB = { open() {} };
+          indexedDB.open("PROPFIND", "/dav");
+          indexedDB.open(databaseName, "2");
+        }
+        const xhr = new XMLHttpRequest();
+        xhr.open(method, "/api");
+      `),
+    );
+    expect(
+      result.observations.endpoints.map(({ value }) => value).sort(),
+    ).toEqual(["/api", "/dav"]);
+  });
+
+  it("classifies optional and one-hop aliased open calls", () => {
+    const source = `
+      const popup = window;
+      popup?.open(url, "/preview");
+      const idb = indexedDB;
+      idb.open(databaseName, "2");
+      const xhr = new XMLHttpRequest();
+      xhr?.open(method, "/api");
+    `;
+    const bundle = analyzeCapturedWebBundle(inspection(source));
+    expect(bundle.observations.endpoints.map(({ value }) => value)).toEqual([
+      "/api",
+    ]);
+    const staticAnalysis = analyzeJavaScriptStaticSource(source);
+    expect(staticAnalysis.endpoints.map(({ value }) => value)).toEqual([
+      "/api",
+    ]);
+    expect(staticAnalysis.storage.map(({ kind }) => kind)).toEqual([
+      "indexed-db",
+    ]);
+  });
+
   it("keeps HTTP-method-named reads of provable keyed collections out of endpoints", () => {
     const result = analyzeCapturedWebBundle(
       inspection(`

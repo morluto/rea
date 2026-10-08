@@ -1,5 +1,24 @@
 import type { z } from "zod";
-import type { AnalysisInputIssue } from "./analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  type AnalysisInputIssue,
+} from "./analysisErrorCore.js";
+
+/** Build the standard application input error while retaining schema causes and extra semantic issues. */
+export const analysisInputErrorFromIssues = (
+  operation: string,
+  issues: readonly z.core.$ZodIssue[],
+  input: unknown,
+  options: {
+    readonly cause?: unknown;
+    readonly additionalIssues?: readonly AnalysisInputIssue[];
+  } = {},
+): AnalysisInputError =>
+  new AnalysisInputError(
+    operation,
+    options.cause === undefined ? undefined : { cause: options.cause },
+    [...projectInputIssues(issues, input), ...(options.additionalIssues ?? [])],
+  );
 
 /** Project Zod failures to secret-safe caller correction metadata. */
 export const projectInputIssues = (

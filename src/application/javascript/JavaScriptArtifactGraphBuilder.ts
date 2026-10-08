@@ -20,6 +20,14 @@ import {
   completeApplicationCoverage,
   partialApplicationCoverage,
 } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
+import type { JavaScriptSemanticResourceLimit } from "../../domain/javascript/javascriptSemanticValueTypes.js";
+import { semanticCoverageResourceLimits } from "../../domain/javascript/javascriptSemanticCoverage.js";
+import {
+  SEMANTIC_EXPRESSION_DEPTH_LIMIT,
+  SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT,
+  SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT,
+  semanticResourceLimitReason,
+} from "../../domain/javascript/javascriptSemanticResourceLimits.js";
 import {
   addJavaScriptArtifactContainers,
   addJavaScriptArtifactFiles,
@@ -80,6 +88,7 @@ export const buildJavaScriptArtifactGraph = (
 };
 
 const graphCoverage = (context: JavaScriptArtifactGraphContext) => {
+  const resourceLimits = semanticResourceLimits(context);
   const sourceMapPolicyGap = context.analysis.source_maps.some(
     ({ status }) => status === "invalid",
   );
@@ -99,9 +108,45 @@ const graphCoverage = (context: JavaScriptArtifactGraphContext) => {
     partialJavaScript;
   if (context.analysis.truncated_scopes > 0)
     return partialApplicationCoverage([], null);
+  if (resourceLimits.length > 0)
+    return partialApplicationCoverage(
+      resourceLimits.map(applicationGraphResourceLimit),
+      null,
+    );
   if (unknownGap) return partialApplicationCoverage([], null);
   return completeApplicationCoverage();
 };
+
+const semanticResourceLimits = (
+  context: JavaScriptArtifactGraphContext,
+): JavaScriptSemanticResourceLimit[] =>
+  [
+    ...new Set(
+      context.analysis.files.flatMap(({ semantic }) =>
+        semantic === null
+          ? []
+          : semanticCoverageResourceLimits(semantic.ir.coverage),
+      ),
+    ),
+  ].sort();
+
+const applicationGraphResourceLimit = (
+  resourceLimit: JavaScriptSemanticResourceLimit,
+) => ({
+  name: `javascript_semantic_${resourceLimit.replaceAll("-", "_")}`,
+  value:
+    resourceLimit === "primitive-candidates"
+      ? SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT
+      : resourceLimit === "primitive-bytes"
+        ? SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT
+        : SEMANTIC_EXPRESSION_DEPTH_LIMIT,
+  unit:
+    resourceLimit === "expression-depth"
+      ? ("depth" as const)
+      : resourceLimit === "primitive-bytes"
+        ? ("bytes" as const)
+        : ("items" as const),
+});
 
 const graphLimitations = (
   context: JavaScriptArtifactGraphContext,
@@ -150,6 +195,7 @@ const graphLimitations = (
           "Sender, frame, URL, and origin checks are observations only; REA does not claim that they enforce a complete authorization policy.",
         ]
       : []),
+    ...semanticResourceLimits(context).map(semanticResourceLimitReason),
     ...(context.analysis.files.some(
       ({ javascript }) =>
         (javascript?.electron.native_addon_bindings.length ?? 0) > 0,

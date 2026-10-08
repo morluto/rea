@@ -5,6 +5,16 @@ import {
   connect,
   jsonResult,
 } from "./enhancedToolsHarness.js";
+import type {
+  AnalysisExecution,
+  AnalysisOperationPort,
+} from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  AnalysisProtocolError,
+} from "../../../src/domain/analysisErrorCore.js";
+import { err, type Result } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 
 afterEach(closeEnhancedToolResources);
@@ -39,8 +49,10 @@ describe("enhanced MCP tools", () => {
                 { name: "__DATA", start: "0x1800", end: "0x2000" },
               ]),
             );
+          case "current_document":
+            return Promise.resolve(ok("fixture"));
           case "list_documents":
-            return Promise.resolve(ok(["fixture"]));
+            return Promise.resolve(ok(["New Document", "fixture"]));
           case "list_strings":
             return Promise.resolve(
               ok(
@@ -99,5 +111,88 @@ describe("enhanced MCP tools", () => {
     expect(text?.type === "text" ? text.text : "").toBe(
       JSON.stringify(result.structuredContent),
     );
+  });
+});
+
+const overviewPort = (
+  current: Result<AnalysisExecution, AnalysisError>,
+  documents: readonly string[],
+): AnalysisOperationPort => ({
+  execute: (name) => {
+    switch (name) {
+      case "current_document":
+        return Promise.resolve(current);
+      case "list_documents":
+        return Promise.resolve(ok([...documents]));
+      case "list_segments":
+        return Promise.resolve(
+          ok([{ name: "text", start: "0x1000", end: "0x2000" }]),
+        );
+      default:
+        return Promise.resolve(ok([]));
+    }
+  },
+});
+
+describe("overview document identity through MCP", () => {
+  const unsupported = () =>
+    err(
+      new AnalysisCapabilityUnavailableError(
+        "fixture",
+        "current_document",
+        "headless provider",
+      ),
+    );
+
+  it("uses the sole headless document when current-document selection is unsupported", async () => {
+    const client = await connect(
+      overviewPort(unsupported(), ["single-target"]),
+    );
+    expect(
+      jsonResult(
+        await client.callTool({ name: "binary_overview", arguments: {} }),
+      ),
+    ).toMatchObject({ document: "single-target" });
+  });
+
+  it.each([
+    { documents: [] },
+    { documents: [""] },
+    { documents: ["one", "two"] },
+  ])(
+    "rejects ambiguous or missing headless identities: $documents",
+    async ({ documents }) => {
+      const client = await connect(overviewPort(unsupported(), documents));
+      expect(
+        (await client.callTool({ name: "binary_overview", arguments: {} }))
+          .isError,
+      ).toBe(true);
+    },
+  );
+
+  it.each([{ value: null }, { value: "" }, { value: [] }])(
+    "rejects a malformed current-document result: $value",
+    async ({ value }) => {
+      const client = await connect(
+        overviewPort(ok(value), ["fallback-must-not-hide-error"]),
+      );
+      expect(
+        (await client.callTool({ name: "binary_overview", arguments: {} }))
+          .isError,
+      ).toBe(true);
+    },
+  );
+
+  it("preserves non-capability current-document failures", async () => {
+    const client = await connect(
+      overviewPort(
+        err(new AnalysisProtocolError("failed current-document transport")),
+        ["must-not-be-selected"],
+      ),
+    );
+    expect(
+      (await client.callTool({ name: "binary_overview", arguments: {} }))
+        .isError,
+    ).toBe(true);
   });
 });

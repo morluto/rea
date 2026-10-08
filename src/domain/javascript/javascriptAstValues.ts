@@ -1,4 +1,29 @@
 import * as t from "@babel/types";
+import type { JavaScriptSemanticPrimitive } from "./javascriptSemanticValueTypes.js";
+
+/** Read one syntax-level primitive only when its value is exact. */
+export const readExactJavaScriptLiteral = (
+  node: t.Node,
+):
+  | { readonly found: true; readonly value: JavaScriptSemanticPrimitive }
+  | { readonly found: false } => {
+  if (t.isStringLiteral(node)) return { found: true, value: node.value };
+  if (t.isNumericLiteral(node) && Number.isFinite(node.value))
+    return { found: true, value: node.value };
+  if (t.isBooleanLiteral(node)) return { found: true, value: node.value };
+  if (t.isNullLiteral(node)) return { found: true, value: null };
+  if (
+    t.isTemplateLiteral(node) &&
+    node.expressions.length === 0 &&
+    node.quasis.length === 1
+  ) {
+    const cooked = node.quasis[0]?.value.cooked;
+    return cooked === null || cooked === undefined
+      ? { found: false }
+      : { found: true, value: cooked };
+  }
+  return { found: false };
+};
 
 /** Read an identifier or literal property name without evaluating syntax. */
 export const propertyName = (node: t.Node): string => {

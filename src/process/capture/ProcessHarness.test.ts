@@ -304,7 +304,7 @@ it("retains observations and both causes when process cleanup is unverifiable", 
     owned_process_group: {
       state: "unverified" as const,
       reason:
-        "process ownership token could not be read for 1 live process(es): environment_unavailable=1",
+        "process ownership token could not be read for 1 live process(es): environment_unavailable=1; live candidates 900=environment_unavailable",
       unverified_processes: [
         { pid: 900, reason: "platform_binary_environment_withheld" },
       ],

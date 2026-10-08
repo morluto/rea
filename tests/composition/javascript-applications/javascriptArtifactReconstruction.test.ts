@@ -104,6 +104,59 @@ it("preserves graph commitments and export shapes when consuming file-local IR",
   }
 });
 
+it("reports semantic value resource limits in application graph coverage", async () => {
+  const root = await createTestTempDirectory("rea-javascript-semantic-limit-");
+  const expression = Array.from(
+    { length: 20 },
+    () => '(true ? "a" : "b")',
+  ).join(" + ");
+  await writeFile(
+    join(root, "app.js"),
+    `const answer = { nested: ${expression} };`,
+  );
+  const declarations = ['const value0 = "x";'];
+  for (let index = 1; index <= 30; index += 1) {
+    const previous = `value${String(index - 1)}`;
+    declarations.push(
+      `const value${String(index)} = ${previous} + ${previous};`,
+    );
+  }
+  declarations.push("const answer = value30;");
+  await writeFile(join(root, "growth.js"), declarations.join("\n"));
+  const snapshot = await scanCanonicalArtifactInventory(root, {});
+  const reader = createJavaScriptArtifactReader(root, "directory");
+  try {
+    const files = await readJavaScriptArtifactFiles(reader, snapshot);
+    const analysis = analyzeJavaScriptArtifactFiles(files);
+    const graph = buildJavaScriptArtifactGraph(snapshot, files, analysis);
+
+    expect(graph.coverage).toMatchObject({
+      status: "partial",
+      omitted_count: null,
+      limits: expect.arrayContaining([
+        expect.objectContaining({
+          name: "javascript_semantic_primitive_candidates",
+          unit: "items",
+        }),
+        expect.objectContaining({
+          name: "javascript_semantic_primitive_bytes",
+          unit: "bytes",
+        }),
+      ]),
+    });
+    expect(graph.limitations).toContain(
+      "Primitive candidate budget exceeded (maximum 256 alternatives).",
+    );
+    expect(graph.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/primitive string-byte budget exceeded/i),
+      ]),
+    );
+  } finally {
+    await reader.close();
+  }
+});
+
 it("reconstructs package, Electron roles, Webpack/Rspack modules, and cross-layer facts without execution", async () => {
   const root = await fixtureDirectory();
   Reflect.deleteProperty(globalThis, "__rea_bundle_executed");

@@ -6,6 +6,13 @@ import {
   completeApplicationCoverage,
   partialApplicationCoverage,
 } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
+import { semanticCoverageResourceLimits } from "../../domain/javascript/javascriptSemanticCoverage.js";
+import {
+  SEMANTIC_EXPRESSION_DEPTH_LIMIT,
+  SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT,
+  SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT,
+  semanticResourceLimitReason,
+} from "../../domain/javascript/javascriptSemanticResourceLimits.js";
 import type {
   JavaScriptModuleOrigin,
   JavaScriptSemanticModuleLink,
@@ -362,15 +369,39 @@ const relationshipEvidence = (
     operation,
     coverage: semanticCoverage(input.semantic),
     confidence,
-    limitations: [...input.semantic.ir.limitations, ...limitations],
+    limitations: [
+      ...input.semantic.ir.limitations,
+      ...semanticCoverageResourceLimits(input.semantic.ir.coverage).map(
+        semanticResourceLimitReason,
+      ),
+      ...limitations,
+    ],
   });
 
 const semanticCoverage = (
   semantic: SemanticAnalysis,
 ): JavaScriptArtifactGraphCoverage => {
-  if (semantic.ir.coverage.status === "complete")
+  const resourceLimits = semanticCoverageResourceLimits(semantic.ir.coverage);
+  if (semantic.ir.coverage.status === "complete" && resourceLimits.length === 0)
     return completeApplicationCoverage();
-  return partialApplicationCoverage([], semantic.ir.coverage.omittedCount);
+  return partialApplicationCoverage(
+    resourceLimits.map((resourceLimit) => ({
+      name: `javascript_semantic_${resourceLimit.replaceAll("-", "_")}`,
+      value:
+        resourceLimit === "primitive-candidates"
+          ? SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT
+          : resourceLimit === "primitive-bytes"
+            ? SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT
+            : SEMANTIC_EXPRESSION_DEPTH_LIMIT,
+      unit:
+        resourceLimit === "expression-depth"
+          ? ("depth" as const)
+          : resourceLimit === "primitive-bytes"
+            ? ("bytes" as const)
+            : ("items" as const),
+    })),
+    semantic.ir.coverage.omittedCount,
+  );
 };
 
 const moduleFormat = (

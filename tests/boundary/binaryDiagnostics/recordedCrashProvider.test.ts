@@ -43,6 +43,10 @@ it
     "omitted-physical-note",
     "hidden-segment",
     "wrong-header-range",
+    "wrong-ei-version-zero",
+    "wrong-ei-version-two",
+    "wrong-e-version-zero",
+    "wrong-e-version-two",
     "wrong-note-kind",
     "wrong-owner-display",
     "wrong-pid",
@@ -60,6 +64,11 @@ it
       true,
       scenario === "wrong-owner-display",
     );
+    if (scenario.startsWith("wrong-ei-version-"))
+      bytes[6] = Number(scenario.at(-1));
+    if (scenario.startsWith("wrong-e-version-"))
+      bytes.writeUInt32LE(Number(scenario.at(-1)), 20);
+    if (scenario.startsWith("wrong-e")) await writeFile(path, bytes);
     let owned = "";
     const provider = new PwntoolsRecordedCrashProvider(
       { REA_PWNTOOLS_PYTHON: process.execPath },

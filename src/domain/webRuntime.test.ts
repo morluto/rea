@@ -20,9 +20,7 @@ describe("web runtime coordinate contract", () => {
       ),
     });
     expect(location.script_id).toMatchObject({
-      description: expect.stringContaining(
-        "empty for a position taken from a request initiator",
-      ),
+      description: expect.stringContaining("no session-script association"),
     });
     expect(location.column_number).toMatchObject({
       description: expect.stringContaining("Zero-based UTF-16 column"),

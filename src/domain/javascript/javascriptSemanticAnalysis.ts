@@ -22,6 +22,8 @@ import type {
 } from "./javascriptSemanticState.js";
 import {
   currentSemanticScope,
+  resolveSemanticBindingState,
+  semanticResolutionBlocked,
   resolveSemanticBindingFromScope,
   semanticScopeId,
   semanticVariableScope,
@@ -35,6 +37,7 @@ import {
 import { collectJavaScriptDerivedSemantics } from "./javascriptSemanticDerivedAnalysis.js";
 import { propertyName, range } from "./javascriptStaticAnalysisHelpers.js";
 import { semanticCoverage } from "./javascriptSemanticCoverage.js";
+import { semanticResourceLimitsIn } from "./javascriptSemanticResourceLimits.js";
 import {
   parseJavaScriptSource,
   type ParsedJavaScriptSource,
@@ -111,7 +114,15 @@ export const analyzeParsedJavaScriptSemantics = (
     references,
     moduleLinks,
     ...derived,
-    coverage: semanticCoverage(parserPartial),
+    coverage: semanticCoverage(
+      parserPartial,
+      semanticResourceLimitsIn([
+        ...bindings.map(({ value }) => value),
+        ...callables.flatMap((callable) =>
+          callable.returnSites.map(({ value }) => value),
+        ),
+      ]),
+    ),
     limitations: [
       ...(parserPartial
         ? [
@@ -125,6 +136,122 @@ export const analyzeParsedJavaScriptSemantics = (
       "Cross-function mutation and dynamic property resolution remain unknown.",
     ],
   };
+};
+
+/** Receiver identity facts for the overloaded `.open` syntax only. */
+export type JavaScriptOpenReceiverFact =
+  | "window"
+  | "indexed-db"
+  | "cache-storage"
+  | "local"
+  | "local-indexed-db"
+  | "local-cache-storage";
+
+/**
+ * Resolve only the lexical receiver identity needed to distinguish browser
+ * `window.open` from XHR and global storage `.open` calls. This deliberately
+ * builds definitions without running semantic value or provenance analysis.
+ */
+export const classifyParsedJavaScriptOpenReceivers = (
+  file: ParsedJavaScriptSource,
+): ReadonlyMap<number, JavaScriptOpenReceiverFact> => {
+  const state = createState(file.program);
+  collectDefinitions(file.program, state);
+  const facts = new Map<number, JavaScriptOpenReceiverFact>();
+  traverseJavaScriptAst(file.program, {
+    enter: (node) => {
+      if (
+        (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) ||
+        (!t.isMemberExpression(node.callee) &&
+          !t.isOptionalMemberExpression(node.callee)) ||
+        semanticStaticPropertyKey(
+          node.callee.property,
+          node.callee.computed,
+        ) !== "open" ||
+        !t.isIdentifier(node.callee.object)
+      )
+        return;
+      const receiver = node.callee.object.name;
+      const binding = resolveSemanticBindingState(state, node, receiver);
+      if (binding === undefined) {
+        if (semanticResolutionBlocked(state, node, receiver)) return;
+        const fact = openGlobalFact(receiver);
+        if (fact !== undefined) facts.set(node.start ?? -1, fact);
+        return;
+      }
+      if (receiver === "indexedDB" || receiver === "caches") {
+        facts.set(
+          node.start ?? -1,
+          receiver === "indexedDB" ? "local-indexed-db" : "local-cache-storage",
+        );
+        return;
+      }
+      if (binding.mutable || binding.initializers.length !== 1) return;
+      const initializer = binding.initializers[0]?.node;
+      if (!t.isIdentifier(initializer)) return;
+      const initializerBinding = resolveSemanticBindingState(
+        state,
+        initializer,
+        initializer.name,
+      );
+      if (initializerBinding !== undefined) {
+        if (initializer.name === "indexedDB" || initializer.name === "caches") {
+          const localFact =
+            initializer.name === "indexedDB"
+              ? "local-indexed-db"
+              : "local-cache-storage";
+          facts.set(node.start ?? -1, localFact);
+          if (
+            initializerBinding.mutable ||
+            initializerBinding.initializers.length !== 1
+          )
+            return;
+          const nested = initializerBinding.initializers[0]?.node;
+          if (t.isIdentifier(nested)) {
+            const nestedFact = resolveGlobalAliasFact(
+              state,
+              initializer,
+              nested.name,
+            );
+            if (nestedFact !== undefined)
+              facts.set(node.start ?? -1, nestedFact);
+          }
+        } else if (initializer.name === "window") {
+          facts.set(node.start ?? -1, "local");
+        }
+        return;
+      }
+      const aliasFact = resolveGlobalAliasFact(
+        state,
+        initializer,
+        initializer.name,
+      );
+      if (aliasFact !== undefined) facts.set(node.start ?? -1, aliasFact);
+    },
+  });
+  return facts;
+};
+
+const openGlobalFact = (
+  name: string,
+): JavaScriptOpenReceiverFact | undefined => {
+  if (name === "window") return "window";
+  if (name === "indexedDB") return "indexed-db";
+  if (name === "caches") return "cache-storage";
+  return undefined;
+};
+
+const resolveGlobalAliasFact = (
+  state: JavaScriptSemanticAnalysisState,
+  node: t.Node,
+  name: string,
+): JavaScriptOpenReceiverFact | undefined => {
+  if (
+    resolveSemanticBindingState(state, node, name) !== undefined ||
+    semanticResolutionBlocked(state, node, name)
+  )
+    return undefined;
+  return openGlobalFact(name);
 };
 
 const createState = (program: t.Program): JavaScriptSemanticAnalysisState => {

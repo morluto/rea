@@ -37,6 +37,12 @@ explicit limitation; architecture inventory locations remain available.
   connections and controller/class names. `verify:interface-builder` compiles
   a source-owned AppKit XIB with `ibtool`. Storyboards require an installed
   iOS platform; unsupported archive forms remain explicit.
+  XML plist archives accept UTF-8 and BOM-marked UTF-16 in either byte order.
+  The shared keyed-archive and Interface Builder decoder consumes an initial
+  BOM and rejects malformed byte sequences, unsupported encoding declarations,
+  and declarations that disagree with the detected encoding. It never substitutes
+  UTF-8 for a declared encoding it cannot process. Archive and evidence digests
+  still identify the original serialized bytes.
 - `inspect_native_dispatch_metadata` /
   `rea inspect-native-dispatch-metadata <app-or-binary>` prefers a validated macOS Mach-O byte reader. It decodes
   64-bit little-endian Objective-C class/metaclass records, superclass pointers,
@@ -188,15 +194,29 @@ arguments. The receiver class comes from LLDB's Objective-C runtime reader
 without running target code; no expression is evaluated, and REA never
 attaches to a process it did not launch.
 
-The run ends when the process exits, `max_events` entries are recorded, or
-`duration_ms` elapses. In the last two cases the process is killed, and REA
-confirms that it is gone. The result reports:
+The run ends when the process exits, `max_events` entries are recorded,
+`duration_ms` elapses, or the aggregate trace resource budget is exhausted.
+Bounded termination reports partial coverage. REA checks process termination
+using a launch-time OS start identity; if ownership or cleanup cannot be
+verified, the result or error preserves that uncertainty. The result reports:
 
-- the outcome, exit status and captured stdout/stderr (1 MiB kept per stream);
+- the outcome, exit status and captured stdout/stderr (1 MiB kept per stream
+  while excess bytes are drained and counted without growing capture files).
+  Each stream reports `complete`; when draining could not finish, its byte
+  count is an observed lower bound and truncation is explicit;
+- caller-selected arguments, working directory, and environment overrides;
+- `selected_file_sha256` and LLDB module identity observations. These checks do
+  not pin the executable against concurrent mutation; `loaded_image_sha256`
+  remains unknown;
 - signal or exception stops;
 - every breakpoint's resolved locations; a breakpoint that matched no loaded
   code makes coverage partial;
 - limitations.
+
+The bridge limits retained event JSON to 8 MiB and caller frames to 65,536
+across the run. It checks admission before retaining another complete event;
+`resource-limit` reports which observations could not be completed without
+silently changing the requested event or frame settings.
 
 Only entries are observed: return values, floating-point and stack arguments,
 and inlined or `objc_direct` calls are not. The target runs with the current

@@ -4,12 +4,11 @@ import type { WebRuntimePort } from "./WebRuntimePort.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
-  AnalysisInputError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { jsonObjectSchema, jsonValueSchema } from "../domain/jsonValue.js";
-import { projectInputIssues } from "../domain/inputIssueProjection.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   observeWebExecutionInputSchema,
@@ -137,10 +136,8 @@ const parseInput = <T>(
   return parsed.success
     ? ok(parsed.data)
     : err(
-        new AnalysisInputError(
-          operation,
-          { cause: parsed.error },
-          projectInputIssues(parsed.error.issues, rawInput),
-        ),
+        analysisInputErrorFromIssues(operation, parsed.error.issues, rawInput, {
+          cause: parsed.error,
+        }),
       );
 };

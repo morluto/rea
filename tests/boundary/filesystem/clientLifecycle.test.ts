@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
 
-import { configureTomlClient } from "../../../src/application/SetupClientConfiguration.js";
+import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
 import { detectClients } from "../../../src/application/SetupHost.js";
 import {
   runUninstall,
@@ -82,7 +82,7 @@ describe("client configuration filesystem lifecycle", () => {
       'model = "gpt-5"\n[mcp_servers.other]\ncommand = "other"\n',
     );
     expect(
-      await configureTomlClient(
+      await configureClientConfiguration(
         { name: "codex", configPath, format: "toml" },
         {
           HOPPER_LAUNCHER_PATH: "/Hopper Path",
@@ -100,7 +100,7 @@ describe("client configuration filesystem lifecycle", () => {
     expect(configured).toContain('GHIDRA_INSTALL_DIR = "/opt/ghidra"');
     expect(configured).toContain('JAVA_HOME = "/opt/jdk-21"');
     expect(
-      await configureTomlClient(
+      await configureClientConfiguration(
         { name: "codex", configPath, format: "toml" },
         {
           HOPPER_LAUNCHER_PATH: "/Hopper Path",
@@ -124,7 +124,7 @@ describe("client configuration filesystem lifecycle", () => {
 
     const original = await readFile(configPath, "utf8");
     expect(
-      await configureTomlClient(
+      await configureClientConfiguration(
         { name: "codex", configPath, format: "toml" },
         {
           HOPPER_LAUNCHER_PATH: "/Hopper Path",
@@ -151,7 +151,7 @@ describe("client configuration filesystem lifecycle", () => {
     await symlink(targetPath, configPath);
 
     expect(
-      await configureTomlClient(
+      await configureClientConfiguration(
         { name: "codex", configPath, format: "toml" },
         undefined,
         ["rea", "mcp"],
@@ -170,7 +170,11 @@ describe("client configuration filesystem lifecycle", () => {
     await symlink(join(home, "missing-config.toml"), configPath);
 
     expect(
-      await configureTomlClient({ name: "codex", configPath, format: "toml" }),
+      await configureClientConfiguration({
+        name: "codex",
+        configPath,
+        format: "toml",
+      }),
     ).toEqual({ status: "failed", reason: "path" });
     expect((await lstat(configPath)).isSymbolicLink()).toBe(true);
     await expect(

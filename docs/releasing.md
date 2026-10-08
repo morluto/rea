@@ -115,6 +115,8 @@ gh workflow run release.yml --ref release/5.0.0 \
 Publication creates the release from the merged bot PR without preparing or
 updating another PR. Both npm and MCP Registry jobs check out Release Please's
 exact release SHA. They do not build the current main tip or a mutable branch.
+Stable versions publish to npm's `latest` tag; prerelease versions publish to
+the `next` tag so they cannot replace the stable install by default.
 The publish dispatch runs from the frozen release branch so npm's provenance
 records the actual release commit. Before Release Please creates a tag, the
 workflow accepts only `prepare` or `publish` and requires the selected branch

@@ -213,6 +213,27 @@ it("binds npm and MCP publication to the same immutable release SHA", async () =
       "inputs.phase == 'prepare' && steps.release.outputs.prs_created == 'true'",
     );
   }
+  const publishCommand = workflow.jobs.publish.steps.find(
+    (step) => step.name === "Publish",
+  )?.run;
+  expect(publishCommand).toContain("scripts/release-npm-tag.mjs");
+  expect(publishCommand).toContain(
+    'npm publish --access public --tag "${tag}"',
+  );
+  for (const [version, tag] of [
+    ["6.1.0", "latest"],
+    ["6.1.0-rc.1", "next"],
+  ] as const) {
+    const helper = new URL(
+      "../../../scripts/release-npm-tag.mjs",
+      import.meta.url,
+    );
+    const result = await execFileAsync(process.execPath, [
+      helper.pathname,
+      version,
+    ]);
+    expect(result.stdout).toBe(tag);
+  }
 });
 
 it

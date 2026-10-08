@@ -43,6 +43,10 @@ def inspect_core(path, cache):
         raise CoreFailure("unsupported-target", "Initial recorded-core profile requires ELF64 little-endian.")
     if len(content) < 64:
         raise CoreFailure("format", "Selected ELF64 core header is truncated.")
+    if content[6] != 1:
+        raise CoreFailure("format", "ELF identification version is not EV_CURRENT.")
+    if int.from_bytes(content[20:24], "little") != 1:
+        raise CoreFailure("format", "ELF header version is not EV_CURRENT.")
     # Linux commonly emits ELFOSABI_NONE (0), also accepted as GNU/Linux (3).
     # Other declared OSABIs must never select Linux note ctypes.
     if content[7] not in (0, 3) or content[8] != 0:

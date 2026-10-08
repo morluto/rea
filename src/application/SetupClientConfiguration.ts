@@ -27,22 +27,6 @@ import type { SetupClient } from "./SupportedClients.js";
 
 const defaultCommand = (): readonly string[] => npxRegistrationCommand();
 
-/** Back up, atomically update, and semantically read back one JSON MCP configuration. */
-export const configureJsonClient = (
-  client: SetupClient,
-  environment: SetupProviderEnvironment = {},
-  command: readonly string[] = defaultCommand(),
-): Promise<ClientConfigurationResult> =>
-  configureClientDocument(client, environment, command, "json");
-
-/** Back up, atomically update, and semantically read back one TOML MCP configuration. */
-export const configureTomlClient = (
-  client: SetupClient,
-  environment: SetupProviderEnvironment = {},
-  command: readonly string[] = defaultCommand(),
-): Promise<ClientConfigurationResult> =>
-  configureClientDocument(client, environment, command, "toml");
-
 /** Configure one supported client's native stdio MCP registration shape. */
 export const configureClientConfiguration = (
   client: SetupClient,
@@ -52,6 +36,37 @@ export const configureClientConfiguration = (
   if (client.format === undefined || client.format === "unsupported")
     return Promise.resolve({ status: "failed", reason: "readback" });
   return configureClientDocument(client, environment, command, client.format);
+};
+
+/** @deprecated Use configureClientConfiguration with the client's declared format. */
+export const configureJsonClient = (
+  client: SetupClient,
+  environment: SetupProviderEnvironment = {},
+  command: readonly string[] = defaultCommand(),
+): Promise<ClientConfigurationResult> =>
+  configureClientWithFormat(client, "json", environment, command);
+
+/** @deprecated Use configureClientConfiguration with the client's declared format. */
+export const configureTomlClient = (
+  client: SetupClient,
+  environment: SetupProviderEnvironment = {},
+  command: readonly string[] = defaultCommand(),
+): Promise<ClientConfigurationResult> =>
+  configureClientWithFormat(client, "toml", environment, command);
+
+const configureClientWithFormat = (
+  client: SetupClient,
+  format: "json" | "toml",
+  environment: SetupProviderEnvironment,
+  command: readonly string[],
+): Promise<ClientConfigurationResult> => {
+  if (client.format !== undefined && client.format !== format)
+    return Promise.resolve({ status: "failed", reason: "readback" });
+  return configureClientConfiguration(
+    { ...client, format: client.format ?? format },
+    environment,
+    command,
+  );
 };
 
 const configureClientDocument = async (

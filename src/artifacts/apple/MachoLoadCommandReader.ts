@@ -3,6 +3,11 @@ import type {
   MachoImageFacts,
   MachoSlice,
 } from "../../domain/apple/dylibResolution.js";
+import {
+  readFatSliceDeclarations,
+  validateFatSlice,
+  type FatSliceDeclaration,
+} from "../../domain/apple/machoContainer.js";
 
 /** Read `length` bytes at `offset`; shorter results mean end of file. */
 export type ReadAt = (offset: number, length: number) => Promise<Uint8Array>;
@@ -34,6 +39,11 @@ const LC_LOAD_UPWARD_DYLIB = 0x80000023;
 const LC_RPATH = 0x8000001c;
 const LC_DYLD_ENVIRONMENT = 0x27;
 const LC_CODE_SIGNATURE = 0x1d;
+const LC_VERSION_MIN_MACOSX = 0x24;
+const LC_VERSION_MIN_IPHONEOS = 0x25;
+const LC_VERSION_MIN_TVOS = 0x2f;
+const LC_VERSION_MIN_WATCHOS = 0x30;
+const LC_BUILD_VERSION = 0x32;
 
 /** `mach-o/loader.h` `dylib_use_command`: `nameoff == 28` and this marker. */
 const DYLIB_USE_MARKER = 0x1a741800;
@@ -109,22 +119,55 @@ export const readMachoImage = async (
         };
       if (count > MAX_FAT_ARCHITECTURES || 8 + count * (wide ? 32 : 20) > size)
         return { status: "not-mach-o" };
-      const table = viewOf(
-        await readExact(readAt, 8, count * (wide ? 32 : 20), "FAT table"),
+      const tableBytes = await readExact(
+        readAt,
+        8,
+        count * (wide ? 32 : 20),
+        "FAT table",
       );
+      const declarations = readFatSliceDeclarations(tableBytes, {
+        count,
+        wide,
+        littleEndian,
+      });
+      if (declarations.status !== "parsed")
+        throw new MachoFormatIssue("malformed", declarations.reason);
       // A Java class file's version fields read as a FAT count; its "table" names no CPU.
-      const cpuTypes = Array.from({ length: count }, (_, index) =>
-        table.getUint32(index * (wide ? 32 : 20), littleEndian),
-      );
-      if (!cpuTypes.some((type) => KNOWN_CPU_TYPES.includes(type)))
-        return { status: "not-mach-o" };
+      if (
+        !declarations.slices.some(({ cpuType }) =>
+          KNOWN_CPU_TYPES.includes(cpuType),
+        )
+      ) {
+        let hasMachOSliceHeader = false;
+        for (const declaration of declarations.slices) {
+          if (
+            validateFatSlice(
+              declaration,
+              size,
+              8 + count * (wide ? 32 : 20),
+            ) !== null
+          )
+            continue;
+          const bytes = await readAt(declaration.offset, 4);
+          if (bytes.byteLength < 4) continue;
+          const sliceMagic = viewOf(bytes).getUint32(0, false);
+          if (
+            [MH_MAGIC, MH_MAGIC_64, MH_CIGAM, MH_CIGAM_64].includes(sliceMagic)
+          ) {
+            hasMachOSliceHeader = true;
+            break;
+          }
+        }
+        if (!hasMachOSliceHeader) return { status: "not-mach-o" };
+      }
       return {
         status: "parsed",
-        slices: await readFatSlices(readAt, size, {
-          wide,
-          littleEndian,
-          count,
-        }),
+        slices: await readFatSlices(
+          readAt,
+          size,
+          8 + count * (wide ? 32 : 20),
+          declarations.slices,
+        ),
       };
     }
     if (magic === MH_CIGAM || magic === MH_CIGAM_64)
@@ -145,32 +188,30 @@ export const readMachoImage = async (
 const readFatSlices = async (
   readAt: ReadAt,
   size: number,
-  table: {
-    readonly wide: boolean;
-    readonly littleEndian: boolean;
-    readonly count: number;
-  },
+  tableEnd: number,
+  declarations: readonly FatSliceDeclaration[],
 ): Promise<MachoSlice[]> => {
-  const { wide, littleEndian, count } = table;
-  const entrySize = wide ? 32 : 20;
-  const view = viewOf(
-    await readExact(readAt, 8, count * entrySize, "FAT table"),
-  );
   const slices: MachoSlice[] = [];
-  for (let index = 0; index < count; index++) {
-    const base = index * entrySize;
-    const offset = wide
-      ? safeNumber(view.getBigUint64(base + 8, littleEndian))
-      : view.getUint32(base + 8, littleEndian);
-    const length = wide
-      ? safeNumber(view.getBigUint64(base + 16, littleEndian))
-      : view.getUint32(base + 12, littleEndian);
-    if (offset + length > size)
+  for (const declaration of declarations) {
+    const { index, offset, size: length, cpuType, cpuSubtype } = declaration;
+    const rangeIssue = validateFatSlice(declaration, size, tableEnd);
+    if (rangeIssue !== null)
       throw new MachoFormatIssue(
-        "malformed",
-        `FAT architecture ${index} extends beyond the file`,
+        rangeIssue.includes("unsupported") ? "unsupported" : "malformed",
+        rangeIssue,
       );
-    slices.push(await readSlice(readAt, offset, length));
+    const slice = await readSlice(readAt, offset, length, {
+      fatCpuType: cpuType,
+      fatCpuSubtype: cpuSubtype,
+      alignmentExponent: declaration.alignmentExponent,
+    });
+    const identityIssue = validateFatSlice(declaration, size, tableEnd, {
+      cpuType: slice.cpu_type,
+      cpuSubtype: slice.cpu_subtype,
+    });
+    if (identityIssue !== null)
+      throw new MachoFormatIssue("malformed", identityIssue);
+    slices.push(slice);
   }
   return slices;
 };
@@ -179,6 +220,11 @@ const readSlice = async (
   readAt: ReadAt,
   base: number,
   length: number,
+  fat: {
+    readonly fatCpuType: number;
+    readonly fatCpuSubtype: number;
+    readonly alignmentExponent: number;
+  } | null = null,
 ): Promise<MachoSlice> => {
   const header = viewOf(await readExact(readAt, base, 28, "Mach-O header"));
   const magic = header.getUint32(0, true);
@@ -203,13 +249,22 @@ const readSlice = async (
       commandBytes,
       "load commands",
     );
-    return decodeCommands(commands, {
+    const slice = decodeCommands(commands, {
       wide,
       cpuType: header.getUint32(4, true),
       cpuSubtype: header.getUint32(8, true),
       fileType: header.getUint32(12, true),
       commandCount,
+      sliceOffset: base,
+      sliceSize: length,
+      fatCpuType: fat?.fatCpuType ?? null,
+      fatCpuSubtype: fat?.fatCpuSubtype ?? null,
+      fatAlignmentExponent: fat?.alignmentExponent ?? null,
     });
+    const distinctPlatforms = [...new Set(slice.platforms)];
+    slice.platform =
+      distinctPlatforms.length === 1 ? (distinctPlatforms[0] ?? null) : null;
+    return slice;
   }
   throw new MachoFormatIssue(
     magic === swap(MH_MAGIC) || magic === swap(MH_MAGIC_64)
@@ -229,6 +284,11 @@ const decodeCommands = (
     readonly cpuSubtype: number;
     readonly fileType: number;
     readonly commandCount: number;
+    readonly sliceOffset: number;
+    readonly sliceSize: number;
+    readonly fatCpuType: number | null;
+    readonly fatCpuSubtype: number | null;
+    readonly fatAlignmentExponent: number | null;
   },
 ): MachoSlice => {
   // loader.h: load commands are 8-byte aligned in 64-bit images, 4 in 32-bit.
@@ -236,7 +296,17 @@ const decodeCommands = (
   const view = viewOf(bytes);
   const slice: MachoSlice = {
     architecture: architectureName(header.cpuType, header.cpuSubtype),
+    slice_offset: header.sliceOffset,
+    slice_size: header.sliceSize,
+    cpu_type: header.cpuType,
+    cpu_subtype: header.cpuSubtype,
+    fat_cpu_type: header.fatCpuType,
+    fat_cpu_subtype: header.fatCpuSubtype,
+    fat_alignment_exponent: header.fatAlignmentExponent,
     file_type: fileTypeName(header.fileType),
+    file_type_code: header.fileType,
+    platform: null,
+    platforms: [],
     install_name: null,
     dependencies: [],
     rpaths: [],
@@ -290,6 +360,31 @@ const decodeCommand = (
         `load command ${index} is too short for LC_CODE_SIGNATURE`,
       );
     slice.code_signature_present = true;
+    return;
+  }
+  if (command === LC_BUILD_VERSION) {
+    if (body.byteLength < 24)
+      throw new MachoFormatIssue(
+        "malformed",
+        `load command ${index} is too short for LC_BUILD_VERSION`,
+      );
+    const platform = viewOf(body).getUint32(8, true);
+    slice.platforms.push(platform);
+    return;
+  }
+  const legacyPlatform = new Map<number, number>([
+    [LC_VERSION_MIN_MACOSX, 1],
+    [LC_VERSION_MIN_IPHONEOS, 2],
+    [LC_VERSION_MIN_TVOS, 3],
+    [LC_VERSION_MIN_WATCHOS, 4],
+  ]).get(command);
+  if (legacyPlatform !== undefined) {
+    if (body.byteLength < 16)
+      throw new MachoFormatIssue(
+        "malformed",
+        `load command ${index} is too short for a version-min command`,
+      );
+    slice.platforms.push(legacyPlatform);
     return;
   }
   const name = DEPENDENCY_COMMANDS.get(command);
@@ -415,12 +510,6 @@ const swap = (value: number): number =>
     ((value >>> 8) & 0xff00) |
     (value >>> 24)) >>>
   0;
-
-const safeNumber = (value: bigint): number => {
-  if (value > BigInt(Number.MAX_SAFE_INTEGER))
-    throw new MachoFormatIssue("malformed", "FAT offset exceeds safe range");
-  return Number(value);
-};
 
 const viewOf = (bytes: Uint8Array): DataView =>
   new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);

@@ -3,13 +3,10 @@ import type {
   AnalysisOperation,
   AnalysisOperationPort,
 } from "./AnalysisProvider.js";
-import {
-  AnalysisCapabilityUnavailableError,
-  AnalysisOutputError,
-} from "../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { parseDocuments } from "../domain/hopperValues.js";
+import { resolveAnalysisDocument } from "./AnalysisDocument.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 type Facet =
@@ -88,7 +85,11 @@ export const inspectAddressContext = async (
   input: { readonly address: string; readonly document?: string | undefined },
   signal?: AbortSignal,
 ): Promise<Result<JsonValue, AnalysisError>> => {
-  const document = await resolveDocument(analysis, input.document, signal);
+  const document = await resolveAnalysisDocument(
+    analysis,
+    input.document,
+    signal,
+  );
   if (!document.ok) return document;
   const args = parameters(document.value, input.address);
   const operations = [
@@ -130,62 +131,6 @@ export const inspectAddressContext = async (
           )
         : bookmarks,
   });
-};
-
-const resolveDocument = async (
-  analysis: AnalysisOperationPort,
-  document: string | undefined,
-  signal: AbortSignal | undefined,
-): Promise<Result<string, AnalysisError>> => {
-  if (document !== undefined) return ok(document);
-  const current = await analysis.execute(
-    "current_document",
-    {},
-    executionOptions(signal),
-  );
-  if (!current.ok) {
-    if (!(current.error instanceof AnalysisCapabilityUnavailableError))
-      return current;
-    const listed = await analysis.execute(
-      "list_documents",
-      {},
-      executionOptions(signal),
-    );
-    if (!listed.ok) return listed;
-    const parsed = parseDocuments(listed.value.result);
-    if (!parsed.ok)
-      return err(
-        new AnalysisOutputError(
-          "list_documents",
-          "expected one document identity when resolving a headless provider",
-          { cause: parsed.error },
-        ),
-      );
-    if (parsed.value.length !== 1)
-      return err(
-        new AnalysisOutputError(
-          "list_documents",
-          `expected exactly one document identity for a provider without current-document selection, received ${parsed.value.length}`,
-        ),
-      );
-    const [documentName] = parsed.value;
-    if (documentName === undefined)
-      return err(
-        new AnalysisOutputError(
-          "list_documents",
-          "provider returned no document identity",
-        ),
-      );
-    return ok(documentName);
-  }
-  return typeof current.value.result === "string"
-    ? ok(current.value.result)
-    : err(
-        new AnalysisOutputError(
-          "current_document",
-          "expected a document identity string",
-        ),
-      );
 };
 
 const facet = (

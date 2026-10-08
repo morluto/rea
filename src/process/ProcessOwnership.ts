@@ -566,9 +566,15 @@ const cleanupValidationFailure = (
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([category, count]) => `${category}=${String(count)}`)
       .join(", ");
+    const candidates = unreadable
+      .map(
+        ({ pid, diagnostic }) =>
+          `${String(pid)}=${sanitizedTokenReadFailure(diagnostic)}`,
+      )
+      .sort((left, right) => left.localeCompare(right));
     return {
       cleaned: false,
-      reason: `process ownership token could not be read for ${String(unreadable.length)} live process(es): ${breakdown}`,
+      reason: `process ownership token could not be read for ${String(unreadable.length)} live process(es): ${breakdown}; live candidates ${candidates.join(", ")}`,
       failures,
       ...unverifiedEntry,
     };

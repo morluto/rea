@@ -252,6 +252,59 @@ describe("managed member comparison uncertainty", () => {
 });
 
 describe("managed member comparison of undecoded signatures", () => {
+  it("remaps renamed methods only when raw signatures and complete normalized IL match", () => {
+    const signature = Buffer.from([0x00, 0x00, 0x7f]);
+    const left = inspect(
+      buildManagedPeFixture({ methodSignature: signature }),
+      "/tmp/undecoded-method-before.dll",
+    );
+    const renamed = inspect(
+      buildManagedPeFixture({
+        methodSignature: signature,
+        methodName: "renamed",
+      }),
+      "/tmp/undecoded-method-renamed.dll",
+    );
+    expect(left.result.methods[0]?.signature.parse_status).toBe("unsupported");
+    expect(renamed.result.coverage.state).toBe("complete");
+
+    const exact = compareManagedMembers(left, renamed);
+    expect(exact.methods).toEqual([
+      expect.objectContaining({
+        status: "unchanged",
+        match: expect.objectContaining({
+          status: "matched",
+          basis: "exact-il-signature",
+          confidence: "exact",
+        }),
+      }),
+    ]);
+    expect(exact.summary).toMatchObject({ added: 0, removed: 0, unknown: 0 });
+
+    const changedRaw = inspect(
+      buildManagedPeFixture({
+        methodSignature: Buffer.from([0x00, 0x00, 0x7e]),
+        methodName: "renamed",
+      }),
+      "/tmp/undecoded-method-raw-changed.dll",
+    );
+    const changedBody = inspect(
+      buildManagedPeFixture({
+        methodSignature: signature,
+        methodName: "renamed",
+        ilBody: Buffer.from([0x2a]),
+      }),
+      "/tmp/undecoded-method-il-changed.dll",
+    );
+    for (const negative of [changedRaw, changedBody]) {
+      const result = compareManagedMembers(left, negative);
+      expect(result.methods).toHaveLength(2);
+      expect(
+        result.methods.every((method) => method.match.status !== "matched"),
+      ).toBe(true);
+    }
+  });
+
   it("pairs undecoded signatures by exact declared type, name, and raw bytes", () => {
     const undecoded = {
       methodSignature: Buffer.from([0x00, 0x00, 0x7f]),
@@ -275,11 +328,14 @@ describe("managed member comparison of undecoded signatures", () => {
       removed: 0,
       unknown: 0,
     });
-    for (const item of [...result.methods, ...result.fields])
-      expect(item.match).toMatchObject({
-        status: "matched",
-        basis: "exact-signature",
-      });
+    expect(result.methods[0]?.match).toMatchObject({
+      status: "matched",
+      basis: "exact-il-signature",
+    });
+    expect(result.fields[0]?.match).toMatchObject({
+      status: "matched",
+      basis: "exact-signature",
+    });
   });
 
   it("keeps unmatched undecoded members unknown in complete inventories", () => {
@@ -376,10 +432,10 @@ describe("managed member comparison of ambiguous undecoded signatures", () => {
           status: "unknown",
           match: expect.objectContaining({
             status: "ambiguous",
-            basis: "exact-signature",
+            basis: "exact-il-signature",
           }),
           limitations: [
-            "Multiple managed methods share the same declared type, name, and raw signature; REA did not guess a token remap.",
+            "Multiple managed methods share the same non-name identity key; REA did not guess a token remap.",
           ],
         }),
         expect.objectContaining({

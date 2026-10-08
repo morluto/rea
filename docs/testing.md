@@ -532,17 +532,19 @@ conformance/vtable fixture.
   Both commands reject a changed executable digest and clean up the fixture
   process and helper. These lanes require an interactive macOS desktop. See [native investigation](native-investigation.md)
 
-`npm run verify:native-calls` needs only macOS with Command Line Tools (`clang`,
-`lldb`, `codesign`, `nm`). It compiles `tests/conformance/native/calls.m` and
+`npm run verify:native-calls` needs macOS with Command Line Tools (`clang`,
+`lldb`, `codesign`, `nm`) and Developer Mode enabled for unattended debugger
+access. Preflight reports disabled Developer Mode without changing host settings.
+It compiles `tests/conformance/native/calls.m` and
 runs `observe-native-calls` through the CLI and stdio MCP. It checks:
 
 - the receiver class, selector and argument registers of every entry, and that
   breakpoint addresses equal `nm`'s symbol addresses;
-- captured stdout and an environment override;
+- captured stdout and an environment override, plus a 2 MiB flood on each
+  output stream with bounded retained prefixes and exact drained-byte counts;
 - the event-limit and duration outcomes, with the process confirmed gone;
 - that a hardened-runtime copy is refused with `debugger-attach-denied`, and
   that the same copy signed with `get-task-allow` is traced.
-  for the exact ABI, authority, graph and observation boundaries.
 
 ### Firmware adapters
 

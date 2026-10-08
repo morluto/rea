@@ -208,7 +208,7 @@ describe("process environment permission diagnostics", () => {
         ),
       ).resolves.toMatchObject({
         cleaned: false,
-        reason: `process ownership token could not be read for 1 live process(es): environment_errno_${code}=1`,
+        reason: `process ownership token could not be read for 1 live process(es): environment_errno_${code}=1; live candidates 900=environment_errno_${code}`,
         failures: [{ pid: 900, reason: "environment-unreadable", diagnostic }],
       });
       expect(signalGroup).not.toHaveBeenCalled();

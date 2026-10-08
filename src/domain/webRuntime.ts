@@ -8,15 +8,17 @@ import { jsonObjectSchema } from "./jsonValue.js";
 
 // CDP positions are zero-based and relative to the resource named by url.
 // With a script ID that is the script's enclosing resource: the script file,
-// or the HTML document for an inline script. An empty script ID marks the
-// position a request's initiator reported, such as parser markup, which has
-// no script to convert. trace_web_source_location takes one-based,
-// script-relative lines, so the advertised units keep callers from passing a
-// position off by one or by the inline script's offset.
+// or the HTML document for an inline script. An empty script ID marks a
+// position a request initiator reported, such as parser markup or a module
+// import in a script file; it still locates url, but has no session-script
+// association to join captured source or resource_start.
+// trace_web_source_location takes one-based, script-relative lines, so the
+// advertised units keep callers from passing a position off by one or by an
+// inline script's offset.
 const SCRIPT_ID =
-  "CDP session script ID; empty for a position taken from a request initiator rather than a script call frame.";
+  "CDP session script ID; empty for a position a request initiator reported, which has no session-script association for joining captured source or resource_start.";
 const RESOURCE_LINE =
-  "Zero-based line in the resource named by url, as reported by CDP. With a script_id this is the script's enclosing resource (the script file, or the HTML document for an inline script); with an empty script_id it is the request initiator's reported position, such as parser markup in a document.";
+  "Zero-based line in the resource named by url, as reported by CDP: the script file for an external script (including a module-import initiator), or the HTML document for an inline script or parser markup.";
 const RESOURCE_COLUMN =
   "Zero-based UTF-16 column on that line of the resource named by url, as reported by CDP.";
 const START_LINE =

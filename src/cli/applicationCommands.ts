@@ -15,7 +15,6 @@ import { buildReconstructionObligationLedgerEvidenceValidated } from "../applica
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
 import { logCliCommand } from "../cliLogging.js";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import { androidApplicationProjectionInputSchema } from "../domain/android/androidApplication.js";
@@ -27,7 +26,7 @@ import { traceJavaScriptSemanticsInputSchema } from "../domain/javascript/javasc
 import { compareApplicationVersionsInputSchema } from "../domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
 import { compareSourceToBundleInputSchema } from "../domain/javascript/sourceToBundleComparisonSchemas.js";
 import { compareJavaScriptExportShapesInputSchema } from "../domain/javascript/javascriptExportShapeComparisonSchemas.js";
-import { projectInputIssues } from "../domain/inputIssueProjection.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { reconstructionObligationLedgerInputSchema } from "../domain/reconstructionObligationLedgerSchemas.js";
 
 type CliInstance = ReturnType<typeof Cli.create>;
@@ -184,10 +183,10 @@ const registerJsonCommand = <Schema extends z.ZodType>({
           return {
             error: "Application workflow failed",
             ...projectAnalysisError(
-              new AnalysisInputError(
+              analysisInputErrorFromIssues(
                 name,
-                undefined,
-                projectInputIssues(parsed.error.issues, input.value),
+                parsed.error.issues,
+                input.value,
               ),
             ),
           };

@@ -46,12 +46,14 @@ const captureObservations = (
   const partial = result.error.partialObservation;
   expect(result.error.reason).toBe("cleanup_incomplete");
   expect(report?.owned_process_group.state).toBe("unverified");
-  const [summary, breakdown] = (report?.owned_process_group.reason ?? "").split(
-    ": ",
-  );
+  const [summary, diagnostics] = (
+    report?.owned_process_group.reason ?? ""
+  ).split(": ");
   expect(summary).toMatch(
     /^process ownership token could not be read for [1-9][0-9]* live process\(es\)$/u,
   );
+  const [breakdown, liveCandidates] =
+    diagnostics?.split("; live candidates ") ?? [];
   const categories = breakdown?.split(", ") ?? [];
   expect(categories.length).toBeGreaterThan(0);
   const expectedCategory =
@@ -59,6 +61,9 @@ const captureObservations = (
       ? /^environment_errno_(?:EACCES|EPERM)=[1-9][0-9]*$/u
       : /^environment_unavailable=[1-9][0-9]*$/u;
   for (const category of categories) expect(category).toMatch(expectedCategory);
+  expect(liveCandidates).toMatch(
+    /^(?:[1-9][0-9]*=(?:environment_unavailable|environment_errno_(?:EACCES|EPERM)))(?:, [1-9][0-9]*=(?:environment_unavailable|environment_errno_(?:EACCES|EPERM)))*$/u,
+  );
   expect(report?.terminal_renderer.state).toBe("cleaned");
   expect(report?.temporary_root.state).toBe("cleaned");
   if (partial === undefined || !("capture" in partial))

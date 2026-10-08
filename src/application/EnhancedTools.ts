@@ -15,7 +15,6 @@ import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   addressDistance,
   functionDossierSchema,
-  parseDocuments,
   parseFunctionDossier,
   parseListCount,
   parseRelatedAddresses,
@@ -37,6 +36,7 @@ import {
   type EnhancedResult,
   type ValidatedEnhancedCall,
 } from "./EnhancedToolTypes.js";
+import { resolveAnalysisDocument } from "./AnalysisDocument.js";
 import { traceCallPath } from "./CallPathTracing.js";
 import { traceLiteralFeature } from "./EnhancedLiteralTracing.js";
 import { projectNativeApiInspection } from "./native/NativeApiInspection.js";
@@ -388,29 +388,32 @@ export class EnhancedTools {
   }
 
   async #binaryOverview(signal?: AbortSignal): EnhancedResult {
-    const [segmentsResult, documentsResult, proceduresResult, stringsResult] =
-      await Promise.all([
+    const document = await resolveAnalysisDocument(
+      this.analysis,
+      undefined,
+      signal,
+    );
+    if (!document.ok) return document;
+    const [segmentsResult, proceduresResult, stringsResult] = await Promise.all(
+      [
         this.#call("list_segments", {}, signal),
-        this.#call("list_documents", {}, signal),
         this.#call("list_procedures", {}, signal),
         this.#call("list_strings", {}, signal),
-      ]);
+      ],
+    );
     if (!segmentsResult.ok) return segmentsResult;
-    if (!documentsResult.ok) return documentsResult;
     if (!proceduresResult.ok) return proceduresResult;
     if (!stringsResult.ok) return stringsResult;
 
     const segments = parseSegments(segmentsResult.value);
     if (!segments.ok) return segments;
-    const documents = parseDocuments(documentsResult.value);
-    if (!documents.ok) return documents;
     const procedureCount = parseListCount(proceduresResult.value, "procedures");
     if (!procedureCount.ok) return procedureCount;
     const stringCount = parseListCount(stringsResult.value, "strings");
     if (!stringCount.ok) return stringCount;
 
     return ok({
-      document: documents.value[0] ?? "unknown",
+      document: document.value,
       segments: segments.value.map(({ name, start, end }) => ({
         name,
         start,

@@ -7,7 +7,10 @@ import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { createEvidence, parseEvidence } from "../../domain/evidence.js";
 import { describeValidationFailure } from "../../domain/evidenceBundle.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
-import { projectInputIssues } from "../../domain/inputIssueProjection.js";
+import {
+  analysisInputErrorFromIssues,
+  projectInputIssues,
+} from "../../domain/inputIssueProjection.js";
 import { processTraceSpecificationSchema } from "../../domain/process/processTraceComparison.js";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import {
@@ -49,10 +52,11 @@ export const captureProcessScenarioFile = async (
     const input = await readJson(path);
     const parsed = processScenarioSchema.safeParse(input);
     if (!parsed.success)
-      throw new AnalysisInputError(
+      throw analysisInputErrorFromIssues(
         "capture_process_scenario",
+        parsed.error.issues,
+        input,
         { cause: parsed.error },
-        projectInputIssues(parsed.error.issues, input),
       );
     const captured = await captureProcessScenario(
       parsed.data,

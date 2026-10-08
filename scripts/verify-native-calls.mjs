@@ -27,6 +27,14 @@ for (const tool of ["clang", "lldb", "codesign", "nm"])
       { cause },
     );
   }
+const developerMode = await exec("/usr/sbin/DevToolsSecurity", ["-status"]);
+if (
+  !/enabled/iu.test(developerMode.stdout) ||
+  /disabled/iu.test(developerMode.stdout)
+)
+  throw new Error(
+    "Native call observation verification requires macOS Developer Mode; DevToolsSecurity reports it disabled.",
+  );
 
 const SOURCE = fileURLToPath(
   new URL("../tests/conformance/native/calls.m", import.meta.url),
@@ -46,6 +54,7 @@ const INPUT = {
   argument_registers: 4,
   backtrace_frames: 1,
 };
+const CLI_TIMEOUT_MS = 180_000;
 
 /** Pointer-free facts that two runs of the same scenario must share. */
 const stable = (result) =>
@@ -68,17 +77,23 @@ const symbolAddress = async (binary, symbol) => {
 };
 
 const checkScenario = async (binary) => {
-  const result = await artifactCli("observe-native-calls", binary, [
-    JSON.stringify(INPUT),
-  ]);
+  const result = await artifactCli(
+    "observe-native-calls",
+    binary,
+    [JSON.stringify(INPUT)],
+    { timeoutMs: CLI_TIMEOUT_MS },
+  );
   assert.equal(result.process.outcome, "exited");
   assert.equal(result.process.exit_status, 0);
   assert.equal(result.process.terminated, true);
   assert.match(result.process.stdout.text, /^world x0 40\n/u);
   assert.match(result.process.stdout.text, /marker observed\n$/u);
+  assert.equal(result.process.stdout.complete, true);
+  assert.equal(result.process.stderr.complete, true);
   assert.deepEqual(result.coverage, {
     status: "complete",
     event_limit_reached: false,
+    resource_limit_reached: false,
     unresolved_breakpoints: [],
   });
   const greet = result.events.filter(({ symbol }) => symbol === GREET);
@@ -115,25 +130,59 @@ const alive = (pid) => {
 };
 
 const checkBounds = async (binary) => {
-  const limited = await artifactCli("observe-native-calls", binary, [
-    JSON.stringify({
-      breakpoints: [{ kind: "function", name: "nanosleep" }],
-      arguments: ["--wait"],
-      max_events: 2,
-      duration_ms: 30_000,
-    }),
-  ]);
+  const flooded = await artifactCli(
+    "observe-native-calls",
+    binary,
+    [
+      JSON.stringify({
+        breakpoints: [{ kind: "function", name: "rea_never_called" }],
+        arguments: ["--flood"],
+        duration_ms: 30_000,
+      }),
+    ],
+    { timeoutMs: CLI_TIMEOUT_MS },
+  );
+  assert.equal(flooded.process.outcome, "exited");
+  assert.equal(flooded.process.stdout.bytes, 2 * 1024 * 1024);
+  assert.equal(flooded.process.stderr.bytes, 2 * 1024 * 1024);
+  assert.equal(flooded.process.stdout.text.length, 1024 * 1024);
+  assert.equal(flooded.process.stderr.text.length, 1024 * 1024);
+  assert.equal(flooded.process.stdout.text, "O".repeat(1024 * 1024));
+  assert.equal(flooded.process.stderr.text, "E".repeat(1024 * 1024));
+  assert.equal(flooded.process.stdout.truncated, true);
+  assert.equal(flooded.process.stderr.truncated, true);
+  assert.equal(flooded.process.stdout.complete, true);
+  assert.equal(flooded.process.stderr.complete, true);
+
+  const limited = await artifactCli(
+    "observe-native-calls",
+    binary,
+    [
+      JSON.stringify({
+        breakpoints: [{ kind: "function", name: "nanosleep" }],
+        arguments: ["--wait"],
+        max_events: 2,
+        duration_ms: 30_000,
+      }),
+    ],
+    { timeoutMs: CLI_TIMEOUT_MS },
+  );
   assert.equal(limited.process.outcome, "event-limit");
   assert.equal(limited.events.length, 2);
   assert.equal(limited.process.terminated, true);
   assert.equal(alive(limited.process.pid), false);
-  const elapsed = await artifactCli("observe-native-calls", binary, [
-    JSON.stringify({
-      breakpoints: [{ kind: "function", name: "rea_call_add" }],
-      arguments: ["--wait"],
-      duration_ms: 1_500,
-    }),
-  ]);
+  const elapsed = await artifactCli(
+    "observe-native-calls",
+    binary,
+    [
+      JSON.stringify({
+        breakpoints: [{ kind: "function", name: "rea_call_add" }],
+        arguments: ["--wait"],
+        duration_ms: 1_500,
+      }),
+    ],
+    { timeoutMs: CLI_TIMEOUT_MS },
+  );
   assert.equal(elapsed.process.outcome, "duration-elapsed");
   assert.equal(elapsed.events.length, 0);
   assert.equal(alive(elapsed.process.pid), false);
@@ -150,7 +199,10 @@ const cliFailure = async (binary) => {
         JSON.stringify(INPUT),
         "--json",
       ],
-      { env: { ...process.env, REA_LOG_LEVEL: "silent" }, timeout: 120_000 },
+      {
+        env: { ...process.env, REA_LOG_LEVEL: "silent" },
+        timeout: CLI_TIMEOUT_MS,
+      },
     );
   } catch (cause) {
     return JSON.parse(cause.stdout);

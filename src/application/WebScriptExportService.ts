@@ -14,7 +14,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
-import { projectInputIssues } from "../domain/inputIssueProjection.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -38,11 +38,7 @@ export const exportWebScripts = async (
   return input.success
     ? exportWebScriptsValidated(input.data, options)
     : err(
-        new AnalysisInputError(
-          OPERATION,
-          undefined,
-          projectInputIssues(input.error.issues, rawInput),
-        ),
+        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput),
       );
 };
 

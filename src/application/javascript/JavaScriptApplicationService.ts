@@ -5,14 +5,11 @@ import {
   analyzeJavaScriptApplicationInputSchema,
   javascriptApplicationAnalysisResultSchema,
 } from "../../domain/javascript/javascriptApplicationAnalysis.js";
-import {
-  AnalysisInputError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { type AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Evidence } from "../../domain/evidence.js";
-import { projectInputIssues } from "../../domain/inputIssueProjection.js";
+import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
@@ -30,11 +27,7 @@ export const analyzeJavaScriptApplication = async (
   const parsed = analyzeJavaScriptApplicationInputSchema.safeParse(rawInput);
   if (!parsed.success)
     return err(
-      new AnalysisInputError(
-        OPERATION,
-        undefined,
-        projectInputIssues(parsed.error.issues, rawInput),
-      ),
+      analysisInputErrorFromIssues(OPERATION, parsed.error.issues, rawInput),
     );
   return analyzeJavaScriptApplicationValidated(parsed.data, options);
 };

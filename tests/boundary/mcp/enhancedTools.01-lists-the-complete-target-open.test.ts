@@ -123,6 +123,8 @@ const fixturePort = (): AnalysisOperationPort => ({
         return Promise.resolve(
           ok([{ name: "__TEXT", start: "0x1000", end: "0x2000" }]),
         );
+      case "current_document":
+        return Promise.resolve(ok("fixture"));
       case "list_documents":
         return Promise.resolve(ok(["fixture"]));
       case "list_strings":

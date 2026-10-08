@@ -221,7 +221,8 @@ describe("HopperClient cleanup", () => {
     const client = new HopperClient({
       launcher,
       runId,
-      startupTimeoutMs: 1_000,
+      // Cold Darwin ownership-reader compilation runs inside launcher startup.
+      startupTimeoutMs: 10_000,
       onDiagnostic: (event) => diagnostics.push(event),
     });
     clients.push(client);

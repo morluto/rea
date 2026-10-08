@@ -367,6 +367,49 @@ export const createSystemProcessOwnershipHost = (
 
 export const systemProcessOwnershipHost = createSystemProcessOwnershipHost();
 
+/** Observe the current OS start identity for one live PID, when supported. */
+export const observeProcessStartIdentity = async (
+  pid: number,
+  host: ProcessOwnershipHost = systemProcessOwnershipHost,
+): Promise<ProcessIdentityObservation | undefined> => {
+  const process = (await host.listProcesses()).find(
+    (entry) => entry.pid === pid,
+  );
+  if (process === undefined || liveProcesses([process]).length === 0)
+    return undefined;
+  if (host.processIdentities === undefined)
+    return { state: "unavailable", reason: "process identity is unsupported" };
+  return (
+    (await host.processIdentities([process])).get(pid) ?? {
+      state: "unavailable",
+      reason: "process identity was not returned",
+    }
+  );
+};
+
+/** Revalidate a launch-time start identity immediately before signaling a PID. */
+export const signalProcessWithStartIdentity = async (
+  pid: number,
+  expectedIdentity: string,
+  signal: NodeJS.Signals,
+  options: {
+    readonly host?: ProcessOwnershipHost;
+    readonly sendSignal?: (pid: number, signal: NodeJS.Signals) => void;
+  } = {},
+): Promise<"signaled" | "gone" | "identity-changed" | "unverified"> => {
+  const host = options.host ?? systemProcessOwnershipHost;
+  try {
+    const observed = await observeProcessStartIdentity(pid, host);
+    if (observed === undefined) return "gone";
+    if (observed.state !== "readable") return "unverified";
+    if (observed.identity !== expectedIdentity) return "identity-changed";
+    (options.sendSignal ?? process.kill)(pid, signal);
+    return "signaled";
+  } catch {
+    return "unverified";
+  }
+};
+
 /** Prepare native token inspection before REA launches a captured child. */
 export const prepareProcessOwnershipInspection = async (
   signal?: AbortSignal,

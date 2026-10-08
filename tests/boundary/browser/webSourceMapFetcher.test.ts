@@ -100,7 +100,7 @@ describe("source-map redirect URL resolution", () => {
   );
 });
 
-describe("web source-map fetching and validation", () => {
+describe("web source-map fetching and validation: fetching maps and following redirects", () => {
   it("fetches without credentials and derives mappings and original modules", async () => {
     const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
     const map = JSON.stringify({
@@ -215,6 +215,155 @@ describe("web source-map fetching and validation", () => {
 
     expect(calls).toHaveLength(8);
     expect(result.items[0]?.status).toBe("included");
+  });
+});
+
+describe("web source-map fetching and validation: enforcing fetch limits and validating responses", () => {
+  it("settles an endless unique-URL redirect chain at the operation deadline", async () => {
+    let calls = 0;
+    const server = createServer((incoming, response) => {
+      calls += 1;
+      const next =
+        Number(
+          new URL(incoming.url ?? "/", "http://local").searchParams.get("n") ??
+            "0",
+        ) + 1;
+      response.writeHead(302, { location: `/map?n=${String(next)}` }).end();
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      const address = server.address();
+      if (address === null || typeof address === "string")
+        throw new TypeError("Expected a TCP listener address");
+      const localOrigin = `http://127.0.0.1:${String(address.port)}`;
+      const url = `${localOrigin}/map?n=0`;
+      const result = await fetchWebSourceMaps(
+        [{ ...request, fetchUrl: url, declaredUrl: url }],
+        input({ allowed_origins: [localOrigin] }),
+        undefined,
+        { fetch, timeoutMs: 100 },
+      );
+      expect(calls).toBeGreaterThan(1);
+      expect(result).toMatchObject({
+        status: "unavailable",
+        processed: 1,
+        items: [
+          {
+            status: "fetch_failed",
+            artifact: null,
+            limitation: "Source-map fetching exceeded its operation deadline.",
+          },
+        ],
+      });
+    } finally {
+      server.closeAllConnections();
+      if (server.listening)
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) =>
+            error === undefined ? resolve() : reject(error),
+          );
+        });
+    }
+  });
+
+  it("cancels a streamed response when its retained-byte budget is exceeded", async () => {
+    let responseClosed = false;
+    let markResponseClosed: (() => void) | undefined;
+    const responseClosedPromise = new Promise<void>((resolve) => {
+      markResponseClosed = resolve;
+    });
+    const server = createServer((_incoming, response) => {
+      response.on("close", () => {
+        responseClosed = true;
+        markResponseClosed?.();
+      });
+      response.writeHead(200, { "content-type": "application/json" });
+      response.write("x".repeat(1_024));
+      const interval = setInterval(() => response.write("x".repeat(1_024)), 2);
+      response.on("close", () => clearInterval(interval));
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      const address = server.address();
+      if (address === null || typeof address === "string")
+        throw new TypeError("Expected a TCP listener address");
+      const localOrigin = `http://127.0.0.1:${String(address.port)}`;
+      const url = `${localOrigin}/map`;
+      const result = await fetchWebSourceMaps(
+        [{ ...request, fetchUrl: url, declaredUrl: url }],
+        input({ allowed_origins: [localOrigin] }),
+        undefined,
+        { fetch, maxResponseBytes: 512 },
+      );
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const closeConfirmed = await Promise.race([
+        responseClosedPromise.then(() => true),
+        new Promise<boolean>((resolve) => {
+          timeout = setTimeout(() => resolve(false), 500);
+        }),
+      ]);
+      if (timeout !== undefined) clearTimeout(timeout);
+      expect(closeConfirmed).toBe(true);
+      expect(responseClosed).toBe(true);
+      expect(result).toMatchObject({
+        status: "unavailable",
+        items: [
+          {
+            status: "fetch_failed",
+            artifact: null,
+            limitation:
+              "Source-map response exceeded the retained-byte budget.",
+          },
+        ],
+      });
+    } finally {
+      server.closeAllConnections();
+      if (server.listening)
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) =>
+            error === undefined ? resolve() : reject(error),
+          );
+        });
+    }
+  });
+
+  it("cancels a pending response reader on caller abort", async () => {
+    let markPullStarted: (() => void) | undefined;
+    const pullStarted = new Promise<void>((resolve) => {
+      markPullStarted = resolve;
+    });
+    let markCancelled: (() => void) | undefined;
+    const cancelled = new Promise<void>((resolve) => {
+      markCancelled = resolve;
+    });
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("{"));
+      },
+      pull() {
+        markPullStarted?.();
+      },
+      cancel() {
+        markCancelled?.();
+      },
+    });
+    const controller = new AbortController();
+    const abortReason = new Error("caller stopped source-map fetch");
+    const pending = fetchWebSourceMaps([request], input(), controller.signal, {
+      fetch: async () => new Response(body),
+    });
+
+    await pullStarted;
+    controller.abort(abortReason);
+
+    await expect(pending).rejects.toBe(abortReason);
+    await cancelled;
   });
 
   it("reports malformed source-map JSON as invalid", async () => {

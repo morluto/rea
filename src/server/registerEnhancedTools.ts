@@ -17,11 +17,11 @@ import {
 import {
   createWorkflowEvidence,
   workflowSnapshotRecord,
+  recordWorkflowUnknowns,
 } from "../application/WorkflowEvidence.js";
 import { toolContract, type ToolContract } from "../contracts/toolContracts.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
-import { UnknownRegistryError } from "../domain/unknownRegistryError.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "../logger.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
@@ -324,63 +324,3 @@ const jsonParameters = (
       (entry): entry is [string, JsonValue] => entry[1] !== undefined,
     ),
   );
-
-interface WorkflowUnknownInput {
-  readonly name: string;
-  readonly result: JsonValue;
-  readonly evidenceId: string;
-  readonly recordUnknown: UnknownRegistryPort["recordUnknown"] | undefined;
-}
-
-const recordWorkflowUnknowns = ({
-  name,
-  result,
-  evidenceId,
-  recordUnknown,
-}: WorkflowUnknownInput):
-  | ReturnType<UnknownRegistryPort["recordUnknown"]>
-  | { readonly ok: true; readonly value: null } => {
-  if (
-    !["trace_feature", "trace_call_path", "inspect_native_api"].includes(
-      name,
-    ) ||
-    recordUnknown === undefined ||
-    typeof result !== "object" ||
-    result === null ||
-    Array.isArray(result) ||
-    !Array.isArray(result.residual_unknowns)
-  )
-    return { ok: true, value: null };
-  for (const question of result.residual_unknowns) {
-    if (typeof question !== "string") continue;
-    const recorded = recordUnknown({
-      question,
-      severity: "medium",
-      domain: name === "inspect_native_api" ? "native-api" : "control-flow",
-      supporting_evidence_ids: [evidenceId],
-      contradicting_evidence_ids: [],
-      required_authority: "shipped-artifact",
-      required_confidence: "observed",
-      required_environment: null,
-      recommended_probes: [
-        {
-          operation: name,
-          rationale:
-            name === "inspect_native_api"
-              ? "Confirm the unsupported boundary with a capable provider or ABI probe."
-              : "Continue with a focused query or another available provider.",
-        },
-      ],
-      relationships: [],
-    });
-    if (
-      !recorded.ok &&
-      !(
-        recorded.error instanceof UnknownRegistryError &&
-        recorded.error.reason === "already-exists"
-      )
-    )
-      return recorded;
-  }
-  return { ok: true, value: null };
-};

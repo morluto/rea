@@ -346,6 +346,10 @@ try {
     requireSuccessfulTool(overview, "binary_overview"),
     "binary_overview",
   );
+  if (firstOverview.document !== currentDocument)
+    throw new Error(
+      "binary_overview did not identify the selected Hopper document",
+    );
   const firstAnalysis = await verifyCurrentTarget(client, options);
   const fixtureAnalysis = await verifyRealHopperFixture({
     client,
@@ -382,6 +386,16 @@ try {
     await client.callTool({ name: "list_documents", arguments: {} }, options),
     "list_documents after target switch",
   );
+  const secondDocument = await requireCurrentDocument(
+    client,
+    options,
+    documentsAfterTargetSwitch,
+    requireSuccessfulTool,
+  );
+  if (verifiedSecondOverview.document !== secondDocument)
+    throw new Error(
+      "binary_overview retained another document after target switch",
+    );
   const expectedDocumentsAfterTargetSwitch =
     process.platform === "linux"
       ? firstDocuments.length

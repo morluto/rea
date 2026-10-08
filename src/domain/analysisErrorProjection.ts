@@ -42,12 +42,26 @@ export const projectAnalysisError = (
   error: AnalysisError,
 ): AnalysisErrorProjection => {
   assertKnownAnalysisErrorTag(error._tag);
-  const code = errorCode(error);
+  const underlyingCode = underlyingErrorCode(error);
+  const code = error.cleanupIncomplete ? "cleanup_incomplete" : underlyingCode;
   const primaryDetails = errorDetails(error);
-  const details =
-    error.capturedOutput === undefined
-      ? primaryDetails
-      : { ...primaryDetails, captured_output: { ...error.capturedOutput } };
+  const details = {
+    ...primaryDetails,
+    ...(error.cleanupIncomplete
+      ? {
+          cleanup: "incomplete",
+          resources: [...error.cleanupResources],
+          ...(error.cleanup === undefined
+            ? {}
+            : { cleanup_reason: error.cleanup.reason }),
+          execution_failure:
+            primaryDetails?.execution_failure ?? underlyingCode,
+        }
+      : {}),
+    ...(error.capturedOutput === undefined
+      ? {}
+      : { captured_output: { ...error.capturedOutput } }),
+  };
   return {
     code,
     category: analysisErrorCategory(error),
@@ -56,12 +70,13 @@ export const projectAnalysisError = (
     remediation: {
       action: analysisErrorRemediationAction(error),
     },
-    ...(details === undefined ? {} : { details }),
+    ...(Object.keys(details).length === 0 ? {} : { details }),
   };
 };
 
-const errorCode = (error: AnalysisError): AnalysisErrorProjection["code"] => {
-  if (error.cleanupIncomplete) return "cleanup_incomplete";
+const underlyingErrorCode = (
+  error: AnalysisError,
+): AnalysisErrorProjection["code"] => {
   if (error instanceof ProviderSelectionError)
     return error.reason === "provider_unavailable"
       ? "provider_unavailable"
@@ -380,11 +395,31 @@ const lifecycleErrorDetails = (
   error: AnalysisError,
 ): Readonly<Record<string, JsonValue>> | undefined => {
   if (error instanceof AnalysisCancelledError)
-    return { operation: error.operation, cleanup: "complete" };
+    return {
+      operation: error.operation,
+      cleanup: error.cleanup === undefined ? "complete" : "incomplete",
+      ...(error.cleanup === undefined
+        ? {}
+        : {
+            cleanup_reason: error.cleanup.reason,
+            resources: [...error.cleanup.resources],
+            execution_failure: "cancelled",
+          }),
+    };
   if (error instanceof HopperCancelledError)
     return { operation: "hopper", cleanup: "complete" };
   if (error instanceof AnalysisTimeoutError)
-    return { operation: error.operation, timeout_ms: error.timeoutMs };
+    return {
+      operation: error.operation,
+      timeout_ms: error.timeoutMs,
+      ...(error.cleanup === undefined
+        ? {}
+        : {
+            cleanup: "incomplete",
+            cleanup_reason: error.cleanup.reason,
+            resources: [...error.cleanup.resources],
+          }),
+    };
   if (error instanceof HopperTimeoutError)
     return {
       stage: error.operation === undefined ? "startup" : error.stage,

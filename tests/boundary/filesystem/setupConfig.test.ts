@@ -5,12 +5,12 @@ import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { resolveClientConfigTransactionPath } from "../../../src/application/ClientConfigPath.js";
-import { configureJsonClient } from "../../../src/application/SetupClientConfiguration.js";
+import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 
 const pinnedPackage = PRODUCT_IDENTITY.registrationPackageSpecifier;
 
-describe("JSON client configuration transaction", () => {
+describe("JSON client configuration transaction: writing configuration through safe paths", () => {
   it.skipIf(typeof process.getuid !== "function")(
     "rejects a symlink target not owned by the current user",
     async () => {
@@ -40,7 +40,11 @@ describe("JSON client configuration transaction", () => {
     const original =
       '{"theme":"dark","mcpServers":{"other":{"command":"other"}}}\n';
     await writeFile(configPath, original);
-    const result = await configureJsonClient({ name: "cursor", configPath });
+    const result = await configureClientConfiguration({
+      name: "cursor",
+      configPath,
+      format: "json",
+    });
     expect(result.status).toBe("configured");
     expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(original);
     expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({
@@ -64,7 +68,11 @@ describe("JSON client configuration transaction", () => {
     await symlink(targetPath, configPath);
 
     expect(
-      await configureJsonClient({ name: "cursor", configPath }),
+      await configureClientConfiguration({
+        name: "cursor",
+        configPath,
+        format: "json",
+      }),
     ).toMatchObject({ status: "configured" });
     expect((await lstat(configPath)).isSymbolicLink()).toBe(true);
     expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(original);
@@ -77,7 +85,13 @@ describe("JSON client configuration transaction", () => {
         },
       },
     });
-    expect(await configureJsonClient({ name: "cursor", configPath })).toEqual({
+    expect(
+      await configureClientConfiguration({
+        name: "cursor",
+        configPath,
+        format: "json",
+      }),
+    ).toEqual({
       status: "unchanged",
     });
   });
@@ -87,7 +101,13 @@ describe("JSON client configuration transaction", () => {
     const configPath = join(directory, "mcp.json");
     await symlink(join(directory, "missing.json"), configPath);
 
-    expect(await configureJsonClient({ name: "cursor", configPath })).toEqual({
+    expect(
+      await configureClientConfiguration({
+        name: "cursor",
+        configPath,
+        format: "json",
+      }),
+    ).toEqual({
       status: "failed",
       reason: "path",
     });
@@ -96,7 +116,9 @@ describe("JSON client configuration transaction", () => {
       readFile(`${configPath}.rea.backup`, "utf8"),
     ).rejects.toThrow();
   });
+});
 
+describe("JSON client configuration transaction: keeping matching configuration unchanged", () => {
   it("performs no write or second backup when configuration already matches", async () => {
     const directory = await createTestTempDirectory("rea-setup-");
     const configPath = join(directory, "mcp.json");
@@ -104,7 +126,13 @@ describe("JSON client configuration transaction", () => {
       configPath,
       `${JSON.stringify({ mcpServers: { rea: { command: "npx", args: ["-y", pinnedPackage, "mcp"] } } })}\n`,
     );
-    expect(await configureJsonClient({ name: "cursor", configPath })).toEqual({
+    expect(
+      await configureClientConfiguration({
+        name: "cursor",
+        configPath,
+        format: "json",
+      }),
+    ).toEqual({
       status: "unchanged",
     });
     await expect(
@@ -132,8 +160,8 @@ describe("JSON client configuration transaction", () => {
     );
 
     expect(
-      await configureJsonClient(
-        { name: "cursor", configPath },
+      await configureClientConfiguration(
+        { name: "cursor", configPath, format: "json" },
         {
           GHIDRA_INSTALL_DIR: "/opt/ghidra",
           JAVA_HOME: "/usr/lib/jvm/jdk-21",
@@ -154,9 +182,13 @@ describe("JSON client configuration migration and provider paths", () => {
       '{"theme":"dark","mcpServers":{"rea":{"command":"npx","args":["-y","rea-agents","mcp"]},"other":{"command":"other"}}}\n';
     await writeFile(configPath, original);
 
-    expect(await configureJsonClient({ name: "cursor", configPath })).toEqual(
-      expect.objectContaining({ status: "configured" }),
-    );
+    expect(
+      await configureClientConfiguration({
+        name: "cursor",
+        configPath,
+        format: "json",
+      }),
+    ).toEqual(expect.objectContaining({ status: "configured" }));
 
     expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual({
       theme: "dark",
@@ -175,11 +207,13 @@ describe("JSON client configuration migration and provider paths", () => {
     const directory = await createTestTempDirectory("rea-setup-");
     const configPath = join(directory, "mcp.json");
     const hopperPath = "/Applications/Hopper v6.app/Contents/MacOS/hopper";
-    const client = { name: "cursor", configPath };
+    const client = { name: "cursor", configPath, format: "json" } as const;
     const original = "{}\n";
     await writeFile(configPath, original);
     expect(
-      await configureJsonClient(client, { HOPPER_LAUNCHER_PATH: hopperPath }),
+      await configureClientConfiguration(client, {
+        HOPPER_LAUNCHER_PATH: hopperPath,
+      }),
     ).toMatchObject({
       status: "configured",
     });
@@ -193,12 +227,14 @@ describe("JSON client configuration migration and provider paths", () => {
       },
     });
     expect(
-      await configureJsonClient(client, { HOPPER_LAUNCHER_PATH: hopperPath }),
+      await configureClientConfiguration(client, {
+        HOPPER_LAUNCHER_PATH: hopperPath,
+      }),
     ).toEqual({
       status: "unchanged",
     });
     expect(
-      await configureJsonClient(client, {
+      await configureClientConfiguration(client, {
         HOPPER_LAUNCHER_PATH: "/opt/hopper/bin/Hopper",
       }),
     ).toMatchObject({ status: "configured" });
@@ -208,13 +244,15 @@ describe("JSON client configuration migration and provider paths", () => {
   it("adds exact BYO Ghidra and Java paths without installing dependencies", async () => {
     const directory = await createTestTempDirectory("rea-setup-");
     const configPath = join(directory, "mcp.json");
-    const client = { name: "cursor", configPath };
+    const client = { name: "cursor", configPath, format: "json" } as const;
     const environment = {
       GHIDRA_INSTALL_DIR: "/opt/ghidra_12.1.4_PUBLIC",
       JAVA_HOME: "/usr/lib/jvm/jdk-21",
     };
 
-    expect(await configureJsonClient(client, environment)).toMatchObject({
+    expect(
+      await configureClientConfiguration(client, environment),
+    ).toMatchObject({
       status: "configured",
     });
     expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({
@@ -227,7 +265,7 @@ describe("JSON client configuration migration and provider paths", () => {
         },
       },
     });
-    expect(await configureJsonClient(client, environment)).toEqual({
+    expect(await configureClientConfiguration(client, environment)).toEqual({
       status: "unchanged",
     });
   });
@@ -236,7 +274,13 @@ describe("JSON client configuration migration and provider paths", () => {
     const directory = await createTestTempDirectory("rea-setup-");
     const configPath = join(directory, "mcp.json");
     await writeFile(configPath, "not-json");
-    expect(await configureJsonClient({ name: "cursor", configPath })).toEqual({
+    expect(
+      await configureClientConfiguration({
+        name: "cursor",
+        configPath,
+        format: "json",
+      }),
+    ).toEqual({
       status: "failed",
       reason: "readback",
     });
@@ -248,7 +292,13 @@ describe("JSON client configuration migration and provider paths", () => {
     const directory = await createTestTempDirectory("rea-setup-");
     const configPath = join(directory, "mcp.json");
     await writeFile(configPath, original);
-    expect(await configureJsonClient({ name: "cursor", configPath })).toEqual({
+    expect(
+      await configureClientConfiguration({
+        name: "cursor",
+        configPath,
+        format: "json",
+      }),
+    ).toEqual({
       status: "failed",
       reason: "readback",
     });
@@ -264,7 +314,13 @@ describe("JSON client configuration migration and provider paths", () => {
     const configPath = join(directory, "mcp.json");
     const original = `{"mcpServers":${servers}}`;
     await writeFile(configPath, original);
-    expect(await configureJsonClient({ name: "cursor", configPath })).toEqual({
+    expect(
+      await configureClientConfiguration({
+        name: "cursor",
+        configPath,
+        format: "json",
+      }),
+    ).toEqual({
       status: "failed",
       reason: "readback",
     });

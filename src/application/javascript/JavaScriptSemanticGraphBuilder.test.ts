@@ -1,3 +1,4 @@
+import * as t from "@babel/types";
 import { expect, it } from "vitest";
 
 import {
@@ -13,7 +14,12 @@ import {
 import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { queryJavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticQuery.js";
-import { analyzeJavaScriptSemantics } from "../../domain/javascript/javascriptSemanticAnalysis.js";
+import {
+  analyzeJavaScriptSemantics,
+  analyzeParsedJavaScriptSemantics,
+} from "../../domain/javascript/javascriptSemanticAnalysis.js";
+import { parseJavaScriptSource } from "../../domain/javascript/javascriptSourceParser.js";
+import { semanticCoverageResourceLimits } from "../../domain/javascript/javascriptSemanticCoverage.js";
 
 const SHA256 = "a".repeat(64);
 const GRAPH_ID = `jag_${"b".repeat(64)}`;
@@ -84,6 +90,94 @@ it("keeps dynamic calls explicit and returns complete deterministic results", ()
     include_ambiguous_dynamic_edges: true,
   });
   expect(repeated).toEqual(first);
+});
+
+it("preserves primitive candidate budget unknowns in semantic graph coverage", () => {
+  const term = '(true ? "a" : "b")';
+  const source = `const answer = ${Array.from({ length: 20 }, () => term).join(" + ")};`;
+  const ir = analyzeJavaScriptSemantics(source);
+  const graph = graphFor(source, ir);
+
+  expect(ir.coverage).toMatchObject({
+    status: "partial",
+    resourceLimits: ["primitive-candidates"],
+  });
+  expect(graph.unknowns).toContainEqual(
+    expect.objectContaining({
+      family: "data-flow",
+      reason: "resource-limit",
+      detail: expect.stringMatching(/primitive candidate budget exceeded/i),
+    }),
+  );
+});
+
+it("preserves derived string-byte limit reasons in semantic graph unknowns", () => {
+  const declarations = ['const value0 = "x";'];
+  for (let index = 1; index <= 30; index += 1) {
+    const previous = `value${String(index - 1)}`;
+    declarations.push(
+      `const value${String(index)} = ${previous} + ${previous};`,
+    );
+  }
+  declarations.push("const answer = value30;");
+  const source = declarations.join("\n");
+  const ir = analyzeJavaScriptSemantics(source);
+  const graph = graphFor(source, ir);
+
+  expect(semanticCoverageResourceLimits(ir.coverage)).toContain(
+    "primitive-bytes",
+  );
+  expect(graph.unknowns).toContainEqual(
+    expect.objectContaining({
+      reason: "resource-limit",
+      detail: expect.stringMatching(/primitive string-byte budget exceeded/i),
+    }),
+  );
+});
+
+it("retains resource-limit reasons at nested object property slots", () => {
+  const term = '(true ? "a" : "b")';
+  const source = `const answer = { nested: { value: ${Array.from({ length: 20 }, () => term).join(" + ")} } };`;
+  const ir = analyzeJavaScriptSemantics(source);
+  const graph = graphFor(source, ir);
+
+  expect(semanticCoverageResourceLimits(ir.coverage)).toEqual([
+    "primitive-candidates",
+  ]);
+  expect(graph.unknowns).toContainEqual(
+    expect.objectContaining({
+      family: "object-flow",
+      reason: "resource-limit",
+      detail: expect.stringMatching(/Unknown value at property:value/u),
+    }),
+  );
+});
+
+it("preserves deep expression resource reasons through graph projection", () => {
+  const source = "const answer = true;";
+  const parsed = parseJavaScriptSource(source);
+  const declaration = parsed?.program.body[0];
+  const declarator = t.isVariableDeclaration(declaration)
+    ? declaration.declarations[0]
+    : undefined;
+  if (parsed === null || !t.isVariableDeclarator(declarator))
+    throw new Error("Expected parsed binding initializer");
+  let expression: t.Expression = t.booleanLiteral(true);
+  for (let index = 0; index < 5_000; index += 1)
+    expression = t.unaryExpression("!", expression, true);
+  declarator.init = expression;
+  const ir = analyzeParsedJavaScriptSemantics(parsed);
+  const graph = graphFor(source, ir);
+
+  expect(semanticCoverageResourceLimits(ir.coverage)).toEqual([
+    "expression-depth",
+  ]);
+  expect(graph.unknowns).toContainEqual(
+    expect.objectContaining({
+      reason: "resource-limit",
+      detail: expect.stringMatching(/expression depth budget exceeded/i),
+    }),
+  );
 });
 
 it("keeps ambiguous interprocedural flow out of the default traversal", () => {
@@ -257,7 +351,7 @@ it("keeps duplicate function fingerprints ambiguous", () => {
   expect(query.summary.total_seed_matches).toBe(2);
 });
 
-const graphFor = (source: string) => {
+const graphFor = (source: string, ir = analyzeJavaScriptSemantics(source)) => {
   const file: JavaScriptArtifactFile = {
     path: "app.js",
     container_sha256: SHA256,
@@ -273,9 +367,7 @@ const graphFor = (source: string) => {
       {
         file,
         javascript: null,
-        semantic: {
-          ir: analyzeJavaScriptSemantics(source),
-        },
+        semantic: { ir },
       },
     ],
     packages: [],

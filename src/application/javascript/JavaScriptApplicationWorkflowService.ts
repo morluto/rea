@@ -6,7 +6,7 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { type AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Evidence } from "../../domain/evidence.js";
-import { projectInputIssues } from "../../domain/inputIssueProjection.js";
+import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { compareJavaScriptApplicationVersions } from "../../domain/javascript/javascriptApplicationVersionComparison.js";
 import { compareApplicationVersionsInputSchema } from "../../domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
 import { compareJavaScriptExportShapes } from "../../domain/javascript/javascriptExportShapeComparison.js";
@@ -35,11 +35,7 @@ export const traceApplicationFeatureEvidence = (
   const parsed = traceApplicationFeatureInputSchema.safeParse(rawInput);
   if (!parsed.success)
     return err(
-      new AnalysisInputError(
-        operation,
-        undefined,
-        projectInputIssues(parsed.error.issues, rawInput),
-      ),
+      analysisInputErrorFromIssues(operation, parsed.error.issues, rawInput),
     );
   return traceApplicationFeatureEvidenceValidated(parsed.data);
 };
@@ -85,11 +81,7 @@ export const compareApplicationVersionsEvidence = (
   const parsed = compareApplicationVersionsInputSchema.safeParse(rawInput);
   if (!parsed.success)
     return err(
-      new AnalysisInputError(
-        operation,
-        undefined,
-        projectInputIssues(parsed.error.issues, rawInput),
-      ),
+      analysisInputErrorFromIssues(operation, parsed.error.issues, rawInput),
     );
   return compareApplicationVersionsEvidenceValidated(parsed.data);
 };
@@ -180,11 +172,7 @@ export const compareJavaScriptExportShapesEvidence = (
   const parsed = compareJavaScriptExportShapesInputSchema.safeParse(rawInput);
   if (!parsed.success)
     return err(
-      new AnalysisInputError(
-        operation,
-        undefined,
-        projectInputIssues(parsed.error.issues, rawInput),
-      ),
+      analysisInputErrorFromIssues(operation, parsed.error.issues, rawInput),
     );
   return compareJavaScriptExportShapesEvidenceValidated(parsed.data);
 };
@@ -235,13 +223,7 @@ const workflowFailure = (
   input: unknown,
 ): Result<never, AnalysisError> =>
   cause instanceof z.ZodError
-    ? err(
-        new AnalysisInputError(
-          operation,
-          undefined,
-          projectInputIssues(cause.issues, input),
-        ),
-      )
+    ? err(analysisInputErrorFromIssues(operation, cause.issues, input))
     : cause instanceof TypeError &&
         SAFE_APPLICATION_INPUT_CONSTRAINTS.has(cause.message)
       ? err(

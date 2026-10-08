@@ -6,25 +6,47 @@ import type {
 } from "./javascriptSemanticIr.js";
 import { compareCodePoints } from "../canonicalOrdering.js";
 import { semanticPrimitiveKey } from "./javascriptSemanticProvenance.js";
+import { readExactJavaScriptLiteral } from "./javascriptAstValues.js";
+import {
+  SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT,
+  exceedsSemanticPrimitiveStringByteBudget,
+  semanticResourceLimitUnknown,
+} from "./javascriptSemanticResourceLimits.js";
+
+/**
+ * Keep eight independent binary choices exact, while bounding the next
+ * exponential expansion before it allocates hundreds more alternatives.
+ */
+export const MAX_SEMANTIC_PRIMITIVE_CANDIDATES =
+  SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT;
 
 /** Normalize one bounded collection of possible primitive values. */
 export const semanticPrimitiveSet = (
   values: readonly JavaScriptSemanticPrimitive[],
 ): JavaScriptSemanticValue => {
+  const uniqueValues = new Set<JavaScriptSemanticPrimitive>();
+  for (const value of values) {
+    if (typeof value === "number" && !Number.isFinite(value))
+      return {
+        status: "unknown",
+        reason: "Nonfinite numbers are outside the JSON primitive lattice.",
+      };
+    uniqueValues.add(value);
+    if (uniqueValues.size > MAX_SEMANTIC_PRIMITIVE_CANDIDATES)
+      return semanticResourceLimitUnknown("primitive-candidates");
+  }
   if (
-    values.some((value) => typeof value === "number" && !Number.isFinite(value))
+    exceedsSemanticPrimitiveStringByteBudget(
+      [...uniqueValues].flatMap((value) =>
+        typeof value === "string" ? [value] : [],
+      ),
+    )
   )
-    return {
-      status: "unknown",
-      reason: "Nonfinite numbers are outside the JSON primitive lattice.",
-    };
-  const unique = [
-    ...new Map(
-      values.map((value) => [semanticPrimitiveKey(value), value]),
-    ).values(),
-  ].sort((left, right) =>
-    compareCodePoints(semanticPrimitiveKey(left), semanticPrimitiveKey(right)),
-  );
+    return semanticResourceLimitUnknown("primitive-bytes");
+  const unique = [...uniqueValues]
+    .map((value) => ({ key: semanticPrimitiveKey(value), value }))
+    .sort((left, right) => compareCodePoints(left.key, right.key))
+    .map(({ value }) => value);
   const only = unique[0];
   return unique.length === 1 && only !== undefined
     ? { status: "literal", value: only }
@@ -47,10 +69,5 @@ export const semanticPrimitiveValue = (
 ):
   | { readonly found: true; readonly value: JavaScriptSemanticPrimitive }
   | { readonly found: false } => {
-  if (t.isStringLiteral(node)) return { found: true, value: node.value };
-  if (t.isNumericLiteral(node) && Number.isFinite(node.value))
-    return { found: true, value: node.value };
-  if (t.isBooleanLiteral(node)) return { found: true, value: node.value };
-  if (t.isNullLiteral(node)) return { found: true, value: null };
-  return { found: false };
+  return readExactJavaScriptLiteral(node);
 };

@@ -28,10 +28,15 @@ import type {
   JavaScriptReferenceInput as ReferenceInput,
 } from "./javascriptStaticAnalysisState.js";
 
+type JavaScriptCallLike =
+  | t.CallExpression
+  | t.OptionalCallExpression
+  | t.NewExpression;
+
 /** Inspect one call or new expression for references, endpoints, storage, and roles. */
 export const inspectCall = (
   source: string,
-  node: t.CallExpression | t.NewExpression,
+  node: JavaScriptCallLike,
   context: FindingContext,
 ): void => {
   const { accumulator } = context;
@@ -92,7 +97,7 @@ export const inspectCall = (
 };
 
 const requireCallSpecifier = (
-  node: t.CallExpression | t.NewExpression,
+  node: JavaScriptCallLike,
   name: string,
   moduleRequireName: string | null,
 ): { readonly specifier: string | undefined } | null => {
@@ -109,7 +114,7 @@ const requireCallSpecifier = (
 };
 
 const chunkLoadSpecifier = (
-  node: t.CallExpression | t.NewExpression,
+  node: JavaScriptCallLike,
   name: string,
   moduleRequireName: string | null,
 ): { readonly specifier: string | undefined } | null => {
@@ -123,7 +128,7 @@ const chunkLoadSpecifier = (
 
 const vitePreloadDependencySpecifiers = (
   source: string,
-  node: t.CallExpression | t.NewExpression,
+  node: JavaScriptCallLike,
   name: string,
 ): readonly string[] => {
   if (name !== "__vite__mapDeps" || !t.isArrayExpression(node.arguments[0]))
@@ -147,7 +152,7 @@ const vitePreloadDependencyTable = (source: string): readonly string[] => {
 };
 
 const inspectEndpointCall = (
-  node: t.CallExpression | t.NewExpression,
+  node: JavaScriptCallLike,
   name: string,
   first: string | undefined,
   context: FindingContext,
@@ -162,7 +167,13 @@ const inspectEndpointCall = (
       value: first,
       mechanism: `call:${name}`,
     });
-  const endpoint = endpointArgumentHelper(name, node.arguments, node.callee);
+  const receiverFact = context.openReceiverFacts?.get(node.start ?? -1);
+  const endpoint = endpointArgumentHelper(
+    name,
+    node.arguments,
+    node.callee,
+    receiverFact,
+  );
   if (endpoint !== undefined)
     addEndpoint(context, {
       node,
@@ -209,12 +220,22 @@ export const inspectRoleProperty = (
 };
 
 const inspectStorageCall = (
-  node: t.CallExpression | t.NewExpression,
+  node: JavaScriptCallLike,
   name: string,
   first: string | undefined,
   context: FindingContext,
 ): void => {
-  const storage = storageKind(name);
+  const receiverFact = context.openReceiverFacts?.get(node.start ?? -1);
+  const storage =
+    receiverFact === "local" ||
+    receiverFact === "local-indexed-db" ||
+    receiverFact === "local-cache-storage"
+      ? undefined
+      : receiverFact === "indexed-db"
+        ? "indexed-db"
+        : receiverFact === "cache-storage"
+          ? "cache-storage"
+          : storageKind(name);
   if (storage === undefined) return;
   addLocatedFinding(context, {
     collection: context.accumulator.storage,

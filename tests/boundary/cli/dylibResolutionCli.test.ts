@@ -6,6 +6,7 @@ import { describe, expect } from "vitest";
 import {
   FILE_TYPE,
   LC,
+  buildVersionCommand,
   dylibCommand,
   machoImage,
   rpathCommand,
@@ -36,6 +37,7 @@ const fixtureApp = async (): Promise<string> => {
       "<plist><dict><key>CFBundleExecutable</key><string>App</string></dict></plist>",
     "Contents/MacOS/App": machoImage({
       commands: [
+        buildVersionCommand(1),
         rpathCommand("@executable_path/../Frameworks"),
         dylibCommand(LC.LOAD_DYLIB, "@rpath/libcore.dylib"),
         dylibCommand(LC.LOAD_WEAK_DYLIB, "@rpath/libgone.dylib"),
@@ -43,10 +45,16 @@ const fixtureApp = async (): Promise<string> => {
     }),
     "Contents/Frameworks/libcore.dylib": machoImage({
       fileType: FILE_TYPE.dylib,
-      commands: [dylibCommand(LC.ID_DYLIB, "@rpath/libcore.dylib")],
+      commands: [
+        buildVersionCommand(1),
+        dylibCommand(LC.ID_DYLIB, "@rpath/libcore.dylib"),
+      ],
     }),
     "Contents/Helpers/tool": machoImage({
-      commands: [dylibCommand(LC.LOAD_DYLIB, "@loader_path/libnone.dylib")],
+      commands: [
+        buildVersionCommand(1),
+        dylibCommand(LC.LOAD_DYLIB, "@loader_path/libnone.dylib"),
+      ],
     }),
   });
   return app;
@@ -153,11 +161,15 @@ describe("trace-dylib-resolution CLI", () => {
       await writeFiles(directory, {
         tool: machoImage({
           commands: [
+            buildVersionCommand(1),
             dylibCommand(LC.LOAD_DYLIB, "@loader_path/lib/libhelper.dylib"),
             dylibCommand(LC.LOAD_DYLIB, "@loader_path/../escape.dylib"),
           ],
         }),
-        "lib/libhelper.dylib": machoImage({ fileType: FILE_TYPE.dylib }),
+        "lib/libhelper.dylib": machoImage({
+          fileType: FILE_TYPE.dylib,
+          commands: [buildVersionCommand(1)],
+        }),
         "unrelated.txt": "not traversed",
       });
       const result = await cli.run({

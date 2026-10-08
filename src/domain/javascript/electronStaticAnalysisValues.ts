@@ -2,7 +2,10 @@ import * as t from "@babel/types";
 
 import { compareCodePoints } from "../canonicalOrdering.js";
 import type { ElectronStaticValue } from "./electronStaticAnalysisTypes.js";
-import { semanticStaticPropertyName } from "./javascriptAstValues.js";
+import {
+  readExactJavaScriptLiteral,
+  semanticStaticPropertyName,
+} from "./javascriptAstValues.js";
 import { sourceSlice } from "./javascriptStaticAnalysisHelpers.js";
 
 /** Preserve one literal value or the exact inert expression. */
@@ -142,10 +145,9 @@ const literalValue = (
 ):
   | { readonly found: true; readonly value: string | number | boolean | null }
   | { readonly found: false } => {
-  if (t.isStringLiteral(node) || t.isNumericLiteral(node))
-    return { found: true, value: node.value };
-  if (t.isBooleanLiteral(node)) return { found: true, value: node.value };
-  if (t.isNullLiteral(node)) return { found: true, value: null };
+  if (node === null || node === undefined) return { found: false };
+  const literal = readExactJavaScriptLiteral(node);
+  if (literal.found) return literal;
   if (t.isTemplateLiteral(node) && node.expressions.length === 0)
     return {
       found: true,

@@ -44,6 +44,7 @@ import {
 import {
   createWorkflowEvidence,
   workflowSnapshotRecord,
+  recordWorkflowUnknowns,
 } from "./WorkflowEvidence.js";
 import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
 import { artifactInspectionResultSchema } from "../domain/artifactInspection.js";
@@ -262,7 +263,19 @@ const runAnalysis = async (
       signal,
       evidenceProfile,
     });
-    if (evidence !== undefined) session.recordEvidence(evidence);
+    if (evidence !== undefined) {
+      const recorded = session.recordEvidence(evidence);
+      if (!recorded.ok) return cliError(recorded.error);
+      if (isWorkflowEvidenceTool(tool)) {
+        const unknowns = recordWorkflowUnknowns({
+          name: tool,
+          result: evidence.normalized_result,
+          evidenceId: evidence.evidence_id,
+          recordUnknown: (unknown) => session.recordUnknown(unknown),
+        });
+        if (!unknowns.ok) return cliError(unknowns.error);
+      }
+    }
     if (
       isWorkflowEvidenceTool(tool) &&
       tool !== "trace_native_ui_action" &&
@@ -442,7 +455,8 @@ const analysisProfileForRoute = (
 ): AnalysisProfileCommitment | undefined => {
   const profile = route.profile;
   if (profile === null || profile === undefined) return undefined;
-  if (isWorkflowEvidenceTool(tool)) return workflowAnalysisProfile(profile);
+  if (isWorkflowEvidenceTool(tool))
+    return workflowAnalysisProfile(profile, tool);
   const provider = providerIdentityForRoute(route, tool);
   return provider.id === profile.provider.id ? profile : undefined;
 };

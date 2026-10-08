@@ -1,10 +1,38 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { projectInputIssues } from "./inputIssueProjection.js";
+import {
+  analysisInputErrorFromIssues,
+  projectInputIssues,
+} from "./inputIssueProjection.js";
 import { processScenarioSchema } from "./process/processScenario.js";
 
 describe("input issue projection", () => {
+  it("builds application input errors with projected and semantic issues", () => {
+    const schema = z.object({ count: z.number().int() });
+    const input = { count: "invalid" };
+    const parsed = schema.safeParse(input);
+    if (parsed.success) throw new Error("expected invalid input");
+    const cause = parsed.error;
+    const error = analysisInputErrorFromIssues(
+      "inspect_fixture",
+      parsed.error.issues,
+      input,
+      {
+        cause,
+        additionalIssues: [
+          { path: ["count"], reason: "out_of_range", minimum: 0 },
+        ],
+      },
+    );
+
+    expect(error.cause).toBe(cause);
+    expect(error.issues).toEqual([
+      { path: ["count"], reason: "invalid_type", expected: "number" },
+      { path: ["count"], reason: "out_of_range", minimum: 0 },
+    ]);
+  });
+
   it("preserves static regex guidance without echoing the rejected value", () => {
     const schema = z.object({
       value: z.string().regex(/^[^\0]*$/u, "Values cannot contain NUL"),

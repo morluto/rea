@@ -12,6 +12,8 @@ import {
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { UnknownRegistryPort } from "./investigation/InvestigationRecordPort.js";
+import { UnknownRegistryError } from "../domain/unknownRegistryError.js";
 
 /** Build the shared Evidence record for a successful composed binary workflow. */
 export const createWorkflowEvidence = (input: {
@@ -27,7 +29,12 @@ export const createWorkflowEvidence = (input: {
     result: input.result,
     ...(input.upstreamProfile === undefined
       ? {}
-      : { analysisProfile: workflowAnalysisProfile(input.upstreamProfile) }),
+      : {
+          analysisProfile: workflowAnalysisProfile(
+            input.upstreamProfile,
+            input.operation,
+          ),
+        }),
     confidence: "derived",
     limitations: ["Derived by an REA composed workflow."],
   });
@@ -61,4 +68,65 @@ export const workflowSnapshotRecord = (
             },
     },
   };
+};
+
+interface WorkflowUnknownInput {
+  readonly name: string;
+  readonly result: JsonValue;
+  readonly evidenceId: string;
+  readonly recordUnknown: UnknownRegistryPort["recordUnknown"] | undefined;
+}
+
+/** Retain residual workflow questions using the shared investigation policy. */
+export const recordWorkflowUnknowns = ({
+  name,
+  result,
+  evidenceId,
+  recordUnknown,
+}: WorkflowUnknownInput):
+  | ReturnType<UnknownRegistryPort["recordUnknown"]>
+  | { readonly ok: true; readonly value: null } => {
+  if (
+    !["trace_feature", "trace_call_path", "inspect_native_api"].includes(
+      name,
+    ) ||
+    recordUnknown === undefined ||
+    typeof result !== "object" ||
+    result === null ||
+    Array.isArray(result) ||
+    !Array.isArray(result.residual_unknowns)
+  )
+    return { ok: true, value: null };
+  for (const question of result.residual_unknowns) {
+    if (typeof question !== "string") continue;
+    const recorded = recordUnknown({
+      question,
+      severity: "medium",
+      domain: name === "inspect_native_api" ? "native-api" : "control-flow",
+      supporting_evidence_ids: [evidenceId],
+      contradicting_evidence_ids: [],
+      required_authority: "shipped-artifact",
+      required_confidence: "observed",
+      required_environment: null,
+      recommended_probes: [
+        {
+          operation: name,
+          rationale:
+            name === "inspect_native_api"
+              ? "Confirm the unsupported boundary with a capable provider or ABI probe."
+              : "Continue with a focused query or another available provider.",
+        },
+      ],
+      relationships: [],
+    });
+    if (
+      !recorded.ok &&
+      !(
+        recorded.error instanceof UnknownRegistryError &&
+        recorded.error.reason === "already-exists"
+      )
+    )
+      return recorded;
+  }
+  return { ok: true, value: null };
 };

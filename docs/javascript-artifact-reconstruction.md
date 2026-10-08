@@ -224,6 +224,22 @@ These safeguards are not caller-selectable output budgets. Source-map parsing
 reports truncation when its format or parser safety boundary is reached. The
 application graph has no aggregate node, edge, root, or observation prefix cap.
 
+Semantic evaluation retains at most 256 distinct primitive candidates per
+expression and at most 1 MiB of worst-case JSON string bytes across a normalized
+primitive value's string candidates. The byte budget estimates six JSON bytes
+per UTF-16 code unit, the expansion bound for escaped strings, and bounds both
+retained candidate strings and temporary canonical-key serialization. This is
+an in-memory semantic allocation bound independent of CLI or MCP transport
+budgets. Source literal bytes remain in the parsed source and artifact evidence;
+when a normalized semantic value exceeds the bound, its value is unknown and
+coverage is partial. Expression
+evaluation and provenance walks stop after 256 nested levels. Union products
+and string lengths are checked before allocating combinations or concatenated
+strings. When a boundary is reached, the value stays unknown, semantic coverage
+becomes partial, and graph evidence retains the expression location and typed
+limiting reason. The number of unresolved alternatives is unknown; it is not
+reported as an exact omission count.
+
 Byte, entry, path, and graph-shape bounds are hard limits. The parse deadline is
 checked before and between bounded parsing and traversal phases; the synchronous
 Babel and JSON parser calls cannot be preempted mid-call, so their input byte

@@ -55,6 +55,15 @@ export interface JavaScriptAnalysisAccumulator {
 export interface JavaScriptFindingContext {
   readonly source: string;
   readonly accumulator: JavaScriptAnalysisAccumulator;
+  readonly openReceiverFacts?: ReadonlyMap<
+    number,
+    | "window"
+    | "indexed-db"
+    | "cache-storage"
+    | "local"
+    | "local-indexed-db"
+    | "local-cache-storage"
+  >;
 }
 
 /** Candidate import, require, worker, or service-worker reference. */

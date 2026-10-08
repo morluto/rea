@@ -28,7 +28,18 @@ export interface WebSourceMapRequest {
 
 interface SourceMapFetchHost {
   readonly fetch: typeof fetch;
+  /** Fetch-operation deadline; injectable so boundary regressions stay fast. */
+  readonly timeoutMs?: number;
+  /** Maximum response bytes retained across this operation. */
+  readonly maxResponseBytes?: number;
 }
+
+// Source maps are normally fetched as a small part of a larger inspection.
+// Bound a stalled server to 30 seconds and bound raw map input retained for
+// parsing to 64 MiB per inspection. Both limits apply at the network boundary;
+// hitting either produces an explicit fetch_failed item, never truncated data.
+const SOURCE_MAP_FETCH_TIMEOUT_MS = 30_000;
+const SOURCE_MAP_RESPONSE_BYTES = 64 * 1024 * 1024;
 
 type SourceMaps = WebSourceMaps;
 type SourceMapItem = WebSourceMapItem;
@@ -45,9 +56,33 @@ export const fetchWebSourceMaps = async (
   host: SourceMapFetchHost = { fetch: globalThis.fetch },
 ): Promise<SourceMaps> => {
   const items: SourceMapItem[] = [];
-  for (const request of requests) {
-    if (signal?.aborted === true) throw signal.reason;
-    items.push(await fetchOne(request, input, signal, host));
+  const operationController = new AbortController();
+  const timeout = setTimeout(
+    () => operationController.abort(new SourceMapDeadlineError()),
+    host.timeoutMs ?? SOURCE_MAP_FETCH_TIMEOUT_MS,
+  );
+  const abortFromCaller = (): void => operationController.abort(signal?.reason);
+  signal?.addEventListener("abort", abortFromCaller, { once: true });
+  const operationSignal = operationController.signal;
+  const budget = { retainedBytes: 0 };
+  try {
+    for (const request of requests) {
+      if (signal?.aborted === true) throw signal.reason;
+      if (operationSignal.aborted) {
+        items.push(
+          emptySourceMapItem(
+            request,
+            "fetch_failed",
+            "Source-map fetching exceeded its operation deadline.",
+          ),
+        );
+        continue;
+      }
+      items.push(await fetchOne(request, input, operationSignal, host, budget));
+    }
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", abortFromCaller);
   }
   const retained = items.filter(
     ({ status }) => status === "included" || status === "partial",
@@ -68,11 +103,26 @@ export const fetchWebSourceMaps = async (
   });
 };
 
+class SourceMapDeadlineError extends Error {
+  constructor() {
+    super("Source-map fetching exceeded its operation deadline.");
+    this.name = "SourceMapDeadlineError";
+  }
+}
+
+class SourceMapSizeLimitError extends Error {
+  constructor() {
+    super("Source-map response exceeded the retained-byte budget.");
+    this.name = "SourceMapSizeLimitError";
+  }
+}
+
 const fetchOne = async (
   request: WebSourceMapRequest,
   input: AnalyzeWebBundleInput,
   signal: AbortSignal | undefined,
   host: SourceMapFetchHost,
+  budget: { retainedBytes: number },
 ): Promise<SourceMapItem> => {
   if (!approvedUrl(request.fetchUrl, input.allowed_origins))
     return emptySourceMapItem(
@@ -102,13 +152,30 @@ const fetchOne = async (
         `Source-map server returned HTTP ${String(response.status)}.`,
       );
     }
-    return normalizeSourceMap(request, await response.text(), fetchedUrl);
+    return normalizeSourceMap(
+      request,
+      await readBoundedText(
+        response,
+        budget,
+        host.maxResponseBytes ?? SOURCE_MAP_RESPONSE_BYTES,
+        signal,
+      ),
+      fetchedUrl,
+    );
   } catch (cause: unknown) {
-    if (signal?.aborted === true) throw cause;
+    if (
+      signal?.aborted === true &&
+      !(signal.reason instanceof SourceMapDeadlineError)
+    )
+      throw cause;
     return emptySourceMapItem(
       request,
       "fetch_failed",
-      "Source-map fetch or validation failed.",
+      cause instanceof SourceMapSizeLimitError
+        ? cause.message
+        : cause instanceof SourceMapDeadlineError
+          ? cause.message
+          : "Source-map fetch or validation failed.",
     );
   }
 };
@@ -122,19 +189,27 @@ const fetchFollowingApprovedRedirects = async (
   let current = initialUrl;
   const visited = new Set<string>();
   for (;;) {
+    if (signal?.aborted === true) throw signal.reason;
     if (!approvedUrl(current, allowedOrigins)) return undefined;
     if (visited.has(current)) throw new Error("source_map_redirect_loop");
     visited.add(current);
-    const response = await host.fetch(current, {
-      method: "GET",
-      headers: {
-        Accept: "application/json, application/source-map+json;q=0.9",
-      },
-      redirect: "manual",
-      credentials: "omit",
-      referrerPolicy: "no-referrer",
-      ...(signal === undefined ? {} : { signal }),
-    });
+    const response = await promiseWithAbort(
+      host.fetch(current, {
+        method: "GET",
+        headers: {
+          Accept: "application/json, application/source-map+json;q=0.9",
+        },
+        redirect: "manual",
+        credentials: "omit",
+        referrerPolicy: "no-referrer",
+        ...(signal === undefined ? {} : { signal }),
+      }),
+      signal,
+    );
+    if (signal !== undefined && signalIsAborted(signal)) {
+      await response.body?.cancel(signal.reason).catch(() => undefined);
+      throw signal.reason;
+    }
     if (response.status < 300 || response.status >= 400)
       return { response, fetchedUrl: current };
     const location = response.headers.get("location");
@@ -142,6 +217,123 @@ const fetchFollowingApprovedRedirects = async (
     await response.body?.cancel();
     current = new URL(location, current).href;
   }
+};
+
+const readBoundedText = async (
+  response: Response,
+  budget: { retainedBytes: number },
+  maxBytes: number,
+  signal: AbortSignal | undefined,
+): Promise<string> => {
+  if (response.body === null) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  try {
+    for (;;) {
+      if (signal?.aborted === true) throw signal.reason;
+      const { done, value } = await readWithAbort(reader, signal);
+      if (done) break;
+      const nextBytes = value?.byteLength ?? 0;
+      if (budget.retainedBytes + bytes + nextBytes > maxBytes) {
+        await reader.cancel(new SourceMapSizeLimitError());
+        throw new SourceMapSizeLimitError();
+      }
+      if (value !== undefined) chunks.push(value);
+      bytes += nextBytes;
+    }
+  } finally {
+    // Aborting cancels the reader in readWithAbort. It owns the pending read
+    // until that cancellation settles, so releasing the lock here can throw.
+    if (signal?.aborted !== true) reader.releaseLock();
+  }
+  budget.retainedBytes += bytes;
+  const joined = new Uint8Array(bytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    joined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(joined);
+};
+
+const readWithAbort = <T>(
+  reader: ReadableStreamDefaultReader<T>,
+  signal: AbortSignal | undefined,
+): Promise<Awaited<ReturnType<ReadableStreamDefaultReader<T>["read"]>>> => {
+  if (signal === undefined) return reader.read();
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = (): void => signal.removeEventListener("abort", abort);
+    const abort = (): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      void reader.cancel(signal.reason).catch(() => undefined);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    void reader.read().then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(value);
+      },
+      (cause: unknown) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        void reader.cancel(cause).catch(() => undefined);
+        reject(cause);
+      },
+    );
+  });
+};
+
+const signalIsAborted = (signal: AbortSignal | undefined): boolean =>
+  signal?.aborted === true;
+
+const promiseWithAbort = (
+  promise: Promise<Response>,
+  signal: AbortSignal | undefined,
+): Promise<Response> => {
+  if (signal === undefined) return promise;
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = (): void => signal.removeEventListener("abort", abort);
+    const abort = (): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    void promise.then(
+      (response) => {
+        if (settled || signal.aborted) {
+          void response.body?.cancel(signal.reason).catch(() => undefined);
+          if (!settled) {
+            settled = true;
+            cleanup();
+            reject(signal.reason);
+          }
+          return;
+        }
+        settled = true;
+        cleanup();
+        resolve(response);
+      },
+      (cause: unknown) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(cause);
+      },
+    );
+  });
 };
 
 const normalizeSourceMap = (

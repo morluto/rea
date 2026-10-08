@@ -9,6 +9,7 @@ import {
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
   nativeCallObservationInputSchema,
@@ -37,6 +38,7 @@ export const observeNativeCalls = async (
   parameters: Readonly<Record<string, JsonValue>>,
   tracer: NativeCallTracer,
   signal?: AbortSignal,
+  readTargetDigest: typeof fileSha256 = fileSha256,
 ): Promise<Result<NativeCallObservationResult, AnalysisError>> => {
   if (target.kind !== "executable" || target.format !== "mach-o")
     return err(
@@ -50,7 +52,22 @@ export const observeNativeCalls = async (
   if (!parsed.success)
     return err(new AnalysisInputError(OPERATION, { cause: parsed.error }));
   // Observe the bytes the session's other Evidence describes.
-  if ((await fileSha256(target.path, signal)) !== target.sha256)
+  let digest: string;
+  try {
+    digest = await readTargetDigest(target.path, signal);
+  } catch (cause: unknown) {
+    if (signal?.aborted === true || isAbortError(cause))
+      return err(new AnalysisCancelledError(OPERATION));
+    return err(
+      new ProviderAdapterError("native-macos", OPERATION, {
+        diagnostics: {
+          reason: "Unable to verify the selected target digest",
+          detail: cause instanceof Error ? cause.message : String(cause),
+        },
+      }),
+    );
+  }
+  if (digest !== target.sha256)
     return err(
       new EvidenceIntegrityError(
         "Native call observation target digest changed after session binding",
@@ -62,6 +79,7 @@ export const observeNativeCalls = async (
     {
       executable: target.path,
       architecture: target.architecture,
+      expectedSha256: target.sha256,
       input: parsed.data,
     },
     signal,
@@ -69,6 +87,9 @@ export const observeNativeCalls = async (
   if (!traced.ok) return traced;
   return ok(projectNativeCalls(target, parsed.data, traced.value));
 };
+
+const isAbortError = (cause: unknown): boolean =>
+  cause instanceof Error && cause.name === "AbortError";
 
 /** Join the request, the tracer's run and REA's own checks into the result contract. */
 export const projectNativeCalls = (
@@ -83,15 +104,30 @@ export const projectNativeCalls = (
     .filter(({ location_count: count }) => count === 0)
     .map(({ index }) => index);
   const eventLimit = run.outcome === "event-limit";
+  const resourceLimit = run.outcome === "resource-limit";
   const partial =
-    eventLimit || run.outcome === "stop-limit" || unresolved.length > 0;
+    eventLimit ||
+    resourceLimit ||
+    run.outcome === "duration-elapsed" ||
+    run.outcome === "stop-limit" ||
+    unresolved.length > 0;
   return nativeCallObservationResultSchema.parse({
     target: {
       path: target.path,
       sha256: target.sha256,
       architecture: target.architecture,
       arguments: input.arguments,
+      environment: input.environment,
       working_directory: input.working_directory ?? null,
+      launch_identity: {
+        loaded_image_sha256: run.target_identity.loaded_image_sha256,
+        file_device: run.target_identity.file_device,
+        file_inode: run.target_identity.file_inode,
+        selected_file_sha256: run.target_identity.selected_file_sha256,
+        module_path: run.target_identity.module_path,
+        module_uuid: run.target_identity.module_uuid,
+        stable: run.target_identity.stable,
+      },
     },
     debugger: trace.debugger,
     process: {
@@ -118,13 +154,20 @@ export const projectNativeCalls = (
     coverage: {
       status: partial ? "partial" : "complete",
       event_limit_reached: eventLimit,
+      resource_limit_reached: resourceLimit,
       unresolved_breakpoints: unresolved,
     },
     limitations: [
       ...NATIVE_CALL_OBSERVATION_LIMITATIONS,
+      "The selected pathname digest and LLDB module identity are checked around launch. No immutable executable snapshot is used; concurrent in-place mutation or replacement and restoration cannot be ruled out, so the loaded-image digest remains unknown.",
       ...(eventLimit
         ? [
             `Observation stopped at max_events (${input.max_events}); later calls were not recorded and the process was killed.`,
+          ]
+        : []),
+      ...(resourceLimit
+        ? [
+            "Observation stopped before retaining the next complete event because the estimated 8 MiB trace-payload or 65,536-frame aggregate budget was reached; the process was killed.",
           ]
         : []),
       ...(run.outcome === "duration-elapsed"
@@ -132,6 +175,11 @@ export const projectNativeCalls = (
             `The process was still running after duration_ms (${input.duration_ms}) and was killed.`,
           ]
         : []),
+      ...(run.target_identity.stable
+        ? []
+        : [
+            "LLDB did not provide enough module identity evidence to confirm pathname and module continuity around launch.",
+          ]),
       ...(run.outcome === "stop-limit"
         ? [
             "Observation stopped after repeated signal or exception stops; the process was killed.",
@@ -151,6 +199,11 @@ export const projectNativeCalls = (
         : []),
       ...(trace.stdout.truncated || trace.stderr.truncated
         ? ["Target output beyond 1 MiB per stream is counted but not kept."]
+        : []),
+      ...(!trace.stdout.complete || !trace.stderr.complete
+        ? [
+            "Target output draining did not complete; reported byte counts are observed lower bounds, not stream totals.",
+          ]
         : []),
       ...(run.terminated && trace.terminated
         ? []

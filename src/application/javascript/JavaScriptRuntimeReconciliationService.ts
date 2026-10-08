@@ -7,7 +7,7 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { type AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Evidence } from "../../domain/evidence.js";
-import { projectInputIssues } from "../../domain/inputIssueProjection.js";
+import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { reconcileJavaScriptRuntime } from "../../domain/javascript/javascriptRuntimeReconciliation.js";
 import { reconcileJavaScriptRuntimeInputSchema } from "../../domain/javascript/javascriptRuntimeReconciliationSchemas.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -22,11 +22,7 @@ export const reconcileJavaScriptRuntimeEvidence = (
   const parsed = reconcileJavaScriptRuntimeInputSchema.safeParse(rawInput);
   if (!parsed.success)
     return err(
-      new AnalysisInputError(
-        OPERATION,
-        undefined,
-        projectInputIssues(parsed.error.issues, rawInput),
-      ),
+      analysisInputErrorFromIssues(OPERATION, parsed.error.issues, rawInput),
     );
   return reconcileJavaScriptRuntimeEvidenceValidated(parsed.data);
 };
@@ -44,11 +40,7 @@ export const reconcileJavaScriptRuntimeEvidenceValidated = (
   } catch (cause: unknown) {
     if (cause instanceof z.ZodError)
       return err(
-        new AnalysisInputError(
-          OPERATION,
-          undefined,
-          projectInputIssues(cause.issues, parsedInput),
-        ),
+        analysisInputErrorFromIssues(OPERATION, cause.issues, parsedInput),
       );
     if (
       cause instanceof TypeError &&

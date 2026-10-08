@@ -48,7 +48,20 @@ const dependencySchema = z.strictObject({
 /** Observed dylib-loading facts of one Mach-O slice. */
 export const machoSliceSchema = z.strictObject({
   architecture: z.string().min(1),
+  /** Physical identity observed in the thin header and, for FAT, its table. */
+  slice_offset: z.number().int().nonnegative(),
+  slice_size: z.number().int().positive(),
+  cpu_type: z.number().int().nonnegative(),
+  cpu_subtype: z.number().int().nonnegative(),
+  fat_cpu_type: z.number().int().nonnegative().nullable(),
+  fat_cpu_subtype: z.number().int().nonnegative().nullable(),
+  fat_alignment_exponent: z.number().int().nonnegative().nullable(),
   file_type: z.enum(["execute", "dylib", "bundle", "other"]),
+  file_type_code: z.number().int().nonnegative(),
+  /** Raw LC_BUILD_VERSION platform number; null means no such command was observed. */
+  platform: z.number().int().nonnegative().nullable(),
+  /** Every distinct build platform declared by LC_BUILD_VERSION/version-min commands. */
+  platforms: z.array(z.number().int().nonnegative()),
   install_name: z.string().nullable(),
   dependencies: z.array(dependencySchema),
   rpaths: z.array(z.string()),
@@ -97,6 +110,8 @@ const candidateSchema = z.strictObject({
     "malformed",
     "unsupported",
     "architecture-missing",
+    "not-loadable",
+    "platform-mismatch",
     "outside-target",
     "escapes-target",
     "undetermined",
@@ -192,6 +207,7 @@ interface ProcessContext {
   readonly view: DylibTreeView;
   readonly root: string;
   readonly architecture: string;
+  readonly platforms: readonly number[];
   readonly executable: string | null;
   readonly loaded: Map<string, LoadedImage>;
   readonly byInstallName: Map<string, string>;
@@ -269,14 +285,89 @@ const evaluateCandidate = async (
   if (lookup.kind !== "file")
     return { ...base, outcome: "absent", resolved_path: null };
   const facts = await imageFacts(context, lookup.path);
-  const outcome: Candidate["outcome"] =
-    facts.status !== "parsed"
-      ? facts.status
-      : compatibleSlice(facts.slices, context.architecture) === undefined
-        ? "architecture-missing"
-        : "resolved";
+  let outcome: Candidate["outcome"];
+  if (facts.status !== "parsed") outcome = facts.status;
+  else {
+    const slice = compatibleSlice(facts.slices, context.architecture);
+    if (slice === undefined) outcome = "architecture-missing";
+    else if (![2, 6, 7, 8].includes(slice.file_type_code))
+      outcome = "not-loadable";
+    else {
+      const platformResult = platformLoadability(
+        context.platforms,
+        slice.platforms,
+        slice.file_type_code,
+        context.architecture,
+      );
+      outcome =
+        platformResult === "compatible"
+          ? "resolved"
+          : platformResult === "incompatible"
+            ? "platform-mismatch"
+            : "undetermined";
+    }
+  }
   return { ...base, outcome, resolved_path: lookup.path };
 };
+
+type PlatformLoadability = "compatible" | "incompatible" | "unknown";
+
+/** Apply dyld's documented cross-platform load cases and retain uncertain host cases. */
+const platformLoadability = (
+  processPlatforms: readonly number[],
+  imagePlatforms: readonly number[],
+  fileType: number,
+  architecture: string,
+): PlatformLoadability => {
+  if (processPlatforms.length === 0 || imagePlatforms.length === 0)
+    return "unknown";
+  const outcomes = processPlatforms.map((processPlatform) =>
+    imageLoadabilityForPlatform(
+      processPlatform,
+      imagePlatforms,
+      fileType,
+      architecture,
+    ),
+  );
+  if (outcomes.every((outcome) => outcome === "compatible"))
+    return "compatible";
+  if (outcomes.every((outcome) => outcome === "incompatible"))
+    return "incompatible";
+  return "unknown";
+};
+
+const imageLoadabilityForPlatform = (
+  processPlatform: number,
+  imagePlatforms: readonly number[],
+  fileType: number,
+  architecture: string,
+): PlatformLoadability => {
+  if (imagePlatforms.includes(processPlatform)) return "compatible";
+
+  // These are explicit dyld loadableIntoProcess cross-platform cases.
+  if (processPlatform === 6 && imagePlatforms.includes(1)) return "compatible"; // macOS dylibs in Mac Catalyst processes
+  if (processPlatform === 2 && imagePlatforms.includes(6)) return "compatible"; // Catalyst dylibs in iOS processes
+  if (processPlatform === 2 && imagePlatforms.includes(11)) return "compatible"; // visionOS dylibs in iOS processes
+  if (processPlatform === 7 && imagePlatforms.includes(12)) return "compatible"; // visionOS simulator dylibs in iOS simulator processes
+  if (processPlatform === 1 && fileType === 2 && imagePlatforms.includes(6))
+    return "compatible"; // Catalyst main executables run on macOS
+
+  // dyld's remaining exceptions depend on host architecture or a special path.
+  if (
+    (processPlatform === 2 &&
+      imagePlatforms.includes(1) &&
+      architecture.startsWith("arm64")) ||
+    ([7, 8, 9].includes(processPlatform) && imagePlatforms.includes(1))
+  )
+    return "unknown";
+
+  if (isKnownPlatform(processPlatform) && imagePlatforms.every(isKnownPlatform))
+    return "incompatible";
+  return "unknown";
+};
+
+const isKnownPlatform = (platform: number): boolean =>
+  platform >= 1 && platform <= 12;
 
 const imageFacts = async (
   context: ProcessContext,
@@ -455,6 +546,7 @@ export const traceDylibLoading = async (
             view,
             root,
             architecture: slice.architecture,
+            platforms: slice.platforms,
             executable: slice.file_type === "execute" ? root : null,
             loaded: new Map(),
             byInstallName: new Map(),
@@ -503,7 +595,17 @@ const withoutDependencies = (
   slice: MachoSlice,
 ): Omit<MachoSlice, "dependencies"> => ({
   architecture: slice.architecture,
+  slice_offset: slice.slice_offset,
+  slice_size: slice.slice_size,
+  cpu_type: slice.cpu_type,
+  cpu_subtype: slice.cpu_subtype,
+  fat_cpu_type: slice.fat_cpu_type,
+  fat_cpu_subtype: slice.fat_cpu_subtype,
+  fat_alignment_exponent: slice.fat_alignment_exponent,
   file_type: slice.file_type,
+  file_type_code: slice.file_type_code,
+  platform: slice.platform,
+  platforms: slice.platforms,
   install_name: slice.install_name,
   rpaths: slice.rpaths,
   dyld_environment: slice.dyld_environment,

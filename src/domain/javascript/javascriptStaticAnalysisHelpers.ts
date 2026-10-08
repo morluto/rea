@@ -437,22 +437,38 @@ const xhrOpenUrl = (
   name: string,
   methodNode: t.Node | null | undefined,
   urlNode: t.Node | null | undefined,
+  receiverFact?:
+    | "window"
+    | "indexed-db"
+    | "cache-storage"
+    | "local"
+    | "local-indexed-db"
+    | "local-cache-storage",
 ): string | undefined => {
   const url = stringValue(urlNode);
   if (url === undefined) return undefined;
   const method = stringValue(methodNode);
   // IndexedDB and Cache Storage `open` take a name and a version, so a
   // receiver spelled as storage needs a standard HTTP method literal.
-  const storage = storageKind(name) !== undefined;
+  const storage =
+    receiverFact === "local-indexed-db" ||
+    receiverFact === "local-cache-storage" ||
+    receiverFact === "indexed-db" ||
+    receiverFact === "cache-storage" ||
+    storageKind(name) !== undefined;
   if (method === undefined)
     return storage ||
+      receiverFact === "window" ||
       WINDOW_OPEN_CALL.test(name) ||
       FS_OPEN_FLAGS.has(url) ||
       BROWSING_CONTEXT_KEYWORDS.has(url.toLowerCase())
       ? undefined
       : url;
   return XHR_METHODS.has(method.toUpperCase()) ||
-    (!storage && /^[A-Z][A-Z-]*$/u.test(method))
+    ((!storage ||
+      receiverFact === "local-indexed-db" ||
+      receiverFact === "local-cache-storage") &&
+      /^[A-Z][A-Z-]*$/u.test(method))
     ? url
     : undefined;
 };
@@ -504,10 +520,19 @@ export const endpointArgument = (
     | t.ArgumentPlaceholder
   )[],
   callee: t.Node,
+  receiverFact?:
+    | "window"
+    | "indexed-db"
+    | "cache-storage"
+    | "local"
+    | "local-indexed-db"
+    | "local-cache-storage",
 ): string | undefined => {
+  if (receiverFact === "window") return undefined;
   if (name === "fetch" || name.endsWith(".fetch") || name === "WebSocket")
     return stringValue(args[0]);
-  if (name.endsWith(".open")) return xhrOpenUrl(name, args[0], args[1]);
+  if (name.endsWith(".open"))
+    return xhrOpenUrl(name, args[0], args[1], receiverFact);
   const method = ["get", "post", "put", "patch", "delete", "request"].find(
     (candidate) => name === candidate || name.endsWith(`.${candidate}`),
   );
