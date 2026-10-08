@@ -564,10 +564,12 @@ export const traceDylibLoading = async (
     );
     if (slices.length === 0) withoutArchitecture.push(root);
     for (const slice of slices) {
-      const searchOverrides = embeddedDyldOverrides(
-        slice.dyld_environment,
-        slice.platforms,
-      );
+      const executable = slice.file_type === "execute" ? root : null;
+      // Only the main executable supplies the process's embedded environment.
+      const searchOverrides =
+        executable === null
+          ? []
+          : embeddedDyldOverrides(slice.dyld_environment, slice.platforms);
       // Inserted libraries introduce unexamined images even without dependencies.
       if (
         searchOverrides.some(
@@ -586,7 +588,7 @@ export const traceDylibLoading = async (
             searchOverrides,
             environmentRoots,
             platforms: slice.platforms,
-            executable: slice.file_type === "execute" ? root : null,
+            executable,
             loaded: new Map(),
             byInstallName: new Map(),
             images,

@@ -1019,3 +1019,89 @@ it.each([
     expect(trace.coverage.status).toBe(coverage);
   },
 );
+
+it.each(["dylib", "bundle", "other"] as const)(
+  "ignores embedded process settings from a %s root while retaining load findings",
+  async (file_type) => {
+    const root = "Contents/MacOS/root";
+    const child = "Contents/MacOS/child.dylib";
+    const settings = [
+      "DYLD_LIBRARY_PATH=/external",
+      "DYLD_INSERT_LIBRARIES=/external/injected.dylib",
+    ];
+    const trace = await traceDylibLoading(
+      memoryView({
+        [root]: parsed(
+          slice({
+            file_type,
+            dyld_environment: settings,
+            dependencies: [
+              dependency("@loader_path/child.dylib"),
+              dependency("@loader_path/missing.dylib"),
+              dependency("@loader_path/lazy.dylib", {
+                command: "LC_LAZY_LOAD_DYLIB",
+              }),
+            ],
+          }),
+        ),
+        [child]: parsed(
+          slice({
+            dependencies: [dependency("@loader_path/descendant.dylib")],
+          }),
+        ),
+      }),
+      { roots: [root] },
+    );
+    expect(trace.edges.map(({ resolution }) => resolution.status)).toEqual([
+      "resolved",
+      "unresolved",
+      "unresolved",
+      "unresolved",
+    ]);
+    expect(
+      trace.edges.every(({ loader_conditional }) => !loader_conditional),
+    ).toBe(true);
+    expect(trace.coverage.status).toBe("complete");
+    expect(
+      trace.findings.filter(({ kind }) => kind === "required-load-unresolved"),
+    ).toHaveLength(2);
+    expect(
+      trace.findings.find(({ kind }) => kind === "required-load-unresolved")
+        ?.explanation,
+    ).toContain("load this required dependency");
+    expect(
+      trace.findings.filter(({ kind }) => kind === "lazy-load-unresolved"),
+    ).toHaveLength(1);
+    expect(
+      trace.images.find(({ path }) => path === root)?.slices[0]
+        ?.dyld_environment,
+    ).toEqual(settings);
+    expect(
+      trace.findings.find(({ kind }) => kind === "dyld-environment-present")
+        ?.explanation,
+    ).toContain("entries in this non-executable root are observations");
+  },
+);
+
+it("keeps inserted-library uncertainty scoped to the executable's process", async () => {
+  const library = "Contents/MacOS/library.dylib";
+  const trace = await traceDylibLoading(
+    memoryView({
+      [MAIN]: executable({
+        dyld_environment: ["DYLD_INSERT_LIBRARIES=/external/injected.dylib"],
+      }),
+      [library]: parsed(
+        slice({
+          dyld_environment: ["DYLD_INSERT_LIBRARIES=/external/ignored.dylib"],
+        }),
+      ),
+    }),
+    { roots: [library, MAIN] },
+  );
+  expect(trace.coverage.status).toBe("partial");
+  const limitation = trace.limitations.find((value) =>
+    value.includes("LC_DYLD_ENVIRONMENT"),
+  );
+  expect(limitation).toContain(MAIN);
+  expect(limitation).not.toContain(library);
+});

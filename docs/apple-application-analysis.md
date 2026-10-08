@@ -177,10 +177,14 @@ cache rather than on disk, so REA does not check them against the host.
 - `required-load-unresolved`, `weak-load-unresolved`, and `lazy-load-unresolved`.
   `LC_LAZY_LOAD_DYLIB` dependencies are resolved but not traversed, because dyld
   loads them on first use; an unresolved one is not a launch failure.
-- `earlier-rpath-candidate-absent`: a Mach-O placed at an earlier search path
-  would load first. Whether code-signing library validation would reject it is
-  not evaluated; use `inspect_signature`.
-- `dyld-environment-present`: `LC_DYLD_ENVIRONMENT` search paths are not modeled.
+- `earlier-rpath-candidate-absent`: a compatible Mach-O placed at an earlier
+  modeled search path could take precedence, subject to unmodeled search inputs
+  and code-signing library validation. These findings do not establish which
+  image dyld will load; use `inspect_signature` for signing metadata.
+- `dyld-environment-present`: preserves observed `LC_DYLD_ENVIRONMENT` entries.
+  Only an executable root supplies process settings; entries on library and
+  other non-executable roots do not alter resolution or coverage. Applicable
+  executable image-selection overrides are not modeled.
 
 `verify:macos-bundle` checks the parser against `otool -l` for every traced
 image. It also compares the predicted load order of two process roots with the

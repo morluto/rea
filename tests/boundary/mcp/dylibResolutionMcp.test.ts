@@ -260,3 +260,66 @@ it.each([
     ).toEqual([setting]);
   });
 });
+
+it("ignores process settings on an explicitly selected library root through MCP", async () => {
+  const root = await createTestTempDirectory("rea-dylib-root-mcp-");
+  const path = join(root, "library.dylib");
+  const settings = [
+    "DYLD_LIBRARY_PATH=/external",
+    "DYLD_INSERT_LIBRARIES=/external/injected.dylib",
+  ];
+  await writeFile(
+    path,
+    machoImage({
+      fileType: FILE_TYPE.dylib,
+      commands: [
+        buildVersionCommand(1),
+        ...settings.map(dyldEnvironmentCommand),
+        dylibCommand(LC.LOAD_DYLIB, "@loader_path/child.dylib"),
+        dylibCommand(LC.LOAD_DYLIB, "@loader_path/missing.dylib"),
+      ],
+    }),
+  );
+  await writeFile(
+    join(root, "child.dylib"),
+    machoImage({
+      fileType: FILE_TYPE.dylib,
+      commands: [buildVersionCommand(1)],
+    }),
+  );
+  await withClient(async (client) => {
+    const opened = await client.callTool({
+      name: "open_binary",
+      arguments: { path },
+    });
+    expect(opened.isError, JSON.stringify(opened.structuredContent)).not.toBe(
+      true,
+    );
+    const result = await client.callTool({
+      name: "trace_dylib_resolution",
+      arguments: { roots: ["library.dylib"] },
+    });
+    expect(result.isError, JSON.stringify(result.structuredContent)).not.toBe(
+      true,
+    );
+    const trace = dylibResolutionResultSchema.parse(
+      structuredResult(result.structuredContent),
+    );
+    expect(trace.edges.map(({ resolution }) => resolution.status)).toEqual([
+      "resolved",
+      "unresolved",
+    ]);
+    expect(trace.coverage.status).toBe("complete");
+    expect(trace.findings.map(({ kind }) => kind)).toContain(
+      "required-load-unresolved",
+    );
+    expect(
+      trace.images.find(({ path }) => path === "library.dylib")?.slices[0]
+        ?.dyld_environment,
+    ).toEqual(settings);
+    expect(
+      trace.findings.find(({ kind }) => kind === "dyld-environment-present")
+        ?.explanation,
+    ).toContain("entries in this non-executable root are observations");
+  });
+});

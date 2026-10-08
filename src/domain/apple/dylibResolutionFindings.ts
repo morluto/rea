@@ -34,18 +34,23 @@ export const deriveFindings = (
   });
   for (const { image, architecture } of roots) {
     const facts = images.get(image);
-    const environment =
+    const slice =
       facts?.status === "parsed"
-        ? (facts.slices.find((slice) => slice.architecture === architecture)
-            ?.dyld_environment ?? [])
-        : [];
+        ? facts.slices.find(
+            (candidate) => candidate.architecture === architecture,
+          )
+        : undefined;
+    const environment = slice?.dyld_environment ?? [];
     if (environment.length > 0)
       findings.push({
         kind: "dyld-environment-present",
         edge_index: null,
         image,
         basis: "derived",
-        explanation: `${image} (${architecture}) sets dyld environment variables through LC_DYLD_ENVIRONMENT (${environment.join(", ")}); any image-selection overrides they request are not modeled. Diagnostic settings alone do not alter resolution.`,
+        explanation:
+          slice?.file_type === "execute"
+            ? `${image} (${architecture}) sets dyld environment variables through LC_DYLD_ENVIRONMENT (${environment.join(", ")}); any image-selection overrides they request are not modeled. Diagnostic settings alone do not alter resolution.`
+            : `${image} (${architecture}) contains LC_DYLD_ENVIRONMENT (${environment.join(", ")}). Dyld reads these commands only from the main executable; entries in this non-executable root are observations and do not alter resolution.`,
       });
   }
   return findings;
@@ -77,7 +82,7 @@ const unresolvedFinding = (edge: Edge, index: number): Finding => {
     : {
         ...base,
         kind: "required-load-unresolved",
-        explanation: `${missing}${when}dyld would fail to launch ${edge.root} (${edge.architecture}) unless the image is supplied elsewhere.`,
+        explanation: `${missing}${when}dyld would fail to load this required dependency for ${edge.root} (${edge.architecture}) unless the image is supplied elsewhere.`,
       };
 };
 

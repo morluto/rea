@@ -309,3 +309,60 @@ cliTest(
     }
   },
 );
+
+cliTest(
+  "retains definitive load findings for an explicitly selected app library root",
+  async ({ cli }) => {
+    const app = await fixtureApp();
+    const settings = [
+      "DYLD_LIBRARY_PATH=/external",
+      "DYLD_INSERT_LIBRARIES=/external/injected.dylib",
+    ];
+    await writeFiles(app, {
+      "Contents/Frameworks/libcore.dylib": machoImage({
+        fileType: FILE_TYPE.dylib,
+        commands: [
+          buildVersionCommand(1),
+          ...settings.map(dyldEnvironmentCommand),
+          dylibCommand(LC.LOAD_DYLIB, "@loader_path/child.dylib"),
+          dylibCommand(LC.LOAD_DYLIB, "@loader_path/missing.dylib"),
+        ],
+      }),
+      "Contents/Frameworks/child.dylib": machoImage({
+        fileType: FILE_TYPE.dylib,
+        commands: [buildVersionCommand(1)],
+      }),
+    });
+    const result = await cli.run({
+      arguments: [
+        "trace-dylib-resolution",
+        app,
+        "--root",
+        "Contents/Frameworks/libcore.dylib",
+        "--json",
+      ],
+      environment: ENVIRONMENT,
+    });
+    expect(result.exitCode, JSON.stringify(result.json)).toBe(0);
+    const trace = dylibResolutionResultSchema.parse(
+      parseEvidence(result.json).normalized_result,
+    );
+    expect(trace.edges.map(({ resolution }) => resolution.status)).toEqual([
+      "resolved",
+      "unresolved",
+    ]);
+    expect(trace.coverage.status).toBe("complete");
+    expect(trace.findings.map(({ kind }) => kind)).toContain(
+      "required-load-unresolved",
+    );
+    expect(
+      trace.images.find(
+        ({ path }) => path === "Contents/Frameworks/libcore.dylib",
+      )?.slices[0]?.dyld_environment,
+    ).toEqual(settings);
+    expect(
+      trace.findings.find(({ kind }) => kind === "dyld-environment-present")
+        ?.explanation,
+    ).toContain("entries in this non-executable root are observations");
+  },
+);
