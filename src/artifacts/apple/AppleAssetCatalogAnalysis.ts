@@ -48,10 +48,15 @@ export const analyzeAppleAssetCatalogs = async (input: {
     sha256: string;
     records: ReturnType<typeof parseAppleAssetCatalogRecords>;
   }[] = [];
+  const uninspected: string[] = [];
   let totalMetadataBytes = 0;
   try {
     for await (const entry of reader.entries(input.signal)) {
-      if (entry.kind !== "file" || !entry.path.endsWith("Assets.car")) continue;
+      if (!entry.path.endsWith("Assets.car")) continue;
+      if (entry.kind !== "file") {
+        uninspected.push(`${entry.path} (${entry.kind})`);
+        continue;
+      }
       const inspected = await inspectAssetCatalogEntry({
         reader,
         entry,
@@ -69,10 +74,12 @@ export const analyzeAppleAssetCatalogs = async (input: {
   } finally {
     await reader.close();
   }
-  if (catalogs.length === 0)
+  // Without any readable catalog, unmatched resource keys would overstate an
+  // absence that a skipped catalog entry may contradict.
+  if (catalogs.length === 0 && uninspected.length > 0)
     throw new ArtifactReaderFailure(
-      "unavailable",
-      "No compiled Assets.car catalogs were found in the app bundle",
+      "path",
+      `Asset catalog entries are not regular files and were not inspected: ${uninspected.join(", ")}`,
     );
   const interfaceBuilder = await analyzeInterfaceBuilderBundle({
     bundlePath: input.bundlePath,
@@ -93,6 +100,18 @@ export const analyzeAppleAssetCatalogs = async (input: {
     ...result,
     limitations: [
       ...result.limitations,
+      // An app without a compiled catalog is an observed empty inventory, not
+      // a missing host tool.
+      ...(catalogs.length === 0
+        ? [
+            "No compiled Assets.car catalog was found among the app bundle's regular files (symlinks are not followed); any resource keys are reported as unmatched.",
+          ]
+        : []),
+      ...(uninspected.length === 0
+        ? []
+        : [
+            `Asset catalog entries that are not regular files were not inspected, so resource keys reported as unmatched may resolve there: ${uninspected.join(", ")}`,
+          ]),
       "Exact resource-key joins use only recognized image or asset key fields on decoded Interface Builder resource objects; other archive resource references are not inferred.",
       ...(interfaceBuilder.graph.truncated
         ? [

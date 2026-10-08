@@ -62,6 +62,40 @@ it("inspects a standalone keyed archive through MCP with original object identit
       arguments: { path: "other.plist" },
     });
     expect(rejected.isError).toBe(true);
+    expect(rejected.structuredContent).toMatchObject({
+      error: {
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              path: ["path"],
+              reason: "invalid_value",
+              expected: "archive.plist",
+            },
+          ],
+        },
+      },
+    });
+    const missingRoot = await client.callTool({
+      name: "inspect_keyed_archive",
+      arguments: { root: "missing" },
+    });
+    expect(missingRoot.isError).toBe(true);
+    expect(missingRoot.structuredContent).toMatchObject({
+      error: {
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              path: ["root"],
+              reason: "invalid_value",
+              message: expect.stringContaining("missing"),
+              expected: Object.keys(graph.roots),
+            },
+          ],
+        },
+      },
+    });
   } finally {
     await client.close();
     await server.close();

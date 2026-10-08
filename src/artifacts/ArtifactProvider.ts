@@ -21,7 +21,10 @@ import {
   type ArtifactAnalysisOperation,
 } from "../contracts/artifactToolContracts.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
-import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  AnalysisInputError,
+} from "../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -116,10 +119,15 @@ class ArtifactClient implements AnalysisClient {
           parameters.path !== "." &&
           parameters.path !== basename(this.target.path)
         )
-          throw new ArtifactReaderFailure(
-            "path",
-            "For an active plist, path must select that archive (omit path or use its basename)",
-          );
+          throw new AnalysisInputError(operation, undefined, [
+            {
+              path: ["path"],
+              reason: "invalid_value",
+              message:
+                "For an active plist, path must select that archive (omit path or use its basename).",
+              expected: basename(this.target.path),
+            },
+          ]);
         const bundlePath = standalone
           ? dirname(this.target.path)
           : this.target.sourcePath;
@@ -352,6 +360,8 @@ const translateFailure = (
       cause.details,
       cause.message,
     );
+  // Caller-selection failures are already typed; keep their correction details.
+  if (cause instanceof AnalysisInputError) return cause;
   return new ArtifactOperationError(operation, "io");
 };
 

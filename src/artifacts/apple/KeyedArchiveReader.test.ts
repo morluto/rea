@@ -125,6 +125,16 @@ describe("inert keyed archive decoding", () => {
         offset: 0,
         limit: 1,
       }),
-    ).toThrow("does not exist");
+    ).toThrow(
+      expect.objectContaining({
+        issues: [
+          expect.objectContaining({
+            path: ["root"],
+            message: expect.stringContaining("does not exist"),
+            expected: ["root", "other"],
+          }),
+        ],
+      }),
+    );
   });
 });

@@ -102,8 +102,12 @@ jobs:
         with:
           name: rea-dist
           path: dist
-      - name: Generate source catalog from downloaded build
-        run: node scripts/generate-mcp-tool-catalog.mjs
+      - name: Restore generated outputs from downloaded build
+        run: |
+          node scripts/generate-mcp-tool-catalog.mjs
+          node scripts/generate-skill-metadata.mjs
+          node scripts/generate-product-catalog.mjs
+          node scripts/generate-completion-ledger.mjs
       - run: npm run test:ci:shard:run -- --shard=${{ matrix.shard }}
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
@@ -443,6 +447,11 @@ jobs:
           tests/boundary/filesystem/safeOutputTree.test.ts
           tests/boundary/providers/native/artifactProvider.archiveSafety.test.ts
           tests/boundary/filesystem/setupUnavailableProvider.test.ts
+          tests/boundary/filesystem/windowsNpxRegistration.test.ts
+          src/application/ClientRegistrationIdentity.test.ts
+          tests/boundary/filesystem/webScriptManifestPaths.test.ts
+          tests/acceptance/webModuleCli.test.ts
+          tests/acceptance/webSourceLocationCli.test.ts
           tests/boundary/cli/referenceSourceImportStatus.test.ts
           src/cliReferenceSourceImportStatus.test.ts
           tests/boundary/filesystem/asarInventoryFreshness.test.ts
@@ -483,3 +492,13 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run docs:check
+      - name: Generation leaves authored files unchanged
+        run: git diff --exit-code
+      - uses: actions/upload-artifact@v4
+        with:
+          name: generated-docs
+          path: |
+            docs/public/product-catalog.json
+            docs/verification/managed-conformance-*.json
+            skills/reverse-engineer-anything
+          if-no-files-found: error

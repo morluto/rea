@@ -162,8 +162,7 @@ export const analysisErrorUserMessage = (error: AnalysisError): string => {
       : `Evidence ${error.evidenceId} does not match the requested reference (${error.reason}). Check the expected and actual identity in the diagnostic details.`;
   if (error instanceof EvidenceIntegrityError)
     return "Evidence is invalid or has changed. Recreate or re-import it, then try again.";
-  if (error instanceof EvidenceFileError)
-    return evidenceFileMessage(error.reason);
+  if (error instanceof EvidenceFileError) return evidenceFileMessage(error);
   if (error instanceof UnknownRegistryError && error.reason === "not-found")
     return "The requested residual unknown does not exist in this session. Check the unknown_id and try again.";
   if (error instanceof UnknownRegistryError)
@@ -258,7 +257,14 @@ const artifactMessage = (reason: ArtifactOperationError["reason"]): string => {
   return "Artifact could not be read or written. Check file access and try again.";
 };
 
-const evidenceFileMessage = (reason: EvidenceFileError["reason"]): string => {
+const evidenceFileMessage = ({
+  operation,
+  reason,
+}: EvidenceFileError): string => {
+  if (reason === "missing")
+    return operation === "read"
+      ? "Evidence file does not exist at the selected path. Check the path and try again."
+      : "Evidence output directory does not exist. Choose an existing directory and try again.";
   if (reason === "not-file")
     return "Evidence path does not point to a regular file. Choose a file and try again.";
   if (reason === "exists")

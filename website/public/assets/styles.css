@@ -171,6 +171,26 @@ section[id] {
 .navigation .nav-start {
   color: var(--ink);
 }
+.faq-list {
+  border-top: 1px solid var(--line);
+}
+.faq-item {
+  padding-block: 1rem;
+  border-bottom: 1px solid var(--line);
+  scroll-margin-top: 2rem;
+}
+.faq-item summary {
+  cursor: pointer;
+  color: var(--ink);
+  font-weight: 600;
+  line-height: 1.55;
+}
+.faq-item[open] summary {
+  margin-bottom: 0.9rem;
+}
+.faq-item > :last-child {
+  margin-bottom: 0;
+}
 .eyebrow {
   margin-bottom: 1.2rem;
   font-size: 0.875rem;
@@ -872,7 +892,8 @@ pre code {
 .th04-overview {
   margin-bottom: 3.2rem;
 }
-.th04-ring-figure img {
+.th04-ring-figure img,
+.ctf-mask-figure img {
   min-width: 680px;
 }
 .th04-preview img {
@@ -1057,10 +1078,16 @@ pre code {
   }
   .header-inner {
     min-height: 78px;
-    gap: 1rem;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 0.55rem;
+    padding-block: 0.8rem;
   }
   .navigation {
-    gap: 1rem;
+    width: 100%;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem 0.25rem;
     font-size: 0.875rem;
   }
   .hero {
@@ -1179,16 +1206,6 @@ pre code {
 }
 
 @media (max-width: 360px) {
-  .header-inner {
-    flex-wrap: wrap;
-    justify-content: flex-start;
-    gap: 0.3rem;
-    padding-block: 0.65rem;
-  }
-  .navigation {
-    width: 100%;
-    justify-content: space-between;
-  }
   .stats,
   .case-stats {
     grid-template-columns: 1fr;
