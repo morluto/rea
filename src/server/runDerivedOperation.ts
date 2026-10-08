@@ -33,8 +33,10 @@ export const runDerivedOperation = async <Value>(
   try {
     value = compute();
   } catch (cause: unknown) {
+    // Typed causes already name the failed constraint; keep their issues.
     return err(
-      cause instanceof AnalysisCancelledError
+      cause instanceof AnalysisCancelledError ||
+        cause instanceof AnalysisInputError
         ? cause
         : new AnalysisInputError(operation, { cause }),
     );

@@ -241,11 +241,33 @@ it("requires compatible contracts and enforces capture age through a clock seam"
         }),
       },
     }),
-  ).toThrow("incompatible comparison contracts");
+  ).toThrow(
+    expect.objectContaining({
+      issues: [
+        expect.objectContaining({
+          path: ["right"],
+          message: expect.stringContaining(
+            "incompatible comparison contracts; these scenario fields differ: changed",
+          ),
+          expected: ["changed"],
+        }),
+      ],
+    }),
+  );
   expect(() =>
     compareProcessCaptures(capture, capture, {
       maxCaptureAgeMs: 1,
       now: () => Date.parse("2026-01-01T00:00:01.000Z"),
     }),
-  ).toThrow("max_capture_age_ms");
+  ).toThrow(
+    expect.objectContaining({
+      issues: [
+        expect.objectContaining({
+          path: ["max_capture_age_ms"],
+          reason: "out_of_range",
+          message: expect.stringContaining("left completed at"),
+        }),
+      ],
+    }),
+  );
 });

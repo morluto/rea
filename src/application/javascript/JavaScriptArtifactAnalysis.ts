@@ -407,7 +407,7 @@ const pointForOffset = (
   text: string,
   offset: number,
 ): JavaScriptSourcePoint => {
-  const lines = text.slice(0, offset).split("\n");
+  const lines = text.slice(0, offset).split(/\r\n|\r|\n/u);
   return { line: lines.length, column: lines.at(-1)?.length ?? 0 };
 };
 

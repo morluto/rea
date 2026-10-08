@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import { z } from "zod";
 
+import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { analyzeJavaScriptApplication } from "../../../src/application/javascript/JavaScriptApplicationService.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -70,3 +71,45 @@ cliTest(
     expect(updates.every(({ terminal }) => terminal !== true)).toBe(true);
   },
 );
+
+for (const command of ["analyze-javascript-application", "analyze"]) {
+  cliTest(
+    `${command} retains HTML source ranges after a bare carriage return`,
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-html-coordinate-cli-");
+      const opening = '<script src="actual.js">';
+      await Promise.all([
+        writeFile(
+          join(root, "index.html"),
+          `<main>context</main>\r${opening}</script>`,
+        ),
+        writeFile(join(root, "actual.js"), "export const actual = true;"),
+      ]);
+      const output = await cli.run({ arguments: [command, root, "--json"] });
+      expect(output.exitCode).toBe(0);
+      const evidence = parseEvidence(output.json);
+      const result = javascriptApplicationAnalysisResultSchema.parse(
+        evidence.normalized_result,
+      );
+      const loads = result.graph.edges.filter(
+        ({ relation, properties }) =>
+          relation === "loads" && properties.script_path === "actual.js",
+      );
+      expect(loads).toHaveLength(1);
+      expect(loads[0]).toMatchObject({
+        properties: { resolved_path: "actual.js" },
+        evidence: {
+          location: {
+            available: true,
+            value: {
+              kind: "source-range",
+              source: "index.html",
+              start: { line: 2, column: 0 },
+              end: { line: 2, column: opening.length },
+            },
+          },
+        },
+      });
+    },
+  );
+}

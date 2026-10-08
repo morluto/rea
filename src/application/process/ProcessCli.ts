@@ -5,6 +5,7 @@ import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { createEvidence, parseEvidence } from "../../domain/evidence.js";
+import { describeValidationFailure } from "../../domain/evidenceBundle.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { projectInputIssues } from "../../domain/inputIssueProjection.js";
 import { processTraceSpecificationSchema } from "../../domain/process/processTraceComparison.js";
@@ -120,7 +121,7 @@ const parseCaptureEvidence = (input: unknown) => {
         { cause },
         projectInputIssues(cause.issues, input),
       );
-    throw invalidCaptureEvidence();
+    throw invalidCaptureEvidence(cause);
   }
   if (
     evidence.operation !== "capture_process_scenario" ||
@@ -140,24 +141,28 @@ const parseCaptureEvidence = (input: unknown) => {
       locations: evidence.locations,
     };
   } catch (cause: unknown) {
-    throw invalidCaptureEvidence();
+    throw invalidCaptureEvidence(cause);
   }
 };
 
 const parseTraceSpecification = (input: unknown) => {
   const parsed = processTraceSpecificationSchema.safeParse(input);
   if (parsed.success) return parsed.data;
+  // Match the MCP boundary: the operation name and a trace_spec-rooted path.
   throw new AnalysisInputError(
-    "compare-process-captures",
+    "compare_process_captures",
     { cause: parsed.error },
-    projectInputIssues(parsed.error.issues, input),
+    projectInputIssues(parsed.error.issues, input).map((issue) => ({
+      ...issue,
+      path: ["trace_spec", ...issue.path],
+    })),
   );
 };
 
-const invalidCaptureEvidence = (): ProcessCliFailure =>
+const invalidCaptureEvidence = (cause: unknown): ProcessCliFailure =>
   new ProcessCliFailure(
     "invalid_input",
-    "Capture evidence is malformed. Create new capture evidence, then try again.",
+    `Capture evidence is malformed (${describeValidationFailure(cause)}). Create new capture evidence, then try again.`,
   );
 
 const readJson = async (path: string): Promise<unknown> => {

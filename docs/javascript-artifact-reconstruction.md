@@ -125,6 +125,9 @@ SHA-256 digests, inventory IDs, ASAR container identity, and `.asar.unpacked`
 status. Direct ASAR inputs and filesystem-backed ASAR files nested beneath a
 directory are supported.
 
+JavaScript and HTML source ranges retain an initial UTF-8 BOM as one UTF-16
+code unit, matching the original bytes identified by the artifact digest.
+
 If an ASAR declares an unpacked companion entry but the corresponding
 `<archive>.unpacked` file is absent from the operator-supplied artifact set, REA
 keeps the ASAR occurrence with `hash_status: unavailable`, records an explicit
@@ -268,3 +271,5 @@ document base and query/fragment rules. CommonJS module lookups retain extension
 and directory resolution.
 Unresolved HTML references retain their declaration, source range, and resolution
 reason in the renderer observations.
+HTML script source ranges follow the HTML parser across LF, CRLF, and bare CR
+line endings, preserving UTF-16 columns.
