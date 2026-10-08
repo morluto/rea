@@ -29,7 +29,10 @@ The instance-local adapter subclass forwards the documented pyelftools 0.33
 `iter_segments(type=...)` / `iter_sections(type=...)` filters missing from
 pwntools 4.15.0 cached overrides. No upstream file or global method is changed.
 Sectionless dynamic string tables use unique DT_STRTAB/DT_STRSZ mappings to
-file-backed PT_LOAD bytes; unresolved coordinates remain explicitly unknown.
+file-backed PT_LOAD bytes; ambiguous or non-file-backed mappings are explicitly
+unsupported. Section-name table escapes follow the [ELF ABI](https://gabi.xinuos.com/elf/02-eheader.html):
+SHN_XINDEX represents actual indices at least 0xff00; ordinary absence uses index
+zero. Raw name offsets remain reported when the name table is absent.
 
 PLT convenience inference uses the unchanged upstream Unicorn instruction
 emulator. REA labels those maps as derived static evidence. The no-execution

@@ -617,6 +617,11 @@ released process ownership. Exec syscall tracing must identify only the declared
 Node/Python launchers; no target binary is executed. Core/debugger claims need
 separate verification lanes. Pass an installed package entrypoint as the script's
 first argument to verify packaging independently of the checkout.
+The valid SHN_XINDEX fixture has 65,281 full section rows; CLI is checked in
+the ordinary lane. Its large MCP transfer is opt-in with
+`REA_VERIFY_LARGE_ELF_MCP=1` (or the workflow dispatch `large_mcp` input), an
+explicit 256 MiB SDK receive buffer and five-minute request timeout. Ordinary
+MCP fixtures retain the pinned SDK defaults.
 
 ## Agent evaluation and conformance records
 

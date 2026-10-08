@@ -85,7 +85,12 @@ uses isolated mode and an owned cache. Exact upstream profiles are recorded in
   library, and an absent canary symbol does not prove every function unprotected.
 
 Complete results have a 32 MiB input, 64 MiB reply, 1 MiB combined diagnostics
-and 30-second owned command deadline. Python lowers resource soft limits to at most 3 GiB virtual address space,
+and 30-second owned command deadline. The reply budget applies to the decoder
+record; the CLI/MCP Evidence envelope adds copies and encoding overhead. The
+pinned MCP SDK defaults to a 10 MiB receive buffer. Large complete results need
+a caller-configured `StdioClientTransport({ maxBufferSize: ... })`; the large
+extended-index verification uses 256 MiB and an explicit five-minute request
+timeout in its separate opt-in MCP lane. REA does not silently truncate the result. Python lowers resource soft limits to at most 3 GiB virtual address space,
 30 CPU seconds and 64 MiB file output. Inherited tighter soft/hard limits are
 retained, and the effective values are returned in the result limitations. Virtual address space is not RSS;
 Unicorn needs a large virtual map. Limits fail with no partial success, and

@@ -134,7 +134,12 @@ def inspect_elf(path, cache):
             section_count = headers.num_sections()
             if headers.header.e_shstrndx == 0xffff and section_count == 0:
                 raise LayoutFailure("format", "ELF extended section-name index requires a declared section-zero header.")
+            raw_name_index = headers.header.e_shstrndx
+            if 0xff00 <= raw_name_index < 0xffff:
+                raise LayoutFailure("format", f"ELF section-name index {raw_name_index} is reserved and cannot directly reference a section.")
             section_name_index = headers.get_shstrndx()
+            if raw_name_index == 0xffff and section_name_index < 0xff00:
+                raise LayoutFailure("format", f"ELF SHN_XINDEX resolves to ordinary index {section_name_index}; the escape requires an index at least SHN_LORESERVE (0xff00).")
             if section_name_index != 0:
                 if section_name_index >= section_count:
                     raise LayoutFailure("format", f"ELF section-name table index {section_name_index} lies outside the declared section count {section_count}.")

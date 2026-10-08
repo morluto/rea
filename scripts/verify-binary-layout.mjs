@@ -18,7 +18,10 @@ import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { mcpTextValue } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { sectionNameFixtures } from "./lib/elf-section-name-fixtures.mjs";
+import { withLargeResultMcp } from "./lib/large-result-mcp.mjs";
 
+const verifyLargeMcp = process.env.REA_VERIFY_LARGE_ELF_MCP === "1";
 const python = process.env.REA_PWNTOOLS_PYTHON;
 const strace = process.env.REA_VERIFY_STRACE_COMMAND;
 if (
@@ -404,62 +407,37 @@ try {
       }
     }
   }
-  const sectionNameTable =
-    protectedReport.sections[sectionBearingBytes.readUInt16LE(62)];
-  assert.equal(sectionNameTable.type, "SHT_STRTAB");
-  for (const problem of [
-    "out-of-range",
-    "wrong-type",
-    "undeclared-header",
-    "extended-undeclared-header",
-    "extended-without-sections",
-  ]) {
-    let bytes = Buffer.from(sectionBearingBytes);
-    let selected = protectedReport.sections.length + 100;
-    if (problem === "wrong-type") {
-      selected = protectedReport.sections.find(
-        (section) => section.type === "SHT_PROGBITS",
-      ).index;
-    } else if (problem.includes("undeclared-header")) {
-      const end =
-        Number(bytes.readBigUInt64LE(40)) +
-        protectedReport.sections.length * bytes.readUInt16LE(58);
-      const extended = Buffer.alloc(Math.max(bytes.length, end + 64));
-      bytes.copy(extended);
-      const start = Number(BigInt(sectionNameTable.header_location.offset));
-      bytes.copy(extended, end, start, start + 64);
-      bytes = extended;
-      selected = protectedReport.sections.length;
-    }
-    if (problem === "extended-without-sections") {
-      bytes.writeBigUInt64LE(0n, 40);
-      bytes.writeUInt16LE(0, 60);
-      bytes.writeUInt16LE(0xffff, 62);
-    } else if (problem === "extended-undeclared-header") {
-      bytes.writeUInt16LE(0xffff, 62);
-      bytes.writeUInt32LE(selected, Number(bytes.readBigUInt64LE(40)) + 40);
-    } else bytes.writeUInt16LE(selected, 62);
-    const path = join(root.path, `invalid-section-names-${problem}`);
-    await writeFile(path, bytes);
+  for (const fixture of sectionNameFixtures(
+    sectionBearingBytes,
+    protectedReport,
+  )) {
+    const path = join(root.path, `section-names-${fixture.name}`);
+    await writeFile(path, fixture.bytes);
     for (const mode of ["cli", "mcp"]) {
-      await inspect(mode, path, "invalid_input");
-      cases++;
-    }
-    assert.deepEqual(await readFile(path), bytes);
-  }
-  for (const profile of ["absent", "extended-absent", "extended-present"]) {
-    const bytes = Buffer.from(sectionBearingBytes);
-    const selected =
-      profile === "extended-present" ? sectionNameTable.index : 0;
-    bytes.writeUInt16LE(profile === "absent" ? 0 : 0xffff, 62);
-    if (profile !== "absent")
-      bytes.writeUInt32LE(selected, Number(bytes.readBigUInt64LE(40)) + 40);
-    const path = join(root.path, `section-names-${profile}`);
-    await writeFile(path, bytes);
-    for (const mode of ["cli", "mcp"]) {
-      const value = await inspect(mode, path);
-      assert.deepEqual(value.symbols, protectedReport.symbols);
-      if (selected === 0) {
+      if (
+        fixture.expectation === "resolved" &&
+        mode === "mcp" &&
+        !verifyLargeMcp
+      )
+        continue;
+      // Ordinary cases retain the SDK default. Only this complete 65,281-row
+      // case selects a larger receive budget; production data is not truncated.
+      const value =
+        fixture.expectation === "resolved" && mode === "mcp"
+          ? await withLargeResultMcp(
+              { entrypoint, environment, maxBufferSize: 256 * 1024 * 1024 },
+              (largeClient) =>
+                inspect(mode, path, undefined, environment, largeClient),
+            )
+          : await inspect(
+              mode,
+              path,
+              fixture.expectation === "invalid_input"
+                ? "invalid_input"
+                : undefined,
+            );
+      if (fixture.expectation === "absent") {
+        assert.deepEqual(value.symbols, protectedReport.symbols);
         assert.deepEqual(
           value.sections.map((section) => section.name),
           protectedReport.sections.map(() => ({
@@ -474,14 +452,17 @@ try {
           value.sections.map((section) => section.name_offset),
           protectedReport.sections.map((section) => section.name_offset),
         );
-      } else
+      } else if (fixture.expectation === "resolved") {
+        assert.equal(value.sections.length, fixture.sectionCount);
         assert.deepEqual(
-          value.sections.map((section) => section.name),
-          protectedReport.sections.map((section) => section.name),
+          value.sections[fixture.tableIndex].name,
+          protectedReport.sections[sectionBearingBytes.readUInt16LE(62)].name,
         );
+        assert.deepEqual(value.symbols, protectedReport.symbols);
+      }
       cases++;
     }
-    assert.deepEqual(await readFile(path), bytes);
+    assert.deepEqual(await readFile(path), fixture.bytes);
   }
   // Malformed references must fail before the decoder reads unrelated bytes.
   const neededTagOffsets = [];
@@ -1165,7 +1146,7 @@ try {
       {
         env: { ...environment, PATH: "/usr/bin:/bin" },
         timeout: 45_000,
-        maxBuffer: 64 * 1024 * 1024,
+        maxBuffer: 256 * 1024 * 1024,
       },
     );
   }
@@ -1240,6 +1221,7 @@ console.log(
       status: "passed",
       public_cases: cases,
       bootstrap_boundary_cases: bootstrapCases,
+      large_index_mcp: verifyLargeMcp ? "verified" : "not-requested",
       profile: "pwntools4.15.0/pyelftools0.33/Unicorn2.1.2",
       target_execution: "exec-syscalls-verified-absent",
       verifier,
@@ -1258,10 +1240,13 @@ async function inspect(
 ) {
   let envelope;
   if (mode === "mcp") {
-    const response = await selectedClient.callTool({
-      name: "inspect_binary_layout",
-      arguments: { path },
-    });
+    const response = await selectedClient.callTool(
+      {
+        name: "inspect_binary_layout",
+        arguments: { path },
+      },
+      { timeout: 300_000 },
+    );
     const value = JSON.parse(mcpTextValue(response));
     if (category !== undefined) {
       assert.equal(response.isError, true);
@@ -1280,7 +1265,7 @@ async function inspect(
         {
           env: selectedEnvironment,
           timeout: 40_000,
-          maxBuffer: 64 * 1024 * 1024,
+          maxBuffer: 256 * 1024 * 1024,
         },
       );
     } catch (cause) {

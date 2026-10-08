@@ -2,6 +2,11 @@ name: Real offline binary layout
 
 on:
   workflow_dispatch:
+    inputs:
+      large_mcp:
+        description: "Also verify the complete 65,281-section result over MCP (slow)"
+        type: boolean
+        default: false
   pull_request:
     paths:
       - ".github/workflows/real-binary-layout.yml"
@@ -27,6 +32,8 @@ on:
       - "src/artifacts/ArtifactReader.ts"
       - "src/domain/analysisError*.ts"
       - "scripts/verify-binary-layout.mjs"
+      - "scripts/lib/elf-section-name-fixtures.mjs"
+      - "scripts/lib/large-result-mcp.mjs"
       - "scripts/fixtures/binary-layout*"
       - "package.json"
       - "package-lock.json"
@@ -41,6 +48,7 @@ concurrency:
 env:
   NODE_OPTIONS: --max-old-space-size=768
   HUSKY: "0"
+  REA_VERIFY_LARGE_ELF_MCP: ${{ inputs.large_mcp && '1' || '0' }}
 
 jobs:
   real-binary-layout:
