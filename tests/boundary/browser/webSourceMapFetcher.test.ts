@@ -193,6 +193,37 @@ describe("web source-map fetching and validation: fetching maps and following re
     });
   });
 
+  it.each([
+    ["embedded credentials", "https://user:secret@app.example.test/a.map"],
+    ["a different scheme on the same host", "http://app.example.test/a.map"],
+    ["another origin", "https://private.example.test/a.map"],
+    ["a non-http(s) scheme", "ftp://app.example.test/a.map"],
+    ["a file URL", "file:///tmp/a.map"],
+    ["an unparseable URL", "not a url"],
+  ])(
+    "filters a declared fetch URL with %s before any request",
+    async (_description, fetchUrl) => {
+      const calls: string[] = [];
+      const result = await fetchWebSourceMaps(
+        [{ ...request, fetchUrl }],
+        input(),
+        undefined,
+        {
+          fetch: (url) => {
+            calls.push(String(url));
+            return Promise.resolve(new Response("{}", { status: 200 }));
+          },
+        },
+      );
+
+      expect(calls).toEqual([]);
+      expect(result).toMatchObject({
+        status: "unavailable",
+        items: [{ status: "policy_filtered" }],
+      });
+    },
+  );
+
   it("follows an approved redirect chain without an arbitrary hop ceiling", async () => {
     const calls: string[] = [];
     const result = await fetchWebSourceMaps([request], input(), undefined, {
