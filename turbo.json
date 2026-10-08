@@ -10,8 +10,14 @@
         "scripts/clean-build-output.mjs",
         "scripts/generate-mcp-tool-catalog.mjs",
         "scripts/generate-package-metadata.mjs",
-        "scripts/lib/generated-file.mjs",
-        "skills/reverse-engineer-anything/SKILL.md",
+        "scripts/generate-skill-metadata.mjs",
+        "scripts/generate-product-catalog.mjs",
+        "scripts/generate-completion-ledger.mjs",
+        "scripts/lib/**/*.mjs",
+        "scripts/verify/managed/**",
+        "scripts/fixtures/managed/**",
+        ".oxfmtrc.json",
+        "skill-src/**",
         "src/**/*.ts",
         "!src/**/*.test.ts",
         "!src/**/*.fixture.ts",
@@ -22,7 +28,11 @@
       "outputs": [
         "dist/**",
         ".cache/tsconfig.build.tsbuildinfo",
-        "src/generatedMcpToolCatalog.ts"
+        "src/generatedMcpToolCatalog.ts",
+        "skills/**",
+        "docs/public/product-catalog.json",
+        "docs/verification/managed-conformance-manifest.json",
+        "docs/verification/managed-conformance-ledger.json"
       ]
     },
     "typecheck": {
@@ -46,7 +56,7 @@
         "package-lock.json",
         "scripts/generate-package-metadata.mjs",
         "scripts/lib/generated-file.mjs",
-        "skills/reverse-engineer-anything/SKILL.md",
+        "skill-src/reverse-engineer-anything/SKILL.md",
         "src/generatedPackageMetadata.ts"
       ]
     },
@@ -124,6 +134,7 @@
         "src/generated*.ts",
         "src/contracts/**/*.ts",
         "docs/**",
+        "skill-src/**",
         "skills/**/SKILL.md",
         "README.md"
       ]

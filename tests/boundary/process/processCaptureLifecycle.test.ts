@@ -423,11 +423,20 @@ itWithCaptureCapability(
     );
     const timedOutCapture = captureObservations(timedOut);
     expect(timedOutCapture.capture.exit.reason).toBe("timeout");
-    if (!timedOutCapture.cleanupIncomplete && timedOut.ok)
-      expect(timedOut.value.cleanup).toEqual({
+    if (!timedOutCapture.cleanupIncomplete && timedOut.ok) {
+      expect(timedOut.value.cleanup).toMatchObject({
         owned_process_group: "verified",
         temporary_root: "removed",
       });
+      for (const { pid } of timedOut.value.cleanup.unverified_processes ?? []) {
+        expect(timedOut.value.residual_unknowns).toContainEqual({
+          scope: "process",
+          reason: expect.stringContaining(
+            `${String(pid)} could not be verified`,
+          ),
+        });
+      }
+    }
 
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 50);
