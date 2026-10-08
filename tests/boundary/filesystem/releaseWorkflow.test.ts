@@ -103,11 +103,11 @@ it("requires explicit release preparation or publication instead of main pushes"
     "skip-github-release": "${{ inputs.phase == 'prepare' }}",
     "skip-github-pull-request": "${{ inputs.phase == 'publish' }}",
   });
-  const catalogCommit = workflow.jobs["release-please"].steps.find(
-    (step) => step.name === "Commit canonical release catalog",
+  const catalogValidation = workflow.jobs["release-please"].steps.find(
+    (step) => step.name === "Validate generated release documentation",
   );
-  expect(catalogCommit?.env?.GH_TOKEN).toBe(
-    "${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}",
+  expect(catalogValidation?.run).toBe(
+    "npm run docs:check && git diff --exit-code",
   );
 });
 
@@ -203,7 +203,7 @@ it("binds npm and MCP publication to the same immutable release SHA", async () =
     "Set up Node.js for generated documentation",
     "Install dependencies",
     "Regenerate release documentation",
-    "Commit canonical release catalog",
+    "Validate generated release documentation",
   ];
   for (const name of preparation) {
     expect(

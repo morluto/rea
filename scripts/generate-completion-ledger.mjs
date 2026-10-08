@@ -30,7 +30,7 @@ const { stdout } = await exec(
   },
 );
 const verifierOutput = JSON.parse(stdout);
-// Managed conformance claims are host-independent. Keep the checked-in
+// Managed conformance claims are host-independent. Keep the generated
 // commitment reproducible across macOS, Linux, and Windows rather than
 // embedding the machine that happened to generate it.
 const portableCompletionReport = {

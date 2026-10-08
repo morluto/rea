@@ -95,7 +95,7 @@ describe("canonical product catalog", () => {
       );
   });
 
-  it("matches every source-derived checked-in product fact", async () => {
+  it("matches every source-derived build-generated product fact", async () => {
     const catalog = await createProductCatalog(root);
     expect(catalog.tools.total).toBe(TOOL_CONTRACTS.length);
     expect(
@@ -204,10 +204,10 @@ describe("canonical product catalog", () => {
       providerCatalogDigest(catalog.providers),
     );
     expect(
-      JSON.parse(await readFile("docs/product-catalog.json", "utf8")),
+      JSON.parse(await readFile("docs/public/product-catalog.json", "utf8")),
     ).toEqual(catalog);
     expect(await serializeProductCatalog(catalog)).toBe(
-      await readFile("docs/product-catalog.json", "utf8"),
+      await readFile("docs/public/product-catalog.json", "utf8"),
     );
     await expect(
       assertDocumentationFacts(root, catalog),
