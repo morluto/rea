@@ -317,6 +317,12 @@ unpaired Unicode surrogate; a rejection identifies the field and UTF-16 index
 and leaves every annotation unchanged. CRLF, supplementary Unicode characters,
 and combining characters are preserved. Windows P0 remains read-only. Ghidra has no
 GUI authority, and REA never falls back automatically to Hopper.
+Ghidra name edits preserve the existing namespace. Supply either a leaf name
+such as `renamed` or a fully qualified name in that namespace, such as
+`alpha::renamed`. The returned qualified name can be reused as an idempotent
+rename input. Edits retain the existing namespace; other namespace-like text
+remains literal leaf-name text. A qualified name with an empty leaf is rejected
+before any comment or name is changed.
 
 - `npm run verify:ghidra`: host-native debug/stripped targets, native type layout,
   instruction/call facts, value dependencies and process/project cleanup.

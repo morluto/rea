@@ -1,19 +1,13 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
-const README_PATHS = [
-  "README.md",
-  "README_zh.md",
-  "README_ja.md",
-  "README_ko.md",
-  "README_ar.md",
-];
 const readmeLinkTargets = (content) =>
   [...content.matchAll(/\]\(([^)\s]+)\)/gu)]
     .map((match) => match[1] ?? "")
     .filter(
       (target) =>
-        !target.startsWith("#") && !/^README(?:_[a-z]+)?\.md$/u.test(target),
+        !target.startsWith("#") &&
+        !/^README(?:_[A-Za-z0-9-]+)?\.md$/u.test(target),
     )
     .sort();
 
@@ -64,8 +58,11 @@ export const documentationFactIssues = async (root, catalog) => {
   const issues = await skillReferenceIssues(
     join(root, "skills/reverse-engineer-anything"),
   );
+  const readmePaths = (await readdir(root))
+    .filter((path) => /^README(?:_[A-Za-z0-9-]+)?\.md$/u.test(path))
+    .sort();
   const readmes = new Map();
-  for (const path of README_PATHS) {
+  for (const path of readmePaths) {
     const content = await readFile(join(root, path), "utf8");
     readmes.set(path, content);
     requireText(issues, path, content, "MCP-tool_catalog");
@@ -86,7 +83,7 @@ export const documentationFactIssues = async (root, catalog) => {
     }
   }
   const canonicalLinks = readmeLinkTargets(readmes.get("README.md") ?? "");
-  for (const path of README_PATHS.slice(1))
+  for (const path of readmePaths.filter((path) => path !== "README.md"))
     if (
       JSON.stringify(readmeLinkTargets(readmes.get(path) ?? "")) !==
       JSON.stringify(canonicalLinks)

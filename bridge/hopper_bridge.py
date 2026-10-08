@@ -387,13 +387,26 @@ def _containing_procedure(document, address):
     return (procedure, None) if procedure is not None else (None, "not_in_procedure")
 
 
+def _basic_block_end(procedure, block):
+    """Normalize native block endpoints to an exclusive byte address."""
+    end = block.getEndingAddress()
+    # Hopper 6.1 returns the final instruction address, despite the Python
+    # documentation describing an exclusive end. Membership distinguishes
+    # that representation from an actual exclusive endpoint in other builds.
+    if procedure.getBasicBlockAtAddress(end) == block:
+        instruction = procedure.getSegment().getInstructionAtAddress(end)
+        if instruction is not None and instruction.getInstructionLength() > 0:
+            return end + instruction.getInstructionLength()
+    return end
+
+
 def _instruction_addresses(procedure):
     result = []
     seen = set()
     segment = procedure.getSegment()
     for block in procedure.basicBlockIterator():
         address = block.getStartingAddress()
-        end = block.getEndingAddress()
+        end = _basic_block_end(procedure, block)
         while address < end and address not in seen:
             seen.add(address)
             instruction = segment.getInstructionAtAddress(address)
@@ -633,25 +646,11 @@ def _render_instruction(segment, address):
 
 def _assembly(procedure):
     """Render assembly while guarding against malformed instruction cycles."""
-    lines = []
     segment = procedure.getSegment()
-    seen = set()
-    for block in procedure.basicBlockIterator():
-        address = block.getStartingAddress()
-        end = block.getEndingAddress()
-        while address < end and address not in seen:
-            seen.add(address)
-            instruction = segment.getInstructionAtAddress(address)
-            if instruction is None:
-                break
-            line = _render_instruction(segment, address)
-            if line is not None:
-                lines.append(line)
-            length = instruction.getInstructionLength()
-            if length <= 0:
-                break
-            address += length
-    return "\n".join(lines)
+    return "\n".join(
+        line for address in _instruction_addresses(procedure)
+        if (line := _render_instruction(segment, address)) is not None
+    )
 
 
 def _read_function_instructions(document, params):
@@ -688,7 +687,7 @@ def _analyze_function(document, params):
                 successors.append(_hex(successor))
         blocks.append({
             "start": _hex(block.getStartingAddress()),
-            "end": _hex(block.getEndingAddress()),
+            "end": _hex(_basic_block_end(procedure, block)),
             "successors": sorted(set(successors), key=lambda value: int(value, 16)),
         })
     pseudo = _pseudocode(document, procedure) or ""
@@ -986,7 +985,7 @@ def _dispatch(method, params):
             return sorted((_hex(item.getEntryPoint()) for item in procedure.getAllCalleeProcedures()), key=lambda value: int(value, 16))
         if method == "procedure_info":
             blocks = list(procedure.basicBlockIterator())
-            length = sum(max(0, block.getEndingAddress() - block.getStartingAddress()) for block in blocks)
+            length = sum(max(0, _basic_block_end(procedure, block) - block.getStartingAddress()) for block in blocks)
             return {
                 "name": _procedure_name(procedure),
                 "entrypoint": _hex(procedure.getEntryPoint()),

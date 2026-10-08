@@ -30,7 +30,10 @@ import {
   requireMcpResult,
   requireWorkflowEvidenceProvider,
 } from "./lib/mcp-verifier-results.mjs";
-import { verifyHopperFunctionBasics } from "./lib/real-hopper-function-basics.mjs";
+import {
+  verifyHopperTerminalInstructions,
+  verifyHopperFunctionBasics,
+} from "./lib/real-hopper-function-basics.mjs";
 import { openAndVerifyLargeFixture } from "./lib/real-hopper-exhaustive-search.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 import { requireHopperSelection } from "./lib/real-hopper-selection.mjs";
@@ -465,6 +468,7 @@ try {
   );
   if (closed.isError === true) throw new Error(textValue(closed));
   let unicodeStrings = null;
+  let terminalInstructions = null;
   if (fixtureTargets.unicode !== undefined) {
     const call = async (name, args = {}) =>
       requireSuccessfulTool(
@@ -472,6 +476,7 @@ try {
         name,
       );
     await call("open_binary", { path: fixtureTargets.unicode.path });
+    terminalInstructions = await verifyHopperTerminalInstructions(call);
     unicodeStrings = await verifyHopperStringObjects(call, [
       { value: "REA_UTF16_é_😀", encoding: "utf-16-le" },
       { value: 'REA_UTF16_ESCAPED_é_"\\line\nend\t\r', encoding: "utf-16-le" },
@@ -482,6 +487,9 @@ try {
   const lifecycleAndCli = await verifyHopperLifecycleAndCli(client, options, {
     primary: targetA,
     secondary: targetB,
+    ...(fixtureTargets.unicode === undefined
+      ? {}
+      : { unicode: fixtureTargets.unicode.path }),
     ownedProcessIds,
   });
   const closedSession = requireMcpResult(
@@ -509,6 +517,7 @@ try {
     analyses: [firstAnalysis, secondAnalysis],
     fixtureAnalysis,
     unicodeStrings,
+    terminalInstructions,
     boundaryContracts,
     lifecycleAndCli,
     inventoryCounts,

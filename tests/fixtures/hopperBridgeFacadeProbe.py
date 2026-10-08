@@ -71,6 +71,9 @@ class FakeProcedure:
     def basicBlockIterator(self):
         return [FakeBlock()]
 
+    def getBasicBlockAtAddress(self, address):
+        return None
+
     def getBasicBlockCount(self):
         return 1
 

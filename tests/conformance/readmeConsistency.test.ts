@@ -5,12 +5,27 @@ import { describe, expect, it } from "vitest";
 import { SUPPORTED_CLIENT_DEFINITIONS } from "../../src/application/SupportedClients.js";
 import { PRODUCT_IDENTITY } from "../../src/identity.js";
 
-const translatedReadmes = [
-  "README_zh.md",
-  "README_ja.md",
-  "README_ko.md",
-  "README_ar.md",
+const readmeLanguages = [
+  { path: "README.md", label: "English" },
+  { path: "README_zh.md", label: "简体中文" },
+  { path: "README_zh-TW.md", label: "繁體中文" },
+  { path: "README_ja.md", label: "日本語" },
+  { path: "README_ko.md", label: "한국어" },
+  { path: "README_tr.md", label: "Türkçe" },
+  { path: "README_ru.md", label: "Русский" },
+  { path: "README_vi.md", label: "Tiếng Việt" },
+  { path: "README_th.md", label: "ไทย" },
+  { path: "README_de.md", label: "Deutsch" },
+  { path: "README_es.md", label: "Español" },
+  { path: "README_uk.md", label: "Українська" },
+  { path: "README_pl.md", label: "Polski" },
+  { path: "README_pt-BR.md", label: "Português (Brasil)" },
+  { path: "README_ar.md", label: "العربية" },
 ] as const;
+
+const translatedReadmes = readmeLanguages
+  .map((language) => language.path)
+  .filter((path) => path !== "README.md");
 
 const normalizedProse = (content: string): string =>
   content.replace(/\s+/gu, " ").trim();
@@ -30,11 +45,25 @@ const linkedTargets = (content: string): string[] =>
     .map((match) => match[1] ?? "")
     .filter(
       (target) =>
-        !target.startsWith("#") && !/^README(?:_[a-z]+)?\.md$/u.test(target),
+        !target.startsWith("#") &&
+        !/^README(?:_[A-Za-z0-9-]+)?\.md$/u.test(target),
     )
     .sort();
 
 describe("onboarding documentation product facts", () => {
+  it.each(readmeLanguages)(
+    "links every available language from $path",
+    async ({ path, label }) => {
+      const content = await readFile(resolve(path), "utf8");
+      const selector = content.split("\n\n")[1] ?? "";
+      expect(selector).toContain(`**${label}**`);
+      for (const language of readmeLanguages) {
+        if (language.path !== path)
+          expect(selector).toContain(`[${language.label}](${language.path})`);
+      }
+    },
+  );
+
   it("keeps detailed requirements and versioned MCP configuration aligned in the installation guide", async () => {
     const content = await readFile(resolve("docs/installation.md"), "utf8");
     expect(jsonExamples(content)).toContainEqual(

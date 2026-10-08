@@ -1011,6 +1011,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         for (String field : List.of("name", "comment", "inline_comment")) {
             if (params.has(field)) validateAnnotationText(requireText(params, field), field);
         }
+        String leafName = params.has("name")
+            ? annotationLeafName(function, requireString(params, "name")) : null;
         int transaction = currentProgram.startTransaction("REA function annotations");
         boolean commit = false;
         try {
@@ -1024,7 +1026,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 }
             }
             if (params.has("name"))
-                function.setName(requireString(params, "name"), SourceType.USER_DEFINED);
+                function.setName(leafName, SourceType.USER_DEFINED);
             monitor.checkCancelled();
             invalidateAnalysisCaches();
             JsonObject readback = annotationReadback(function);
@@ -1032,7 +1034,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 if (!params.has(field)) continue;
                 String requested = requireText(params, field);
                 JsonElement measured = readback.get(field);
-                String expected = !field.equals("name") && requested.isEmpty() ? null : requested;
+                String expected = field.equals("name") ? leafName : requested.isEmpty() ? null : requested;
                 String observed = field.equals("name") ? function.getName() :
                     (measured.isJsonNull() ? null : measured.getAsString());
                 if (!java.util.Objects.equals(expected, observed))
@@ -1060,6 +1062,22 @@ public final class ReaGhidraBridge extends HeadlessScript {
             // Rollback also invalidates inventory and decompiler views.
             invalidateAnalysisCaches();
         }
+    }
+
+    private String annotationLeafName(Function function, String requested) {
+        // Fully qualified readback must be usable as an idempotent rename input.
+        if (requested.equals(procedureName(function))) return function.getName();
+        String namespace = function.getParentNamespace().isGlobal()
+            ? "" : function.getParentNamespace().getName(true);
+        String prefix = namespace + "::";
+        if (!namespace.isEmpty() && requested.startsWith(prefix)) {
+            String leaf = requested.substring(prefix.length());
+            if (!leaf.isEmpty()) return leaf;
+            throw new RequestFailure("invalid_function_name",
+                "Function name has an empty leaf within namespace " + namespace + " at " +
+                canonicalAddress(function.getEntryPoint()) + ": " + requested);
+        }
+        return requested;
     }
 
     private static String requireText(JsonObject params, String field) {

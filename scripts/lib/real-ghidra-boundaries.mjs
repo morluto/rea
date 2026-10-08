@@ -11,6 +11,7 @@ import { mcpTextValue, requireMcpResult } from "./mcp-verifier-results.mjs";
 import { verifyLegacyGhidraReferenceSnapshot } from "./ghidra-reference-snapshot-e2e.mjs";
 import { verifyGhidraSnapshotLifecycle } from "./real-ghidra-snapshot-lifecycle.mjs";
 import { verifyGhidraTargetAdmission } from "./real-ghidra-target-admission.mjs";
+import { verifyGhidraNamespaceAnnotations } from "./real-ghidra-namespace-annotations.mjs";
 
 /** Probe real Ghidra location, annotation and error contracts through public adapters. */
 export async function verifyGhidraBoundaries(
@@ -656,6 +657,13 @@ export async function verifyGhidraBoundaries(
     entry: address,
     runtimeRoot: env.TMPDIR,
   });
+  await verifyGhidraNamespaceAnnotations({
+    call,
+    reject: invalid,
+    target,
+    entrypoint,
+    env,
+  });
   await assert.rejects(access(socketRoot), { code: "ENOENT" });
   await assert.rejects(access(runtimeRoot), { code: "ENOENT" });
   assert.equal(await call("procedure_address", { procedure: name }), address);
@@ -696,6 +704,7 @@ export async function verifyGhidraBoundaries(
     missing_and_nonregular_source_rejected: true,
     imported_source_identity_retained: true,
     equivalent_instruction_address_spellings: true,
+    qualified_annotation_name_roundtrip: true,
     source_immutable: true,
     reopen_discards_edits: true,
     long_tmpdir_private_socket_cleanup: true,

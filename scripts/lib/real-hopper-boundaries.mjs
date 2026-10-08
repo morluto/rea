@@ -394,6 +394,33 @@ export async function verifyHopperLifecycleAndCli(client, options, targets) {
       JSON.parse(analyzed.stdout).normalized_result,
       expectedFunction,
     );
+    let cliTerminalFunctionParity = null;
+    if (targets.unicode !== undefined) {
+      const objc = join(directory, `objc-${suffix}`);
+      await copyFile(targets.unicode, objc);
+      await call("open_binary", { path: objc });
+      const procedures = await call("list_procedures");
+      const delegate = procedures.find(
+        (item) => item.value === "-[REAWidget delegate]",
+      );
+      assert.ok(delegate, "Objective-C fixture omitted its tail-call method");
+      const expected = await call("analyze_function", {
+        procedure: delegate.address,
+      });
+      await call("close_binary");
+      const analyzed = await runCli([
+        dispatcher,
+        "function",
+        objc,
+        delegate.address,
+        "--provider",
+        "hopper",
+        "--format",
+        "json",
+      ]);
+      assert.deepEqual(JSON.parse(analyzed.stdout).normalized_result, expected);
+      cliTerminalFunctionParity = true;
+    }
     let failure;
     try {
       await runCli([
@@ -424,6 +451,7 @@ export async function verifyHopperLifecycleAndCli(client, options, targets) {
       cliInvalidAddress: true,
       cliLiteralTraceParity: true,
       cliFunctionDossierParity: true,
+      cliTerminalFunctionParity,
       callerCancellationRecovered: true,
       closedDocumentAbsent: true,
     };

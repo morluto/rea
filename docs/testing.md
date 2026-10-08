@@ -211,7 +211,9 @@ CallReference classifications across reference and dossier results, retains long
 string fragment metadata in dossiers, and exercises pathological regex deadline
 and cancellation followed by successful requests in the same native session. When the macOS
 Objective-C fixture is present, the lane also verifies native UTF-16 string objects
-and their inferred encodings against their actual bytes.
+and their inferred encodings against their actual bytes. Native terminal calls
+are checked across reference, instruction, assembly, block-range and procedure-length
+projections; block endpoints are normalized using actual native membership.
 Unmapped annotation destinations and
 oversized later batch names fail before any earlier edit is applied.
 The Linux demo lane remains a separate `verify:hopper:linux` command.
@@ -342,6 +344,13 @@ inputs, plus real read-permission denial on a non-root host. Root runs report
 that permission-denial check as unverified. A focused filesystem integration
 check retains selected-platform routing and exclusive creation; two copy/digest
 checks duplicated by the real workflow have been removed.
+Namespace annotation probes compile a separate host C fixture with C++ ABI
+symbols, avoiding a C++ runtime prerequisite. Real Ghidra demangling supplies
+duplicate leaf names in two top-level namespaces and a nested namespace. The
+workflow verifies leaf and qualified renames, repeated reuse of fully qualified
+readback, lookup by the returned name, literal namespace-like leaf names,
+rejection of empty qualified leaf names without changing comments, CLI
+behavior, and independent CLI/MCP database ownership.
 Malformed annotation readback, memory completeness, and inventory data remain separate
 SDK/provider integration cases; success from a real
 provider cannot establish rejection of a contradictory provider response.
