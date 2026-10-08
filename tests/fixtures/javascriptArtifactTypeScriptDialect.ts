@@ -68,6 +68,7 @@ export const expectValidTypeScriptInput = async (
   // This supplemental oracle does not claim complete TypeScript type validity.
   await execute(process.execPath, [
     compiler,
+    "--ignoreConfig",
     "--noCheck",
     "--allowJs",
     "--target",
