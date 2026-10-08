@@ -40,6 +40,8 @@ export async function verifyBrowserNestedSourceMaps(
       results.push({
         name: scenario.name,
         status: "fail",
+        phase: cause.qualificationPhase ?? "native-producer-admission",
+        proof: cause.qualificationReceipt ?? null,
         error: String(cause),
       });
     }
