@@ -1,5 +1,11 @@
 import * as t from "@babel/types";
-import { AnyMap, eachMapping } from "@jridgewell/trace-mapping";
+import {
+  AnyMap,
+  eachMapping,
+  type EncodedSourceMap,
+  type Section,
+  type SectionedSourceMap,
+} from "@jridgewell/trace-mapping";
 
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import { isUrlLikeModuleSpecifier } from "../domain/webBundleAnalyzerAst.js";
@@ -336,6 +342,47 @@ const promiseWithAbort = (
   });
 };
 
+type EncodedBrowserSourceMap = EncodedSourceMap | SectionedSourceMap;
+
+/** Compose indexed offsets before upstream flattening, retaining parent clipping. */
+const sourceMapWithAbsoluteSections = (
+  text: string,
+): EncodedBrowserSourceMap => {
+  const root = JSON.parse(text) as EncodedBrowserSourceMap;
+  if (!("sections" in root)) return root;
+  const sections: Section[] = [];
+  const pending: Section[] = [{ map: root, offset: { line: 0, column: 0 } }];
+  while (pending.length > 0) {
+    const node = pending.pop();
+    if (node === undefined) break;
+    if (!("sections" in node.map)) {
+      sections.push(node);
+      continue;
+    }
+    // A parent's boundary clips the preceding leaf even when its first child
+    // starts later or it has no children. Empty maps retain that boundary
+    // without adding source/name identities or point mappings.
+    sections.push({
+      offset: node.offset,
+      map: { version: 3, sources: [], names: [], mappings: "" },
+    });
+    for (let index = node.map.sections.length - 1; index >= 0; index -= 1) {
+      const child = node.map.sections[index];
+      if (child === undefined) continue;
+      pending.push({
+        map: child.map,
+        offset: {
+          line: node.offset.line + child.offset.line,
+          column:
+            child.offset.column +
+            (child.offset.line === 0 ? node.offset.column : 0),
+        },
+      });
+    }
+  }
+  return { ...root, sections };
+};
+
 const normalizeSourceMap = (
   request: WebSourceMapRequest,
   text: string,
@@ -348,7 +395,7 @@ const normalizeSourceMap = (
       "Source-map JSON is not a version 3 map.",
     );
   try {
-    const map = new AnyMap(text, fetchedUrl);
+    const map = new AnyMap(sourceMapWithAbsoluteSections(text), fetchedUrl);
     const resolvedBySource = new Map<string, string>();
     const originalSources = map.sources.map((source, index) => {
       const content = map.sourcesContent?.[index];

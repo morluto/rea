@@ -84,6 +84,13 @@ are made.
 
 ## Verification
 
+Browser bundle collection uses absolute section offsets for nested inline maps.
+An enclosing column offset contributes only when the nested section starts on
+that enclosing section's first generated line. Parent boundaries still clip
+preceding browser mappings when a nested section starts with a gap or has no
+child leaves. Raw map text, original source identities and the dedicated decoder
+profile are preserved.
+
 Focused tests cover duplicate mappings, indexed offsets/overlap/local indexes,
 32-bit VLQ overflow, nullable content, UTF-16/CRLF positions, immutable artifact
 identity, cancellation, late output closure, cleanup failures, SDK schemas and
