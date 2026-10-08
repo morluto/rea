@@ -24,7 +24,7 @@ REA is a layered ESM TypeScript application. Dependencies flow inward from pure 
 - `src/application/` composes shared CLI/MCP workflows; `src/server/` translates MCP requests; `src/cli.ts` and `src/main.ts` are the CLI and MCP entry points.
 - `src/process/` owns shared process lifecycle primitives, not provider wire protocols. `bridge/` contains provider-side adapters.
 - `tests/` contains unit, composition, boundary, acceptance, and conformance tests. `scripts/verify-*` and capability directories under `scripts/verify/` contain real-toolchain checks.
-- `docs/product-catalog.json` is generated. Update its source contracts and regenerate it; do not edit it directly.
+- `docs/public/product-catalog.json`, `docs/verification/managed-conformance-*.json`, and `skills/` are ignored build outputs. Update source contracts and authored instructions in `skill-src/`, then run `npm run build:cached`; never commit derived catalog digests or portable conformance projections.
 - `src/generatedMcpToolCatalog.ts` is build-generated and gitignored. Never commit it; resolve any trace of it in merges by deleting it and running `npm run build:cached`.
 
 ## Build, Test, and Development Commands
@@ -36,7 +36,7 @@ REA is a layered ESM TypeScript application. Dependencies flow inward from pure 
 - `npm run check:changed`: run cached static checks and source tests affected since the branch merge base (default `origin/main`).
 - `npm run check:fast`: run cached typecheck and lint checks.
 - `npm run check:pr`: opt into the complete local deterministic gate and generated-document checks for broad changes; CI owns full coverage. Routine iterations need focused tests and relevant checks, not the whole gate each time.
-- `npm run docs:check`: check committed generated documents; `npm run docs:generate` regenerates them.
+- `npm run docs:check`: build and validate generated documents for the current checkout; `npm run docs:generate` regenerates them. CI retains ignored outputs as artifacts and does not push snapshot commits to feature branches.
 - For provider-dependent changes, see [docs/testing.md](docs/testing.md) and run the matching real-provider verification.
 - Keep each verification lane's prerequisites limited to the claim it checks. Use host-native fixtures for host/provider acceptance; put optional cross-target formats and their external toolchains in a separate lane. Preflight required commands and report the missing dependency and lane clearly.
 
@@ -53,6 +53,8 @@ Use ESM TypeScript, two-space indentation, and the committed Oxfmt configuration
 ## Boundary Contracts
 
 Treat a boundary as a contract between the producer's actual representation and the consumer's required meaning. When implementing or auditing a boundary, trace the value through parsing, normalization, authorization, serialization, and the CLI/MCP result. Establish affected callers from their code paths; similar tool names or workflows do not prove that they share a schema or failure mode.
+
+When changing boundary behavior, inspect adjacent input representations, failure paths, and affected callers, and correct the underlying assumption across those cases.
 
 Keep portable evidence and scenario validation distinct from host-native execution checks. Absolute filesystem paths, file URLs, and HTTP paths have different semantics; do not substitute one platform's syntax for the domain concept. Interpret provider metadata according to its documented or observed producer behavior. When a transformation loses information, preserve the reported value and an explicit unknown rather than guessing a canonical identity.
 

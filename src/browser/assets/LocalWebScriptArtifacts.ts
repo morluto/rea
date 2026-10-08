@@ -1,5 +1,5 @@
 import { lstat, realpath } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
 import { normalizeArtifactPath } from "../../artifacts/ArtifactPaths.js";
@@ -55,7 +55,7 @@ export class LocalWebScriptArtifacts implements WebScriptArtifactPort {
           "path",
           `Selected source path changes during normalization: ${selected.content.relative_path}`,
         );
-      const root = dirname(input.manifest_path);
+      const root = resolve(dirname(input.manifest_path));
       const sourcePath = join(root, "files", portable);
       targetPath = sourcePath;
       await assertContained(root, sourcePath);

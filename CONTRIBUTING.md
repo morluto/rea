@@ -35,7 +35,7 @@ links, and `npm run docs:preview` to preview that build at `/rea/`.
 Site navigation lives in `docs/.vitepress/config.ts`. Keep links to guides
 relative so they work on GitHub and the website; link to repository files
 outside `docs/` using their full GitHub URLs. Generated reference documents
-still use `npm run docs:generate`; `docs:build` only builds the website.
+use `npm run docs:generate`; `docs:build` generates them before building the website.
 
 Pull requests run `npm run docs:check`. `.github/workflows/pages.yml` is a
 manual VitePress build and does not publish. The public site at
@@ -74,8 +74,24 @@ require the matching real-provider `verify:*` lane.
 Formatting uses Oxfmt and the committed `.oxfmtrc.json`; generated sources use
 the same configuration. Pre-commit formats and lints staged files; pre-push runs
 `check:fast`.
-`docs:check` checks committed generated metadata. `docs:generate` regenerates
-those files, and the docs CI lane checks them.
+`docs:check` builds and validates generated metadata for the current checkout.
+The product catalog (`docs/public/product-catalog.json`), portable managed
+conformance projections (`docs/verification/managed-conformance-*.json`), and
+packaged skill (`skills/`) are ignored build outputs. Edit skill instructions
+and references in `skill-src/`; the build adds catalog-dependent metadata to
+the packaged copy without rewriting authored files. The generated manifest
+commits to that exact packaged skill bundle. It is a portable projection of
+the deterministic managed verifier, not a record of optional real-provider runs.
+CI validates these outputs and retains them as artifacts instead of pushing
+generated-only commits onto feature branches. Reviewed source metadata such as
+`src/generatedPackageMetadata.ts` and `docs/error-contract.schema.json` remains
+tracked and checked for freshness. Do not commit ignored generated outputs.
+The build-generated product catalog contains documented facts and their provider
+identity, rather than full runtime schema hashes. The managed skill contains
+instructions and inventory metadata; doctor compares its installed files with
+the canonical bundle. Schema-only fixes should not change these outputs or the
+skill commitment in the conformance manifest. Runtime schema identity remains
+available through doctor and `binary_session`.
 Real-provider execution remains uncached; deterministic builds use Turbo.
 
 Local `npm test` runs every deterministic Vitest project without coverage or

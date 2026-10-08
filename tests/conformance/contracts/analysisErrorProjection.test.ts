@@ -25,7 +25,7 @@ describe("analysis error projection contract", () => {
       ).map(
         (reason) => new ArtifactOperationError("inventory_artifact", reason),
       ),
-      ...(["not-file", "exists", "invalid-json", "io"] as const).map(
+      ...(["not-file", "exists", "invalid-json", "missing", "io"] as const).map(
         (reason) => new EvidenceFileError("read", reason),
       ),
       ...(

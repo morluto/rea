@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AnalysisInputError } from "../analysisErrorCore.js";
 import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
 
 /** Select one archive within the active bundle and optionally one named root. */
@@ -85,7 +86,14 @@ export const projectKeyedArchive = (
   if (top === undefined || Object.keys(top).length === 0)
     throw new TypeError("Keyed archive has no $top roots");
   if (selection.root !== undefined && !Object.hasOwn(top, selection.root))
-    throw new TypeError(`Archive root does not exist: ${selection.root}`);
+    throw new AnalysisInputError("inspect_keyed_archive", undefined, [
+      {
+        path: ["root"],
+        reason: "invalid_value",
+        message: `Archive root does not exist: ${selection.root}. Select one of the archive's $top roots or omit root.`,
+        expected: Object.keys(top),
+      },
+    ]);
   const roots =
     selection.root === undefined
       ? top

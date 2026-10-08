@@ -177,6 +177,7 @@ describe("doctor installation identity", () => {
             version: "10",
             toolCount: null,
             catalogDigest: null,
+            canonical: false,
           }),
       }),
     );
