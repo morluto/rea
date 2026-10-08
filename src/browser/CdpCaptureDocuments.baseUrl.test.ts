@@ -132,8 +132,10 @@ describe("DOM metadata document base URLs", () => {
         "https://user:secret@app.example.test/guide",
       ),
     );
-    expect(result.urls[1]?.destination_scope).toBe("approved");
-    expect(JSON.stringify(result.urls[1])).not.toContain("secret");
+    expect(result.urls[1]).toMatchObject({
+      url: `${origin}/guide`,
+      destination_scope: "approved",
+    });
   });
 
   it("does not authorize a foreign document using its approved base URL", () => {
