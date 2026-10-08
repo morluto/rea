@@ -445,6 +445,9 @@ jobs:
           tests/boundary/filesystem/setupUnavailableProvider.test.ts
           tests/boundary/filesystem/windowsNpxRegistration.test.ts
           src/application/ClientRegistrationIdentity.test.ts
+          tests/boundary/filesystem/webScriptManifestPaths.test.ts
+          tests/acceptance/webModuleCli.test.ts
+          tests/acceptance/webSourceLocationCli.test.ts
           tests/boundary/cli/referenceSourceImportStatus.test.ts
           src/cliReferenceSourceImportStatus.test.ts
           tests/boundary/filesystem/asarInventoryFreshness.test.ts

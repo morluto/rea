@@ -24,7 +24,7 @@ cliTest(
       join(root, "files", "modules", "main.js"),
       artifacts.source,
     );
-    const manifestPath = join(root, "manifest.json");
+    const manifestPath = join(root, "manifest.json").replaceAll("\\", "/");
     await writeFile(manifestPath, JSON.stringify(manifest));
     const environment = {
       REA_LOG_LEVEL: "silent",
