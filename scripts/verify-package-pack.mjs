@@ -44,9 +44,7 @@ export async function verifyPackagePack({ root, workspace }) {
     !skill.includes(
       `  tool_count: ${String(CATALOG_IDENTITY.counts.mcp_tools)}\n`,
     ) ||
-    !skill.includes(
-      `  catalog_digest: "${CATALOG_IDENTITY.digests.combined_sha256}"\n`,
-    )
+    skill.includes("  catalog_digest:")
   )
     throw new Error(
       "packaged skill metadata did not match the catalog shipped in the package",

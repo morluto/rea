@@ -28,7 +28,7 @@ if (!versionLine.test(current))
   throw new Error("Missing authored skill version");
 const source = current.replace(
   versionLine,
-  `$&\n  tool_count: ${String(CATALOG_IDENTITY.counts.mcp_tools)}\n  catalog_digest: "${CATALOG_IDENTITY.digests.combined_sha256}"`,
+  `$&\n  tool_count: ${String(CATALOG_IDENTITY.counts.mcp_tools)}`,
 );
 const paths = await filePaths(sourceRoot);
 // Rebuild this owned output directory so removed references cannot survive a build.

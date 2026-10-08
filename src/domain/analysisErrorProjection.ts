@@ -259,7 +259,11 @@ const artifactStateErrorDetails = (
     };
   if (error instanceof UnknownRegistryError) return { reason: error.reason };
   if (error instanceof EvidenceFileError)
-    return { operation: error.operation, reason: error.reason };
+    return {
+      operation: error.operation,
+      reason: error.reason,
+      ...(error.path === undefined ? {} : { path: error.path }),
+    };
   return undefined;
 };
 

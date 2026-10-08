@@ -2,6 +2,7 @@ import canonicalize from "canonicalize";
 
 import {
   createEvidenceBundle,
+  describeEvidenceBundleFailure,
   parseEvidenceBundle,
   validateResidualUnknownAddition,
   type EvidenceBundle,
@@ -68,6 +69,7 @@ export class EvidenceLedger {
       return err(
         new EvidenceIntegrityError("Evidence bundle validation failed", {
           cause,
+          userMessage: describeEvidenceBundleFailure(input, cause),
         }),
       );
     }

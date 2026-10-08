@@ -26,7 +26,8 @@ export const createDoctorHostFixture = (
     Promise.resolve({
       version: PRODUCT_IDENTITY.skillVersion,
       toolCount: CATALOG_IDENTITY.counts.mcp_tools,
-      catalogDigest: CATALOG_IDENTITY.digests.combined_sha256,
+      catalogDigest: null,
+      canonical: true,
     }),
   ...overrides,
 });

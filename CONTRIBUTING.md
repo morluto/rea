@@ -86,6 +86,12 @@ CI validates these outputs and retains them as artifacts instead of pushing
 generated-only commits onto feature branches. Reviewed source metadata such as
 `src/generatedPackageMetadata.ts` and `docs/error-contract.schema.json` remains
 tracked and checked for freshness. Do not commit ignored generated outputs.
+The build-generated product catalog contains documented facts and their provider
+identity, rather than full runtime schema hashes. The managed skill contains
+instructions and inventory metadata; doctor compares its installed files with
+the canonical bundle. Schema-only fixes should not change these outputs or the
+skill commitment in the conformance manifest. Runtime schema identity remains
+available through doctor and `binary_session`.
 Real-provider execution remains uncached; deterministic builds use Turbo.
 
 Local `npm test` runs every deterministic Vitest project without coverage or

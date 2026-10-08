@@ -25,6 +25,7 @@
           <a href="showcase/">Showcases</a>
           <a class="nav-start" href="get-started/">Get started</a>
           <a href="guides/">Guides</a>
+          <a href="faq/">FAQ</a>
           <a href="https://github.com/morluto/rea">GitHub</a>
         </nav>
       </div>
@@ -259,6 +260,37 @@
             <figcaption>
               Adding the player's direction rotates every bullet by the same
               angle.
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container feature-case">
+          <div>
+            <p class="eyebrow">Case study · CTF</p>
+            <h2>Solve a CTF flag checker</h2>
+            <p>
+              Use REA to inspect an easy DownUnderCTF binary. Extract its
+              checking rules, solve for the flag and confirm that the original
+              program accepts it.
+            </p>
+            <a class="text-link" href="showcase/ctf/">See the CTF solution</a>
+          </div>
+          <figure class="workflow-figure case-preview">
+            <p class="figure-title">One check reveals one character</p>
+            <div class="code-block">
+              <div class="code-header">
+                <span>From REA's code and data</span>
+              </div>
+              <pre><code>Mask: skip 21, select 1, skip 14
+Target: 55
+
+code[21] = 55  →  '7'</code></pre>
+            </div>
+            <figcaption>
+              Each mask selects characters whose codes must add up to a stored
+              number. This one selects a single character.
             </figcaption>
           </figure>
         </div>

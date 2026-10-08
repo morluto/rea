@@ -52,7 +52,7 @@ it.each(["\n", "\r\n"])(
     const f = await fixture(eol);
     await f.generate();
     const first = await readFile(join(f.outputRoot, "SKILL.md"), "utf8");
-    expect(first).toContain('catalog_digest: "' + "a".repeat(64) + '"');
+    expect(first).not.toContain("catalog_digest:");
     expect(first).toContain("tool_count: 139");
     expect(
       first.replace(/^ {2}(?:tool_count|catalog_digest):[^\n]*\n/gmu, ""),
@@ -60,6 +60,9 @@ it.each(["\n", "\r\n"])(
     expect(
       await readFile(join(f.outputRoot, "references/guide.md"), "utf8"),
     ).toBe("# Guide\nPreserve evidence.\n");
+    await f.identity(139, "b".repeat(64));
+    await f.generate();
+    expect(await readFile(join(f.outputRoot, "SKILL.md"), "utf8")).toBe(first);
     await f.identity(140, "b".repeat(64));
     await expect(f.generate("--check")).rejects.toMatchObject({
       stderr: expect.stringContaining("missing or stale"),
@@ -67,9 +70,6 @@ it.each(["\n", "\r\n"])(
     await f.generate();
     expect(await readFile(join(f.outputRoot, "SKILL.md"), "utf8")).toContain(
       "tool_count: 140",
-    );
-    expect(await readFile(join(f.outputRoot, "SKILL.md"), "utf8")).toContain(
-      'catalog_digest: "' + "b".repeat(64) + '"',
     );
     expect(await readFile(join(f.sourceRoot, "SKILL.md"), "utf8")).toBe(
       authored.replaceAll("\n", eol),

@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { npxRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import {
   SUPPORTED_NODE_VERSION_PROSE,
   supportsNodeVersion,
@@ -35,7 +36,7 @@ export const setupRegistrationCommand = (
   useNpmRunner: boolean = process.env.npm_command === "exec",
 ): readonly string[] =>
   useNpmRunner
-    ? PRODUCT_IDENTITY.mcpCommand.split(" ")
+    ? npxRegistrationCommand(platform)
     : platform === "win32"
       ? [
           process.execPath,

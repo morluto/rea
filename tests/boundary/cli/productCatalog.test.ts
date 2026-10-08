@@ -195,6 +195,11 @@ describe("canonical product catalog", () => {
       "project_managed_application_graph",
       "verify_managed_native_boundaries",
     ]);
+    // Runtime schema commitments must not fan out into checked-in documentation.
+    // Provider commitments cover the facts actually present in this projection.
+    expect(Object.keys(catalog.runtime_catalog.digests)).toEqual([
+      "providers_sha256",
+    ]);
     expect(catalog.runtime_catalog.digests.providers_sha256).toBe(
       providerCatalogDigest(catalog.providers),
     );
