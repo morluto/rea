@@ -133,3 +133,78 @@ it("reports CLI trace specification issues like the MCP trace_spec input", async
     },
   });
 });
+
+it("names the side and constraint when Evidence is not a usable capture", async () => {
+  const client = await connect();
+  const capture = captureEvidence("right");
+  const unrelated = createEvidence(undefined, PROCESS_PROVIDER, {
+    operation: "other",
+    parameters: {},
+    result: {},
+  });
+  const wrongKind = await client.callTool({
+    name: "compare_process_captures",
+    arguments: { left: unrelated, right: capture },
+  });
+  expect(wrongKind.structuredContent).toMatchObject({
+    error: {
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["left"],
+            reason: "invalid_value",
+            message: expect.stringContaining(
+              "the left Evidence has operation other",
+            ),
+          },
+        ],
+      },
+    },
+  });
+
+  const tampered = await client.callTool({
+    name: "compare_process_captures",
+    arguments: {
+      left: capture,
+      right: { ...capture, parameters: { side: "changed" } },
+    },
+  });
+  expect(tampered.structuredContent).toMatchObject({
+    error: {
+      code: "evidence_integrity_mismatch",
+      message: expect.stringContaining(
+        "The right Evidence failed validation (Evidence semantic identifier does not match its record)",
+      ),
+    },
+  });
+
+  const invalidResult = createEvidence(undefined, PROCESS_PROVIDER, {
+    predicateType: "rea.process-capture",
+    operation: "capture_process_scenario",
+    parameters: {},
+    result: { manifest: {} },
+  });
+  const malformed = await client.callTool({
+    name: "compare_process_captures",
+    arguments: { left: capture, right: invalidResult },
+  });
+  expect(malformed.structuredContent).toMatchObject({
+    error: {
+      code: "evidence_integrity_mismatch",
+      message: expect.stringContaining(
+        "The right Evidence has an invalid process capture result (at ",
+      ),
+    },
+  });
+
+  const root = await createTestTempDirectory("rea-process-malformed-");
+  const leftPath = join(root, "left.json");
+  const rightPath = join(root, "right.json");
+  await writeFile(leftPath, JSON.stringify(capture));
+  await writeFile(rightPath, JSON.stringify(invalidResult));
+  expect(await compareProcessEvidenceFiles(leftPath, rightPath)).toMatchObject({
+    category: "invalid_input",
+    message: expect.stringContaining("Capture evidence is malformed (at "),
+  });
+});
