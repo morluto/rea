@@ -301,23 +301,43 @@ def _containing_procedure(document, address):
     return (procedure, None) if procedure is not None else (None, "not_in_procedure")
 
 
+def _block_instruction_addresses(procedure, block):
+    """Walk either endpoint convention using Hopper's block ownership API.
+
+    Some Hopper builds return the final instruction start, despite the public
+    API documenting an exclusive end. Equality compares fresh native wrappers;
+    probing ownership also keeps an exclusive endpoint in the next block out.
+    """
+    owner_at = getattr(procedure, "getBasicBlockAtAddress", None)
+    if not callable(owner_at):
+        raise CapabilityUnavailableError(
+            "Instruction enumeration requires Hopper basic-block ownership"
+        )
+    segment = procedure.getSegment()
+    address = block.getStartingAddress()
+    end = block.getEndingAddress()
+    while address <= end:
+        if owner_at(address) != block:
+            break
+        instruction = segment.getInstructionAtAddress(address)
+        if instruction is None:
+            break
+        length = instruction.getInstructionLength()
+        if length <= 0 or (address < end and address + length > end):
+            break
+        yield address
+        address += length
+
+
 def _instruction_addresses(procedure):
     result = []
     seen = set()
-    segment = procedure.getSegment()
     for block in procedure.basicBlockIterator():
-        address = block.getStartingAddress()
-        end = block.getEndingAddress()
-        while address < end and address not in seen:
+        for address in _block_instruction_addresses(procedure, block):
+            if address in seen:
+                continue
             seen.add(address)
-            instruction = segment.getInstructionAtAddress(address)
-            if instruction is None:
-                break
             result.append(address)
-            length = instruction.getInstructionLength()
-            if length <= 0:
-                break
-            address += length
     return result
 
 
@@ -483,25 +503,13 @@ def _render_instruction(segment, address):
 
 
 def _assembly(procedure):
-    """Render assembly while guarding against malformed instruction cycles."""
+    """Render the same owned instruction set used by references and fast reads."""
     lines = []
     segment = procedure.getSegment()
-    seen = set()
-    for block in procedure.basicBlockIterator():
-        address = block.getStartingAddress()
-        end = block.getEndingAddress()
-        while address < end and address not in seen:
-            seen.add(address)
-            instruction = segment.getInstructionAtAddress(address)
-            if instruction is None:
-                break
-            line = _render_instruction(segment, address)
-            if line is not None:
-                lines.append(line)
-            length = instruction.getInstructionLength()
-            if length <= 0:
-                break
-            address += length
+    for address in _instruction_addresses(procedure):
+        line = _render_instruction(segment, address)
+        if line is not None:
+            lines.append(line)
     return "\n".join(lines)
 
 
