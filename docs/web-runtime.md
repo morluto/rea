@@ -20,7 +20,7 @@ Results retain:
 - The selected target, frame and document loader identity; local armed/end timestamps and separate backend monotonic coverage timestamps.
 - Every admitted producer function/block range, exclusive end offset and execution count in UTF-16 code units, with verified bounds when exact text is available. Nested/overlapping counts are preserved and must not be summed.
 - Main-document script inventory, exact session script IDs, resource start coordinates, sourceURL/source-map declarations, producer hash and independently computed UTF-8 text digest.
-- Armed-window requests from the selected main frame and selected origins, complete reported initiator objects (including stack hierarchy/descriptions), derived callsites, exact script-ID associations and unresolved async parent IDs. Source association does not establish UI causality.
+- Armed-window requests from the selected main frame and selected origins, complete reported initiator objects (including stack hierarchy/descriptions), derived callsites, exact script-ID associations and unresolved async parent IDs. Source association does not establish UI causality. Callsite, listener and `resource_start` `line_number`/`column_number` values are CDP's zero-based lines and UTF-16 columns; add one to the line before passing it to `trace_web_source_location`, which uses one-based lines.
 
 The coverage counter interval starts at backend acceptance before the armed receipt and ends at the resetting sample after the local timer. Counts may include execution during these command intervals; request events are restricted to the locally armed window. The result retains both backend timestamps and the distinct local clock.
 

@@ -6,6 +6,13 @@ import {
 import { browserVersionSchema } from "./browserObservationSchemas.js";
 import { jsonObjectSchema } from "./jsonValue.js";
 
+// CDP coordinates stay zero-based. trace_web_source_location uses one-based
+// lines, so the advertised units keep callers from passing a line off by one.
+const ZERO_BASED_LINE =
+  "Zero-based line within the script resource, as reported by CDP.";
+const ZERO_BASED_COLUMN =
+  "Zero-based UTF-16 column within the line, as reported by CDP.";
+
 /** Scope for one externally owned page; omitted origins select its current origin. */
 export const webRuntimeScopeSchema = z.strictObject({
   cdp_endpoint: browserEndpointSchema,
@@ -27,8 +34,8 @@ export const webRuntimeSourceSchema = z.object({
   language: z.string().nullable(),
   resource_start: z
     .object({
-      line_number: z.number().int().min(0),
-      column_number: z.number().int().min(0),
+      line_number: z.number().int().min(0).describe(ZERO_BASED_LINE),
+      column_number: z.number().int().min(0).describe(ZERO_BASED_COLUMN),
     })
     .nullable(),
   source: z.discriminatedUnion("state", [
@@ -51,8 +58,8 @@ export type WebRuntimeSource = z.infer<typeof webRuntimeSourceSchema>;
 export const webRuntimeLocationSchema = z.object({
   script_id: z.string(),
   url: z.string().nullable(),
-  line_number: z.number().int().min(0),
-  column_number: z.number().int().min(0).nullable(),
+  line_number: z.number().int().min(0).describe(ZERO_BASED_LINE),
+  column_number: z.number().int().min(0).nullable().describe(ZERO_BASED_COLUMN),
   function_name: z.string().nullable(),
   source_association: z.enum(["script_id", "unknown"]),
 });
