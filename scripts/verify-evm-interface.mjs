@@ -550,7 +550,7 @@ if (failures.length !== 0)
   );
 
 function permitsStdioSocketObservation(line, localDescriptors) {
-  if (line.startsWith('socketpair(AF_UNIX,')) {
+  if (line.startsWith("socketpair(AF_UNIX,")) {
     const pair = /\[(\d+), (\d+)\]\)\s+= 0$/.exec(line);
     if (pair !== null) {
       localDescriptors.add(pair[1]);
@@ -564,7 +564,8 @@ function permitsStdioSocketObservation(line, localDescriptors) {
     return true;
   }
   // A failed descriptor query performs no request and identifies no socket.
-  if (line.startsWith('getsockname(') && / = -1 ENOTSOCK/.test(line)) return true;
+  if (line.startsWith("getsockname(") && / = -1 ENOTSOCK/.test(line))
+    return true;
   const metadata =
     /^(?:getsockopt\((\d+), SOL_SOCKET, SO_TYPE,|setsockopt\((\d+), SOL_SOCKET, SO_(?:RCVBUF|SNDBUF),|shutdown\((\d+), SHUT_WR\))/.exec(
       line,
