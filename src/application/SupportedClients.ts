@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { posix } from "node:path";
 import { lstatSync } from "node:fs";
 
 /** One supported client configuration location. */
@@ -46,14 +46,18 @@ const vscodeUserDirectory = ({
   env,
 }: ClientPathContext): string => {
   if (platform === "win32")
-    return join(
-      env.APPDATA ?? join(home, "AppData", "Roaming"),
+    return posix.join(
+      env.APPDATA ?? posix.join(home, "AppData", "Roaming"),
       "Code",
       "User",
     );
   if (platform === "darwin")
-    return join(home, "Library", "Application Support", "Code", "User");
-  return join(env.XDG_CONFIG_HOME ?? join(home, ".config"), "Code", "User");
+    return posix.join(home, "Library", "Application Support", "Code", "User");
+  return posix.join(
+    env.XDG_CONFIG_HOME ?? posix.join(home, ".config"),
+    "Code",
+    "User",
+  );
 };
 
 const claudeDesktopDirectory = ({
@@ -62,29 +66,35 @@ const claudeDesktopDirectory = ({
   env,
 }: ClientPathContext): string => {
   if (platform === "win32")
-    return join(env.APPDATA ?? join(home, "AppData", "Roaming"), "Claude");
+    return posix.join(
+      env.APPDATA ?? posix.join(home, "AppData", "Roaming"),
+      "Claude",
+    );
   if (platform === "linux")
-    return join(env.XDG_CONFIG_HOME ?? join(home, ".config"), "Claude");
-  return join(home, "Library", "Application Support", "Claude");
+    return posix.join(
+      env.XDG_CONFIG_HOME ?? posix.join(home, ".config"),
+      "Claude",
+    );
+  return posix.join(home, "Library", "Application Support", "Claude");
 };
 
 const claudeCodeConfigDirectory = ({ home, env }: ClientPathContext): string =>
   env.CLAUDE_CONFIG_DIR ?? home;
 
 const claudeCodeMarkerDirectory = ({ home, env }: ClientPathContext): string =>
-  env.CLAUDE_CONFIG_DIR ?? join(home, ".claude");
+  env.CLAUDE_CONFIG_DIR ?? posix.join(home, ".claude");
 
 const codexDirectory = ({ home, env }: ClientPathContext): string =>
-  env.CODEX_HOME ?? join(home, ".codex");
+  env.CODEX_HOME ?? posix.join(home, ".codex");
 
 const copilotDirectory = ({ home, env }: ClientPathContext): string =>
-  env.COPILOT_HOME ?? join(home, ".copilot");
+  env.COPILOT_HOME ?? posix.join(home, ".copilot");
 
 const commandCodeDirectory = ({ home }: ClientPathContext): string =>
-  join(home, ".commandcode");
+  posix.join(home, ".commandcode");
 
 const opencodeDirectory = ({ home, env }: ClientPathContext): string =>
-  join(env.XDG_CONFIG_HOME ?? join(home, ".config"), "opencode");
+  posix.join(env.XDG_CONFIG_HOME ?? posix.join(home, ".config"), "opencode");
 
 const existingOpenCodeConfigPath = (context: ClientPathContext): string => {
   if (context.env.OPENCODE_CONFIG !== undefined)
@@ -95,7 +105,7 @@ const existingOpenCodeConfigPath = (context: ClientPathContext): string => {
     "opencode.jsonc",
     ".opencode.json",
     ".opencode.jsonc",
-  ].map((filename) => join(directory, filename));
+  ].map((filename) => posix.join(directory, filename));
   return (
     candidates.find((path) => {
       try {
@@ -110,14 +120,14 @@ const existingOpenCodeConfigPath = (context: ClientPathContext): string => {
       }
     }) ??
     candidates[0] ??
-    join(directory, "opencode.json")
+    posix.join(directory, "opencode.json")
   );
 };
 
 const devinDirectory = ({ home, platform, env }: ClientPathContext): string =>
   platform === "win32"
-    ? join(env.APPDATA ?? join(home, "AppData", "Roaming"), "devin")
-    : join(home, ".config", "devin");
+    ? posix.join(env.APPDATA ?? posix.join(home, "AppData", "Roaming"), "devin")
+    : posix.join(home, ".config", "devin");
 
 /** Stable product metadata used to derive setup discovery and documentation. */
 export const SUPPORTED_CLIENT_DEFINITIONS = [
@@ -125,7 +135,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     name: "claude_code",
     displayName: "Claude Code",
     configPath: (context: ClientPathContext) =>
-      join(claudeCodeConfigDirectory(context), ".claude.json"),
+      posix.join(claudeCodeConfigDirectory(context), ".claude.json"),
     markerPath: claudeCodeMarkerDirectory,
     format: "json",
   },
@@ -133,7 +143,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     name: "claude_desktop",
     displayName: "Claude Desktop",
     configPath: (context: ClientPathContext) =>
-      join(claudeDesktopDirectory(context), "claude_desktop_config.json"),
+      posix.join(claudeDesktopDirectory(context), "claude_desktop_config.json"),
     markerPath: claudeDesktopDirectory,
     format: "json",
   },
@@ -141,7 +151,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     name: "codex",
     displayName: "Codex",
     configPath: (context: ClientPathContext) =>
-      join(codexDirectory(context), "config.toml"),
+      posix.join(codexDirectory(context), "config.toml"),
     markerPath: codexDirectory,
     format: "toml",
   },
@@ -170,7 +180,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     name: "devin",
     displayName: "Devin",
     configPath: ({ home, platform, env }: ClientPathContext) =>
-      join(devinDirectory({ home, platform, env }), "mcp_config.json"),
+      posix.join(devinDirectory({ home, platform, env }), "mcp_config.json"),
     markerPath: devinDirectory,
     format: "json",
   },
@@ -192,7 +202,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     name: "copilot_cli",
     displayName: "GitHub Copilot CLI",
     configPath: (context: ClientPathContext) =>
-      join(copilotDirectory(context), "mcp-config.json"),
+      posix.join(copilotDirectory(context), "mcp-config.json"),
     markerPath: copilotDirectory,
     format: "copilot_cli",
   },
@@ -200,7 +210,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     name: "commandcode",
     displayName: "Command Code",
     configPath: (context: ClientPathContext) =>
-      join(commandCodeDirectory(context), "mcp.json"),
+      posix.join(commandCodeDirectory(context), "mcp.json"),
     markerPath: commandCodeDirectory,
     format: "commandcode",
   },
@@ -208,14 +218,26 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     name: "vscode",
     displayName: "VS Code",
     configPath: (context: ClientPathContext) =>
-      join(vscodeUserDirectory(context), "mcp.json"),
+      posix.join(vscodeUserDirectory(context), "mcp.json"),
     markerPath: vscodeUserDirectory,
     format: "vscode",
   },
 ] as const satisfies readonly ClientDefinition[];
 
 const resolvePath = (path: ClientPath, context: ClientPathContext): string =>
-  typeof path === "function" ? path(context) : join(context.home, ...path);
+  typeof path === "function"
+    ? path(context)
+    : posix.join(context.home, ...path);
+
+/**
+ * Normalize path spellings for the target platform dialect. All client paths
+ * are rendered with forward slashes; on Windows targets, `\` separators in
+ * caller inputs are separators rather than literal characters.
+ */
+const dialectPath =
+  (platform: NodeJS.Platform) =>
+  (path: string | undefined): string | undefined =>
+    platform === "win32" ? path?.replaceAll("\\", "/") : path;
 
 /** Describe every client location that setup, doctor, or uninstall may inspect. */
 export const supportedClients = (
@@ -230,7 +252,19 @@ export const supportedClients = (
     XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
   },
 ): readonly SetupClient[] => {
-  const context = { home, platform, env };
+  const input = dialectPath(platform);
+  const context: ClientPathContext = {
+    home: input(home) ?? home,
+    platform,
+    env: {
+      APPDATA: input(env.APPDATA),
+      CLAUDE_CONFIG_DIR: input(env.CLAUDE_CONFIG_DIR),
+      CODEX_HOME: input(env.CODEX_HOME),
+      COPILOT_HOME: input(env.COPILOT_HOME),
+      OPENCODE_CONFIG: input(env.OPENCODE_CONFIG),
+      XDG_CONFIG_HOME: input(env.XDG_CONFIG_HOME),
+    },
+  };
   return SUPPORTED_CLIENT_DEFINITIONS.map((definition) => ({
     name: definition.name,
     displayName: definition.displayName,

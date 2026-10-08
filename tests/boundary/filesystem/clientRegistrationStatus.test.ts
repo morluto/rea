@@ -32,7 +32,7 @@ describe("client registration status", () => {
     expect(statuses).toEqual([
       expect.objectContaining({
         client: "claude_code",
-        config_path: join(home, ".claude.json"),
+        config_path: `${home.replaceAll("\\", "/")}/.claude.json`,
         state: "aligned",
         remediation: null,
       }),

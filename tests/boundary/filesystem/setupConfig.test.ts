@@ -10,6 +10,16 @@ import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 
 const pinnedPackage = PRODUCT_IDENTITY.registrationPackageSpecifier;
 
+// The default registration command is `cmd /c npx …` on Windows so that
+// shell-less MCP clients can spawn the npx batch shim.
+const expectedEntry =
+  process.platform === "win32"
+    ? {
+        command: "cmd",
+        args: ["/c", "npx", "-y", pinnedPackage, "mcp"],
+      }
+    : { command: "npx", args: ["-y", pinnedPackage, "mcp"] };
+
 describe("JSON client configuration transaction", () => {
   it.skipIf(typeof process.getuid !== "function")(
     "rejects a symlink target not owned by the current user",
@@ -47,40 +57,39 @@ describe("JSON client configuration transaction", () => {
       theme: "dark",
       mcpServers: {
         other: { command: "other" },
-        rea: {
-          command: "npx",
-          args: ["-y", pinnedPackage, "mcp"],
-        },
+        rea: expectedEntry,
       },
     });
   });
 
-  it("updates a symlink target without replacing the JSON config symlink", async () => {
-    const directory = await createTestTempDirectory("rea-setup-");
-    const targetPath = join(directory, "managed.json");
-    const configPath = join(directory, "mcp.json");
-    const original = '{"theme":"dark"}\n';
-    await writeFile(targetPath, original);
-    await symlink(targetPath, configPath);
+  it.skipIf(typeof process.getuid !== "function")(
+    "updates a symlink target without replacing the JSON config symlink",
+    async () => {
+      const directory = await createTestTempDirectory("rea-setup-");
+      const targetPath = join(directory, "managed.json");
+      const configPath = join(directory, "mcp.json");
+      const original = '{"theme":"dark"}\n';
+      await writeFile(targetPath, original);
+      await symlink(targetPath, configPath);
 
-    expect(
-      await configureJsonClient({ name: "cursor", configPath }),
-    ).toMatchObject({ status: "configured" });
-    expect((await lstat(configPath)).isSymbolicLink()).toBe(true);
-    expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(original);
-    expect(JSON.parse(await readFile(targetPath, "utf8"))).toMatchObject({
-      theme: "dark",
-      mcpServers: {
-        rea: {
-          command: "npx",
-          args: ["-y", pinnedPackage, "mcp"],
+      expect(
+        await configureJsonClient({ name: "cursor", configPath }),
+      ).toMatchObject({ status: "configured" });
+      expect((await lstat(configPath)).isSymbolicLink()).toBe(true);
+      expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(original);
+      expect(JSON.parse(await readFile(targetPath, "utf8"))).toMatchObject({
+        theme: "dark",
+        mcpServers: {
+          rea: expectedEntry,
         },
-      },
-    });
-    expect(await configureJsonClient({ name: "cursor", configPath })).toEqual({
-      status: "unchanged",
-    });
-  });
+      });
+      expect(await configureJsonClient({ name: "cursor", configPath })).toEqual(
+        {
+          status: "unchanged",
+        },
+      );
+    },
+  );
 
   it("fails before mutation when a JSON config symlink is dangling", async () => {
     const directory = await createTestTempDirectory("rea-setup-");
@@ -102,7 +111,7 @@ describe("JSON client configuration transaction", () => {
     const configPath = join(directory, "mcp.json");
     await writeFile(
       configPath,
-      `${JSON.stringify({ mcpServers: { rea: { command: "npx", args: ["-y", pinnedPackage, "mcp"] } } })}\n`,
+      `${JSON.stringify({ mcpServers: { rea: expectedEntry } })}\n`,
     );
     expect(await configureJsonClient({ name: "cursor", configPath })).toEqual({
       status: "unchanged",
@@ -124,8 +133,7 @@ describe("JSON client configuration transaction", () => {
               JAVA_HOME: "/usr/lib/jvm/jdk-21",
               GHIDRA_INSTALL_DIR: "/opt/ghidra",
             },
-            args: ["-y", pinnedPackage, "mcp"],
-            command: "npx",
+            ...expectedEntry,
           },
         },
       })}\n`,
@@ -161,10 +169,7 @@ describe("JSON client configuration migration and provider paths", () => {
     expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual({
       theme: "dark",
       mcpServers: {
-        rea: {
-          command: "npx",
-          args: ["-y", pinnedPackage, "mcp"],
-        },
+        rea: expectedEntry,
         other: { command: "other" },
       },
     });
@@ -186,8 +191,7 @@ describe("JSON client configuration migration and provider paths", () => {
     expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({
       mcpServers: {
         rea: {
-          command: "npx",
-          args: ["-y", pinnedPackage, "mcp"],
+          ...expectedEntry,
           env: { HOPPER_LAUNCHER_PATH: hopperPath },
         },
       },

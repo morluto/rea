@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parse as parseJsonc, type ParseError } from "jsonc-parser";
@@ -422,7 +422,7 @@ describe("platform-aware client config paths", () => {
     await writeFile(join(opencodeDirectory, "opencode.jsonc"), "{}\n");
     const clients = supportedClients(home, "linux", {});
     expect(clients.find(({ name }) => name === "opencode")?.configPath).toBe(
-      join(opencodeDirectory, "opencode.jsonc"),
+      posix.join(home, ".config", "opencode", "opencode.jsonc"),
     );
     expect(
       supportedClients(home, "linux", {

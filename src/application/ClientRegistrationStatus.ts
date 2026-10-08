@@ -163,7 +163,7 @@ const registrationAligned = (
     command.length === 3 &&
     command[2] === "mcp" &&
     resolve(command[0] ?? "") === resolve(process.execPath) &&
-    resolve(command[1] ?? "") === currentCommandPath
+    resolve(command[1] ?? "") === resolve(currentCommandPath)
   )
     return true;
   if (
@@ -177,7 +177,7 @@ const registrationAligned = (
   return (
     command.length === 2 &&
     command[1] === "mcp" &&
-    resolve(command[0] ?? "") === currentCommandPath
+    resolve(command[0] ?? "") === resolve(currentCommandPath)
   );
 };
 

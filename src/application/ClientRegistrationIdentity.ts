@@ -34,7 +34,7 @@ export const isOwnedClientRegistrationCommand = (
     command.length === 3 &&
     command[2] === "mcp" &&
     resolve(command[0] ?? "") === resolve(process.execPath) &&
-    resolve(command[1] ?? "") === currentCommandPath
+    resolve(command[1] ?? "") === resolve(currentCommandPath)
   )
     return true;
 
@@ -44,7 +44,7 @@ export const isOwnedClientRegistrationCommand = (
       executable === PRODUCT_IDENTITY.cliBinary ||
       (isAbsolute(executable) &&
         basename(executable) === PRODUCT_IDENTITY.cliBinary) ||
-      resolve(executable) === currentCommandPath
+      resolve(executable) === resolve(currentCommandPath)
     )
       return true;
   }

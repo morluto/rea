@@ -65,7 +65,7 @@ describe("client configuration filesystem lifecycle", () => {
     ]);
     expect(
       detected.find(({ name }) => name === "claude_code")?.configPath,
-    ).toBe(join(home, ".claude.json"));
+    ).toBe(join(home, ".claude.json").replaceAll("\\", "/"));
     expect(detected.find(({ name }) => name === "devin")?.format).toBe("json");
     const emptyHome = await createTestTempDirectory("rea-empty-");
     roots.push(emptyHome);
@@ -140,27 +140,30 @@ describe("client configuration filesystem lifecycle", () => {
     ).rejects.toThrow();
   });
 
-  it("updates a symlink target without replacing the TOML config symlink", async () => {
-    const home = await createTestTempDirectory("rea-toml-symlink-");
-    roots.push(home);
-    const configPath = join(home, ".codex/config.toml");
-    const targetPath = join(home, "managed-config.toml");
-    const original = 'model = "gpt-5"\n';
-    await mkdir(dirname(configPath), { recursive: true });
-    await writeFile(targetPath, original);
-    await symlink(targetPath, configPath);
+  it.skipIf(typeof process.getuid !== "function")(
+    "updates a symlink target without replacing the TOML config symlink",
+    async () => {
+      const home = await createTestTempDirectory("rea-toml-symlink-");
+      roots.push(home);
+      const configPath = join(home, ".codex/config.toml");
+      const targetPath = join(home, "managed-config.toml");
+      const original = 'model = "gpt-5"\n';
+      await mkdir(dirname(configPath), { recursive: true });
+      await writeFile(targetPath, original);
+      await symlink(targetPath, configPath);
 
-    expect(
-      await configureTomlClient(
-        { name: "codex", configPath, format: "toml" },
-        undefined,
-        ["rea", "mcp"],
-      ),
-    ).toMatchObject({ status: "configured" });
-    expect((await lstat(configPath)).isSymbolicLink()).toBe(true);
-    expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(original);
-    expect(await readFile(targetPath, "utf8")).toContain("[mcp_servers.rea]");
-  });
+      expect(
+        await configureTomlClient(
+          { name: "codex", configPath, format: "toml" },
+          undefined,
+          ["rea", "mcp"],
+        ),
+      ).toMatchObject({ status: "configured" });
+      expect((await lstat(configPath)).isSymbolicLink()).toBe(true);
+      expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(original);
+      expect(await readFile(targetPath, "utf8")).toContain("[mcp_servers.rea]");
+    },
+  );
 
   it("fails before mutation when a TOML config symlink is dangling", async () => {
     const home = await createTestTempDirectory("rea-toml-symlink-");
@@ -223,30 +226,33 @@ describe("client configuration filesystem removal", () => {
     );
   });
 
-  it("removes an owned entry through a symlink without replacing it", async () => {
-    const home = await createTestTempDirectory("rea-uninstall-symlink-");
-    roots.push(home);
-    const configPath = join(home, ".cursor/mcp.json");
-    const targetPath = join(home, "managed-mcp.json");
-    const original = JSON.stringify({
-      mcpServers: {
-        rea: { command: "rea", args: ["mcp"] },
-        other: { command: "other" },
-      },
-    });
-    await mkdir(dirname(configPath), { recursive: true });
-    await writeFile(targetPath, original);
-    await symlink(targetPath, configPath);
+  it.skipIf(typeof process.getuid !== "function")(
+    "removes an owned entry through a symlink without replacing it",
+    async () => {
+      const home = await createTestTempDirectory("rea-uninstall-symlink-");
+      roots.push(home);
+      const configPath = join(home, ".cursor/mcp.json");
+      const targetPath = join(home, "managed-mcp.json");
+      const original = JSON.stringify({
+        mcpServers: {
+          rea: { command: "rea", args: ["mcp"] },
+          other: { command: "other" },
+        },
+      });
+      await mkdir(dirname(configPath), { recursive: true });
+      await writeFile(targetPath, original);
+      await symlink(targetPath, configPath);
 
-    expect((await runUninstall(false, systemUninstallHost(home))).status).toBe(
-      "complete",
-    );
-    expect((await lstat(configPath)).isSymbolicLink()).toBe(true);
-    expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(original);
-    expect(JSON.parse(await readFile(targetPath, "utf8"))).toEqual({
-      mcpServers: { other: { command: "other" } },
-    });
-  });
+      expect(
+        (await runUninstall(false, systemUninstallHost(home))).status,
+      ).toBe("complete");
+      expect((await lstat(configPath)).isSymbolicLink()).toBe(true);
+      expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(original);
+      expect(JSON.parse(await readFile(targetPath, "utf8"))).toEqual({
+        mcpServers: { other: { command: "other" } },
+      });
+    },
+  );
 
   it("fails before mutation when an uninstall config symlink is dangling", async () => {
     const home = await createTestTempDirectory("rea-uninstall-symlink-");
@@ -378,7 +384,7 @@ const uninstallFixture = async (): Promise<{
 }> => {
   const home = await createTestTempDirectory("rea-uninstall-failure-");
   roots.push(home);
-  const config = join(home, ".cursor/mcp.json");
+  const config = join(home, ".cursor/mcp.json").replaceAll("\\", "/");
   await mkdir(dirname(config), { recursive: true });
   await writeFile(
     config,
