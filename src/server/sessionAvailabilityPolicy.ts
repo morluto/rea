@@ -10,6 +10,7 @@ export interface SessionAvailabilityDefaults {
     | undefined;
   readonly optionalFeatures?: Pick<
     SessionAvailability,
+    | "evmInterfaceEnabled"
     | "browserObservationEnabled"
     | "browserScenarioEnabled"
     | "electronObservationEnabled"
@@ -32,6 +33,8 @@ export const sessionAvailabilityPolicy = (
   const policy =
     configured ??
     (() => ({
+      evmInterfaceEnabled:
+        defaults.optionalFeatures?.evmInterfaceEnabled ?? false,
       processCaptureEnabled: platform !== "win32",
       binaryLayoutEnabled:
         defaults.optionalFeatures?.binaryLayoutEnabled ?? false,

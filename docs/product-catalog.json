@@ -7,10 +7,10 @@
       "client": "2.3.1",
       "core": "2.3.1"
     },
-    "skill_version": "30"
+    "skill_version": "31"
   },
   "tools": {
-    "total": 136,
+    "total": 137,
     "families": [
       {
         "id": "direct",
@@ -100,12 +100,13 @@
       {
         "id": "artifact",
         "surface": "artifact-provider",
-        "count": 5,
+        "count": 6,
         "tools": [
           "decode_interface_builder",
           "extract_artifact",
           "inspect_artifact",
           "inspect_asset_catalog",
+          "inspect_evm_interface",
           "inspect_keyed_archive"
         ]
       },
@@ -237,6 +238,12 @@
       "name": "Binwalk",
       "version": "3.1.0",
       "capabilities": ["inspect_firmware_regions"]
+    },
+    {
+      "id": "evmole-interface",
+      "name": "REA EVM interface adapter",
+      "version": "evmole@0.9.3",
+      "capabilities": ["inspect_evm_interface"]
     },
     {
       "id": "ghidra",
@@ -592,7 +599,7 @@
     }
   ],
   "cli": {
-    "primary_count": 91,
+    "primary_count": 92,
     "commands": [
       "address-to-file-offset",
       "analyze",
@@ -636,6 +643,7 @@
       "inspect-asset-catalog",
       "inspect-binary-layout",
       "inspect-electron-page",
+      "inspect-evm-interface",
       "inspect-firmware-regions",
       "inspect-keyed-archive",
       "inspect-macho",
@@ -695,15 +703,15 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 91,
-      "mcp_tools": 136,
+      "cli_commands": 92,
+      "mcp_tools": 137,
       "mcp_prompts": 6
     },
     "digests": {
-      "tools_sha256": "51992818bb03b1f6136a2674517e3d983037dc474cd0ac31a37fe4096211e5e2",
+      "tools_sha256": "66abfdfb36ab4cb49c43b6127027567af6b4f23930ed6e9c1befcc97c7d1d36f",
       "prompts_sha256": "ef2de8814390b340623c32001610aa2709d90bed51537b6e562ab3abf144ab4d",
-      "combined_sha256": "fc75e5d817f64311dacc23ef2bde4223fd12d2d5a9c49e93051ac9f7857b2d8c",
-      "providers_sha256": "6e0080dea56ee7f3ebdf5ce0d74ea18e5d44ebce80b89c7f4de94e9c69f4d2e5"
+      "combined_sha256": "2df2088b50001addd54f8c378be296cbe3523adab6c20e6efe464764fc41f7ee",
+      "providers_sha256": "3e818806f5ebd1842e5b88dc35fd75142afa029c79f659cbe249f8fdf6045dca"
     }
   }
 }

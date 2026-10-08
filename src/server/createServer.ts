@@ -1,3 +1,6 @@
+import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
+import { createEvmInterfaceService } from "../composition/evm.js";
+import { registerEvmTools } from "./registerEvmTools.js";
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
 import { createBinaryLayoutService } from "../composition/binaryDiagnostics.js";
 import type { BinaryLayoutService } from "../application/binaryDiagnostics/BinaryLayoutService.js";
@@ -62,6 +65,7 @@ const ACTIVE_TARGET_INSTRUCTIONS =
   "REA analyzes the active reverse-engineering target. Use the analysis tool that answers the question directly. Search or list symbols when discovery is needed; analyze_function provides a function dossier, and focused procedure tools return individual facets.";
 
 export interface CreateServerOptions {
+  readonly evmInterface?: EvmInterfaceService;
   readonly logger?: Logger;
   readonly binaryLayout?: BinaryLayoutService;
   readonly firmwareAnalysis?: FirmwareAnalysisPort;
@@ -89,6 +93,9 @@ const installSessionToolAvailability = (
   const policy = sessionAvailabilityPolicy(options.availabilityPolicy, {
     optionalProviderLoadFailures: options.optionalProviderLoadFailures,
     optionalFeatures: {
+      evmInterfaceEnabled:
+        options.evmInterface !== undefined ||
+        (process.platform === "linux" && process.arch === "x64"),
       webModuleResolutionEnabled:
         options.webModuleTrace !== undefined ||
         isAbsolute(process.env.REA_BROWSER_EXECUTABLE ?? ""),
@@ -202,6 +209,12 @@ export const createServer = (
   registerBinaryDiagnosticsTools(
     server,
     options.binaryLayout ?? createBinaryLayoutService(),
+    toolLogger,
+    recordEvidence,
+  );
+  registerEvmTools(
+    server,
+    options.evmInterface ?? createEvmInterfaceService(),
     toolLogger,
     recordEvidence,
   );

@@ -24,7 +24,10 @@ export const toolFamilyCatalog = (sources) => {
     {
       id: "artifact",
       surface: "artifact-provider",
-      contracts: sources.artifactContracts.ARTIFACT_TOOL_CONTRACTS,
+      contracts: [
+        ...sources.artifactContracts.ARTIFACT_TOOL_CONTRACTS,
+        ...sources.evmContracts.EVM_TOOL_CONTRACTS,
+      ],
     },
     {
       id: "managed",
@@ -150,6 +153,10 @@ export const providerCatalog = (sources) => {
       identity: sources.pwntoolsProvider.PWNTOOLS_PROVIDER_IDENTITY,
       contracts:
         sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.evmProvider.EVMOLE_PROVIDER_IDENTITY,
+      contracts: sources.evmContracts.EVM_TOOL_CONTRACTS,
     },
     {
       identity: sources.artifactProviders.ARTIFACT_GRAPH_PROVIDER,

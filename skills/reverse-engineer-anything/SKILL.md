@@ -2,9 +2,9 @@
 name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "30"
-  tool_count: 136
-  catalog_digest: "fc75e5d817f64311dacc23ef2bde4223fd12d2d5a9c49e93051ac9f7857b2d8c"
+  version: "31"
+  tool_count: 137
+  catalog_digest: "2df2088b50001addd54f8c378be296cbe3523adab6c20e6efe464764fc41f7ee"
 ---
 
 # REA
@@ -99,6 +99,11 @@ explicit path or endpoint and do not need it.
   [historical captures](https://github.com/morluto/rea/blob/main/docs/web-network-captures.md) for the exact upstream
   profile and credential exclusions.
 - User-owned Electron runtime already open: `list_electron_targets`.
+- Explicit local EVM bytecode carrier: `inspect_evm_interface` with caller-selected
+  `raw` or `hex` encoding. Preserve carrier/decoded digests and treat selectors,
+  argument strings and mutability as inferred candidates; this performs no chain
+  lookup or target execution. See the
+  [EVM bytecode guide](https://github.com/morluto/rea/blob/main/docs/evm-bytecode.md).
 - Explicit Linux ELF file for offline layout, symbols, relocations or static
   mitigation evidence: `inspect_binary_layout`. This target-free operation uses
   caller-supplied pwntools without opening a disassembler database. Preserve its

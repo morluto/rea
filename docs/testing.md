@@ -634,6 +634,16 @@ the ordinary lane. Its large MCP transfer is opt-in with
 explicit 256 MiB SDK receive buffer and five-minute request timeout. Ordinary
 MCP fixtures retain the pinned SDK defaults.
 
+### Offline EVM interface
+
+`npm run verify:evm:interface` requires Linux x64, an absolute
+`REA_VERIFY_STRACE_COMMAND`, caller-supplied util-linux `prlimit` and `REA_VERIFY_SOLC_MODULE` selecting the absolute module path for
+solc 0.8.30. It compiles source-owned plain/optimized/via-IR Cancun fixtures in
+private storage and checks actual CLI/MCP selector evidence, raw/hex identity,
+unknowns, malformed carriers and independent cleanup. An optional positional
+entrypoint verifies a fresh installed package. It acquires no engine, compiler
+or chain dependency and does not execute a contract on a chain.
+
 ## Agent evaluation and conformance records
 
 Evaluate native, JavaScript, managed and browser investigation tasks through a

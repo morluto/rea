@@ -1,3 +1,4 @@
+import { EVM_TOOL_CONTRACTS } from "./evm/evmToolContracts.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "./native/binaryDiagnosticsToolContracts.js";
 import { NATIVE_TOOL_CONTRACTS } from "./native/nativeToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "./artifactToolContracts.js";
@@ -26,6 +27,7 @@ export const TOOL_CONTRACTS = [
   ...NATIVE_TOOL_CONTRACTS,
   ...BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
   ...ARTIFACT_TOOL_CONTRACTS,
+  ...EVM_TOOL_CONTRACTS,
   ...MANAGED_TOOL_CONTRACTS,
   ...ANDROID_TOOL_CONTRACTS,
   ...FIRMWARE_TOOL_CONTRACTS,
