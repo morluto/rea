@@ -22,14 +22,22 @@ const resultSchema = z.object({
   references: z.array(z.object({ source_address: z.string() })),
 });
 
+type ProbeResult = z.infer<typeof resultSchema>;
+
+async function runProbe(scenario: string): Promise<ProbeResult> {
+  const { stdout } = await execute("python3", [probe, bridge, scenario], {
+    encoding: "utf8",
+    timeout: 3_000,
+    maxBuffer: 1_024 * 1_024,
+  });
+  return resultSchema.parse(JSON.parse(stdout));
+}
+
 describe("Hopper instruction block boundaries", () => {
   it.each(["inclusive", "exclusive", "duplicate"])(
     "preserves branches and returns with %s endpoints without duplicates or adjacent instructions",
     async (scenario) => {
-      const { stdout } = await execute("python3", [probe, bridge, scenario], {
-        timeout: 3_000,
-      });
-      const result = resultSchema.parse(JSON.parse(stdout));
+      const result = await runProbe(scenario);
       expect(result.addresses).toEqual([0x1000, 0x1004, 0x1008]);
       if (scenario !== "duplicate") {
         expect(result.blocks).toEqual([
@@ -56,10 +64,7 @@ describe("Hopper instruction block boundaries", () => {
     ["foreign_owner", [0x1000, 0x1004]],
     ["reversed", []],
   ])("stops safely at %s", async (scenario, addresses) => {
-    const { stdout } = await execute("python3", [probe, bridge, scenario], {
-      timeout: 3_000,
-    });
-    const result = resultSchema.parse(JSON.parse(stdout));
+    const result = await runProbe(scenario);
     expect(result.addresses).toEqual(addresses);
     expect(result.assembly).toHaveLength(addresses.length);
     expect(result.fast).toEqual(result.assembly);
@@ -67,14 +72,7 @@ describe("Hopper instruction block boundaries", () => {
   });
 
   it("uses instruction lengths without assuming ARM64 fixed-width encoding", async () => {
-    const { stdout } = await execute(
-      "python3",
-      [probe, bridge, "variable_length"],
-      {
-        timeout: 3_000,
-      },
-    );
-    const result = resultSchema.parse(JSON.parse(stdout));
+    const result = await runProbe("variable_length");
     expect(result.addresses).toEqual([0x1000, 0x1003, 0x1005]);
     expect(result.blocks).toEqual([
       { start: "0x1000", end: "0x1005" },
@@ -95,7 +93,9 @@ describe("Hopper instruction block boundaries", () => {
       "python3",
       [probe, bridge, "no_ownership"],
       {
+        encoding: "utf8",
         timeout: 3_000,
+        maxBuffer: 1_024 * 1_024,
       },
     );
     expect(
