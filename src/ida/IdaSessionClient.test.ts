@@ -8,6 +8,11 @@ import {
 import { IdaSessionClient } from "./IdaSessionClient.js";
 import { functionDossierSchema } from "../domain/hopperValues.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
+import { privateRuntimeRootCapability } from "../process/PrivateRuntimeRoot.js";
+
+// Headless sessions allocate a private workspace; on win32 that requires the
+// packaged native addon, which source checkouts do not carry.
+const runtimeRootAvailable = privateRuntimeRootCapability().available;
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -33,71 +38,74 @@ const fixture = async (mode: "attached" | "headless" = "attached") => {
   return { root, target, producer, client };
 };
 
-describe("headless IDA producer pagination", () => {
-  it("follows reported cursors for modern inventories, pseudocode, and bare-hex assembly without losing pages", async () => {
-    const { producer, client } = await fixture("headless");
-    producer.overrideCall = (name, args) => {
-      const first = args.offset === 0;
-      const cursor = first ? { next: 1 } : { done: true };
-      if (name === "decompile")
-        return { code: first ? "first line" : "second line", cursor };
-      if (name === "disasm")
-        return {
-          asm: {
-            name: "main",
-            start_ea: "0x1000",
-            lines: [
-              {
-                addr: first ? "1000" : "1001",
-                instruction: first ? "push rbp" : "ret",
-              },
-            ],
-          },
-          cursor,
-        };
-      if (name === "find_regex")
-        return {
-          matches: [
-            {
-              addr: first ? "0x3000" : "0x3002",
-              string: first ? "a.b" : "a+b",
+describe.skipIf(!runtimeRootAvailable)(
+  "headless IDA producer pagination",
+  () => {
+    it("follows reported cursors for modern inventories, pseudocode, and bare-hex assembly without losing pages", async () => {
+      const { producer, client } = await fixture("headless");
+      producer.overrideCall = (name, args) => {
+        const first = args.offset === 0;
+        const cursor = first ? { next: 1 } : { done: true };
+        if (name === "decompile")
+          return { code: first ? "first line" : "second line", cursor };
+        if (name === "disasm")
+          return {
+            asm: {
+              name: "main",
+              start_ea: "0x1000",
+              lines: [
+                {
+                  addr: first ? "1000" : "1001",
+                  instruction: first ? "push rbp" : "ret",
+                },
+              ],
             },
-          ],
-          cursor,
-        };
-      if (name === "list_funcs") {
-        const page = z
-          .object({ offset: z.number() })
-          .parse(args.queries).offset;
-        return [
-          {
-            data: [
+            cursor,
+          };
+        if (name === "find_regex")
+          return {
+            matches: [
               {
-                addr: page === 0 ? "0x1000" : "0x2000",
-                name: page === 0 ? "main" : "other",
-                size: "0x20",
+                addr: first ? "0x3000" : "0x3002",
+                string: first ? "a.b" : "a+b",
               },
             ],
-            next_offset: page === 0 ? 1 : null,
-          },
-        ];
-      }
-      return undefined;
-    };
-    const inventory = await client.execute("list_procedures", {});
-    expect(inventory.ok && inventory.value.result).toHaveLength(2);
-    const strings = await client.execute("list_strings", {});
-    expect(strings.ok && strings.value.result).toHaveLength(2);
-    const result = await client.execute("analyze_function", {
-      procedure: "main",
+            cursor,
+          };
+        if (name === "list_funcs") {
+          const page = z
+            .object({ offset: z.number() })
+            .parse(args.queries).offset;
+          return [
+            {
+              data: [
+                {
+                  addr: page === 0 ? "0x1000" : "0x2000",
+                  name: page === 0 ? "main" : "other",
+                  size: "0x20",
+                },
+              ],
+              next_offset: page === 0 ? 1 : null,
+            },
+          ];
+        }
+        return undefined;
+      };
+      const inventory = await client.execute("list_procedures", {});
+      expect(inventory.ok && inventory.value.result).toHaveLength(2);
+      const strings = await client.execute("list_strings", {});
+      expect(strings.ok && strings.value.result).toHaveLength(2);
+      const result = await client.execute("analyze_function", {
+        procedure: "main",
+      });
+      if (!result.ok) throw result.error;
+      const dossier = functionDossierSchema.parse(result.value.result);
+      expect(dossier.pseudocode).toBe("first line\nsecond line");
+      expect(dossier.assembly).toEqual(["0x1000: push rbp", "0x1001: ret"]);
+      await client.close();
     });
-    if (!result.ok) throw result.error;
-    const dossier = functionDossierSchema.parse(result.value.result);
-    expect(dossier.pseudocode).toBe("first line\nsecond line");
-    expect(dossier.assembly).toEqual(["0x1000: push rbp", "0x1001: ret"]);
-    await client.close();
-  });
-});
+  },
+);
 
 describe("attached IDA observation semantics", () => {
   it("rejects an unrelated document before connecting or opening a provider", async () => {
@@ -299,147 +307,157 @@ describe("attached IDA function observations", () => {
   });
 });
 
-describe("headless IDA lifecycle boundaries", () => {
-  it("never closes an unowned worker even when open echoes the requested private identity", async () => {
-    const { producer, client } = await fixture("headless");
-    producer.owned = false;
-    expect((await client.execute("health", {})).ok).toBe(false);
-    const closed = await client.closeWithOutcome();
-    expect(closed.ok).toBe(false);
-    if (!closed.ok) expect(closed.error.cleanupIncomplete).toBe(true);
-    expect(producer.calls.some(({ name }) => name === "idb_close")).toBe(false);
-  });
-});
-
-describe("headless IDA session ownership and cleanup", () => {
-  it("shares an in-flight close across concurrent cleanup callers", async () => {
-    const { producer, client } = await fixture("headless");
-    expect((await client.execute("health", {})).ok).toBe(true);
-
-    let release: (() => void) | undefined;
-    let notify: (() => void) | undefined;
-    const closeStarted = new Promise<void>((resolve) => {
-      notify = resolve;
+describe.skipIf(!runtimeRootAvailable)(
+  "headless IDA lifecycle boundaries",
+  () => {
+    it("never closes an unowned worker even when open echoes the requested private identity", async () => {
+      const { producer, client } = await fixture("headless");
+      producer.owned = false;
+      expect((await client.execute("health", {})).ok).toBe(false);
+      const closed = await client.closeWithOutcome();
+      expect(closed.ok).toBe(false);
+      if (!closed.ok) expect(closed.error.cleanupIncomplete).toBe(true);
+      expect(producer.calls.some(({ name }) => name === "idb_close")).toBe(
+        false,
+      );
     });
-    producer.beforeCall = async (name) => {
-      if (name !== "idb_close") return;
-      notify?.();
-      await new Promise<void>((resolve) => {
-        release = resolve;
+  },
+);
+
+describe.skipIf(!runtimeRootAvailable)(
+  "headless IDA session ownership and cleanup",
+  () => {
+    it("shares an in-flight close across concurrent cleanup callers", async () => {
+      const { producer, client } = await fixture("headless");
+      expect((await client.execute("health", {})).ok).toBe(true);
+
+      let release: (() => void) | undefined;
+      let notify: (() => void) | undefined;
+      const closeStarted = new Promise<void>((resolve) => {
+        notify = resolve;
       });
-    };
+      producer.beforeCall = async (name) => {
+        if (name !== "idb_close") return;
+        notify?.();
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      };
 
-    const first = client.closeWithOutcome();
-    await closeStarted;
-    const second = client.closeWithOutcome();
-    release?.();
-    const results = await Promise.all([first, second]);
+      const first = client.closeWithOutcome();
+      await closeStarted;
+      const second = client.closeWithOutcome();
+      release?.();
+      const results = await Promise.all([first, second]);
 
-    expect(results.every((result) => result.ok)).toBe(true);
-    expect(
-      producer.calls.filter(({ name }) => name === "idb_close"),
-    ).toHaveLength(1);
-    expect(producer.closes).toBe(1);
-  });
-
-  it("retains the workspace after an unconfirmed open, even when inventory is empty, and never retries startup implicitly", async () => {
-    const { producer, client, root } = await fixture("headless");
-    producer.beforeCall = async (name) => {
-      if (name === "idb_open")
-        throw new Error("Timed out while the worker may still be opening");
-    };
-    expect((await client.execute("health", {})).ok).toBe(false);
-    expect((await client.execute("health", {})).ok).toBe(false);
-    expect(
-      producer.calls.filter(({ name }) => name === "idb_open"),
-    ).toHaveLength(1);
-    const closed = await client.closeWithOutcome();
-    expect(closed.ok).toBe(false);
-    if (!closed.ok) expect(closed.error.cleanupIncomplete).toBe(true);
-    expect(
-      (await readdir(root)).some((name) => name.startsWith("rea-ida-")),
-    ).toBe(true);
-    expect(producer.closes).toBe(1);
-  });
-  it("opens a private digest-verified copy, scopes requests, closes without saving, and removes only its workspace", async () => {
-    const { producer, client, root, target } = await fixture("headless");
-    const original = await readFile(target.path);
-    const result = await client.execute("analyze_function", {
-      procedure: "main",
+      expect(results.every((result) => result.ok)).toBe(true);
+      expect(
+        producer.calls.filter(({ name }) => name === "idb_close"),
+      ).toHaveLength(1);
+      expect(producer.closes).toBe(1);
     });
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw result.error;
-    expect(producer.inputPath).not.toBe(target.path);
-    expect(await readFile(producer.inputPath)).toEqual(original);
-    expect(
-      functionDossierSchema
-        .parse(result.value.result)
-        .limitations.some((value) => value.includes("Direct callers")),
-    ).toBe(true);
-    const open = producer.calls.find(({ name }) => name === "idb_open");
-    expect(open?.args).toMatchObject({
-      mode: "force_headless",
-      run_auto_analysis: true,
+
+    it("retains the workspace after an unconfirmed open, even when inventory is empty, and never retries startup implicitly", async () => {
+      const { producer, client, root } = await fixture("headless");
+      producer.beforeCall = async (name) => {
+        if (name === "idb_open")
+          throw new Error("Timed out while the worker may still be opening");
+      };
+      expect((await client.execute("health", {})).ok).toBe(false);
+      expect((await client.execute("health", {})).ok).toBe(false);
+      expect(
+        producer.calls.filter(({ name }) => name === "idb_open"),
+      ).toHaveLength(1);
+      const closed = await client.closeWithOutcome();
+      expect(closed.ok).toBe(false);
+      if (!closed.ok) expect(closed.error.cleanupIncomplete).toBe(true);
+      expect(
+        (await readdir(root)).some((name) => name.startsWith("rea-ida-")),
+      ).toBe(true);
+      expect(producer.closes).toBe(1);
     });
-    for (const call of producer.calls.filter(
-      ({ name }) => !["idb_open", "idb_list"].includes(name),
-    ))
-      expect(call.args.database).toBe(producer.database);
-    expect((await client.closeWithOutcome()).ok).toBe(true);
-    expect(
-      producer.calls.find(({ name }) => name === "idb_close")?.args.save,
-    ).toBe(false);
-    expect(await readdir(root)).toEqual(["target.elf"]);
-    expect(await readFile(target.path)).toEqual(original);
-  });
-  it("retains the private workspace and reports cleanup failure when worker release is unverified", async () => {
-    const { producer, client, root } = await fixture("headless");
-    await client.execute("health", {});
-    producer.failClose = true;
-    const result = await client.closeWithOutcome();
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.cleanupIncomplete).toBe(true);
-    expect(
-      (await readdir(root)).some((name) => name.startsWith("rea-ida-")),
-    ).toBe(true);
-  });
-  it("never closes an unrelated database when startup returns a different input identity", async () => {
-    const { producer, client, root } = await fixture("headless");
-    producer.overrideCall = (name) =>
-      name === "idb_open"
-        ? {
-            success: true,
-            session: {
-              session_id: "user-database",
-              input_path: "/unrelated/input",
-            },
-          }
-        : undefined;
-    expect((await client.execute("health", {})).ok).toBe(false);
-    expect((await client.closeWithOutcome()).ok).toBe(true);
-    expect(producer.calls.some(({ name }) => name === "idb_close")).toBe(false);
-    expect(await readdir(root)).toEqual(["target.elf"]);
-  });
-  it("releases a privately owned worker after malformed open output using verified session inventory", async () => {
-    const { producer, client, root } = await fixture("headless");
-    producer.beforeCall = async (name, args) => {
-      if (name === "idb_open") {
-        producer.database = z.string().parse(args.preferred_session_id);
-        producer.inputPath = z.string().parse(args.input_path);
-      }
-    };
-    producer.overrideCall = (name) =>
-      name === "idb_open"
-        ? jsonValueSchema.parse({
-            success: true,
-            session: { session_id: producer.database },
-          })
-        : undefined;
-    expect((await client.execute("health", {})).ok).toBe(false);
-    expect((await client.closeWithOutcome()).ok).toBe(true);
-    expect(
-      producer.calls.find(({ name }) => name === "idb_close")?.args.database,
-    ).toMatch(/^rea-/u);
-    expect(await readdir(root)).toEqual(["target.elf"]);
-  });
-});
+    it("opens a private digest-verified copy, scopes requests, closes without saving, and removes only its workspace", async () => {
+      const { producer, client, root, target } = await fixture("headless");
+      const original = await readFile(target.path);
+      const result = await client.execute("analyze_function", {
+        procedure: "main",
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw result.error;
+      expect(producer.inputPath).not.toBe(target.path);
+      expect(await readFile(producer.inputPath)).toEqual(original);
+      expect(
+        functionDossierSchema
+          .parse(result.value.result)
+          .limitations.some((value) => value.includes("Direct callers")),
+      ).toBe(true);
+      const open = producer.calls.find(({ name }) => name === "idb_open");
+      expect(open?.args).toMatchObject({
+        mode: "force_headless",
+        run_auto_analysis: true,
+      });
+      for (const call of producer.calls.filter(
+        ({ name }) => !["idb_open", "idb_list"].includes(name),
+      ))
+        expect(call.args.database).toBe(producer.database);
+      expect((await client.closeWithOutcome()).ok).toBe(true);
+      expect(
+        producer.calls.find(({ name }) => name === "idb_close")?.args.save,
+      ).toBe(false);
+      expect(await readdir(root)).toEqual(["target.elf"]);
+      expect(await readFile(target.path)).toEqual(original);
+    });
+    it("retains the private workspace and reports cleanup failure when worker release is unverified", async () => {
+      const { producer, client, root } = await fixture("headless");
+      await client.execute("health", {});
+      producer.failClose = true;
+      const result = await client.closeWithOutcome();
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.cleanupIncomplete).toBe(true);
+      expect(
+        (await readdir(root)).some((name) => name.startsWith("rea-ida-")),
+      ).toBe(true);
+    });
+    it("never closes an unrelated database when startup returns a different input identity", async () => {
+      const { producer, client, root } = await fixture("headless");
+      producer.overrideCall = (name) =>
+        name === "idb_open"
+          ? {
+              success: true,
+              session: {
+                session_id: "user-database",
+                input_path: "/unrelated/input",
+              },
+            }
+          : undefined;
+      expect((await client.execute("health", {})).ok).toBe(false);
+      expect((await client.closeWithOutcome()).ok).toBe(true);
+      expect(producer.calls.some(({ name }) => name === "idb_close")).toBe(
+        false,
+      );
+      expect(await readdir(root)).toEqual(["target.elf"]);
+    });
+    it("releases a privately owned worker after malformed open output using verified session inventory", async () => {
+      const { producer, client, root } = await fixture("headless");
+      producer.beforeCall = async (name, args) => {
+        if (name === "idb_open") {
+          producer.database = z.string().parse(args.preferred_session_id);
+          producer.inputPath = z.string().parse(args.input_path);
+        }
+      };
+      producer.overrideCall = (name) =>
+        name === "idb_open"
+          ? jsonValueSchema.parse({
+              success: true,
+              session: { session_id: producer.database },
+            })
+          : undefined;
+      expect((await client.execute("health", {})).ok).toBe(false);
+      expect((await client.closeWithOutcome()).ok).toBe(true);
+      expect(
+        producer.calls.find(({ name }) => name === "idb_close")?.args.database,
+      ).toMatch(/^rea-/u);
+      expect(await readdir(root)).toEqual(["target.elf"]);
+    });
+  },
+);

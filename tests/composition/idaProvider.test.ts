@@ -14,6 +14,11 @@ import { createEvidence } from "../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../src/domain/evidenceBundle.js";
 import { createAnalysisExecution } from "../../src/application/AnalysisProvider.js";
 import { IDA_PROVIDER_IDENTITY } from "../../src/ida/IdaProvider.js";
+import { privateRuntimeRootCapability } from "../../src/process/PrivateRuntimeRoot.js";
+
+// Headless sessions allocate a private workspace; on win32 that requires the
+// packaged native addon, which source checkouts do not carry.
+const runtimeRootAvailable = privateRuntimeRootCapability().available;
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -22,43 +27,47 @@ afterEach(async () => {
 });
 
 describe("IDA provider composition", () => {
-  it("discovers without launching and commits adapter semantics without persisting credentials", async () => {
-    const { root, target } = await createIdaTarget();
-    roots.push(root);
-    const path = join(root, "registration.json");
-    await writeFile(
-      path,
-      JSON.stringify({
-        url: "http://127.0.0.1:8745/mcp",
-        headers: { Authorization: "Bearer private-fixture-token" },
-        mode: "headless",
-      }),
-    );
-    const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
-    if (!config.ok) throw config.error;
-    const producer = new RecordingIdaMcp(target, "headless");
-    const provider = new IdaProvider(config.value, () => producer);
-    expect(provider.inspectAvailability()).toMatchObject({
-      status: "available",
-      diagnostics: { live_connection_probed: false },
-    });
-    const resolution = await provider.resolveAnalysisProfile(target);
-    expect(resolution.ok).toBe(true);
-    if (!resolution.ok) throw resolution.error;
-    expect(resolution.value.profile.parameters).toMatchObject({
-      engine_version: null,
-      upstream_distribution_version: null,
-      cache_policy: "live",
-      version_scope: "rea-ida-adapter",
-    });
-    expect(JSON.stringify(resolution)).not.toContain("private-fixture-token");
-    expect(producer.connects).toBe(0);
-    expect(
-      provider
-        .capabilities()
-        .find(({ operation }) => operation === "procedure_callers")?.available,
-    ).toBe(false);
-  });
+  it.skipIf(!runtimeRootAvailable)(
+    "discovers without launching and commits adapter semantics without persisting credentials",
+    async () => {
+      const { root, target } = await createIdaTarget();
+      roots.push(root);
+      const path = join(root, "registration.json");
+      await writeFile(
+        path,
+        JSON.stringify({
+          url: "http://127.0.0.1:8745/mcp",
+          headers: { Authorization: "Bearer private-fixture-token" },
+          mode: "headless",
+        }),
+      );
+      const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
+      if (!config.ok) throw config.error;
+      const producer = new RecordingIdaMcp(target, "headless");
+      const provider = new IdaProvider(config.value, () => producer);
+      expect(provider.inspectAvailability()).toMatchObject({
+        status: "available",
+        diagnostics: { live_connection_probed: false },
+      });
+      const resolution = await provider.resolveAnalysisProfile(target);
+      expect(resolution.ok).toBe(true);
+      if (!resolution.ok) throw resolution.error;
+      expect(resolution.value.profile.parameters).toMatchObject({
+        engine_version: null,
+        upstream_distribution_version: null,
+        cache_policy: "live",
+        version_scope: "rea-ida-adapter",
+      });
+      expect(JSON.stringify(resolution)).not.toContain("private-fixture-token");
+      expect(producer.connects).toBe(0);
+      expect(
+        provider
+          .capabilities()
+          .find(({ operation }) => operation === "procedure_callers")
+          ?.available,
+      ).toBe(false);
+    },
+  );
   it("re-observes externally mutable state even when a document is explicit and a snapshot is imported", async () => {
     const { root, target } = await createIdaTarget();
     roots.push(root);
