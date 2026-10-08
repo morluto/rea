@@ -27,6 +27,7 @@ const verifierRun = createVerifierRun();
 const root = process.cwd();
 const workspace = await mkdtemp(join(tmpdir(), "rea-windows-package-"));
 const prefix = join(workspace, "prefix");
+let report;
 
 try {
   const packed = JSON.parse(
@@ -107,9 +108,13 @@ try {
     HOME: home,
     USERPROFILE: home,
     APPDATA: join(home, "AppData", "Roaming"),
+    CLAUDE_CONFIG_DIR: home,
+    CODEX_HOME: join(home, ".codex"),
     XDG_CONFIG_HOME: join(home, ".config"),
     OPENCODE_CONFIG: join(home, ".config", "opencode", "opencode.jsonc"),
     COPILOT_HOME: join(home, ".copilot"),
+    GROK_HOME: join(home, ".grok"),
+    SAND_DATA_ROOT: join(home, ".grokbot"),
   };
   await mkdir(join(home, ".config", "opencode"), { recursive: true });
   await writeFile(
@@ -212,23 +217,23 @@ try {
     environment,
   });
 
-  process.stdout.write(
-    `${JSON.stringify({
-      verifier_run: await completeVerifierRun(verifierRun),
-      ok: true,
-      platform: process.platform,
-      package: packageResult.filename,
-      tools: toolCount,
-      ghidra_bridge: "present",
-      agent_setup: ["opencode", "vscode", "copilot_cli"],
-      setup_idempotent: true,
-      uninstall: true,
-      update,
-    })}\n`,
-  );
+  report = {
+    ok: true,
+    platform: process.platform,
+    package: packageResult.filename,
+    tools: toolCount,
+    ghidra_bridge: "present",
+    agent_setup: ["opencode", "vscode", "copilot_cli"],
+    setup_idempotent: true,
+    uninstall: true,
+    update,
+  };
 } finally {
   await rm(workspace, { recursive: true, force: true });
 }
+process.stdout.write(
+  `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), ...report })}\n`,
+);
 
 function npm(arguments_, cwd) {
   const npmExecPath = process.env.npm_execpath;

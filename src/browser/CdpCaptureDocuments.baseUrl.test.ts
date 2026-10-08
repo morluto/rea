@@ -100,6 +100,44 @@ describe("DOM metadata document base URLs", () => {
     });
   });
 
+  it.each([
+    "javascript:void(0)",
+    "mailto:someone@example.test",
+    "data:text/plain,hello",
+    "ftp://app.example.test/file",
+  ])("classifies the non-http(s) destination %s as unsupported", (href) => {
+    const result = capture(snapshot(undefined, "assets/", documentUrl, href));
+    expect(result.urls[1]).toMatchObject({
+      url: null,
+      destination_scope: "unsupported",
+    });
+  });
+
+  it("classifies an unparseable destination as unsupported", () => {
+    const result = capture(
+      snapshot(undefined, "assets/", documentUrl, "https://[invalid"),
+    );
+    expect(result.urls[1]).toMatchObject({
+      url: null,
+      destination_scope: "unsupported",
+    });
+  });
+
+  it("classifies a same-origin destination with credentials as approved", () => {
+    const result = capture(
+      snapshot(
+        undefined,
+        "assets/",
+        documentUrl,
+        "https://user:secret@app.example.test/guide",
+      ),
+    );
+    expect(result.urls[1]).toMatchObject({
+      url: `${origin}/guide`,
+      destination_scope: "approved",
+    });
+  });
+
   it("does not authorize a foreign document using its approved base URL", () => {
     const result = capture(
       snapshot(

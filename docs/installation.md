@@ -95,7 +95,7 @@ npx skills add morluto/rea --skill reverse-engineer-anything
 
 This installs agent instructions and bundled references, not REA MCP
 registration or analysis engines. Follow the skill's
-[conditional connection guide](https://github.com/morluto/rea/blob/main/skills/reverse-engineer-anything/SKILL.md#connect-only-when-needed).
+[conditional connection guide](https://github.com/morluto/rea/blob/main/skill-src/reverse-engineer-anything/SKILL.md#connect-only-when-needed).
 Working tools can be used immediately. If tools are missing, inspect the current
 client's registration with `doctor --client codex --json` (substitute its client
 ID), then plan repairs with `setup --client codex --dry-run --json`. Show and
@@ -119,7 +119,8 @@ readiness for one task instead of auditing every integration, see
 
 ## Supported agents
 
-Setup can configure these clients for REA's local MCP server:
+Setup can configure these clients for REA's local MCP server. Grok Bot is
+listed after the table because its connector is not one of these files:
 
 | Client             | `--client` value |
 | ------------------ | ---------------- |
@@ -135,11 +136,36 @@ Setup can configure these clients for REA's local MCP server:
 | GitHub Copilot CLI | `copilot_cli`    |
 | Command Code       | `commandcode`    |
 | VS Code            | `vscode`         |
+| Grok Build         | `grok_build`     |
 
 For OpenCode, setup writes the V1 `mcp.rea` entry, which OpenCode V1 and V2
 both load. If the configuration already uses OpenCode V2's native
 `mcp.servers` table, setup registers REA there instead and replaces any earlier
 `mcp.rea` entry from REA.
+
+Grok Build loads `[mcp_servers.rea]` from `$GROK_HOME/config.toml`, or from
+`~/.grok/config.toml` when `GROK_HOME` is unset. Setup edits that server
+table, `[mcp_servers.rea.env]`, and a root `disabled_mcp_servers` entry that
+names `rea`. It sets `startup_timeout_sec = 30` and leaves every other name
+in that list. The shared skill installed under `~/.agents/skills` is already
+on Grok Build's skill path.
+
+Grok Bot (`grok_bot`) is detected from `~/.grokbot`, or from `SAND_DATA_ROOT`
+when that value is an absolute path. A relative or empty `SAND_DATA_ROOT`
+stays on `~/.grokbot`. That directory is not the connector store. Grok Bot
+keeps connectors in the signed-in account and runs them on its hosted
+computer. It does not import `mcp.json` from the data directory, and it does
+not attach a stdio server running on this machine. Setup does not call the
+account connector API, does not write a registration file, and does not report
+the data directory as aligned. Ask the Grok Bot chat to add a custom MCP
+server named `rea` that runs on the Bot's computer:
+
+```bash
+npx -y rea-agents@<version> mcp
+```
+
+Do not put credentials in that command or its arguments. `rea doctor --client grok_bot`
+reports this manual step. `rea uninstall` does not remove the account connector.
 
 ## Review setup changes
 
@@ -209,7 +235,7 @@ rea setup --yes --all-detected --install-hopper --json
 
 Setup pins package-runner MCP registrations to the exact installed REA version,
 installs the matching skill and on-demand references in the same plan, and adds
-`startup_timeout_sec = 30` for Codex. `rea update` installs the exact resolved
+`startup_timeout_sec = 30` for Codex and Grok Build. `rea update` installs the exact resolved
 release into the npm prefix that owns the running package, then checks the new
 executable's version before reporting success. It does not reopen onboarding.
 Release lookup and installation both use npm's configured registry.
@@ -314,8 +340,57 @@ Hopper serializes analysis requests. Cancelling a wait can leave provider work
 running, which the session reports. Successful decompilation is cached until
 a relevant rename or comment changes it.
 
-Closing a session shuts down REA's bridge and removes its temporary socket
-directory while preserving the Hopper application. A `cleanup_incomplete`
+Analysis and annotation calls stay bound to the active target's native Hopper
+document, even when GUI focus changes or other documents have the same display
+name. Use `open_binary` to change targets. Byte reads stop at a segment boundary
+and return the readable prefix with `complete: false`. File-offset mapping checks
+the reverse lookup and original executable bounds; synthetic external-symbol
+memory has no original file offset. For FAT Mach-O, offsets refer to the original
+container file. Results retain Hopper's image-relative offset, the observed slice
+base, and the source executable path.
+Loader selection reads the Mach-O container header, including FAT files with a
+single architecture. For FAT64, REA validates the architecture table and selected
+Mach-O header, prepares a private thin image, and loads it with Hopper's native
+Mach-O loader. It checks the entire source's SHA-256 while copying the slice;
+source identity and reported offsets still refer to the original container.
+An ambiguous architecture subtype requires an explicitly extracted thin image;
+REA does not guess. Configured loader arguments remain explicit overrides.
+FAT64 is distinct from the CPU architecture: FAT32 containers can contain 64-bit
+executable images. This preparation avoids the Raw Binary loader dialog observed
+with native FAT64 loading on Hopper 6.1.0-demo.
+The prepared image and its owned document close together, including on MCP exit;
+if document closure is unconfirmed, REA retains the backing image and reports
+`cleanup_incomplete` with its path. Ordinary documents retain their existing
+MCP-exit behavior.
+Startup deadlines report missing bridge readiness and preserve the launcher
+outcome; a successful helper exit does not prove that a loader dialog completed.
+Cursor navigation returns the observed object start when Hopper snaps an interior
+address; adjacent-object navigation rejects unmapped inputs and document ends.
+Native API text rejects NUL characters and unpaired Unicode surrogates before
+annotation changes. Renames preserve unselected label owners; use a batch with
+all affected addresses to move or swap existing labels explicitly. Every rename
+destination must be mapped, and native symbol names must fit Hopper's 1024 UTF-16
+code-unit limit. Oversized names fail before any batch edits; bookmarks and
+literal string results are not subject to that symbol-name limit. Rename success
+requires exact final readback. New bookmarks must point into mapped memory;
+existing legacy bookmarks outside it can still be removed.
+String results read each native typed object's complete bytes, retain the original
+provider display in `provider_value`, and report its encoding, byte length, and
+termination. `encoding_status: inferred` distinguishes REA's decoding from an
+observed source encoding. Hopper can split long literals into adjacent
+unterminated objects; search matches each object's decoded bytes independently.
+Undecodable objects retain native display text with `decoding.available: false`
+and a reason, so one uncertain object does not block unrelated inspections.
+Function dossiers retain this same string evidence. Native call edges retain
+Hopper's partial `CallReference` classification and exact endpoints; detailed
+reference flags remain unavailable rather than being invented.
+Regex searches use ECMAScript Unicode syntax in a cancellable worker with a
+five-second matching deadline. Deadline or cancellation stops matching while
+leaving the Hopper API available. Literal mode retains Unicode casefold matching.
+
+Closing or switching a target closes its bound Hopper document, shuts down REA's
+bridge and removes its temporary socket directory while preserving the Hopper
+application and unrelated documents. A `cleanup_incomplete`
 result identifies resources whose cleanup could not be verified.
 
 ### Hopper in CI
@@ -404,7 +479,17 @@ home/cache/config/temp paths. REA passes `-readOnly`, `-deleteProject`, uses
 Ghidra's default analysis and resource settings, and loads its packaged Java
 bridge via `-scriptPath`; it never opens an existing user project. Linux and
 macOS use a current-user-only local bridge socket and descriptor. The
-experimental Windows transport uses authenticated IPv4 loopback with a
+project remains under the selected temporary directory. If its Unix socket
+pathname would exceed the host's byte limit, REA allocates a separate mode-0700
+socket directory under `/tmp` and removes it on close, cancellation, or failure.
+Diagnostics retain the actual endpoint and both owned directories.
+On macOS, REA starts the inspected JVM directly using Ghidra's own LaunchSupport
+configuration. Apple platform shell wrappers hide their environments from
+ownership inspection, so retaining those wrappers would prevent verified
+process-group cancellation during startup.
+If ownership remains unverifiable, it reports the reason and retains the process
+supervisor and private runtime instead of removing files beneath a live provider.
+The experimental Windows transport uses authenticated IPv4 loopback with a
 private native-owned bearer descriptor and Job Object process ownership.
 
 Operations begin only after default auto-analysis completes. `open_binary`

@@ -1,12 +1,15 @@
 import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
-import { expect, it } from "vitest";
+import { beforeAll, expect, it, vi } from "vitest";
 import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../../../src/process/OwnedCommand.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
+import { prepareProcessOwnershipInspection } from "../../../src/process/ProcessOwnershipObservation.js";
 import { waitForProviderProcessReady } from "../../fixtures/providerProcess.js";
 
 const command = (script: string) => ({
@@ -14,6 +17,10 @@ const command = (script: string) => ({
   arguments: ["-e", script],
   runId: `rea-owned-command-test-${randomUUID()}`,
 });
+
+// Output/exit cases start with a prepared inspector; startup deadline cases
+// below inject their own preparation so they remain independent of compiler speed.
+beforeAll(() => prepareProcessOwnershipInspection());
 
 it("includes ownership preparation in the command deadline before provider creation", async () => {
   let prepared = false;
@@ -86,6 +93,60 @@ it("collects a real owned command and verifies its exit before returning diagnos
     signal: null,
     stdout: { text: "observed-output", bytes: 15 },
   });
+});
+
+it("fails an accepted nonzero command when an output stream errors and cleans it up", async () => {
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  class FakeProcess extends EventEmitter {
+    readonly stdout = stdout;
+    readonly stderr = stderr;
+    exitCode: number | null = null;
+    signalCode: NodeJS.Signals | null = null;
+    readonly pid = 41234;
+    kill(): boolean {
+      return true;
+    }
+  }
+  const child = new FakeProcess();
+  const cleanup = vi.fn(async () => ({
+    cleaned: true as const,
+    signaled: false,
+  }));
+  const request = command("unused fake launcher command");
+
+  const failure = runOwnedCommand(
+    request,
+    { timeoutMs: 2_000, diagnosticBytes: 1024, acceptNonZeroExit: true },
+    {
+      launcher: async () => {
+        setImmediate(() => {
+          stdout.write("partial output");
+          stdout.destroy(new Error("fixture read failure"));
+          stderr.end();
+          child.exitCode = 7;
+          child.emit("exit", 7, null);
+          child.emit("close", 7, null);
+        });
+        return {
+          process: child,
+          ownership: {
+            runId: request.runId,
+            leaderPid: child.pid,
+            processGroupId: child.pid,
+          },
+          cleanup,
+        };
+      },
+    },
+  );
+
+  await expect(failure).rejects.toMatchObject({
+    reason: "process",
+    message: "stdout stream failed: fixture read failure",
+    snapshot: { stdout: { text: "partial output" }, exitCode: 7 },
+  });
+  expect(cleanup).toHaveBeenCalledOnce();
 });
 
 it("cancels a real acquired process and independently releases it", async () => {

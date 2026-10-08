@@ -8,6 +8,7 @@ import type { CliCommandOutput } from "./streamedJsonOutput.js";
 export const runCliJavaScriptApplicationAnalysis = async (
   input: unknown,
   output?: CliCommandOutput,
+  signal?: AbortSignal,
 ): Promise<JsonValue | undefined> => {
   const started = performance.now();
   const progress = createProgressReporter(
@@ -16,7 +17,10 @@ export const runCliJavaScriptApplicationAnalysis = async (
     },
     { minimumIntervalMs: 0 },
   );
-  const result = await analyzeJavaScriptApplication(input, { progress });
+  const result = await analyzeJavaScriptApplication(input, {
+    progress,
+    ...(signal === undefined ? {} : { signal }),
+  });
   const value = result.ok ? result.value : cliError(result.error);
   if (
     output !== undefined &&
@@ -26,7 +30,8 @@ export const runCliJavaScriptApplicationAnalysis = async (
       duration: `${Math.round(performance.now() - started)}ms`,
     }))
   )
-    return undefined;
+    // Keep failures visible to command logging after the stream has handled stdout.
+    return result.ok ? undefined : value;
   return value;
 };
 

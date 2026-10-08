@@ -32,9 +32,9 @@ HAR uses unchanged `har-schema@2.0.0` draft-06 schemas, `ajv@8.20.0`,
 `lossless-json@4.3.1` numeric representations, pinned in the npm lockfile.
 Only the HAR 1.2 profile is supported. Unknown extensions remain reported
 evidence. Duplicate object keys, including equal values and escaped spellings,
-are rejected before materialization. A `__proto__` member returns an explicit
-unsupported-boundary error in both formats: the current shared JSON schema
-cannot preserve this member. Original capture files remain unchanged.
+are rejected before materialization. Prototype-named members such as
+`__proto__` are preserved as ordinary own JSON members without prototype
+mutation. Original capture files remain unchanged.
 The observed mitmproxy 12.2.3 `SaveHar` profile can emit `postData.text: null`
 for a missing request body. REA preserves that reported null, omitting the
 optional field only from its validation copy for this exact producer profile;
@@ -125,6 +125,15 @@ both commands have a 30-second wall deadline and independently supervised
 process cleanup. Owned decoder diagnostics retain at most 1 MiB across stdout
 and stderr; the collector drops overflow as it arrives, reports the limit
 failure and verifies cleanup. Heap limits alone do not establish aggregate RSS limits.
+
+Observed decoder memory exhaustion returns `resource_constraint`, with the
+selected capture, applicable limits and retained process diagnostics. HAR's
+old-generation heap is fixed; inherited `NODE_OPTIONS` cannot raise it.
+Record selection happens after complete decoding and does not reduce that
+workload. Use a smaller capture exported by its producer or another decoder
+with sufficient capacity, retaining the original for provenance. Subsets do
+not establish complete-capture coverage. Repeating the same workload or
+running provider health diagnostics does not resolve the heap constraint.
 
 Stable regular-file reads reject symlinks, replacement and concurrent changes.
 Private snapshots, declarations and tool configuration are removed before the

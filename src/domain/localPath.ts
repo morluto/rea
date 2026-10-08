@@ -1,4 +1,11 @@
 import { isAbsolute, relative, sep } from "node:path";
+import { z } from "zod";
+
+/** Preserve selected filesystem names while rejecting OS-invalid NUL bytes. */
+export const localPathStringSchema = z
+  .string()
+  .min(1)
+  .regex(/^[^\0]*$/u, "Local filesystem paths cannot contain NUL");
 
 /** True when the value is an absolute filesystem path on the host platform. */
 export const isAbsoluteLocalPath = (value: string): boolean =>

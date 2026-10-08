@@ -1,8 +1,11 @@
 import type { JsonValue } from "./jsonValue.js";
-import { AnalysisError } from "./analysisErrorBase.js";
+import {
+  AnalysisError,
+  type AnalysisErrorOptions,
+} from "./analysisErrorBase.js";
 
 /** A provider adapter failed outside its more precise typed variants. */
-export interface ProviderAdapterErrorOptions extends ErrorOptions {
+export interface ProviderAdapterErrorOptions extends AnalysisErrorOptions {
   readonly diagnostics?: Readonly<Record<string, JsonValue>>;
 }
 

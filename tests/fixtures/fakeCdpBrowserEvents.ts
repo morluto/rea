@@ -403,7 +403,7 @@ const emitMalformedRedirect = (
     requestId: "request-1",
     type: "Fetch",
     request: { url: finalUrl, method: "GET" },
-    redirectResponse,
+    ...(options.omitRedirectResponse === true ? {} : { redirectResponse }),
     timestamp: 9,
   });
   return finalUrl;

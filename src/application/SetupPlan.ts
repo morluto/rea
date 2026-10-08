@@ -168,9 +168,11 @@ export const planSetupActions = async (input: {
     };
   }
   const clientPlans = inspections.flatMap(({ client, inspection }) =>
-    inspection.status === "create" ||
-    inspection.status === "update" ||
-    (input.discovery.installHopper && inspection.status === "already_current")
+    client.format !== "unsupported" &&
+    (inspection.status === "create" ||
+      inspection.status === "update" ||
+      (input.discovery.installHopper &&
+        inspection.status === "already_current"))
       ? [
           {
             client,

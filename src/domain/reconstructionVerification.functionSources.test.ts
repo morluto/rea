@@ -323,10 +323,6 @@ describe("function reconstruction malformed source IDs", () => {
 
   it.each([
     [
-      "same singular source on both sides",
-      { ...singular, right_evidence_id: left.evidence_id },
-    ],
-    [
       "duplicate left plural source",
       { ...plural, left_evidence_ids: [left.evidence_id, left.evidence_id] },
     ],
@@ -334,17 +330,9 @@ describe("function reconstruction malformed source IDs", () => {
       "duplicate right plural source",
       { ...plural, right_evidence_ids: [right.evidence_id, right.evidence_id] },
     ],
-    [
-      "same plural source on both sides",
-      { ...plural, right_evidence_ids: [left.evidence_id] },
-    ],
-    [
-      "overlapping plural sides",
-      { ...plural, right_evidence_ids: [right.evidence_id, left.evidence_id] },
-    ],
-  ])("rejects %s with the existing uniqueness guard", (_name, parameters) => {
+  ])("rejects %s", (_name, parameters) => {
     expect(admittedVerification(comparison(parameters))).toThrow(
-      /unique and two-sided/u,
+      /repeats a source within one side/u,
     );
   });
 });

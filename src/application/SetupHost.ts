@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { npxRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import {
   SUPPORTED_NODE_VERSION_PROSE,
   supportsNodeVersion,
@@ -35,7 +36,7 @@ export const setupRegistrationCommand = (
   useNpmRunner: boolean = process.env.npm_command === "exec",
 ): readonly string[] =>
   useNpmRunner
-    ? PRODUCT_IDENTITY.mcpCommand.split(" ")
+    ? npxRegistrationCommand(platform)
     : platform === "win32"
       ? [
           process.execPath,
@@ -139,9 +140,11 @@ export const systemSetupHost = (
         ? Promise.resolve({ status: "skipped" })
         : configureClientConfiguration(client, providerEnvironment, command),
     clientNeedsConfigure: (client, providerEnvironment, command) =>
-      clientConfigurationAligned(client, providerEnvironment, command).then(
-        (aligned) => !aligned,
-      ),
+      client.format === "unsupported"
+        ? Promise.resolve(false)
+        : clientConfigurationAligned(client, providerEnvironment, command).then(
+            (aligned) => !aligned,
+          ),
     inspectClientConfiguration: inspectClientConfiguration,
     skillNeedsInstall: () => canonicalSkillNeedsInstall(homedir()),
     installSkill: () => installCanonicalSkill(homedir()),

@@ -23,7 +23,10 @@ import {
   hopperLoaderArgsForTarget,
   resolveHopperAnalysisProfile,
 } from "./HopperAnalysisProfile.js";
+import { mapHopperFileOffset } from "./HopperFileOffset.js";
+import { HopperRegexSearch } from "./HopperRegexSearch.js";
 import { HopperClient } from "./HopperClient.js";
+import { hopperMachOImageSchema } from "./HopperMachOImage.js";
 
 import {
   CAPABILITIES,
@@ -158,7 +161,36 @@ export class HopperProvider implements AnalysisProviderCandidate {
           ),
         close: () => Promise.resolve(),
       };
-    const derivedLoaderArgs = hopperLoaderArgsForTarget(target);
+    const preparation = profile?.parameters.prepared_image;
+    const parsedImage =
+      preparation === undefined
+        ? undefined
+        : hopperMachOImageSchema.safeParse(preparation);
+    if (parsedImage?.success === false)
+      return {
+        execute: (operation) =>
+          Promise.resolve(
+            err(
+              new AnalysisCapabilityUnavailableError(
+                IDENTITY.id,
+                operation,
+                "Hopper prepared-image profile is malformed; resolve the analysis profile again.",
+              ),
+            ),
+          ),
+        close: () => Promise.resolve(),
+      };
+    const preparedImage = parsedImage?.data;
+    const container =
+      preparedImage === undefined
+        ? profile?.parameters.macho_container
+        : "thin";
+    const derivedLoaderArgs = hopperLoaderArgsForTarget(
+      target,
+      container === "thin" || container === "fat32" || container === "fat64"
+        ? container
+        : undefined,
+    );
     if (!derivedLoaderArgs.ok)
       return {
         execute: () => Promise.resolve(err(derivedLoaderArgs.error)),
@@ -170,6 +202,14 @@ export class HopperProvider implements AnalysisProviderCandidate {
         launcherPath: this.config.hopperLauncherPath,
         targetPath: target.path,
         targetKind: target.kind,
+        ...(preparedImage === undefined
+          ? {}
+          : {
+              preparedImage: {
+                image: preparedImage,
+                sourceSha256: target.sha256,
+              },
+            }),
         loaderArgs:
           this.config.hopperLoaderArgs.length > 0
             ? this.config.hopperLoaderArgs
@@ -191,25 +231,49 @@ export class HopperProvider implements AnalysisProviderCandidate {
       onDiagnostic: (diagnostic) =>
         this.logger.info(diagnostic, "Hopper bridge reported a diagnostic"),
     });
+    const regexSearch = new HopperRegexSearch(client);
     return {
       execute: async (operation, parameters, options) => {
-        const result = await client.callTool(operation, parameters, options);
-        return result.ok
+        const result =
+          (operation === "search_strings" ||
+            operation === "search_procedures") &&
+          parameters.mode === "regex"
+            ? await regexSearch.execute(operation, parameters, options)
+            : await client.callTool(operation, parameters, options);
+        if (!result.ok) return result;
+        const mapped =
+          operation === "address_to_file_offset"
+            ? await mapHopperFileOffset(target, result.value, options?.signal)
+            : result;
+        return mapped.ok
           ? {
               ok: true,
-              value: createAnalysisExecution(result.value, executionProvider, {
+              value: createAnalysisExecution(mapped.value, executionProvider, {
+                rawResult: result.value,
                 ...(profile === undefined ? {} : { analysisProfile: profile }),
                 limitations: [
-                  "Results depend on Hopper's completed static analysis.",
+                  ...(preparedImage === undefined
+                    ? []
+                    : [
+                        "REA loaded a verified thin Mach-O slice from the original FAT64 source. Identity and file offsets refer to the original file. The owned temporary image and its Hopper document close together, including on MCP shutdown.",
+                      ]),
+                  ...(CAPABILITIES.find(
+                    (descriptor) => descriptor.operation === operation,
+                  )?.limitations ?? []),
+                  ...(operation === "read_bytes"
+                    ? [
+                        "Hopper byte reads stop at the containing segment's exclusive end; a readable prefix is returned with complete=false when the requested range crosses it.",
+                      ]
+                    : []),
                   ...(operation === "procedure_references"
                     ? [
-                        "Hopper's public Python API does not expose flow classification for calls without resolved targets; unresolved_calls is empty and its coverage is unknown.",
+                        "Native CallReference classifications and unresolved targets are preserved. Detailed reference flags and coverage beyond reported CallReference objects remain unknown.",
                       ]
                     : []),
                 ],
               }),
             }
-          : result;
+          : mapped;
       },
       runtimeLineageSnapshots: () => {
         const observation = client.runtimeLineage();
@@ -235,8 +299,15 @@ export class HopperProvider implements AnalysisProviderCandidate {
           },
         ];
       },
-      closeWithOutcome: (options) => client.closeWithOutcome(options),
-      close: () => client.close(),
+      operationHealthSnapshot: () => client.operationHealth(),
+      closeWithOutcome: async (options) => {
+        await regexSearch.close();
+        return client.closeWithOutcome(options);
+      },
+      close: async () => {
+        await regexSearch.close();
+        await client.close();
+      },
     };
   }
 }

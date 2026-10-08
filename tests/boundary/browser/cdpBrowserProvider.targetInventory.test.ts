@@ -56,7 +56,6 @@ describe("CDP target inventory", () => {
         allowed_origins: ["https://allowed.example"],
       });
 
-      expect(result.ok).toBe(true);
       if (!result.ok) throw result.error;
       expect(result.value.targets).toHaveLength(targets.length);
       expect(result.value.targets[0]?.target_id).toBe("target-0000");

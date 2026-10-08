@@ -5,6 +5,7 @@ import {
   FILE_TYPE,
   LC,
   codeSignatureCommand,
+  buildVersionCommand,
   dyldEnvironmentCommand,
   dylibCommand,
   dylibUseCommand,
@@ -22,7 +23,7 @@ import {
 const read = (bytes: Uint8Array) =>
   readMachoImage(readerOf(bytes), bytes.length);
 
-describe("Mach-O load command reader", () => {
+describe("Mach-O load command reader: decodes thin-image load commands", () => {
   it("decodes dylib loading commands of a thin image", async () => {
     const image = machoImage({
       fileType: FILE_TYPE.dylib,
@@ -124,7 +125,9 @@ describe("Mach-O load command reader", () => {
       },
     ]);
   });
+});
 
+describe("Mach-O load command reader: reads and validates universal binary slices", () => {
   it("reads every slice of FAT and FAT_64 containers in either byte order", async () => {
     for (const [wide, littleEndian] of [
       [false, false],
@@ -162,6 +165,63 @@ describe("Mach-O load command reader", () => {
         ["x86_64", ["@executable_path/b"]],
       ]);
     }
+  });
+
+  it("retains physical slice identity and declared build platform", async () => {
+    const thin = machoImage({ commands: [buildVersionCommand(7)] });
+    const parsedThin = await read(thin);
+    expect(
+      parsedThin.status === "parsed" && parsedThin.slices[0],
+    ).toMatchObject({
+      slice_offset: 0,
+      slice_size: thin.length,
+      cpu_type: CPU.arm64.type,
+      cpu_subtype: CPU.arm64.subtype,
+      fat_cpu_type: null,
+      fat_cpu_subtype: null,
+      platform: 7,
+    });
+    const fat = fatImage([{ cpu: CPU.arm64, bytes: thin }]);
+    const parsedFat = await read(fat);
+    expect(parsedFat.status === "parsed" && parsedFat.slices[0]).toMatchObject({
+      slice_offset: 4096,
+      slice_size: thin.length,
+      fat_cpu_type: CPU.arm64.type,
+      fat_cpu_subtype: CPU.arm64.subtype,
+    });
+  });
+
+  it("rejects FAT table/header identity mismatches and unaligned ranges", async () => {
+    const original = fatImage([{ cpu: CPU.arm64, bytes: machoImage({}) }]);
+    for (const [fieldOffset, value] of [
+      [8, CPU.x86_64.type],
+      [12, 99],
+    ] as const) {
+      const mismatch = original.slice();
+      new DataView(mismatch.buffer).setUint32(fieldOffset, value, false);
+      expect(await read(mismatch)).toMatchObject({
+        status: "malformed",
+        reason: expect.stringContaining("disagrees"),
+      });
+    }
+    const unaligned = original.slice();
+    new DataView(unaligned.buffer).setUint32(16, 4097, false);
+    expect(await read(unaligned)).toMatchObject({
+      status: "malformed",
+      reason: expect.stringContaining("not aligned"),
+    });
+  });
+
+  it("preserves unknown CPU table facts when the embedded slice is Mach-O", async () => {
+    const cpu = { type: 0x7fffffff, subtype: 11 };
+    const facts = await read(fatImage([{ cpu, bytes: machoImage({ cpu }) }]));
+    expect(facts.status === "parsed" && facts.slices[0]).toMatchObject({
+      architecture: "cpu-7fffffff",
+      cpu_type: cpu.type,
+      cpu_subtype: cpu.subtype,
+      fat_cpu_type: cpu.type,
+      fat_cpu_subtype: cpu.subtype,
+    });
   });
 });
 
@@ -314,7 +374,19 @@ describe("Mach-O load command reader failures", () => {
     const fat = fatImage([{ cpu: CPU.arm64, bytes: machoImage({}) }]);
     expect(await read(fat.subarray(0, 4100))).toMatchObject({
       status: "malformed",
-      reason: "FAT architecture 0 extends beyond the file",
+      reason: "FAT architecture 0 slice range extends beyond the file",
     });
   });
 });
+
+it.each([true, false])(
+  "rejects unconsumed command bytes in wide=%s headers",
+  async (wide) => {
+    const bytes = machoImage({ wide, commands: [rpathCommand("ignored")] });
+    new DataView(bytes.buffer).setUint32(16, 0, true);
+    expect(await read(bytes)).toMatchObject({
+      status: "malformed",
+      reason: expect.stringContaining("sizeofcmds"),
+    });
+  },
+);

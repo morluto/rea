@@ -269,6 +269,32 @@ describe("CdpBrowserProvider: protocol failures and cancellation cleanup", () =>
       "Accessibility.getFullAXTree was unavailable from this browser target.",
     );
 
+    const invalidAccessibilityParams = await startFakeCdpBrowser({
+      commandError: (command) =>
+        command.method === "Accessibility.getFullAXTree"
+          ? { code: -32_602, message: "Invalid params" }
+          : undefined,
+    });
+    trackBrowser(invalidAccessibilityParams);
+    const invalidParamsResult = await new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: invalidAccessibilityParams.endpoint,
+        allowed_origins: [invalidAccessibilityParams.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+    expect(invalidParamsResult).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "BrowserObservationError",
+        reason: "protocol_error",
+        command: "Accessibility.getFullAXTree",
+        code: -32_602,
+        reportedMessage: "Invalid params",
+      },
+    });
+
     for (const [options, reason] of [
       [{ oversizedDiscovery: true }, "invalid_endpoint_response"],
       [{ invalidBrowserWebSocket: true }, "invalid_endpoint_response"],

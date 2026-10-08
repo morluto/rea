@@ -49,12 +49,18 @@ export const inspectPwndbgCore = async ({
   diagnostics,
   options,
   launcher,
+  probePath,
 }: {
   readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly rootPath: string;
   readonly diagnostics: AnalysisCapturedOutput;
   readonly options: ExecutionOptions | undefined;
   readonly launcher?: PwntoolsLauncher;
+  readonly probePath?: (
+    path: string,
+    kind: "file" | "directory",
+    mode: number,
+  ) => Promise<void>;
 }): Promise<RecordedCrash["debugger"]> => {
   const gdb = environment.REA_PWNDBG_GDB ?? "/usr/bin/gdb";
   const entry = environment.REA_PWNDBG_GDBINIT ?? "";
@@ -65,28 +71,45 @@ export const inspectPwndbgCore = async ({
       userMessage: message,
       capturedOutput: diagnostics,
     });
+  const checkCancelled = () => {
+    if (options?.signal?.aborted)
+      throw new AnalysisCancelledError(OPERATION, {
+        capturedOutput: diagnostics,
+      });
+  };
+  checkCancelled();
   for (const [key, path, kind] of [
     ["REA_PWNDBG_GDB", gdb, "file"],
     ["REA_PWNDBG_GDBINIT", entry, "file"],
     ["REA_PWNDBG_VENV_PATH", venv, "directory"],
   ] as const) {
     try {
+      checkCancelled();
       if (!isAbsolute(path))
         throw new Error("Expected an absolute caller-supplied path.");
-      await access(
-        path,
-        key === "REA_PWNDBG_GDB" ? constants.X_OK : constants.R_OK,
-      );
-      const information = await stat(path);
-      if (kind === "file" ? !information.isFile() : !information.isDirectory())
-        throw new Error(`Expected a ${kind}.`);
+      const mode = key === "REA_PWNDBG_GDB" ? constants.X_OK : constants.R_OK;
+      if (probePath !== undefined) {
+        await probePath(path, kind, mode);
+      } else {
+        await access(path, mode);
+        checkCancelled();
+        const information = await stat(path);
+        checkCancelled();
+        if (
+          kind === "file" ? !information.isFile() : !information.isDirectory()
+        )
+          throw new Error(`Expected a ${kind}.`);
+      }
+      checkCancelled();
     } catch (cause: unknown) {
+      if (options?.signal?.aborted) checkCancelled();
       throw unavailable(
         `${key} is unavailable at ${path}: ${cause instanceof Error ? cause.message : String(cause)}. Configure the requested core-only context, or omit include_debugger_context for basic recorded evidence.`,
         cause,
       );
     }
   }
+  checkCancelled();
   const stage = join(rootPath, "debugger");
   await mkdir(stage, { mode: 0o700 });
   const requestPath = join(stage, "request.json");

@@ -1,10 +1,10 @@
 import { z } from "zod";
+import { localPathStringSchema } from "../localPath.js";
 
 const target = {
-  path: z
-    .string()
-    .min(1)
-    .describe("Local APK path; the target is never executed"),
+  path: localPathStringSchema.describe(
+    "Local APK path; the target is never executed",
+  ),
 };
 const classTarget = {
   ...target,

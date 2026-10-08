@@ -281,7 +281,6 @@ describe("runtime lifecycle and invalid producer data", () => {
         },
       },
     );
-    expect(result.ok).toBe(false);
     if (result.ok)
       throw new Error("Cancellation must not produce successful evidence");
     expect(result.error._tag).toBe("AnalysisCancelledError");
@@ -297,7 +296,6 @@ describe("runtime lifecycle and invalid producer data", () => {
       unsupportedMethods: ["Profiler.stopPreciseCoverage"],
     });
     const result = await provider.observeExecution(execution);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Failed cleanup must not return success");
     expect(result.error.cleanupIncomplete).toBe(true);
     expect(

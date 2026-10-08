@@ -10,6 +10,7 @@ export const LC = {
   RPATH: 0x8000001c,
   DYLD_ENVIRONMENT: 0x27,
   CODE_SIGNATURE: 0x1d,
+  BUILD_VERSION: 0x32,
 } as const;
 
 export const CPU = {
@@ -72,6 +73,16 @@ export const codeSignatureCommand = (): Uint8Array => {
   const view = new DataView(bytes.buffer);
   view.setUint32(0, LC.CODE_SIGNATURE, true);
   view.setUint32(4, 16, true);
+  return bytes;
+};
+
+/** `build_version_command` carrying the producer's raw platform number. */
+export const buildVersionCommand = (platform: number): Uint8Array => {
+  const bytes = new Uint8Array(24);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(0, LC.BUILD_VERSION, true);
+  view.setUint32(4, bytes.length, true);
+  view.setUint32(8, platform, true);
   return bytes;
 };
 

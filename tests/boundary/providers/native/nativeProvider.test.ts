@@ -1,12 +1,14 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
 import {
+  NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
   NativeCommandFailure,
   XcrunCommandRunner,
   type NativeCommandRunner,
@@ -14,12 +16,17 @@ import {
 import { err, ok } from "../../../../src/domain/result.js";
 import { parseLipoArchitectures } from "../../../../src/native/parsers/lipo.js";
 import { parseCodeSignature } from "../../../../src/native/parsers/codesign.js";
+import { prepareProcessOwnershipInspection } from "../../../../src/process/ProcessOwnershipObservation.js";
+import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 
 import {
   NativeFixtureRunner as FixtureRunner,
   nativeFixture as fixture,
   nativeMachoTarget as machoTarget,
+  nativeMachoTargetForFile,
 } from "../../../fixtures/nativeCommands.js";
+
+beforeAll(() => prepareProcessOwnershipInspection());
 
 let directory: string | undefined;
 afterEach(async () => {
@@ -28,7 +35,7 @@ afterEach(async () => {
   directory = undefined;
 });
 
-describe("native macOS provider discovery and inspection", () => {
+describe("native macOS provider discovery", () => {
   it.each(["ordinary.fixture", "  spaced.fixture  ", " leading", "trailing "])(
     "preserves the exact signing identifier %j reported by codesign",
     (identifier) => {
@@ -68,22 +75,90 @@ describe("native macOS provider discovery and inspection", () => {
     });
   });
 
-  it("retries a failed native tool resolution and caches only success", async () => {
-    let resolutions = 0;
-    const runner = new XcrunCommandRunner((tool) => {
-      resolutions += 1;
-      return Promise.resolve(
-        resolutions === 1
-          ? err(new NativeCommandFailure(tool, "unavailable"))
-          : ok({ path: "/usr/bin/true", sha256: "a".repeat(64) }),
+  it.each(["timeout", "output-limit"] as const)(
+    "preserves %s resolution failures with their captured output and cleanup status",
+    async (reason) => {
+      const failure = new NativeCommandFailure(
+        "file",
+        reason,
+        9,
+        undefined,
+        {
+          stdout: "partial xcrun output",
+          stderr: "partial xcrun diagnostic",
+          stdoutBytes: 20,
+          stderrBytes: 25,
+          exitCode: 9,
+          signal: null,
+          truncated: reason === "output-limit",
+        },
+        "ownership cleanup was not confirmed",
+        ["process-group:1234"],
       );
-    });
-    const options = {};
+      const runner = new XcrunCommandRunner(() =>
+        Promise.resolve(err(failure)),
+      );
 
-    expect((await runner.run("file", [], options)).ok).toBe(false);
-    expect((await runner.run("file", [], options)).ok).toBe(true);
-    expect((await runner.run("file", [], options)).ok).toBe(true);
-    expect(resolutions).toBe(2);
+      const result = await runner.run("file", [], {});
+
+      expect(result).toEqual(err(failure));
+      if (result.ok) throw new Error("Resolution failure unexpectedly passed");
+      expect(result.error).toMatchObject({
+        reason,
+        capture: {
+          stdout: "partial xcrun output",
+          truncated: reason === "output-limit",
+        },
+        cleanupFailure: "ownership cleanup was not confirmed",
+        cleanupResources: ["process-group:1234"],
+      });
+    },
+  );
+});
+
+describe("native command output collection", () => {
+  it("retries discovery and resamples the executable after its tool path is replaced", async () => {
+    directory = await createTestTempDirectory("rea-native-tool-identity-");
+    const executable = join(directory, "fixture-tool");
+    const source = (value: string): string =>
+      `#!/bin/sh\nprintf '%s\\n' '${value}'\n`;
+    const install = async (value: string): Promise<string> => {
+      const contents = source(value);
+      await writeFile(executable, contents, { mode: 0o700 });
+      await chmod(executable, 0o700);
+      return createHash("sha256").update(contents).digest("hex");
+    };
+    let unavailable = true;
+    const runner = new XcrunCommandRunner(async (tool) => {
+      if (unavailable) {
+        unavailable = false;
+        return err(new NativeCommandFailure(tool, "unavailable"));
+      }
+      const digest = createHash("sha256")
+        .update(await readFile(executable))
+        .digest("hex");
+      return ok({ path: executable, sha256: digest });
+    });
+
+    const originalDigest = await install("original-tool-output");
+    expect(await runner.run("file", [], {})).toMatchObject({
+      ok: false,
+      error: { reason: "unavailable" },
+    });
+    const original = await runner.run("file", [], {});
+    if (!original.ok) throw original.error;
+    expect(original.value.stdout).toBe("original-tool-output\n");
+    expect(original.value.executableSha256).toBe(originalDigest);
+
+    const replacementDigest = await install("replacement-tool-output");
+    const replacement = await runner.run("file", [], {});
+    if (!replacement.ok) throw replacement.error;
+    expect(replacement.value.stdout).toBe("replacement-tool-output\n");
+    expect(replacement.value.executableSha256).toBe(replacementDigest);
+    expect(replacement.value.versionReason).toContain("prelaunch file sample");
+    expect(replacement.value.versionReason).toContain(
+      "does not prove atomic OS image binding",
+    );
   });
 
   it("retains the complete native command output", async () => {
@@ -100,23 +175,222 @@ describe("native macOS provider discovery and inspection", () => {
     expect(captured.ok && captured.value.stdout).toBe(output);
   });
 
-  it("cancels and reaps a running native command without an operation timeout", async () => {
+  it("retains both output streams and exit status when a command fails", async () => {
+    const runner = new XcrunCommandRunner(() =>
+      Promise.resolve(ok({ path: process.execPath, sha256: "a".repeat(64) })),
+    );
+    const result = await runner.run(
+      "file",
+      [
+        "-e",
+        'process.stdout.write("partial stdout"); process.stderr.write("partial stderr"); process.exitCode = 7',
+      ],
+      {},
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      reason: "nonzero-exit",
+      exitCode: 7,
+      capture: {
+        stdout: "partial stdout",
+        stderr: "partial stderr",
+        stdoutBytes: 14,
+        stderrBytes: 14,
+        exitCode: 7,
+        signal: null,
+        truncated: false,
+      },
+    });
+  });
+
+  it("retains accepted nonzero output as a complete command capture", async () => {
+    const runner = new XcrunCommandRunner(() =>
+      Promise.resolve(ok({ path: process.execPath, sha256: "a".repeat(64) })),
+    );
+    const result = await runner.run(
+      "file",
+      [
+        "-e",
+        'process.stdout.write("unsigned observation"); process.exitCode = 1',
+      ],
+      { acceptNonZero: true },
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        stdout: "unsigned observation",
+        stdoutBytes: 20,
+        exitCode: 1,
+        signal: null,
+      },
+    });
+  });
+});
+
+describe("native command failure capture and limits", () => {
+  it("projects captured diagnostics from a failed native provider command", async () => {
+    const runner = new XcrunCommandRunner(() =>
+      Promise.resolve(ok({ path: process.execPath, sha256: "a".repeat(64) })),
+    );
+    const result = await new NativeMacOSProvider(runner, "darwin")
+      .createClient(machoTarget("/private/fixture"))
+      .execute("demangle_swift", { symbols: ["fixture-symbol"] });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("ProviderAdapterError");
+    expect(result.error.capturedOutput?.stderr).toContain("Cannot find module");
+    expect(result.error.capturedOutput?.stderr_bytes).toBeGreaterThan(0);
+    expect(result.error.capturedOutput?.exit_code).not.toBe(0);
+    expect(projectAnalysisError(result.error).details).toMatchObject({
+      captured_output: {
+        stderr: expect.stringContaining("Cannot find module"),
+        stderr_bytes: expect.any(Number),
+        exit_code: expect.any(Number),
+      },
+      diagnostics: {
+        reason: "nonzero-exit",
+        stderr_bytes: expect.any(Number),
+      },
+    });
+  });
+
+  it("retains output written before cancellation and reaps the stalled command", async () => {
     const runner = new XcrunCommandRunner(() =>
       Promise.resolve(ok({ path: process.execPath, sha256: "a".repeat(64) })),
     );
     const controller = new AbortController();
-    const pending = runner.run("file", ["-e", "setTimeout(() => {}, 10000)"], {
-      signal: controller.signal,
-    });
-    setTimeout(() => controller.abort(), 30);
+    const pending = runner.run(
+      "file",
+      [
+        "-e",
+        'process.stdout.write("started"); process.stderr.write("warning"); setInterval(() => {}, 1000)',
+      ],
+      { signal: controller.signal },
+    );
+    setTimeout(() => controller.abort(), 100);
 
     const result = await pending;
 
-    expect(result).toMatchObject({
-      ok: false,
-      error: { reason: "cancelled" },
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      reason: "cancelled",
+      capture: {
+        stdout: "started",
+        stderr: "warning",
+        stdoutBytes: 7,
+        stderrBytes: 7,
+        truncated: false,
+      },
     });
   });
+
+  it("rejects output beyond the complete native-command budget", async () => {
+    const runner = new XcrunCommandRunner(() =>
+      Promise.resolve(ok({ path: process.execPath, sha256: "a".repeat(64) })),
+    );
+    const megabytesOverBudget =
+      Math.ceil(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES / (1024 * 1024)) + 1;
+    const result = await runner.run(
+      "file",
+      [
+        "-e",
+        `async function main() { const chunk = "x".repeat(1024 * 1024); for (let i = 0; i < ${String(megabytesOverBudget)}; i += 1) await new Promise((resolve) => process.stdout.write(chunk, resolve)); } void main()`,
+      ],
+      {},
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.reason).toBe("output-limit");
+    expect(result.error.capture?.truncated).toBe(true);
+    expect(
+      (result.error.capture?.stdoutBytes ?? 0) +
+        (result.error.capture?.stderrBytes ?? 0),
+    ).toBeLessThanOrEqual(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES);
+  });
+});
+
+describe("native command failure projection", () => {
+  it("projects native cancellation output and incomplete cleanup to callers", async () => {
+    const capture = {
+      stdout: "partial output",
+      stderr: "partial diagnostic",
+      stdoutBytes: 14,
+      stderrBytes: 19,
+      exitCode: null,
+      signal: "SIGKILL",
+      truncated: false,
+    };
+    const runner: NativeCommandRunner = {
+      async run(tool) {
+        return err(
+          new NativeCommandFailure(
+            tool,
+            "cancelled",
+            null,
+            undefined,
+            capture,
+            "process group cleanup was not confirmed",
+            ["process-group:1234"],
+          ),
+        );
+      },
+    };
+    const result = await new NativeMacOSProvider(runner, "darwin")
+      .createClient(machoTarget("/private/fixture"))
+      .execute("list_architectures", {});
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.capturedOutput).toMatchObject({
+      stdout: "partial output",
+      stderr: "partial diagnostic",
+      stdout_bytes: 14,
+      stderr_bytes: 19,
+      signal: "SIGKILL",
+      truncated: false,
+    });
+    expect(result.error.cleanup).toEqual({
+      reason: "process group cleanup was not confirmed",
+      resources: ["process-group:1234"],
+    });
+    expect(projectAnalysisError(result.error).details).toMatchObject({
+      captured_output: {
+        stdout_bytes: 14,
+        stderr_bytes: 19,
+        signal: "SIGKILL",
+      },
+      cleanup: "incomplete",
+      resources: ["process-group:1234"],
+    });
+  });
+
+  it.each([
+    ["timeout", "AnalysisTimeoutError", "provider_timeout"],
+    ["output-limit", "AnalysisResourceConstraintError", "resource_constraint"],
+  ] as const)(
+    "projects native command %s as a typed resource failure",
+    async (reason, tag, code) => {
+      const runner: NativeCommandRunner = {
+        async run(tool) {
+          return err(new NativeCommandFailure(tool, reason));
+        },
+      };
+      const result = await new NativeMacOSProvider(runner, "darwin")
+        .createClient(machoTarget("/private/fixture"))
+        .execute("list_architectures", {});
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error._tag).toBe(tag);
+      expect(projectAnalysisError(result.error).code).toBe(code);
+    },
+  );
 });
 
 describe("native macOS provider inspection", () => {
@@ -126,8 +400,7 @@ describe("native macOS provider inspection", () => {
       machoTarget("/private/fixture"),
     );
     const execution = await client.execute("inspect_macho", {});
-    expect(execution.ok).toBe(true);
-    if (!execution.ok) return;
+    if (!execution.ok) throw execution.error;
     expect(execution.value.provider.id).toBe("native-macos");
     expect(execution.value.result).toMatchObject({
       format: "mach-o",
@@ -169,8 +442,7 @@ describe("native macOS provider inspection", () => {
 
     const execution = await client.execute("inspect_macho", {});
 
-    expect(execution.ok).toBe(true);
-    if (!execution.ok) return;
+    if (!execution.ok) throw execution.error;
     expect(execution.value.result).toMatchObject({
       segments: {
         items: [
@@ -203,8 +475,7 @@ describe("native macOS provider inspection", () => {
 
     const execution = await client.execute("inspect_macho", {});
 
-    expect(execution.ok).toBe(true);
-    if (!execution.ok) return;
+    if (!execution.ok) throw execution.error;
     expect(execution.value.limitations).toEqual(
       expect.arrayContaining([expect.stringMatching(/vtool.*unavailable/iu)]),
     );
@@ -242,7 +513,7 @@ describe("native macOS provider inspection", () => {
     const client = new NativeMacOSProvider(
       new FixtureRunner(),
       "darwin",
-    ).createClient(machoTarget(executable, app));
+    ).createClient(await nativeMachoTargetForFile(executable, app));
 
     const architectures = await client.execute("list_architectures", {});
     expect(architectures.ok && architectures.value.result).toMatchObject({
@@ -318,15 +589,17 @@ class PrototypeEntitlementsRunner extends FixtureRunner {
 
 describe("native signature entitlements", () => {
   it("reports entitlement entries keyed __proto__ that the result omits", async () => {
+    directory = await createTestTempDirectory("rea-signature-entitlements-");
+    const executable = join(directory, "fixture");
+    await writeFile(executable, "fixture");
     const client = new NativeMacOSProvider(
       new PrototypeEntitlementsRunner(),
       "darwin",
-    ).createClient(machoTarget("/private/fixture"));
+    ).createClient(await nativeMachoTargetForFile(executable));
 
     const signature = await client.execute("inspect_signature", {});
 
-    expect(signature.ok).toBe(true);
-    if (!signature.ok) return;
+    if (!signature.ok) throw signature.error;
     expect(signature.value.result).toMatchObject({
       entitlements: { "com.apple.security.app-sandbox": true },
     });

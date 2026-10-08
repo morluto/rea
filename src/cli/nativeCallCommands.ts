@@ -4,9 +4,8 @@ import { runProviderAnalysis } from "../composition/directAnalysis.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
 import { logCliCommand } from "../cliLogging.js";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { projectInputIssues } from "../domain/inputIssueProjection.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { nativeCallObservationInputSchema } from "../domain/native/nativeCallObservation.js";
 import type { Logger } from "../logger.js";
@@ -39,10 +38,10 @@ export const registerNativeCallCommands = (
           return {
             error: "Analysis failed",
             ...projectAnalysisError(
-              new AnalysisInputError(
+              analysisInputErrorFromIssues(
                 OPERATION,
-                undefined,
-                projectInputIssues(parsed.error.issues, input.value),
+                parsed.error.issues,
+                input.value,
               ),
             ),
           };

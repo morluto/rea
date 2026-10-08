@@ -42,7 +42,18 @@ const comparison = (
         ? "rea.process-comparison"
         : "rea.artifact-comparison",
       operation,
-      parameters: input.salt === undefined ? {} : { salt: input.salt },
+      parameters: {
+        ...(process
+          ? {
+              left_evidence_id: left.evidence_id,
+              right_evidence_id: right.evidence_id,
+            }
+          : {
+              left_evidence_ids: [left.evidence_id],
+              right_evidence_ids: [right.evidence_id],
+            }),
+        ...(input.salt === undefined ? {} : { salt: input.salt }),
+      },
       result,
       confidence: "derived",
       authority: "analyst-inference",
@@ -273,13 +284,17 @@ describe("changed behavior aggregation", () => {
         processResult({ status: "changed", terminal: "changed" }),
         {
           salt: comparisonIndex,
-          evidenceLinks: Array.from(
-            { length: 200 },
-            (_, linkIndex) =>
-              `ev_${(comparisonIndex * 200 + linkIndex + 1)
-                .toString(16)
-                .padStart(64, "0")}`,
-          ),
+          evidenceLinks: [
+            left.evidence_id,
+            right.evidence_id,
+            ...Array.from(
+              { length: 200 },
+              (_, linkIndex) =>
+                `ev_${(comparisonIndex * 200 + linkIndex + 1)
+                  .toString(16)
+                  .padStart(64, "0")}`,
+            ),
+          ],
         },
       ),
     );
@@ -287,7 +302,7 @@ describe("changed behavior aggregation", () => {
     const result = findChangedBehavior(comparisons);
 
     expect(result.summary.observed_changes).toBe(comparisons.length);
-    expect(result.evidence_links).toHaveLength(comparisons.length * 201);
-    expect(result.findings.items[0]?.evidence_links).toHaveLength(201);
+    expect(result.evidence_links).toHaveLength(comparisons.length * 201 + 2);
+    expect(result.findings.items[0]?.evidence_links).toHaveLength(203);
   });
 });

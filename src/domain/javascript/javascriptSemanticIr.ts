@@ -8,6 +8,7 @@ import type {
 export type {
   JavaScriptSemanticPrimitive,
   JavaScriptSemanticProperty,
+  JavaScriptSemanticResourceLimit,
   JavaScriptSemanticValue,
 } from "./javascriptSemanticValueTypes.js";
 

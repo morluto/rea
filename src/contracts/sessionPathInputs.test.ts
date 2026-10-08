@@ -147,6 +147,29 @@ it.each(cases)("$name requires an absolute local path", (pathCase) => {
     expect(pathCase.omitted(), pathCase.name).toBe(true);
 });
 
+it("preserves whitespace in selected browser and Electron filesystem names", () => {
+  const executable = "/opt/browser with trailing space ";
+  expect(
+    browserScenarioBrowserSchema.parse({
+      mode: "launch",
+      executable_path: executable,
+    }),
+  ).toMatchObject({ executable_path: executable });
+  const application = "/tmp/application ";
+  const root = "/tmp/application root ";
+  expect(
+    electronActiveObservationInputSchema.parse({
+      executable_path: executable,
+      application_path: application,
+      application_root: root,
+    }),
+  ).toMatchObject({
+    executable_path: executable,
+    application_path: application,
+    application_root: root,
+  });
+});
+
 it("keeps evidence bundle export overwrite disabled by default", () => {
   expect(
     exportEvidenceBundleInputSchema.safeParse({ path: "/tmp/bundle.json" }),

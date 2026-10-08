@@ -30,8 +30,7 @@ it("resolves dynamic source imports while retaining computed targets as unknown"
     caller: "reference-dynamic-import-test",
     policy: { secretPatterns: [] },
   });
-  expect(result.ok).toBe(true);
-  if (!result.ok) return;
+  if (!result.ok) throw result.error;
   expect(result.value.parse_failures).toEqual([]);
   expect(result.value.relationships).toHaveLength(5);
   for (const [to, kind] of [

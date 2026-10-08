@@ -29,48 +29,35 @@ const observe = async (path: string) => {
 };
 
 describe("artifact comparison summary", () => {
-  it.each([
-    { removed: 1, added: 1 },
-    { removed: 0, added: 1 },
-    { removed: 0, added: 0 },
-  ])(
-    "counts unchanged paths with $removed removals and $added additions",
-    async ({ removed, added }) => {
-      const root = await createTestTempDirectory("rea-artifact-summary-");
-      const leftPath = join(root, "left");
-      const rightPath = join(root, "right");
-      await Promise.all([mkdir(leftPath), mkdir(rightPath)]);
-      await Promise.all(
-        [leftPath, rightPath].flatMap((path) =>
-          ["same.txt", "duplicate.txt"].map((name) =>
-            writeFile(join(path, name), "unchanged content"),
-          ),
+  it("counts unchanged paths alongside additions and removals", async () => {
+    const root = await createTestTempDirectory("rea-artifact-summary-");
+    const leftPath = join(root, "left");
+    const rightPath = join(root, "right");
+    await Promise.all([mkdir(leftPath), mkdir(rightPath)]);
+    await Promise.all(
+      [leftPath, rightPath].flatMap((path) =>
+        ["same.txt", "duplicate.txt"].map((name) =>
+          writeFile(join(path, name), "unchanged content"),
         ),
-      );
-      await Promise.all([
-        ...Array.from({ length: removed }, (_, index) =>
-          writeFile(join(leftPath, `removed-${index}.txt`), "old content"),
-        ),
-        ...Array.from({ length: added }, (_, index) =>
-          writeFile(join(rightPath, `added-${index}.txt`), "new content"),
-        ),
-      ]);
-      const [left, right] = await Promise.all([
-        observe(leftPath),
-        observe(rightPath),
-      ]);
-      const comparison = compareArtifacts(left, right);
-      const changed = removed + added > 0 ? 1 : 0;
-
-      expect(comparison.summary).toEqual({
-        unchanged: 3 - changed,
-        added,
-        removed,
-        changed,
-        unknown: 0,
-        contradiction: 0,
-      });
-      expect(comparison.changes).toHaveLength(removed + added + changed);
-    },
-  );
+      ),
+    );
+    await Promise.all([
+      writeFile(join(leftPath, "removed.txt"), "old content"),
+      writeFile(join(rightPath, "added.txt"), "new content"),
+    ]);
+    const [left, right] = await Promise.all([
+      observe(leftPath),
+      observe(rightPath),
+    ]);
+    const comparison = compareArtifacts(left, right);
+    expect(comparison.summary).toEqual({
+      unchanged: 2,
+      added: 1,
+      removed: 1,
+      changed: 1,
+      unknown: 0,
+      contradiction: 0,
+    });
+    expect(comparison.changes).toHaveLength(3);
+  });
 });

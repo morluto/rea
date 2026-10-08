@@ -5,6 +5,7 @@ import { WebNetworkCaptureService } from "../../../src/application/WebNetworkCap
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
+import { webNetworkCaptureSchema } from "../../../src/domain/webNetworkCapture.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 
@@ -17,7 +18,7 @@ it("publishes valid SDK schemas and retains historical inline Evidence with the 
           format: "har",
           decoder: { id: "test-capture-port", name: "test port", version: "1" },
           container: {
-            reported: { creator: "fixture" },
+            reported: { creator: "fixture", ["__proto__"]: { preserved: 7 } },
             numeric_literals: [],
             redactions: [],
             records_pointer: "/log/entries",
@@ -72,6 +73,15 @@ it("publishes valid SDK schemas and retains historical inline Evidence with the 
   );
   const evidence = parseEvidence(parsed.evidence);
   expect(parsed.result).toEqual(evidence.normalized_result);
+  const capture = webNetworkCaptureSchema.parse(parsed.result);
+  expect(capture.container.reported).toEqual({
+    creator: "fixture",
+    ["__proto__"]: { preserved: 7 },
+  });
+  expect(Object.getPrototypeOf(capture.container.reported)).toBe(
+    Object.prototype,
+  );
+  expect(Reflect.get(Object.prototype, "preserved")).toBeUndefined();
   expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
   const invalid = await client.callTool({
     name: "inspect_web_network_capture",

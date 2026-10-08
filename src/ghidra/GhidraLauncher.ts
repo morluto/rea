@@ -18,6 +18,7 @@ import {
   spawnOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
 import { ghidraJavaEnvironment } from "./GhidraInstallation.js";
+import { ghidraJavaLaunch } from "./GhidraJavaLaunch.js";
 import type { GhidraTransportKind } from "./GhidraTransport.js";
 import {
   snapshotGhidraExtensions,
@@ -124,7 +125,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           ? {}
           : { dosMz: this.options.dosMz }),
       });
-      const command = ghidraHeadlessCommand({
+      const scriptCommand = ghidraHeadlessCommand({
         platform,
         analyzeHeadlessPath: this.options.analyzeHeadlessPath,
         arguments: headlessArguments,
@@ -132,33 +133,55 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           ? {}
           : { comSpec: this.options.comSpec }),
       });
+      const environment = ghidraLaunchEnvironment(
+        paths,
+        this.options.javaHome,
+        platform,
+        scriptCommand.command,
+      );
+      if (platform === "darwin" && this.options.javaHome === undefined)
+        throw new GhidraLaunchError(
+          "macOS Ghidra requires its inspected JDK home",
+        );
+      const command =
+        platform === "darwin" && this.options.javaHome !== undefined
+          ? await ghidraJavaLaunch({
+              analyzeHeadlessPath: this.options.analyzeHeadlessPath,
+              javaHome: this.options.javaHome,
+              homeRoot: paths.homeRoot,
+              tempRoot: paths.tempRoot,
+              arguments: headlessArguments,
+              environment,
+              ...(options.signal === undefined
+                ? {}
+                : { signal: options.signal }),
+            })
+          : { ...scriptCommand, environment };
       started = await spawnOwnedProviderProcess({
         command: command.command,
         arguments: command.arguments,
         runId: session.runId,
-        // analyzeHeadless is an interpreter-driven script. Parent identity and
-        // the per-process run token remain the cleanup authority.
-        expectedCommand: null,
+        // macOS launches the inspected JVM directly: platform shell wrappers
+        // with withheld environments cannot establish run-token ownership.
+        expectedCommand: platform === "darwin" ? command.command : null,
         windowsVerbatimArguments: platform === "win32",
         platform,
-        env: ghidraLaunchEnvironment(
-          paths,
-          this.options.javaHome,
-          platform,
-          command.command,
-        ),
+        env: command.environment,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
       await writeGhidraRuntimeFile(
         paths.ownershipPath,
         `${JSON.stringify({
           run_id: session.runId,
+          transport: session.transport,
+          endpoint_path: session.endpointPath,
           pid: started.ownership.leaderPid,
           process_group_id: started.ownership.processGroupId,
           parent_pid: process.pid,
           ownership_kind:
             platform === "win32" ? "windows-job-object" : "posix-process-group",
-          launcher: this.options.analyzeHeadlessPath,
+          launcher: command.command,
+          headless_script: this.options.analyzeHeadlessPath,
           created_at: new Date().toISOString(),
         })}\n`,
         platform,

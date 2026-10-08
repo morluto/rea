@@ -5,7 +5,15 @@ import {
   type ArtifactOccurrence,
   type IntegrityContradiction,
 } from "./artifactGraph.js";
-import { canonicalDigest, canonicalJson } from "./comparisonSemantics.js";
+import { canonicalJson } from "./comparisonSemantics.js";
+import {
+  artifactContradictionId,
+  artifactEdgeId,
+  artifactGraphDigest,
+  artifactIdForContent,
+  artifactManifestId,
+  occurrenceIdForLocation,
+} from "./artifactIdentity.js";
 import { parseEvidence, type Evidence } from "./evidence.js";
 import { artifactInspectionResultSchema } from "./artifactInspection.js";
 import { err, ok, type Result } from "./result.js";
@@ -79,10 +87,7 @@ const validateInventoryPage = (inventory: ArtifactInventoryResult): void => {
     "edge ID",
   );
   for (const node of inventory.nodes)
-    if (
-      node.artifact_id !==
-      `art_${canonicalDigest({ sha256: node.sha256 }, "Artifact inventory")}`
-    )
+    if (node.artifact_id !== artifactIdForContent(node.sha256))
       throw new TypeError("Artifact node ID is not content-addressed");
 };
 
@@ -230,38 +235,29 @@ const validateCompleteInventory = (inventory: InventorySet): void => {
       throw new TypeError(
         "Integrity contradiction references a missing graph member",
       );
-    const expectedId = `ic_${canonicalDigest(
-      {
-        root_artifact_id: inventory.manifest.root_artifact_id,
-        logical_path: contradiction.logical_path,
-        declared_sha256: contradiction.declared_sha256,
-        observed_sha256: contradiction.observed_sha256,
-      },
-      "Artifact inventory",
-    )}`;
+    const expectedId = artifactContradictionId({
+      rootArtifactId: inventory.manifest.root_artifact_id,
+      logicalPath: contradiction.logical_path,
+      declaredSha256: contradiction.declared_sha256,
+      observedSha256: contradiction.observed_sha256,
+    });
     if (contradiction.contradiction_id !== expectedId)
       throw new TypeError(
         "Integrity contradiction ID does not match its identity",
       );
   }
-  const graphSha256 = canonicalDigest(
-    {
-      nodes: inventory.nodes,
-      occurrences: inventory.occurrences,
-      edges: inventory.edges,
-      integrity_contradictions: inventory.integrityContradictions,
-    },
-    "Artifact inventory",
-  );
+  const graphSha256 = artifactGraphDigest({
+    nodes: inventory.nodes,
+    occurrences: inventory.occurrences,
+    edges: inventory.edges,
+    contradictions: inventory.integrityContradictions,
+  });
   if (graphSha256 !== inventory.manifest.graph_sha256)
     throw new TypeError("Artifact graph commitment does not match its members");
-  const manifestId = `agm_${canonicalDigest(
-    {
-      root_artifact_id: inventory.manifest.root_artifact_id,
-      graph_sha256: graphSha256,
-    },
-    "Artifact inventory",
-  )}`;
+  const manifestId = artifactManifestId(
+    inventory.manifest.root_artifact_id,
+    graphSha256,
+  );
   if (manifestId !== inventory.manifest.manifest_id)
     throw new TypeError("Artifact manifest ID does not match its commitment");
 };
@@ -279,17 +275,11 @@ const validateOccurrence = (
     !occurrenceIds.has(occurrence.parent_occurrence_id)
   )
     throw new TypeError("Artifact occurrence references a missing parent");
-  const expectedId =
-    occurrence.logical_path === "."
-      ? `occ_${canonicalDigest({ root: inventory.manifest.root_artifact_id }, "Artifact inventory")}`
-      : `occ_${canonicalDigest(
-          {
-            root_artifact_id: inventory.manifest.root_artifact_id,
-            logical_path: occurrence.logical_path,
-            entry_kind: occurrence.entry_kind,
-          },
-          "Artifact inventory",
-        )}`;
+  const expectedId = occurrenceIdForLocation({
+    rootArtifactId: inventory.manifest.root_artifact_id,
+    logicalPath: occurrence.logical_path,
+    entryKind: occurrence.entry_kind,
+  });
   if (occurrence.occurrence_id !== expectedId)
     throw new TypeError("Artifact occurrence ID does not match its identity");
 };
@@ -312,9 +302,7 @@ const validateEdge = (
     occurrence_id: edge.occurrence_id,
     logical_path: edge.logical_path,
   };
-  if (
-    edge.edge_id !== `edge_${canonicalDigest(semantic, "Artifact inventory")}`
-  )
+  if (edge.edge_id !== artifactEdgeId(semantic))
     throw new TypeError("Artifact edge ID does not match its identity");
 };
 

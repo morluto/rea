@@ -19,8 +19,7 @@ describe("readReferenceSource entries", () => {
 
     const result = await readReferenceSource(root);
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     expect(result.value.entries.map(({ path }) => path)).toEqual([
       "a.js",
       "nested",
@@ -53,8 +52,7 @@ describe("readReferenceSource entries", () => {
 
     const result = await readReferenceSource(root);
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     expect(result.value.entries).toEqual([
       {
         status: "read",
@@ -98,8 +96,7 @@ describe("readReferenceSource entries", () => {
 
     const result = await readReferenceSource(root);
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     expect(result.value.bytesRead).toBe(size);
     expect(result.value.entries).toContainEqual(
       expect.objectContaining({
@@ -120,8 +117,7 @@ describe("readReferenceSource entries", () => {
 
     const result = await readReferenceSource(root);
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     const path = [...segments, "deep.txt"].join("/");
     expect(result.value.entries).toContainEqual(
       expect.objectContaining({ status: "read", kind: "file", path }),
@@ -145,8 +141,7 @@ describe("readReferenceSource failures and exclusions", () => {
       },
     });
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     expect(checked).toEqual(["ignored", "kept"]);
     expect(result.value.entries.map(({ path }) => path)).toEqual(["kept"]);
   });

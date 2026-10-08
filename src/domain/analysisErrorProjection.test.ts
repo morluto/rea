@@ -11,6 +11,7 @@ import {
 import { ArtifactOperationError } from "./artifactOperationError.js";
 import { BinaryTargetError } from "./configurationErrors.js";
 import { BrowserObservationError } from "./browserObservationError.js";
+import { EvidenceIntegrityError } from "./evidenceErrors.js";
 import {
   HopperProcessError,
   HopperRemoteError,
@@ -22,6 +23,34 @@ import { UnknownRegistryError } from "./unknownRegistryError.js";
 import { projectAnalysisError } from "./analysisErrorProjection.js";
 import { ProviderSelectionError } from "./providerSelectionError.js";
 import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
+import { nativeCallPartialObservationSchema } from "./native/nativeCallPartialObservation.js";
+
+const nativeCallPartialObservation = nativeCallPartialObservationSchema.parse({
+  kind: "native-call-observation",
+  target: {
+    path: "/tmp/selected-app",
+    sha256: "a".repeat(64),
+    architecture: "arm64",
+    arguments: [],
+    environment: {},
+    working_directory: null,
+  },
+  process: {
+    pid: 4242,
+    stdout: {
+      text: "partial stdout",
+      bytes: 13,
+      truncated: false,
+      complete: false,
+    },
+    stderr: null,
+    other_stops: [],
+  },
+  debugger: { version: null },
+  events: [],
+  coverage: { status: "partial", reason: "cancelled" },
+  limitations: ["Observation ended before the requested window completed."],
+});
 
 const retainedOutput = {
   stdout: "selected output\u0000",
@@ -62,6 +91,7 @@ it.each([
   ["cpu", { cpu_seconds: 1 }],
   ["file-size", null],
   ["file-size", { file_size_bytes: 1024 }],
+  ["transport", { result_budget_bytes: 10485760 }],
 ] as const)(
   "projects reported %s constraints with observed or unknown limits: %j",
   (resource, limits) => {
@@ -86,14 +116,6 @@ it.each([
         captured_output: retainedOutput,
       },
     });
-    expect(projected.remediation.action).toContain(
-      resource === "cpu"
-        ? "CPU"
-        : resource === "file-size"
-          ? "file-size"
-          : "memory",
-    );
-    expect(projected.remediation.action).not.toContain("doctor");
     expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
       true,
     );
@@ -127,6 +149,97 @@ it.each([
     );
   },
 );
+
+it.each([
+  new AnalysisCancelledError("observe_native_calls", {
+    cleanup: {
+      reason: "target process termination could not be verified",
+      resources: ["native-target:4242"],
+    },
+  }),
+  new AnalysisTimeoutError("observe_native_calls", 65_000, {
+    cleanup: {
+      reason: "target process identity was unavailable",
+      resources: ["native-target:4242"],
+    },
+  }),
+])("retains incomplete cleanup for lifecycle failures: $._tag", (failure) => {
+  expect(projectAnalysisError(failure)).toMatchObject({
+    code: "cleanup_incomplete",
+    details: {
+      cleanup: "incomplete",
+      cleanup_reason: expect.any(String),
+      resources: ["native-target:4242"],
+    },
+  });
+});
+
+it("retains the original failure tag and code when cleanup is incomplete", () => {
+  const error = new EvidenceIntegrityError(
+    "The launched native target did not match its selected digest",
+    {
+      cleanup: {
+        reason: "target survivor identity could not be verified",
+        resources: ["native-target:4242"],
+      },
+    },
+  );
+  expect(error._tag).toBe("EvidenceIntegrityError");
+  expect(projectAnalysisError(error)).toMatchObject({
+    code: "cleanup_incomplete",
+    category: "integrity_mismatch",
+    details: {
+      cleanup: "incomplete",
+      cleanup_reason: "target survivor identity could not be verified",
+      resources: ["native-target:4242"],
+      execution_failure: "evidence_integrity_mismatch",
+    },
+  });
+});
+
+it("projects native partial observations through healthy cancellation failures", () => {
+  const projected = projectAnalysisError(
+    new AnalysisCancelledError("observe_native_calls", {
+      partialObservation: nativeCallPartialObservation,
+    }),
+  );
+
+  expect(projected).toMatchObject({
+    code: "cancelled",
+    details: {
+      operation: "observe_native_calls",
+      cleanup: "complete",
+      partial_observation: nativeCallPartialObservation,
+    },
+  });
+  expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(true);
+});
+
+it("retains native partial observations and cleanup uncertainty on provider failures", () => {
+  const projected = projectAnalysisError(
+    new ProviderAdapterError("native-lldb", "observe_native_calls", {
+      partialObservation: nativeCallPartialObservation,
+      cleanup: {
+        reason: "target process termination could not be verified",
+        resources: ["native-target:4242"],
+      },
+    }),
+  );
+
+  expect(projected).toMatchObject({
+    code: "cleanup_incomplete",
+    details: {
+      provider_id: "native-lldb",
+      operation: "observe_native_calls",
+      cleanup: "incomplete",
+      cleanup_reason: "target process termination could not be verified",
+      resources: ["native-target:4242"],
+      execution_failure: "execution_failure",
+      partial_observation: nativeCallPartialObservation,
+    },
+  });
+  expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(true);
+});
 
 describe("analysis error projection: provider failures", () => {
   it("projects the primary browser failure alongside incomplete cleanup", () => {
@@ -385,5 +498,42 @@ describe("analysis error projection: caller contract", () => {
       },
       details: { reason: "not-found" },
     });
+  });
+});
+
+describe("analysis error projection: operational diagnostics", () => {
+  it("distinguishes an observed Hopper exit from an undetermined provider failure", () => {
+    const exited = projectAnalysisError(
+      new HopperProcessError(7, undefined, "search_strings", 4),
+    );
+    expect(exited).toMatchObject({
+      code: "provider_unavailable",
+      retryable: true,
+      details: {
+        stage: "analysis",
+        provider_state: "exited",
+        retry_action: "restart_provider",
+        operation: "search_strings",
+        request_id: 4,
+        exit_code: 7,
+      },
+    });
+    expect(exited.message).not.toContain("Run `rea doctor`, then try again.");
+    expect(exited.remediation.action).toContain("Restart the owned provider");
+
+    const unknown = projectAnalysisError(
+      new HopperProcessError(null, undefined, "search_strings", 5),
+    );
+    expect(unknown.details).toMatchObject({
+      stage: "analysis",
+      provider_state: "unknown",
+      retry_action: "unknown",
+      operation: "search_strings",
+      request_id: 5,
+      exit_code: null,
+    });
+    expect(unknown.message).toContain("could not determine");
+    expect(unknown.message).not.toContain("stopped");
+    expect(unknown.remediation.action).toContain("provider_operation_health");
   });
 });

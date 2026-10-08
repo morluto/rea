@@ -7,7 +7,7 @@ import type { FirmwareOperation } from "../domain/firmware/firmwareAnalysis.js";
 import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { toCallToolResult } from "./toolResult.js";
+import { toCallToolResult, toEvidenceToolResult } from "./toolResult.js";
 
 /** Bind firmware handlers to their exact named schemas. */
 export const registerFirmwareTools = (
@@ -26,9 +26,7 @@ export const registerFirmwareTools = (
       );
       if (!result.ok) return toCallToolResult(result, contract);
       const recorded = recordEvidence?.(result.value);
-      return recorded !== undefined && !recorded.ok
-        ? toCallToolResult(recorded, contract)
-        : toCallToolResult(result, contract);
+      return toEvidenceToolResult(result.value, contract, recorded);
     };
   const inspect = toolContract("inspect_firmware_regions");
   server.registerTool(

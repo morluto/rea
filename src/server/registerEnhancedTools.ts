@@ -9,25 +9,25 @@ import type {
 } from "@modelcontextprotocol/server";
 
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
+import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import {
   EnhancedTools,
   type ValidatedEnhancedCall,
 } from "../application/EnhancedTools.js";
 import {
-  REA_WORKFLOW_PROVIDER,
-  workflowAnalysisProfile,
-} from "../application/InvestigationProviders.js";
+  createWorkflowEvidence,
+  workflowSnapshotRecord,
+  recordWorkflowUnknowns,
+} from "../application/WorkflowEvidence.js";
 import { toolContract, type ToolContract } from "../contracts/toolContracts.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
-import { UnknownRegistryError } from "../domain/unknownRegistryError.js";
-import { createEvidence } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "../logger.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { toCallToolResult } from "./toolResult.js";
+import { toCallToolResult, toEvidenceToolResult } from "./toolResult.js";
 import { executeFunctionAnalysisEvidence } from "../application/FunctionAnalysisEvidence.js";
 
 /** Optional session services used by enhanced tool registration. */
@@ -39,6 +39,14 @@ export interface EnhancedToolRegistration {
     | undefined;
   readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
   readonly recordUnknown: UnknownRegistryPort["recordUnknown"] | undefined;
+  readonly allowsSnapshotReplay:
+    | ((operation: ValidatedEnhancedCall["name"]) => boolean)
+    | undefined;
+  readonly recordWorkflowSnapshot:
+    | ((
+        input: Parameters<BinarySessionPort["recordWorkflowSnapshot"]>[0],
+      ) => ReturnType<BinarySessionPort["recordWorkflowSnapshot"]>)
+    | undefined;
 }
 
 /** Register composed workflows against the same port as direct bridge tools. */
@@ -235,28 +243,27 @@ const executeEnhancedTool = async (
     terminal: true,
   });
   if (result.ok) {
-    const upstreamProfile = registration.analysisProfile?.();
-    const evidence = createEvidence(
-      registration.activeTarget?.(),
-      REA_WORKFLOW_PROVIDER,
-      {
-        operation: name,
-        parameters,
-        result: result.value,
-        ...(upstreamProfile === undefined
-          ? {}
-          : {
-              analysisProfile: workflowAnalysisProfile(upstreamProfile),
-            }),
-        confidence: "derived",
-        limitations: [
-          "Derived by an REA workflow from one or more provider observations.",
-        ],
-      },
-    );
+    const evidence = createWorkflowEvidence({
+      target: registration.activeTarget?.(),
+      operation: name,
+      parameters,
+      result: result.value,
+      upstreamProfile: registration.analysisProfile?.(),
+    });
     const recorded = registration.recordEvidence?.(evidence);
     if (recorded !== undefined && !recorded.ok)
       return toCallToolResult(recorded, contract);
+    if (
+      name !== "trace_native_ui_action" &&
+      registration.allowsSnapshotReplay?.(name) === true
+    ) {
+      const workflowRecord = workflowSnapshotRecord(evidence, name);
+      if (workflowRecord !== undefined) {
+        const snapshot = registration.recordWorkflowSnapshot?.(workflowRecord);
+        if (snapshot !== undefined && !snapshot.ok)
+          return toCallToolResult(snapshot, contract);
+      }
+    }
     const unknowns = recordWorkflowUnknowns({
       name,
       result: result.value,
@@ -264,7 +271,7 @@ const executeEnhancedTool = async (
       recordUnknown: registration.recordUnknown,
     });
     if (!unknowns.ok) return toCallToolResult(unknowns, contract);
-    return toCallToolResult({ ok: true, value: evidence }, contract);
+    return toEvidenceToolResult(evidence, contract, recorded);
   }
   return toCallToolResult(result, contract);
 };
@@ -301,12 +308,12 @@ const executeFunctionTool = async (
     message: result.ok ? "completed" : "failed",
     terminal: true,
   });
-  if (result.ok) {
-    const recorded = registration.recordEvidence?.(result.value);
-    if (recorded !== undefined && !recorded.ok)
-      return toCallToolResult(recorded, contract);
-  }
-  return toCallToolResult(result, contract);
+  if (!result.ok) return toCallToolResult(result, contract);
+  return toEvidenceToolResult(
+    result.value,
+    contract,
+    registration.recordEvidence?.(result.value),
+  );
 };
 
 const jsonParameters = (
@@ -317,63 +324,3 @@ const jsonParameters = (
       (entry): entry is [string, JsonValue] => entry[1] !== undefined,
     ),
   );
-
-interface WorkflowUnknownInput {
-  readonly name: string;
-  readonly result: JsonValue;
-  readonly evidenceId: string;
-  readonly recordUnknown: UnknownRegistryPort["recordUnknown"] | undefined;
-}
-
-const recordWorkflowUnknowns = ({
-  name,
-  result,
-  evidenceId,
-  recordUnknown,
-}: WorkflowUnknownInput):
-  | ReturnType<UnknownRegistryPort["recordUnknown"]>
-  | { readonly ok: true; readonly value: null } => {
-  if (
-    !["trace_feature", "trace_call_path", "inspect_native_api"].includes(
-      name,
-    ) ||
-    recordUnknown === undefined ||
-    typeof result !== "object" ||
-    result === null ||
-    Array.isArray(result) ||
-    !Array.isArray(result.residual_unknowns)
-  )
-    return { ok: true, value: null };
-  for (const question of result.residual_unknowns) {
-    if (typeof question !== "string") continue;
-    const recorded = recordUnknown({
-      question,
-      severity: "medium",
-      domain: name === "inspect_native_api" ? "native-api" : "control-flow",
-      supporting_evidence_ids: [evidenceId],
-      contradicting_evidence_ids: [],
-      required_authority: "shipped-artifact",
-      required_confidence: "observed",
-      required_environment: null,
-      recommended_probes: [
-        {
-          operation: name,
-          rationale:
-            name === "inspect_native_api"
-              ? "Confirm the unsupported boundary with a capable provider or ABI probe."
-              : "Continue with a focused query or another available provider.",
-        },
-      ],
-      relationships: [],
-    });
-    if (
-      !recorded.ok &&
-      !(
-        recorded.error instanceof UnknownRegistryError &&
-        recorded.error.reason === "already-exists"
-      )
-    )
-      return recorded;
-  }
-  return { ok: true, value: null };
-};

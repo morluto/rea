@@ -9,6 +9,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { itWithCaptureCapability } from "./processCaptureCapability.js";
 
 import { captureProcessScenario } from "../../../src/process/capture/ProcessHarness.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { snapshotRoots } from "../../../src/process/capture/FilesystemSnapshot.js";
 import { ProcessCaptureError } from "../../../src/process/capture/ProcessCaptureError.js";
 import {
@@ -34,6 +35,32 @@ type PartialCapture = Extract<
   NonNullable<ProcessCaptureError["partialObservation"]>,
   { readonly capture: unknown }
 >["capture"];
+const expectUnverifiedHostCleanup = (error: ProcessCaptureError): void => {
+  const report = error.cleanupReport;
+  expect(error.reason, error.message).toBe("cleanup_incomplete");
+  expect(report?.owned_process_group.state).toBe("unverified");
+  const [summary, diagnostics] = (
+    report?.owned_process_group.reason ?? ""
+  ).split(": ");
+  expect(summary).toMatch(
+    /^process ownership token could not be read for [1-9][0-9]* live process\(es\)$/u,
+  );
+  const [breakdown, liveCandidates] =
+    diagnostics?.split("; live candidates ") ?? [];
+  const categories = breakdown?.split(", ") ?? [];
+  expect(categories.length).toBeGreaterThan(0);
+  const expectedCategory =
+    process.platform === "linux"
+      ? /^environment_errno_(?:EACCES|EPERM)=[1-9][0-9]*$/u
+      : /^environment_unavailable=[1-9][0-9]*$/u;
+  for (const category of categories) expect(category).toMatch(expectedCategory);
+  expect(liveCandidates).toMatch(
+    /^(?:[1-9][0-9]*=(?:environment_unavailable|environment_errno_(?:EACCES|EPERM)))(?:, [1-9][0-9]*=(?:environment_unavailable|environment_errno_(?:EACCES|EPERM)))*$/u,
+  );
+  expect(report?.terminal_renderer.state).toBe("cleaned");
+  expect(report?.temporary_root.state).toBe("cleaned");
+};
+
 const captureObservations = (
   result: CaptureRun,
 ): {
@@ -42,25 +69,8 @@ const captureObservations = (
 } => {
   if (result.ok) return { capture: result.value, cleanupIncomplete: false };
   if (!(result.error instanceof ProcessCaptureError)) throw result.error;
-  const report = result.error.cleanupReport;
+  expectUnverifiedHostCleanup(result.error);
   const partial = result.error.partialObservation;
-  expect(result.error.reason).toBe("cleanup_incomplete");
-  expect(report?.owned_process_group.state).toBe("unverified");
-  const [summary, breakdown] = (report?.owned_process_group.reason ?? "").split(
-    ": ",
-  );
-  expect(summary).toMatch(
-    /^process ownership token could not be read for [1-9][0-9]* live process\(es\)$/u,
-  );
-  const categories = breakdown?.split(", ") ?? [];
-  expect(categories.length).toBeGreaterThan(0);
-  const expectedCategory =
-    process.platform === "linux"
-      ? /^environment_errno_(?:EACCES|EPERM)=[1-9][0-9]*$/u
-      : /^environment_unavailable=[1-9][0-9]*$/u;
-  for (const category of categories) expect(category).toMatch(expectedCategory);
-  expect(report?.terminal_renderer.state).toBe("cleaned");
-  expect(report?.temporary_root.state).toBe("cleaned");
   if (partial === undefined || !("capture" in partial))
     throw new Error(
       "cleanup-incomplete capture omitted completed observations",
@@ -248,7 +258,6 @@ itWithCaptureCapability(
       cleanupHost,
     );
 
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected cleanup-incomplete failure");
     if (!(result.error instanceof ProcessCaptureError)) throw result.error;
     const partial = result.error.partialObservation;
@@ -256,6 +265,13 @@ itWithCaptureCapability(
     expect(result.error.executionFailure).toBe(
       "fixture final snapshot failure",
     );
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "cleanup_incomplete",
+      details: { cleanup: "incomplete", resources: ["owned_process_group"] },
+    });
+    expect(projected).not.toHaveProperty("stack");
+    expect(projected).not.toHaveProperty("cause");
     expect(partial).toBeDefined();
     if (partial === undefined || !("observations" in partial))
       throw new Error("expected incomplete process observations");
@@ -423,11 +439,20 @@ itWithCaptureCapability(
     );
     const timedOutCapture = captureObservations(timedOut);
     expect(timedOutCapture.capture.exit.reason).toBe("timeout");
-    if (!timedOutCapture.cleanupIncomplete && timedOut.ok)
-      expect(timedOut.value.cleanup).toEqual({
+    if (!timedOutCapture.cleanupIncomplete && timedOut.ok) {
+      expect(timedOut.value.cleanup).toMatchObject({
         owned_process_group: "verified",
         temporary_root: "removed",
       });
+      for (const { pid } of timedOut.value.cleanup.unverified_processes ?? []) {
+        expect(timedOut.value.residual_unknowns).toContainEqual({
+          scope: "process",
+          reason: expect.stringContaining(
+            `${String(pid)} could not be verified`,
+          ),
+        });
+      }
+    }
 
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 50);
@@ -441,7 +466,6 @@ itWithCaptureCapability(
       }),
       controller.signal,
     );
-    expect(cancelled.ok).toBe(false);
     if (cancelled.ok) throw new Error("expected cancellation");
     expect(cancelled.error.message).toContain("cancelled");
   },
@@ -472,8 +496,12 @@ itWithCaptureCapability(
       signal,
     );
 
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected initial snapshot cancellation");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "cancelled",
+      category: "cancelled",
+      details: { operation: "process_capture", cleanup: "complete" },
+    });
     expect(result.error).toMatchObject({
       reason: "cancelled",
       userCategory: "cancelled",
@@ -508,10 +536,19 @@ itWithCaptureCapability(
     );
 
     const result = await resultPromise;
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected final snapshot cancellation");
     expect(initialSnapshotCompleted).toBe(true);
-    expect(result.error).toMatchObject({
+    if (!(result.error instanceof ProcessCaptureError)) throw result.error;
+    if (result.error.cleanupIncomplete) {
+      expectUnverifiedHostCleanup(result.error);
+      expect(result.error.executionFailure).toBe(
+        "process capture was cancelled",
+      );
+    }
+    const cancellation = result.error.cleanupIncomplete
+      ? result.error.cause
+      : result.error;
+    expect(cancellation, result.error.message).toMatchObject({
       reason: "cancelled",
       userCategory: "cancelled",
     });
@@ -546,7 +583,6 @@ itWithCaptureCapability(
       captureSnapshot,
     );
 
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected filesystem observation failure");
     expect(result.error).toMatchObject({
       reason: "capture_failed",

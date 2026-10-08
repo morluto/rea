@@ -5,6 +5,7 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisCapabilityUnavailableError,
+  AnalysisResourceConstraintError,
 } from "./analysisErrorCore.js";
 import { redactExplicitText } from "./explicitSensitiveValues.js";
 import type { JsonValue } from "./jsonValue.js";
@@ -116,6 +117,28 @@ export const redactExplicitFailure = (
         ...(error.userMessage === undefined
           ? {}
           : { userMessage: text(error.userMessage) }),
+      },
+    );
+  if (error instanceof AnalysisResourceConstraintError)
+    return new AnalysisResourceConstraintError(
+      error.operation,
+      error.resource,
+      text(error.reason),
+      error.reportedLimits === null ? null : diagnostics(error.reportedLimits),
+      {
+        cause: error,
+        ...(error.remediationAction === undefined
+          ? {}
+          : { remediationAction: text(error.remediationAction) }),
+        ...(error.capturedOutput === undefined
+          ? {}
+          : {
+              capturedOutput: {
+                stdout: text(error.capturedOutput.stdout),
+                stderr: text(error.capturedOutput.stderr),
+                truncated: error.capturedOutput.truncated,
+              },
+            }),
       },
     );
   if (error instanceof ProviderCleanupError)

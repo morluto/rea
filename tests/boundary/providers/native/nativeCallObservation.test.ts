@@ -39,10 +39,28 @@ const run = (
   version: "lldb-2100.0.17.203",
   pid: 4242,
   outcome: "exited",
+  resource_limit_reached: false,
+  target_output: {
+    stdout_bytes: 0,
+    stderr_bytes: 0,
+    stdout_truncated: false,
+    stderr_truncated: false,
+    stdout_complete: true,
+    stderr_complete: true,
+  },
   exit_status: 0,
   exit_description: null,
   killed: false,
   terminated: true,
+  target_identity: {
+    loaded_image_sha256: null,
+    selected_file_sha256: "a".repeat(64),
+    file_device: "1",
+    file_inode: "2",
+    module_path: "/tmp/Fixture",
+    module_uuid: "fixture-uuid",
+    stable: true,
+  },
   elapsed_ms: 12.5,
   breakpoints: [
     { index: 0, location_count: 1, locations: [LOCATION] },
@@ -80,8 +98,8 @@ class FixtureTracer implements NativeCallTracer {
         version: "lldb-2100.0.17.203",
       },
       run: run(),
-      stdout: { text: "hello\n", bytes: 6, truncated: false },
-      stderr: { text: "", bytes: 0, truncated: false },
+      stdout: { text: "hello\n", bytes: 6, truncated: false, complete: true },
+      stderr: { text: "", bytes: 0, truncated: false, complete: true },
       terminated: true,
     }),
   ) {}
@@ -122,13 +140,17 @@ const observe = async (
       signal === undefined ? undefined : { signal },
     );
 
-describe("observe_native_calls projection", () => {
+describe("observe_native_calls projection: projects completed observations", () => {
   it("launches the active Mach-O through the tracer and projects its run", async () => {
     const tracer = new FixtureTracer();
     const target = await fixtureTarget();
     const observed = await observe(
       tracer,
-      { breakpoints: BREAKPOINTS, arguments: ["--flag"] },
+      {
+        breakpoints: BREAKPOINTS,
+        arguments: ["--flag"],
+        environment: { REA_CASE: "selected" },
+      },
       target,
     );
     if (!observed.ok) throw observed.error;
@@ -137,6 +159,7 @@ describe("observe_native_calls projection", () => {
       architecture: "arm64",
       input: {
         arguments: ["--flag"],
+        environment: { REA_CASE: "selected" },
         duration_ms: 10_000,
         max_events: 1_000,
         argument_registers: 4,
@@ -146,6 +169,7 @@ describe("observe_native_calls projection", () => {
     const result = nativeCallObservationResultSchema.parse(
       observed.value.result,
     );
+    expect(result.target.environment).toEqual({ REA_CASE: "selected" });
     expect(result.breakpoints.map(({ request }) => request)).toEqual([
       {
         kind: "objc-method",
@@ -162,6 +186,15 @@ describe("observe_native_calls projection", () => {
       terminated: true,
       stdout: { text: "hello\n" },
     });
+    expect(result.target.launch_identity).toEqual({
+      file_device: "1",
+      file_inode: "2",
+      loaded_image_sha256: null,
+      selected_file_sha256: "a".repeat(64),
+      module_path: "/tmp/Fixture",
+      module_uuid: "fixture-uuid",
+      stable: true,
+    });
     expect(result.events[0]).toMatchObject({
       receiver_class: "Greeter",
       selector: "greet:times:",
@@ -169,11 +202,61 @@ describe("observe_native_calls projection", () => {
     expect(result.coverage).toEqual({
       status: "complete",
       event_limit_reached: false,
+      resource_limit_reached: false,
       unresolved_breakpoints: [],
     });
     expect(observed.value.locations).toEqual([
       { kind: "artifact-path", path: target.path },
     ]);
+  });
+});
+
+describe("observe_native_calls projection: reports partial observation coverage", () => {
+  it("retains normal exit and location counts when breakpoint metadata is bounded", async () => {
+    const observed = await observe(
+      new FixtureTracer(
+        ok({
+          debugger: {
+            path: "/usr/bin/lldb",
+            sha256: "a".repeat(64),
+            version: null,
+          },
+          run: run({
+            breakpoint_locations_truncated: true,
+            breakpoints: [
+              { index: 0, location_count: 64, locations: [LOCATION] },
+              { index: 1, location_count: 64, locations: [] },
+            ],
+          }),
+          stdout: { text: "", bytes: 0, truncated: false, complete: true },
+          stderr: { text: "", bytes: 0, truncated: false, complete: true },
+          terminated: true,
+        }),
+      ),
+      { breakpoints: BREAKPOINTS },
+    );
+    if (!observed.ok) throw observed.error;
+    const result = nativeCallObservationResultSchema.parse(
+      observed.value.result,
+    );
+    expect(result.process).toMatchObject({
+      outcome: "exited",
+      exit_status: 0,
+      terminated: true,
+    });
+    expect(
+      result.breakpoints.map(({ location_count }) => location_count),
+    ).toEqual([64, 64]);
+    expect(result.coverage).toMatchObject({
+      status: "partial",
+      breakpoint_locations_truncated: true,
+      resource_limit_reached: false,
+      unresolved_breakpoints: [],
+    });
+    expect(result.limitations).toContain(
+      "Resolved breakpoint locations exceeded the aggregate 8 MiB metadata budget; omitted locations are counted in location_count. This metadata limit does not change the process outcome.",
+    );
+    expect(result.limitations.join(" ")).not.toContain("process was killed");
   });
 
   it("marks event limits, unresolved breakpoints and unconfirmed exits", async () => {
@@ -194,8 +277,13 @@ describe("observe_native_calls projection", () => {
             { index: 1, location_count: 0, locations: [] },
           ],
         }),
-        stdout: { text: "", bytes: 0, truncated: false },
-        stderr: { text: "x".repeat(16), bytes: 2_000_000, truncated: true },
+        stdout: { text: "", bytes: 0, truncated: false, complete: false },
+        stderr: {
+          text: "x".repeat(16),
+          bytes: 2_000_000,
+          truncated: true,
+          complete: true,
+        },
         terminated: true,
       }),
     );
@@ -210,9 +298,13 @@ describe("observe_native_calls projection", () => {
     expect(result.coverage).toEqual({
       status: "partial",
       event_limit_reached: true,
+      resource_limit_reached: false,
       unresolved_breakpoints: [1],
     });
     expect(result.process.terminated).toBe(false);
+    expect(result.limitations).toContain(
+      "Target output draining did not complete; reported byte counts are observed lower bounds, not stream totals.",
+    );
     expect(result.limitations).toEqual(
       expect.arrayContaining([
         "Observation stopped at max_events (1); later calls were not recorded and the process was killed.",
@@ -220,6 +312,81 @@ describe("observe_native_calls projection", () => {
         "Target output beyond 1 MiB per stream is counted but not kept.",
         "REA could not confirm that process 4242 exited; check for it before relying on host state.",
       ]),
+    );
+  });
+
+  it("marks duration and aggregate resource limits as partial coverage", async () => {
+    for (const outcome of ["duration-elapsed", "resource-limit"] as const) {
+      const tracer = new FixtureTracer(
+        ok({
+          debugger: {
+            path: "/usr/bin/lldb",
+            sha256: "a".repeat(64),
+            version: null,
+          },
+          run: run({
+            outcome,
+            resource_limit_reached: outcome === "resource-limit",
+          }),
+          stdout: { text: "", bytes: 0, truncated: false, complete: true },
+          stderr: { text: "", bytes: 0, truncated: false, complete: true },
+          terminated: true,
+        }),
+      );
+      const observed = await observe(tracer, { breakpoints: BREAKPOINTS });
+      if (!observed.ok) throw observed.error;
+      const result = nativeCallObservationResultSchema.parse(
+        observed.value.result,
+      );
+      expect(result.coverage).toMatchObject({
+        status: "partial",
+        resource_limit_reached: outcome === "resource-limit",
+      });
+    }
+  });
+});
+
+describe("observe_native_calls projection: preserves unknown launch identity", () => {
+  it("preserves unknown launch identity without claiming digest binding", async () => {
+    const tracer = new FixtureTracer(
+      ok({
+        debugger: {
+          path: "/usr/bin/lldb",
+          sha256: "a".repeat(64),
+          version: null,
+        },
+        run: run({
+          target_identity: {
+            loaded_image_sha256: null,
+            selected_file_sha256: null,
+            file_device: null,
+            file_inode: null,
+            module_path: null,
+            module_uuid: null,
+            stable: false,
+          },
+        }),
+        stdout: { text: "", bytes: 0, truncated: false, complete: true },
+        stderr: { text: "", bytes: 0, truncated: false, complete: true },
+        terminated: true,
+      }),
+    );
+    const observed = await observe(tracer, { breakpoints: BREAKPOINTS });
+    if (!observed.ok) throw observed.error;
+    const result = nativeCallObservationResultSchema.parse(
+      observed.value.result,
+    );
+    expect(result.target.launch_identity).toEqual({
+      file_device: null,
+      file_inode: null,
+      loaded_image_sha256: null,
+      selected_file_sha256: null,
+      module_path: null,
+      module_uuid: null,
+      stable: false,
+    });
+    expect(result.limitations).toContain(
+      "LLDB did not provide enough module identity evidence to confirm pathname and module continuity around launch.",
     );
   });
 });

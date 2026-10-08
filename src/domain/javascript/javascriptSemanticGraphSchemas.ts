@@ -250,6 +250,7 @@ export const JAVASCRIPT_SEMANTIC_UNKNOWN_REASONS = [
   "eval-or-generated-code",
   "incomplete-module",
   "missing-source",
+  "resource-limit",
   "unsupported-syntax",
 ] as const;
 

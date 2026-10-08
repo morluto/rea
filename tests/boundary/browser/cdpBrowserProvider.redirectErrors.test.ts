@@ -22,7 +22,7 @@ const inspectNetwork = async (options: FakeOptions) => {
   return { browser, inspection: result.value };
 };
 
-describe("CdpBrowserProvider: redirect errors", () => {
+describe("CdpBrowserProvider: redirect errors: redirect response validation", () => {
   it.each([
     { label: "missing", url: undefined, reason: "invalid_protocol_value" },
     { label: "malformed", url: "http://%", reason: "invalid_protocol_value" },
@@ -113,6 +113,41 @@ describe("CdpBrowserProvider: redirect errors", () => {
       );
     },
   );
+});
+
+describe("CdpBrowserProvider: redirect errors: preserving authorized predecessor evidence", () => {
+  it("preserves predecessor evidence when a continuation omits redirectResponse", async () => {
+    const { browser, inspection } = await inspectNetwork({
+      malformedRedirectResponse: true,
+      omitRedirectResponse: true,
+    });
+
+    expect(inspection.network.requests).toHaveLength(1);
+    expect(inspection.network.requests[0]).toMatchObject({
+      request_id: "request-1",
+      url: `${browser.allowedOrigin}/malformed-redirect-prior`,
+      status: 201,
+      redirects: [
+        {
+          url: `${browser.allowedOrigin}/api?token=network-secret`,
+          response_url: `${browser.allowedOrigin}/api?token=network-secret`,
+        },
+      ],
+      body_shapes: { status: "partial", response: null },
+    });
+    expect(inspection.metadata.responses).toHaveLength(1);
+    expect(inspection.completeness.unavailable_sections).toContain(
+      "network_requests",
+    );
+    expect(inspection.completeness.excluded).toContainEqual({
+      section: "network_requests",
+      reason: "invalid_protocol_value",
+      count: expect.any(Number),
+    });
+    expect(JSON.stringify(inspection)).not.toContain(
+      "malformed-redirect-final",
+    );
+  });
 
   it("keeps authorized prior evidence when the later response URL is disallowed", async () => {
     const { browser, inspection } = await inspectNetwork({

@@ -11,7 +11,10 @@ import type {
   SetupProviderEnvironment,
   SetupResult,
 } from "./SetupTypes.js";
-import type { SetupClient } from "./SupportedClients.js";
+import {
+  manualRegistrationRemediation,
+  type SetupClient,
+} from "./SupportedClients.js";
 import type { DoctorReport, DoctorScope } from "./Doctor.js";
 import { configureDetectedClients } from "./SetupClients.js";
 import { discoverSetupState, planSetupActions } from "./SetupPlan.js";
@@ -163,6 +166,7 @@ export const runSetup = async (
     planSelection,
   );
 
+  const manualRemediation = manualClientsRemediation(planned.selectedClients);
   if (options.dryRun === true)
     return {
       status: "planned",
@@ -171,6 +175,9 @@ export const runSetup = async (
       clients,
       doctor: summarizeDoctor(discovery.initialDoctor),
       clientStates,
+      ...(manualRemediation === undefined
+        ? {}
+        : { remediation: manualRemediation }),
     };
 
   let approved = options.approved || plannedActions.length === 0;
@@ -250,11 +257,14 @@ export const runSetup = async (
       "REA analysis skill could not be installed or verified. Check permissions for `~/.agents/skills`, then rerun setup.",
     );
   const doctor = summarizeDoctor(await host.doctor(readinessScope));
-  const remediation = finalSetupRemediation(
-    host.platform,
-    appliedActions.includes("installed_hopper"),
-    doctor.healthy,
-    hopperPath,
+  const remediation = combineRemediation(
+    finalSetupRemediation(
+      host.platform,
+      appliedActions.includes("installed_hopper"),
+      doctor.healthy,
+      hopperPath,
+    ),
+    manualRemediation,
   );
   return {
     status: remediation === undefined ? "ready" : "needs_human",
@@ -382,6 +392,22 @@ const setupFailure = async (
 
 const emitProgress = (options: SetupOptions, event: SetupProgressEvent): void =>
   options.onProgress?.(event);
+
+const manualClientsRemediation = (
+  clients: readonly SetupClient[],
+): string | undefined =>
+  clients
+    .map((client) => manualRegistrationRemediation(client.name))
+    .find((remediation) => remediation !== undefined);
+
+const combineRemediation = (
+  ...parts: readonly (string | undefined)[]
+): string | undefined => {
+  const present = parts.filter(
+    (part): part is string => part !== undefined && part !== "",
+  );
+  return present.length === 0 ? undefined : present.join(" ");
+};
 
 const finalSetupRemediation = (
   platform: NodeJS.Platform,

@@ -230,7 +230,6 @@ describe("analysis snapshot cache partitioning", () => {
       ANALYSIS_SNAPSHOT_PROFILE,
       createEvidenceBundle([evidence]),
     );
-    expect(exported.ok).toBe(true);
     if (!exported.ok) throw new Error("snapshot export failed");
     const tampered = structuredClone(exported.value);
     const tamperedEntry = tampered.entries[0];

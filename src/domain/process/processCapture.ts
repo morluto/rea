@@ -223,6 +223,10 @@ export interface UnverifiedProcessCapture {
   readonly cleanup: {
     readonly owned_process_group: "verified";
     readonly temporary_root: "removed";
+    /** Unrelated processes whose ownership token the host could not expose. */
+    readonly unverified_processes?:
+      | readonly UnverifiedCleanupProcess[]
+      | undefined;
   };
 }
 
@@ -232,10 +236,19 @@ const fileStateShape = {
   size: z.number().int().nonnegative(),
 };
 
+/** An unrelated process left untouched because its ownership is unknown. */
+export interface UnverifiedCleanupProcess {
+  readonly pid: number;
+  readonly reason: string;
+}
+
 /** A resource cleanup result retained when observations cannot be verified. */
 export interface ProcessCaptureResourceCleanup {
   readonly state: "cleaned" | "failed" | "unverified" | "not_required";
   readonly reason: string | null;
+  readonly unverified_processes?:
+    | readonly UnverifiedCleanupProcess[]
+    | undefined;
 }
 
 export interface ProcessCaptureCleanupReport {
@@ -347,6 +360,10 @@ const processSettlementSchema = z.discriminatedUnion("state", [
     cleanup_outcome: z.enum(["cleaned", "failed"]),
   }),
 ]);
+
+const unverifiedCleanupProcessesSchema = z.array(
+  z.strictObject({ pid: z.number().int().positive(), reason: z.string() }),
+);
 
 const processCaptureShapeSchema = z.strictObject({
   manifest: z.strictObject({
@@ -478,12 +495,14 @@ const processCaptureShapeSchema = z.strictObject({
   cleanup: z.object({
     owned_process_group: z.literal("verified"),
     temporary_root: z.literal("removed"),
+    unverified_processes: unverifiedCleanupProcessesSchema.optional(),
   }),
 });
 
 const processCleanupResourceSchema = z.strictObject({
   state: z.enum(["cleaned", "failed", "unverified", "not_required"]),
   reason: z.string().nullable(),
+  unverified_processes: unverifiedCleanupProcessesSchema.optional(),
 });
 
 const partialObservationFieldSchema = <Schema extends z.ZodType>(
@@ -559,7 +578,7 @@ const incompleteCaptureObservationSchema = z.strictObject({
   observations: incompleteProcessCaptureObservationsSchema,
 });
 
-/** Validated, non-comparable process observations attached to cleanup errors. */
+/** Validated, non-comparable process observations attached to execution or cleanup errors. */
 export const partialProcessCaptureObservationSchema = z
   .union([
     completedCaptureObservationSchema.extend(
@@ -570,15 +589,15 @@ export const partialProcessCaptureObservationSchema = z
     ),
   ])
   .superRefine((partial, context) => {
-    if (
-      !Object.values(partial.cleanup).some(
-        ({ state }) => state === "failed" || state === "unverified",
-      )
-    )
+    const cleanupIncomplete = Object.values(partial.cleanup).some(
+      ({ state }) => state === "failed" || state === "unverified",
+    );
+    if (!cleanupIncomplete && partial.execution_failure === null)
       context.addIssue({
         code: "custom",
-        path: ["cleanup"],
-        message: "partial observations require incomplete resource cleanup",
+        path: ["execution_failure"],
+        message:
+          "partial observations require incomplete cleanup or an execution failure",
       });
 
     if ("observations" in partial) {

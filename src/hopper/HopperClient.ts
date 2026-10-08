@@ -8,6 +8,7 @@ import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.
 import {
   HopperCancelledError,
   type HopperError,
+  type HopperLauncherOutcome,
   HopperProcessError,
   HopperProtocolError,
   HopperRemoteError,
@@ -19,6 +20,12 @@ import {
   hopperStartupFailure,
   type HopperStartupFailureDiagnostic,
 } from "../domain/hopperStartupFailure.js";
+import {
+  providerRetryAction,
+  sharedProviderFailureStage,
+  type ProviderOperationHealth,
+  type ProviderOperationRequest,
+} from "../domain/providerOperationHealth.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
@@ -31,6 +38,7 @@ import {
   ProviderProcessSupervisor,
 } from "../process/ProviderProcess.js";
 import type { BridgeLaunch, BridgeLauncher } from "./BridgeLauncher.js";
+import { hopperOperationStage } from "./HopperOperationStage.js";
 import type { HopperDiagnostic } from "./HopperDiagnostics.js";
 import { cleanupHopperSession } from "./HopperCleanup.js";
 import {
@@ -69,7 +77,6 @@ type HopperClientCloseOptions = {
   readonly retainDocument?: boolean;
 };
 
-/** Safe launcher telemetry; stderr content is intentionally never exposed. */
 /**
  * Owns one authenticated NDJSON-over-Unix-socket bridge session.
  *
@@ -94,6 +101,7 @@ export class HopperClient {
   #closing = false;
   #launcherExitCode: number | null | undefined;
   #launcherFailureDiagnostic: HopperStartupFailureDiagnostic | undefined;
+  #operationFailure: OperationFailureRecord | undefined;
   #startupController: AbortController | undefined;
   #startPromise: Promise<Result<HopperServerInfo, HopperError>> | undefined;
   #closePromise: Promise<Result<null, AnalysisError>> | undefined;
@@ -101,10 +109,49 @@ export class HopperClient {
     this.#responses.push(chunk);
   };
   readonly #onSocketError = (): void => {
-    this.#failAll(new HopperProcessError(null));
+    const error = new HopperProcessError(
+      null,
+      undefined,
+      undefined,
+      undefined,
+      "unreachable",
+    );
+    this.#failAll(error);
+    this.#rememberProcessFailure(error, []);
   };
   readonly #onSocketClose = (): void => {
-    if (!this.#closing) this.#failAll(new HopperProcessError(null));
+    if (this.#closing) return;
+    const launch = this.#launch;
+    if (
+      launch?.providerLifetime === "launcher-process" &&
+      this.#launcherExitCode !== undefined
+    )
+      return;
+    if (launch?.providerLifetime === "launcher-process") {
+      setImmediate(() => {
+        if (this.#closing || this.#launcherExitCode !== undefined) return;
+        const exitCode = launch.process.exitCode ?? null;
+        const error = new HopperProcessError(
+          exitCode,
+          this.#launcherFailureDiagnostic,
+          undefined,
+          undefined,
+          exitCode !== null ? "exited" : "unreachable",
+        );
+        this.#failAll(error);
+        this.#rememberProcessFailure(error, []);
+      });
+      return;
+    }
+    const error = new HopperProcessError(
+      null,
+      undefined,
+      undefined,
+      undefined,
+      "unreachable",
+    );
+    this.#failAll(error);
+    this.#rememberProcessFailure(error, []);
   };
 
   constructor(options: HopperClientOptions) {
@@ -147,6 +194,59 @@ export class HopperClient {
     return this.#requests.activity();
   }
 
+  /**
+   * Latest operational health for this owned bridge.
+   * A recorded exit remains visible after request activity returns to idle.
+   */
+  operationHealth(): ProviderOperationHealth {
+    const failure = this.#operationFailure;
+    if (failure !== undefined) {
+      const requests: readonly ProviderOperationRequest[] =
+        failure.requests.map((request) => ({
+          ...request,
+          stage: failure.startupFailure
+            ? "launch"
+            : hopperOperationStage(request.operation),
+        }));
+      return {
+        state: failure.state,
+        stage:
+          requests.length === 0
+            ? failure.startupFailure
+              ? "launch"
+              : "connection"
+            : sharedProviderFailureStage(requests),
+        retryAction: providerRetryAction(failure.state, failure.startupFailure),
+        exitCode: failure.exitCode,
+        requests,
+      };
+    }
+    const activity = this.requestActivity();
+    if (activity !== null) {
+      const stage = hopperOperationStage(activity.operation);
+      return {
+        state: "busy",
+        stage,
+        retryAction: "wait",
+        exitCode: null,
+        requests: [
+          {
+            requestId: activity.requestId,
+            operation: activity.operation,
+            stage,
+          },
+        ],
+      };
+    }
+    return {
+      state: "idle",
+      stage: null,
+      retryAction: null,
+      exitCode: null,
+      requests: [],
+    };
+  }
+
   /** Launch the bridge once and complete its authenticated health handshake. */
   start(signal?: AbortSignal): Promise<Result<HopperServerInfo, HopperError>> {
     if (this.#closePromise !== undefined) {
@@ -175,7 +275,25 @@ export class HopperClient {
     void started.then(
       (result) => {
         release();
-        if (!result.ok) reset();
+        if (!result.ok) {
+          if (result.error instanceof HopperProcessError)
+            this.#rememberProcessFailure(result.error, []);
+          else if (
+            this.#operationFailure === undefined &&
+            (result.error instanceof HopperTimeoutError ||
+              result.error instanceof HopperStartError)
+          )
+            this.#operationFailure = {
+              state:
+                result.error instanceof HopperTimeoutError
+                  ? "not_started"
+                  : "unknown",
+              exitCode: null,
+              startupFailure: true,
+              requests: [],
+            };
+          reset();
+        }
       },
       (cause: unknown) => {
         this.#logger.debug(
@@ -193,6 +311,7 @@ export class HopperClient {
     signal?: AbortSignal,
   ): Promise<Result<HopperServerInfo, HopperError>> {
     if (isAborted(signal)) return err(new HopperCancelledError());
+    this.#operationFailure = undefined;
     if (this.#socket !== undefined || this.#runtimeRoot !== undefined) {
       return err(new HopperProtocolError("Hopper client is already started"));
     }
@@ -286,6 +405,8 @@ export class HopperClient {
     arguments_: Readonly<Record<string, JsonValue>> = {},
     options: {
       readonly signal?: AbortSignal;
+      /** Deadline after startup, including waiting for Hopper's serial bridge. */
+      readonly timeoutMs?: number;
       readonly progress?: ProgressReporter;
     } = {},
   ): Promise<Result<JsonValue, AnalysisError>> {
@@ -383,25 +504,31 @@ export class HopperClient {
     deadline: ProviderStartupDeadline,
   ): Promise<Result<undefined, HopperError>> {
     while (deadline.remainingMs() > 0) {
-      if (deadline.signal.aborted) return err(startupInterruption(deadline));
+      if (deadline.signal.aborted)
+        return err(await this.#startupInterruption(deadline));
       if (this.#closing) return err(new HopperProcessError(null));
       if (
         this.#launcherExitCode !== undefined &&
-        hopperStartupFailure(this.#launcherExitCode) !== undefined
-      )
-        return err(
-          new HopperProcessError(
-            this.#launcherExitCode,
-            this.#launcherFailureDiagnostic,
-          ),
+        this.#launch !== undefined &&
+        (this.#launch.providerLifetime === "launcher-process" ||
+          this.#launcherExitCode !== 0)
+      ) {
+        const failure = await this.#launcherStartupFailure(
+          this.#launch.providerLifetime === "launcher-process",
+          this.#launcherExitCode,
+          deadline,
         );
+        return deadline.interruption === "cancelled"
+          ? err(await this.#startupInterruption(deadline))
+          : err(failure);
+      }
       try {
         await access(socketPath);
       } catch (cause: unknown) {
         // best-effort cleanup: socket polling; absence means keep waiting.
         void cause;
         if ((await deadline.wait(50)) === "aborted")
-          return err(startupInterruption(deadline));
+          return err(await this.#startupInterruption(deadline));
         continue;
       }
       const attempt = await connectHopperSocketOnce(
@@ -414,9 +541,74 @@ export class HopperClient {
         return ok(undefined);
       }
       if ((await deadline.wait(50)) === "aborted")
-        return err(startupInterruption(deadline));
+        return err(await this.#startupInterruption(deadline));
     }
-    return err(new HopperTimeoutError(this.#options.startupTimeoutMs));
+    return err(await this.#startupInterruption(deadline));
+  }
+
+  async #startupInterruption(
+    deadline: ProviderStartupDeadline,
+  ): Promise<HopperCancelledError | HopperTimeoutError> {
+    if (deadline.interruption === "cancelled")
+      return new HopperCancelledError();
+    return new HopperTimeoutError(
+      deadline.timeoutMs,
+      undefined,
+      undefined,
+      "not_started",
+      "launch",
+      this.#launcherOutcome(
+        (await this.#process?.waitForOutputClose(0)) ?? false,
+      ),
+    );
+  }
+
+  #launcherOutcome(outputClosed: boolean): HopperLauncherOutcome | undefined {
+    const snapshot = this.#process?.snapshot();
+    const token = this.#token;
+    if (snapshot === undefined) return undefined;
+    const redact = (text: string): string =>
+      token === undefined
+        ? text
+        : text.replaceAll(token, "[redacted transport credential]");
+    return {
+      exit_code: snapshot.exitCode ?? null,
+      signal: snapshot.signal ?? null,
+      stdout: { ...snapshot.stdout, text: redact(snapshot.stdout.text) },
+      stderr: { ...snapshot.stderr, text: redact(snapshot.stderr.text) },
+      output_closed: outputClosed,
+      diagnostic_truncated: snapshot.diagnosticTruncated === true,
+    };
+  }
+
+  async #launcherStartupFailure(
+    ownsProviderLifetime: boolean,
+    exitCode: number | null,
+    deadline: ProviderStartupDeadline,
+  ): Promise<HopperError> {
+    const process = this.#process;
+    // Descendants may inherit the helper's pipes. Bound drainage independently
+    // from readiness, and report whether producer output actually closed.
+    const outputClosed =
+      (await process?.waitForOutputClose(
+        Math.min(1_000, deadline.remainingMs()),
+      )) ?? false;
+    const launcherFailure = this.#launcherOutcome(outputClosed);
+    if (ownsProviderLifetime)
+      return new HopperProcessError(
+        exitCode,
+        this.#launcherFailureDiagnostic,
+        undefined,
+        undefined,
+        "exited",
+        "launch",
+        launcherFailure,
+      );
+    return new HopperStartError({
+      userMessage:
+        "Hopper's launcher helper failed before bridge readiness. Review details.launcher and complete Hopper setup before retrying.",
+      ...(launcherFailure === undefined ? {} : { launcherFailure }),
+    });
   }
 
   async #request(
@@ -432,15 +624,28 @@ export class HopperClient {
     const socket = this.#socket;
     const token = this.#token;
     if (socket === undefined || socket.destroyed || token === undefined) {
-      return err(new HopperProcessError(null, undefined, method, id));
+      return this.#unavailableRequest(
+        new HopperProcessError(
+          null,
+          undefined,
+          method,
+          id,
+          "unreachable",
+          hopperOperationStage(method),
+        ),
+      );
     }
     if (options.signal?.aborted === true)
       return err(new HopperCancelledError());
     const startedAt = performance.now();
     const result = await this.#requests.run(id, method, params, {
       ...(options.signal === undefined ? {} : { signal: options.signal }),
+      ...(options.timeoutMs === undefined
+        ? {}
+        : { timeoutMs: options.timeoutMs }),
       ...(options.progress !== undefined ? { progress: options.progress } : {}),
     });
+    this.#retainRequestHealth(result, id, method);
     this.#logger[result.ok ? "debug" : "warn"](
       {
         method,
@@ -525,10 +730,18 @@ export class HopperClient {
       type: "launcher-exit",
       code: event.code,
     });
-    if (launch.ownsProcessLifetime && !this.#closing)
+    if (launch.providerLifetime === "launcher-process" && !this.#closing) {
+      this.#rememberExit(event.code);
       this.#failAll(
-        new HopperProcessError(event.code, this.#launcherFailureDiagnostic),
+        new HopperProcessError(
+          event.code,
+          this.#launcherFailureDiagnostic,
+          undefined,
+          undefined,
+          "exited",
+        ),
       );
+    }
   }
 
   #abortProtocol(message: string, cause?: Error): void {
@@ -539,7 +752,120 @@ export class HopperClient {
   #failAll(error: HopperError): void {
     this.#requests.failAll(error);
   }
+
+  #unavailableRequest(
+    error: HopperProcessError,
+  ): Result<JsonValue, HopperProcessError> {
+    this.#rememberProcessFailure(
+      error,
+      error.requestId === undefined || error.operation === undefined
+        ? []
+        : [{ requestId: error.requestId, operation: error.operation }],
+    );
+    return err(error);
+  }
+
+  #retainRequestHealth(
+    result: Result<JsonValue, HopperError>,
+    requestId: number,
+    operation: string,
+  ): void {
+    if (this.#closing) return;
+    if (result.ok) return;
+    if (!(result.error instanceof HopperProcessError)) return;
+    this.#rememberProcessFailure(result.error, [
+      {
+        requestId: result.error.requestId ?? requestId,
+        operation: result.error.operation ?? operation,
+      },
+    ]);
+  }
+
+  #rememberExit(code: number | null): void {
+    if (this.#closing) return;
+    const previous = this.#operationFailure;
+    this.#operationFailure = {
+      state: "exited",
+      exitCode: code ?? previous?.exitCode ?? null,
+      startupFailure:
+        hopperStartupFailure(code) !== undefined ||
+        previous?.startupFailure === true,
+      requests: previous?.requests ?? [],
+    };
+  }
+
+  #rememberProcessFailure(
+    error: HopperProcessError,
+    requests: readonly FailedProviderRequest[],
+  ): void {
+    if (this.#closing) return;
+    const previous = this.#operationFailure;
+    const state = processFailureState(error);
+    const startupFailure =
+      error.stage === "launch" ||
+      error.failureCode !== undefined ||
+      previous?.startupFailure === true;
+    const merged = mergeFailedRequests(previous?.requests ?? [], requests);
+    if (
+      previous !== undefined &&
+      PROCESS_FAILURE_RANK[previous.state] > PROCESS_FAILURE_RANK[state]
+    ) {
+      this.#operationFailure = {
+        ...previous,
+        startupFailure,
+        requests: merged,
+      };
+      return;
+    }
+    this.#operationFailure = {
+      state,
+      exitCode:
+        state === "exited"
+          ? (error.exitCode ?? previous?.exitCode ?? null)
+          : null,
+      startupFailure,
+      requests: merged,
+    };
+  }
 }
+
+interface FailedProviderRequest {
+  readonly requestId: number;
+  readonly operation: string;
+}
+
+interface OperationFailureRecord {
+  readonly state: "exited" | "unreachable" | "unknown" | "not_started";
+  readonly exitCode: number | null;
+  readonly startupFailure: boolean;
+  readonly requests: readonly FailedProviderRequest[];
+}
+
+const PROCESS_FAILURE_RANK = {
+  not_started: 0,
+  unknown: 0,
+  unreachable: 1,
+  exited: 2,
+} as const;
+
+const processFailureState = (
+  error: HopperProcessError,
+): OperationFailureRecord["state"] =>
+  error.providerState === "exited" || error.exitCode !== null
+    ? "exited"
+    : error.providerState;
+
+const mergeFailedRequests = (
+  current: readonly FailedProviderRequest[],
+  added: readonly FailedProviderRequest[],
+): readonly FailedProviderRequest[] => {
+  const byId = new Map<number, FailedProviderRequest>();
+  for (const request of [...current, ...added])
+    byId.set(request.requestId, request);
+  return [...byId.values()].sort(
+    (left, right) => left.requestId - right.requestId,
+  );
+};
 
 const isAborted = (signal?: AbortSignal): boolean => signal?.aborted === true;
 

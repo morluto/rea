@@ -9,6 +9,15 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { decodeNibArchive } from "../../../src/artifacts/apple/NibArchive.js";
 import { analyzeInterfaceBuilderBundle } from "../../../src/artifacts/apple/InterfaceBuilderAnalysis.js";
 
+import { interfaceBuilderAnalysisSchema } from "../../../src/domain/apple/interfaceBuilderGraph.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
+import {
+  createInterfaceBuilderUidFixture,
+  expectInterfaceBuilderUidCase,
+  interfaceBuilderUidCases,
+} from "../../fixtures/interfaceBuilderMalformedUid.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
+
 const compile = promisify(execFile);
 
 const compileNestedViews = async (depth: number, withWindow = false) => {
@@ -173,6 +182,52 @@ describe.skipIf(process.platform !== "darwin")(
             facet: "hierarchy:Contents/Resources/Main.nib",
             status: "partial",
           }),
+        );
+      },
+    );
+  },
+);
+
+// Selected by the existing native Apple CI job; no workflow change is needed.
+describe.skipIf(process.platform !== "darwin")(
+  "Foundation malformed hierarchy references",
+  () => {
+    it.each(interfaceBuilderUidCases)(
+      "filesystem reports %s hierarchy coverage and original bytes",
+      async (selectedCase) => {
+        const fixture = await createInterfaceBuilderUidFixture(selectedCase);
+        const result = await analyzeInterfaceBuilderBundle({
+          bundlePath: fixture.app,
+          targetSha256: "f".repeat(64),
+        });
+        expectInterfaceBuilderUidCase(
+          result,
+          selectedCase,
+          fixture.bytes,
+          fixture.oracle,
+        );
+      },
+    );
+    cliTest.for(interfaceBuilderUidCases)(
+      "built CLI reports $0 hierarchy coverage and original bytes",
+      async (selectedCase, { cli }) => {
+        const fixture = await createInterfaceBuilderUidFixture(selectedCase);
+        const output = await cli.run({
+          arguments: ["decode-interface-builder", fixture.app, "--json"],
+          environment: {
+            REA_LOG_LEVEL: "silent",
+            REA_ANALYSIS_PROVIDER: "auto",
+          },
+        });
+        expect(output.exitCode).toBe(0);
+        const result = interfaceBuilderAnalysisSchema.parse(
+          parseEvidence(output.json).normalized_result,
+        );
+        expectInterfaceBuilderUidCase(
+          result,
+          selectedCase,
+          fixture.bytes,
+          fixture.oracle,
         );
       },
     );

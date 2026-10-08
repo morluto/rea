@@ -21,10 +21,10 @@ REA is a layered ESM TypeScript application. Dependencies flow inward from pure 
 
 - `src/domain/` owns pure provider-neutral semantics; `src/contracts/` owns caller-visible schemas and the canonical tool inventory.
 - `src/hopper/`, `src/ghidra/`, `src/ida/`, `src/browser/`, `src/inspector/`, `src/native/`, `src/artifacts/`, and `src/dotnet/` own provider-specific boundaries. Keep provider protocols out of domain and application code.
-- `src/application/` composes shared CLI/MCP workflows; `src/server/` translates MCP requests; `src/cli.ts` and `src/main.ts` are the CLI and MCP entry points.
-- `src/process/` owns shared process lifecycle primitives, not provider wire protocols. `bridge/` contains provider-side adapters.
+- `src/application/` composes shared CLI/MCP workflows, including Evidence provenance, unknowns, and eligible snapshot bindings; `src/server/` translates MCP requests; `src/cli.ts` and `src/main.ts` are the CLI and MCP entry points.
+- `src/process/` owns shared process lifecycle primitives, not provider wire protocols. Reuse its supervision and identity primitives before adding provider-local lifecycle code; a PID and executable pathname alone do not establish ownership after exit or reuse. `bridge/` contains provider-side adapters.
 - `tests/` contains unit, composition, boundary, acceptance, and conformance tests. `scripts/verify-*` and capability directories under `scripts/verify/` contain real-toolchain checks.
-- `docs/product-catalog.json` is generated. Update its source contracts and regenerate it; do not edit it directly.
+- `docs/public/product-catalog.json`, `docs/verification/managed-conformance-*.json`, and `skills/` are ignored build outputs. Update source contracts and authored instructions in `skill-src/`, then run `npm run build:cached`; never commit derived catalog digests or portable conformance projections.
 - `src/generatedMcpToolCatalog.ts` is build-generated and gitignored. Never commit it; resolve any trace of it in merges by deleting it and running `npm run build:cached`.
 
 ## Build, Test, and Development Commands
@@ -36,7 +36,7 @@ REA is a layered ESM TypeScript application. Dependencies flow inward from pure 
 - `npm run check:changed`: run cached static checks and source tests affected since the branch merge base (default `origin/main`).
 - `npm run check:fast`: run cached typecheck and lint checks.
 - `npm run check:pr`: opt into the complete local deterministic gate and generated-document checks for broad changes; CI owns full coverage. Routine iterations need focused tests and relevant checks, not the whole gate each time.
-- `npm run docs:check`: check committed generated documents; `npm run docs:generate` regenerates them.
+- `npm run docs:check`: build and validate generated documents for the current checkout; `npm run docs:generate` regenerates them. CI retains ignored outputs as artifacts and does not push snapshot commits to feature branches.
 - For provider-dependent changes, see [docs/testing.md](docs/testing.md) and run the matching real-provider verification.
 - Keep each verification lane's prerequisites limited to the claim it checks. Use host-native fixtures for host/provider acceptance; put optional cross-target formats and their external toolchains in a separate lane. Preflight required commands and report the missing dependency and lane clearly.
 
@@ -54,9 +54,13 @@ Use ESM TypeScript, two-space indentation, and the committed Oxfmt configuration
 
 Treat a boundary as a contract between the producer's actual representation and the consumer's required meaning. When implementing or auditing a boundary, trace the value through parsing, normalization, authorization, serialization, and the CLI/MCP result. Establish affected callers from their code paths; similar tool names or workflows do not prove that they share a schema or failure mode.
 
-Keep portable evidence and scenario validation distinct from host-native execution checks. Absolute filesystem paths, file URLs, and HTTP paths have different semantics; do not substitute one platform's syntax for the domain concept. Interpret provider metadata according to its documented or observed producer behavior. When a transformation loses information, preserve the reported value and an explicit unknown rather than guessing a canonical identity.
+When changing boundary behavior, inspect adjacent input representations, failure paths, and affected callers, and correct the underlying assumption across those cases.
 
-Preserve meaningful failure reasons through application and adapter layers. Malformed input is distinct from an unsupported target, unavailable provider, or host operating-system permission denial. Diagnostics should identify the failed constraint and the target or lifecycle request it applies to. Recovery advice must address that reason and point to an available workflow; generic catches must not erase actionable validation details.
+Keep portable evidence and scenario validation distinct from host-native execution checks. Absolute filesystem paths, file URLs, and HTTP paths have different semantics; do not substitute one platform's syntax for the domain concept. Interpret provider metadata according to its documented or observed producer behavior. Keep values used for identity, provenance, matching, and path resolution separate from display formatting. When normalization loses information, preserve the source value and an explicit unknown; display placeholders must not feed back into lookup or selection.
+
+Preserve meaningful failure reasons through application and adapter layers. Malformed input is distinct from an unsupported target, unavailable provider, or host operating-system permission denial. Diagnostics should identify the failed constraint and the target or lifecycle request it applies to. Recovery advice must address that reason and point to an available workflow; generic catches must not erase actionable validation details. Preserve collected observations on execution failure independently of whether cleanup succeeds.
+
+Preserve partial native facts. A shared schema must not require one provider's full metadata before another provider can report the facts it observes. Keep observed classifications and endpoints alongside explicit unknowns for unsupported flags; never invent missing flags or discard known facts to satisfy an all-or-nothing availability shape. Before claiming a native API lacks a capability, inspect the installed API and probe representative producer objects. Exercise the resulting partial representation through CLI, MCP, and composed results such as function dossiers.
 
 Leave meaningful target, action, capture, and output choices to the agent. A selected operation already expresses intent; do not require approval booleans or repeated permission declarations. Trace each setting to its consumer: remove ignored options and single-value confirmations, derive built-in lifecycle behavior, and supply defaults for omitted optional metadata. Report actual effects and limitations where they help interpret results rather than asking callers to restate them.
 
@@ -80,13 +84,15 @@ Let agents compose experiments with ordinary commands, scripts, and local fixtur
 - Use **observe/capture** only when runtime activity is required, and declare authority and lifecycle effects in the contract.
 - Extend an existing tool when intent and result contract are unchanged. Add a tool for a distinct analyst outcome or materially different authority.
 - Keep caller-facing names and results provider-neutral. Put engine-specific behavior in provider adapters and report each provider's exact coverage.
-- Keep results complete by default. Add a limit only when it follows from a real format, protocol, authority, or resource-safety constraint; explain truncation and unsupported facets. Keep observed, derived, inferred, and unknown results distinct.
+- Keep results complete by default. Add a limit only when it follows from a real format, protocol, authority, or resource-safety constraint; explain truncation and unsupported facets. Account for representation expansion and products of independently bounded dimensions before allocating or retaining output. Derive facet completeness from what was examined and exhausted, not an empty failure list. Keep observed, derived, inferred, and unknown results distinct.
 - Include artifact identity, source locations, Evidence references, actionable errors, and relevant limitations when they affect conclusions. Return the evidence needed for the next analysis inline rather than requiring a resource or identifier lookup.
 - Implement shared application workflows behind CLI and MCP adapters. Update canonical contracts and generated catalog together.
 
 See [docs/tool-design.md](docs/tool-design.md) for the design checklist. When usability or tool selection changes, evaluate representative CLI/MCP tasks as well as schema and transport behavior.
 
 ## Testing Guidelines
+
+Prioritize real end-to-end workflows, boundary integration, and golden producer data. Keep a focused module test when it covers a distinct failure or semantic case absent from those workflows; test paths do not establish depth. See [docs/testing.md](docs/testing.md) for pruning and classification rules.
 
 Name tests `*.test.ts`. Use Vitest and production seams (`tests/fixtures/`) rather than module mocks. Domain tests assert pure behavior; adapter tests use fake launcher/socket seams; MCP tests connect with the client SDK version pinned in `package.json`. Preserve the canonical tool inventory defined by `TOOL_CONTRACTS` and verified through `CATALOG_IDENTITY` and generated product metadata. Cover malformed input, cancellation, lifecycle cleanup, and actual format, protocol, host-permission, and target-identity boundaries. Do not add tests that merely freeze arbitrary caps or prescribed call sequences. Real Hopper, Ghidra, browser, managed conformance, and any real managed-tool claims cannot be replaced by mocks; use the corresponding `verify:*` command.
 
@@ -100,7 +106,7 @@ Development requires Node.js 24.18.0 and npm 11.16.0 (`.nvmrc` and `packageManag
 
 ## Commit & Pull Request Guidelines
 
-Use Conventional Commit subjects because Release Please derives versions and changelogs from them. Examples: `feat: add historical source import`, `fix(process): stop timers after exit`, and `docs: update architecture`. Use `!` or a `BREAKING CHANGE:` footer for breaking changes. Pull request titles must follow the same format because squash merges use the title as the release commit. Pull requests should describe contract or behavior changes, list verification commands, link issues, and include sanitized MCP examples when schemas change. State whether real Hopper/Ghidra verification was performed. Never commit binaries, Hopper or Ghidra project documents, credentials, `dist/`, `node_modules/`, or local planning artifacts (e.g. `.codex/`).
+Use Conventional Commit subjects because Release Please derives changelogs from them. Release Please uses `always-bump-minor`: every release increments minor, including breaking changes. Examples: `feat: add historical source import`, `fix(process): stop timers after exit`, and `docs: update architecture`. Use `!` or a `BREAKING CHANGE:` footer for breaking changes. Pull request titles must follow the same format because squash merges use the title as the release commit. Pull requests should describe contract or behavior changes, list verification commands, link issues, and include sanitized MCP examples when schemas change. State whether real Hopper/Ghidra verification was performed. Never commit binaries, Hopper or Ghidra project documents, credentials, `dist/`, `node_modules/`, or local planning artifacts (e.g. `.codex/`).
 
 <!-- BEGIN:turborepo-agent-rules -->
 

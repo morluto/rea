@@ -109,6 +109,11 @@ export class JadxMcpTransport implements Transport {
     return this.#supervisor?.snapshot().stderr.text ?? "";
   }
 
+  /** Whether the retained startup/operation diagnostics lost bytes. */
+  diagnosticsTruncated(): boolean {
+    return this.#supervisor?.snapshot().diagnosticTruncated ?? false;
+  }
+
   /** Preserve the failed protocol/resource constraint after the SDK closes requests. */
   failureReason(): string | null {
     return this.#failure;

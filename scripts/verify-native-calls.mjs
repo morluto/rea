@@ -27,6 +27,7 @@ for (const tool of ["clang", "lldb", "codesign", "nm"])
       { cause },
     );
   }
+const developerMode = await exec("/usr/sbin/DevToolsSecurity", ["-status"]);
 
 const SOURCE = fileURLToPath(
   new URL("../tests/conformance/native/calls.m", import.meta.url),
@@ -43,13 +44,17 @@ const INPUT = {
     { kind: "function", name: "rea_call_add" },
   ],
   environment: { REA_CALLS_MARKER: "observed" },
+  // Entry stops and Objective-C runtime reads slow the real target on busy hosts.
+  duration_ms: 30_000,
   argument_registers: 4,
   backtrace_frames: 1,
 };
+const CLI_TIMEOUT_MS = 180_000;
 
 /** Pointer-free facts that two runs of the same scenario must share. */
 const stable = (result) =>
   result.events.map((event) => ({
+    breakpoint_index: event.breakpoint_index,
     symbol: event.symbol,
     file_address: event.file_address,
     selector: event.selector,
@@ -68,17 +73,23 @@ const symbolAddress = async (binary, symbol) => {
 };
 
 const checkScenario = async (binary) => {
-  const result = await artifactCli("observe-native-calls", binary, [
-    JSON.stringify(INPUT),
-  ]);
+  const result = await artifactCli(
+    "observe-native-calls",
+    binary,
+    [JSON.stringify(INPUT)],
+    { timeoutMs: CLI_TIMEOUT_MS },
+  );
   assert.equal(result.process.outcome, "exited");
   assert.equal(result.process.exit_status, 0);
   assert.equal(result.process.terminated, true);
   assert.match(result.process.stdout.text, /^world x0 40\n/u);
   assert.match(result.process.stdout.text, /marker observed\n$/u);
+  assert.equal(result.process.stdout.complete, true);
+  assert.equal(result.process.stderr.complete, true);
   assert.deepEqual(result.coverage, {
     status: "complete",
     event_limit_reached: false,
+    resource_limit_reached: false,
     unresolved_breakpoints: [],
   });
   const greet = result.events.filter(({ symbol }) => symbol === GREET);
@@ -115,33 +126,67 @@ const alive = (pid) => {
 };
 
 const checkBounds = async (binary) => {
-  const limited = await artifactCli("observe-native-calls", binary, [
-    JSON.stringify({
-      breakpoints: [{ kind: "function", name: "nanosleep" }],
-      arguments: ["--wait"],
-      max_events: 2,
-      duration_ms: 30_000,
-    }),
-  ]);
+  const flooded = await artifactCli(
+    "observe-native-calls",
+    binary,
+    [
+      JSON.stringify({
+        breakpoints: [{ kind: "function", name: "rea_never_called" }],
+        arguments: ["--flood"],
+        duration_ms: 30_000,
+      }),
+    ],
+    { timeoutMs: CLI_TIMEOUT_MS },
+  );
+  assert.equal(flooded.process.outcome, "exited");
+  assert.equal(flooded.process.stdout.bytes, 2 * 1024 * 1024);
+  assert.equal(flooded.process.stderr.bytes, 2 * 1024 * 1024);
+  assert.equal(flooded.process.stdout.text.length, 1024 * 1024);
+  assert.equal(flooded.process.stderr.text.length, 1024 * 1024);
+  assert.equal(flooded.process.stdout.text, "O".repeat(1024 * 1024));
+  assert.equal(flooded.process.stderr.text, "E".repeat(1024 * 1024));
+  assert.equal(flooded.process.stdout.truncated, true);
+  assert.equal(flooded.process.stderr.truncated, true);
+  assert.equal(flooded.process.stdout.complete, true);
+  assert.equal(flooded.process.stderr.complete, true);
+
+  const limited = await artifactCli(
+    "observe-native-calls",
+    binary,
+    [
+      JSON.stringify({
+        breakpoints: [{ kind: "function", name: "rea_call_add" }],
+        max_events: 2,
+        duration_ms: 30_000,
+      }),
+    ],
+    { timeoutMs: CLI_TIMEOUT_MS },
+  );
   assert.equal(limited.process.outcome, "event-limit");
   assert.equal(limited.events.length, 2);
   assert.equal(limited.process.terminated, true);
   assert.equal(alive(limited.process.pid), false);
-  const elapsed = await artifactCli("observe-native-calls", binary, [
-    JSON.stringify({
-      breakpoints: [{ kind: "function", name: "rea_call_add" }],
-      arguments: ["--wait"],
-      duration_ms: 1_500,
-    }),
-  ]);
+  const elapsed = await artifactCli(
+    "observe-native-calls",
+    binary,
+    [
+      JSON.stringify({
+        breakpoints: [{ kind: "function", name: "rea_call_add" }],
+        arguments: ["--wait"],
+        duration_ms: 1_500,
+      }),
+    ],
+    { timeoutMs: CLI_TIMEOUT_MS },
+  );
   assert.equal(elapsed.process.outcome, "duration-elapsed");
   assert.equal(elapsed.events.length, 0);
   assert.equal(alive(elapsed.process.pid), false);
 };
 
 const cliFailure = async (binary) => {
+  let output;
   try {
-    await exec(
+    const completed = await exec(
       process.execPath,
       [
         fileURLToPath(new URL("rea.mjs", import.meta.url)),
@@ -150,12 +195,16 @@ const cliFailure = async (binary) => {
         JSON.stringify(INPUT),
         "--json",
       ],
-      { env: { ...process.env, REA_LOG_LEVEL: "silent" }, timeout: 120_000 },
+      {
+        env: { ...process.env, REA_LOG_LEVEL: "silent" },
+        timeout: CLI_TIMEOUT_MS,
+      },
     );
+    output = completed.stdout;
   } catch (cause) {
     return JSON.parse(cause.stdout);
   }
-  throw new Error("observe-native-calls unexpectedly succeeded");
+  throw new Error(`observe-native-calls unexpectedly succeeded: ${output}`);
 };
 
 /** Hardened runtime blocks the debugger unless get-task-allow is granted. */
@@ -174,6 +223,22 @@ const checkHardenedRuntime = async (directory, binary) => {
   const denied = await cliFailure(blocked);
   assert.equal(denied.code, "capability_unavailable");
   assert.match(denied.details.reason, /^debugger-attach-denied: /u);
+  await withArtifactMcp(blocked, async (client) => {
+    const deniedMcp = await client.callTool(
+      {
+        name: "observe_native_calls",
+        arguments: INPUT,
+      },
+      { timeout: CLI_TIMEOUT_MS },
+    );
+    assert.equal(deniedMcp.isError, true, JSON.stringify(deniedMcp));
+    assert.equal(deniedMcp.structuredContent.error.code, denied.code);
+    assert.match(
+      deniedMcp.structuredContent.error.details.reason,
+      /^debugger-attach-denied: /u,
+    );
+    assert.ok(deniedMcp.structuredContent.error.details.partial_observation);
+  });
   const allowed = join(directory, "debuggable");
   const entitlements = join(directory, "get-task-allow.plist");
   await writeFile(
@@ -215,14 +280,55 @@ try {
       "observe_native_calls",
       INPUT,
     );
+    assert.equal(
+      viaMcp.process.outcome,
+      "exited",
+      JSON.stringify(viaMcp.coverage),
+    );
     assert.deepEqual(stable(viaMcp), stable(viaCli));
     assert.equal(viaMcp.process.stdout.text, viaCli.process.stdout.text);
+
+    // Two caller selections may resolve to one address. Each must retain its
+    // own hit; consuming only the first stop-reason ID loses the second.
+    const overlapping = {
+      breakpoints: [
+        { kind: "function", name: "rea_call_add" },
+        { kind: "function", name: "rea_call_add", module: basename(binary) },
+      ],
+      duration_ms: 30_000,
+      argument_registers: 2,
+    };
+    const paired = await artifactMcpResult(
+      client,
+      "observe_native_calls",
+      overlapping,
+    );
+    assert.equal(paired.process.outcome, "exited");
+    assert.equal(paired.events.length, 6);
+    for (const index of [0, 1]) {
+      const hits = paired.events.filter(
+        (event) => event.breakpoint_index === index,
+      );
+      assert.deepEqual(
+        hits.map((event) => event.registers[0].value),
+        ["0x0", "0x1", "0x2"],
+      );
+      assert.ok(hits.every((event) => event.symbol === "rea_call_add"));
+    }
+    const capped = await artifactMcpResult(client, "observe_native_calls", {
+      ...overlapping,
+      max_events: 2,
+    });
+    assert.equal(capped.process.outcome, "event-limit");
+    assert.equal(capped.events.length, 2);
+    assert.equal(capped.process.terminated, true);
   });
   await checkBounds(binary);
   await checkHardenedRuntime(directory, binary);
   console.log(
     JSON.stringify({
       ok: true,
+      developer_mode: developerMode.stdout.trim(),
       mocked: false,
       cli: true,
       stdio_mcp: true,

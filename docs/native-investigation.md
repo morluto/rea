@@ -12,6 +12,27 @@ input file and include the observed lipo slice offset for universal binaries.
 If that offset is unavailable, segment evidence locations are omitted with an
 explicit limitation; architecture inventory locations remain available.
 
+Hopper's `address_to_file_offset` combines the native image-relative mapping with
+original-file coordinates only after checking the source against the session's
+SHA-256. FAT tables and embedded Mach-O headers come from that same hashing pass.
+A changed or nonregular source reports `artifact_changed`; an unreadable or
+missing source reports its access or filesystem failure. Those errors retain the native offset,
+loaded header and provider source path in `details.partial_observation`, with the
+original-file coordinate explicitly unavailable. Restore the original bytes or
+reopen the changed executable to obtain verified coordinates. Snapshot replay
+remains historical evidence for its recorded artifact identity.
+
+A selected Hopper database's digest identifies the database rather than its
+original executable. Original-file mapping is unavailable for that selection;
+native mapping facts remain in partial evidence, and `read_bytes` still reads
+the loaded database. Open the original executable to verify source coordinates.
+
+Native Xcode command execution uses shared process supervision with a 60-second
+deadline and a 64 MiB aggregate stdout/stderr budget. Timeout, cancellation,
+stream failure, and output exhaustion retain the captured output, exit details,
+and cleanup outcome in the error result. Truncated output is never parsed as a
+complete observation.
+
 - `trace_dylib_resolution` / `rea trace-dylib-resolution <app-or-mach-o>`
   parses Mach-O load commands in TypeScript and follows dyld's path expansion
   for every executable in an app bundle, or for one Mach-O within its directory.
@@ -37,6 +58,28 @@ explicit limitation; architecture inventory locations remain available.
   connections and controller/class names. `verify:interface-builder` compiles
   a source-owned AppKit XIB with `ibtool`. Storyboards require an installed
   iOS platform; unsupported archive forms remain explicit.
+  XML plist archives accept UTF-8 and BOM-marked UTF-16 in either byte order.
+  App bundle `Info.plist` executable resolution uses the same decoder as keyed
+  archives and Interface Builder. The decoder consumes an initial
+  BOM and rejects malformed byte sequences, unsupported encoding declarations,
+  and declarations that disagree with the detected encoding. It never substitutes
+  UTF-8 for a declared encoding it cannot process. Archive and evidence digests
+  still identify the original serialized bytes. Bundle resolution reports
+  malformed bytes and unsupported encodings against the original plist path
+  before looking up the executable. Interface Builder decoding
+  limits aggregate input archives to 32 MiB.
+  Before decoding, it also bounds the serialized structure: expanded binary
+  plist references, NIB table records, XML elements and text, plus their
+  projected representations must fit the 256 MiB aggregate decode budget.
+  NIB string values, data, property names and class names are charged at each
+  projected JSON occurrence, including when the archive reuses one source
+  value. Binary plist data projection also accounts for the temporary byte
+  copy made by the pinned decoder projection. These are format-derived
+  representation reservations, not exact heap measurements or a process-wide
+  heap ceiling.
+  Archives beyond either aggregate budget are omitted with their paths and an
+  explicitly partial `archive_decode` facet; previously decoded documents and
+  their identities remain available.
 - `inspect_native_dispatch_metadata` /
   `rea inspect-native-dispatch-metadata <app-or-binary>` prefers a validated macOS Mach-O byte reader. It decodes
   64-bit little-endian Objective-C class/metaclass records, superclass pointers,
@@ -62,9 +105,69 @@ explicit limitation; architecture inventory locations remain available.
   partial coverage. Other providers retain the
   existing symbol-based inventory with its narrower coverage.
 
+## Exact CLI selectors
+
+`function`, `instructions` and `decompile` accept `--procedure=<name-or-address>`;
+`xrefs` accepts `--address=<name-or-address>`. `search` accepts `--pattern=<text>`
+and `trace` accepts `--query=<text>`. These alternatives preserve names and text
+that begin with a dash, including Objective-C names such as
+`rea function ./app '--procedure=-[REAWidget delegate]' --provider hopper --format json`.
+Use the equals form when the value resembles a CLI flag, for example
+`rea trace ./app --query=--help --provider hopper --format json`.
+The existing positional forms remain available. Missing selectors and conflicting
+positional/named values fail before analysis starts; identical selections agree.
+
 ## Native instruction, call and type primitives
 
 Ghidra supplies three exact-object operations:
+
+Ghidra accepts hexadecimal addresses with or without a `0x` prefix, in either
+letter case, and explicit address-space coordinates such as `EXTERNAL:0x1`.
+Results use canonical lowercase hexadecimal offsets. For a procedure identifier,
+an explicit `0x` or address-space prefix selects an address; otherwise an exact
+database symbol name takes precedence over a bare hexadecimal address. Thus a
+function renamed to `dead` remains selectable by name. Use the names returned
+by the inventory, including their namespaces and any platform symbol prefix.
+Overloads can share a fully qualified name; ambiguity errors return every
+matching entry address so the caller can select the intended function directly.
+
+`resolve_containing_procedure` also resolves an exact external entry. Its empty
+body remains explicit; nearby external addresses do not inherit that identity.
+
+Ghidra function references cover the complete function-body AddressSet and its
+exact entry, including references into instruction interiors and references
+from embedded data. Addresses inside an enclosing span but outside the owned
+body are excluded. `procedure_references` returns internal and external edges;
+`analyze_function` omits incoming edges whose sources belong to the same function.
+The reference collector's semantics participate in the analysis profile, so
+older snapshots cannot replay the former incomplete results under this profile.
+
+Ghidra regex searches use Java Pattern semantics. If compiling or matching a
+pattern exhausts the engine's stack, REA returns a resource constraint and
+preserves the active database and annotations. Retry in literal mode or simplify
+the regex; successful literal searches retain complete matching strings.
+Cancelling an active request terminates the ephemeral database and discards its
+annotations. REA retains the selected target and imports the original artifact
+again on the next Ghidra query.
+
+Opening the same target and profile again retains the live database, including
+annotations. It does not make those edits eligible for an immutable snapshot.
+Snapshot closes drain earlier provider requests before saving and keep later
+requests waiting until the save and close finish. A concurrent successful edit
+therefore rejects the snapshot save and leaves the edited session open.
+After metadata edits, snapshot saves and imports remain unavailable in that
+session. Use `export_evidence_bundle` to retain the observations, close without
+`snapshot_path`, and reopen the target before importing or saving a snapshot.
+
+Ghidra checks its private import copy against the artifact digest selected by
+`open_binary`. If the source changes before that copy is acquired, the query
+reports `artifact_changed` with the selected path and both digests. Reopen the
+stable target to acquire its current identity. An already imported database
+continues to describe its captured bytes even if the original path is changed
+or removed; this identity failure does not mark the Ghidra installation unavailable.
+On Linux and macOS, an unreadable source reports `access_denied`; a removed or
+nonregular replacement reports `artifact_changed`. Source copying is cancellable
+and never replaces an existing private snapshot.
 
 ```bash
 rea inspect-native-instruction <binary> <address> --provider ghidra
@@ -188,15 +291,41 @@ arguments. The receiver class comes from LLDB's Objective-C runtime reader
 without running target code; no expression is evaluated, and REA never
 attaches to a process it did not launch.
 
-The run ends when the process exits, `max_events` entries are recorded, or
-`duration_ms` elapses. In the last two cases the process is killed, and REA
-confirms that it is gone. The result reports:
+The run ends when the process exits, `max_events` entries are recorded,
+`duration_ms` elapses, or the aggregate trace resource budget is exhausted.
+Bounded termination reports partial coverage. REA checks process termination
+using a launch-time OS start identity; if ownership or cleanup cannot be
+verified, the result or error preserves that uncertainty. The result reports:
 
-- the outcome, exit status and captured stdout/stderr (1 MiB kept per stream);
+- the outcome, exit status and captured stdout/stderr (1 MiB kept per stream
+  while excess bytes are drained and counted without growing capture files).
+  Each stream reports `complete`; when draining could not finish, its byte
+  count is an observed lower bound and truncation is explicit;
+- caller-selected arguments, working directory, and environment overrides;
+- `selected_file_sha256` and LLDB module identity observations. These checks do
+  not pin the executable against concurrent mutation; `loaded_image_sha256`
+  remains unknown;
 - signal or exception stops;
 - every breakpoint's resolved locations; a breakpoint that matched no loaded
   code makes coverage partial;
 - limitations.
+
+The bridge limits retained event JSON to 8 MiB and caller frames to 65,536
+across the run. It checks admission before retaining another complete event;
+`resource-limit` reports which observations could not be completed without
+silently changing the requested event or frame settings.
+Resolved breakpoint locations have a separate aggregate 8 MiB metadata budget.
+If their details exceed it, `location_count` retains the full observed match
+count, coverage is partial, and `breakpoint_locations_truncated` is true. This
+post-run metadata limit does not imply that the target was killed.
+
+Accepted entries and signal stops are also flushed to a bounded 8 MiB journal.
+If cancellation, timeout, capture failure, or a later bridge error prevents a
+full result, the error retains this evidence in `details.partial_observation`
+with partial coverage. Available output prefixes remain inline; their byte
+counts are observed lower bounds when final drain counters are unavailable.
+The original failure classification and cleanup uncertainty remain separate.
+An interrupted journal row is ignored with an explicit limitation.
 
 Only entries are observed: return values, floating-point and stack arguments,
 and inlined or `objc_direct` calls are not. The target runs with the current
@@ -217,8 +346,17 @@ protected runtime DACLs, and handle-based path admission. See [Windows Ghidra P0
 [issue #527](https://github.com/morluto/rea/issues/527).
 On Linux and macOS, `annotate_native_function` atomically edits a function name
 and entry comments in the ephemeral database, returning refreshed analysis
-without changing executable bytes. Windows P0 remains read-only. Ghidra has no
+without changing executable bytes. Annotation text must contain no NUL or
+unpaired Unicode surrogate; a rejection identifies the field and UTF-16 index
+and leaves every annotation unchanged. CRLF, supplementary Unicode characters,
+and combining characters are preserved. Windows P0 remains read-only. Ghidra has no
 GUI authority, and REA never falls back automatically to Hopper.
+Ghidra name edits preserve the existing namespace. Supply either a leaf name
+such as `renamed` or a fully qualified name in that namespace, such as
+`alpha::renamed`. The returned qualified name can be reused as an idempotent
+rename input. Edits retain the existing namespace; other namespace-like text
+remains literal leaf-name text. A qualified name with an empty leaf is rejected
+before any comment or name is changed.
 
 - `npm run verify:ghidra`: host-native debug/stripped targets, native type layout,
   instruction/call facts, value dependencies and process/project cleanup.
@@ -238,3 +376,32 @@ GUI authority, and REA never falls back automatically to Hopper.
 macOS ARM64 is the real host verified during this implementation. Admission of
 macOS Intel does not claim an Intel verification run. Unsupported metadata and
 unresolved runtime/value semantics remain visible in results.
+
+## Interface Builder hierarchy coverage
+
+A keyed-archive hierarchy UID without an object-table entry marks the hierarchy
+as partial while preserving decoded objects and known links. UID 0 remains
+archived nil and does not count as a missing reference. Archive and evidence
+digests identify the original serialized bytes.
+
+## Keyed archive integer precision
+
+The archive reader observes XML number element types and binary number markers.
+Integers beyond the exact range of a JSON number are reported with the original
+decimal text as `{ "$plist_type": "integer", "decimal": "<exact digits>" }` when
+that source value can be associated unambiguously. Integral real values remain
+numbers. Colliding integer/real values, unclassified numbers, and malformed UID
+markers remain decoded with an explicit precision limitation. The limitation
+also counts observed unsafe integer literals, including observations outside the
+selected object page. Incomplete supplemental metadata produces an explicit
+precision note without rejecting an archive accepted by the byte decoder.
+Mixed XML number content (comments, CDATA, processing instructions or child
+elements) and integer text the supplemental reader cannot classify disable exact
+association and retain decoded numbers with that precision note. Nonnumeric
+`UID` and `CF$UID` dictionary values remain ordinary data and are projected
+recursively; numeric reference markers retain their original representation.
+
+Value projection preserves serialized node kinds, IDs, references and pagination.
+Exact and ambiguous value counts describe emitted root/object value instances;
+a root and an object may contain the same value. Archive digests identify the
+original bytes.

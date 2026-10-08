@@ -21,7 +21,7 @@ const executableAvailable = (path: string): boolean => {
   }
 };
 
-export const defaultHopperLauncherPath = (
+const defaultHopperLauncherPath = (
   platform: NodeJS.Platform = process.platform,
   homeDirectory: string = homedir(),
   executable: (path: string) => boolean = executableAvailable,

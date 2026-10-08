@@ -27,7 +27,9 @@ async function readReleaseWorkflow() {
   return z
     .object({
       on: z.record(z.string(), z.unknown()),
+      concurrency: z.object({ group: z.string() }),
       jobs: z.object({
+        "release-proposal": jobSchema,
         "release-please": jobSchema,
         publish: jobSchema,
         "publish-mcp": jobSchema,
@@ -80,9 +82,33 @@ it("validates the source before release creation and the prepared candidate befo
   }
 });
 
-it("requires explicit release preparation or publication instead of main pushes", async () => {
+it("refreshes a release proposal on main pushes without creating or publishing a release", async () => {
   const workflow = await readReleaseWorkflow();
-  expect(Object.keys(workflow.on)).toEqual(["workflow_dispatch"]);
+  expect(workflow.on.push).toEqual({ branches: ["main"] });
+  const proposal = workflow.jobs["release-proposal"];
+  expect(proposal.if).toBe("github.event_name == 'push'");
+  const action = proposal.steps.find((step) =>
+    step.uses?.startsWith("googleapis/release-please-action@"),
+  );
+  expect(action?.with).toMatchObject({
+    token: "${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}",
+    "target-branch": "main",
+    "skip-github-release": true,
+  });
+  expect(action?.with?.["skip-github-pull-request"]).not.toBe(true);
+  expect(workflow.jobs["release-please"].if).toBe(
+    "github.event_name == 'workflow_dispatch'",
+  );
+  for (const job of [workflow.jobs.publish, workflow.jobs["publish-mcp"]]) {
+    expect(job.if).toContain("inputs.phase == 'publish'");
+  }
+  expect(workflow.concurrency.group).toBe(
+    "release-${{ inputs.release_branch || github.ref_name }}",
+  );
+});
+
+it("keeps frozen candidate preparation and publication explicit", async () => {
+  const workflow = await readReleaseWorkflow();
   expect(workflow.on.workflow_dispatch).toMatchObject({
     inputs: {
       release_branch: { required: true, type: "string" },
@@ -103,11 +129,11 @@ it("requires explicit release preparation or publication instead of main pushes"
     "skip-github-release": "${{ inputs.phase == 'prepare' }}",
     "skip-github-pull-request": "${{ inputs.phase == 'publish' }}",
   });
-  const catalogCommit = workflow.jobs["release-please"].steps.find(
-    (step) => step.name === "Commit canonical release catalog",
+  const catalogValidation = workflow.jobs["release-please"].steps.find(
+    (step) => step.name === "Validate generated release documentation",
   );
-  expect(catalogCommit?.env?.GH_TOKEN).toBe(
-    "${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}",
+  expect(catalogValidation?.run).toBe(
+    "npm run docs:check && git diff --exit-code",
   );
 });
 
@@ -203,7 +229,7 @@ it("binds npm and MCP publication to the same immutable release SHA", async () =
     "Set up Node.js for generated documentation",
     "Install dependencies",
     "Regenerate release documentation",
-    "Commit canonical release catalog",
+    "Validate generated release documentation",
   ];
   for (const name of preparation) {
     expect(
@@ -212,6 +238,27 @@ it("binds npm and MCP publication to the same immutable release SHA", async () =
     ).toBe(
       "inputs.phase == 'prepare' && steps.release.outputs.prs_created == 'true'",
     );
+  }
+  const publishCommand = workflow.jobs.publish.steps.find(
+    (step) => step.name === "Publish",
+  )?.run;
+  expect(publishCommand).toContain("scripts/release-npm-tag.mjs");
+  expect(publishCommand).toContain(
+    'npm publish --access public --tag "${tag}"',
+  );
+  for (const [version, tag] of [
+    ["6.1.0", "latest"],
+    ["6.1.0-rc.1", "next"],
+  ] as const) {
+    const helper = new URL(
+      "../../../scripts/release-npm-tag.mjs",
+      import.meta.url,
+    );
+    const result = await execFileAsync(process.execPath, [
+      helper.pathname,
+      version,
+    ]);
+    expect(result.stdout).toBe(tag);
   }
 });
 

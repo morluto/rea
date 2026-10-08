@@ -70,6 +70,14 @@ describe.skipIf(process.platform !== "darwin")(
         expect(JSON.stringify(spanning.content)).toContain(
           "Each Swift symbol must be one line.",
         );
+        const invalidNativeString = await client.callTool({
+          name: "demangle_swift",
+          arguments: { symbols: ["$s4main\0FooV"] },
+        });
+        expect(invalidNativeString.isError).toBe(true);
+        expect(JSON.stringify(invalidNativeString.content)).toContain(
+          "Swift symbols cannot contain NUL.",
+        );
       },
     );
   },

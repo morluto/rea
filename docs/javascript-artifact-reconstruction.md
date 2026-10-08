@@ -100,17 +100,22 @@ a temporary output file larger than the running engine's string limit, verifies
 its bytes and digest, and removes it. Use `-- jsonl` for the compact JSONL check.
 Each check needs space for one output file plus a 1 GiB free-space reserve.
 
-Other CLI formats, `--token-count`, and MCP transport serialization still
-assemble whole strings. Field selection remains useful when the caller needs a
+Other CLI formats and `--token-count` still assemble whole strings.
+Field selection remains useful when the caller needs a
 smaller view, for example `--format json --filter-output
 evidence_id,normalized_result.statistics`. Streaming output does not bound the
 memory needed to construct the analysis graph itself.
-The separate large-response transport work is tracked in
-[#1053](https://github.com/morluto/rea/issues/1053) and
+MCP prepares the complete repeated response incrementally against the pinned
+SDK's 10 MiB stdio receive-buffer budget. Oversized results return an actionable
+transport constraint and the exact same-session Evidence reference. Use
+`trace_application_feature` to inspect a selected module's relationships, or
+`export_evidence_bundle` to write the complete canonical bundle without a
+document-sized allocation. Same-session analysis reads reuse authenticated
+immutable snapshots; foreign inline Evidence is still parsed and authenticated.
+See [MCP tool results](mcp-contracts.md#tool-results) for larger client buffers
+and `REA_MCP_MAX_RESPONSE_BYTES`. Follow-up results remain complete and can also
+exceed the transport budget. Compact result views are tracked separately in
 [#1050](https://github.com/morluto/rea/issues/1050).
-Client framing limits also apply: the pinned Node MCP SDK's stdio transport
-defaults to a 10 MiB buffer. Its caller-selected `maxBufferSize` must accommodate
-the complete response, including text and structured Evidence projections.
 
 ## What is reconstructed
 
@@ -120,6 +125,13 @@ SHA-256 digests, inventory IDs, ASAR container identity, and `.asar.unpacked`
 status. Direct ASAR inputs and filesystem-backed ASAR files nested beneath a
 directory are supported.
 
+JavaScript sources (`.js`, `.jsx`, `.mjs`, and `.cjs`) and TypeScript sources
+(`.ts`, `.tsx`, `.mts`, and `.cts`) are parsed as inert text; analysis does not
+execute them.
+
+JavaScript and HTML source ranges retain an initial UTF-8 BOM as one UTF-16
+code unit, matching the original bytes identified by the artifact digest.
+
 If an ASAR declares an unpacked companion entry but the corresponding
 `<archive>.unpacked` file is absent from the operator-supplied artifact set, REA
 keeps the ASAR occurrence with `hash_status: unavailable`, records an explicit
@@ -127,6 +139,9 @@ limitation, and does not create a content-addressed child artifact for those
 missing bytes. This allows static JavaScript/Electron reconstruction to proceed
 for the embedded files while preserving the missing native/resource bytes as an
 unknown instead of silently treating them as absent or verified.
+
+Plain `.ts` artifact sources use TypeScript syntax without JSX, including
+angle-bracket type assertions. `.tsx` and `.jsx` retain JSX parsing.
 
 Selected bounded text is then parsed as inert data to recover:
 
@@ -150,6 +165,12 @@ Selected bounded text is then parsed as inert data to recover:
   visible check enforces a complete policy;
 - utility-process entrypoints and native `.node` binding requests without
   parsing or executing the add-on.
+
+Overloaded `.open` calls use lexical receiver facts: ambient browser window and
+document receivers are treated as browsing-context or document operations,
+while locally shadowed receivers can still contribute network endpoint
+candidates. A template recovered with a parser error and no cooked value stays
+dynamic; its raw spelling is not treated as a valid JavaScript string.
 
 Each recovered bundle module retains the exact factory-source digest. A complete
 bounded AST also receives a `babel-ast-v1` structural fingerprint that ignores
@@ -212,6 +233,22 @@ These safeguards are not caller-selectable output budgets. Source-map parsing
 reports truncation when its format or parser safety boundary is reached. The
 application graph has no aggregate node, edge, root, or observation prefix cap.
 
+Semantic evaluation retains at most 256 distinct primitive candidates per
+expression and at most 1 MiB of worst-case JSON string bytes across a normalized
+primitive value's string candidates. The byte budget estimates six JSON bytes
+per UTF-16 code unit, the expansion bound for escaped strings, and bounds both
+retained candidate strings and temporary canonical-key serialization. This is
+an in-memory semantic allocation bound independent of CLI or MCP transport
+budgets. Source literal bytes remain in the parsed source and artifact evidence;
+when a normalized semantic value exceeds the bound, its value is unknown and
+coverage is partial. Expression
+evaluation and provenance walks stop after 256 nested levels. Union products
+and string lengths are checked before allocating combinations or concatenated
+strings. When a boundary is reached, the value stays unknown, semantic coverage
+becomes partial, and graph evidence retains the expression location and typed
+limiting reason. The number of unresolved alternatives is unknown; it is not
+reported as an exact omission count.
+
 Byte, entry, path, and graph-shape bounds are hard limits. The parse deadline is
 checked before and between bounded parsing and traversal phases; the synchronous
 Babel and JSON parser calls cannot be preempted mid-call, so their input byte
@@ -260,3 +297,5 @@ document base and query/fragment rules. CommonJS module lookups retain extension
 and directory resolution.
 Unresolved HTML references retain their declaration, source range, and resolution
 reason in the renderer observations.
+HTML script source ranges follow the HTML parser across LF, CRLF, and bare CR
+line endings, preserving UTF-16 columns.

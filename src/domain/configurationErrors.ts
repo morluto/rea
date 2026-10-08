@@ -1,4 +1,7 @@
-import { AnalysisError } from "./analysisErrorBase.js";
+import {
+  AnalysisError,
+  type AnalysisErrorOptions,
+} from "./analysisErrorBase.js";
 
 /** Runtime configuration could not be parsed safely. */
 export class ConfigurationError extends AnalysisError {
@@ -16,7 +19,7 @@ export class NoBinaryOpenError extends AnalysisError {
 }
 
 /** Additional constraints identified while admitting a filesystem target. */
-export interface BinaryTargetErrorOptions extends ErrorOptions {
+export interface BinaryTargetErrorOptions extends AnalysisErrorOptions {
   readonly constraint?: "directory_requires_file";
 }
 

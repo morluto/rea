@@ -1,5 +1,3 @@
-import { join } from "node:path";
-
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 import type { GhidraLaunch } from "./GhidraLauncher.js";
@@ -15,6 +13,8 @@ export interface GhidraDiagnosticsOptions {
   readonly profileDigest: string;
   readonly runId?: string;
   readonly runtimeRoot?: string;
+  readonly socketRoot?: string;
+  readonly endpointPath?: string;
   readonly launch?: GhidraLaunch;
   readonly snapshot?: ProviderProcessSnapshot;
   readonly token?: string;
@@ -47,15 +47,13 @@ export const createGhidraDiagnostics = (
     ...(options.runId === undefined ? {} : { run_id: options.runId }),
     ...(options.runtimeRoot === undefined
       ? {}
-      : {
-          runtime_root: options.runtimeRoot,
-          endpoint_path: join(
-            options.runtimeRoot,
-            options.transport === "unix-socket"
-              ? "bridge.sock"
-              : "bridge-endpoint.json",
-          ),
-        }),
+      : { runtime_root: options.runtimeRoot }),
+    ...(options.socketRoot === undefined
+      ? {}
+      : { socket_root: options.socketRoot }),
+    ...(options.endpointPath === undefined
+      ? {}
+      : { endpoint_path: options.endpointPath }),
     ...(options.launch === undefined
       ? {}
       : {

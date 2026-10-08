@@ -16,9 +16,19 @@ const ipcEventKinds = new Set([
   "ipc-renderer-post-message",
 ]);
 const events = [];
+// Budget serialized data and estimated retained object/array storage together.
+const retentionBudgetBytes = 16 * 1024 * 1024;
+const snapshotEnvelopeReserveBytes = 1024;
+let estimatedRetainedBytes = 0;
+let serializedBytes = 0;
 let observed = 0;
 let observedIpc = 0;
 let observedRuntime = 0;
+let dropped = 0;
+let droppedIpc = 0;
+let droppedRuntime = 0;
+const droppedFamilies = new Map();
+const droppedRoles = new Map();
 let sequence = 0;
 let correlationSequence = 0;
 
@@ -41,6 +51,73 @@ const shape = (value, depth = 0) => {
     default:
       return "unknown";
   }
+};
+
+// Measure JSON strings without allocating an encoded copy of a caller value.
+const jsonStringBytes = (value) => {
+  let bytes = 2;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code === 0x22 || code === 0x5c) bytes += 2;
+    else if (
+      code === 0x08 ||
+      code === 0x09 ||
+      code === 0x0a ||
+      code === 0x0c ||
+      code === 0x0d
+    )
+      bytes += 2;
+    else if (code <= 0x1f) bytes += 6;
+    else if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        bytes += 4;
+        index += 1;
+      } else bytes += 6;
+    } else if (code >= 0xdc00 && code <= 0xdfff) bytes += 6;
+    else if (code <= 0x7f) bytes += 1;
+    else if (code <= 0x7ff) bytes += 2;
+    else bytes += 3;
+    if (bytes > retentionBudgetBytes) return bytes;
+  }
+  return bytes;
+};
+
+const jsonScalarBytes = (value) => {
+  if (value === null) return 4;
+  if (typeof value === "string") return jsonStringBytes(value);
+  if (typeof value === "boolean") return value ? 4 : 5;
+  return String(value).length;
+};
+
+const eventFamily = (kind, processTypeValue) => {
+  if (kind === "preload" && processTypeValue === "main")
+    return "preload-configuration";
+  if (kind.startsWith("ipc-renderer"))
+    return processTypeValue === "renderer" ? "renderer-ipc" : "ipc";
+  return ipcEventKinds.has(kind) ? "ipc" : kind;
+};
+
+const noteDropped = (kind, processTypeValue, isIpc) => {
+  dropped += 1;
+  if (isIpc) droppedIpc += 1;
+  else droppedRuntime += 1;
+  const family = eventFamily(kind, processTypeValue);
+  droppedFamilies.set(family, (droppedFamilies.get(family) ?? 0) + 1);
+  if (typeof processTypeValue === "string")
+    droppedRoles.set(
+      processTypeValue,
+      (droppedRoles.get(processTypeValue) ?? 0) + 1,
+    );
+  if (kind === "window-lifecycle")
+    droppedRoles.set("window", (droppedRoles.get("window") ?? 0) + 1);
+  if (kind === "web-contents-lifecycle" || kind === "navigation")
+    droppedRoles.set(
+      "web_contents",
+      (droppedRoles.get("web_contents") ?? 0) + 1,
+    );
+  if (kind === "preload" && processTypeValue === "preload")
+    droppedRoles.set("preload", (droppedRoles.get("preload") ?? 0) + 1);
 };
 
 const isAllowedNavigation = (value) => {
@@ -83,7 +160,8 @@ const frameIdentity = (event) => {
 
 const record = (event) => {
   observed += 1;
-  if (ipcEventKinds.has(event.kind)) observedIpc += 1;
+  const isIpc = ipcEventKinds.has(event.kind);
+  if (isIpc) observedIpc += 1;
   else observedRuntime += 1;
   const raw = {
     sequence: ++sequence,
@@ -109,10 +187,15 @@ const record = (event) => {
     error: false,
     ...event,
   };
-  const argumentShapes = Array.isArray(raw.argument_shapes)
+  const shapeGroups = Array.isArray(raw.argument_shape_value_groups)
+    ? raw.argument_shape_value_groups.filter(Array.isArray)
+    : Array.isArray(raw.argument_shape_values)
+      ? [raw.argument_shape_values]
+      : [];
+  const existingShapes = Array.isArray(raw.argument_shapes)
     ? raw.argument_shapes
     : [];
-  events.push({
+  const retainedEvent = {
     ...raw,
     correlation_id: raw.correlation_id,
     event: typeof raw.event === "string" ? raw.event : null,
@@ -121,9 +204,7 @@ const record = (event) => {
     receiver: typeof raw.receiver === "string" ? raw.receiver : null,
     frame: typeof raw.frame === "string" ? raw.frame : null,
     target: typeof raw.target === "string" ? raw.target : null,
-    argument_shapes: argumentShapes.map((value) =>
-      typeof value === "string" ? value : "unknown",
-    ),
+    argument_shapes: [],
     result_shape:
       typeof raw.result_shape === "string" ? raw.result_shape : null,
     process_type:
@@ -132,8 +213,91 @@ const record = (event) => {
       typeof raw.artifact_path === "string" ? raw.artifact_path : null,
     artifact_sha256:
       typeof raw.artifact_sha256 === "string" ? raw.artifact_sha256 : null,
-  });
-  return events.at(-1);
+  };
+  delete retainedEvent.argument_shape_values;
+  delete retainedEvent.argument_shape_value_groups;
+
+  // All event values are JSON scalars except argument_shapes. Measure them
+  // incrementally so large channels, paths, or shape lists never require a
+  // full JSON.stringify temporary allocation before the budget decision.
+  let eventBytes = 2;
+  let argumentShapeCount = 0;
+  const eventKeys = Object.keys(retainedEvent);
+  for (let index = 0; index < eventKeys.length; index += 1) {
+    const key = eventKeys[index];
+    const value = retainedEvent[key];
+    if (index > 0) eventBytes += 1;
+    eventBytes += jsonStringBytes(key) + 1;
+    if (key === "argument_shapes") {
+      eventBytes += 2;
+      let shapeOverflow = false;
+      const countShape = (argument) => {
+        const encodedShapeBytes = jsonStringBytes(shape(argument));
+        eventBytes += encodedShapeBytes + (argumentShapeCount === 0 ? 0 : 1);
+        argumentShapeCount += 1;
+        shapeOverflow =
+          eventBytes + estimatedRetainedBytes + snapshotEnvelopeReserveBytes >
+          retentionBudgetBytes;
+      };
+      for (const group of shapeGroups)
+        for (const argument of group) {
+          countShape(argument);
+          if (shapeOverflow) break;
+        }
+      if (shapeOverflow) {
+        noteDropped(raw.kind, retainedEvent.process_type, isIpc);
+        return null;
+      }
+      for (const valueShape of existingShapes)
+        if (!shapeOverflow) {
+          eventBytes +=
+            jsonStringBytes(
+              typeof valueShape === "string" ? valueShape : "unknown",
+            ) + (argumentShapeCount++ === 0 ? 0 : 1);
+          shapeOverflow =
+            eventBytes + estimatedRetainedBytes + snapshotEnvelopeReserveBytes >
+            retentionBudgetBytes;
+        }
+      if (shapeOverflow) {
+        noteDropped(raw.kind, retainedEvent.process_type, isIpc);
+        return null;
+      }
+    } else eventBytes += jsonScalarBytes(value);
+    if (
+      eventBytes + estimatedRetainedBytes + snapshotEnvelopeReserveBytes >
+      retentionBudgetBytes
+    ) {
+      noteDropped(raw.kind, retainedEvent.process_type, isIpc);
+      return null;
+    }
+  }
+  // Reserve room for the only fields mutated after recording: result_shape and
+  // error. The shape vocabulary's longest value is "undefined".
+  const reservedMutationBytes = retainedEvent.result_shape === null ? 7 : 0;
+  // Include one byte for the event-array separator and reserve space for the
+  // snapshot's counters and JSON delimiters.
+  // One retained event, one defensive snapshot copy, and up to two serialized
+  // result views (timeline plus IPC), with per-object and per-array-slot costs.
+  const eventEstimateBytes = eventBytes * 3 + 512 + argumentShapeCount * 16;
+  const retainedEventBytes = eventEstimateBytes + reservedMutationBytes + 1;
+  if (
+    estimatedRetainedBytes + retainedEventBytes + snapshotEnvelopeReserveBytes >
+    retentionBudgetBytes
+  ) {
+    noteDropped(raw.kind, retainedEvent.process_type, isIpc);
+    return null;
+  }
+  for (const group of shapeGroups)
+    for (const argument of group)
+      retainedEvent.argument_shapes.push(shape(argument));
+  for (const valueShape of existingShapes)
+    retainedEvent.argument_shapes.push(
+      typeof valueShape === "string" ? valueShape : "unknown",
+    );
+  events.push(retainedEvent);
+  estimatedRetainedBytes += retainedEventBytes;
+  serializedBytes += eventBytes + reservedMutationBytes + 1;
+  return retainedEvent;
 };
 
 const recordRuntime = (kind, event, phase, details = {}) =>
@@ -145,7 +309,7 @@ const recordIpc = (kind, channel, args, details = {}) =>
     return record({
       kind,
       channel: typeof channel === "string" ? channel : null,
-      argument_shapes: values.map((value) => shape(value)),
+      argument_shape_values: values,
       ...details,
     });
   })();
@@ -222,7 +386,7 @@ const patchNavigationMethods = (webContents, contentsId) => {
     webContents[method] = function patchedNavigation(...args) {
       recordRuntime("navigation", method, "attempted", {
         target: contentsId,
-        argument_shapes: args.map((value) => shape(value)),
+        argument_shape_values: args,
       });
       if (method === "loadURL" && !isAllowedNavigation(args[0])) {
         recordRuntime("navigation", method, "blocked", {
@@ -354,7 +518,7 @@ const patchWebContents = (webContents, windowId) => {
         recordRuntime("navigation", event, "blocked", {
           target: contentsId,
           sender: windowId,
-          argument_shapes: args.map((value) => shape(value)),
+          argument_shape_values: args,
           error: true,
         });
         return;
@@ -363,7 +527,7 @@ const patchWebContents = (webContents, windowId) => {
     recordRuntime(kind, event, "observed", {
       target: contentsId,
       sender: windowId,
-      argument_shapes: args.map((value) => shape(value)),
+      argument_shape_values: args,
       error: kind === "error",
     });
     if (event === "did-create-window") {
@@ -379,31 +543,44 @@ const patchWebContents = (webContents, windowId) => {
   boundaries.patchWindowOpenHandler(webContents, contentsId);
 };
 
-const patchBrowserWindow = (electron) => {
-  const original = electron.BrowserWindow;
-  if (typeof original !== "function") return;
-  electron.BrowserWindow = new Proxy(original, {
-    construct(target, args, newTarget) {
-      const window = Reflect.construct(target, args, newTarget);
-      const targetId = identity(window, "window");
-      recordRuntime("window-lifecycle", "created", "completed", {
-        target: targetId,
-        argument_shapes: args.map((value) => shape(value)),
-      });
-      const preload = args[0]?.webPreferences?.preload;
+const patchWindows = (app) => {
+  if (app === null || app === undefined) return;
+  app.on("browser-window-created", (_event, window) => {
+    const targetId = identity(window, "window");
+    recordRuntime("window-lifecycle", "created", "completed", {
+      target: targetId,
+      capture_method: "event-emitter",
+    });
+    try {
+      // Electron 44 separates the preload descriptor from WebPreferences.
+      // Read the engine's descriptor, never infer a path from application code.
+      const preferences = window.webContents.getLastWebPreferences?.();
+      const preload =
+        typeof preferences?.preload === "string"
+          ? preferences.preload
+          : window.webContents._getPreloadScript?.()?.filePath;
       if (typeof preload === "string")
         recordRuntime("preload", "configured", "completed", {
           target: targetId,
           artifact_path: preload,
         });
-      patchEmitter(window, (event) =>
-        recordRuntime("window-lifecycle", event, "observed", {
+    } catch (cause) {
+      recordRuntime(
+        "error",
+        cause instanceof Error ? cause.message : String(cause),
+        "failed",
+        {
           target: targetId,
-        }),
+          error: true,
+        },
       );
-      patchWebContents(window.webContents, targetId);
-      return window;
-    },
+    }
+    patchEmitter(window, (event) =>
+      recordRuntime("window-lifecycle", event, "observed", {
+        target: targetId,
+      }),
+    );
+    patchWebContents(window.webContents, targetId);
   });
 };
 
@@ -427,7 +604,7 @@ try {
       "observed",
       {
         target: "app",
-        argument_shapes: args.map((value) => shape(value)),
+        argument_shape_values: args,
         process_type: "main",
       },
     ),
@@ -435,33 +612,60 @@ try {
   patchIpcMain(electron.ipcMain);
   boundaries.patchIpcRenderer(electron.ipcRenderer);
   boundaries.patchContextBridge(electron.contextBridge);
-  patchBrowserWindow(electron);
+  patchWindows(electron.app);
   boundaries.patchUtilityProcess(electron.utilityProcess);
   boundaries.patchShell(electron.shell);
-  boundaries.patchSessionManager(electron.session);
+  boundaries.patchSessionManager(electron.session, electron.app);
   boundaries.patchApplicationEffects(electron.app);
   boundaries.patchNativeAddonLoading();
   boundaries.patchChildProcess();
   process.once("uncaughtException", (cause, origin) => {
     recordRuntime("process-lifecycle", "uncaught-exception", "observed", {
-      argument_shapes: [shape(cause), shape(origin)],
+      argument_shape_values: [cause, origin],
       error: true,
     });
     throw cause;
   });
   process.once("unhandledRejection", (reason, promise) => {
     recordRuntime("process-lifecycle", "unhandled-rejection", "observed", {
-      argument_shapes: [shape(reason), shape(promise)],
+      argument_shape_values: [reason, promise],
       error: true,
     });
     throw reason;
   });
-} catch {
+} catch (cause) {
   globalThis.__reaElectronActiveHookError = true;
+  recordRuntime(
+    "error",
+    cause instanceof Error ? cause.message : String(cause),
+    "failed",
+    {
+      target: "active-hook-installation",
+      error: true,
+    },
+  );
 }
 
 globalThis.__reaElectronActiveSnapshot = () => ({
-  events: events.slice(),
+  events: events.map((event) => ({
+    ...event,
+    argument_shapes: [...event.argument_shapes],
+  })),
+  retention_budget_bytes: retentionBudgetBytes,
+  estimated_retained_bytes: estimatedRetainedBytes,
+  event_serialized_byte_upper_bound: serializedBytes,
+  retained: events.length,
+  dropped,
+  dropped_ipc: droppedIpc,
+  dropped_runtime: droppedRuntime,
+  dropped_event_families: [...droppedFamilies].map(([family, count]) => ({
+    family,
+    count,
+  })),
+  dropped_event_roles: [...droppedRoles].map(([role, count]) => ({
+    role,
+    count,
+  })),
   observed,
   observed_ipc: observedIpc,
   observed_runtime: observedRuntime,

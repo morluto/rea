@@ -6,6 +6,13 @@ import {
   completeApplicationCoverage,
   partialApplicationCoverage,
 } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
+import { semanticCoverageResourceLimits } from "../../domain/javascript/javascriptSemanticCoverage.js";
+import {
+  SEMANTIC_EXPRESSION_DEPTH_LIMIT,
+  SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT,
+  SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT,
+  semanticResourceLimitReason,
+} from "../../domain/javascript/javascriptSemanticResourceLimits.js";
 import type {
   JavaScriptModuleOrigin,
   JavaScriptSemanticModuleLink,
@@ -122,27 +129,40 @@ export const addJavaScriptSourceModules = (
   }
 };
 
+/** Relationship compositions the application graph cannot represent, for disclosure. */
+export interface JavaScriptModuleRelationshipOmissions {
+  /** Import specifiers that resolved back to the importing module itself. */
+  readonly selfImports: number;
+}
+
+type RelationshipOmissionCounter = { selfImports: number };
+
 /** Compose bounded CommonJS and ESM binding relationships across artifact files. */
 export const addJavaScriptModuleRelationships = (
   context: JavaScriptArtifactGraphContext,
-): void => {
+): JavaScriptModuleRelationshipOmissions => {
+  const omissions = { selfImports: 0 };
   for (const analyzed of context.analysis.files) {
     const { file, semantic } = analyzed;
     const source = context.sourceModuleNodes.get(file.path);
     if (semantic === null || source === undefined) continue;
     for (const link of semantic.ir.moduleLinks) {
       const input = { context, file, semantic, source, link };
-      if (isExportLink(link)) addExportRelationship(input);
+      if (isExportLink(link)) addExportRelationship(input, omissions);
       else if (link.specifier !== null)
-        addImportRelationship(input, source, {
+        addImportRelationship(input, source, omissions, {
           specifier: link.specifier,
           importedPath: link.importedName === null ? [] : [link.importedName],
         });
     }
   }
+  return omissions;
 };
 
-const addExportRelationship = (input: RelationshipInput): void => {
+const addExportRelationship = (
+  input: RelationshipInput,
+  omissions: RelationshipOmissionCounter,
+): void => {
   const { context, file, semantic, source, link } = input;
   if (link.exportedName === null) return;
   const baseCoverage = semanticCoverage(semantic);
@@ -206,15 +226,25 @@ const addExportRelationship = (input: RelationshipInput): void => {
     evidence: relationshipEvidence(input, "expose-module-export", []),
   });
   const origin = moduleOriginForExport(semantic.ir, link);
-  if (origin !== null) addImportRelationship(input, exported, origin);
+  if (origin !== null)
+    addImportRelationship(input, exported, omissions, origin);
 };
 
 const addImportRelationship = (
   input: RelationshipInput,
   source: ApplicationNode,
+  omissions: RelationshipOmissionCounter,
   origin: JavaScriptModuleOrigin,
 ): void => {
   const target = resolveModuleTarget(input, origin.specifier);
+  // A specifier that resolves back to the importing module itself (a literal
+  // self-import, self-require, or artifact-confined path alias)
+  // cannot become an edge: the application graph forbids self-referential
+  // edges, and emitting one fails result validation for the whole analysis.
+  if (target.node.node_id === source.node_id) {
+    omissions.selfImports += 1;
+    return;
+  }
   input.context.accumulator.addEdge({
     source_node_id: source.node_id,
     target_node_id: target.node.node_id,
@@ -362,15 +392,39 @@ const relationshipEvidence = (
     operation,
     coverage: semanticCoverage(input.semantic),
     confidence,
-    limitations: [...input.semantic.ir.limitations, ...limitations],
+    limitations: [
+      ...input.semantic.ir.limitations,
+      ...semanticCoverageResourceLimits(input.semantic.ir.coverage).map(
+        semanticResourceLimitReason,
+      ),
+      ...limitations,
+    ],
   });
 
 const semanticCoverage = (
   semantic: SemanticAnalysis,
 ): JavaScriptArtifactGraphCoverage => {
-  if (semantic.ir.coverage.status === "complete")
+  const resourceLimits = semanticCoverageResourceLimits(semantic.ir.coverage);
+  if (semantic.ir.coverage.status === "complete" && resourceLimits.length === 0)
     return completeApplicationCoverage();
-  return partialApplicationCoverage([], semantic.ir.coverage.omittedCount);
+  return partialApplicationCoverage(
+    resourceLimits.map((resourceLimit) => ({
+      name: `javascript_semantic_${resourceLimit.replaceAll("-", "_")}`,
+      value:
+        resourceLimit === "primitive-candidates"
+          ? SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT
+          : resourceLimit === "primitive-bytes"
+            ? SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT
+            : SEMANTIC_EXPRESSION_DEPTH_LIMIT,
+      unit:
+        resourceLimit === "expression-depth"
+          ? ("depth" as const)
+          : resourceLimit === "primitive-bytes"
+            ? ("bytes" as const)
+            : ("items" as const),
+    })),
+    semantic.ir.coverage.omittedCount,
+  );
 };
 
 const moduleFormat = (

@@ -7,8 +7,10 @@ semantic cases that these workflows cannot reliably reproduce. A test's path
 or suite name does not establish its behavioral depth.
 
 Avoid tests that mirror getters, enum mappings, fixture helpers, or prescribed
-call sequences. Prefer one representative workflow over a Cartesian matrix
-when every row crosses the same boundary. Keep distinct command handlers,
+call sequences, or assert cache object identity without a caller-visible contract.
+Prefer representative workflows over a Cartesian matrix when rows cross the
+same boundary. Retain combinations that exercise a distinct interaction, such as
+filtering within a full-output envelope. Keep distinct command handlers,
 producer representations, failure reasons, and lifecycle states covered.
 Consolidate their shared setup without hiding the inputs or expected evidence.
 
@@ -20,6 +22,34 @@ cleanup coverage. Trivial helper checks do not need a replacement. If only
 tests consume a production module, trace CLI/MCP and verifier imports,
 including imports of compiled files, and remove abandoned scaffolding with its
 tests when it has no runtime consumer.
+
+When a test expects a `Result` to succeed, throw its error before asserting the
+returned value. An `.ok` assertion immediately before the same throwing guard
+adds no coverage and hides the typed failure. A removed parser matrix can leave
+one golden malformed-input case and a real filesystem lifecycle that proves
+configure, update, readback, and removal; an add-only journey does not cover the
+whole lifecycle.
+
+Protocol fixtures must model the commands they support and their producer reply
+shapes. Reject unmodeled commands instead of returning a generic success; an
+empty result is appropriate only for a supported command with no result fields.
+
+Keep transport-only in-memory MCP sessions in the MCP boundary lane and direct
+filesystem workflows in the filesystem boundary lane. Real process-tree capture
+belongs in the serial process boundary lane, including captures invoked through
+MCP. Report unavailable capture authority as a named skip rather than returning
+from the test without assertions. Reserve acceptance paths for journeys
+through the compiled public CLI or MCP runtime. Calling a compiled private
+workflow or injecting a provider still establishes its narrower integration
+claim, even if a directory name calls it acceptance.
+
+Emit a verifier's final success report only after awaited cleanup. Observe final
+process lineage after closing its owned resources.
+
+The Vitest runner releases cached native process inspectors during awaited
+worker teardown. Fork termination does not run Node's normal exit hooks; a
+per-file teardown would instead retire shared inspectors before later files
+can use them.
 
 Measure slow files before removing capacity regressions. Optimize repeated
 process startup, fixture construction, and production algorithms when they
@@ -113,6 +143,12 @@ covers `trace-dylib-resolution`:
 - for the main executable and an XPC service, a predicted load order equal to
   the images dyld actually loads under `DYLD_PRINT_LIBRARIES`.
 
+The lane also compiles executable/library pairs with empty embedded directory,
+versioned-path, and suffix settings. It checks present and removed dependencies
+through CLI and MCP, and compares actual `DYLD_PRINT_SEARCHING` diagnostics for
+root-level candidates. These cases distinguish an empty search directory from
+an empty versioned scan or a suffix that only repeats the original path.
+
 It runs in macOS CI.
 
 Apple artifact verifiers live in `scripts/verify/apple/`, with the macOS bundle
@@ -138,12 +174,79 @@ case. Real capture tests preserve actual descendant and cleanup checks.
 The existing Apple job also exercises the relocated filesystem snapshot identity,
 cancellation and descriptor cleanup regressions on macOS.
 
+Prepare the native inspector before cases that measure producer output or exit
+behavior; keep startup deadlines and cancellation in distinct cases. Run real
+process-capture verification separately from package or build checks. On macOS,
+new npm processes can become token-unreadable after changing their display
+title and prevent verified cleanup during a capture's ownership sweep.
+
 MCP SDK transport tests with recording providers remain integration tests.
 They are useful for schema drift and failure projection but do not prove that
 Hopper, Ghidra or another substituted engine works. `verify:package` proves
 packaging/install behavior and fake-provider integration; use the corresponding
-real-provider lanes for engine claims. Real Apple dispatch and Interface
+real-provider lanes for engine claims. Packed-bridge checks verify shipped files
+and Python syntax without deleted mock fixtures or source-spelling assertions.
+Real Apple dispatch and Interface
 Builder verifiers currently prove format integration through production readers.
+
+`verify:hopper` exercises an installed Hopper through the production stdio MCP
+server and CLI. It checks source-owned call chains, CFG edges, references and
+complete large inventories, then probes unnamed bookmarks, annotation clearing,
+batch validation before mutation, malformed addresses and regexes, segment-end
+partial reads, and synthetic file-offset rejection. Advertised schemas are
+validated in their JSON Schema dialect and successful replies are checked against
+their advertised output schemas. Navigation checks cover interior-object cursor
+readback and mapped-memory boundaries. Annotation probes verify invalid native
+text and duplicate destinations/names before mutation, preserve unselected label
+owners, and exercise explicit batch label swaps. Function locals retain observed
+names and stack displacements. Graph probes check symbol/interior-address parity
+and a source-owned recursive cycle; literal tracing preserves complete queries
+and whitespace. Disposable binary copies prove that switching and closing
+actually removes the native document, and that CLI byte, function-dossier,
+literal-trace results and invalid-address diagnostics agree with MCP.
+No provider is mocked in this lane.
+Real search probes cover Unicode names, literal metacharacters, case and regex
+modes, annotation cache invalidation, complete native fragments of long literals
+checked against byte reads, escaped UTF-8/control text, byte-preserving Latin-1
+decoding, and Hopper's UTF-16 symbol-name truncation boundary. It verifies native
+CallReference classifications across reference and dossier results, retains long
+string fragment metadata in dossiers, and exercises pathological regex deadline
+and cancellation followed by successful requests in the same native session. When the macOS
+Objective-C fixture is present, the lane also verifies native UTF-16 string objects
+and their inferred encodings against their actual bytes. Native terminal calls
+are checked across reference, instruction, assembly, block-range and procedure-length
+projections; block endpoints are normalized using actual native membership.
+Exact Objective-C names also exercise named CLI selectors for function, instruction,
+decompilation, reference and search operations. A literal `--help` trace query proves
+that selector data is preserved independently of global CLI flags.
+Unmapped annotation destinations and
+oversized later batch names fail before any earlier edit is applied.
+
+`verify:hopper:deadlines` checks the native client's optional request deadlines
+on macOS with an owned source-built fixture. Zero and elapsed deadlines must
+leave native comments unchanged, including when a synchronous progress observer
+delays timer dispatch. It also observes a short analysis deadline and verifies
+subsequent wire recovery and clean shutdown. Caller timeout does not interrupt
+Hopper's synchronous native operation. Socket boundary tests deterministically
+cover active and queued expiry, late replies and timer cleanup.
+
+The Linux demo lane remains a separate `verify:hopper:linux` command.
+
+`verify:hopper:fat` is a separate macOS lane requiring installed Hopper and the
+existing Xcode clang/lipo toolchain. It compiles arm64/x86-64 thin executables and
+one- and two-slice FAT32 containers, verifies exact/interior address mappings
+against bytes in the original files, checks CLI/MCP parity, and checks owned
+runtime cleanup. Source byte changes, removal, permission denial (for non-root
+callers), and nonregular replacement must retain native partial mapping facts,
+reject unverified original-file coordinates,
+and recover after restoration. Single-slice FAT cases also relocate the slice
+without changing its loaded bytes. `verify:hopper:fat64` additionally checks
+FAT64 preparation through Hopper's native Mach-O loader, source-container
+mappings, profile identity,
+malformed and ambiguous slice rejection, and temporary-image lifetime. Both
+lanes have been verified on Hopper 6.1.0-demo; this establishes REA's prepared
+FAT64 workflow, not native FAT64-loader support.
+Cross-architecture fixture compilation is not required by `verify:hopper`.
 
 Golden tests use immutable captured text inputs with producer/source provenance
 under `tests/fixtures/golden/`. Expected results are reviewed for the semantic
@@ -151,6 +254,8 @@ claim; capture commands do not automatically approve new expected outputs.
 Do not call handcrafted utility output or synthetic binary builders real-data
 goldens. Keep unsupported binary layouts and malformed boundaries as targeted
 regressions until a real fixture establishes equivalent coverage.
+
+`verify:browser` exercises source-map failure isolation and expanded-output limits through the compiled CLI and stdio MCP with real Chrome. It also submits five 2 MiB source-map annotations, checks retained script identities and explicit map omissions, and closes its owned fixture target. These public workflows replace redundant metadata-admission assertions; replacement and document-reset boundaries remain focused producer regressions.
 
 `verify:browser` also captures a source-owned noise canvas as a real PNG above
 8 MiB through the CLI and stdio MCP, with complete byte/digest parity and real PNG
@@ -219,6 +324,70 @@ The host-native Ghidra lane also verifies native value tracing through the
 production CLI and a separate stdio MCP process. It compares complete dependency
 graphs, validates Evidence and upstream/workflow profiles, checks capability
 discovery, and closes the MCP session. No provider or transport is mocked.
+It also validates every advertised input/output JSON Schema and the exercised
+MCP outputs, probes address spelling and name/address ambiguity, and checks
+direct versus targetless calls, byte-read completeness, invalid input diagnostics,
+CLI/MCP parity, atomic annotation rollback, refreshed inventories, unchanged
+executable bytes, and discarded edits after reopen. A deliberately long temporary
+path exercises private Unix socket allocation and cleanup, including cancellation
+after a real headless process launches. Native annotation probes reject NUL and
+unpaired Unicode surrogates without partial edits or a broken bridge, preserve
+supported Unicode and control text, and check lossless malformed-text diagnostics.
+Memory-to-file mapping is checked against original artifact bytes.
+The fixture also stores a pointer one byte past a function entry; exact
+xrefs, raw procedure references, and CLI/MCP dossiers must retain that data edge.
+A valid legacy snapshot reconstructs the former omitted edge under its older
+profile; CLI and MCP must reject that binding with a mismatch reason and
+recovery advice. The rejected open must preserve the active live session.
+Exact external entries must resolve while retaining an empty body; unknown
+external addresses remain unresolved and external annotations are rejected.
+An adversarial regex over a full 12 KB literal must report stack exhaustion as
+a resource constraint, preserve live annotations, and allow complete literal
+searches afterward; CLI and MCP must agree on both results and recovery advice.
+Real snapshot lifecycle checks retain edited API results as Evidence while
+rejecting immutable snapshot saves and imports before and after a repeated
+open of the same target. They verify unchanged live annotations and run identity,
+absent rejected output files, an unchanged source snapshot, and successful
+snapshot import/save after closing and recreating the database. The pristine
+snapshot is written by an independent real CLI session.
+They also start a real annotation and snapshot close concurrently: the edit
+must succeed, the snapshot must be rejected without creating a file, and the
+edited session must remain usable until explicitly closed.
+Source-admission probes change a caller-owned fixture after `open_binary` but
+before the first Ghidra query. They require an actionable `artifact_changed`
+error preserving both digests and the selected path, unchanged provider
+availability, failed-copy cleanup, and successful recovery after reopening.
+After import, deleting that source must preserve the captured database identity.
+Instruction inspection and containing-function lookup also agree across
+hexadecimal case, leading zeros, and encoded default address-space spellings.
+The same source-acquisition workflow exercises missing and directory-replaced
+inputs, plus real read-permission denial on a non-root host. Root runs report
+that permission-denial check as unverified. A focused filesystem integration
+check retains selected-platform routing and exclusive creation; two copy/digest
+checks duplicated by the real workflow have been removed.
+Namespace annotation probes compile a separate host C fixture with C++ ABI
+symbols, avoiding a C++ runtime prerequisite. Real Ghidra demangling supplies
+duplicate leaf names in two top-level namespaces and a nested namespace. The
+workflow verifies leaf and qualified renames, repeated reuse of fully qualified
+readback, lookup by the returned name, literal namespace-like leaf names,
+rejection of empty qualified leaf names without changing comments, CLI
+behavior, and independent CLI/MCP database ownership.
+Large-result probes compile initialized host-native data sized from the pinned
+MCP SDK receive budget. Real byte reads, annotation edits and function dossiers
+exceed that budget while preserving the connection and active analysis run.
+Successful-result and oversized-error delivery constraints must identify their
+successfully retained Evidence records;
+export must recover every source byte, complete annotation and original error
+diagnostic, with CLI parity
+and an unchanged executable. The focused formatter check retains only the
+separate case where recording was not acknowledged.
+Long ordinary procedure names and encoded address-space selectors must produce
+normal validation errors without exhausting Java's regex stack or losing the
+private bridge connection. Each rejection is followed by a real provider lookup;
+address-like literal names still resolve exactly after annotation.
+Malformed annotation readback, memory completeness, and inventory data remain separate
+SDK/provider integration cases; success from a real
+provider cannot establish rejection of a contradictory provider response.
 
 The Linux switch lane checks dense, sparse-with-holes, shared-body, nonzero,
 negative, and nonexact JSON integer labels plus a comparison-only control.
@@ -284,7 +453,7 @@ are separate proof levels.
 Synthetic producer regressions run independently:
 
 ```sh
-npm run test:focused -- tests/boundary/android/jadxIntegration.test.ts tests/boundary/mcp/androidAnalysisMcp.test.ts
+npm run test:focused -- tests/boundary/process/jadxIntegration.test.ts tests/boundary/process/androidAnalysisMcp.test.ts
 ```
 
 ## Optional NativeAOT Ghidra analysis
@@ -356,22 +525,27 @@ a DOS emulator or compiler, then checks real 16-bit decoding, segment
 relocation, near/far calls, decompilation, disjoint function body ranges,
 stable CLI/MCP observations, unchanged source bytes, and owned process/project
 cleanup. Raw p-code address-space selector tokens are reported separately from
-the stable observation comparison. Linux x64 is verified; macOS DOS remains
-unverified. This lane is separate from host-native and optional cross-format
+the stable observation comparison. Linux x64 and macOS arm64 are verified;
+macOS x64 remains unverified. This lane is separate from host-native and optional cross-format
 verification. See [DOS analysis](ghidra-dos.md).
 
 `npm run verify:ghidra:com` uses a generated headerless fixture with no compiler,
 DOS emulator or game data. It exercises explicit admission, BinaryLoader entry
 preparation, measured register context, whole-file byte readback, source offsets,
 unmapped PSP/partial reads, actual decompilation, CLI/MCP parity and owned cleanup.
+Both segmented-address lanes reject oversized default, explicit-space and encoded-space
+coordinates through real reads, function queries and annotation attempts. Rejected
+annotations must preserve the live function dossier; CLI and MCP must report the
+truncation constraint, while leading-zero coordinates still resolve correctly.
 It has the same Ghidra/JDK prerequisites as the MZ lane. Neither lane claims DOS
 runtime or PC-98 device execution.
 
 ## Apple Interface Builder archives
 
 `npm run verify:interface-builder` compiles the source-owned AppKit XIB into a
-real `.nib` with Xcode `ibtool`, wraps it in a temporary app bundle, and checks
-the decoded view hierarchy, outlet, action, evidence coverage, and truncation
+real `.nib` with Xcode `ibtool`, wraps it in a temporary app bundle, and runs
+the compiled CLI and stdio MCP server with production providers. It compares
+their decoded results and checks the view hierarchy, outlet, action, evidence coverage, and truncation
 status. Storyboard compilation additionally requires an installed iOS platform.
 
 Keep the provider-specific acceptance path independent from optional
@@ -425,7 +599,7 @@ behavior, and complete CI evidence before merging.
 | `npm run test:watch:all`          | Changed tests from every project; builds at startup, so rebuild after production edits before relying on compiled tests |
 | `npm run check:changed`           | Cached typecheck/lint and branch-related source feedback                                                                |
 | `npm run check:pr`                | Opt-in complete local deterministic gate and generated-file checks                                                      |
-| `npm run docs:check`              | Committed generated-document freshness                                                                                  |
+| `npm run docs:check`              | Generated-document validation from current source and build outputs                                                     |
 
 For example:
 
@@ -460,19 +634,23 @@ broad changes or diagnosing CI, rather than after every edit. Package/install
 changes additionally need package verification; provider changes need actual
 provider evidence.
 
-Local full-suite Vitest runs use up to two workers and schedule projects one
-at a time. Process, acceptance and process-global projects serialize their
-files to prevent competing lifecycle observations. CI retains its two-worker
-budget.
+Each Vitest project uses up to two workers, bounded by available host parallelism.
+Default-group projects can run together. Only `process-boundary` runs in the
+later sequence group and serializes its files because process-tree observations
+share host sampling resources. Tests that launch the real process harness belong
+in `tests/boundary/process/`, including CLI command and environment tests.
+Acceptance and process-global files retain isolated
+forks but are not serialized; isolation does not imply serial scheduling. CI uses
+the same per-project worker bound.
 The pure domain/contracts and recording-port service projects share one worker
 module context because their tests own no mutable runtime resources. MCP
 boundary files also share the immutable server module graph while creating and
 closing independent in-memory sessions. Adapter, composition, acceptance,
 process-global, and other boundary projects retain per-file isolation.
-`npm test`, `npm run docs:check`, and `npm run docs:generate` share
-repository-local locks and fail fast when the same class of command is already
-running. The `npm test` build is inside that lock. `check:pr` runs its test task
-before starting generated-document validation.
+Build and documentation writers use checkout-local locks for their respective
+output files. `npm test` delegates its build to the build lock; the Vitest suite
+does not hold a test-command lock. `check:pr` runs its test task before starting
+generated-document validation.
 
 Vitest and Node persistent compile caches are deliberately not enabled by
 default. To evaluate repeated local runs, opt in for both cold and warm
@@ -530,24 +708,36 @@ conformance/vtable fixture.
   Both commands reject a changed executable digest and clean up the fixture
   process and helper. These lanes require an interactive macOS desktop. See [native investigation](native-investigation.md)
 
-`npm run verify:native-calls` needs only macOS with Command Line Tools (`clang`,
-`lldb`, `codesign`, `nm`). It compiles `tests/conformance/native/calls.m` and
+`npm run verify:native-calls` needs macOS with Command Line Tools (`clang`,
+`lldb`, `codesign`, `nm`) and actual debugger access to the owned fixtures.
+The lane reports Developer Mode status without treating it as proof of access
+or denial, and does not change host settings. LLDB and target entitlements
+establish the tested permission boundary.
+It compiles `tests/conformance/native/calls.m` and
 runs `observe-native-calls` through the CLI and stdio MCP. It checks:
 
 - the receiver class, selector and argument registers of every entry, and that
   breakpoint addresses equal `nm`'s symbol addresses;
-- captured stdout and an environment override;
+- overlapping breakpoint selections retain each selection's hits and share
+  the aggregate event limit; callback capture reads the stopped frame before
+  LLDB resumes, avoiding stale frame metadata from asynchronous stop events;
+- captured stdout and an environment override, plus a 2 MiB flood on each
+  output stream with bounded retained prefixes and exact drained-byte counts;
 - the event-limit and duration outcomes, with the process confirmed gone;
 - that a hardened-runtime copy is refused with `debugger-attach-denied`, and
   that the same copy signed with `get-task-allow` is traced.
-  for the exact ABI, authority, graph and observation boundaries.
 
 ### Firmware adapters
+
+Linux-owned provider launches require a procps-compatible `ps` on REA's `PATH`
+so ownership can be inspected before launching a child. A missing or incompatible
+command fails with an actionable capability error before the launch.
 
 `npm run fixtures:firmware` uses existing Python 3 and a host C compiler to make
 an ignored gzip/USTAR firmware fixture and independent offset/hash oracle.
 `npm run verify:firmware` requires caller-supplied Binwalk 3.1.0, Unblob 26.6.4
-and util-linux prlimit on Linux. The provider also accepts other 3.1.x and
+and util-linux prlimit on Linux, with `7z` on `PATH` for the gzip/USTAR
+fixture's Unblob extractor. The provider also accepts other 3.1.x and
 26.6.x builds and reports them as unverified; this lane proves the audited
 releases. It verifies CLI/MCP parity, selected ranges,
 unknown chunks, depth limits and extracted child digests. The optional

@@ -548,7 +548,6 @@ it.skipIf(!onDarwin)(
         clearedAppleVectorTokenFailsClosed: true,
         callerPfzBeforeTokenRead: true,
         emptyLaterArgumentRead: true,
-        emptyEnvironmentFailsClosed: true,
         emptyArgv0Read: true,
         emptyEnvironmentRecordsBeforeTokenFailClosed: true,
         duplicateTokenFailsClosed: true,
@@ -614,18 +613,36 @@ it.skipIf(!onDarwin)(
 );
 
 it.skipIf(!onDarwin)(
-  "reads only the exact ownership key from live process environments",
+  "reads exact ownership keys and preserves unknowns after process title changes",
   async () => {
     const host = createSystemProcessOwnershipHost("darwin");
-    const decoy = await startNodeChild({
-      DECOY: "words REA_PROCESS_RUN_ID=synthetic-decoy",
-    });
-    const owned = await startNodeChild({
-      REA_PROCESS_RUN_ID: "synthetic-owned",
-    });
+    const children: Awaited<ReturnType<typeof startNodeChild>>[] = [];
     try {
+      const decoy = await startNodeChild({
+        DECOY: "words REA_PROCESS_RUN_ID=synthetic-decoy",
+      });
+      children.push(decoy);
+      const owned = await startNodeChild({
+        REA_PROCESS_RUN_ID: "synthetic-owned",
+      });
+      children.push(owned);
+      const titleMutated = await startNodeChild(
+        { REA_PROCESS_RUN_ID: "synthetic-title-mutated" },
+        process.execPath,
+        ["-e", 'process.title = "npm run check"; setInterval(() => {}, 1_000)'],
+      );
+      children.push(titleMutated);
+      await expect
+        .poll(async () => {
+          const process = (await host.listProcesses()).find(
+            ({ pid }) => pid === titleMutated.pid,
+          );
+          return process?.command ?? "";
+        })
+        .toMatch(/^npm run check/u);
+
       const processes = await host.listProcesses();
-      const entries = [decoy, owned].map(({ pid }) => {
+      const entries = [decoy, owned, titleMutated].map(({ pid }) => {
         const entry = processes.find((process) => process.pid === pid);
         if (entry === undefined)
           throw new Error("test child is absent from process table");
@@ -641,18 +658,25 @@ it.skipIf(!onDarwin)(
         state: "readable",
         runId: "synthetic-owned",
       });
+      expect(observations?.get(titleMutated.pid)).toMatchObject({
+        state: "unavailable",
+        reason: expect.stringMatching(/\S/u),
+      });
       expect(identities?.get(decoy.pid)?.state).toBe("readable");
       expect(identities?.get(owned.pid)?.state).toBe("readable");
+      expect(identities?.get(titleMutated.pid)?.state).toBe("readable");
     } finally {
-      await stopNodeChild(decoy.child);
-      await stopNodeChild(owned.child);
-      await host.close?.();
+      try {
+        await Promise.all(children.map(({ child }) => stopNodeChild(child)));
+      } finally {
+        await host.close?.();
+      }
     }
   },
 );
 
 it.skipIf(!onDarwin)(
-  "reads owned tokens with empty later arguments across executable path padding",
+  "reads owned tokens across executable padding and distinguishes a real empty environment",
   async () => {
     const root = await mkdtemp(join(tmpdir(), "rea-process-token-padding-"));
     const host = createSystemProcessOwnershipHost("darwin");
@@ -674,6 +698,7 @@ it.skipIf(!onDarwin)(
           ),
         );
       }
+      children.push(await startNodeChild({}));
       const processes = await host.listProcesses();
       const entries = children.map(({ pid }) => {
         const entry = processes.find((process) => process.pid === pid);
@@ -685,6 +710,7 @@ it.skipIf(!onDarwin)(
       expect(children.map(({ pid }) => observations?.get(pid))).toEqual([
         { state: "readable", runId: "synthetic-padding-0" },
         { state: "readable", runId: "synthetic-padding-1" },
+        { state: "readable" },
       ]);
     } finally {
       for (const { child } of children) await stopNodeChild(child);

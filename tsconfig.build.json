@@ -8,6 +8,7 @@
   },
   "include": ["src/**/*.ts"],
   "exclude": [
+    "src/generatedMcpToolCatalog.ts",
     "src/**/*.fixture.ts",
     "src/**/*.test.ts",
     "tests",

@@ -1,5 +1,6 @@
 import {
   effectiveClientServer,
+  grokServerListedDisabled,
   parseClientConfiguration,
 } from "./ClientConfigurationDocument.js";
 import { access, readFile } from "node:fs/promises";
@@ -9,8 +10,14 @@ import { z } from "zod";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { MCP_STARTUP_POLICY } from "../mcpStartupPolicy.js";
-import { isOwnedClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
-import { supportedClients } from "./SupportedClients.js";
+import {
+  isOwnedClientRegistrationCommand,
+  npxRegistrationCommand,
+} from "./ClientRegistrationIdentity.js";
+import {
+  manualRegistrationRemediation,
+  supportedClients,
+} from "./SupportedClients.js";
 import type { SetupClient } from "./SupportedClients.js";
 
 interface ClientRegistrationStatusBase {
@@ -34,7 +41,7 @@ export type ClientRegistrationStatus = ClientRegistrationStatusBase &
       }
     | {
         readonly command: readonly [];
-        readonly state: "missing" | "invalid";
+        readonly state: "missing" | "invalid" | "manual";
         readonly remediation: string;
       }
   );
@@ -77,21 +84,33 @@ export const readClientRegistrationStatuses = async (
           CLAUDE_CONFIG_DIR: options.environment.CLAUDE_CONFIG_DIR,
           CODEX_HOME: options.environment.CODEX_HOME,
           COPILOT_HOME: options.environment.COPILOT_HOME,
+          GROK_HOME: options.environment.GROK_HOME,
           OPENCODE_CONFIG: options.environment.OPENCODE_CONFIG,
+          SAND_DATA_ROOT: options.environment.SAND_DATA_ROOT,
           XDG_CONFIG_HOME: options.environment.XDG_CONFIG_HOME,
         },
   )) {
     if (
-      client.format === "unsupported" ||
-      (!(await exists(client.markerPath)) && !(await exists(client.configPath)))
+      !(await exists(client.markerPath)) &&
+      !(await exists(client.configPath))
     )
       continue;
+    const manualRemediation = manualRegistrationRemediation(client.name);
+    if (client.format === "unsupported") {
+      if (manualRemediation !== undefined)
+        statuses.push({
+          client: client.name,
+          config_path: client.markerPath ?? client.configPath,
+          command: [],
+          state: "manual",
+          remediation: manualRemediation,
+        });
+      continue;
+    }
     try {
       const content = await readFile(client.configPath, "utf8");
-      const raw = effectiveClientServer(
-        parseClientConfiguration(content, client.format),
-        PRODUCT_IDENTITY.mcpServerKey,
-      );
+      const parsed = parseClientConfiguration(content, client.format);
+      const raw = effectiveClientServer(parsed, PRODUCT_IDENTITY.mcpServerKey);
       if (raw === undefined) {
         statuses.push(
           unavailableStatus(client.name, client.configPath, "missing"),
@@ -108,7 +127,19 @@ export const readClientRegistrationStatuses = async (
           client.name,
           client.configPath,
           command,
-          registrationAligned(registration, client, currentCommandPath)
+          registrationAligned(
+            registration,
+            client,
+            currentCommandPath,
+            options.platform ?? process.platform,
+          ) &&
+            !(
+              client.format === "grok" &&
+              grokServerListedDisabled(
+                parsed.document,
+                PRODUCT_IDENTITY.mcpServerKey,
+              )
+            )
             ? "aligned"
             : "stale",
         ),
@@ -132,6 +163,7 @@ const registrationAligned = (
   registration: z.output<typeof registrationSchema>,
   client: SetupClient,
   currentCommandPath: string,
+  platform: NodeJS.Platform,
 ): boolean => {
   const command = [registration.command, ...registration.args];
   if (registration.disabled === true || registration.enabled === false)
@@ -139,7 +171,7 @@ const registrationAligned = (
   if (!isOwnedClientRegistrationCommand(command, currentCommandPath))
     return false;
   if (
-    client.name === "codex" &&
+    (client.name === "codex" || client.name === "grok_build") &&
     registration.startup_timeout_sec !==
       MCP_STARTUP_POLICY.codexStartupTimeoutSeconds
   )
@@ -160,12 +192,10 @@ const registrationAligned = (
     resolve(command[1] ?? "") === currentCommandPath
   )
     return true;
+  const npxCommand = npxRegistrationCommand(platform);
   if (
-    command.length === 4 &&
-    command[0] === "npx" &&
-    command[1] === "-y" &&
-    command[2] === PRODUCT_IDENTITY.registrationPackageSpecifier &&
-    command[3] === "mcp"
+    command.length === npxCommand.length &&
+    command.every((argument, index) => argument === npxCommand[index])
   )
     return true;
   return (

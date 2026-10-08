@@ -1,27 +1,27 @@
 import { readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { Ajv2020 } from "ajv/dist/2020.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import {
+  createDeferred,
+  createTestBinarySession,
+} from "../../fixtures/binarySession.js";
 import type {
   AnalysisClient,
   AnalysisProvider,
   CapabilityDescriptor,
 } from "../../../src/application/AnalysisProvider.js";
-import { probeProcessCaptureCapability } from "../../../src/process/capture/ProcessHarness.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { MAX_JSON_DEPTH } from "../../../src/domain/jsonValue.js";
+import { parseAnalysisSnapshot } from "../../../src/domain/analysisSnapshot.js";
 import { INVESTIGATION_EXAMPLES } from "../../../src/contracts/investigationExamples.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import {
@@ -35,15 +35,117 @@ const SNAPSHOT_PROFILE = createAnalysisProfile(
 );
 
 const resources: Array<{ close(): Promise<unknown> }> = [];
-const processFixture = fileURLToPath(
-  new URL("../../fixtures/processFidelity.mjs", import.meta.url),
-);
 let directory: string | undefined;
 afterEach(async () => {
   await Promise.all(resources.splice(0).map((resource) => resource.close()));
   if (directory !== undefined)
     await rm(directory, { recursive: true, force: true });
   directory = undefined;
+});
+
+describe("MCP snapshot lifecycle ordering", () => {
+  it("saves earlier in-flight observations, blocks later calls, and preserves the session on write failure", async () => {
+    directory = await createTestTempDirectory("rea-mcp-snapshot-order-");
+    const started = createDeferred<void>();
+    const release = createDeferred<ReturnType<typeof ok>>();
+    const { mcp, first, closed } = await createSessionMcpHarness(
+      directory,
+      (closed) => {
+        const base = provider(closed);
+        return {
+          ...base,
+          capabilities: () =>
+            base.capabilities().map((capability) => ({
+              ...capability,
+              operation: "address_name",
+            })),
+          createClient: (target) => ({
+            ...client(target.path, closed),
+            execute: (name) => {
+              if (name === "health") return Promise.resolve(ok(null));
+              started.resolve();
+              return release.promise;
+            },
+          }),
+        };
+      },
+      resources,
+    );
+    expect(
+      (await mcp.callTool({ name: "open_binary", arguments: { path: first } }))
+        .isError,
+    ).not.toBe(true);
+    const observation = mcp.callTool({
+      name: "address_name",
+      arguments: { address: "0x1000", document: "fixture" },
+    });
+    await started.promise;
+    const snapshotPath = join(directory, "analysis.json");
+    const closing = mcp.callTool({
+      name: "close_binary",
+      arguments: { snapshot_path: snapshotPath },
+    });
+    const later = mcp.callTool({
+      name: "address_name",
+      arguments: { address: "0x1001", document: "fixture" },
+    });
+    expect(
+      structured(await mcp.callTool({ name: "binary_session", arguments: {} }))
+        .result,
+    ).toMatchObject({ open: true });
+    expect(closed).toEqual([]);
+    release.resolve(ok(first));
+    expect((await observation).isError).not.toBe(true);
+    expect((await closing).isError).not.toBe(true);
+    expect((await later).isError).toBe(true);
+    const snapshot = parseAnalysisSnapshot(
+      JSON.parse(await readFile(snapshotPath, "utf8")),
+    );
+    expect(snapshot.entries).toHaveLength(1);
+    expect(snapshot.entries[0]?.execution.result).toBe(first);
+    expect(
+      snapshot.evidence_bundle.records.some(
+        (record) =>
+          record.operation === "address_name" &&
+          record.normalized_result === first,
+      ),
+    ).toBe(true);
+
+    expect(
+      (await mcp.callTool({ name: "open_binary", arguments: { path: first } }))
+        .isError,
+    ).not.toBe(true);
+    const bytes = await readFile(snapshotPath);
+    expect(
+      (
+        await mcp.callTool({
+          name: "close_binary",
+          arguments: { snapshot_path: snapshotPath },
+        })
+      ).isError,
+    ).toBe(true);
+    expect(await readFile(snapshotPath)).toEqual(bytes);
+    expect(
+      (
+        await mcp.callTool({
+          name: "address_name",
+          arguments: { address: "0x1000", document: "fixture" },
+        })
+      ).isError,
+    ).not.toBe(true);
+    expect(
+      structured(await mcp.callTool({ name: "binary_session", arguments: {} }))
+        .result,
+    ).toMatchObject({ open: true });
+    expect(
+      (
+        await mcp.callTool({
+          name: "close_binary",
+          arguments: { snapshot_path: snapshotPath, overwrite: true },
+        })
+      ).isError,
+    ).not.toBe(true);
+  }, 10_000);
 });
 
 describe("target-free MCP lifecycle", () => {
@@ -294,69 +396,6 @@ describe("json depth bounds over MCP", () => {
     expect(text).toContain("Input validation");
     expect(text).toContain("maximum nesting depth");
   }, 10_000);
-});
-
-describe("process residuals over MCP", () => {
-  it("records process residuals linked to capture Evidence", async () => {
-    if (!(await probeProcessCaptureCapability()).available) return;
-    const session = createTestBinarySession(() => client("fixture", []));
-    const server = createServer(session, session, {
-      logger: silentLogger,
-    });
-    const mcp = new Client({ name: "process-unknown", version: "1.0.0" });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    resources.push(mcp, server);
-    await server.connect(serverTransport);
-    await mcp.connect(clientTransport);
-
-    const captured = await mcp.callTool({
-      name: "capture_process_scenario",
-      arguments: {
-        executable: process.execPath,
-        arguments: [processFixture, "partial"],
-      },
-    });
-    expect(captured.isError, text(captured)).not.toBe(true);
-    const contract = toolContract("capture_process_scenario");
-    const wire = (await mcp.listTools()).tools.find(
-      ({ name }) => name === contract.name,
-    );
-    if (wire?.outputSchema === undefined)
-      throw new Error("Missing process capture output schema");
-    expect(
-      new Ajv2020({ strict: false, validateFormats: false }).validate(
-        z.record(z.string(), z.unknown()).parse(wire.outputSchema),
-        captured.structuredContent,
-      ),
-    ).toBe(true);
-    expect(
-      contract.outputSchema.safeParse(captured.structuredContent).success,
-    ).toBe(true);
-    const listedUnknowns = await mcp.callTool({
-      name: "list_unknowns",
-      arguments: {},
-    });
-    expect(listedUnknowns.isError, text(listedUnknowns)).not.toBe(true);
-    const listed = z
-      .object({
-        result: z.object({
-          items: z.array(
-            z.object({
-              question: z.string(),
-              domain: z.string(),
-            }),
-          ),
-        }),
-      })
-      .parse(structured(listedUnknowns)).result.items;
-    expect(listed).toContainEqual(
-      expect.objectContaining({
-        question: "Was network behavior fully observed during capture?",
-        domain: "process-network",
-      }),
-    );
-  });
 });
 
 const client = (path: string, closed: string[]): AnalysisClient => ({

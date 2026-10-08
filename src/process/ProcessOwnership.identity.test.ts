@@ -99,92 +99,102 @@ describe("capture-local process ownership", () => {
     expect(signalGroup).toHaveBeenCalledWith(process.processGroupId, "SIGKILL");
   });
 
-  it("cleans verified owners before reporting an unrelated opaque process", async () => {
-    const owned: ProcessTableEntry = {
-      pid: 905,
-      parentPid: 1,
-      processGroupId: 905,
-      state: "S",
-      command: "owned-detached-child",
-    };
-    const opaque: ProcessTableEntry = {
-      pid: 906,
-      parentPid: 1,
-      processGroupId: 906,
-      state: "S",
-      command: "unrelated-process",
-    };
-    const malformed: ProcessTableEntry = {
-      ...opaque,
-      pid: 907,
-      processGroupId: 907,
-      command: "malformed-procargs-process",
-    };
-    const sysctlDenied: ProcessTableEntry = {
-      ...opaque,
-      pid: 908,
-      processGroupId: 908,
-      command: "sysctl-denied-process",
-    };
-    const signalGroup = vi.fn();
-    const host: ProcessOwnershipHost = {
-      listProcesses: () =>
-        Promise.resolve([owned, opaque, malformed, sysctlDenied]),
-      environment: (pid) =>
-        pid === owned.pid
-          ? Promise.resolve({ REA_PROCESS_RUN_ID: "run-token" })
-          : Promise.reject(new Error("permission denied")),
-      runTokens: (entries) =>
-        Promise.resolve(
-          new Map(
-            entries.map(({ pid }) => [
-              pid,
-              pid === owned.pid
-                ? { state: "readable", runId: "run-token" as const }
-                : {
-                    state: "unavailable",
-                    reason:
-                      pid === malformed.pid
-                        ? ("malformed_procargs" as const)
-                        : pid === sysctlDenied.pid
-                          ? ("sysctl_failed_1" as const)
-                          : ("environment_unavailable" as const),
-                  },
-            ]),
+  it.skipIf(typeof process.getuid !== "function")(
+    "cleans verified owners and records unrelated opaque candidates as unverified",
+    async () => {
+      const owned: ProcessTableEntry = {
+        pid: 905,
+        parentPid: 1,
+        processGroupId: 905,
+        state: "S",
+        command: "owned-detached-child",
+      };
+      const opaque: ProcessTableEntry = {
+        pid: 906,
+        parentPid: 1,
+        processGroupId: 906,
+        state: "S",
+        command: "/usr/bin/unrelated-process",
+      };
+      const malformed: ProcessTableEntry = {
+        ...opaque,
+        pid: 907,
+        processGroupId: 907,
+        uid: process.getuid?.() === 0 ? 1 : 0,
+        command: "/usr/bin/malformed-procargs-process",
+      };
+      const sysctlDenied: ProcessTableEntry = {
+        ...opaque,
+        pid: 908,
+        processGroupId: 908,
+        uid: process.getuid?.() === 0 ? 1 : 0,
+        command: "/usr/bin/sysctl-denied-process",
+      };
+      const signalGroup = vi.fn();
+      const host: ProcessOwnershipHost = {
+        platform: "darwin",
+        listProcesses: () =>
+          Promise.resolve([owned, opaque, malformed, sysctlDenied]),
+        environment: (pid) =>
+          pid === owned.pid
+            ? Promise.resolve({ REA_PROCESS_RUN_ID: "run-token" })
+            : Promise.reject(new Error("permission denied")),
+        runTokens: (entries) =>
+          Promise.resolve(
+            new Map(
+              entries.map(({ pid }) => [
+                pid,
+                pid === owned.pid
+                  ? { state: "readable", runId: "run-token" as const }
+                  : {
+                      state: "unavailable",
+                      reason:
+                        pid === malformed.pid
+                          ? ("malformed_procargs" as const)
+                          : pid === sysctlDenied.pid
+                            ? ("sysctl_failed_1" as const)
+                            : ("platform_binary_environment_withheld" as const),
+                    },
+              ]),
+            ),
           ),
-        ),
-      signalGroup,
-    };
+        signalGroup,
+      };
 
-    await expect(
-      cleanupOwnedProcessGroup(
-        {
-          runId: "run-token",
-          leaderPid: 100,
-          processGroupId: 100,
-          sweepTokenOwnedProcesses: true,
-        },
-        host,
-      ),
-    ).resolves.toMatchObject({
-      cleaned: false,
-      reason:
-        "process ownership token could not be read for 3 live process(es): environment_unavailable=1, malformed_procargs=1, sysctl_errno_1=1",
-    });
-    expect(signalGroup).toHaveBeenCalledWith(owned.processGroupId, "SIGKILL");
-    expect(signalGroup).not.toHaveBeenCalledWith(
-      opaque.processGroupId,
-      "SIGKILL",
-    );
-    expect(signalGroup).not.toHaveBeenCalledWith(
-      malformed.processGroupId,
-      "SIGKILL",
-    );
-    expect(signalGroup).not.toHaveBeenCalledWith(
-      sysctlDenied.processGroupId,
-      "SIGKILL",
-    );
-  });
+      await expect(
+        cleanupOwnedProcessGroup(
+          {
+            runId: "run-token",
+            leaderPid: 100,
+            processGroupId: 100,
+            sweepTokenOwnedProcesses: true,
+          },
+          host,
+        ),
+      ).resolves.toMatchObject({
+        cleaned: true,
+        signaled: true,
+        unverified: [
+          { pid: 906, diagnostic: "platform_binary_environment_withheld" },
+          { pid: 907, diagnostic: "malformed_procargs" },
+          { pid: 908, diagnostic: "sysctl_failed_1" },
+        ],
+      });
+      expect(signalGroup).toHaveBeenCalledWith(owned.processGroupId, "SIGKILL");
+      expect(signalGroup).not.toHaveBeenCalledWith(
+        opaque.processGroupId,
+        "SIGKILL",
+      );
+      expect(signalGroup).not.toHaveBeenCalledWith(
+        malformed.processGroupId,
+        "SIGKILL",
+      );
+      expect(signalGroup).not.toHaveBeenCalledWith(
+        sysctlDenied.processGroupId,
+        "SIGKILL",
+      );
+    },
+  );
 });
 
 describe("capture-local process identity baselines", () => {

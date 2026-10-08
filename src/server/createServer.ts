@@ -7,7 +7,8 @@ import type { RecordedCrashService } from "../application/binaryDiagnostics/Reco
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
 import { createBinaryLayoutService } from "../composition/binaryDiagnostics.js";
 import type { BinaryLayoutService } from "../application/binaryDiagnostics/BinaryLayoutService.js";
-import { McpServer } from "@modelcontextprotocol/server";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { isAbsolute } from "node:path";
 
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
@@ -145,7 +146,7 @@ const installSessionToolAvailability = (
 };
 
 const createMcpServer = (session: BinarySessionPort | undefined): McpServer =>
-  new McpServer(
+  new EvidenceMcpServer(
     {
       name: PRODUCT_IDENTITY.mcpServerKey,
       version: PRODUCT_IDENTITY.packageVersion,
@@ -157,6 +158,9 @@ const createMcpServer = (session: BinarySessionPort | undefined): McpServer =>
           ? ACTIVE_TARGET_INSTRUCTIONS
           : TARGET_FREE_INSTRUCTIONS,
     },
+    session === undefined
+      ? undefined
+      : (evidence) => session.recordEvidence(evidence),
   );
 
 /**
@@ -294,7 +298,9 @@ const createSessionRecorders = (
   evidenceById:
     session === undefined
       ? undefined
-      : (evidenceId: string) => session.evidenceById(evidenceId),
+      : (evidenceId: string) =>
+          session.evidenceForAnalysis?.(evidenceId) ??
+          session.evidenceById(evidenceId),
   activeTarget:
     session === undefined ? undefined : () => session.activeTarget(),
   recordEvidence:
@@ -349,6 +355,14 @@ const registerBinaryAnalysisTools = ({
     ...analysisOptions,
     analysisProfile:
       session === undefined ? undefined : () => session.analysisProfile(),
+    allowsSnapshotReplay:
+      session === undefined
+        ? undefined
+        : (operation) => session.allowsSnapshotReplay(operation),
+    recordWorkflowSnapshot:
+      session === undefined
+        ? undefined
+        : (input) => session.recordWorkflowSnapshot(input),
   });
   const evidenceOptions = { logger, activeTarget, recordEvidence };
   registerNativeTools(server, analysis, evidenceOptions);

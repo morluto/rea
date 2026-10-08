@@ -2,6 +2,7 @@ import type { ObjcSwiftMetadata } from "../domain/native/objcSwiftMetadata.js";
 import type { Segment, Section } from "./AppleMachoSelection.js";
 import { boundClassName, decodeObjcCategories } from "./AppleObjcCategories.js";
 import { readObjcPropertiesOf } from "./AppleObjcProperties.js";
+import type { DecodeIssue } from "./AppleDispatchDecodeFacts.js";
 import { createObjcProtocolReader } from "./AppleObjcProtocols.js";
 import type {
   BinaryMetadataEvidence,
@@ -67,9 +68,15 @@ export const decodeObjcDispatchFacets = (input: {
   readers: ObjcDispatchReaders;
   budget: DispatchRecordBudget;
   result: ObjcSwiftMetadata;
-}): { failures: string[]; examined: number; categoriesExamined: number } => {
+}): {
+  failures: string[];
+  categoryIssues: DecodeIssue[];
+  examined: number;
+  categoriesExamined: number;
+} => {
   const { bytes, sections, segments, readers: read, budget, result } = input;
   const failures: string[] = [];
+  const categoryIssues: DecodeIssue[] = [];
   let examined = 0;
   const methods = (
     list: bigint,
@@ -275,7 +282,8 @@ export const decodeObjcDispatchFacets = (input: {
       properties: readObjcPropertiesOf(read, read.pointer(ro + 64n), {
         owner: name,
         admit: () => budget.admit(),
-        failures,
+        issues: categoryIssues,
+        location: hex(read.pointer(ro + 64n)),
       }),
       protocols: protocolReader.list(read.pointer(ro + 40n)),
       ivar_count: ivarCount,
@@ -328,10 +336,11 @@ export const decodeObjcDispatchFacets = (input: {
     read,
     result,
     failures,
+    issues: categoryIssues,
     admit: () => budget.admit(),
     methods,
     protocols: (list) => protocolReader.list(list),
     localClassName: (address) => localClassName(read, address),
   });
-  return { failures, examined, categoriesExamined };
+  return { failures, categoryIssues, examined, categoriesExamined };
 };

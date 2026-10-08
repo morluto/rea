@@ -214,6 +214,9 @@ describe("Ghidra headless launcher", () => {
       process.platform === "win32" ? "C:\\Java\\jdk-21" : "/opt/jdk-21";
     const launcher = new GhidraHeadlessLauncher({
       analyzeHeadlessPath: fixturePath,
+      // This fixture exercises the official script route. Native macOS JVM
+      // launching is covered by the real Ghidra acceptance lane.
+      platform: process.platform === "win32" ? "win32" : "linux",
       javaHome,
       bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
     });
@@ -228,8 +231,7 @@ describe("Ghidra headless launcher", () => {
       providerVersion: "12.1.4",
       profileDigest: "a".repeat(64),
     });
-    expect(launched.ok).toBe(true);
-    if (!launched.ok) return;
+    if (!launched.ok) throw launched.error;
     const capturePath = join(runtimeRoot, "launch-capture.json");
     await vi.waitFor(() => access(`${capturePath}.ready`), { timeout: 10_000 });
     const capture = launchCaptureSchema.parse(

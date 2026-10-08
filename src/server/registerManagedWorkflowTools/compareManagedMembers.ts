@@ -5,7 +5,7 @@ import { compareManagedMembersEvidenceValidated } from "../../application/manage
 import { managedMemberComparisonResultSchema } from "../../domain/managed/managedMemberComparison.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
-import { toCallToolResult } from "../toolResult.js";
+import { toCallToolResult, toEvidenceToolResult } from "../toolResult.js";
 import { managedWorkflowContract } from "./contract.js";
 import { resolveManagedEvidence } from "./evidence.js";
 import type { ManagedWorkflowToolRegistration } from "./types.js";
@@ -68,12 +68,7 @@ export const registerCompareManagedMembers = (
             relationships: [],
           })
         : options.recordEvidence?.(result.value);
-      if (output !== undefined && !output.ok)
-        return toCallToolResult(output, compareContract);
-      return toCallToolResult(
-        { ok: true, value: result.value },
-        compareContract,
-      );
+      return toEvidenceToolResult(result.value, compareContract, output);
     },
   );
 };

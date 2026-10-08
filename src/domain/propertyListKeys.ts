@@ -61,7 +61,7 @@ const XML_ENTITIES: Readonly<Record<string, string>> = {
  * Unicode stays as written: comments and CDATA may hold such text literally,
  * and the XML decoder rejects it anywhere else.
  */
-const decodeXmlText = (text: string): string =>
+export const decodeXmlText = (text: string): string =>
   text.replace(
     /&(?:#x([\da-f]+)|#(\d+)|([a-z]+));/giu,
     (entity, hex?: string, decimal?: string, name?: string) => {

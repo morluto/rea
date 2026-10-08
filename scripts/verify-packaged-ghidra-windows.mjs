@@ -127,7 +127,6 @@ const environment = {
     process.env.ComSpec ??
     join(process.env.SystemRoot ?? "C:\\Windows", "System32", "cmd.exe")
   ).replaceAll("\\", "/"),
-  REA_ANALYSIS_PROVIDER: "ghidra",
   REA_LOG_LEVEL: "error",
   GHIDRA_HEADLESS_MAXMEM: "512m",
   NODE_OPTIONS: "--max-old-space-size=512",
@@ -291,7 +290,17 @@ try {
       expected.every((name) => report.mcpOperations.includes(name)),
       "Packaged verification omitted an admitted operation.",
     );
-    await call("binary_session", {});
+    const session = await call("binary_session", {});
+    assert.equal(
+      session.analysis_provider_binding?.selection_source,
+      "auto-single-candidate",
+      "Packaged MCP verification must exercise automatic provider selection.",
+    );
+    assert.equal(
+      session.analysis_provider_binding?.provider?.id,
+      "ghidra",
+      "The sole available Windows analysis provider must be Ghidra.",
+    );
     await call("close_binary", {});
     await assertCleanup();
   } finally {

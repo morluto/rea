@@ -1,3 +1,8 @@
+import { access, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
+
 import { EventEmitter } from "node:events";
 import { Socket } from "node:net";
 
@@ -30,6 +35,7 @@ const processCleanupLaunch = (): BridgeLaunch => ({
     kill: () => true,
   }),
   ownsProcessLifetime: true,
+  providerLifetime: "launcher-process",
   shutdownMode: "process-cleanup",
   cleanup: () =>
     Promise.resolve({
@@ -118,4 +124,46 @@ describe("Hopper shutdown rejection diagnostics", () => {
       }),
     );
   });
+});
+
+it("keeps a prepared backing image when native document closure cannot be confirmed", async () => {
+  const parent = await createTestTempDirectory("rea-hopper-backing-lifetime-");
+  const runtimeRoot = await PrivateRuntimeRoot.create({ parent });
+  const preparedImagePath = join(runtimeRoot.path, "image.macho");
+  await writeFile(preparedImagePath, "owned backing bytes");
+  const { logger } = loggerHarness();
+  try {
+    const launch = {
+      ...processCleanupLaunch(),
+      preparedImagePath,
+      shutdownMode: "bridge-request" as const,
+      providerLifetime: "external-application" as const,
+    };
+    const result = await cleanupHopperSession({
+      socket: new Socket(),
+      launch,
+      runtimeRoot,
+      processSupervisor: undefined,
+      activeRequest: null,
+      retainDocument: true,
+      progress: undefined,
+      logger,
+      onDiagnostic: undefined,
+      request: () => Promise.reject(failure("document closure unobserved")),
+      releaseTransport: () => undefined,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        cleanupResources: expect.arrayContaining([
+          "hopper-document",
+          runtimeRoot.path,
+        ]),
+      },
+    });
+    await expect(access(preparedImagePath)).resolves.toBeUndefined();
+  } finally {
+    await runtimeRoot.close();
+    await rm(parent, { recursive: true, force: true });
+  }
 });

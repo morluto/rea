@@ -49,6 +49,9 @@ it("preserves queue failure diagnostics through the provider, CLI adapter and SD
       details: {
         diagnostics: {
           target_path: "/tmp/public-fixture",
+          failure_kind: "protocol",
+          failure_message:
+            "Ghidra serial request execution rejected unexpectedly",
           failure_cause: {
             name: "TypeError",
             code: "EDECODE",

@@ -10,6 +10,7 @@ const temporary: string[] = [];
 
 const electronModuleSource = `const { EventEmitter } = require("node:events");
 const app = new EventEmitter();
+app.isReady = () => true;
 app.relaunch = () => undefined;
 app.setAsDefaultProtocolClient = () => true;
 app.setLoginItemSettings = () => undefined;
@@ -40,6 +41,8 @@ class BrowserWindow extends EventEmitter {
     this.id = 3;
     this.webContents = new WebContents();
     this.options = options;
+    this.webContents.getLastWebPreferences = () => options.webPreferences;
+    app.emit("browser-window-created", {}, this);
   }
 }
 const utilityProcess = {
@@ -66,7 +69,7 @@ const contextBridge = {
 };
 module.exports = {
   app,
-  BrowserWindow,
+  get BrowserWindow() { return BrowserWindow; },
   contextBridge,
   ipcMain,
   ipcRenderer,
@@ -102,8 +105,17 @@ electron.app.relaunch();
 electron.contextBridge.exposeInMainWorld("api", { value: true });
 window.webContents.loadURL("https://example.invalid").catch(() => undefined);
 for (let index = 0; index < 6000; index++) electron.app.relaunch();
+electron.ipcRenderer.send("x".repeat(9 * 1024 * 1024));
+electron.app.emit("r".repeat(9 * 1024 * 1024));
+const manyArguments = Array(30_000).fill(true);
+for (let index = 0; index < 8; index++) electron.ipcRenderer.send("shape-budget", ...manyArguments);
 try { process.dlopen({}, "/missing/native.node"); } catch {}
-process.stdout.write(JSON.stringify({ snapshot: globalThis.__reaElectronActiveSnapshot(), default_popup_decision: defaultPopupDecision, popup_decision: popupDecision }) + "\\n");
+const firstSnapshot = globalThis.__reaElectronActiveSnapshot();
+const firstIpc = firstSnapshot.events.find((event) => event.kind === "main-handler-invocation");
+if (firstIpc) { firstIpc.channel = "mutated"; firstIpc.argument_shapes.push("mutated"); }
+firstSnapshot.events.length = 0;
+const snapshot = globalThis.__reaElectronActiveSnapshot();
+process.stdout.write(JSON.stringify({ snapshot, default_popup_decision: defaultPopupDecision, popup_decision: popupDecision }) + "\\n");
 })();
 `;
 
@@ -115,7 +127,7 @@ afterEach(async () => {
   );
 });
 
-it("retains active hook lifecycle and IPC evidence without a count ceiling", async () => {
+it("retains active hook evidence within its event-retention budget", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-");
   temporary.push(root);
   await writeFile(join(root, "electron.js"), electronModuleSource);
@@ -123,7 +135,7 @@ it("retains active hook lifecycle and IPC evidence without a count ceiling", asy
   await writeFile(script, activeCaptureSource);
   const hook = join(process.cwd(), "scripts/electron-active-hook.cjs");
   const execution = await runNode(hook, script, root, root);
-  expect(execution.code).toBe(0);
+  expect(execution.code, execution.stderr).toBe(0);
   const result = JSON.parse(
     execution.stdout.trim().split("\n").at(-1) ?? "null",
   ) as {
@@ -133,13 +145,37 @@ it("retains active hook lifecycle and IPC evidence without a count ceiling", asy
       readonly hook_error: boolean;
       readonly events: readonly Record<string, unknown>[];
       readonly observed: number;
+      readonly retained: number;
+      readonly dropped: number;
+      readonly dropped_ipc: number;
+      readonly dropped_runtime: number;
+      readonly retention_budget_bytes: number;
     };
   };
   const { snapshot } = result;
 
   expect(snapshot.hook_error).toBe(false);
-  expect(snapshot.events).toHaveLength(snapshot.observed);
+  expect(snapshot.events).toHaveLength(snapshot.retained);
+  expect(snapshot.observed).toBe(snapshot.retained + snapshot.dropped);
   expect(snapshot.observed).toBeGreaterThan(5_000);
+  expect(snapshot.dropped_ipc).toBeGreaterThanOrEqual(2);
+  expect(snapshot.dropped_runtime).toBe(1);
+  expect(snapshot.dropped).toBe(
+    snapshot.dropped_ipc + snapshot.dropped_runtime,
+  );
+  expect(
+    snapshot.events.some(
+      (event) =>
+        event.kind === "ipc-renderer-send" &&
+        Array.isArray(event.argument_shapes) &&
+        event.argument_shapes.length === 30_000,
+    ),
+  ).toBe(true);
+  expect(
+    Buffer.byteLength(JSON.stringify(snapshot), "utf8"),
+  ).toBeLessThanOrEqual(snapshot.retention_budget_bytes);
+  const sequences = snapshot.events.map((event) => event.sequence as number);
+  expect(sequences).toEqual([...sequences].sort((left, right) => left - right));
   expect(snapshot.events).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ kind: "window-lifecycle", event: "created" }),

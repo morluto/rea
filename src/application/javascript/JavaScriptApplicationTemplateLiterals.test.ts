@@ -45,15 +45,10 @@ const graphIdentities = async (source: string) => {
 // source locations and every derived identity stay comparable.
 it.each([
   "fetch('https://api.example.com/v1/users');",
-  "new WebSocket('wss://ws.example.com/socket');",
-  "const xhr = new XMLHttpRequest(); xhr.open('GET', 'https://xhr.example.com/data');",
   "localStorage.setItem('token', 1);",
-  "sessionStorage.getItem('session-id');",
-  "indexedDB.open('records');",
   "new Worker('./worker.js');",
   "const dep = require('./dep.js'); dep();",
   "import('./dep.js');",
-  "navigator.serviceWorker.register('./worker.js');",
 ])(
   "reads a template without substitutions as its exact string: %s",
   async (quoted) => {

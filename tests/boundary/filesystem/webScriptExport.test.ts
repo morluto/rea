@@ -176,7 +176,6 @@ describe("captured script publication failures and cleanup", () => {
       const { input } = await setup();
       await writeFile(input.capture_path, bytes);
       const result = await exportWebScripts(input);
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected invalid input");
       expect(result.error._tag).toBe("AnalysisInputError");
       await expect(access(input.output_directory)).rejects.toMatchObject({
@@ -195,7 +194,6 @@ describe("captured script publication failures and cleanup", () => {
       process.platform === "win32" ? "junction" : "dir",
     );
     const result = await exportWebScripts(input);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected exclusive output failure");
     expect(result.error.userMessage).toContain("already exists");
     expect(await readFile(marker, "utf8")).toBe("keep");
@@ -229,7 +227,6 @@ describe("captured script publication failures and cleanup", () => {
     const controller = new AbortController();
     controller.abort();
     const result = await exportWebScripts(input, { signal: controller.signal });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected cancellation");
     expect(result.error._tag).toBe("AnalysisCancelledError");
     await expect(
@@ -249,7 +246,6 @@ describe("captured script publication failures and cleanup", () => {
       ...input,
       capture_path: `${input.capture_path}.missing`,
     });
-    expect(missing.ok).toBe(false);
     if (missing.ok) throw new Error("Expected unavailable input");
     expect(missing.error.userMessage).toContain(
       `${input.capture_path}.missing`,
@@ -258,7 +254,6 @@ describe("captured script publication failures and cleanup", () => {
       ...input,
       capture_path: "capture.json",
     });
-    expect(relative.ok).toBe(false);
     if (relative.ok) throw new Error("Expected host path error");
     expect(relative.error._tag).toBe("AnalysisInputError");
   });

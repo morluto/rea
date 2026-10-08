@@ -28,7 +28,7 @@ intentionally not included. -->
 - Provider, bridge, target-format, or platform compatibility:
 - Evidence, artifact, provenance, or reconstruction contract:
 - Process execution, authorization, cleanup, or containment impact:
-- Generated metadata (`docs/product-catalog.json`), package, or installation impact (the regen-generated bot pushes tracked generated files; never hand-edit them):
+- Generated metadata (`docs/public/product-catalog.json`), package, or installation impact (CI generates and validates ignored catalogs and `skills/`; edit authored instructions in `skill-src/` and never commit build outputs):
 
 ## Evidence and regression coverage
 
@@ -61,7 +61,8 @@ limits, security/privacy/containment implications, and meaningful proof gaps. --
 - Breaking changes or migration steps:
   <!-- For ! / BREAKING CHANGE: show a previously valid call/configuration,
   its new behavior and migration, and why compatibility/deprecation cannot
-  preserve it. Compatible fixes/additions should use patch/minor semantics.
+  preserve it. Every release increments minor, including breaking changes;
+  keep breaking markers and migration notes so callers can assess compatibility.
   See docs/releasing.md. -->
 - Real Hopper/Ghidra, browser, or OS coverage:
 - Package or release metadata impact:

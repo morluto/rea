@@ -89,7 +89,7 @@ export const reconstructionClaimResultSchema = z.object({
   comparison_evidence_id: evidenceIdSchema,
   left_evidence_ids: z.array(evidenceIdSchema).min(1),
   right_evidence_ids: z.array(evidenceIdSchema).min(1),
-  evidence_links: z.array(evidenceIdSchema).min(3),
+  evidence_links: z.array(evidenceIdSchema).min(2),
   unknown_ids: z.array(unknownIdSchema),
   limitations: z.array(z.string()),
 });
@@ -118,7 +118,7 @@ export const reconstructionVerificationResultSchema = z
         unknown_ids: z.array(unknownIdSchema),
       }),
     ),
-    evidence_links: z.array(evidenceIdSchema).min(3),
+    evidence_links: z.array(evidenceIdSchema).min(2),
     limitations: z.array(z.string()),
   })
   .superRefine((result, context) => {

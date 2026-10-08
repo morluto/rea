@@ -9,7 +9,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
-import { projectInputIssues } from "../domain/inputIssueProjection.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   collectWebModuleImports,
@@ -78,11 +78,9 @@ export class WebModuleTraceService {
     const parsed = webModuleTraceInputSchema.safeParse(rawInput);
     if (!parsed.success)
       return err(
-        new AnalysisInputError(
-          OPERATION,
-          { cause: parsed.error },
-          projectInputIssues(parsed.error.issues, rawInput),
-        ),
+        analysisInputErrorFromIssues(OPERATION, parsed.error.issues, rawInput, {
+          cause: parsed.error,
+        }),
       );
     const input = parsed.data;
     for (const [path, value] of [

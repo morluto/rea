@@ -1,6 +1,6 @@
 import { APPLICATION_TOOL_CONTRACTS } from "../../contracts/applicationToolContracts.js";
 import type { Evidence } from "../../domain/evidence.js";
-import { toCallToolResult } from "../toolResult.js";
+import { toEvidenceToolResult } from "../toolResult.js";
 import type { ApplicationToolRegistration } from "./types.js";
 
 export const recordResult = (
@@ -19,9 +19,7 @@ export const recordResult = (
           evidence,
           unknownRegistration(evidence, unknownKind),
         );
-  if (recorded !== undefined && !recorded.ok)
-    return toCallToolResult(recorded, contract);
-  return toCallToolResult({ ok: true, value: evidence }, contract);
+  return toEvidenceToolResult(evidence, contract, recorded);
 };
 
 const unknownRegistration = (

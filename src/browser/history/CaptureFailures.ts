@@ -8,6 +8,7 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -17,6 +18,7 @@ import {
   type InspectWebNetworkCaptureInput,
 } from "../../domain/webNetworkCapture.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
+import { HAR_CAPTURE_HEAP_LIMITS } from "./CaptureRelease.js";
 const OPERATION = "inspect_web_network_capture";
 
 /** Preserve the origin and typed cause of a historical capture failure. */
@@ -55,6 +57,18 @@ export const historicalCaptureFailure = (
       );
     if (cause.reason === "output-limit")
       return new AnalysisOutputError(OPERATION, cause.message);
+    if (
+      phase === "decoder" &&
+      input.format === "har" &&
+      cause.reason === "process" &&
+      cause.snapshot?.signal === "SIGABRT" &&
+      /FATAL ERROR:[^\r\n]*heap out of memory/u.test(cause.snapshot.stderr.text)
+    )
+      return captureMemoryFailure(
+        input,
+        "The HAR decoder exhausted its fixed V8 heap",
+        cause,
+      );
   }
   if (options?.signal?.aborted) return new AnalysisCancelledError(OPERATION);
   if (
@@ -144,3 +158,44 @@ export const historicalCaptureFailure = (
     },
   });
 };
+
+/** Preserve a decoder's observed memory failure and its actual workload limits. */
+export const captureMemoryFailure = (
+  input: InspectWebNetworkCaptureInput,
+  reason: string,
+  cause?: unknown,
+): AnalysisResourceConstraintError =>
+  new AnalysisResourceConstraintError(
+    OPERATION,
+    "memory",
+    `${reason}: ${input.capture_path}. No complete capture result is available.`,
+    {
+      boundary: "historical-capture-decoder",
+      capture_path: input.capture_path,
+      format: input.format,
+      maximum_input_bytes: WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
+      maximum_reply_bytes: WEB_NETWORK_CAPTURE_LIMITS.outputBytes,
+      ...(input.format === "har"
+        ? {
+            old_generation_heap_mib: HAR_CAPTURE_HEAP_LIMITS.oldGenerationMiB,
+            semi_space_heap_mib: HAR_CAPTURE_HEAP_LIMITS.semiSpaceMiB,
+          }
+        : {}),
+      ...(cause instanceof OwnedCommandFailure
+        ? { observed_signal: cause.snapshot?.signal ?? null }
+        : {}),
+    },
+    {
+      cause,
+      remediationAction: `Use a smaller capture exported by its producer, or another decoder with sufficient capacity for the original capture. Preserve the original for provenance; a subset does not establish complete-capture coverage.${input.format === "har" ? ` REA's HAR old-generation heap is fixed at ${HAR_CAPTURE_HEAP_LIMITS.oldGenerationMiB} MiB; inherited NODE_OPTIONS cannot raise it.` : ""}`,
+      ...(cause instanceof OwnedCommandFailure && cause.snapshot !== null
+        ? {
+            capturedOutput: {
+              stdout: cause.snapshot.stdout.text,
+              stderr: cause.snapshot.stderr.text,
+              truncated: cause.snapshot.diagnosticTruncated ?? false,
+            },
+          }
+        : {}),
+    },
+  );

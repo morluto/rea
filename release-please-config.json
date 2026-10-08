@@ -1,6 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "release-type": "node",
+  "versioning": "always-bump-minor",
   "include-v-in-tag": false,
   "changelog-sections": [
     { "type": "feat", "section": "Features", "hidden": false },
@@ -16,10 +17,6 @@
     ".": {
       "package-name": "rea-agents",
       "extra-files": [
-        { "type": "generic", "path": "README_zh.md" },
-        { "type": "generic", "path": "README_ja.md" },
-        { "type": "generic", "path": "README_ko.md" },
-        { "type": "generic", "path": "README_ar.md" },
         { "type": "generic", "path": "docs/installation.md" },
         {
           "type": "generic",
@@ -34,11 +31,6 @@
           "type": "json",
           "path": "server.json",
           "jsonpath": "$.packages[0].version"
-        },
-        {
-          "type": "json",
-          "path": "docs/product-catalog.json",
-          "jsonpath": "$.package.version"
         }
       ]
     }

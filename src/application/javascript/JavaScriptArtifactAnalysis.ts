@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
 
 import { analyzeParsedJavaScriptStaticSource } from "../../domain/javascript/javascriptStaticAnalysis.js";
-import { analyzeParsedJavaScriptSemantics } from "../../domain/javascript/javascriptSemanticAnalysis.js";
+import {
+  analyzeParsedJavaScriptSemantics,
+  classifyParsedJavaScriptOpenReceivers,
+} from "../../domain/javascript/javascriptSemanticAnalysis.js";
 import type { JavaScriptSemanticIr } from "../../domain/javascript/javascriptSemanticIr.js";
 import { parseJavaScriptSource } from "../../domain/javascript/javascriptSourceParser.js";
 import { hasValidSourceMapContents } from "../../domain/sourceMapContents.js";
@@ -163,14 +166,19 @@ const analyzeArtifactFile = <SemanticIr extends JavaScriptModuleSemanticIr>(
     state.files.push({ file, javascript: null, semantic: null });
     return;
   }
-  const parsed = parseJavaScriptSource(file.text.value);
+  const parsed = parseJavaScriptSource(file.text.value, file.path);
   if (parsed === null) {
     const analysis = failedJavaScriptStaticAnalysis();
     state.files.push({ file, javascript: analysis, semantic: null });
     state.parseFailures += 1;
     return;
   }
-  const analysis = analyzeParsedJavaScriptStaticSource(file.text.value, parsed);
+  const openReceiverFacts = classifyParsedJavaScriptOpenReceivers(parsed);
+  const analysis = analyzeParsedJavaScriptStaticSource(
+    file.text.value,
+    parsed,
+    openReceiverFacts,
+  );
   const staticFindings = findingCount(analysis);
   const semantics =
     analysis.parse_status === "complete" || analysis.parse_status === "partial"
@@ -407,7 +415,7 @@ const pointForOffset = (
   text: string,
   offset: number,
 ): JavaScriptSourcePoint => {
-  const lines = text.slice(0, offset).split("\n");
+  const lines = text.slice(0, offset).split(/\r\n|\r|\n/u);
   return { line: lines.length, column: lines.at(-1)?.length ?? 0 };
 };
 

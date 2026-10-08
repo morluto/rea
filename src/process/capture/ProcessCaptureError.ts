@@ -31,14 +31,14 @@ export class ProcessCaptureError extends AnalysisError {
 
   constructor(message: string, options?: ProcessCaptureErrorOptions) {
     super(message, options);
-    this.userMessage = options?.userMessage;
+    this.userMessage = options?.userMessage ?? message;
     this.userCategory = options?.userCategory;
     this.reason =
       options?.reason ??
       (options?.userCategory === "cancelled" ? "cancelled" : "capture_failed");
     this.cleanupIncomplete = this.reason === "cleanup_incomplete";
     this.cleanupResources = options?.cleanupResources ?? [];
-    this.executionFailure = options?.executionFailure;
+    this.executionFailure = options?.executionFailure ?? message;
     this.partialObservation = options?.partialObservation;
     this.cleanupReport = options?.cleanupReport;
   }

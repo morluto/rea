@@ -6,7 +6,6 @@ import { exec, json, run } from "./lib/verify-package-core.mjs";
 
 /** Install the packed CLI globally with and without optional dependencies and verify PTY degradation. */
 export async function verifyPackageInstall({
-  root,
   tarball,
   prefix,
   workspace,
@@ -14,14 +13,7 @@ export async function verifyPackageInstall({
 }) {
   await exec(
     "npm",
-    [
-      "install",
-      "--global",
-      "--ignore-scripts",
-      "--prefix",
-      prefix,
-      join(root, tarball),
-    ],
+    ["install", "--global", "--ignore-scripts", "--prefix", prefix, tarball],
     { env: environment },
   );
   const cli = join(prefix, "bin", "rea");
@@ -61,7 +53,7 @@ export async function verifyPackageInstall({
       "--omit=optional",
       "--prefix",
       noOptionalPrefix,
-      join(root, tarball),
+      tarball,
     ],
     { env: environment },
   );

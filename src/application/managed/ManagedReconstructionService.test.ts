@@ -9,6 +9,7 @@ import {
 } from "../../domain/managed/managedReconstruction.js";
 import { managedMemberInspectionSchema } from "../../domain/managed/managedArtifact.js";
 import { createEvidence } from "../../domain/evidence.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { importManagedReconstructionEvidence } from "./ManagedReconstructionService.js";
 
 const exampleInput = () =>
@@ -150,8 +151,7 @@ describe("managed decompiler reconstruction import", () => {
   it("wraps imported reconstruction in Evidence", () => {
     const evidence = importManagedReconstructionEvidence(exampleInput());
 
-    expect(evidence.ok).toBe(true);
-    if (!evidence.ok) return;
+    if (!evidence.ok) throw evidence.error;
     expect(evidence.value).toMatchObject({
       operation: "import_managed_reconstruction",
       provider: { id: "rea-dotnet-workflows" },
@@ -169,5 +169,80 @@ describe("managed decompiler reconstruction import", () => {
         ],
       },
     });
+  });
+});
+
+describe("managed reconstruction input diagnostics", () => {
+  it("lists schema issues for malformed raw input", () => {
+    const result = importManagedReconstructionEvidence({});
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: expect.arrayContaining([
+        expect.objectContaining({ reason: "missing_argument" }),
+      ]),
+    });
+  });
+
+  it("keeps the failed domain constraint as an issue message", () => {
+    const result = importManagedReconstructionEvidence({
+      ...MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE,
+      methods: [
+        {
+          ...exampleMethod(),
+          reconstruction: {
+            ...exampleMethod().reconstruction,
+            text_sha256: "0".repeat(64),
+          },
+        },
+      ],
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [
+        {
+          path: [],
+          reason: "invalid_value",
+          message: expect.stringMatching(/text hash mismatch/u),
+        },
+      ],
+    });
+  });
+
+  it("reports nested Evidence schema issues without a misleading request path", () => {
+    const input = exampleInput();
+    const malformed = createEvidence(undefined, input.static_members.provider, {
+      operation: "inspect_managed_members",
+      parameters: {},
+      result: {
+        ...managedMemberInspectionSchema.parse(
+          input.static_members.normalized_result,
+        ),
+        artifact: { sha256: 7 },
+      },
+      rawResult: null,
+    });
+    const result = importManagedReconstructionEvidence({
+      ...MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE,
+      static_members: malformed,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({ _tag: "AnalysisInputError" });
+    const issues =
+      result.error instanceof AnalysisInputError ? result.error.issues : [];
+    expect(issues.length).toBeGreaterThan(0);
+    expect(issues.every(({ path }) => path.length === 0)).toBe(true);
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        reason: "invalid_value",
+        message: expect.stringContaining(
+          "nested value failed validation at artifact",
+        ),
+      }),
+    );
   });
 });

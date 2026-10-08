@@ -91,7 +91,7 @@ export const processComparisonContract = (
  * Defaults are part of the evidence contract and must remain deterministic.
  */
 export const processScenarioSchema = z
-  .object({
+  .strictObject({
     executable: childProcessString.min(1),
     arguments: z.array(childProcessString).default([]),
     working_directory: childProcessString.default("."),
@@ -100,7 +100,7 @@ export const processScenarioSchema = z
       .array(childProcessString.min(1))
       .default([]),
     terminal: z
-      .object({
+      .strictObject({
         columns: z.number().int().min(1).max(65_535).default(80),
         rows: z.number().int().min(1).max(65_535).default(24),
         scrollback: z.number().int().min(0).default(1_000),
@@ -109,19 +109,19 @@ export const processScenarioSchema = z
     events: z
       .array(
         z.discriminatedUnion("type", [
-          z.object({
+          z.strictObject({
             ...timedEventBase,
             type: z.literal("input"),
             data: z.string(),
             sensitive: z.boolean().default(false),
           }),
-          z.object({
+          z.strictObject({
             ...timedEventBase,
             type: z.literal("resize"),
             columns: z.number().int().min(1).max(65_535),
             rows: z.number().int().min(1).max(65_535),
           }),
-          z.object({
+          z.strictObject({
             ...timedEventBase,
             type: z.literal("signal"),
             signal: z.enum(["SIGINT", "SIGTERM", "SIGKILL"]),
@@ -133,7 +133,7 @@ export const processScenarioSchema = z
     idle_timeout_ms: positiveBudget.default(30_000),
     settle_ms: z.number().int().safe().nonnegative().default(100),
     limits: z
-      .object({
+      .strictObject({
         output_bytes: positiveBudget.default(1_000_000),
         files: positiveBudget.default(10_000),
         file_bytes: positiveBudget.default(10_000_000),
@@ -149,15 +149,19 @@ export const processScenarioSchema = z
         filesystem_depth: 16,
       }),
     normalization: z
-      .object({
+      .strictObject({
         paths: z.boolean().default(false),
         pids: z.boolean().default(true),
         ports: z.boolean().default(true),
         time_bucket_ms: positiveBudget.default(10),
         patterns: z
           .array(
-            z.object({
-              pattern: z.string(),
+            z.strictObject({
+              pattern: z
+                .string()
+                .describe(
+                  "Literal text to replace in captured output; not a regular expression.",
+                ),
               replacement: z.string(),
             }),
           )
@@ -171,7 +175,6 @@ export const processScenarioSchema = z
         patterns: [],
       }),
   })
-  .strict()
   .superRefine((scenario, context) => {
     for (let index = 1; index < scenario.events.length; index += 1) {
       const event = scenario.events[index];

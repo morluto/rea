@@ -23,6 +23,11 @@ import {
 } from "./LinuxPrivateDisplayProbe.js";
 import writeFileAtomic from "write-file-atomic";
 
+import {
+  prepareHopperMachOImage,
+  type HopperMachOImage,
+} from "./HopperMachOImage.js";
+
 import { acquireHopperTargetLease } from "./HopperTargetLease.js";
 import type { HopperTargetLease } from "./HopperTargetLease.js";
 
@@ -39,9 +44,16 @@ export interface BridgeSession {
 
 /** Process handle returned by a bridge launcher. */
 export type BridgeLaunch =
-  | (ProviderProcessLaunch & { readonly shutdownMode: "bridge-request" })
+  | (ProviderProcessLaunch & {
+      readonly shutdownMode: "bridge-request";
+      readonly preparedImagePath?: string;
+      /** The owned helper may hand off to an external GUI application. */
+      readonly providerLifetime: "launcher-process" | "external-application";
+    })
   | (Extract<ProviderProcessLaunch, { readonly ownsProcessLifetime: true }> & {
       readonly shutdownMode: "process-cleanup";
+      readonly preparedImagePath?: string;
+      readonly providerLifetime: "launcher-process";
       readonly cleanup: NonNullable<ProviderProcessLaunch["cleanup"]>;
     });
 
@@ -64,6 +76,10 @@ interface SharedHopperApplicationLauncherOptions {
   readonly targetKind: "executable" | "database";
   readonly loaderArgs: readonly string[];
   readonly bridgeScriptPath: string;
+  readonly preparedImage?: {
+    readonly image: HopperMachOImage;
+    readonly sourceSha256: string;
+  };
 }
 
 /** Explicit launcher contract; the Linux adapter verifies its pinned Hopper build before execution. */
@@ -120,16 +136,30 @@ export class HopperApplicationLauncher implements BridgeLauncher {
     const lease = leaseResult.value;
     let leaseTransferred = false;
     try {
+      let loadedPath = this.options.targetPath;
+      if (this.options.preparedImage !== undefined) {
+        const prepared = await prepareHopperMachOImage(
+          this.options.targetPath,
+          this.options.preparedImage.sourceSha256,
+          this.options.preparedImage.image,
+          join(session.directory, "image.macho"),
+          options.signal,
+        );
+        if (!prepared.ok) return prepared;
+        loadedPath = prepared.value;
+      }
       const ownsProcessLifetime = usesLinuxDemo(this.options);
       const bootstrap = await this.#writeBootstrap(
         session,
         ownsProcessLifetime,
+        loadedPath,
       );
       if (!bootstrap.ok) return bootstrap;
       const launched = await this.#launchPreparedTarget({
         session,
         signal: options.signal,
         bootstrapPath: bootstrap.value,
+        loadedPath,
         ownsProcessLifetime,
         lease,
       });
@@ -144,6 +174,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
     readonly session: BridgeSession;
     readonly signal: AbortSignal | undefined;
     readonly bootstrapPath: string;
+    readonly loadedPath: string;
     readonly ownsProcessLifetime: boolean;
     readonly lease: HopperTargetLease | undefined;
   }): Promise<
@@ -162,7 +193,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
       "-Y",
       bootstrapPath,
       action,
-      this.options.targetPath,
+      input.loadedPath,
     ];
     try {
       if (signal?.aborted === true) return err(new HopperCancelledError());
@@ -211,15 +242,26 @@ export class HopperApplicationLauncher implements BridgeLauncher {
         await cleanupOwnedProcessGroup(started.ownership);
         return err(new HopperStartError({ cause }));
       }
-      return ok({
+      const ownedLauncher = {
+        ...(this.options.preparedImage === undefined
+          ? {}
+          : { preparedImagePath: input.loadedPath }),
         process: started.process,
-        ownsProcessLifetime: true,
+        ownsProcessLifetime: true as const,
         ownership: started.ownership,
-        shutdownMode: ownsProcessLifetime
-          ? "process-cleanup"
-          : "bridge-request",
         cleanup,
-      });
+      };
+      return ownsProcessLifetime
+        ? ok({
+            ...ownedLauncher,
+            providerLifetime: "launcher-process",
+            shutdownMode: "process-cleanup",
+          })
+        : ok({
+            ...ownedLauncher,
+            providerLifetime: "external-application",
+            shutdownMode: "bridge-request",
+          });
     } catch (cause: unknown) {
       return err(hopperLaunchFailure(cause, signal));
     }
@@ -257,12 +299,18 @@ export class HopperApplicationLauncher implements BridgeLauncher {
   async #writeBootstrap(
     session: BridgeSession,
     ownsProcessLifetime: boolean,
+    loadedPath: string,
   ): Promise<Result<string, HopperStartError>> {
     const bootstrapPath = `${session.directory}/bootstrap.py`;
     try {
       await writeFile(
         bootstrapPath,
-        bridgeBootstrapSource(session, this.options, ownsProcessLifetime),
+        bridgeBootstrapSource(
+          session,
+          this.options,
+          ownsProcessLifetime,
+          loadedPath,
+        ),
         { encoding: "utf8", mode: 0o600 },
       );
       await chmod(bootstrapPath, 0o600);
@@ -308,12 +356,13 @@ const bridgeBootstrapSource = (
   session: BridgeSession,
   options: SharedHopperApplicationLauncherOptions,
   ownsProcessLifetime: boolean,
+  loadedPath: string,
 ): string =>
   [
     `REA_SOCKET = ${JSON.stringify(session.socketPath)}`,
     `REA_TOKEN = ${JSON.stringify(session.token)}`,
     `REA_RUN_ID = ${JSON.stringify(session.runId)}`,
-    `REA_TARGET_PATH = ${JSON.stringify(options.targetPath)}`,
+    `REA_TARGET_PATH = ${JSON.stringify(loadedPath)}`,
     `REA_OWNS_PROCESS_LIFETIME = ${ownsProcessLifetime ? "True" : "False"}`,
     `exec(compile(open(${JSON.stringify(options.bridgeScriptPath)}, 'rb').read(), ${JSON.stringify(options.bridgeScriptPath)}, 'exec'))`,
     "",

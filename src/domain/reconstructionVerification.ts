@@ -6,6 +6,7 @@ import { z } from "zod";
 import { artifactComparisonResultSchema } from "./artifactComparison.js";
 import { artifactInventoryResultSchema } from "./artifactGraph.js";
 import { uniqueSorted } from "./canonicalOrdering.js";
+import { comparisonSourceEvidenceSides } from "./comparisonSourceEvidence.js";
 import { parseEvidence, type Evidence } from "./evidence.js";
 import { parseEvidenceBundle } from "./evidenceBundle.js";
 import { functionComparisonResultSchema } from "./functionComparison.js";
@@ -36,13 +37,10 @@ import {
 } from "./reconstructionUnknowns.js";
 import type { ResidualUnknown } from "./residualUnknown.js";
 
-const evidenceIdSchema = prefixedDigestSchema("ev");
-
 export {
   reconstructionVerificationInputSchema,
   reconstructionVerificationResultSchema,
 } from "./reconstructionVerificationSchemas.js";
-import { prefixedDigestSchema } from "./../domain/digests.js";
 export type { ReconstructionVerificationResult } from "./reconstructionVerificationSchemas.js";
 
 const providers = {
@@ -130,12 +128,8 @@ const evaluateClaim = (
       `Missing comparison Evidence ${claim.comparison_evidence_id}`,
     );
   validateComparisonIdentity(claim, comparison);
-  const sides = sourceSides(claim, comparison);
-  const allSourceIds = [...sides.left, ...sides.right];
-  if (new Set(allSourceIds).size !== allSourceIds.length)
-    throw new TypeError(
-      "Comparison source Evidence must be unique and two-sided",
-    );
+  const sides = comparisonSourceEvidenceSides(comparison);
+  const allSourceIds = uniqueSorted([...sides.left, ...sides.right]);
   if (!sameSet(comparison.evidence_links, allSourceIds))
     throw new TypeError(
       "Comparison Evidence closure disagrees with its parameters",
@@ -224,52 +218,6 @@ const validateComparisonIdentity = (claim: Claim, evidence: Evidence): void => {
     throw new TypeError("Comparison Evidence identity or authority disagrees");
 };
 
-const sourceSides = (
-  claim: Claim,
-  evidence: Evidence,
-): { left: string[]; right: string[] } => {
-  const parameters = evidence.parameters;
-  let singularSides: { left: string[]; right: string[] } | undefined;
-  if (
-    claim.kind === "behavioral" ||
-    (claim.kind === "structural-function" &&
-      ("left_evidence_id" in parameters || "right_evidence_id" in parameters))
-  ) {
-    const parsed = z
-      .object({
-        left_evidence_id: evidenceIdSchema,
-        right_evidence_id: evidenceIdSchema,
-      })
-      .passthrough()
-      .parse(parameters);
-    singularSides = {
-      left: [parsed.left_evidence_id],
-      right: [parsed.right_evidence_id],
-    };
-    if (
-      claim.kind === "behavioral" ||
-      !("left_evidence_ids" in parameters || "right_evidence_ids" in parameters)
-    )
-      return singularSides;
-  }
-  const parsed = z
-    .object({
-      left_evidence_ids: z.array(evidenceIdSchema).min(1),
-      right_evidence_ids: z.array(evidenceIdSchema).min(1),
-    })
-    .passthrough()
-    .parse(parameters);
-  if (
-    singularSides !== undefined &&
-    (parsed.left_evidence_ids.length !== 1 ||
-      parsed.right_evidence_ids.length !== 1 ||
-      parsed.left_evidence_ids[0] !== singularSides.left[0] ||
-      parsed.right_evidence_ids[0] !== singularSides.right[0])
-  )
-    throw new TypeError("Function comparison source Evidence aliases disagree");
-  return { left: parsed.left_evidence_ids, right: parsed.right_evidence_ids };
-};
-
 const observedStatus = (claim: Claim, evidence: Evidence): ObservedStatus => {
   if (claim.kind === "behavioral") {
     const result = processCaptureComparisonSchema.parse(
@@ -335,6 +283,10 @@ const authorityLimitations = (
   const requiredAuthority =
     claim.kind === "behavioral" ? "controlled-replay" : "shipped-artifact";
   const limitations: string[] = [];
+  if (sides.left.some((id) => sides.right.includes(id)))
+    limitations.push(
+      "A source observation appears on both comparison sides; independent original and reconstruction observations are unavailable.",
+    );
   if (
     sources.some(
       (source) =>
@@ -393,5 +345,5 @@ const count = (
   status: ClaimResult["status"],
 ): number => items.filter((item) => item.status === status).length;
 const sameSet = (left: readonly string[], right: readonly string[]): boolean =>
-  left.length === right.length &&
+  uniqueSorted(left).length === uniqueSorted(right).length &&
   uniqueSorted(left).every((id, index) => id === uniqueSorted(right)[index]);

@@ -4,6 +4,12 @@ import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 
 const count = z.number().int().nonnegative();
+/** Selector failures authored by REA's bridge, separate from arbitrary engine errors. */
+export const jadxInputFailureSchema = z.strictObject({
+  kind: z.literal("invalid-input"),
+  field: z.enum(["class_name", "method_name", "overload_index"]),
+  message: z.string().min(1),
+});
 /** Values observed inside the exact JVM producing the analysis. */
 export const jadxRuntimeSchema = z.object({
   engine_reported_version: z.string().min(1),

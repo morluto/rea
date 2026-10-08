@@ -15,7 +15,6 @@ import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   addressDistance,
   functionDossierSchema,
-  parseDocuments,
   parseFunctionDossier,
   parseListCount,
   parseRelatedAddresses,
@@ -37,7 +36,9 @@ import {
   type EnhancedResult,
   type ValidatedEnhancedCall,
 } from "./EnhancedToolTypes.js";
+import { resolveAnalysisDocument } from "./AnalysisDocument.js";
 import { traceCallPath } from "./CallPathTracing.js";
+import { resolveProcedureAddress } from "./ProcedureAddressResolution.js";
 import { traceLiteralFeature } from "./EnhancedLiteralTracing.js";
 import { projectNativeApiInspection } from "./native/NativeApiInspection.js";
 export type { ValidatedEnhancedCall } from "./EnhancedToolTypes.js";
@@ -296,9 +297,15 @@ export class EnhancedTools {
     const relation = input.direction === "forward" ? "callees" : "callers";
     const tool =
       input.direction === "forward" ? "procedure_callees" : "procedure_callers";
-    const discovered = new Set([input.address]);
+    const resolved = await resolveProcedureAddress(
+      this.#call.bind(this),
+      input.address,
+      signal,
+    );
+    if (!resolved.ok) return resolved;
+    const discovered = new Set([resolved.value]);
     const queue: Array<{ address: string; depth: number }> = [
-      { address: input.address, depth: 0 },
+      { address: resolved.value, depth: 0 },
     ];
     let queueIndex = 0;
     const graph: Record<string, JsonValue[]> = {};
@@ -388,29 +395,32 @@ export class EnhancedTools {
   }
 
   async #binaryOverview(signal?: AbortSignal): EnhancedResult {
-    const [segmentsResult, documentsResult, proceduresResult, stringsResult] =
-      await Promise.all([
+    const document = await resolveAnalysisDocument(
+      this.analysis,
+      undefined,
+      signal,
+    );
+    if (!document.ok) return document;
+    const [segmentsResult, proceduresResult, stringsResult] = await Promise.all(
+      [
         this.#call("list_segments", {}, signal),
-        this.#call("list_documents", {}, signal),
         this.#call("list_procedures", {}, signal),
         this.#call("list_strings", {}, signal),
-      ]);
+      ],
+    );
     if (!segmentsResult.ok) return segmentsResult;
-    if (!documentsResult.ok) return documentsResult;
     if (!proceduresResult.ok) return proceduresResult;
     if (!stringsResult.ok) return stringsResult;
 
     const segments = parseSegments(segmentsResult.value);
     if (!segments.ok) return segments;
-    const documents = parseDocuments(documentsResult.value);
-    if (!documents.ok) return documents;
     const procedureCount = parseListCount(proceduresResult.value, "procedures");
     if (!procedureCount.ok) return procedureCount;
     const stringCount = parseListCount(stringsResult.value, "strings");
     if (!stringCount.ok) return stringCount;
 
     return ok({
-      document: documents.value[0] ?? "unknown",
+      document: document.value,
       segments: segments.value.map(({ name, start, end }) => ({
         name,
         start,

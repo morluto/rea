@@ -129,8 +129,9 @@ tree semantics, vulnerability scanning, emulation or hardware runtime capture.
   Unblob one worker. No automatic parallel extraction engines.
 - **120-second** deadline; inherited **1 GiB per-process address-space** limit,
   120 CPU seconds and zero core-dump allowance through `prlimit`.
-- JSON reports: at most **8 MiB**; oversized reports fail without a truncated
-  success. Diagnostic output is bounded with exact captured byte counts.
+- JSON reports: at most **8 MiB** and valid UTF-8; malformed encoding and
+  oversized reports fail without repairing or truncating producer data.
+  Diagnostic output is bounded with exact captured byte counts.
 - Default staging budget: **256 MiB** and **10,000 entries**, configurable using
   `max_output_bytes` / `max_output_files` (CLI `--max-output-bytes` /
   `--max-output-files`). Depth defaults to 3, allowed range 1–10.

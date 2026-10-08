@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { isAbsoluteLocalPath } from "./localPath.js";
+import { isAbsoluteLocalPath, localPathStringSchema } from "./localPath.js";
 import { browserNetworkContentSelectionSchema } from "./browserNetworkEvidence.js";
 
 import {
@@ -12,14 +12,13 @@ export const scenarioIdentifierSchema = z
   .string()
   .regex(/^[A-Za-z][A-Za-z0-9._-]*$/u);
 
-const browserExecutablePathSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .refine(isAbsoluteLocalPath, {
+const browserExecutablePathSchema = localPathStringSchema.refine(
+  isAbsoluteLocalPath,
+  {
     message:
       "executable_path must be an absolute local filesystem path (for example /opt/chromium/chrome or C:\\chromium\\chrome.exe)",
-  });
+  },
+);
 
 const browserScenarioBaseUrlSchema = z
   .string()

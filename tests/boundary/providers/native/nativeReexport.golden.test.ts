@@ -15,8 +15,7 @@ it("retains native re-export dependencies alongside ordinary and identity comman
     nativeMachoTarget("/owned/libOuter.dylib"),
   );
   const result = await client.execute("inspect_macho", {});
-  expect(result.ok).toBe(true);
-  if (!result.ok) return;
+  if (!result.ok) throw result.error;
   expect(result.value.result).toMatchObject({
     dependencies: {
       exhaustive: true,

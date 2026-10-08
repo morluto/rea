@@ -102,6 +102,20 @@ run the same owned-process cleanup path. Settlement reports whether the
 sampled process group quiesced or whether cleanup was needed or unverifiable;
 sampling cannot prove that every short-lived or detached descendant was seen.
 
+When the host withholds an unrelated process’s ownership token, REA leaves that
+process untouched and records its PID and reason in `cleanup.unverified_processes`
+and process residual unknowns. Successful cleanup verifies the owned group;
+it does not attribute those unrelated processes. Related or otherwise unexplained
+unreadable processes still prevent successful cleanup.
+
+On macOS, changing a Node process's `process.title` can make its run token
+unreadable. Node documents that [setting the title overwrites argv memory](https://nodejs.org/download/release/v24.18.0/docs/api/process.html#processtitle).
+With the pinned toolchain, a live child retained a readable start identity
+while its token became unavailable after this change; npm changes its title
+as well. A newly started unreadable process can prevent verified cleanup even
+after the selected command exits. REA preserves this uncertainty and leaves
+that process untouched.
+
 ## Compare two captures
 
 Compare saved capture Evidence with:
@@ -124,7 +138,12 @@ causal evidence. Trace comparison returns `unknown` when a capture lacks the
 required complete event journal or contains relevant residual unknowns.
 
 Each capture carries commitments for the selected scenario, executable,
-comparison contract, and normalization rules. Comparison rejects captures
-whose comparison contracts differ. Captures are local Evidence files; keep
+comparison contract, and normalization rules. The comparison contract covers
+the working directory, explicit environment, filesystem observation paths,
+terminal size, scripted events, timeouts, limits, and normalization; the
+executable and its arguments may differ. Comparison rejects captures whose
+comparison contracts differ and names the differing fields, so run both
+scenarios from the same absolute working directory and observation paths.
+Captures are local Evidence files; keep
 their source artifacts and invocation context available when interpreting a
 difference.

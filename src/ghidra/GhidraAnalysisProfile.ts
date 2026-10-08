@@ -42,6 +42,12 @@ export const resolveGhidraAnalysisProfile = (
         annotation_policy: "atomic-function-entry-metadata-v1",
         load_image_observations: "source-mappings-entry-context-v2",
         function_body_evidence: "complete-inclusive-ranges-v1",
+        function_references: "complete-body-and-entry-reference-manager-v2",
+        location_resolution: "explicit-address-exact-name-first-v2",
+        process_launch:
+          installation.platform === "darwin"
+            ? "inspected-jvm-launch-support-v1"
+            : "official-headless-script-v1",
         ...(dos
           ? {
               load_image_evidence: dosCom

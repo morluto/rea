@@ -1,6 +1,8 @@
 name: Release
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       release_branch:
@@ -18,12 +20,27 @@ env:
   HUSKY: "0"
 
 concurrency:
-  group: release-${{ inputs.release_branch }}
+  group: release-${{ inputs.release_branch || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
+  release-proposal:
+    name: Update release proposal
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          target-branch: main
+          skip-github-release: true
+
   release-please:
     name: Release Please
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -170,43 +187,9 @@ jobs:
         if: inputs.phase == 'prepare' && steps.release.outputs.prs_created == 'true'
         run: npm run docs:generate
 
-      - name: Commit canonical release catalog
+      - name: Validate generated release documentation
         if: inputs.phase == 'prepare' && steps.release.outputs.prs_created == 'true'
-        shell: bash
-        env:
-          # Use the same identity for the follow-up commit so it also triggers CI.
-          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
-          RELEASE_PR_JSON: ${{ steps.release.outputs.pr }}
-        run: |
-          release_pr_branch="$(node --input-type=module -e '
-            const value = JSON.parse(process.env.RELEASE_PR_JSON ?? "");
-            if (
-              typeof value !== "object" ||
-              value === null ||
-              typeof value.headBranchName !== "string" ||
-              value.headBranchName.length === 0
-            ) {
-              process.exit(1);
-            }
-            process.stdout.write(value.headBranchName);
-          ')"
-          changed_paths="$(git diff --name-only)"
-          if [[ -z "${changed_paths}" ]]; then
-            echo "Release documentation is already canonical."
-            exit 0
-          fi
-          if [[ "${changed_paths}" != "docs/product-catalog.json" ]]; then
-            echo "docs:generate changed unexpected tracked paths:" >&2
-            printf '%s\n' "${changed_paths}" >&2
-            exit 1
-          fi
-          git diff --check
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- docs/product-catalog.json
-          git commit -m "chore: normalize release product catalog"
-          gh auth setup-git
-          git push origin "HEAD:${release_pr_branch}"
+        run: npm run docs:check && git diff --exit-code
 
   publish:
     name: Publish to npm
@@ -247,7 +230,8 @@ jobs:
           if [ "${published_version}" = "\"${version}\"" ]; then
             echo "rea-agents@${version} is already published; verifying the existing package."
           else
-            npm publish --access public
+            tag="$(node scripts/release-npm-tag.mjs "${version}")"
+            npm publish --access public --tag "${tag}"
           fi
 
       - name: Verify published CLI from npm

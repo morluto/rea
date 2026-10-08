@@ -1,9 +1,13 @@
+import { once } from "node:events";
+
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
+import { HopperProcessError } from "../../../../src/domain/hopperErrors.js";
 import { HOPPER_OPERATIONS } from "../../../../src/hopper/HopperProvider.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 import type { HopperDiagnostic } from "../../../../src/hopper/HopperDiagnostics.js";
 import { providerCleanupFailure } from "../../../../src/hopper/HopperDiagnostics.js";
+import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 
 import {
   HopperFixtureLauncher as FixtureLauncher,
@@ -190,5 +194,127 @@ describe("HopperClient response lifecycle", () => {
       category: "bridge_exception",
       message: "safe fake failure",
     });
+  });
+});
+
+describe("HopperClient operational diagnostics", () => {
+  it("records process exit code, stage, and restart guidance on unexpected exit", async () => {
+    const launcher = new FixtureLauncher();
+    const client = await startClient(launcher);
+    const child = launcher.processes.at(-1);
+    if (child === undefined) throw new Error("Missing fixture process");
+    const exited = once(child, "exit");
+    const result = await client.callTool("exit");
+    await exited;
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      if (!(result.error instanceof HopperProcessError))
+        throw new Error("Expected a provider process error");
+      expect(["unreachable", "exited"]).toContain(result.error.providerState);
+      expect(result.error.exitCode).toBe(
+        result.error.providerState === "exited" ? 7 : null,
+      );
+      expect(result.error).toMatchObject({
+        _tag: "HopperProcessError",
+        operation: "exit",
+      });
+      const projected = projectAnalysisError(result.error);
+      expect(projected).toMatchObject({
+        code: "provider_unavailable",
+        retryable: true,
+        details: {
+          stage: "analysis",
+          provider_state: result.error.providerState,
+          retry_action: "restart_provider",
+          operation: "exit",
+          exit_code: result.error.exitCode,
+        },
+      });
+      expect(projected.remediation.action).toContain("close_binary");
+    }
+    expect(client.operationHealth()).toMatchObject({
+      state: "exited",
+      stage: "analysis",
+      retryAction: "restart_provider",
+      exitCode: 7,
+      requests: [
+        expect.objectContaining({
+          operation: "exit",
+          stage: "analysis",
+        }),
+      ],
+    });
+  });
+
+  it("retains request correlation and health across concurrent requests when the bridge process terminates", async () => {
+    const launcher = new FixtureLauncher();
+    const client = await startClient(launcher);
+    const hanging = client.callTool("hang");
+    const inFlight = await launcher.waitForRequest("hang");
+    const queued = client.callTool("echo", { label: "queued" });
+
+    const child = launcher.processes.at(-1);
+    if (child === undefined) throw new Error("Missing fixture process");
+    const exited = once(child, "exit");
+    child.kill("SIGKILL");
+    await exited;
+
+    const [hangingResult, queuedResult] = await Promise.all([hanging, queued]);
+    expect(hangingResult.ok).toBe(false);
+    expect(queuedResult.ok).toBe(false);
+    if (!hangingResult.ok && !queuedResult.ok) {
+      if (
+        !(hangingResult.error instanceof HopperProcessError) ||
+        !(queuedResult.error instanceof HopperProcessError)
+      )
+        throw new Error("Expected correlated provider process errors");
+      // Socket loss may be observed before the separate child-exit event.
+      // The immutable reply must preserve what was known when it settled.
+      expect(["unreachable", "exited"]).toContain(
+        hangingResult.error.providerState,
+      );
+      expect(["unreachable", "exited"]).toContain(
+        queuedResult.error.providerState,
+      );
+      expect(hangingResult.error).toMatchObject({
+        _tag: "HopperProcessError",
+        operation: "hang",
+        requestId: inFlight.id,
+      });
+      expect(queuedResult.error).toMatchObject({
+        _tag: "HopperProcessError",
+        operation: "echo",
+        requestId: inFlight.id + 1,
+      });
+      const hangingProjected = projectAnalysisError(hangingResult.error);
+      const queuedProjected = projectAnalysisError(queuedResult.error);
+      expect(hangingProjected.details).toMatchObject({
+        stage: "analysis",
+        provider_state: hangingResult.error.providerState,
+        retry_action: "restart_provider",
+        operation: "hang",
+        request_id: inFlight.id,
+      });
+      expect(queuedProjected.details).toMatchObject({
+        stage: "analysis",
+        provider_state: queuedResult.error.providerState,
+        retry_action: "restart_provider",
+        operation: "echo",
+        request_id: inFlight.id + 1,
+      });
+      expect(hangingProjected.remediation.action).toContain("close_binary");
+      expect(queuedProjected.remediation.action).toContain("close_binary");
+    }
+    expect(client.operationHealth()).toMatchObject({
+      state: "exited",
+      retryAction: "restart_provider",
+    });
+    expect(client.operationHealth().requests).toEqual([
+      expect.objectContaining({ requestId: inFlight.id, operation: "hang" }),
+      expect.objectContaining({
+        requestId: inFlight.id + 1,
+        operation: "echo",
+      }),
+    ]);
   });
 });

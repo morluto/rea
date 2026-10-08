@@ -2,11 +2,12 @@ import { createHash } from "node:crypto";
 
 import canonicalize from "canonicalize";
 
-import { parseEvidence } from "../evidence.js";
+import type { Evidence } from "../evidence.js";
 import {
   managedNativeBoundaryInspectionSchema,
   type ManagedNativeBoundaryInspection,
 } from "./managedArtifact.js";
+import { parseManagedInspectionEvidence } from "./managedInspectionEvidence.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
   managedNativeVerificationResultSchema,
@@ -33,25 +34,24 @@ const sha256 = (value: JsonValue): string => {
   return createHash("sha256").update(serialized).digest("hex");
 };
 
-const managedBoundaryFromInput = (
+const parseManagedBoundary = (
   input: ManagedNativeVerificationInput,
-): ManagedNativeBoundaryInspection => {
-  const managedEvidence = parseEvidence(input.managed_boundaries);
-  if (managedEvidence.operation !== "inspect_managed_native_boundaries")
-    throw new TypeError(
-      "Evidence operation is not inspect_managed_native_boundaries",
-    );
-  return managedNativeBoundaryInspectionSchema.parse(
-    managedEvidence.normalized_result,
+): {
+  readonly evidence: Evidence;
+  readonly result: ManagedNativeBoundaryInspection;
+} =>
+  parseManagedInspectionEvidence(
+    input.managed_boundaries,
+    "inspect_managed_native_boundaries",
+    managedNativeBoundaryInspectionSchema,
   );
-};
 
 /** Verify managed P/Invoke declarations against authenticated native Evidence. */
 export const verifyManagedNativeBoundaries = (
   input: ManagedNativeVerificationInput,
 ): ManagedNativeVerificationResult => {
-  const managed = managedBoundaryFromInput(input);
-  const managedEvidence = parseEvidence(input.managed_boundaries);
+  const { evidence: managedEvidence, result: managed } =
+    parseManagedBoundary(input);
   const native = collectNativeSymbols(input.native_observations);
   const verifiedPinvokes = managed.pinvoke_imports.map((item) =>
     verifyPinvoke({

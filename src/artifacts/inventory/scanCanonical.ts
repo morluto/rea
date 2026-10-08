@@ -21,7 +21,11 @@ import {
   rootOccurrenceFor,
   type MutableOccurrence,
 } from "./ArtifactGraphConstruction.js";
-import { canonicalDigest } from "../../domain/comparisonSemantics.js";
+import {
+  artifactContradictionId,
+  artifactGraphDigest,
+  artifactManifestId,
+} from "../../domain/artifactIdentity.js";
 import { classifyRoot } from "./classify.js";
 import { hashReadable, type HashResult } from "../ArtifactHash.js";
 import { createReader, inventoryLimitations } from "./reader.js";
@@ -125,15 +129,12 @@ const buildInventorySnapshot = async (
 
   await verifyRootDigest(path, rootDigest, signal);
 
-  const graphSha256 = canonicalDigest(
-    {
-      nodes: orderedNodes,
-      occurrences: orderedOccurrences,
-      edges: orderedEdges,
-      integrity_contradictions: integrityContradictions,
-    },
-    "Artifact",
-  );
+  const graphSha256 = artifactGraphDigest({
+    nodes: orderedNodes,
+    occurrences: orderedOccurrences,
+    edges: orderedEdges,
+    contradictions: integrityContradictions,
+  });
   const manifest = buildManifest({
     rootNode,
     graphSha256,
@@ -171,15 +172,12 @@ const buildIntegrityContradictions = (
         : occurrenceById.get(occurrence.parent_occurrence_id);
     const parentArtifactId = parent?.artifact_id ?? rootNode.artifact_id;
     return {
-      contradiction_id: `ic_${canonicalDigest(
-        {
-          root_artifact_id: rootNode.artifact_id,
-          logical_path: contradiction.logicalPath,
-          declared_sha256: contradiction.declaredSha256,
-          observed_sha256: contradiction.observedSha256,
-        },
-        "Artifact",
-      )}`,
+      contradiction_id: artifactContradictionId({
+        rootArtifactId: rootNode.artifact_id,
+        logicalPath: contradiction.logicalPath,
+        declaredSha256: contradiction.declaredSha256,
+        observedSha256: contradiction.observedSha256,
+      }),
       occurrence_id: occurrence.occurrence_id,
       parent_artifact_id: parentArtifactId,
       logical_path: contradiction.logicalPath,
@@ -241,13 +239,7 @@ const buildManifest = ({
   readonly orderedEdges: readonly { edge_id: string }[];
 }): ArtifactInventoryResult["manifest"] =>
   artifactInventoryResultSchema.shape.manifest.parse({
-    manifest_id: `agm_${canonicalDigest(
-      {
-        root_artifact_id: rootNode.artifact_id,
-        graph_sha256: graphSha256,
-      },
-      "Artifact",
-    )}`,
+    manifest_id: artifactManifestId(rootNode.artifact_id, graphSha256),
     root_artifact_id: rootNode.artifact_id,
     root_sha256: rootNode.sha256,
     root_format: rootNode.format,

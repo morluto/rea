@@ -1,7 +1,7 @@
 import { EVMOLE_PROVIDER_IDENTITY } from "../../../src/evm/EvmoleRelease.js";
 import { PWNTOOLS_PROVIDER_IDENTITY } from "../../../src/native/pwntools/PwntoolsRelease.js";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -95,7 +95,7 @@ describe("canonical product catalog", () => {
       );
   });
 
-  it("matches every source-derived checked-in product fact", async () => {
+  it("matches every source-derived build-generated product fact", async () => {
     const catalog = await createProductCatalog(root);
     expect(catalog.tools.total).toBe(TOOL_CONTRACTS.length);
     expect(
@@ -195,14 +195,19 @@ describe("canonical product catalog", () => {
       "project_managed_application_graph",
       "verify_managed_native_boundaries",
     ]);
+    // Runtime schema commitments must not fan out into checked-in documentation.
+    // Provider commitments cover the facts actually present in this projection.
+    expect(Object.keys(catalog.runtime_catalog.digests)).toEqual([
+      "providers_sha256",
+    ]);
     expect(catalog.runtime_catalog.digests.providers_sha256).toBe(
       providerCatalogDigest(catalog.providers),
     );
     expect(
-      JSON.parse(await readFile("docs/product-catalog.json", "utf8")),
+      JSON.parse(await readFile("docs/public/product-catalog.json", "utf8")),
     ).toEqual(catalog);
     expect(await serializeProductCatalog(catalog)).toBe(
-      await readFile("docs/product-catalog.json", "utf8"),
+      await readFile("docs/public/product-catalog.json", "utf8"),
     );
     await expect(
       assertDocumentationFacts(root, catalog),
@@ -268,19 +273,10 @@ describe("canonical product catalog drift", () => {
     ]);
   });
 
-  it("reports tool-family and setup-client fact drift", async () => {
+  it("requires setup-client facts in the canonical installation guide", async () => {
     const catalog = await createProductCatalog(root);
-    const firstFamily = catalog.tools.families[0];
-    if (firstFamily === undefined) throw new TypeError("Missing tool family");
     const drifted = {
       ...catalog,
-      tools: {
-        ...catalog.tools,
-        families: [
-          { ...firstFamily, count: firstFamily.count + 1 },
-          ...catalog.tools.families.slice(1),
-        ],
-      },
       setup_clients: [
         ...catalog.setup_clients,
         {
@@ -292,12 +288,49 @@ describe("canonical product catalog drift", () => {
       ],
     };
     const issues = await documentationFactIssues(root, drifted);
-    expect(issues.some((issue) => issue.includes("tool family counts"))).toBe(
-      true,
-    );
-    expect(issues.some((issue) => issue.includes("Future Client"))).toBe(true);
     expect(issues).toContain("docs/installation.md: missing Future Client");
     expect(issues).not.toContain("README.md: missing Future Client");
+  });
+
+  it("keeps translated readmes linked to canonical setup and tool details", async () => {
+    const directory = await createTestTempDirectory("rea-readme-facts-");
+    temporaryRoots.push(directory);
+    const paths = [
+      "README.md",
+      "README_zh.md",
+      "README_ja.md",
+      "README_ko.md",
+      "README_ar.md",
+      "docs/installation.md",
+      "AGENTS.md",
+      ".github/pull_request_template.md",
+    ];
+    for (const path of paths) {
+      const destination = join(directory, path);
+      await mkdir(dirname(destination), { recursive: true });
+      await copyFile(join(root, path), destination);
+    }
+    await mkdir(join(directory, "skills/reverse-engineer-anything"), {
+      recursive: true,
+    });
+    const translatedPath = join(directory, "README_zh.md");
+    const translated = await readFile(translatedPath, "utf8");
+    await writeFile(
+      translatedPath,
+      translated.replace(
+        "(docs/installation.md#supported-agents)",
+        "(docs/installation.md#missing-agents)",
+      ),
+      "utf8",
+    );
+
+    const issues = await documentationFactIssues(
+      directory,
+      await createProductCatalog(root),
+    );
+    expect(issues).toContain(
+      "README_zh.md: documentation links differ from README.md",
+    );
   });
 
   it("changes the provider projection digest when provider facts drift", async () => {

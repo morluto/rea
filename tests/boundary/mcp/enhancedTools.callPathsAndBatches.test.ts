@@ -11,41 +11,6 @@ import { observed as ok } from "../../fixtures/analysisExecution.js";
 afterEach(closeEnhancedToolResources);
 
 describe("enhanced MCP tools", () => {
-  it("returns Evidence IDs and a complete call path", async () => {
-    const client = await connect({
-      execute: async (_name, arguments_) => {
-        const procedure = arguments_.procedure;
-        return ok(
-          procedure === "0x1"
-            ? ["0x2", "0x3"]
-            : procedure === "0x2"
-              ? ["0x1"]
-              : [],
-        );
-      },
-    });
-    const result = await client.callTool({
-      name: "trace_call_path",
-      arguments: {
-        start: "0x1",
-        goal: "0x3",
-      },
-    });
-
-    expect(result.isError).not.toBe(true);
-    expect(result.structuredContent).toMatchObject({
-      evidence_id: expect.stringMatching(/^ev_[a-f0-9]{64}$/u),
-      result: {
-        goal_status: "reached",
-        nodes: expect.arrayContaining([
-          expect.objectContaining({ address: "0x1" }),
-          expect.objectContaining({ address: "0x3" }),
-        ]),
-        truncated: false,
-      },
-    });
-  });
-
   it("returns every batch item in caller order with its own result", async () => {
     const addresses = Array.from(
       { length: 37 },

@@ -14,13 +14,23 @@ const environment = () => ({
 });
 
 /** Execute the compiled CLI with production providers and no test adapters. */
-export async function artifactCli(command, target, arguments_ = []) {
-  return (await artifactCliEvidence(command, target, arguments_))
+export async function artifactCli(
+  command,
+  target,
+  arguments_ = [],
+  options = {},
+) {
+  return (await artifactCliEvidence(command, target, arguments_, options))
     .normalized_result;
 }
 
 /** Execute the compiled CLI and return its complete Evidence record. */
-export async function artifactCliEvidence(command, target, arguments_ = []) {
+export async function artifactCliEvidence(
+  command,
+  target,
+  arguments_ = [],
+  { timeoutMs = 60000 } = {},
+) {
   const { stdout } = await promisify(execFile)(
     process.execPath,
     [
@@ -30,7 +40,7 @@ export async function artifactCliEvidence(command, target, arguments_ = []) {
       ...arguments_,
       "--json",
     ],
-    { env: environment(), timeout: 60000, maxBuffer: 16 * 1024 * 1024 },
+    { env: environment(), timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 },
   );
   const evidence = JSON.parse(stdout);
   assert.equal(evidence.error, undefined, stdout);

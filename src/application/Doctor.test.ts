@@ -177,6 +177,7 @@ describe("doctor installation identity", () => {
             version: "10",
             toolCount: null,
             catalogDigest: null,
+            canonical: false,
           }),
       }),
     );
@@ -285,7 +286,58 @@ describe("doctor scoped readiness", () => {
     );
     expect(staleSelected.healthy).toBe(false);
   });
+});
 
+describe("Grok Bot readiness", () => {
+  it("does not treat a Grok Bot data directory as an aligned registration", async () => {
+    const registrations: readonly ClientRegistrationStatus[] = [
+      {
+        client: "grok_bot",
+        config_path: "/home/user/.grokbot",
+        command: [],
+        state: "manual",
+        remediation: "Add the connector from the Grok Bot chat.",
+      },
+    ];
+    const audit = await runDoctor(
+      undefined,
+      host({ clientRegistrations: () => Promise.resolve(registrations) }),
+    );
+    expect(audit.checks.map(({ name }) => name)).not.toContain(
+      "registration:grok_bot",
+    );
+    expect(audit.identity?.registrations).toEqual(registrations);
+
+    const scoped = await runDoctor(
+      undefined,
+      host({ clientRegistrations: () => Promise.resolve(registrations) }),
+      { clients: ["grok_bot"] },
+    );
+    expect(scoped.healthy).toBe(false);
+    expect(scoped.scope_checks).toContainEqual(
+      expect.objectContaining({
+        name: "registration:grok_bot",
+        ok: false,
+        remediation: "Add the connector from the Grok Bot chat.",
+      }),
+    );
+
+    const absent = await runDoctor(
+      undefined,
+      host({ clientRegistrations: () => Promise.resolve([]) }),
+      { clients: ["grok_bot"] },
+    );
+    expect(absent.scope_checks).toContainEqual(
+      expect.objectContaining({
+        name: "registration:grok_bot",
+        ok: false,
+        remediation: expect.stringContaining("hosted computer"),
+      }),
+    );
+  });
+});
+
+describe("doctor scoped readiness", () => {
   it("keeps agent readiness independent of Hopper host requirements", async () => {
     const result = await runDoctor(
       undefined,

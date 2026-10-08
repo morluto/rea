@@ -62,6 +62,41 @@ const segmentSchema = z.object({
 const unavailableAnalysisFactSchema = z
   .object({ available: z.literal(false), reason: z.string() })
   .strict();
+/** Typed string evidence shared by inventories and referenced function literals. */
+export const analysisStringSchema = z.object({
+  address: z.string(),
+  value: z.string(),
+  provider_value: z
+    .string()
+    .exactOptional()
+    .describe(
+      "Original provider display text, which may shorten the typed object.",
+    ),
+  decoding: unavailableAnalysisFactSchema
+    .exactOptional()
+    .describe(
+      "When present, value retains native display text because typed bytes could not be decoded.",
+    ),
+  string: z
+    .object({
+      encoding: z.string().min(1),
+      encoding_status: z
+        .enum(["observed", "inferred"])
+        .exactOptional()
+        .describe(
+          "Whether the provider declares the encoding or REA infers it from the typed bytes and native display. This does not establish the original source's intended encoding.",
+        ),
+      termination: z.enum(["missing", "present_or_not_required"]),
+      byte_length: z.number().int().min(0),
+    })
+    .exactOptional(),
+});
+
+/** An analyzed bookmark retains a missing provider label as null. */
+export const analysisBookmarkSchema = z.strictObject({
+  address: z.string(),
+  name: z.string().nullable(),
+});
 /** Complete observed function-body ranges; every range endpoint is inclusive. */
 export const functionBodySchema = z.discriminatedUnion("available", [
   unavailableAnalysisFactSchema,
@@ -207,6 +242,15 @@ export const localVariableSchema = z
   .object({
     description: z.string(),
     provenance: z.string().min(1),
+    name: z.string().nullable().exactOptional(),
+    stack_displacement: z
+      .string()
+      .regex(/^-?\d+$/u)
+      .nullable()
+      .exactOptional()
+      .describe(
+        "Observed signed stack byte displacement, encoded as decimal to preserve precision.",
+      ),
   })
   .strict();
 /** Provider-neutral complete raw-instruction list for one analyzed function. */
@@ -242,13 +286,27 @@ export const referenceKindSchema = z.discriminatedUnion("available", [
   unavailableAnalysisFactSchema,
   availableReferenceKindSchema,
 ]);
-const referenceEdgeSchema = z
+/** Reported call sites without resolved targets; unreported dispatch stays unknown. */
+export const unresolvedCallSchema = z.strictObject({
+  address: z.string(),
+  reason: z.string(),
+});
+
+/** Observed endpoints with complete or partial reference classification evidence. */
+export const referenceEdgeSchema = z
   .object({
     source_address: z.string(),
     target_address: z.string(),
     source_procedure: procedureIdentitySchema.nullable(),
     target_procedure: procedureIdentitySchema.nullable(),
     kind: referenceKindSchema,
+    call: z
+      .strictObject({
+        classification: z.enum(["none", "unknown", "direct", "objective_c"]),
+        provider_type: z.number().int(),
+        provenance: z.string().min(1),
+      })
+      .exactOptional(),
   })
   .strict();
 export const functionDossierSchema = z
@@ -272,14 +330,9 @@ export const functionDossierSchema = z
     callees: z.array(procedureIdentitySchema),
     incoming_references: z.array(referenceEdgeSchema),
     outgoing_references: z.array(referenceEdgeSchema),
+    unresolved_calls: z.array(unresolvedCallSchema).exactOptional(),
     referenced_strings: z.array(
-      z
-        .object({
-          address: z.string(),
-          value: z.string(),
-          source_address: z.string(),
-        })
-        .strict(),
+      analysisStringSchema.extend({ source_address: z.string() }),
     ),
     referenced_names: z.array(
       z

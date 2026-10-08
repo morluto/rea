@@ -90,12 +90,35 @@ describe("jsonValueSchema depth bound", () => {
     ).toBe(false);
     expect(jsonValueSchema.safeParse({ a: 1n }).success).toBe(false);
   });
-
-  it("accepts ordinary nested JSON", () => {
-    expect(
-      jsonValueSchema.safeParse({
-        list: [1, "two", null, true, { deep: { further: [{}] } }],
-      }).success,
-    ).toBe(true);
-  });
 });
+
+it("preserves prototype-named members without prototype mutation", () => {
+  const input: unknown = JSON.parse(
+    '{"__proto__":{"preserved":7},"constructor":"ordinary","prototype":[1],"nested":{"\\u005f\\u005fproto\\u005f\\u005f":"escaped"},"list":[{"__proto__":null}]}',
+  );
+  const parsed = jsonObjectSchema.parse(input);
+  expect(parsed).toEqual(input);
+  expect(Object.getPrototypeOf(parsed)).toBe(Object.prototype);
+  expect(Object.hasOwn(parsed, "__proto__")).toBe(true);
+  expect(parsed["__proto__"]).toEqual({ preserved: 7 });
+  expect(parsed["constructor"]).toBe("ordinary");
+  expect(parsed["prototype"]).toEqual([1]);
+  expect(parsed["nested"]).toEqual({ ["__proto__"]: "escaped" });
+  expect(parsed["list"]).toEqual([{ ["__proto__"]: null }]);
+  expect(Object.getPrototypeOf(parsed["nested"])).toBe(Object.prototype);
+  expect(Reflect.get(Object.prototype, "preserved")).toBeUndefined();
+  expect(JSON.parse(JSON.stringify(parsed))).toEqual(input);
+});
+
+it.each([undefined, Number.NaN, Infinity, 1n, () => 0, new Date(0)])(
+  "rejects non-JSON values in prototype-named members (%s)",
+  (value) => {
+    for (const input of [
+      { ["__proto__"]: value },
+      { nested: [{ ["__proto__"]: value }] },
+    ]) {
+      expect(jsonValueSchema.safeParse(input).success).toBe(false);
+      expect(jsonObjectSchema.safeParse(input).success).toBe(false);
+    }
+  },
+);

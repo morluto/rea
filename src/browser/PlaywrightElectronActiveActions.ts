@@ -68,6 +68,25 @@ const hookEventSchema = z.strictObject({
 
 const hookSnapshotSchema = z.strictObject({
   events: z.array(hookEventSchema),
+  retention_budget_bytes: z.number().int().min(0),
+  estimated_retained_bytes: z.number().int().min(0),
+  event_serialized_byte_upper_bound: z.number().int().min(0),
+  retained: z.number().int().min(0),
+  dropped: z.number().int().min(0),
+  dropped_ipc: z.number().int().min(0),
+  dropped_runtime: z.number().int().min(0),
+  dropped_event_families: z.array(
+    z.strictObject({
+      family: z.string().min(1),
+      count: z.number().int().min(1),
+    }),
+  ),
+  dropped_event_roles: z.array(
+    z.strictObject({
+      role: z.string().min(1),
+      count: z.number().int().min(1),
+    }),
+  ),
   observed: z.number().int().min(0),
   observed_ipc: z.number().int().min(0),
   observed_runtime: z.number().int().min(0),
@@ -84,6 +103,8 @@ const metricSchema = z.strictObject({
 const windowMetadataSchema = z.strictObject({
   window_id: z.string(),
   web_contents_id: z.string(),
+  url: z.string(),
+  title: z.string(),
   visible: z.boolean().nullable(),
   destroyed: z.boolean(),
 });
@@ -95,11 +116,6 @@ export type ElectronHookSnapshot = z.infer<typeof hookSnapshotSchema>;
 export type ElectronHookEvent = z.infer<typeof hookEventSchema>;
 export type ElectronMetrics = z.infer<typeof metricSchema>[];
 type ElectronWindowMetadata = z.infer<typeof windowMetadataSchema>;
-type ElectronPageSnapshot = {
-  readonly index: number;
-  readonly url: string;
-  readonly title: string;
-};
 
 /** Run explicit actions against provider-owned Electron windows. */
 export const runElectronActions = async (
@@ -109,12 +125,12 @@ export const runElectronActions = async (
 ): Promise<ElectronActions> => {
   const actions: ElectronActions = [];
   for (const action of input.actions) {
-    if (options.signal?.aborted === true)
-      throw new BrowserObservationError(OPERATION, "cancelled");
     const actionStartedAt = Date.now();
     const windowIndex = actionWindowIndex(action);
     let selectedWindow: Page | undefined;
     try {
+      if (options.signal?.aborted === true)
+        throw new BrowserObservationError(OPERATION, "cancelled");
       selectedWindow =
         windowIndex === null
           ? undefined
@@ -303,25 +319,23 @@ export const readApplicationState = async (
   readonly electronVersion: string;
   readonly hookSnapshot: ElectronHookSnapshot;
 }> => {
-  const pages = application.windows();
-  const pageSnapshotsPromise: Promise<ElectronPageSnapshot[]> = Promise.all(
-    pages.map(async (page: Page, index): Promise<ElectronPageSnapshot> => ({
-      index,
-      url: page.url(),
-      title: await page.title(),
-    })),
-  );
   const windowMetadataPromise: Promise<ElectronWindowMetadata[]> = application
     .evaluate(({ BrowserWindow }) =>
       BrowserWindow.getAllWindows().map(
         (window: {
           readonly id: number;
-          readonly webContents: { readonly id: number };
+          readonly webContents: {
+            readonly id: number;
+            getURL(): string;
+            getTitle(): string;
+          };
           isDestroyed(): boolean;
           isVisible(): boolean;
         }) => ({
           window_id: `window:${String(window.id)}`,
           web_contents_id: `webContents:${String(window.webContents.id)}`,
+          url: window.webContents.getURL(),
+          title: window.webContents.getTitle(),
           visible: window.isDestroyed() ? null : window.isVisible(),
           destroyed: window.isDestroyed(),
         }),
@@ -357,6 +371,15 @@ export const readApplicationState = async (
         ? candidate()
         : {
             events: [],
+            retention_budget_bytes: 0,
+            estimated_retained_bytes: 0,
+            event_serialized_byte_upper_bound: 0,
+            retained: 0,
+            dropped: 0,
+            dropped_ipc: 0,
+            dropped_runtime: 0,
+            dropped_event_families: [],
+            dropped_event_roles: [],
             observed: 0,
             observed_ipc: 0,
             observed_runtime: 0,
@@ -364,33 +387,15 @@ export const readApplicationState = async (
           };
     })
     .then((value) => hookSnapshotSchema.parse(value));
-  const [
-    pageSnapshots,
-    windowMetadata,
-    processMetrics,
-    electronVersion,
-    hookSnapshot,
-  ] = await Promise.all([
-    pageSnapshotsPromise,
-    windowMetadataPromise,
-    processMetricsPromise,
-    electronVersionPromise,
-    hookSnapshotPromise,
-  ]);
+  const [windowMetadata, processMetrics, electronVersion, hookSnapshot] =
+    await Promise.all([
+      windowMetadataPromise,
+      processMetricsPromise,
+      electronVersionPromise,
+      hookSnapshotPromise,
+    ]);
   return {
-    windows: pageSnapshots.map((page) => {
-      const metadata = windowMetadata[page.index];
-      if (metadata === undefined)
-        throw new BrowserObservationError(OPERATION, "window_metadata_missing");
-      return {
-        window_id: metadata.window_id,
-        web_contents_id: metadata.web_contents_id,
-        url: page.url,
-        title: page.title,
-        visible: metadata.visible,
-        destroyed: metadata.destroyed,
-      };
-    }),
+    windows: windowMetadata,
     metrics: processMetrics,
     electronVersion,
     hookSnapshot,

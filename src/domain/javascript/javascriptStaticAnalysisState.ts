@@ -16,6 +16,7 @@ import type {
   ElectronSenderValidationFinding,
   ElectronUtilityProcessFinding,
 } from "./electronStaticAnalysisTypes.js";
+import { JavaScriptModuleRangeIndex } from "./javascriptStaticAnalysisFindings.js";
 
 /** Source offsets for one recovered bundle module factory. */
 export interface JavaScriptModuleRange {
@@ -45,7 +46,7 @@ export interface JavaScriptAnalysisAccumulator {
   readonly senderValidations: LocatedJavaScriptFinding<ElectronSenderValidationFinding>[];
   readonly utilityProcesses: LocatedJavaScriptFinding<ElectronUtilityProcessFinding>[];
   readonly nativeAddonBindings: LocatedJavaScriptFinding<ElectronNativeAddonBindingFinding>[];
-  readonly modules: JavaScriptModuleRange[];
+  readonly moduleRangeIndex: JavaScriptModuleRangeIndex;
   readonly seen: Set<string>;
   visitedNodes: number;
   unknownFindings: number;
@@ -55,6 +56,15 @@ export interface JavaScriptAnalysisAccumulator {
 export interface JavaScriptFindingContext {
   readonly source: string;
   readonly accumulator: JavaScriptAnalysisAccumulator;
+  readonly openReceiverFacts?: ReadonlyMap<
+    number,
+    | "window"
+    | "indexed-db"
+    | "cache-storage"
+    | "local"
+    | "local-indexed-db"
+    | "local-cache-storage"
+  >;
 }
 
 /** Candidate import, require, worker, or service-worker reference. */
@@ -83,22 +93,23 @@ export interface LocatedJavaScriptFindingInput<
 }
 
 /** Create isolated mutable state for one source analysis. */
-export const createJavaScriptAnalysisAccumulator =
-  (): JavaScriptAnalysisAccumulator => ({
-    references: [],
-    endpoints: [],
-    storage: [],
-    roles: [],
-    sourceMaps: [],
-    registrations: [],
-    browserWindows: [],
-    contextBridgeApis: [],
-    ipc: [],
-    senderValidations: [],
-    utilityProcesses: [],
-    nativeAddonBindings: [],
-    modules: [],
-    seen: new Set(),
-    visitedNodes: 0,
-    unknownFindings: 0,
-  });
+export const createJavaScriptAnalysisAccumulator = (
+  sourceLength: number,
+): JavaScriptAnalysisAccumulator => ({
+  references: [],
+  endpoints: [],
+  storage: [],
+  roles: [],
+  sourceMaps: [],
+  registrations: [],
+  browserWindows: [],
+  contextBridgeApis: [],
+  ipc: [],
+  senderValidations: [],
+  utilityProcesses: [],
+  nativeAddonBindings: [],
+  moduleRangeIndex: new JavaScriptModuleRangeIndex(sourceLength),
+  seen: new Set(),
+  visitedNodes: 0,
+  unknownFindings: 0,
+});

@@ -20,16 +20,27 @@ rea project-apple-application-graph '{"inventory_evidence":[<inventory_artifact 
 }
 ```
 
-The result includes every component in each inventory category and every
-JavaScript-to-native bridge candidate pair. It has no caller-selected component
-budget, prefix truncation, or omitted-count fields. Duplicate inventory pages
-are merged by artifact identity and occurrence path; their Evidence IDs remain
-attached as source Evidence.
+The result includes every component in each inventory category. Bridge
+hypotheses are the path-based JavaScript/native pairs within each application
+root. To keep their Cartesian expansion bounded, the projection limits the
+serialized candidate array to 2 MiB. It computes the pair count and
+exact UTF-8 JSON size before creating candidate objects, then retains a
+deterministic prefix when the byte budget is exceeded. The result's
+`bridge_candidate_coverage` reports total, emitted, and omitted pair counts;
+overall coverage becomes `partial` and a limitation explains the omission.
+Duplicate inventory pages are merged by artifact identity and occurrence path;
+their Evidence IDs remain attached as source Evidence.
+
+For IPA inventories, archive components outside every application root remain
+in the component lists. Their JavaScript and native candidates are grouped with
+other unrooted components, preserving the inventory projection's path pairing
+semantics without attributing them to an application bundle.
 
 Coverage is `complete-within-inventory` when the supplied pages reconstruct the
 complete authenticated inventory, and `partial` otherwise. A partial result
-states that absence is unknown. Component and bridge-candidate arrays are still
-the complete projection of the inventory that was supplied.
+states that absence is unknown. Component arrays remain complete when candidate
+hypotheses are omitted; component arrays still include every component from
+the supplied inventory pages, and overall coverage is `partial` in that case.
 
 ## Application roots
 
@@ -177,10 +188,22 @@ cache rather than on disk, so REA does not check them against the host.
 - `required-load-unresolved`, `weak-load-unresolved`, and `lazy-load-unresolved`.
   `LC_LAZY_LOAD_DYLIB` dependencies are resolved but not traversed, because dyld
   loads them on first use; an unresolved one is not a launch failure.
-- `earlier-rpath-candidate-absent`: a Mach-O placed at an earlier search path
-  would load first. Whether code-signing library validation would reject it is
-  not evaluated; use `inspect_signature`.
-- `dyld-environment-present`: `LC_DYLD_ENVIRONMENT` search paths are not modeled.
+- `earlier-rpath-candidate-absent`: a compatible Mach-O placed at an earlier
+  modeled search path could take precedence, subject to unmodeled search inputs
+  and code-signing library validation. These findings do not establish which
+  image dyld will load; use `inspect_signature` for signing metadata.
+- `dyld-environment-present`: preserves observed `LC_DYLD_ENVIRONMENT` entries.
+  Only an executable root supplies process settings; entries on library and
+  other non-executable roots do not alter resolution or coverage. Applicable
+  executable image-selection overrides are not modeled.
+
+Empty dyld settings have different consumers. Modern dyld appends a slash and
+image name to ordinary and fallback directory entries, so an empty entry can
+search `/child.dylib` or `/Foo.framework/Foo`. REA retains uncertainty for those
+unchecked paths; an empty fallback does not preempt an ordinary-search hit.
+Empty versioned-directory lists do not scan a directory, and empty suffixes
+only repeat the original candidate, so they do not add search uncertainty.
+Reported command values are retained in all cases.
 
 `verify:macos-bundle` checks the parser against `otool -l` for every traced
 image. It also compares the predicted load order of two process roots with the

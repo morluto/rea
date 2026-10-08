@@ -36,6 +36,14 @@ for (const variable of ["REA_BINWALK_COMMAND", "REA_UNBLOB_COMMAND"]) {
     );
   await access(path);
 }
+try {
+  await exec("7z", ["i"], { timeout: 10_000 });
+} catch (cause) {
+  throw new Error(
+    "verify:firmware prerequisite unavailable: Unblob's gzip/USTAR fixture extraction requires 7z on PATH",
+    { cause },
+  );
+}
 const fixtureRoot = resolve(
   process.env.REA_FIRMWARE_FIXTURE_ROOT ??
     join(repository, "_reference/firmware-integration/generated"),

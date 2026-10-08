@@ -162,6 +162,7 @@ const captureAuthorizedPage = async (
   if (state.events.navigationDuringCapture || completedUrl !== attachedUrl)
     throw new BrowserObservationError("inspect_web_page", "target_changed");
   await report(context.progress, 3, "Normalizing browser evidence");
+  state.events.recordScriptMetadataBudgetExclusions();
   return {
     inspection: normalizedInspection(state, {
       attachedUrl,

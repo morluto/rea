@@ -1,6 +1,6 @@
 <div align="center">
 
-**English** · [简体中文](README_zh.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [العربية](README_ar.md)
+**English** · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md)
 
 # REA: Reverse Engineer Anything
 
@@ -10,7 +10,7 @@
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
-[![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](docs/product-catalog.json)
+[![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](docs/mcp-contracts.md#generated-catalog)
 [![Node.js 22+](https://img.shields.io/badge/Node.js-22.19%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
@@ -18,7 +18,7 @@
 
 <a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
 
-**[Website](https://morluto.github.io/rea/) · [Guides](https://morluto.github.io/rea/guides/) · [Showcases](https://morluto.github.io/rea/showcase/)**
+**[Website](https://rea.tools/) · [Guides](https://rea.tools/guides/) · [Showcases](https://rea.tools/showcase/)**
 
 [Quick start](#quick-start) · [How REA works](#how-rea-works) · [What you can analyze](#what-you-can-analyze) · [Showcases](#showcases) · [FAQ](#faq) · [Documentation](#documentation)
 
@@ -54,7 +54,7 @@ REA connects your agent to tools for inspecting native binaries, JavaScript and 
 
 Setup registers REA with your agent and installs matching workflow instructions. Native analysis can use an existing Hopper or Ghidra installation; setup can optionally install Hopper with approval. Static JavaScript analysis needs neither engine.
 
-> **[Visit the REA website](https://morluto.github.io/rea/)** for setup instructions, illustrated guides, and real case studies.
+> **[Visit the REA website](https://rea.tools/)** for setup instructions, illustrated guides, and real case studies.
 
 ## Quick start
 
@@ -70,7 +70,7 @@ Choose your agents, review the proposed changes, and approve them. Setup adds
 REA's MCP server and matching workflow instructions, with backups of existing
 configuration. Restart your agent afterward.
 
-Setup supports Claude Code, Codex, Cursor, Gemini CLI and
+Setup supports Claude Code, Codex, Cursor, Gemini CLI, Grok Build and
 [other agents](docs/installation.md#supported-agents). See
 [installation and setup](docs/installation.md) for provider configuration and
 manual MCP registration.
@@ -149,12 +149,12 @@ Additional tools and host support depend on the target:
 
 | Target                 | What REA returns                                                                     | Requirements and guide                                                                                                                |
 | ---------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Native binaries        | Pseudocode, assembly, strings, symbols, calls and references                         | Hopper, Ghidra or IDA; [native analysis](https://morluto.github.io/rea/guides/native/)                                                |
+| Native binaries        | Pseudocode, assembly, strings, symbols, calls and references                         | Hopper, Ghidra or IDA; [native analysis](https://rea.tools/guides/native/)                                                            |
 | Offline ELF layout     | Sections, segments, original symbols/relocations and static mitigation candidates    | Caller-supplied pwntools on Linux x64; [binary diagnostics](docs/binary-diagnostics.md)                                               |
 | EVM bytecode           | Dispatch selectors, byte offsets, inferred arguments and mutability                  | Local raw/hex carrier; [offline EVM guide](docs/evm-bytecode.md)                                                                      |
 | Recorded Linux crashes | Raw notes, every recorded thread's registers/signals and optional mapping candidates | Caller-supplied pwntools; optional GDB/pwndbg; [recorded crashes](docs/recorded-crashes.md)                                           |
-| JavaScript / Electron  | Modules, imports, source maps, routes, IPC and native add-on relationships           | Node.js and npm; [application analysis](https://morluto.github.io/rea/guides/javascript/)                                             |
-| Websites               | Page structure, scripts, network observations and requested screenshots              | A Chrome-family browser; [browser analysis](https://morluto.github.io/rea/guides/browser/)                                            |
+| JavaScript / Electron  | Modules, imports, source maps, routes, IPC and native add-on relationships           | Node.js and npm; [application analysis](https://rea.tools/guides/javascript/)                                                         |
+| Websites               | Page structure, scripts, network observations and requested screenshots              | A Chrome-family browser; [browser analysis](https://rea.tools/guides/browser/)                                                        |
 | Saved network captures | Requests, responses, exposed payloads and source locations                           | HAR; mitmdump on Linux for native mitmproxy captures; [capture guide](docs/web-network-captures.md)                                   |
 | .NET assemblies        | Metadata, CIL instructions, declared native dependencies and build comparisons       | Static inspection; [managed-code guide](docs/managed-code-analysis.md)                                                                |
 | Android APKs           | Manifest declarations, classes, decompiled methods and references                    | Headless JADX and a full JDK on Linux/macOS; [Android guide](docs/android-analysis.md)                                                |
@@ -174,7 +174,7 @@ Native formats and host support vary by provider. See
 [experimental Windows Ghidra support](docs/windows-ghidra-p0.md).
 Ghidra also supports [16-bit DOS analysis](docs/ghidra-dos.md).
 For large binaries, raise its startup deadline with
-`REA_GHIDRA_STARTUP_TIMEOUT_MS`; see [provider setup](docs/installation.md#ghidra).
+`REA_GHIDRA_STARTUP_TIMEOUT_MS`.
 For provider selection, see the [CLI guide](docs/cli.md#choose-a-provider).
 Check [release availability](docs/installation.md#released-package-and-main)
 for features added since the latest npm release.
@@ -187,7 +187,7 @@ Follow a sound call into its position-to-pan helper, inspect the instructions,
 and turn incomplete pseudocode into C. The reconstruction passes 3,205
 original-x86 cases and reproduces all 63 compiled function bytes.
 
-[Read the case study](https://morluto.github.io/rea/showcase/dx-ball/) ·
+[Read the case study](https://rea.tools/showcase/dx-ball/) ·
 [Reconstruction repository](https://github.com/N0zoM1z0/dx-ball)
 
 ### Notion: trace the Electron clipboard bridge
@@ -195,7 +195,7 @@ original-x86 cases and reproduces all 63 compiled function bytes.
 Find the renderer's clipboard API, follow it through preload and IPC into the
 main process, and inspect the rich clipboard format.
 
-[Read the case study](https://morluto.github.io/rea/showcase/notion/)
+[Read the case study](https://rea.tools/showcase/notion/)
 
 ### TH04: recover a DOS bullet-ring calculation
 
@@ -203,7 +203,7 @@ Inspect the original PC-98 game's 16-bit instructions, recover the fixed and
 aimed angle calculations, and compare the reconstructed C++ with the
 historical compiler output.
 
-[Read the case study](https://morluto.github.io/rea/showcase/th04/) ·
+[Read the case study](https://rea.tools/showcase/th04/) ·
 [Reconstruction repository](https://github.com/N0zoM1z0/th04)
 
 If you've used REA on something interesting, we'd love to see it. Share your
@@ -291,14 +291,14 @@ with your REA version, target type, steps to reproduce and error output.
 
 ## Documentation
 
-Start with the website's [worked guides](https://morluto.github.io/rea/guides/).
+Start with the website's [worked guides](https://rea.tools/guides/).
 For exact options, prerequisites and result contracts:
 
 - [Installation and setup](docs/installation.md): agent registration, provider configuration, updates and uninstall.
 - [Readiness and troubleshooting](docs/installation.md#check-readiness-for-your-task): diagnose one agent or analysis engine.
 - [CLI and Evidence](docs/cli.md): commands, provider selection, snapshots, import/export and exit statuses.
 - [MCP contracts](docs/mcp-contracts.md) and [agent prompts](docs/mcp-prompts.md): tool results, sessions and guided investigations.
-- [Tool catalog](docs/product-catalog.json): generated inventory of tools, providers and CLI commands.
+- [Tool catalog](docs/mcp-contracts.md#generated-catalog): build-generated inventory of tools, providers and CLI commands.
 - [Roadmap](docs/roadmap.md): planned work and capability trackers.
 
 Report vulnerabilities through [SECURITY.md](SECURITY.md).
@@ -315,13 +315,13 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and checks,
 
 ## Project links
 
-[Website](https://morluto.github.io/rea/) · [npm](https://www.npmjs.com/package/rea-agents) · [skills.sh](https://skills.sh/morluto/rea/reverse-engineer-anything) · [Issues](https://github.com/morluto/rea/issues) · [Security](SECURITY.md)
-
-## License
-
-[MIT](LICENSE)
+[Website](https://rea.tools/) · [npm](https://www.npmjs.com/package/rea-agents) · [skills.sh](https://skills.sh/morluto/rea/reverse-engineer-anything) · [Issues](https://github.com/morluto/rea/issues) · [Security](SECURITY.md)
 
 ## Star history
+
+🎉 **20,000 GitHub stars — thank you!**
+
+Thanks to everyone using REA, reporting bugs, testing builds, and contributing fixes.
 
 <a href="https://www.star-history.com/?repos=morluto%2Frea&amp;type=date">
   <picture>
@@ -334,3 +334,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and checks,
 ## Disclaimer
 
 REA provides tools for lawful reverse-engineering research, analysis, and reconstruction. You are responsible for obtaining any required authorization and complying with applicable laws. The project does not endorse illegal or unauthorized use.
+
+## License
+
+[MIT](LICENSE)

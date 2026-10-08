@@ -65,6 +65,7 @@ export class CdpCaptureCompleteness {
       reason === "invalid_protocol_value"
     )
       this.#unavailable.add(section);
+    if (reason === "resource_budget_exhausted") this.#truncated.add(section);
     const key = `${section}\0${reason}`;
     const existing = this.#excluded.get(key);
     const combined =

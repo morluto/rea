@@ -1,5 +1,15 @@
 # MCP runtime contracts
 
+## Generated catalog
+
+Run `npm run build:cached` in a source checkout to generate the machine-readable
+catalog at `docs/public/product-catalog.json`. Documentation deployments serve
+the same file at [/rea/product-catalog.json](/rea/product-catalog.json). PR CI retains it with the packaged
+skill and portable conformance projections in the `generated-docs` artifact.
+These outputs describe the exact source revision being built; they are not
+checked-in snapshots. For a running server, `binary_session` remains the
+authoritative source of catalog identity and tool availability.
+
 ## Identity and discovery
 
 `binary_session` reports the active package, server, SDK, and negotiated
@@ -68,8 +78,24 @@ Provider calls receive the request cancellation signal. Artifact traversal,
 hashing, version comparisons, Hopper requests, and process capture
 check the same signal. Cancellation is distinct from timeout. A cleanup failure
 uses `cleanup_incomplete` and lists only the owned resource kinds that remain.
+Native call tracing and process capture retain available observations in
+`details.partial_observation` on failure, including when cleanup succeeds.
+The observation reports its partial coverage; cleanup details describe host
+state separately from the execution failure.
 Derived comparisons and reconstruction verification yield before computation
 and before publication, so cancellation cannot race with successful Evidence.
+
+`analyze_javascript_application` also yields between reconstruction phases and
+during graph/result sealing, cross-graph binding checks, Evidence JSON validation,
+and canonical hashing. Its final result validation reuses exact graphs whose
+owned constructors validated and completely sealed them; imported graphs still
+receive full schema and commitment checks.
+Cancellation observed before completion returns `cancelled` and prevents the
+provisional result from entering the session ledger; prior Evidence stays usable.
+Single-file parsing, graph construction, and validation of imported graphs
+still run synchronously, so control messages can wait for those
+phases to release the event loop. A rejected client promise alone does not
+establish that the server has stopped its work.
 
 CLI calls work without a progress token and translate SIGINT into the same
 AbortSignal used by providers. Existing controlled-process cleanup and provider
@@ -153,6 +179,26 @@ to a compatible comparison tool: `analyze_function` Evidence can be passed
 directly to `compare_functions`, and `inspect_artifact` Evidence to
 `compare_artifacts`. Use `get_evidence_bundle` when the task needs broader
 retained session history or an explicit bundle for transfer.
+
+REA prepares complete MCP results within the pinned stdio client's 10 MiB
+receive-buffer budget, including both text and structured representations and
+room for the JSON-RPC envelope. If a result cannot fit, REA returns
+`resource_constraint` with `details.resource: "transport"` before constructing
+a document-sized string. Analysis Evidence remains complete in the current
+session. Its exact reference is reported in
+`details.reported_limits.evidence_reference`; use it with a focused application
+workflow, or call `export_evidence_bundle` with a destination path. Complete
+bundle exports stream canonical JSON into an atomically published file. A broad
+follow-up or `get_evidence_bundle` can also exceed the response budget; exporting
+preserves the complete session without sending it through a single MCP frame.
+
+Clients that explicitly configure a larger receive buffer can set the REA
+server's `REA_MCP_MAX_RESPONSE_BYTES` environment variable to the same byte
+count. This setting must be a safe decimal integer at least 10485760; REA
+reserves 1024 bytes for the envelope. Raising it restores complete inline
+delivery for responses that fit that buffer and Node's single-string limit.
+It does not change the client's buffer, analysis coverage, or retained content.
+Ordinary responses keep their existing complete result contract.
 
 ## Retained application Evidence inputs
 

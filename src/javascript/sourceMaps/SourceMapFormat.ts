@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { WEB_SOURCE_MAP_LIMITS } from "../../domain/webSourceLocation.js";
+import { hasValidSourceMapContents } from "../../domain/sourceMapContents.js";
 
 const leafSchema = z.object({
   version: z.literal(3),
@@ -36,6 +37,17 @@ interface PendingMap {
   readonly path: readonly number[];
   readonly offset: Offset;
   readonly stop: Offset | null;
+}
+
+/** Shared structural constraints configurable only for stricter consumers. */
+export interface SourceMapStructureBudget {
+  records: number;
+}
+
+export interface SourceMapStructureOptions {
+  readonly profile?: "browser-collection";
+  readonly budget?: SourceMapStructureBudget;
+  readonly check?: () => void;
 }
 
 /** A decoder-profile failure with an actionable producer constraint. */
@@ -84,9 +96,32 @@ const addOffset = (base: Offset, offset: Offset): Offset => {
   return result;
 };
 
-const addSections = (node: PendingMap, pending: PendingMap[]): void => {
+const consumeRecords = (budget: { records: number }, count: number): void => {
+  if (count > WEB_SOURCE_MAP_LIMITS.decodedRecords - budget.records)
+    throw new SourceMapFormatFailure(
+      "limit",
+      `Source-map structure exceeds the ${WEB_SOURCE_MAP_LIMITS.decodedRecords}-record decoder budget.`,
+    );
+  budget.records += count;
+};
+
+const addSections = (
+  node: PendingMap,
+  pending: PendingMap[],
+  budget: { records: number },
+  options: SourceMapStructureOptions,
+): void => {
+  options.check?.();
+  const header = mapHeaderSchema.parse(node.value);
+  if (!Array.isArray(header.sections))
+    throw new SourceMapFormatFailure(
+      "format",
+      "Indexed source-map sections must be an array.",
+    );
+  consumeRecords(budget, header.sections.length);
   const sections = indexedSchema.parse(node.value).sections;
   for (const [index, section] of sections.entries()) {
+    if ((index & 255) === 0) options.check?.();
     const previous = sections[index - 1];
     if (previous !== undefined && compare(section.offset, previous.offset) <= 0)
       throw new SourceMapFormatFailure(
@@ -133,6 +168,7 @@ const addSections = (node: PendingMap, pending: PendingMap[]): void => {
 
 const inspectMappingLayout = (
   mappings: string,
+  check?: () => void,
 ): { lines: number; segments: number } => {
   let lines = 1;
   let segments = 0;
@@ -152,7 +188,9 @@ const inspectMappingLayout = (
         "Source-map segment requires one, four or five VLQ components.",
       );
   };
+  let index = 0;
   for (const character of mappings) {
+    if ((index++ & 0x3fff) === 0) check?.();
     if (character === "," || character === ";") {
       finish();
       inSegment = false;
@@ -189,6 +227,58 @@ const inspectMappingLayout = (
   return { lines, segments };
 };
 
+const inspectLeaf = (
+  node: PendingMap,
+  budget: { records: number },
+  options: SourceMapStructureOptions,
+): z.output<typeof leafSchema> => {
+  options.check?.();
+  consumeRecords(budget, 1);
+  if (
+    typeof node.value !== "object" ||
+    node.value === null ||
+    Array.isArray(node.value)
+  )
+    return leafSchema.parse(node.value);
+  const rawMap = node.value as Readonly<Record<string, unknown>>;
+  const rawSources = rawMap.sources;
+  const rawNames = rawMap.names;
+  const rawContents = rawMap.sourcesContent;
+  consumeRecords(budget, Array.isArray(rawSources) ? rawSources.length : 0);
+  consumeRecords(budget, Array.isArray(rawNames) ? rawNames.length : 0);
+  consumeRecords(budget, Array.isArray(rawContents) ? rawContents.length : 0);
+  options.check?.();
+  if (options.profile === "browser-collection" && !Array.isArray(rawNames))
+    throw new SourceMapFormatFailure(
+      "format",
+      "Source-map leaf requires a names array.",
+    );
+  if (
+    options.profile === "browser-collection" &&
+    !hasValidSourceMapContents(
+      Array.isArray(rawSources) ? rawSources.length : 0,
+      rawContents,
+    )
+  )
+    throw new SourceMapFormatFailure(
+      "format",
+      "Source-map sourcesContent must align with its source declarations.",
+    );
+  options.check?.();
+  const leaf = leafSchema.parse(node.value);
+  const layout = inspectMappingLayout(leaf.mappings, options.check);
+  consumeRecords(budget, layout.segments + layout.lines);
+  if (
+    layout.segments > WEB_SOURCE_MAP_LIMITS.decodedSegments ||
+    node.offset.line + layout.lines > WEB_SOURCE_MAP_LIMITS.decodedRows
+  )
+    throw new SourceMapFormatFailure(
+      "limit",
+      "Source-map layout exceeds the 262144 segment/generated-row decoder budget.",
+    );
+  return leaf;
+};
+
 /** Validate structure before allocation, retaining raw declarations and section boundaries. */
 export const inspectSourceMap = (
   text: string,
@@ -204,14 +294,43 @@ export const inspectSourceMap = (
     ? withoutBom.slice(withoutBom.indexOf("\n") + 1)
     : withoutBom;
   const value: unknown = JSON.parse(jsonText);
+  const inspected = inspectSourceMapValue(value);
+  const normalized =
+    inspected.format === "regular"
+      ? inspected.leaves[0]?.map
+      : {
+          version: 3,
+          sections: inspected.leaves.map((leaf) => ({
+            offset: leaf.offset,
+            map: leaf.map,
+          })),
+        };
+  return {
+    jsonText: JSON.stringify(normalized),
+    ...inspected,
+  };
+};
+
+/** Return validated leaves when a consumer needs decoded rows after preflight. */
+export const inspectSourceMapValue = (
+  value: unknown,
+  options: SourceMapStructureOptions = {},
+): {
+  readonly format: "regular" | "indexed";
+  readonly reportedFile: string | null;
+  readonly declarations: readonly SourceMapSourceDeclaration[];
+  readonly leaves: readonly SourceMapLeaf[];
+} => {
+  options.check?.();
   const root = mapHeaderSchema.parse(value);
   const declarations: SourceMapSourceDeclaration[] = [];
   const leaves: SourceMapLeaf[] = [];
   const pending: PendingMap[] = [
     { value, path: [], offset: { line: 0, column: 0 }, stop: null },
   ];
-  let segmentCount = 0;
+  const budget = options.budget ?? { records: 0 };
   while (pending.length > 0) {
+    options.check?.();
     const node = pending.pop();
     if (node === undefined) break;
     if (node.path.length > WEB_SOURCE_MAP_LIMITS.sectionDepth)
@@ -220,47 +339,25 @@ export const inspectSourceMap = (
         "Indexed source-map nesting exceeds the 64-level decoder stack budget.",
       );
     if (mapHeaderSchema.parse(node.value).sections !== undefined) {
-      addSections(node, pending);
+      addSections(node, pending, budget, options);
       continue;
     }
-    const leaf = leafSchema.parse(node.value);
-    const layout = inspectMappingLayout(leaf.mappings);
-    segmentCount += layout.segments;
-    if (
-      segmentCount > WEB_SOURCE_MAP_LIMITS.decodedSegments ||
-      node.offset.line + layout.lines > WEB_SOURCE_MAP_LIMITS.decodedRows
-    )
-      throw new SourceMapFormatFailure(
-        "limit",
-        "Source-map layout exceeds the 262144 segment/generated-row decoder budget.",
-      );
+    const leaf = inspectLeaf(node, budget, options);
     leaves.push({ map: leaf, offset: node.offset, stop: node.stop });
-    for (const [sourceIndex, source] of leaf.sources.entries())
-      declarations.push({
-        sectionPath: node.path,
-        sourceIndex,
-        source,
-        root: leaf.sourceRoot ?? null,
-        content: leaf.sourcesContent?.[sourceIndex] ?? null,
-        ignored: (leaf.ignoreList ?? leaf.x_google_ignoreList ?? []).includes(
+    if (options.profile !== "browser-collection")
+      for (const [sourceIndex, source] of leaf.sources.entries())
+        declarations.push({
+          sectionPath: node.path,
           sourceIndex,
-        ),
-      });
+          source,
+          root: leaf.sourceRoot ?? null,
+          content: leaf.sourcesContent?.[sourceIndex] ?? null,
+          ignored: (leaf.ignoreList ?? leaf.x_google_ignoreList ?? []).includes(
+            sourceIndex,
+          ),
+        });
   }
-  // Absolute leaves adapt nested first-line column offsets before upstream AnyMap.
-  // Raw map bytes and the original section/source identities are retained separately.
-  const normalized =
-    root.sections === undefined
-      ? leaves[0]?.map
-      : {
-          version: 3,
-          sections: leaves.map((leaf) => ({
-            offset: leaf.offset,
-            map: leaf.map,
-          })),
-        };
   return {
-    jsonText: JSON.stringify(normalized),
     format: root.sections === undefined ? "regular" : "indexed",
     reportedFile: root.file ?? null,
     declarations,

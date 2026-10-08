@@ -16,6 +16,7 @@ import {
   EvidenceFileError,
   EvidenceIntegrityError,
   EvidenceReferenceError,
+  AnalysisSnapshotMismatchError,
 } from "./evidenceErrors.js";
 import {
   HopperRemoteError,
@@ -25,6 +26,7 @@ import {
 } from "./hopperErrors.js";
 import { ProviderSelectionError } from "./providerSelectionError.js";
 import { UnknownRegistryError } from "./unknownRegistryError.js";
+import { providerRetryAction } from "./providerOperationHealth.js";
 import {
   type AnalysisError,
   type AnalysisErrorTag,
@@ -34,26 +36,37 @@ import { type AnalysisErrorProjection } from "./analysisErrorProjection.js";
 export const analysisErrorRemediationAction = (
   error: AnalysisError,
 ): string => {
+  if (error instanceof AnalysisSnapshotMismatchError)
+    return "Run analysis without this snapshot, then save a fresh snapshot using the intended artifact, provider, and analysis profile.";
   if (error instanceof AnalysisUnsupportedTargetError)
     return "Select a target supported by this operation or choose an operation supporting the reported target format.";
   if (error instanceof AnalysisResourceConstraintError)
-    return error.resource === "cpu"
-      ? "Review the reported worker CPU limits and observed signal. Retry with sufficient CPU time or a smaller artifact; REA retains tighter inherited limits."
-      : error.resource === "file-size"
-        ? "Review the reported worker file-size limits and write failure. Retry with a sufficient file-size allowance for the evidence reply; REA retains tighter inherited limits."
-        : "Review the reported worker memory limits and available host memory. Retry with sufficient memory or a smaller artifact; REA retains tighter inherited limits.";
+    return (
+      error.remediationAction ??
+      (error.resource === "transport"
+        ? "Export retained session evidence through export_evidence_bundle to a caller-selected path, or use complete CLI JSON output. Tools that accept retained-evidence references can inspect compatible records. The connection remains usable."
+        : error.resource === "cpu"
+          ? "Review the reported worker CPU limits and observed signal. Retry with sufficient CPU time or a smaller artifact; REA retains tighter inherited limits."
+          : error.resource === "file-size"
+            ? "Review the reported worker file-size limits and write failure. Retry with a sufficient file-size allowance for the evidence reply; REA retains tighter inherited limits."
+            : "Review the reported worker memory limits and available host memory. Retry with sufficient memory or a smaller artifact; REA retains tighter inherited limits.")
+    );
   if (error instanceof HopperTimeoutError)
-    return error.providerState === "busy"
-      ? "Check binary_session.analysis_activity, wait for the active Hopper request to finish, then retry."
-      : "Check binary_session for Hopper health, then retry the operation.";
+    return error.operation === undefined
+      ? "Inspect Hopper for a loader or license dialog and review details.launcher. Correct the loader configuration or complete Hopper setup, then open the target again."
+      : error.providerState === "busy"
+        ? "Check binary_session.analysis_activity, wait for the active Hopper request to finish, then retry."
+        : "Check binary_session for Hopper health, then retry the operation.";
   if (error instanceof HopperProcessError)
-    return "Check binary_session provider health. Restart the owned Hopper process only when it has stopped.";
+    return hopperProcessRemediation(error);
   if (error instanceof HopperStartError)
     return error.ownerRunId === undefined
       ? "Check the Hopper launcher and target details, then retry opening the target."
       : `Use the active REA session ${error.ownerRunId} or close it before opening this target again.`;
   if (error instanceof HopperRemoteError)
-    return "Review the Hopper diagnostic details; correct the request or retry if the failure was transient.";
+    return error.diagnosticType === "invalid_request"
+      ? "Correct the reported address, document, or arguments and retry."
+      : "Review the Hopper diagnostic details; correct the request or retry if the failure was transient.";
   if (error instanceof EvidenceReferenceError)
     return "Use an exact Evidence reference retained by this session, supply the complete inline Evidence, re-run its producer, or import its Evidence bundle. close_binary clears retained records.";
   if (
@@ -64,7 +77,7 @@ export const analysisErrorRemediationAction = (
   if (error instanceof AnalysisAccessDeniedError)
     return "Check the current process's read access to the selected path. Retry with a readable local file.";
   if (error instanceof AnalysisArtifactChangedError)
-    return "Wait until the selected file is stable, then retry this operation.";
+    return "Wait until the selected file is stable. For an active binary session, reopen the target with open_binary before retrying so REA acquires its current identity; for a CLI command or target-free tool, rerun the operation.";
   if (error instanceof AnalysisInputError)
     return "Correct the listed arguments and retry.";
   if (error instanceof UnknownRegistryError && error.reason === "not-found")
@@ -83,7 +96,12 @@ export const analysisErrorCategory = (
   if (error._tag === "ProcessCaptureError")
     return error.userCategory ?? "execution_failure";
   if (error instanceof BrowserObservationError)
-    return browserErrorCategory(error.reason);
+    return error.userCategory ?? browserErrorCategory(error.reason);
+  if (
+    error instanceof HopperRemoteError &&
+    error.diagnosticType === "invalid_request"
+  )
+    return "invalid_input";
   if (
     error instanceof HopperRemoteError &&
     error.diagnosticType === "authorization"
@@ -99,6 +117,8 @@ export const analysisErrorCategory = (
 const browserErrorCategory = (
   reason: BrowserObservationError["reason"],
 ): AnalysisErrorProjection["category"] => {
+  if (reason === "cancelled") return "cancelled";
+  if (reason === "timeout") return "timeout";
   if (reason === "payload_limit") return "truncated";
   if (
     reason === "target_not_found" ||
@@ -141,6 +161,7 @@ const STATIC_ERROR_CATEGORIES: Readonly<
 };
 
 export const analysisErrorUserMessage = (error: AnalysisError): string => {
+  if (error instanceof AnalysisSnapshotMismatchError) return error.message;
   if (error instanceof AnalysisUnsupportedTargetError) return error.message;
   if (error instanceof AnalysisResourceConstraintError) return error.reason;
   if (error instanceof AnalysisAccessDeniedError)
@@ -162,8 +183,7 @@ export const analysisErrorUserMessage = (error: AnalysisError): string => {
       : `Evidence ${error.evidenceId} does not match the requested reference (${error.reason}). Check the expected and actual identity in the diagnostic details.`;
   if (error instanceof EvidenceIntegrityError)
     return "Evidence is invalid or has changed. Recreate or re-import it, then try again.";
-  if (error instanceof EvidenceFileError)
-    return evidenceFileMessage(error.reason);
+  if (error instanceof EvidenceFileError) return evidenceFileMessage(error);
   if (error instanceof UnknownRegistryError && error.reason === "not-found")
     return "The requested residual unknown does not exist in this session. Check the unknown_id and try again.";
   if (error instanceof UnknownRegistryError)
@@ -185,13 +205,14 @@ export const analysisErrorUserMessage = (error: AnalysisError): string => {
 
 const hopperErrorUserMessage = (error: AnalysisError): string | undefined => {
   if (error instanceof HopperTimeoutError) {
-    const request = error.operation ?? "startup";
+    if (error.operation === undefined)
+      return "REA timed out waiting for Hopper bridge readiness. Hopper may be waiting for a loader or license dialog; inspect its window and the captured launcher outcome before retrying.";
+    const request = error.operation;
     return error.providerState === "busy"
       ? `Hopper timed out during ${request} while the provider remained busy. Check binary_session.analysis_activity, wait for the active request to finish, then retry.`
       : `Hopper timed out during ${request} before it started. Check binary_session for provider health, then retry.`;
   }
-  if (error instanceof HopperProcessError)
-    return `Hopper stopped during ${error.operation ?? "connection"}${error.exitCode === null ? "; its exit was not observed" : ` with exit code ${String(error.exitCode)}`}.${error.userMessage === undefined ? "" : ` ${error.userMessage}`} Check binary_session provider health before retrying.`;
+  if (error instanceof HopperProcessError) return hopperProcessMessage(error);
   if (error instanceof HopperStartError)
     return (
       error.userMessage ??
@@ -200,6 +221,44 @@ const hopperErrorUserMessage = (error: AnalysisError): string | undefined => {
   if (error instanceof HopperRemoteError)
     return `Hopper ${error.operation ?? "analysis"} failed (${String(error.code)}, ${error.diagnosticType}): ${error.safeMessage}`;
   return undefined;
+};
+
+const RESTART_OWNED_PROVIDER =
+  "Restart the owned provider by calling close_binary, then open the target again and retry.";
+
+const hopperProcessRemediation = (error: HopperProcessError): string => {
+  if (error.failureCode !== undefined && error.userMessage !== undefined)
+    return error.userMessage;
+  if (error.stage === "launch")
+    return "Review the captured launcher diagnostics and Hopper setup, then retry opening the target.";
+  if (providerRetryAction(error.providerState) === "restart_provider")
+    return RESTART_OWNED_PROVIDER;
+  return "Read binary_session.provider_operation_health for this request before retrying or restarting the owned provider.";
+};
+
+const hopperProcessMessage = (error: HopperProcessError): string => {
+  const stage = error.stage;
+  const where = error.operation ?? stage;
+  const request =
+    error.requestId === undefined
+      ? ""
+      : ` Request id ${String(error.requestId)}.`;
+  const startup =
+    error.userMessage === undefined ? "" : ` ${error.userMessage}`;
+  if (error.providerState === "exited") {
+    const exit =
+      error.exitCode === null
+        ? "no exit code was observed"
+        : `exit code ${String(error.exitCode)}`;
+    const recovery =
+      error.failureCode === undefined && stage !== "launch"
+        ? ` ${RESTART_OWNED_PROVIDER}`
+        : "";
+    return `Hopper exited during ${where} (${exit}).${startup}${recovery}${request}`;
+  }
+  if (error.providerState === "unreachable")
+    return `Hopper became unreachable during ${where}; its process exit was not observed. ${RESTART_OWNED_PROVIDER}${startup}${request}`;
+  return `Hopper failed during ${where} and REA could not determine whether the provider is busy, exited, or unreachable.${startup} Read binary_session.provider_operation_health for this request before retrying or restarting.${request}`;
 };
 
 const standardErrorMessage = (tag: AnalysisErrorTag): string | undefined => {
@@ -258,7 +317,14 @@ const artifactMessage = (reason: ArtifactOperationError["reason"]): string => {
   return "Artifact could not be read or written. Check file access and try again.";
 };
 
-const evidenceFileMessage = (reason: EvidenceFileError["reason"]): string => {
+const evidenceFileMessage = ({
+  operation,
+  reason,
+}: EvidenceFileError): string => {
+  if (reason === "missing")
+    return operation === "read"
+      ? "Evidence file does not exist at the selected path. Check the path and try again."
+      : "Evidence output directory does not exist. Choose an existing directory and try again.";
   if (reason === "not-file")
     return "Evidence path does not point to a regular file. Choose a file and try again.";
   if (reason === "exists")

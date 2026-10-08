@@ -1,4 +1,7 @@
-import { historicalCaptureFailure } from "./CaptureFailures.js";
+import {
+  historicalCaptureFailure,
+  captureMemoryFailure,
+} from "./CaptureFailures.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import type { HistoricalCaptureFormatAdapter } from "./HistoricalCaptureFormatAdapter.js";
 import { randomUUID } from "node:crypto";
@@ -160,7 +163,9 @@ export class HistoricalCaptureDecoder {
               },
             },
           ]);
-        if (reply.reason === "decoder" || reply.reason === "resource-limit")
+        if (reply.reason === "resource-limit")
+          throw captureMemoryFailure(input, reply.message);
+        if (reply.reason === "decoder")
           throw new ProviderAdapterError(input.format, OPERATION, {
             diagnostics: {
               phase: "decoder",

@@ -29,8 +29,7 @@ it("imports Dockerfile-prefixed TypeScript with ordinary source evidence and unc
     caller: "dockerfile-language-test",
     policy: { secretPatterns: [] },
   });
-  expect(result.ok).toBe(true);
-  if (!result.ok) return;
+  if (!result.ok) throw result.error;
   const graph = result.value;
   expect(graph.parse_failures).toEqual([]);
   expect(graph.relationships).toHaveLength(sourcePaths.length * 3);
@@ -88,8 +87,7 @@ it("retains parser failures and hashes for malformed Dockerfile-prefixed TypeScr
     caller: "dockerfile-language-test",
     policy: { secretPatterns: [] },
   });
-  expect(result.ok).toBe(true);
-  if (!result.ok) return;
+  if (!result.ok) throw result.error;
   expect(result.value.relationships).toEqual([]);
   expect(result.value.parse_failures).toEqual(
     paths.map((path) => ({

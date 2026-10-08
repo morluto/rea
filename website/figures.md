@@ -114,3 +114,17 @@ Second check labels verbatim:
 Use enough horizontal space for clear check names and generous typography. A two-line label is fine where needed.
 
 Text constraints: render every supplied English label and number verbatim with correct spelling. No extra claims, no additional labels, no footnotes, no source code or assembly, no logos or watermarks. Keep all connectors complete and directed correctly. Large legible labels matter more than decorative density. Never say full reconstruction, exact game clone, all bytes, or automatic source recovery.
+
+## CTF masked-squares figure
+
+`public/assets/figures/ctf-mask-equation.svg` explains the seventh check in
+DownUnderCTF 2023's masked-squares flag checker. The original encoded mask is
+`-21, +1, -14, 0`: expand it to 36 cells, highlight zero-based cell 21 and
+compare its code with the recorded target 55 (`7`). Labels and selected cells
+come from the fresh REA byte reads documented in
+[evidence/ctf-masked-squares.md](evidence/ctf-masked-squares.md).
+
+The diagram is maintained as SVG source using the shared blue/gray palette.
+It illustrates one equation; the downloadable Python solver uses all 26.
+Keep code selectable in HTML and use the existing scrollable figure viewport
+on smaller screens.

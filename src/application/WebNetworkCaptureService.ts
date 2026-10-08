@@ -11,7 +11,7 @@ import {
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
-import { projectInputIssues } from "../domain/inputIssueProjection.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -50,11 +50,9 @@ export class WebNetworkCaptureService {
     const parsed = inspectWebNetworkCaptureInputSchema.safeParse(rawInput);
     if (!parsed.success)
       return failure(
-        new AnalysisInputError(
-          OPERATION,
-          { cause: parsed.error },
-          projectInputIssues(parsed.error.issues, rawInput),
-        ),
+        analysisInputErrorFromIssues(OPERATION, parsed.error.issues, rawInput, {
+          cause: parsed.error,
+        }),
       );
     const input = parsed.data;
     if (!isAbsolute(input.capture_path))

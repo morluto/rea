@@ -6,6 +6,26 @@ import {
 import { browserVersionSchema } from "./browserObservationSchemas.js";
 import { jsonObjectSchema } from "./jsonValue.js";
 
+// CDP positions are zero-based and relative to the resource named by url.
+// With a script ID that is the script's enclosing resource: the script file,
+// or the HTML document for an inline script. An empty script ID marks a
+// position a request initiator reported, such as parser markup or a module
+// import in a script file; it still locates url, but has no session-script
+// association to join captured source or resource_start.
+// trace_web_source_location takes one-based, script-relative lines, so the
+// advertised units keep callers from passing a position off by one or by an
+// inline script's offset.
+const SCRIPT_ID =
+  "CDP session script ID; empty for a position a request initiator reported, which has no session-script association for joining captured source or resource_start.";
+const RESOURCE_LINE =
+  "Zero-based line in the resource named by url, as reported by CDP: the script file for an external script (including a module-import initiator), or the HTML document for an inline script or parser markup.";
+const RESOURCE_COLUMN =
+  "Zero-based UTF-16 column on that line of the resource named by url, as reported by CDP.";
+const START_LINE =
+  "Zero-based line where the script text starts in its enclosing resource (the HTML document for an inline script).";
+const START_COLUMN =
+  "Zero-based UTF-16 column where the script text starts on that line of its enclosing resource.";
+
 /** Scope for one externally owned page; omitted origins select its current origin. */
 export const webRuntimeScopeSchema = z.strictObject({
   cdp_endpoint: browserEndpointSchema,
@@ -27,8 +47,8 @@ export const webRuntimeSourceSchema = z.object({
   language: z.string().nullable(),
   resource_start: z
     .object({
-      line_number: z.number().int().min(0),
-      column_number: z.number().int().min(0),
+      line_number: z.number().int().min(0).describe(START_LINE),
+      column_number: z.number().int().min(0).describe(START_COLUMN),
     })
     .nullable(),
   source: z.discriminatedUnion("state", [
@@ -49,10 +69,10 @@ export type WebRuntimeSource = z.infer<typeof webRuntimeSourceSchema>;
 
 /** Producer callsite coordinates are zero-based resource lines and UTF-16 columns. */
 export const webRuntimeLocationSchema = z.object({
-  script_id: z.string(),
+  script_id: z.string().describe(SCRIPT_ID),
   url: z.string().nullable(),
-  line_number: z.number().int().min(0),
-  column_number: z.number().int().min(0).nullable(),
+  line_number: z.number().int().min(0).describe(RESOURCE_LINE),
+  column_number: z.number().int().min(0).nullable().describe(RESOURCE_COLUMN),
   function_name: z.string().nullable(),
   source_association: z.enum(["script_id", "unknown"]),
 });

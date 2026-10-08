@@ -22,7 +22,6 @@ test("keeps unresolved target identity unknown while matching verified loaded sc
   try {
     await writeFile(entry, "export const fixture = true;\n");
     const analysis = await analyzeJavaScriptApplication({ input_path: root });
-    expect(analysis.ok).toBe(true);
     if (!analysis.ok) throw analysis.error;
     const provider = new V8InspectorProvider();
     const input = {
@@ -31,7 +30,6 @@ test("keeps unresolved target identity unknown while matching verified loaded sc
       observation_ms: 10,
     };
     const observed = await provider.observe(input);
-    expect(observed.ok).toBe(true);
     if (!observed.ok) throw observed.error;
     const evidence = createJavaScriptRuntimeObservationEvidence(
       "observe_javascript_runtime",

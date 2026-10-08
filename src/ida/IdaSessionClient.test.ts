@@ -163,7 +163,6 @@ describe("attached IDA function observations", () => {
     const result = await client.execute("analyze_function", {
       procedure: "0x1004",
     });
-    expect(result.ok).toBe(true);
     if (!result.ok) throw result.error;
     const dossier = functionDossierSchema.parse(result.value.result);
     expect(dossier.procedure.address).toBe("0x1000");
@@ -367,7 +366,6 @@ describe("headless IDA session ownership and cleanup", () => {
     const result = await client.execute("analyze_function", {
       procedure: "main",
     });
-    expect(result.ok).toBe(true);
     if (!result.ok) throw result.error;
     expect(producer.inputPath).not.toBe(target.path);
     expect(await readFile(producer.inputPath)).toEqual(original);

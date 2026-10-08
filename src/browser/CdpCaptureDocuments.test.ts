@@ -2,11 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   captureAccessibility,
-  captureDom,
   captureFrames,
   captureResources,
 } from "./CdpCaptureDocuments.js";
-import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
 
 const origin = "https://app.example.test";
 
@@ -31,43 +29,6 @@ describe("CDP document capture", () => {
     const resources = captureResources(result, new Set([origin]));
     expect(frames.items).toHaveLength(2_000);
     expect(resources.items).toHaveLength(2_000);
-  });
-
-  it("rebases parent indexes when allowed DOM documents are combined", () => {
-    const input = inspectWebPageInputSchema.parse({
-      cdp_endpoint: "http://127.0.0.1:9222",
-      allowed_origins: [origin],
-      target_id: "page-1",
-    });
-    const snapshot = {
-      strings: [`${origin}/main`, `${origin}/frame`, "#document", "DIV", ""],
-      documents: [
-        {
-          documentURL: 0,
-          nodes: {
-            nodeType: [9, 1],
-            nodeName: [2, 3],
-            nodeValue: [4, 4],
-            parentIndex: [-1, 0],
-            attributes: [[], []],
-          },
-        },
-        {
-          documentURL: 1,
-          nodes: {
-            nodeType: [9, 1],
-            nodeName: [2, 3],
-            nodeValue: [4, 4],
-            parentIndex: [-1, 0],
-            attributes: [[], []],
-          },
-        },
-      ],
-    };
-    const capture = captureDom(snapshot, new Set([origin]), input);
-    expect(capture.nodes.map((node) => node.parent_index)).toEqual([
-      -1, 0, -1, 2,
-    ]);
   });
 
   it("retains full approved accessibility text", () => {

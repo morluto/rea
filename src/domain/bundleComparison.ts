@@ -11,6 +11,7 @@ import type { ResidualUnknown } from "./residualUnknown.js";
 import { digestSchema } from "./../domain/digests.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 import { comparisonStatusSchema } from "./comparisonStatus.js";
+import { localPathStringSchema } from "./localPath.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const classificationSchema = z.enum([
@@ -24,8 +25,8 @@ const classificationSchema = z.enum([
 
 /** Strict input for canonical Evidence bundle comparison. */
 export const bundleComparisonInputSchema = z.strictObject({
-  left_bundle_path: z.string().min(1),
-  right_bundle_path: z.string().min(1),
+  left_bundle_path: localPathStringSchema,
+  right_bundle_path: localPathStringSchema,
   record_pairs: z
     .array(
       z.object({

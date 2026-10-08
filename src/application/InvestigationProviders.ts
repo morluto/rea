@@ -1,3 +1,4 @@
+import type { AnalysisOperation } from "./AnalysisProvider.js";
 import {
   createAnalysisProfile,
   type AnalysisProfileCommitment,
@@ -10,12 +11,14 @@ export const REA_WORKFLOW_PROVIDER = {
   version: "1",
 } as const;
 
-/** Commit a workflow result to the exact upstream deep-analysis profile. */
+/** Commit a workflow result to its upstream profile and applicable semantic revision. */
 export const workflowAnalysisProfile = (
   upstream: AnalysisProfileCommitment,
+  operation?: AnalysisOperation,
 ): AnalysisProfileCommitment =>
   createAnalysisProfile(REA_WORKFLOW_PROVIDER, {
     upstream_analysis_profile: upstream,
+    ...(operation === "binary_overview" ? { workflow_revision: 2 } : {}),
   });
 
 /** Provider identity for deterministic artifact inventories. */

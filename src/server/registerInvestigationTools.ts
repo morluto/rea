@@ -23,7 +23,7 @@ import {
   STATIC_RUNTIME_PROVIDER,
 } from "./sessionToolPolicies.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { toCallToolResult } from "./toolResult.js";
+import { toCallToolResult, toEvidenceToolResult } from "./toolResult.js";
 
 /** Register Evidence-composed differential investigation workflows. */
 export const registerInvestigationTools = (
@@ -101,7 +101,7 @@ const registerChangedBehavior = (
           ],
         },
       );
-      return toCallToolResult(recorded, contract);
+      return toEvidenceToolResult(evidence, contract, recorded);
     },
   );
 };
@@ -158,7 +158,7 @@ const registerCallPath = (
           ],
         },
       );
-      return toCallToolResult(recorded, contract);
+      return toEvidenceToolResult(evidence, contract, recorded);
     },
   );
 };
@@ -198,7 +198,9 @@ const registerStaticRuntime = (
         limitations: result.limitations,
         evidenceLinks: links,
       });
-      return toCallToolResult(
+      return toEvidenceToolResult(
+        evidence,
+        contract,
         recordWorkflowEvidence(
           session,
           evidence,
@@ -218,7 +220,6 @@ const registerStaticRuntime = (
             ],
           },
         ),
-        contract,
       );
     },
   );
@@ -255,7 +256,9 @@ const registerReconstruction = (
         limitations: result.limitations,
         evidenceLinks: links,
       });
-      return toCallToolResult(
+      return toEvidenceToolResult(
+        evidence,
+        contract,
         recordWorkflowEvidence(session, evidence, result.status === "unknown", {
           question: "Does the reconstruction satisfy every declared claim?",
           domain: "reconstruction-verification",
@@ -266,7 +269,6 @@ const registerReconstruction = (
             rationale,
           })),
         }),
-        contract,
       );
     },
   );

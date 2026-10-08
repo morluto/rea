@@ -13,6 +13,9 @@ export const verifyAndroidCliCancellation = async ({
   repository,
   execute,
 }) => {
+  // Native identity inspection must be ready before observing the short-lived
+  // engine; compiling its helper after acquisition can miss the whole request.
+  await readProcessRunId(process.pid);
   const child = spawn(
     process.execPath,
     [entrypoint, "inspect-android-package", path, "--format", "json"],
@@ -86,7 +89,7 @@ export const verifyAndroidCliCancellation = async ({
     ]).finally(() => clearTimeout(timer));
     assert.equal(result.code, 143, `${stdout}\n${stderr}`);
     assert.equal(result.signal, null);
-    assert.equal(JSON.parse(stdout).code, "cancelled");
+    assert.equal(JSON.parse(stdout).code, "cancelled", `${stdout}\n${stderr}`);
     assert.throws(() => process.kill(-group, 0), { code: "ESRCH" });
     console.log(
       "PASS real CLI SIGTERM cancellation and owned Java group cleanup",

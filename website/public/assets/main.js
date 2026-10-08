@@ -61,6 +61,28 @@ function initializeStepComparisons() {
 
 initializeStepComparisons();
 
+function initializeFaqAnswers() {
+  const answers = document.querySelectorAll("[data-faq] details[id]");
+  if (answers.length === 0) return;
+
+  const revealAnswer = (fragment) => {
+    answers.forEach((answer) => {
+      if (`#${answer.id}` === fragment) answer.open = true;
+    });
+  };
+  window.addEventListener("hashchange", () =>
+    revealAnswer(window.location.hash),
+  );
+  document.querySelectorAll('[data-faq] a[href^="#"]').forEach((link) => {
+    link.addEventListener("click", () =>
+      revealAnswer(link.getAttribute("href")),
+    );
+  });
+  revealAnswer(window.location.hash);
+}
+
+initializeFaqAnswers();
+
 function initializeBackToTop() {
   const link = document.querySelector(".back-to-top");
   if (link === null) return;
@@ -84,3 +106,32 @@ function initializeBackToTop() {
 }
 
 initializeBackToTop();
+
+async function initializeGitHubStars() {
+  const link = document.querySelector(".nav-github");
+  const count = link?.querySelector(".nav-github-count");
+  if (count === null || count === undefined) return;
+
+  try {
+    const response = await fetch("https://api.github.com/repos/morluto/rea", {
+      headers: { Accept: "application/vnd.github+json" },
+      credentials: "omit",
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) return;
+    const repository = await response.json();
+    const stars = repository.stargazers_count;
+    if (!Number.isSafeInteger(stars) || stars < 0) return;
+
+    const formatted = new Intl.NumberFormat("en-US").format(stars);
+    const label = `REA on GitHub (${formatted} ${stars === 1 ? "star" : "stars"})`;
+    count.textContent = formatted;
+    count.hidden = false;
+    link.setAttribute("aria-label", label);
+    link.setAttribute("title", label);
+  } catch {
+    // Keep the repository link usable when GitHub is unavailable.
+  }
+}
+
+initializeGitHubStars();

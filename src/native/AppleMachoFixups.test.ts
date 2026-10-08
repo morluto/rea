@@ -144,6 +144,33 @@ const SEGMENTS: Segment[] = [
 ];
 
 describe("pointer fixup tables", () => {
+  it("reports unsupported pointer formats even when no pointer is visited", () => {
+    const data = chainedData(1);
+    data.writeUInt16LE(99, 46);
+    const fixups = parsePointerFixups(
+      data,
+      { chained: { offset: 0, size: data.length }, binds: [], dylibs: [] },
+      SEGMENTS,
+      BASE,
+    );
+    expect(fixups.failures).toContain("Unsupported chained pointer format 99");
+  });
+
+  it("does not decode unreferenced imports while constructing fixup facts", () => {
+    const data = chainedData(1);
+    // The second import is outside the table bytes; only the first is needed
+    // to construct the fixup reader, so its malformed symbol remains lazy.
+    data.writeUInt32LE(0xffff_ff00, 72);
+    expect(() =>
+      parsePointerFixups(
+        data,
+        { chained: { offset: 0, size: data.length }, binds: [], dylibs: [] },
+        SEGMENTS,
+        BASE,
+      ),
+    ).not.toThrow();
+  });
+
   for (const format of [1, 2, 3] as const)
     it(`reads chained import format ${format}`, () => {
       const data = chainedData(format);

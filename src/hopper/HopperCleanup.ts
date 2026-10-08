@@ -65,7 +65,7 @@ export const cleanupHopperSession = async (
   await report(
     input.progress,
     0,
-    input.retainDocument
+    input.retainDocument && input.launch?.preparedImagePath === undefined
       ? "detaching REA from the Hopper document"
       : "requesting Hopper document shutdown",
   );
@@ -75,7 +75,20 @@ export const cleanupHopperSession = async (
   await stopProcess(input, state);
   recordUnconfirmedDocument(input, state);
   await report(input.progress, 0.75, "removing Hopper private runtime files");
-  await closeRuntimeRoot(input.runtimeRoot, state);
+  if (
+    input.launch?.preparedImagePath !== undefined &&
+    !state.shutdownConfirmed
+  ) {
+    const resource = input.runtimeRoot?.path ?? input.launch.preparedImagePath;
+    state.resources.add(resource);
+    state.issues.push({
+      resource,
+      reason:
+        "Prepared image retained because native document closure was not confirmed",
+    });
+  } else {
+    await closeRuntimeRoot(input.runtimeRoot, state);
+  }
   return cleanupOutcome(input, state);
 };
 
@@ -99,7 +112,8 @@ const requestShutdown = async (
     return;
   }
   const method =
-    input.retainDocument || input.launch?.shutdownMode === "process-cleanup"
+    (input.retainDocument && input.launch?.preparedImagePath === undefined) ||
+    input.launch?.shutdownMode === "process-cleanup"
       ? "shutdown"
       : "shutdown_document";
   const shutdown = await input

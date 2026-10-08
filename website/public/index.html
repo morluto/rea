@@ -25,8 +25,28 @@
           <a href="showcase/">Showcases</a>
           <a class="nav-start" href="get-started/">Get started</a>
           <a href="guides/">Guides</a>
-          <a href="https://github.com/morluto/rea">GitHub</a>
+          <a href="faq/">FAQ</a>
         </nav>
+        <a
+          class="nav-github"
+          href="https://github.com/morluto/rea"
+          aria-label="REA on GitHub"
+          title="REA on GitHub"
+        >
+          <svg
+            width="22"
+            height="22"
+            viewBox="0 0 16 16"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path
+              fill="currentColor"
+              d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
+            />
+          </svg>
+          <span class="nav-github-count" hidden aria-hidden="true"></span>
+        </a>
       </div>
     </header>
     <main id="main">
@@ -259,6 +279,37 @@
             <figcaption>
               Adding the player's direction rotates every bullet by the same
               angle.
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container feature-case">
+          <div>
+            <p class="eyebrow">Case study · CTF</p>
+            <h2>Solve a CTF flag checker</h2>
+            <p>
+              Use REA to inspect an easy DownUnderCTF binary. Extract its
+              checking rules, solve for the flag and confirm that the original
+              program accepts it.
+            </p>
+            <a class="text-link" href="showcase/ctf/">See the CTF solution</a>
+          </div>
+          <figure class="workflow-figure case-preview">
+            <p class="figure-title">One check reveals one character</p>
+            <div class="code-block">
+              <div class="code-header">
+                <span>From REA's code and data</span>
+              </div>
+              <pre><code>Mask: skip 21, select 1, skip 14
+Target: 55
+
+code[21] = 55  →  '7'</code></pre>
+            </div>
+            <figcaption>
+              Each mask selects characters whose codes must add up to a stored
+              number. This one selects a single character.
             </figcaption>
           </figure>
         </div>

@@ -111,7 +111,6 @@ describe("JavaScript recovery workflow", () => {
         ),
     });
     const result = await service.recover(input);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected invalid port output");
     expect(result.error._tag).toBe("AnalysisOutputError");
   });

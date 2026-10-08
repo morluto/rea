@@ -1,8 +1,15 @@
-import { chmod, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 
 import { build } from "plist";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { execFileOutput } from "../../../../src/process/ExecFileOutput.js";
@@ -70,6 +77,11 @@ describe("native DMG artifact reader", () => {
       ),
     });
 
+    let mountRoot: string | undefined;
+    onTestFinished(async () => {
+      if (mountRoot !== undefined)
+        await rm(mountRoot, { recursive: true, force: true });
+    });
     const host: NativeDmgHost = {
       run(arguments_) {
         if (arguments_[0] === "detach")
@@ -85,6 +97,8 @@ describe("native DMG artifact reader", () => {
           });
         if (arguments_[0] !== "attach")
           return Promise.resolve({ stdout: "", exitCode: 0 });
+        mountRoot = arguments_[arguments_.indexOf("-mountroot") + 1];
+        if (mountRoot === undefined) throw new Error("missing mount root");
         return Promise.resolve({
           stdout: build({
             "system-entities": [
@@ -380,53 +394,58 @@ it("owns the canonical mount root and detaches each observed whole image once", 
   ]);
 });
 
-describe("APFS disk image detach", () => {
-  // hdiutil reports the image disk and its synthesized APFS container as two
-  // whole disks; detaching the container ejects the image disk as well.
-  const apfsHost = (stillListed: readonly string[]) => {
-    const calls: string[][] = [];
-    const host: NativeDmgHost = {
-      async run(arguments_) {
-        calls.push([...arguments_]);
-        if (arguments_[0] === "detach" && arguments_[1] === "/dev/disk4")
-          throw new Error("hdiutil: detach failed - No such file or directory");
-        if (arguments_[0] === "info")
-          return {
-            stdout: build({
-              images:
-                stillListed.length === 0
-                  ? []
-                  : [
-                      {
-                        "system-entities": stillListed.map((device) => ({
-                          "dev-entry": device,
-                        })),
-                      },
-                    ],
-            }),
-            exitCode: 0,
-          };
-        if (arguments_[0] !== "attach") return { stdout: "", exitCode: 0 };
-        const mountRoot = arguments_[arguments_.indexOf("-mountroot") + 1];
-        if (mountRoot === undefined) throw new Error("missing mount root");
-        const mountPoint = join(mountRoot, "Fixture");
-        await mkdir(mountPoint);
+// hdiutil reports the image disk and synthesized APFS container separately;
+// detaching the container can already eject the image disk.
+const apfsHost = (stillListed: readonly string[]) => {
+  const calls: string[][] = [];
+  let mountRoot: string | undefined;
+  onTestFinished(async () => {
+    if (mountRoot !== undefined)
+      await rm(mountRoot, { recursive: true, force: true });
+  });
+  const host: NativeDmgHost = {
+    async run(arguments_) {
+      calls.push([...arguments_]);
+      if (arguments_[0] === "detach" && arguments_[1] === "/dev/disk4")
+        throw new Error("hdiutil: detach failed - No such file or directory");
+      if (arguments_[0] === "info")
         return {
           stdout: build({
-            "system-entities": [
-              { "dev-entry": "/dev/disk4" },
-              { "dev-entry": "/dev/disk4s1" },
-              { "dev-entry": "/dev/disk5s1", "mount-point": mountPoint },
-              { "dev-entry": "/dev/disk5" },
-            ],
+            images:
+              stillListed.length === 0
+                ? []
+                : [
+                    {
+                      "system-entities": stillListed.map((device) => ({
+                        "dev-entry": device,
+                      })),
+                    },
+                  ],
           }),
           exitCode: 0,
         };
-      },
-    };
-    return { calls, host };
+      if (arguments_[0] !== "attach") return { stdout: "", exitCode: 0 };
+      mountRoot = arguments_[arguments_.indexOf("-mountroot") + 1];
+      if (mountRoot === undefined) throw new Error("missing mount root");
+      const mountPoint = join(mountRoot, "Fixture");
+      await mkdir(mountPoint);
+      return {
+        stdout: build({
+          "system-entities": [
+            { "dev-entry": "/dev/disk4" },
+            { "dev-entry": "/dev/disk4s1" },
+            { "dev-entry": "/dev/disk5s1", "mount-point": mountPoint },
+            { "dev-entry": "/dev/disk5" },
+          ],
+        }),
+        exitCode: 0,
+      };
+    },
   };
+  return { calls, host };
+};
 
+describe("APFS disk image detach", () => {
   it("accepts an image disk that its container detach already ejected", async () => {
     const { calls, host } = apfsHost([]);
     const reader = await NativeDmgArtifactReader.create(
@@ -456,8 +475,81 @@ describe("APFS disk image detach", () => {
       undefined,
       host,
     );
-    await expect(reader.close()).rejects.toThrow(
-      "DMG detach or mount-root cleanup failed",
+    await expect(reader.close()).rejects.toMatchObject({
+      reason: "unavailable",
+      message: expect.stringContaining("No such file or directory"),
+    });
+  });
+
+  it("retains a failed attachment and its mount root until a later close detaches it", async () => {
+    let mountRoot: string | undefined;
+    let busy = true;
+    let attached = true;
+    onTestFinished(async () => {
+      if (mountRoot !== undefined)
+        await rm(mountRoot, { recursive: true, force: true });
+    });
+    const host: NativeDmgHost = {
+      async run(args) {
+        if (args[0] === "attach") {
+          mountRoot = args[args.indexOf("-mountroot") + 1];
+          if (mountRoot === undefined) throw new Error("missing mount root");
+          const mountPoint = join(mountRoot, "Fixture");
+          await mkdir(mountPoint);
+          await writeFile(join(mountPoint, "hello.txt"), "owned observation");
+          return {
+            stdout: build({
+              "system-entities": [
+                { "dev-entry": "/dev/disk7", "mount-point": mountPoint },
+              ],
+            }),
+            exitCode: 0,
+          };
+        }
+        if (args[0] === "info")
+          return {
+            stdout: build({
+              images: attached
+                ? [{ "system-entities": [{ "dev-entry": "/dev/disk7" }] }]
+                : [],
+            }),
+            exitCode: 0,
+          };
+        if (args[0] === "detach") {
+          if (busy)
+            return {
+              stdout: "",
+              stderr: "hdiutil: detach failed - Resource busy",
+              exitCode: 16,
+            };
+          attached = false;
+        }
+        return { stdout: "", exitCode: 0 };
+      },
+    };
+    const reader = await NativeDmgArtifactReader.create(
+      "/tmp/image.dmg",
+      undefined,
+      host,
     );
+    await expect(reader.close()).rejects.toMatchObject({
+      reason: "unavailable",
+    });
+    if (mountRoot === undefined) throw new Error("missing owned mount root");
+    expect
+      .soft(
+        await readFile(join(mountRoot, "Fixture", "hello.txt"), "utf8").catch(
+          () => undefined,
+        ),
+      )
+      .toBe("owned observation");
+    busy = false;
+    await reader.close();
+    expect.soft(attached).toBe(false);
+    await expect(
+      readFile(join(mountRoot, "Fixture", "hello.txt")),
+    ).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 });

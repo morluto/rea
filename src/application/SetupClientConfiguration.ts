@@ -2,6 +2,7 @@ import {
   clientRegistrationEntry,
   clientConfigurationValuesEqual,
   clientServerPath,
+  grokServerListedDisabled,
   legacyClientServerPath,
   parseClientConfiguration,
   serializeClientConfiguration,
@@ -15,6 +16,7 @@ import { dirname } from "node:path";
 import writeFileAtomic from "write-file-atomic";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { npxRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import { MCP_STARTUP_POLICY } from "../mcpStartupPolicy.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
 import type {
@@ -24,28 +26,7 @@ import type {
 } from "./SetupTypes.js";
 import type { SetupClient } from "./SupportedClients.js";
 
-const defaultCommand = (): readonly string[] => [
-  "npx",
-  "-y",
-  PRODUCT_IDENTITY.registrationPackageSpecifier,
-  "mcp",
-];
-
-/** Back up, atomically update, and semantically read back one JSON MCP configuration. */
-export const configureJsonClient = (
-  client: SetupClient,
-  environment: SetupProviderEnvironment = {},
-  command: readonly string[] = defaultCommand(),
-): Promise<ClientConfigurationResult> =>
-  configureClientDocument(client, environment, command, "json");
-
-/** Back up, atomically update, and semantically read back one TOML MCP configuration. */
-export const configureTomlClient = (
-  client: SetupClient,
-  environment: SetupProviderEnvironment = {},
-  command: readonly string[] = defaultCommand(),
-): Promise<ClientConfigurationResult> =>
-  configureClientDocument(client, environment, command, "toml");
+const defaultCommand = (): readonly string[] => npxRegistrationCommand();
 
 /** Configure one supported client's native stdio MCP registration shape. */
 export const configureClientConfiguration = (
@@ -78,7 +59,7 @@ const configureClientDocument = async (
   let parsed: ClientConfigurationDocument;
   try {
     parsed = parseClientConfiguration(
-      original ?? (format === "toml" ? "" : "{}"),
+      original ?? (format === "toml" || format === "grok" ? "" : "{}"),
       format,
     );
   } catch (cause: unknown) {
@@ -254,7 +235,7 @@ const restoreConfig = async (
   }
 };
 
-/** Whether REA's entry matches and no conflicting legacy entry remains. */
+/** Whether REA's entry matches, no legacy entry remains, and Grok is not suppressing it. */
 const registrationCurrent = (
   parsed: ClientConfigurationDocument,
   desired: unknown,
@@ -262,7 +243,12 @@ const registrationCurrent = (
   clientConfigurationValuesEqual(
     parsed.servers[PRODUCT_IDENTITY.mcpServerKey],
     desired,
-  ) && !Object.hasOwn(parsed.legacyServers, PRODUCT_IDENTITY.mcpServerKey);
+  ) &&
+  !Object.hasOwn(parsed.legacyServers, PRODUCT_IDENTITY.mcpServerKey) &&
+  !(
+    parsed.dialect === "grok" &&
+    grokServerListedDisabled(parsed.document, PRODUCT_IDENTITY.mcpServerKey)
+  );
 
 const clientConfigurationDesired = (
   client: SetupClient,
@@ -282,7 +268,7 @@ const clientConfigurationDesired = (
   );
   return {
     ...registration,
-    ...(client.name === "codex"
+    ...(client.name === "codex" || client.name === "grok_build"
       ? {
           startup_timeout_sec: MCP_STARTUP_POLICY.codexStartupTimeoutSeconds,
         }

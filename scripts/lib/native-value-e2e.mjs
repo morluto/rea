@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
@@ -8,6 +11,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../../dist/domain/evidence.js";
 import { analysisProfileSchema } from "../../dist/domain/analysisProfile.js";
 import { nativeValueTraceSchema } from "../../dist/domain/native/nativeValueTrace.js";
+import { verifyGhidraBoundaries } from "./real-ghidra-boundaries.mjs";
 
 const defaultEntrypoint = fileURLToPath(new URL("../rea.mjs", import.meta.url));
 const environment = () => ({
@@ -73,6 +77,33 @@ export async function verifyNativeValueE2e(
   globalAddress,
   { entrypoint = defaultEntrypoint } = {},
 ) {
+  const workspace = await mkdtemp(join(tmpdir(), "rea-native-values-e2e-"));
+  const runtime = join(
+    workspace,
+    `runtime${process.platform === "darwin" ? " with spaces" : ""}-${"x".repeat(100)}`,
+  );
+  await mkdir(runtime);
+  const env = { ...environment(), TMPDIR: runtime };
+  try {
+    return await verifyNativeValueAdapters(
+      target,
+      procedure,
+      globalAddress,
+      entrypoint,
+      env,
+    );
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+}
+
+async function verifyNativeValueAdapters(
+  target,
+  procedure,
+  globalAddress,
+  entrypoint,
+  env,
+) {
   const { stdout } = await promisify(execFile)(
     process.execPath,
     [
@@ -90,7 +121,7 @@ export async function verifyNativeValueE2e(
       "5000",
       "--json",
     ],
-    { env: environment(), timeout: 240000, maxBuffer: 72 * 1024 * 1024 },
+    { env, timeout: 240000, maxBuffer: 72 * 1024 * 1024 },
   );
   const evidence = parseEvidence(JSON.parse(stdout));
   assert.equal(evidence.operation, "trace_native_values");
@@ -114,16 +145,17 @@ export async function verifyNativeValueE2e(
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [entrypoint, "mcp"],
-    env: environment(),
+    env,
     stderr: "pipe",
   });
   const client = new Client({ name: "native-values-real-e2e", version: "1" });
+  let boundaries;
   try {
     await client.connect(transport);
     const opened = await client.callTool(
       {
         name: "open_binary",
-        arguments: { path: target.path, provider: "ghidra" },
+        arguments: { path: target.path, provider_id: "ghidra" },
       },
       { timeout: 180000 },
     );
@@ -168,14 +200,11 @@ export async function verifyNativeValueE2e(
       analyzed.structuredContent?.evidence,
     );
     assert.equal(functionEvidence.operation, "analyze_function");
-    assert.equal(functionEvidence.provider.id, "rea-workflow");
+    assert.equal(functionEvidence.provider.id, "ghidra");
     const functionProfile = analysisProfileSchema.parse(
       functionEvidence.analysis_profile,
     );
-    assert.deepEqual(
-      functionProfile.parameters.upstream_analysis_profile,
-      upstreamProfile,
-    );
+    assert.deepEqual(functionProfile, upstreamProfile);
     assert.deepEqual(
       functionEvidence.normalized_result,
       analyzed.structuredContent?.result,
@@ -219,6 +248,12 @@ export async function verifyNativeValueE2e(
         evidence,
       );
     }
+    boundaries = await verifyGhidraBoundaries(client, {
+      target,
+      procedure,
+      entrypoint,
+      env,
+    });
     const closed = await client.callTool({
       name: "close_binary",
       arguments: {},
@@ -229,6 +264,13 @@ export async function verifyNativeValueE2e(
       arguments: {},
     });
     assert.equal(status.structuredContent?.result?.open, false);
+    assert.deepEqual(
+      (await readdir(env.TMPDIR)).filter((name) =>
+        name.startsWith("rea-ghidra-"),
+      ),
+      [],
+      "Ghidra left runtime files after close",
+    );
   } finally {
     await client.close();
     await transport.close();
@@ -239,6 +281,7 @@ export async function verifyNativeValueE2e(
     stdio_mcp: true,
     inline_evidence: true,
     direct_function_comparison: true,
+    boundaries,
     nodes: cliGraph.total_nodes,
     edges: cliGraph.total_edges,
     decompilations: cliGraph.decompilations,

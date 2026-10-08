@@ -266,7 +266,7 @@ it("cancels after snapshot acquisition before launch and removes private input d
 
 it.each([
   { reason: "input-limit", tag: "AnalysisInputError" },
-  { reason: "resource-limit", tag: "ProviderAdapterError" },
+  { reason: "resource-limit", tag: "AnalysisResourceConstraintError" },
   { reason: "decoder", tag: "ProviderAdapterError" },
   { reason: "limit", tag: "AnalysisOutputError" },
 ])(

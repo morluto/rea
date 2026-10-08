@@ -6,6 +6,7 @@ import {
 import type { AndroidRequest } from "../domain/android/androidAnalysis.js";
 import {
   AnalysisCapabilityUnavailableError,
+  AnalysisInputError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
@@ -16,6 +17,7 @@ import { analyzeJadxRequest, type JadxToolPort } from "./JadxAnalysis.js";
 import { JadxMcpTransport, type JadxLauncher } from "./JadxMcpTransport.js";
 import {
   jadxLoadSchema,
+  jadxInputFailureSchema,
   jadxRuntimeSchema,
   parseJadxEnvelope,
   parseJadxJson,
@@ -32,6 +34,7 @@ export class JadxSession {
   readonly transport: JadxMcpTransport;
   readonly #client = new Client({ name: "rea-android-adapter", version: "1" });
   #loaded: ReturnType<typeof jadxLoadSchema.parse> | undefined;
+  #connected = false;
 
   constructor(
     options: Omit<OwnedProviderProcessSpawnOptions, "runId" | "stdin">,
@@ -58,8 +61,10 @@ export class JadxSession {
       signal.throwIfAborted();
       this.transport.beginOperation();
       const raw: JsonValue[] = [];
-      if (this.#loaded === undefined)
+      if (!this.#connected) {
         await this.#client.connect(this.transport, { timeout: 30_000 });
+        this.#connected = true;
+      }
       const server = this.#client.getServerVersion();
       if (
         server?.name !== JADX_BRIDGE_IDENTITY.name ||
@@ -126,6 +131,11 @@ export class JadxSession {
     }
   }
 
+  /** Whether the selected Java runtime established the REA bridge protocol. */
+  initialized(): boolean {
+    return this.#connected;
+  }
+
   /** Join owned cleanup even if SDK connection teardown itself fails. */
   async close(): Promise<void> {
     try {
@@ -156,7 +166,20 @@ export class JadxSession {
         input,
         response: jsonValueSchema.parse(response),
       });
-      if (envelope.failed)
+      if (envelope.failed) {
+        if (envelope.text.startsWith("{")) {
+          const failure = jadxInputFailureSchema.safeParse(
+            parseJadxJson(envelope.text, request.operation),
+          );
+          if (failure.success)
+            throw new AnalysisInputError(request.operation, undefined, [
+              {
+                path: [failure.data.field],
+                reason: "invalid_value",
+                message: failure.data.message,
+              },
+            ]);
+        }
         throw new ProviderAdapterError("jadx", request.operation, {
           diagnostics: {
             upstream_operation: name,
@@ -165,6 +188,7 @@ export class JadxSession {
             target_sha256: target.sha256,
           },
         });
+      }
       return envelope.text;
     };
     return {

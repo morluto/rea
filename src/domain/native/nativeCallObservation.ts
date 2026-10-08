@@ -1,16 +1,21 @@
 import { z } from "zod";
+import { localPathStringSchema } from "../localPath.js";
 
 const hexSchema = z.string().regex(/^0x[0-9a-f]+$/u);
-/** Objective-C class names and selectors never contain spaces or brackets. */
-const objcName = z
+const nativeString = z
   .string()
+  .regex(
+    /^[^\0]*$/u,
+    "Native launch and breakpoint strings cannot contain NUL",
+  );
+/** Objective-C class names and selectors never contain spaces or brackets. */
+const objcName = nativeString
   .min(1)
   .regex(/^[^\s[\]]+$/u, "Use the bare name without spaces or brackets");
 
 const functionBreakpoint = {
   kind: z.literal("function"),
-  name: z
-    .string()
+  name: nativeString
     .min(1)
     .describe(
       "Exact symbol name, such as `open`, a C++ or mangled Swift symbol, or `-[NSString length]`.",
@@ -28,8 +33,7 @@ const objcMethodBreakpoint = {
 export const nativeCallBreakpointSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     ...functionBreakpoint,
-    module: z
-      .string()
+    module: nativeString
       .min(1)
       .optional()
       .describe(
@@ -51,7 +55,7 @@ export const nativeCallBreakpointSchema = z.discriminatedUnion("kind", [
  */
 export const nativeCallObservationInputSchema = z.strictObject({
   breakpoints: z.array(nativeCallBreakpointSchema).min(1),
-  arguments: z.array(z.string()).default([]),
+  arguments: z.array(nativeString).default([]),
   environment: z
     .record(
       z
@@ -62,7 +66,7 @@ export const nativeCallObservationInputSchema = z.strictObject({
     )
     .default({})
     .describe("Overrides on top of the environment REA runs with."),
-  working_directory: z.string().min(1).optional(),
+  working_directory: localPathStringSchema.optional(),
   duration_ms: z
     .number()
     .int()
@@ -127,10 +131,13 @@ export const nativeCallEventSchema = z.strictObject({
   backtrace: z.array(nativeCodeLocationSchema),
 });
 
-const capturedOutputSchema = z.strictObject({
+/** Retained native output with explicit stream completeness and byte counts. */
+export const nativeCapturedOutputSchema = z.strictObject({
   text: z.string(),
+  /** Bytes observed by the bridge, not a total when complete is false. */
   bytes: z.number().int().nonnegative(),
   truncated: z.boolean(),
+  complete: z.boolean(),
 });
 
 /** Observed calls, the process lifecycle, and breakpoint resolution. */
@@ -140,7 +147,21 @@ export const nativeCallObservationResultSchema = z.strictObject({
     sha256: z.string().regex(/^[0-9a-f]{64}$/u),
     architecture: z.string(),
     arguments: z.array(z.string()),
+    environment: z.record(z.string(), z.string()),
     working_directory: z.string().nullable(),
+    launch_identity: z.strictObject({
+      /** A pathname hash does not verify the bytes mapped into the process. */
+      loaded_image_sha256: z.null(),
+      file_device: z.string().nullable(),
+      file_inode: z.string().nullable(),
+      selected_file_sha256: z
+        .string()
+        .regex(/^[0-9a-f]{64}$/u)
+        .nullable(),
+      module_path: z.string().nullable(),
+      module_uuid: z.string().nullable(),
+      stable: z.boolean(),
+    }),
   }),
   debugger: z.strictObject({
     path: z.string(),
@@ -154,14 +175,15 @@ export const nativeCallObservationResultSchema = z.strictObject({
       "duration-elapsed",
       "event-limit",
       "stop-limit",
+      "resource-limit",
     ]),
     exit_status: z.number().int().nullable(),
     exit_description: z.string().nullable(),
     /** REA confirmed the process is gone when observation ended. */
     terminated: z.boolean(),
     elapsed_ms: z.number().nonnegative(),
-    stdout: capturedOutputSchema,
-    stderr: capturedOutputSchema,
+    stdout: nativeCapturedOutputSchema,
+    stderr: nativeCapturedOutputSchema,
     /** Signal and exception stops LLDB reported; the process continued past each. */
     other_stops: z.array(z.string()),
   }),
@@ -187,6 +209,9 @@ export const nativeCallObservationResultSchema = z.strictObject({
   coverage: z.strictObject({
     status: z.enum(["complete", "partial"]),
     event_limit_reached: z.boolean(),
+    resource_limit_reached: z.boolean(),
+    /** Aggregate breakpoint-location metadata exhausted its retained-byte budget. */
+    breakpoint_locations_truncated: z.boolean().optional(),
     /** Requests that matched no code in any image loaded while observing. */
     unresolved_breakpoints: z.array(z.number().int().nonnegative()),
   }),

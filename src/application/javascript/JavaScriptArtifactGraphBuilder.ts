@@ -1,6 +1,7 @@
 import type { ArtifactInventorySnapshot } from "../../artifacts/inventory/ArtifactInventory.js";
 import {
   createJavaScriptApplicationGraph,
+  createImmutableJavaScriptApplicationGraphSteps,
   type JavaScriptApplicationGraph,
 } from "../../domain/javascript/javascriptApplicationGraph.js";
 import type { JavaScriptModuleArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
@@ -14,12 +15,21 @@ import {
 import { addJavaScriptStaticFindings } from "./JavaScriptArtifactGraphFindings.js";
 import {
   addJavaScriptModuleRelationships,
+  type JavaScriptModuleRelationshipOmissions,
   addJavaScriptSourceModules,
 } from "./JavaScriptModuleRelationships.js";
 import {
   completeApplicationCoverage,
   partialApplicationCoverage,
 } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
+import type { JavaScriptSemanticResourceLimit } from "../../domain/javascript/javascriptSemanticValueTypes.js";
+import { semanticCoverageResourceLimits } from "../../domain/javascript/javascriptSemanticCoverage.js";
+import {
+  SEMANTIC_EXPRESSION_DEPTH_LIMIT,
+  SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT,
+  SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT,
+  semanticResourceLimitReason,
+} from "../../domain/javascript/javascriptSemanticResourceLimits.js";
 import {
   addJavaScriptArtifactContainers,
   addJavaScriptArtifactFiles,
@@ -38,7 +48,26 @@ export const buildJavaScriptArtifactGraph = (
   snapshot: ArtifactInventorySnapshot,
   fileSet: JavaScriptArtifactFileSet,
   analysis: JavaScriptModuleArtifactAnalysis,
-): JavaScriptApplicationGraph => {
+): JavaScriptApplicationGraph =>
+  createJavaScriptApplicationGraph(
+    buildJavaScriptArtifactGraphInput(snapshot, fileSet, analysis),
+  );
+
+/** Build a validated application graph with cooperative immutable ownership. */
+export const buildImmutableJavaScriptArtifactGraphSteps = (
+  snapshot: ArtifactInventorySnapshot,
+  fileSet: JavaScriptArtifactFileSet,
+  analysis: JavaScriptModuleArtifactAnalysis,
+): Generator<void, JavaScriptApplicationGraph> =>
+  createImmutableJavaScriptApplicationGraphSteps(
+    buildJavaScriptArtifactGraphInput(snapshot, fileSet, analysis),
+  );
+
+const buildJavaScriptArtifactGraphInput = (
+  snapshot: ArtifactInventorySnapshot,
+  fileSet: JavaScriptArtifactFileSet,
+  analysis: JavaScriptModuleArtifactAnalysis,
+): unknown => {
   const accumulator = new JavaScriptArtifactGraphAccumulator();
   const root = createJavaScriptArtifactRootNode(accumulator, snapshot);
   const context: JavaScriptArtifactGraphContext = {
@@ -60,13 +89,13 @@ export const buildJavaScriptArtifactGraph = (
   const packageRoots = addJavaScriptPackageNodes(context);
   addJavaScriptSourceModules(context);
   addJavaScriptBundlerNodes(context);
-  addJavaScriptModuleRelationships(context);
+  const relationshipOmissions = addJavaScriptModuleRelationships(context);
   addJavaScriptStaticFindings(context);
   addElectronBoundaries(context);
   addJavaScriptHtmlRoles(context);
   addJavaScriptSourceMapOriginals(context);
   const coverage = graphCoverage(context);
-  return createJavaScriptApplicationGraph({
+  return {
     schema: "JavaScriptApplicationGraph",
     root_node_ids:
       packageRoots.length === 0
@@ -75,11 +104,16 @@ export const buildJavaScriptArtifactGraph = (
     nodes: accumulator.nodes(),
     edges: accumulator.edges(),
     coverage,
-    limitations: graphLimitations(context, coverage.status),
-  });
+    limitations: graphLimitations(
+      context,
+      coverage.status,
+      relationshipOmissions,
+    ),
+  };
 };
 
 const graphCoverage = (context: JavaScriptArtifactGraphContext) => {
+  const resourceLimits = semanticResourceLimits(context);
   const sourceMapPolicyGap = context.analysis.source_maps.some(
     ({ status }) => status === "invalid",
   );
@@ -99,13 +133,50 @@ const graphCoverage = (context: JavaScriptArtifactGraphContext) => {
     partialJavaScript;
   if (context.analysis.truncated_scopes > 0)
     return partialApplicationCoverage([], null);
+  if (resourceLimits.length > 0)
+    return partialApplicationCoverage(
+      resourceLimits.map(applicationGraphResourceLimit),
+      null,
+    );
   if (unknownGap) return partialApplicationCoverage([], null);
   return completeApplicationCoverage();
 };
 
+const semanticResourceLimits = (
+  context: JavaScriptArtifactGraphContext,
+): JavaScriptSemanticResourceLimit[] =>
+  [
+    ...new Set(
+      context.analysis.files.flatMap(({ semantic }) =>
+        semantic === null
+          ? []
+          : semanticCoverageResourceLimits(semantic.ir.coverage),
+      ),
+    ),
+  ].sort();
+
+const applicationGraphResourceLimit = (
+  resourceLimit: JavaScriptSemanticResourceLimit,
+) => ({
+  name: `javascript_semantic_${resourceLimit.replaceAll("-", "_")}`,
+  value:
+    resourceLimit === "primitive-candidates"
+      ? SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT
+      : resourceLimit === "primitive-bytes"
+        ? SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT
+        : SEMANTIC_EXPRESSION_DEPTH_LIMIT,
+  unit:
+    resourceLimit === "expression-depth"
+      ? ("depth" as const)
+      : resourceLimit === "primitive-bytes"
+        ? ("bytes" as const)
+        : ("items" as const),
+});
+
 const graphLimitations = (
   context: JavaScriptArtifactGraphContext,
   coverage: "complete" | "partial" | "unknown" | "unavailable",
+  relationshipOmissions: JavaScriptModuleRelationshipOmissions,
 ): string[] => {
   const ipc = collectElectronIpcRecords(context.analysis);
   const pairings = classifyElectronIpcPairings(ipc);
@@ -124,6 +195,11 @@ const graphLimitations = (
   );
   return [
     ...context.analysis.limitations,
+    ...(relationshipOmissions.selfImports > 0
+      ? [
+          `${String(relationshipOmissions.selfImports)} import ${relationshipOmissions.selfImports === 1 ? "specifier" : "specifiers"} resolved back to the importing module itself and ${relationshipOmissions.selfImports === 1 ? "was" : "were"} omitted; application graph edges cannot be self-referential.`,
+        ]
+      : []),
     "CommonJS and ESM binding relationships were recovered from inert syntax and resolved only within the inventoried artifact container.",
     "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code.",
     "Static imports, entrypoints, workers, endpoints, and storage relationships do not prove runtime execution.",
@@ -150,6 +226,7 @@ const graphLimitations = (
           "Sender, frame, URL, and origin checks are observations only; REA does not claim that they enforce a complete authorization policy.",
         ]
       : []),
+    ...semanticResourceLimits(context).map(semanticResourceLimitReason),
     ...(context.analysis.files.some(
       ({ javascript }) =>
         (javascript?.electron.native_addon_bindings.length ?? 0) > 0,

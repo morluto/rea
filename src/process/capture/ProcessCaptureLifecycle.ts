@@ -704,10 +704,18 @@ export const releaseProcessResources = async (options: {
           "owned process cleanup is unverifiable on Windows without process-job authority",
       };
     } else {
+      const terminalPid = options.terminal.pid;
+      const relation = {
+        leaderPid: terminalPid,
+        processGroupId: terminalPid,
+        ...(options.sampledProcessGroupIds === undefined
+          ? {}
+          : { sampledProcessGroupIds: options.sampledProcessGroupIds }),
+      };
       const cleaned = await host.cleanupProcessGroup({
         runId: options.runId,
-        leaderPid: options.terminal.pid,
-        processGroupId: options.terminal.pid,
+        leaderPid: terminalPid,
+        processGroupId: terminalPid,
         sweepTokenOwnedProcesses: true,
         ...(options.sampledProcessGroupIds === undefined
           ? {}
@@ -716,6 +724,7 @@ export const releaseProcessResources = async (options: {
           ? {}
           : { captureBaseline: options.captureBaseline }),
       });
+      const unverified = [...(cleaned.unverified ?? [])];
       if (!cleaned.cleaned) {
         ownedProcessGroup = { state: "unverified", reason: cleaned.reason };
       } else {
@@ -724,11 +733,25 @@ export const releaseProcessResources = async (options: {
             options.runId,
             undefined,
             options.captureBaseline,
+            relation,
           ),
         );
+        unverified.push(...(verified.unverified ?? []));
         if (!verified.cleaned)
           ownedProcessGroup = { state: "unverified", reason: verified.reason };
       }
+      if (unverified.length > 0)
+        ownedProcessGroup = {
+          ...ownedProcessGroup,
+          unverified_processes: [
+            ...new Map(
+              unverified.map(({ pid, diagnostic }) => [
+                `${String(pid)}:${diagnostic}`,
+                { pid, reason: diagnostic },
+              ]),
+            ).values(),
+          ],
+        };
     }
   }
   let temporaryRoot: ProcessCaptureCleanupReport["temporary_root"] = {
@@ -823,6 +846,52 @@ export const resolveProcessResult = (
   },
 ): ProcessCapture => {
   const cleanupFailure = cleanupReportFailure(cleanup);
+  const executionFailureReason =
+    describeProcessCaptureExecutionFailure(executionFailure);
+  let partialObservation: PartialProcessCaptureObservation | undefined;
+  if (
+    (cleanupFailure !== undefined || executionFailure !== undefined) &&
+    (capture !== undefined || observations !== undefined)
+  ) {
+    const normalizedObservations =
+      observations === undefined || partialContext === undefined
+        ? observations
+        : normalizePartialProcessObservations(observations, partialContext);
+    if (capture === undefined) {
+      if (normalizedObservations !== undefined) {
+        const partialResult = partialProcessCaptureObservationSchema.safeParse({
+          observations: normalizedObservations,
+          cleanup,
+          execution_failure: executionFailureReason ?? null,
+        });
+        if (partialResult.success) partialObservation = partialResult.data;
+      }
+    } else {
+      const captureData =
+        "cleanup" in capture
+          ? (() => {
+              const { cleanup: _cleanup, ...data } = capture;
+              void _cleanup;
+              return data;
+            })()
+          : capture;
+      const settlement =
+        cleanupFailure !== undefined
+          ? { ...capture.settlement, cleanup_outcome: "failed" as const }
+          : capture.settlement.state === "quiesced"
+            ? {
+                ...capture.settlement,
+                cleanup_outcome: "not_required" as const,
+              }
+            : { ...capture.settlement, cleanup_outcome: "cleaned" as const };
+      const partialResult = partialProcessCaptureObservationSchema.safeParse({
+        capture: { ...captureData, settlement },
+        cleanup,
+        execution_failure: executionFailureReason ?? null,
+      });
+      if (partialResult.success) partialObservation = partialResult.data;
+    }
+  }
   if (cleanupFailure !== undefined) {
     const cleanupResources = Object.entries(cleanup)
       .filter(
@@ -830,44 +899,6 @@ export const resolveProcessResult = (
           outcome.state === "failed" || outcome.state === "unverified",
       )
       .map(([resource]) => resource);
-    const executionFailureReason =
-      describeProcessCaptureExecutionFailure(executionFailure);
-    let partialObservation: PartialProcessCaptureObservation | undefined;
-    if (capture !== undefined || observations !== undefined) {
-      const normalizedObservations =
-        observations === undefined || partialContext === undefined
-          ? observations
-          : normalizePartialProcessObservations(observations, partialContext);
-      const partialPayload =
-        capture === undefined
-          ? { observations: normalizedObservations }
-          : { capture };
-      const pendingCapture =
-        capture === undefined
-          ? undefined
-          : {
-              ...capture,
-              settlement: {
-                ...capture.settlement,
-                cleanup_outcome: "failed" as const,
-              },
-            };
-      const partialResult = partialProcessCaptureObservationSchema.safeParse({
-        ...partialPayload,
-        ...(pendingCapture === undefined
-          ? {}
-          : {
-              capture: Object.fromEntries(
-                Object.entries(pendingCapture).filter(
-                  ([key]) => key !== "cleanup",
-                ),
-              ),
-            }),
-        cleanup,
-        execution_failure: executionFailureReason ?? null,
-      });
-      if (partialResult.success) partialObservation = partialResult.data;
-    }
     throw new ProcessCaptureError(cleanupFailure, {
       cause: executionFailure,
       reason: "cleanup_incomplete",
@@ -879,20 +910,45 @@ export const resolveProcessResult = (
       cleanupReport: cleanup,
     });
   }
-  if (executionFailure instanceof ProcessCaptureError) throw executionFailure;
+  if (executionFailure instanceof ProcessCaptureError) {
+    const retainedExecutionFailure =
+      executionFailure.executionFailure ?? executionFailureReason;
+    const retainedPartialObservation =
+      executionFailure.partialObservation ?? partialObservation;
+    throw new ProcessCaptureError(executionFailure.message, {
+      cause: executionFailure,
+      ...(executionFailure.userMessage === undefined
+        ? {}
+        : { userMessage: executionFailure.userMessage }),
+      ...(executionFailure.userCategory === undefined
+        ? {}
+        : { userCategory: executionFailure.userCategory }),
+      reason: executionFailure.reason,
+      cleanupResources: executionFailure.cleanupResources,
+      ...(retainedExecutionFailure === undefined
+        ? {}
+        : { executionFailure: retainedExecutionFailure }),
+      ...(retainedPartialObservation === undefined
+        ? {}
+        : { partialObservation: retainedPartialObservation }),
+      cleanupReport: executionFailure.cleanupReport ?? cleanup,
+    });
+  }
   if (executionFailure !== undefined) {
-    const executionFailureReason =
-      describeProcessCaptureExecutionFailure(executionFailure);
     throw new ProcessCaptureError("process capture failed", {
       cause: executionFailure,
+      reason: "capture_failed",
       ...(executionFailureReason === undefined
         ? {}
         : { executionFailure: executionFailureReason }),
+      ...(partialObservation === undefined ? {} : { partialObservation }),
+      cleanupReport: cleanup,
     });
   }
   if (capture === undefined)
     throw new ProcessCaptureError("process capture produced no result");
-  if ("cleanup" in capture) return capture;
+  const unverifiedProcesses = cleanup.owned_process_group.unverified_processes;
+  if ("cleanup" in capture && unverifiedProcesses === undefined) return capture;
 
   const settlement: UnverifiedProcessCapture["settlement"] =
     capture.settlement.state === "quiesced"
@@ -902,9 +958,20 @@ export const resolveProcessResult = (
     return parseProcessCapture({
       ...capture,
       settlement,
+      residual_unknowns: [
+        ...capture.residual_unknowns,
+        ...(unverifiedProcesses ?? []).map(({ pid, reason }) => ({
+          scope: "process" as const,
+          reason: `Ownership of unrelated process ${String(pid)} could not be verified; it was left untouched: ${reason}`,
+        })),
+      ],
       cleanup: {
+        ...("cleanup" in capture ? capture.cleanup : {}),
         owned_process_group: "verified",
         temporary_root: "removed",
+        ...(unverifiedProcesses === undefined
+          ? {}
+          : { unverified_processes: unverifiedProcesses }),
       },
     });
   } catch (cause: unknown) {

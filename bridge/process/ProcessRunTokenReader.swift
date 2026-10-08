@@ -112,6 +112,31 @@ enum RunTokenReadError: Error {
   case ambiguousEnvironmentBoundary
 }
 
+@_silgen_name("csops")
+private func csops(
+  _ pid: Int32,
+  _ ops: UInt32,
+  _ addr: UnsafeMutableRawPointer?,
+  _ size: Int
+) -> Int32
+
+private let csOpsStatus: UInt32 = 0
+private let csPlatformBinary: UInt32 = 0x0400_0000
+
+/**
+ * Whether the target image is an Apple platform binary. Current macOS omits
+ * the environment of platform binaries from KERN_PROCARGS2 for every caller,
+ * so this distinguishes a policy-withheld environment from a process whose
+ * environment is genuinely absent or transiently unreadable.
+ */
+func isPlatformBinary(pid: Int32) -> Bool {
+  var flags: UInt32 = 0
+  let result = withUnsafeMutablePointer(to: &flags) { pointer in
+    csops(pid, csOpsStatus, UnsafeMutableRawPointer(pointer), MemoryLayout<UInt32>.size)
+  }
+  return result == 0 && (flags & csPlatformBinary) != 0
+}
+
 private func readRunToken(pid: Int32, pointerSize: Int) -> RunTokenObservation {
   var mib = [CTL_KERN, KERN_PROCARGS2, Int32(pid)]
   var size = 0
@@ -127,13 +152,25 @@ private func readRunToken(pid: Int32, pointerSize: Int) -> RunTokenObservation {
   }
   bytes = Array(bytes.prefix(size))
   do {
-    return RunTokenObservation(pid: pid, state: "readable", run_id: try token(in: bytes, pointerSize: pointerSize), reason: nil)
+    let runId = try token(in: bytes, pointerSize: pointerSize)
+    // A complete empty environment is readable for an ordinary image. Apple
+    // platform images can expose the same layout after the kernel withholds
+    // their environment, so they remain explicitly unverified without a token.
+    if runId == nil && isPlatformBinary(pid: pid) {
+      return unavailable(pid: pid, reason: "platform_binary_environment_withheld")
+    }
+    return RunTokenObservation(pid: pid, state: "readable", run_id: runId, reason: nil)
   } catch RunTokenReadError.duplicateToken {
     return unavailable(pid: pid, reason: "duplicate_run_token")
   } catch RunTokenReadError.invalidTokenEncoding {
     return unavailable(pid: pid, reason: "invalid_run_token_encoding")
   } catch RunTokenReadError.environmentUnavailable {
-    return unavailable(pid: pid, reason: "environment_unavailable")
+    return unavailable(
+      pid: pid,
+      reason: isPlatformBinary(pid: pid)
+        ? "platform_binary_environment_withheld"
+        : "environment_unavailable"
+    )
   } catch RunTokenReadError.appleVectorUnavailable {
     return unavailable(pid: pid, reason: "apple_vector_unavailable")
   } catch RunTokenReadError.ambiguousEnvironmentBoundary {
@@ -229,9 +266,6 @@ func token(in bytes: [UInt8], pointerSize: Int = MemoryLayout<UnsafeRawPointer>.
     throw RunTokenReadError.ambiguousEnvironmentBoundary
   }
   let environmentEntries = trailingEntries[..<appleVectorStart]
-  guard !environmentEntries.isEmpty else {
-    throw RunTokenReadError.environmentUnavailable
-  }
   var found: String?
   for entry in environmentEntries {
     if entry.starts(with: Array("REA_PROCESS_RUN_ID=".utf8)) {

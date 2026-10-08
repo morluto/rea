@@ -99,21 +99,22 @@ export const decodeAppleDispatchMetadata = (
     evidence,
     offset,
   };
-  const { failures, examined, categoriesExamined } = decodeObjcDispatchFacets({
-    bytes,
-    sections,
-    segments,
-    readers,
-    budget,
-    result,
-  });
+  const { failures, categoryIssues, examined, categoriesExamined } =
+    decodeObjcDispatchFacets({
+      bytes,
+      sections,
+      segments,
+      readers,
+      budget,
+      result,
+    });
   const swiftRelative = createSwiftRelativeReader({
     bytes,
     readers,
     budget,
     result,
   });
-  decodeSwiftDispatchFacets({
+  const swift = decodeSwiftDispatchFacets({
     sections,
     segments,
     readers,
@@ -131,7 +132,7 @@ export const decodeAppleDispatchMetadata = (
       typeEntries.push(section.address + BigInt(index * 4));
     if (section.size / 4 > maxRecords) budget.truncated = true;
   }
-  decodeSwiftClassVtables({
+  const vtables = decodeSwiftClassVtables({
     entries: typeEntries,
     result,
     readers: {
@@ -153,10 +154,13 @@ export const decodeAppleDispatchMetadata = (
   pushDispatchCoverage({
     result,
     failures,
+    categoryIssues,
     examined,
     categoriesExamined,
     truncated: budget.truncated,
     fixups,
+    vtables,
+    swift,
   });
   return objcSwiftMetadataSchema.parse(result);
 };

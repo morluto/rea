@@ -1,13 +1,24 @@
 import { z } from "zod";
 
 import { digestCanonicalValue } from "./canonicalDigest.js";
+import { canonicalJsonDigestSteps } from "./canonicalJsonDigestSteps.js";
 
 import {
   analysisProfileSchema,
   type AnalysisProfileCommitment,
 } from "./analysisProfile.js";
 import type { BinaryTarget } from "./binaryTarget.js";
-import { jsonValueSchema, type JsonValue } from "./jsonValue.js";
+import {
+  jsonObjectSchema,
+  jsonValueSchema,
+  jsonValueValidationIssue,
+  jsonValueValidationSteps,
+  type JsonValue,
+} from "./jsonValue.js";
+import {
+  freezeJsonSnapshot,
+  isImmutableJsonSnapshot,
+} from "./immutableJson.js";
 import { digestSchema } from "./../domain/digests.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 
@@ -89,7 +100,7 @@ const evidenceBaseSchema = z
     provider: providerSchema,
     predicate_type: z.string().min(1),
     operation: z.string().min(1),
-    parameters: z.record(z.string(), jsonValueSchema),
+    parameters: jsonObjectSchema,
     raw_result: jsonValueSchema.nullable(),
     normalized_result: jsonValueSchema,
     confidence: z.enum(["observed", "derived", "inferred"]),
@@ -140,6 +151,14 @@ export const evidenceRecordSchema = z.union([
 ]);
 
 export type Evidence = z.infer<typeof evidenceRecordSchema>;
+const immutableEvidenceSnapshots = new WeakMap<object, Evidence>();
+const immutableResultSchema = z
+  .custom<JsonValue>(isImmutableJsonSnapshot)
+  .superRefine((value, context) => {
+    const issue = jsonValueValidationIssue(value);
+    if (issue !== undefined)
+      context.addIssue({ code: "custom", message: issue });
+  });
 export type EvidenceLocation = z.infer<typeof evidenceLocationSchema>;
 
 /** Minimal immutable local artifact identity accepted by Evidence. */
@@ -206,18 +225,44 @@ const semanticProjection = (evidence: EvidenceWithoutId): JsonValue => ({
   evidence_links: evidence.evidence_links,
 });
 
-/** Recompute the semantic identifier, excluding paths and raw payload bytes. */
+/** Hash semantic content, including raw results and excluding display-subject fields. */
 const computeEvidenceId = (evidence: EvidenceWithoutId): string =>
   `ev_${digestCanonicalValue(semanticProjection(evidence), "Evidence")}`;
 
 /** Parse evidence and reject a syntactically valid but tampered semantic ID. */
 export const parseEvidence = (input: unknown): Evidence => {
-  const evidence = evidenceRecordSchema.parse(input);
+  const immutable =
+    typeof input === "object" && input !== null
+      ? immutableEvidenceSnapshots.get(input)
+      : undefined;
+  if (immutable !== undefined) return immutable;
+  // Select the producer's envelope before traversing its payload. A legacy
+  // record cannot satisfy the required-profile branch, whose failed parse
+  // would otherwise clone the entire normalized result before trying legacy.
+  const schema =
+    typeof input === "object" && input !== null && "analysis_profile" in input
+      ? profiledEvidenceSchema
+      : evidenceBaseSchema;
+  const evidence = schema.parse(input);
   const { evidence_id: evidenceId, ...withoutId } = evidence;
   if (computeEvidenceId(withoutId) !== evidenceId)
     throw new TypeError(
       "Evidence semantic identifier does not match its record",
     );
+  return evidence;
+};
+
+/** Authenticate and seal a ledger-owned snapshot; external mutable values are copied first. */
+export const immutableEvidence = (input: unknown): Evidence =>
+  rememberImmutableEvidence(parseEvidence(input));
+
+/** Recognize authenticated Evidence whose complete reachable JSON data is immutable. */
+export const isImmutableEvidence = (evidence: Evidence): boolean =>
+  immutableEvidenceSnapshots.has(evidence);
+
+const rememberImmutableEvidence = (evidence: Evidence): Evidence => {
+  freezeJsonSnapshot(evidence);
+  immutableEvidenceSnapshots.set(evidence, evidence);
   return evidence;
 };
 
@@ -227,6 +272,50 @@ export const createEvidence = (
   provider: EvidenceProvider,
   observation: EvidenceObservation,
 ): Evidence => {
+  const { normalized, sharedResult } = normalizeEvidenceObservation(
+    target,
+    provider,
+    observation,
+  );
+  const evidence = {
+    ...normalized,
+    evidence_id: computeEvidenceId(normalized),
+  };
+  return sharedResult ? rememberImmutableEvidence(evidence) : evidence;
+};
+
+/** Create Evidence from owned immutable JSON while exposing cooperative computation steps. */
+export function* createImmutableEvidenceSteps(
+  target: EvidenceSubjectTarget | BinaryTarget | undefined,
+  provider: EvidenceProvider,
+  observation: EvidenceObservation,
+): Generator<void, Evidence> {
+  if (!isImmutableJsonSnapshot(observation.result))
+    throw new TypeError(
+      "Cooperative Evidence requires an authenticated immutable result",
+    );
+  // The envelope parser below retains its usual diagnostics, using the completed
+  // immutable validation rather than traversing the payload synchronously again.
+  yield* jsonValueValidationSteps(observation.result);
+  const { normalized } = normalizeEvidenceObservation(
+    target,
+    provider,
+    observation,
+  );
+  const digest = yield* canonicalJsonDigestSteps(
+    semanticProjection(normalized),
+  );
+  return rememberImmutableEvidence({
+    ...normalized,
+    evidence_id: `ev_${digest}`,
+  });
+}
+
+const normalizeEvidenceObservation = (
+  target: EvidenceSubjectTarget | BinaryTarget | undefined,
+  provider: EvidenceProvider,
+  observation: EvidenceObservation,
+) => {
   const subject =
     target === undefined
       ? null
@@ -281,7 +370,14 @@ export const createEvidence = (
     observation.analysisProfile === undefined
       ? evidenceBaseSchema
       : profiledEvidenceSchema;
-  const normalized = schema.parse({
+  const sharedResult =
+    typeof observation.result === "object" &&
+    observation.result !== null &&
+    isImmutableJsonSnapshot(observation.result);
+  const selectedSchema = sharedResult
+    ? schema.safeExtend({ normalized_result: immutableResultSchema })
+    : schema;
+  const normalized = selectedSchema.parse({
     ...semantic,
     evidence_id: `ev_${"0".repeat(64)}`,
     subject,
@@ -289,8 +385,5 @@ export const createEvidence = (
   // The envelope has already been parsed into an independent snapshot. Only
   // its derived identifier changes here; parsing again clones the full payload
   // and recomputes the same digest while the previous snapshot is still live.
-  return {
-    ...normalized,
-    evidence_id: computeEvidenceId(normalized),
-  };
+  return { normalized, sharedResult };
 };

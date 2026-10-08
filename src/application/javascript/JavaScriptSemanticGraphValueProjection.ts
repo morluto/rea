@@ -3,11 +3,14 @@ import type {
   JavaScriptSemanticBinding,
   JavaScriptSemanticValue,
 } from "../../domain/javascript/javascriptSemanticIr.js";
+import { createJavaScriptSemanticGraphUnknown } from "../../domain/javascript/javascriptSemanticGraph.js";
 import {
   retainSemanticGraphNode,
   addSemanticGraphRelation,
+  addSemanticGraphUnknown,
 } from "./JavaScriptSemanticGraphConstruction.js";
 import type { SemanticFlowProjectionContext } from "./JavaScriptSemanticGraphFlowProjection.js";
+import { observedSemanticEvidence } from "./JavaScriptSemanticGraphEvidence.js";
 
 /** Project bounded literal values and object slots for exact query seeds. */
 export const projectSemanticValues = (
@@ -76,6 +79,29 @@ const projectValue = (input: ValueProjectionInput): void => {
         role: `property:${property.name}`,
       });
     }
+  else if (value.status === "unknown" && value.resourceLimit !== undefined) {
+    const location = binding.definitions[0]?.location ?? null;
+    const evidence = observedSemanticEvidence(context.file, location);
+    const isPropertyValue = role.startsWith("property:");
+    addSemanticGraphUnknown(
+      context.state,
+      createJavaScriptSemanticGraphUnknown({
+        node_id: target.node_id,
+        family: isPropertyValue ? "object-flow" : "data-flow",
+        relation_kinds: [isPropertyValue ? "writes-property" : "defines"],
+        reason: "resource-limit",
+        detail: `${value.reason} Unknown value at ${role}.`,
+        candidate_node_ids: [target.node_id],
+        evidence: {
+          ...evidence,
+          authority: "unknown",
+          state: "unknown",
+          confidence: "unknown",
+          limitations: [value.reason],
+        },
+      }),
+    );
+  }
 };
 
 const addLiteralNode = (

@@ -1,8 +1,8 @@
 import { z } from "zod";
 
-import { isAbsoluteLocalPath } from "../localPath.js";
+import { isAbsoluteLocalPath, localPathStringSchema } from "../localPath.js";
 
-const pathInputSchema = z.string().trim().min(1).refine(isAbsoluteLocalPath, {
+const pathInputSchema = localPathStringSchema.refine(isAbsoluteLocalPath, {
   message:
     "Electron executable, application, and root paths must be absolute local filesystem paths (for example /Applications/Electron.app/Contents/MacOS/Electron)",
 });
@@ -76,7 +76,11 @@ export const electronActiveObservationInputSchema = z.strictObject({
     .describe(
       "Absolute local filesystem root for application-relative paths; omit to derive it from the application path. Relative paths are rejected.",
     ),
-  args: z.array(z.string()).default([]),
+  args: z
+    .array(
+      z.string().regex(/^[^\0]*$/u, "Electron arguments must not contain NUL"),
+    )
+    .default([]),
   actions: z.array(actionSchema).default([]),
 });
 export type ElectronActiveObservationInput = z.infer<
@@ -262,13 +266,41 @@ export const electronActiveObservationResultSchema = z.strictObject({
   ipc: z.strictObject({
     events: z.array(ipcEventSchema),
     observed: z.number().int().min(0),
+    dropped: z.number().int().min(0).nullable().default(null),
   }),
   timeline: z
     .strictObject({
       events: z.array(timelineEventSchema),
       observed: z.number().int().min(0),
+      dropped: z.number().int().min(0).nullable().default(null),
     })
-    .default({ events: [], observed: 0 }),
+    .default({ events: [], observed: 0, dropped: null }),
+  retention: z
+    .strictObject({
+      budget_bytes: z.number().int().min(0),
+      estimated_retained_bytes: z.number().int().min(0),
+      event_serialized_byte_upper_bound: z.number().int().min(0),
+      retained: z.number().int().min(0),
+      dropped: z.number().int().min(0),
+      dropped_event_families: z.array(
+        z.strictObject({
+          family: z.string().min(1),
+          count: z.number().int().min(1),
+        }),
+      ),
+      dropped_event_roles: z.array(
+        z.strictObject({
+          role: z.string().min(1),
+          count: z.number().int().min(1),
+        }),
+      ),
+      observed_ipc: z.number().int().min(0),
+      dropped_ipc: z.number().int().min(0),
+      observed_runtime: z.number().int().min(0),
+      dropped_runtime: z.number().int().min(0),
+    })
+    .nullable()
+    .default(null),
   coverage: coverageSchema.default({
     status: "partial_attach",
     observed_event_families: [],
@@ -281,3 +313,16 @@ export const electronActiveObservationResultSchema = z.strictObject({
 export type ElectronActiveObservationResult = z.infer<
   typeof electronActiveObservationResultSchema
 >;
+
+/** Observations collected before an Electron capture failed its cleanup boundary. */
+export interface ElectronActivePartialObservation {
+  readonly kind: "electron-active-observation";
+  readonly capture: Omit<ElectronActiveObservationResult, "application"> & {
+    readonly application: Omit<
+      ElectronActiveObservationResult["application"],
+      "cleanup"
+    > & {
+      readonly cleanup: "unverified" | "terminated-owned-process";
+    };
+  };
+}

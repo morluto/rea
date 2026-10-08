@@ -15,7 +15,6 @@ it.each([0x01c0, 0x01c2, 0x01c4])(
     const path = join(directory, "fixture.exe");
     await writeFile(path, bytes);
     const parsed = await parseBinaryTarget(path);
-    expect(parsed.ok).toBe(true);
     if (!parsed.ok) throw parsed.error;
     expect(parsed.value).toMatchObject({
       kind: "executable",
@@ -31,7 +30,6 @@ it.each([0x01c0, 0x01c2, 0x01c4])(
         "inspect_managed_native_boundaries",
       ] as const) {
         const observed = await client.execute(operation, {});
-        expect(observed.ok).toBe(true);
         if (!observed.ok) throw observed.error;
         expect(observed.value.subject).toMatchObject({
           path,

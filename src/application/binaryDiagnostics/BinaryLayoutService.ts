@@ -12,7 +12,7 @@ import {
   inspectBinaryLayoutInputSchema,
   binaryLayoutSchema,
 } from "../../domain/native/binaryLayout.js";
-import { projectInputIssues } from "../../domain/inputIssueProjection.js";
+import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
 const OPERATION = "inspect_binary_layout";
@@ -31,11 +31,9 @@ export class BinaryLayoutService {
     const input = inspectBinaryLayoutInputSchema.safeParse(rawInput);
     if (!input.success)
       return err(
-        new AnalysisInputError(
-          OPERATION,
-          { cause: input.error },
-          projectInputIssues(input.error.issues, rawInput),
-        ),
+        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
+          cause: input.error,
+        }),
       );
     if (!isAbsolute(input.data.path))
       return err(

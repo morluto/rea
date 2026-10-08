@@ -3,7 +3,11 @@ import {
   type AnalysisProfileCommitment,
 } from "../../domain/analysisProfile.js";
 import type { BinaryTarget } from "../../domain/binaryTarget.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisUnsupportedTargetError,
+} from "../../domain/analysisErrorCore.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { jsonObjectSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import type { AnalysisProviderCandidate } from "../AnalysisProvider.js";
@@ -16,6 +20,7 @@ export interface AnalysisProviderCandidateEvaluation {
   readonly status: AnalysisProviderCandidateStatus;
   readonly profile?: AnalysisProfileCommitment;
   readonly compatibility?: Readonly<Record<string, JsonValue>>;
+  readonly profileError?: AnalysisError;
 }
 
 /** Resolve and validate one provider profile without starting its client. */
@@ -51,12 +56,27 @@ export const evaluateAnalysisProviderCandidate = async (
     return err(new AnalysisCancelledError("open_binary"));
   if (!resolved.ok && resolved.error instanceof AnalysisCancelledError)
     return err(resolved.error);
-  if (!resolved.ok)
-    return ok(
-      rejectedProfile(candidate, status, resolved.error.message, {
-        error_tag: resolved.error._tag,
-      }),
-    );
+  if (!resolved.ok) {
+    const error = resolved.error;
+    const rejection =
+      error instanceof AnalysisUnsupportedTargetError
+        ? {
+            candidate,
+            status: {
+              ...status,
+              targetSupport: {
+                status: "unsupported" as const,
+                code: "target_format_unsupported" as const,
+                reason: error.reason,
+                diagnostics: { path: error.path, error_tag: error._tag },
+              },
+            },
+          }
+        : rejectedProfile(candidate, status, error.message, {
+            error_tag: error._tag,
+          });
+    return ok({ ...rejection, profileError: error });
+  }
   try {
     if (resolved.value.profile === null)
       return ok(

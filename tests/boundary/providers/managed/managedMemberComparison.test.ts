@@ -10,8 +10,12 @@ import {
   compareManagedMemberPaths,
 } from "../../../../src/application/managed/ManagedMemberComparisonService.js";
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
-import { managedMemberComparisonResultSchema } from "../../../../src/domain/managed/managedMemberComparison.js";
+import {
+  managedMemberComparisonResultSchema,
+  parseManagedMemberEvidence,
+} from "../../../../src/domain/managed/managedMemberComparison.js";
 import { createEvidence } from "../../../../src/domain/evidence.js";
+import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { jsonValueSchema } from "../../../../src/domain/jsonValue.js";
 import { compareManagedMembersInputSchema } from "../../../../src/domain/managed/managedMemberComparison.js";
 import { inspectManagedMembersBytes } from "../../../../src/dotnet/ManagedMemberInspector.js";
@@ -39,8 +43,7 @@ it.each([
     await writeFile(leftPath, left);
     await writeFile(rightPath, right);
     const result = await compareManagedMemberPaths({ leftPath, rightPath });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     const comparison = managedMemberComparisonResultSchema.parse(
       result.value.normalized_result,
     );
@@ -53,6 +56,71 @@ it.each([
     );
   },
 );
+
+describe("managed member comparison subject identity", () => {
+  it("rejects authenticated member Evidence whose subject digest differs from its artifact", () => {
+    const bytes = buildManagedPeFixture();
+    const target = managedPeFixtureTarget(bytes, "/fixture/mismatch.dll");
+    const inspection = inspectManagedMembersBytes(bytes, target);
+    const otherDigest = "b".repeat(64);
+    const mismatched = createEvidence(
+      target,
+      {
+        id: "partial-fixture",
+        name: "Partial fixture",
+        version: "1",
+      },
+      {
+        operation: "inspect_managed_members",
+        parameters: {},
+        result: jsonValueSchema.parse({
+          ...inspection,
+          artifact: { ...inspection.artifact, sha256: otherDigest },
+          identity_scope: {
+            ...inspection.identity_scope,
+            requires_artifact_sha256: otherDigest,
+          },
+        }),
+      },
+    );
+    const aligned = createEvidence(
+      target,
+      {
+        id: "partial-fixture",
+        name: "Partial fixture",
+        version: "1",
+      },
+      {
+        operation: "inspect_managed_members",
+        parameters: {},
+        result: inspection,
+      },
+    );
+    const unavailableSubject = createEvidence(
+      undefined,
+      {
+        id: "partial-fixture",
+        name: "Partial fixture",
+        version: "1",
+      },
+      {
+        operation: "inspect_managed_members",
+        parameters: {},
+        result: inspection,
+      },
+    );
+
+    expect(() => parseManagedMemberEvidence(mismatched)).toThrow(
+      `Managed Evidence inspect_managed_members (${mismatched.evidence_id}) subject SHA-256 ${target.sha256} does not match normalized artifact SHA-256 ${otherDigest}`,
+    );
+    expect(parseManagedMemberEvidence(aligned).result.artifact.sha256).toBe(
+      target.sha256,
+    );
+    expect(
+      parseManagedMemberEvidence(unavailableSubject).result.artifact.sha256,
+    ).toBe(target.sha256);
+  });
+});
 
 describe("managed member comparison path workflow", () => {
   it("preserves undecoded signatures as unknown through content-addressed partial Evidence", () => {
@@ -82,8 +150,7 @@ describe("managed member comparison path workflow", () => {
       right: observe(0xfe, "/tmp/partial-right.dll"),
     });
     const result = compareManagedMembersEvidenceValidated(input);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     const comparison = managedMemberComparisonResultSchema.parse(
       result.value.normalized_result,
     );
@@ -113,8 +180,7 @@ describe("managed member comparison path workflow", () => {
       rightPath,
     });
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     expect(result.value).toMatchObject({
       operation: "compare_managed_members",
       confidence: "inferred",
@@ -124,6 +190,22 @@ describe("managed member comparison path workflow", () => {
       managedMemberComparisonResultSchema.parse(result.value.normalized_result)
         .matching.exact_il_signature,
     ).toBe(1);
+  });
+
+  it("reports an unopenable path with the path that failed", async () => {
+    const directory = await createTestTempDirectory("rea-managed-missing-");
+    const leftPath = join(directory, "missing.dll");
+    const rightPath = join(directory, "right.dll");
+    await writeFile(rightPath, buildManagedPeFixture());
+
+    const result = await compareManagedMemberPaths({ leftPath, rightPath });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("BinaryTargetError");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      details: { path: expect.stringContaining("missing.dll") },
+    });
   });
 
   it("rejects a file that changes after target identity is resolved", async () => {

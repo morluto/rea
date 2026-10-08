@@ -43,7 +43,6 @@ describe("IDA provider composition", () => {
       diagnostics: { live_connection_probed: false },
     });
     const resolution = await provider.resolveAnalysisProfile(target);
-    expect(resolution.ok).toBe(true);
     if (!resolution.ok) throw resolution.error;
     expect(resolution.value.profile.parameters).toMatchObject({
       engine_version: null,
@@ -75,7 +74,6 @@ describe("IDA provider composition", () => {
     const first = await session.execute("procedure_pseudo_code", query);
     expect(first.ok && first.value.result).toContain("42");
     const snapshot = session.exportAnalysisSnapshot();
-    expect(snapshot.ok).toBe(true);
     if (!snapshot.ok) throw snapshot.error;
     expect(snapshot.value.entries).toEqual([]);
     const profile = session.analysisProfile();

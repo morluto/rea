@@ -111,7 +111,14 @@ rea project-android-application-graph '{"inventory_evidence":[<inventory_artifac
 
 The projection reports exact component paths and hashes, runtime-family hints,
 and path-based bridge hypotheses. It does not decode DEX or claim observed
-runtime calls.
+runtime calls. Bridge hypotheses form a DEX/JVM-class by native-library
+Cartesian product. The projection computes the product and exact serialized
+candidate-array size before creating candidate objects, then retains a
+deterministic prefix within a 2 MiB UTF-8 JSON budget. If candidates are omitted,
+`bridge_candidate_coverage` reports total, emitted, and omitted counts; overall
+coverage is `partial` while component arrays still include every component
+from the supplied inventory pages. A path pair does not establish that a
+managed declaration names, loads, or calls the native library.
 
 ## Resource and lifecycle limits
 
@@ -122,6 +129,13 @@ the previous session. Sessions are cleaned after 60 seconds of inactivity, on
 target/configuration changes, failure, timeout, cancellation, MCP disconnect or
 server shutdown. One-shot CLI commands always join cleanup before returning.
 REA never writes to the original APK or launches target code.
+
+If Java cannot start the bridge, REA reports the selected executable and retained
+startup diagnostics. Select a full JDK through `JAVA_HOME` or `PATH`, and use
+`java --list-modules` to confirm `jdk.compiler` is present. A runnable JRE alone
+cannot compile the bridge. Missing or ambiguous class and method selections are
+input failures; discover names with `search_android_classes` and
+`inspect_android_class` before correcting the selected argument.
 
 If process cleanup cannot be confirmed, REA retains the workspace and reports its
 location. That provider instance blocks subsequent engine launches until the
@@ -169,6 +183,11 @@ export REA_JADX_MCP_JAR="$PWD/_reference/apk-integration/jadx-headless-mcp-0.7.1
 export REA_ANDROID_TEST_APK="$PWD/_reference/apk-integration/ApiDemos-debug.apk"
 npm run verify:android
 ```
+
+The lane also uses the selected full JDK's `jlink` to create a disposable JRE
+without the compiler module. It checks real Java startup failures, missing
+selectors, recovery after failures, and CLI cancellation with owned cleanup.
+The original APK and host Java configuration remain unchanged.
 
 The download script verifies fixed SHA-256 values, reuses matching files and
 refuses to overwrite a different existing file. APK/JAR files live under ignored

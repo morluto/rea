@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { BinaryTarget } from "../../src/domain/binaryTarget.js";
 import { ok } from "../../src/domain/result.js";
@@ -96,7 +97,10 @@ const capture = (
 export const nativeMachoTarget = (
   path: string,
   sourcePath?: string,
-): BinaryTarget => ({
+): BinaryTarget & {
+  readonly kind: "executable";
+  readonly format: "mach-o";
+} => ({
   path,
   ...(sourcePath === undefined ? {} : { sourcePath }),
   sha256: "0".repeat(64),
@@ -104,6 +108,17 @@ export const nativeMachoTarget = (
   format: "mach-o",
   architecture: "arm64",
   availableArchitectures: ["x86_64", "arm64"],
+});
+
+/** Register the actual bytes of a filesystem-backed native test target. */
+export const nativeMachoTargetForFile = async (
+  path: string,
+  sourcePath?: string,
+): Promise<ReturnType<typeof nativeMachoTarget>> => ({
+  ...nativeMachoTarget(path, sourcePath),
+  sha256: createHash("sha256")
+    .update(await readFile(path))
+    .digest("hex"),
 });
 
 /** Load one captured native tool output. */

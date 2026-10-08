@@ -11,6 +11,7 @@ import {
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import {
+  readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
   semanticStaticPropertyName,
 } from "./javascriptAstValues.js";
@@ -262,10 +263,12 @@ export const dataEffectLiteralString = (
     | t.ArgumentPlaceholder
     | undefined,
 ): string | null => {
-  if (t.isStringLiteral(node)) return node.value;
-  if (t.isTemplateLiteral(node) && node.expressions.length === 0)
-    return node.quasis[0]?.value.cooked ?? node.quasis[0]?.value.raw ?? null;
-  return null;
+  if (node === undefined) return null;
+  const literal = readExactJavaScriptLiteral(node);
+  if (literal.found && typeof literal.value === "string") return literal.value;
+  return t.isTemplateLiteral(node) && node.expressions.length === 0
+    ? (node.quasis[0]?.value.raw ?? null)
+    : null;
 };
 
 /** Read a member callee from call or construction syntax. */
@@ -284,16 +287,3 @@ export const dataEffectMemberObject = (
   (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
     ? node.object
     : null;
-
-/** Compare Babel source offsets for exact containment. */
-export const containsSemanticNode = (outer: t.Node, inner: t.Node): boolean =>
-  outer.start !== null &&
-  outer.start !== undefined &&
-  outer.end !== null &&
-  outer.end !== undefined &&
-  inner.start !== null &&
-  inner.start !== undefined &&
-  inner.end !== null &&
-  inner.end !== undefined &&
-  outer.start <= inner.start &&
-  outer.end >= inner.end;

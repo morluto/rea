@@ -3,16 +3,13 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import {
-  configureJsonClient,
-  configureTomlClient,
-} from "../../../src/application/SetupClientConfiguration.js";
+import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("client configuration write failures", () => {
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0).each([
-    ["json", configureJsonClient],
-    ["toml", configureTomlClient],
+    ["json", configureClientConfiguration],
+    ["toml", configureClientConfiguration],
   ] as const)(
     "classifies a denied %s write as a write failure",
     async (format, configure) => {
@@ -41,7 +38,9 @@ describe("TOML client configuration comparison", () => {
     const original = `unrelated = ${value}\n[mcp_servers.rea]\ncommand = "old"\nstartup_timeout_sec = ${value}\n`;
     await writeFile(configPath, original);
     const client = { name: "codex", format: "toml", configPath } as const;
-    expect(await configureTomlClient(client, {}, ["rea", "mcp"])).toEqual({
+    expect(
+      await configureClientConfiguration(client, {}, ["rea", "mcp"]),
+    ).toEqual({
       status: "configured",
       backupPath: `${configPath}.rea.backup`,
     });
@@ -49,7 +48,9 @@ describe("TOML client configuration comparison", () => {
     expect(await readFile(configPath, "utf8")).toContain(
       `unrelated = ${value}`,
     );
-    expect(await configureTomlClient(client, {}, ["rea", "mcp"])).toEqual({
+    expect(
+      await configureClientConfiguration(client, {}, ["rea", "mcp"]),
+    ).toEqual({
       status: "unchanged",
     });
   });

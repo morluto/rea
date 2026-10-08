@@ -1,7 +1,14 @@
-import { link, lstat, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import {
+  link,
+  lstat,
+  mkdtemp,
+  open,
+  readFile,
+  realpath,
+  rename,
+  rm,
+} from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
-
-import writeFileAtomic from "write-file-atomic";
 
 import { EvidenceFileError } from "../domain/evidenceErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -10,10 +17,14 @@ import { err, ok, type Result } from "../domain/result.js";
 export const readJsonFile = async (
   path: string,
 ): Promise<Result<unknown, EvidenceFileError>> => {
+  const requestedPath = resolve(path);
   try {
-    const canonicalPath = await realpath(resolve(path));
+    const canonicalPath = await realpath(requestedPath);
     const stats = await lstat(canonicalPath);
-    if (!stats.isFile()) return err(new EvidenceFileError("read", "not-file"));
+    if (!stats.isFile())
+      return err(
+        new EvidenceFileError("read", "not-file", { path: requestedPath }),
+      );
     const encoded = await readFile(canonicalPath);
     let decoded: unknown;
     try {
@@ -23,11 +34,21 @@ export const readJsonFile = async (
         ),
       );
     } catch (cause: unknown) {
-      return err(new EvidenceFileError("read", "invalid-json", { cause }));
+      return err(
+        new EvidenceFileError("read", "invalid-json", {
+          cause,
+          path: requestedPath,
+        }),
+      );
     }
     return ok(decoded);
   } catch (cause: unknown) {
-    return err(new EvidenceFileError("read", "io", { cause }));
+    return err(
+      new EvidenceFileError("read", missingOrIo(cause), {
+        cause,
+        path: requestedPath,
+      }),
+    );
   }
 };
 
@@ -38,10 +59,18 @@ export const writeTextFile = async (
   overwrite: boolean,
 ): Promise<
   Result<{ readonly path: string; readonly bytes: number }, EvidenceFileError>
+> => writeTextParts([encoded], path, overwrite);
+
+/** Publish complete streamed text atomically, keeping only one encoded part in memory. */
+export const writeTextParts = async (
+  parts: Iterable<string>,
+  path: string,
+  overwrite: boolean,
+): Promise<
+  Result<{ readonly path: string; readonly bytes: number }, EvidenceFileError>
 > => {
-  const bytes = Buffer.byteLength(encoded, "utf8");
+  const requestedPath = resolve(path);
   try {
-    const requestedPath = resolve(path);
     const canonicalParent = await realpath(dirname(requestedPath));
     const destination = resolve(canonicalParent, basename(requestedPath));
     const existing = await lstat(destination).catch((cause: unknown) => {
@@ -49,41 +78,65 @@ export const writeTextFile = async (
       throw cause;
     });
     if (existing !== undefined) {
-      if (!overwrite) return err(new EvidenceFileError("write", "exists"));
+      if (!overwrite)
+        return err(
+          new EvidenceFileError("write", "exists", { path: requestedPath }),
+        );
       if (!existing.isFile() || existing.isSymbolicLink())
-        return err(new EvidenceFileError("write", "not-file"));
+        return err(
+          new EvidenceFileError("write", "not-file", { path: requestedPath }),
+        );
     }
-    if (overwrite)
-      await writeFileAtomic(destination, encoded, {
-        encoding: "utf8",
-        mode: 0o600,
-        fsync: true,
-      });
-    else await publishNewFile(destination, encoded);
+    const bytes = await publishFile(destination, parts, overwrite);
     return ok({ path: requestedPath, bytes });
   } catch (cause: unknown) {
     if (!overwrite && fileErrorCode(cause) === "EEXIST")
-      return err(new EvidenceFileError("write", "exists", { cause }));
-    return err(new EvidenceFileError("write", "io", { cause }));
+      return err(
+        new EvidenceFileError("write", "exists", {
+          cause,
+          path: requestedPath,
+        }),
+      );
+    return err(
+      new EvidenceFileError("write", missingOrIo(cause), {
+        cause,
+        path: requestedPath,
+      }),
+    );
   }
 };
 
-const publishNewFile = async (
+/** A missing path or parent is a selection error, not a permission failure. */
+const missingOrIo = (cause: unknown): "missing" | "io" => {
+  const code = fileErrorCode(cause);
+  return code === "ENOENT" || code === "ENOTDIR" ? "missing" : "io";
+};
+
+const publishFile = async (
   destination: string,
-  encoded: string,
-): Promise<void> => {
+  parts: Iterable<string>,
+  overwrite: boolean,
+): Promise<number> => {
   const stagingDirectory = await mkdtemp(
     resolve(dirname(destination), ".rea-write-"),
   );
   try {
     const staged = resolve(stagingDirectory, "content");
-    await writeFileAtomic(staged, encoded, {
-      encoding: "utf8",
-      mode: 0o600,
-      fsync: true,
-    });
+    const file = await open(staged, "wx", 0o600);
+    let bytes = 0;
+    try {
+      for (const part of parts) {
+        await file.writeFile(part, { encoding: "utf8" });
+        bytes += Buffer.byteLength(part, "utf8");
+      }
+      await file.sync();
+    } finally {
+      await file.close();
+    }
+    if (overwrite) await rename(staged, destination);
     // A hard link publishes complete bytes atomically and cannot replace an existing name.
-    await link(staged, destination);
+    else await link(staged, destination);
+    return bytes;
   } finally {
     await rm(stagingDirectory, { recursive: true, force: true });
   }

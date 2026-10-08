@@ -14,13 +14,19 @@ import {
   PROVIDER_REJECTION_CODES,
   type ProviderRejectionCode,
 } from "./providerSelection.js";
+import {
+  PROVIDER_FAILURE_STAGES,
+  PROVIDER_OPERATION_STATES,
+  PROVIDER_RETRY_ACTIONS,
+} from "../domain/providerOperationHealth.js";
 import { analysisErrorProjectionSchema } from "./errorSchemas.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 
 /** Inline result with its complete Evidence record. */
 export const inlineEvidenceRecordSchema = evidenceEnvelopeSchema;
 
-export const evidenceResultOf = (schema: z.ZodType) =>
+/** Wrap a result and its Evidence while preserving the result schema type. */
+export const evidenceResultOf = <Schema extends z.ZodType>(schema: Schema) =>
   z.strictObject({
     result: schema,
     evidence_id: prefixedDigestSchema("ev"),
@@ -28,14 +34,18 @@ export const evidenceResultOf = (schema: z.ZodType) =>
   });
 
 const resultOf = evidenceResultOf;
-export const lifecycleResultOf = (schema: z.ZodType) =>
+/** Wrap a lifecycle result while preserving its exact schema type. */
+export const lifecycleResultOf = <Schema extends z.ZodType>(schema: Schema) =>
   z.object({ result: schema });
 
 /** Resolve a required named output schema or reject contract drift. */
-export const requireOutputSchema = (
-  schemas: Readonly<Record<string, z.ZodObject>>,
-  name: string,
-): z.ZodObject => {
+export const requireOutputSchema = <
+  Schemas extends Readonly<Record<string, z.ZodObject>>,
+  Name extends keyof Schemas & string,
+>(
+  schemas: Schemas,
+  name: Name,
+): Schemas[Name] => {
   const schema = schemas[name];
   if (schema === undefined)
     throw new Error(`Missing output schema for ${name}`);
@@ -168,6 +178,22 @@ export const analysisActivity = z.object({
     }),
   ),
 });
+
+const providerOperationRequest = z.object({
+  request_id: z.number().int().min(1),
+  operation: z.string().min(1),
+  stage: z.enum(PROVIDER_FAILURE_STAGES),
+});
+
+export const providerOperationHealth = z
+  .object({
+    state: z.enum(PROVIDER_OPERATION_STATES),
+    stage: z.enum(PROVIDER_FAILURE_STAGES).nullable(),
+    retry_action: z.enum(PROVIDER_RETRY_ACTIONS).nullable(),
+    exit_code: z.number().int().nullable(),
+    requests: z.array(providerOperationRequest),
+  })
+  .nullable();
 
 const providerRejectionCode: z.ZodType<ProviderRejectionCode> = z.enum(
   PROVIDER_REJECTION_CODES,
@@ -315,6 +341,7 @@ export const sessionProvider = z
     capabilities: z.array(providerCapability),
     analysis_run: analysisRun,
     analysis_activity: analysisActivity,
+    provider_operation_health: providerOperationHealth,
     analysis_provider_binding: z
       .object({
         provider: providerIdentity,

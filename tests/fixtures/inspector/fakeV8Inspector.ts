@@ -14,6 +14,8 @@ interface FakeV8InspectorOptions {
   readonly runtimeProduct?: string;
   readonly scriptUrls?: readonly string[];
   readonly scriptHashes?: readonly string[];
+  readonly oversizedEventBytes?: number;
+  readonly contextTransitionCount?: number;
   readonly additionalTargetUrl?: string;
   readonly additionalTargetCount?: number;
   readonly closeOnMethod?: string;
@@ -94,47 +96,7 @@ export const startFakeV8Inspector = async (
     );
   });
   webSockets.on("connection", (socket: WebSocket) => {
-    sockets.add(socket);
-    socket.on("close", () => sockets.delete(socket));
-    socket.on("message", (raw) => {
-      const command = parseCommand(raw.toString());
-      commands.push(command);
-      if (options.closeOnMethod === command.method) {
-        socket.close();
-        return;
-      }
-      socket.send(JSON.stringify({ id: command.id, result: {} }));
-      if (command.method === "Runtime.enable")
-        socket.send(
-          JSON.stringify({
-            method: "Runtime.executionContextCreated",
-            params: {
-              context: {
-                id: 1,
-                origin: "",
-                name: "node[fixture]",
-              },
-            },
-          }),
-        );
-      if (command.method === "Debugger.enable")
-        for (const [index, url] of (
-          options.scriptUrls ?? [options.targetUrl]
-        ).entries())
-          socket.send(
-            JSON.stringify({
-              method: "Debugger.scriptParsed",
-              params: {
-                scriptId: String(index + 1),
-                url,
-                executionContextId: 1,
-                hash: options.scriptHashes?.[index] ?? `hash-${String(index)}`,
-                length: 100 + index,
-                isModule: index % 2 === 0,
-              },
-            }),
-          );
-    });
+    registerInspectorSocket(socket, options, commands, sockets);
   });
   await new Promise<void>((resolve, reject) => {
     http.once("error", reject);
@@ -158,6 +120,83 @@ export const startFakeV8Inspector = async (
       );
     },
   };
+};
+
+const registerInspectorSocket = (
+  socket: WebSocket,
+  options: FakeV8InspectorOptions,
+  commands: InspectorCommand[],
+  sockets: Set<WebSocket>,
+): void => {
+  sockets.add(socket);
+  socket.on("close", () => sockets.delete(socket));
+  socket.on("message", (raw) => {
+    const command = parseCommand(raw.toString());
+    commands.push(command);
+    if (options.closeOnMethod === command.method) {
+      socket.close();
+      return;
+    }
+    socket.send(JSON.stringify({ id: command.id, result: {} }));
+    respondToInspectorCommand(socket, command, options);
+  });
+};
+
+const respondToInspectorCommand = (
+  socket: WebSocket,
+  command: InspectorCommand,
+  options: FakeV8InspectorOptions,
+): void => {
+  if (command.method === "Runtime.enable") sendRuntimeEvents(socket, options);
+  if (command.method === "Debugger.enable") sendScriptEvents(socket, options);
+};
+
+const sendRuntimeEvents = (
+  socket: WebSocket,
+  options: FakeV8InspectorOptions,
+): void => {
+  socket.send(
+    JSON.stringify({
+      method: "Runtime.executionContextCreated",
+      params: { context: { id: 1, origin: "", name: "node[fixture]" } },
+    }),
+  );
+  for (let index = 0; index < (options.contextTransitionCount ?? 0); index += 1)
+    socket.send(
+      JSON.stringify({
+        method: "Runtime.executionContextDestroyed",
+        params: { executionContextId: 1 },
+      }),
+    );
+  if (options.oversizedEventBytes !== undefined)
+    socket.send(
+      JSON.stringify({
+        method: "Runtime.noisyFixtureEvent",
+        params: { padding: "x".repeat(options.oversizedEventBytes) },
+      }),
+    );
+};
+
+const sendScriptEvents = (
+  socket: WebSocket,
+  options: FakeV8InspectorOptions,
+): void => {
+  for (const [index, url] of (
+    options.scriptUrls ?? [options.targetUrl]
+  ).entries())
+    socket.send(
+      JSON.stringify({
+        method: "Debugger.scriptParsed",
+        params: {
+          scriptId: String(index + 1),
+          url,
+          executionContextId: 1,
+          hash: options.scriptHashes?.[index] ?? `hash-${String(index)}`,
+          length: 100 + index,
+          isModule: index % 2 === 0,
+        },
+      }),
+    );
 };
 
 const target = (

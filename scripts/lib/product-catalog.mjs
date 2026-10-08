@@ -58,16 +58,16 @@ export const createProductCatalog = async (root) => {
     runtime_catalog: {
       counts: sources.catalogIdentity.CATALOG_IDENTITY.counts,
       digests: {
-        ...sources.catalogIdentity.CATALOG_IDENTITY.digests,
+        // Full runtime schema digests belong to server identity, not this facts projection.
         providers_sha256: providerCatalogDigest(providers),
       },
     },
   };
 };
 
-/** Stable checked-in representation of the product catalog. */
+/** Stable build-generated representation of the product catalog. */
 export const serializeProductCatalog = (catalog) =>
   formatGeneratedFile(
-    "docs/product-catalog.json",
+    "docs/public/product-catalog.json",
     JSON.stringify(catalog, null, 2),
   );

@@ -143,7 +143,6 @@ export const MCP_TOOLS_WITHOUT_DEDICATED_CLI = Object.freeze([
   "set_addresses_names",
   "set_bookmark",
   "set_comment",
-  "set_current_document",
   "set_inline_comment",
   "unset_bookmark",
   "get_objc_classes",

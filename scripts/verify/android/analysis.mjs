@@ -12,6 +12,7 @@ import { JADX_RELEASE } from "../../../dist/android/JadxRelease.js";
 import fixture from "../../fixtures/android/apidemos.json" with { type: "json" };
 import { verifyAndroidCliCancellation } from "./cli-cancellation.mjs";
 import { verifyAndroidMetadata } from "./metadata.mjs";
+import { verifyAndroidFailureRecovery } from "./failure-recovery.mjs";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const apk = process.env.REA_ANDROID_TEST_APK;
@@ -205,6 +206,15 @@ await verifyAndroidCliCancellation({
   path,
   repository,
   execute,
+});
+await verifyAndroidFailureRecovery({
+  java,
+  entrypoint,
+  environment,
+  path,
+  repository,
+  execute,
+  fixture,
 });
 assert.equal(
   await hashAndroidFile(apk),

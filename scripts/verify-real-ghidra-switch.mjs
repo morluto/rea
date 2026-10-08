@@ -214,7 +214,7 @@ async function verifyTarget(path, sha256, fixtures, variant) {
     });
     const target = await call(client, "open_binary", {
       path,
-      provider: "ghidra",
+      provider_id: "ghidra",
     });
     opened = true;
     assert.equal(target.sha256, sha256);

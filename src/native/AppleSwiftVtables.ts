@@ -3,6 +3,7 @@ import type {
   NativeMetadataEvidence,
   NativeMetadataLocation,
 } from "../domain/native/objcSwiftMetadata.js";
+import { issue, type FacetDecodeFacts } from "./AppleDispatchDecodeFacts.js";
 
 /** Byte readers shared with the validated Mach-O metadata boundary. */
 export interface SwiftMetadataReaders {
@@ -20,13 +21,23 @@ export const decodeSwiftClassVtables = (input: {
   readers: SwiftMetadataReaders;
   entries: readonly bigint[];
   result: ObjcSwiftMetadata;
-}) => {
+}): FacetDecodeFacts => {
   const { readers: read, result } = input;
   const failures: string[] = [];
+  const issues = [] as ReturnType<typeof issue>[];
   let examined = 0;
+  let decoded = 0;
   for (const field of input.entries) {
     if (!read.admit()) {
       failures.push("max_records_reached");
+      issues.push(
+        issue(
+          "swift_class_vtable_descriptors",
+          "record_budget_exhausted",
+          "max_records_reached",
+          `0x${field.toString(16)}`,
+        ),
+      );
       break;
     }
     examined++;
@@ -56,11 +67,19 @@ export const decodeSwiftClassVtables = (input: {
         );
       const owner = read.string(read.relative(descriptor + 8n));
       for (let index = 0; index < count; index++) {
+        const entry = header + 8n + BigInt(index * 8);
         if (!read.admit()) {
           failures.push("max_records_reached");
+          issues.push(
+            issue(
+              "swift_class_vtable_descriptors",
+              "record_budget_exhausted",
+              "max_records_reached",
+              `0x${entry.toString(16)}`,
+            ),
+          );
           break;
         }
-        const entry = header + 8n + BigInt(index * 8);
         const methodFlags = read.u32(entry);
         // Async slots reference async descriptors; coroutine and future kinds need separate decoders.
         const synchronous =
@@ -90,33 +109,48 @@ export const decodeSwiftClassVtables = (input: {
             "Swift class vtable method descriptor; slot index is a metadata word offset, not a source method ordinal",
           ),
         });
+        if (resolved) decoded++;
+        else
+          issues.push(
+            issue(
+              "swift_class_vtable_descriptors",
+              "vtable_implementation_unresolved",
+              "Async, coroutine, external or unmapped vtable implementation is unresolved",
+              `0x${entry.toString(16)}`,
+            ),
+          );
       }
-      if ((specific & 0x4000) !== 0)
+      if ((specific & 0x4000) !== 0) {
         failures.push(
           `${owner}: inherited override descriptors are unsupported`,
         );
+        issues.push(
+          issue(
+            "swift_class_vtable_descriptors",
+            "inherited_override_descriptors_unsupported",
+            "Inherited override descriptors are unsupported",
+            `0x${descriptor.toString(16)}`,
+          ),
+        );
+      }
     } catch (cause) {
-      failures.push(
-        `0x${field.toString(16)}: ${cause instanceof Error ? cause.message : String(cause)}`,
+      const message = cause instanceof Error ? cause.message : String(cause);
+      failures.push(`0x${field.toString(16)}: ${message}`);
+      issues.push(
+        issue(
+          "swift_class_vtable_descriptors",
+          "vtable_decode_failed",
+          message,
+          `0x${field.toString(16)}`,
+        ),
       );
     }
   }
-  const slots = result.swift_dispatch_slots.filter(
-    (slot) => slot.table_kind === "class_vtable",
-  );
-  result.coverage.push({
+  return {
     facet: "swift_class_vtable_descriptors",
     examined,
-    decoded: slots.filter((slot) => slot.decode.status === "decoded").length,
-    status:
-      failures.length > 0 ||
-      slots.some((slot) => slot.decode.status !== "decoded")
-        ? "partial"
-        : "complete",
-    reason:
-      failures.join("; ") ||
-      (slots.some((slot) => slot.decode.status !== "decoded")
-        ? "vtable_implementations_unresolved"
-        : null),
-  });
+    decoded,
+    exhaustive: issues.length === 0,
+    issues,
+  };
 };

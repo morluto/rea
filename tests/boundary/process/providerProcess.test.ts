@@ -325,12 +325,14 @@ describe("provider process output and cleanup primitives", () => {
     expect(cleanup).toHaveBeenCalled();
   });
 
-  it("reports incomplete cleanup when a verified callback leaves the child alive", async () => {
+  it("retains a live child after incomplete cleanup and permits a later stop", async () => {
     const child = spawnProviderProcessFixture("stubborn");
     await waitForProviderProcessReady(child);
-    const cleanup = vi.fn(
-      async () => ({ cleaned: true, signaled: false }) as const,
-    );
+    let release = false;
+    const cleanup = () => {
+      if (release) child.kill("SIGKILL");
+      return Promise.resolve({ cleaned: true, signaled: release } as const);
+    };
     const supervisor = new ProviderProcessSupervisor({
       process: child,
       ownsProcessLifetime: true,
@@ -341,7 +343,13 @@ describe("provider process output and cleanup primitives", () => {
         status: "incomplete",
         reason: "verified process-group cleanup did not stop the launcher",
       });
-      expect(cleanup).toHaveBeenCalled();
+      expect(child.exitCode).toBeNull();
+      expect(child.signalCode).toBeNull();
+      release = true;
+      await expect(supervisor.stop()).resolves.toEqual({
+        status: "verified-cleanup",
+      });
+      expect(supervisor.snapshot().signal).toBe("SIGKILL");
     } finally {
       await stopProviderProcessFixture(child);
     }

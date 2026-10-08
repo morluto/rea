@@ -1,17 +1,16 @@
 import { z } from "zod";
 import { digestSchema } from "../digests.js";
 import { analyzeJavaScriptApplicationInputSchema } from "./javascriptApplicationAnalysis.js";
+import { localPathStringSchema } from "../localPath.js";
 
 /** Recover derived readable modules from one explicitly selected local script. */
 export const javascriptRecoveryInputSchema = z.strictObject({
-  path: z
-    .string()
-    .min(1)
-    .describe("Absolute path to a UTF-8 JavaScript file; never executed"),
-  output_directory: z
-    .string()
-    .min(1)
-    .describe("Absolute absent output directory; parent must exist"),
+  path: localPathStringSchema.describe(
+    "Absolute path to a UTF-8 JavaScript file; never executed",
+  ),
+  output_directory: localPathStringSchema.describe(
+    "Absolute absent output directory; parent must exist",
+  ),
   extraction_mode: z
     .enum(["structural", "heuristic", "inspection"])
     .default("structural")

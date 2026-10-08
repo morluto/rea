@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 
 import { launcherIdentityFailure } from "./ProcessOwnershipIdentity.js";
 import { descendantsOf, liveProcesses } from "./ProcessOwnershipProcessTree.js";
@@ -192,19 +193,22 @@ export const createSystemProcessOwnershipHost = (
     if (platform === "win32") return [];
     const { stdout } = await execFileOutput(
       "ps",
-      ["-axo", "pid=,ppid=,pgid=,stat=,command="],
+      ["-axo", "pid=,ppid=,pgid=,uid=,stat=,command="],
       { env: hostEnvironment, ...(signal === undefined ? {} : { signal }) },
     );
     return stdout
       .split("\n")
-      .map((line) => /\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.*)/u.exec(line))
+      .map((line) =>
+        /\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.*)/u.exec(line),
+      )
       .filter((match): match is RegExpExecArray => match !== null)
       .map((match) => ({
         pid: Number(match[1]),
         parentPid: Number(match[2]),
         processGroupId: Number(match[3]),
-        state: match[4] ?? "",
-        command: match[5] ?? "",
+        uid: Number(match[4]),
+        state: match[5] ?? "",
+        command: match[6] ?? "",
       }));
   };
   const processIdentities: NonNullable<
@@ -297,6 +301,22 @@ export const createSystemProcessOwnershipHost = (
     platform,
     prepare: async (signal) => {
       await darwinTokens?.prepare(signal);
+      if (platform === "linux") {
+        try {
+          const processes = await listProcesses(signal);
+          if (!processes.some(({ pid }) => pid === process.pid))
+            throw new Error("ps did not report REA's current process");
+        } catch (cause: unknown) {
+          if (isExpectedAbort(cause, signal)) throw cause;
+          const reason = `Linux process ownership inspection requires a procps-compatible ps on REA's PATH before launching a child: ${errorMessage(cause)}`;
+          throw new AnalysisCapabilityUnavailableError(
+            "process-ownership",
+            "prepare_owned_process",
+            reason,
+            { cause, userMessage: reason },
+          );
+        }
+      }
     },
     listProcesses,
     async environment(pid) {
@@ -363,6 +383,49 @@ export const createSystemProcessOwnershipHost = (
 };
 
 export const systemProcessOwnershipHost = createSystemProcessOwnershipHost();
+
+/** Observe the current OS start identity for one live PID, when supported. */
+export const observeProcessStartIdentity = async (
+  pid: number,
+  host: ProcessOwnershipHost = systemProcessOwnershipHost,
+): Promise<ProcessIdentityObservation | undefined> => {
+  const process = (await host.listProcesses()).find(
+    (entry) => entry.pid === pid,
+  );
+  if (process === undefined || liveProcesses([process]).length === 0)
+    return undefined;
+  if (host.processIdentities === undefined)
+    return { state: "unavailable", reason: "process identity is unsupported" };
+  return (
+    (await host.processIdentities([process])).get(pid) ?? {
+      state: "unavailable",
+      reason: "process identity was not returned",
+    }
+  );
+};
+
+/** Revalidate a launch-time start identity immediately before signaling a PID. */
+export const signalProcessWithStartIdentity = async (
+  pid: number,
+  expectedIdentity: string,
+  signal: NodeJS.Signals,
+  options: {
+    readonly host?: ProcessOwnershipHost;
+    readonly sendSignal?: (pid: number, signal: NodeJS.Signals) => void;
+  } = {},
+): Promise<"signaled" | "gone" | "identity-changed" | "unverified"> => {
+  const host = options.host ?? systemProcessOwnershipHost;
+  try {
+    const observed = await observeProcessStartIdentity(pid, host);
+    if (observed === undefined) return "gone";
+    if (observed.state !== "readable") return "unverified";
+    if (observed.identity !== expectedIdentity) return "identity-changed";
+    (options.sendSignal ?? process.kill)(pid, signal);
+    return "signaled";
+  } catch {
+    return "unverified";
+  }
+};
 
 /** Prepare native token inspection before REA launches a captured child. */
 export const prepareProcessOwnershipInspection = async (

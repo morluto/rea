@@ -73,6 +73,24 @@ const executionError = (context: {
       "JADX response violated the pinned upstream protocol",
       { cause },
     );
+  if (session !== undefined && !session.initialized()) {
+    const stderr = session.transport.diagnostics();
+    const reason = `Java could not start REA's Android bridge using ${session.transport.options.command}: ${cause instanceof Error ? cause.message : String(cause)}.${stderr.length === 0 ? "" : ` Java diagnostics: ${stderr}`} Select a full JDK including jdk.compiler via JAVA_HOME, or a working java on PATH; verify it with java --list-modules. A JRE cannot compile REA's source bridge. If the JDK works, verify the REA bridge and configured JADX JAR installation.`;
+    return new AnalysisCapabilityUnavailableError(
+      "jadx",
+      request.operation,
+      reason,
+      {
+        cause,
+        userMessage: reason,
+        capturedOutput: {
+          stdout: "",
+          stderr,
+          truncated: session.transport.diagnosticsTruncated(),
+        },
+      },
+    );
+  }
   return new ProviderAdapterError("jadx", request.operation, {
     cause,
     diagnostics: {

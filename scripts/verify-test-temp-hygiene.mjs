@@ -59,9 +59,6 @@ try {
   }
 
   if (failures.length > 0) throw new Error(failures.join("\n\n"));
-  process.stdout.write(
-    "Test temporary-directory hygiene verified: no owned residues remain.\n",
-  );
 } finally {
   await rm(isolatedTemporaryRoot, {
     recursive: true,
@@ -70,3 +67,6 @@ try {
     retryDelay: 25,
   });
 }
+process.stdout.write(
+  "Test temporary-directory hygiene verified: no owned residues remain.\n",
+);

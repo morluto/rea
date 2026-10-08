@@ -30,7 +30,6 @@ describe("JavaScript application failure diagnostics", () => {
       },
     );
 
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected analysis failure");
     expect(result.error.cause).toBe(cause);
     expect(projectAnalysisError(result.error)).toMatchObject({
@@ -59,7 +58,6 @@ describe("JavaScript application failure diagnostics", () => {
         },
       },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected analysis failure");
     expect(result.error.cause).toBe(cause);
     expect(projectAnalysisError(result.error)).toMatchObject({
@@ -84,7 +82,6 @@ describe("JavaScript application failure diagnostics", () => {
       input_path: join(root, "missing"),
       format: "directory",
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected missing artifact failure");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "artifact_operation_failed",
@@ -107,7 +104,6 @@ describe("JavaScript application failure diagnostics", () => {
           },
         },
       );
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected analysis failure");
       expect(projectAnalysisError(result.error)).toMatchObject({
         code: "execution_failure",
@@ -140,7 +136,6 @@ describe("JavaScript application failure diagnostics", () => {
           },
         },
       );
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected analysis failure");
       expect(projectAnalysisError(result.error)).toMatchObject({
         code: "execution_failure",

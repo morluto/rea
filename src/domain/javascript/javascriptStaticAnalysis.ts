@@ -28,6 +28,10 @@ import {
 } from "./javascriptStaticAnalysisState.js";
 import type { JavaScriptStaticAnalysis } from "./javascriptStaticAnalysisTypes.js";
 import {
+  classifyParsedJavaScriptOpenReceivers,
+  type JavaScriptOpenReceiverFact,
+} from "./javascriptSemanticAnalysis.js";
+import {
   parseJavaScriptSource,
   type ParsedJavaScriptSource,
 } from "./javascriptSourceParser.js";
@@ -39,16 +43,21 @@ export const analyzeJavaScriptStaticSource = (
   const file = parseJavaScriptSource(source);
   return file === null
     ? failedJavaScriptStaticAnalysis()
-    : analyzeParsedJavaScriptStaticSource(source, file);
+    : analyzeParsedJavaScriptStaticSource(
+        source,
+        file,
+        classifyParsedJavaScriptOpenReceivers(file),
+      );
 };
 
 /** Recover static structure from an already parsed JavaScript artifact. */
 export const analyzeParsedJavaScriptStaticSource = (
   source: string,
   file: ParsedJavaScriptSource,
+  openReceiverFacts?: ReadonlyMap<number, JavaScriptOpenReceiverFact>,
 ): JavaScriptStaticAnalysis => {
-  const accumulator = createJavaScriptAnalysisAccumulator();
-  traverseStaticSource(source, file, accumulator);
+  const accumulator = createJavaScriptAnalysisAccumulator(source.length);
+  traverseStaticSource(source, file, accumulator, openReceiverFacts);
   addSourceMapDirectives(source, file.comments ?? [], accumulator);
   return finalizeStaticAnalysis(source, file, accumulator);
 };
@@ -57,11 +66,12 @@ const traverseStaticSource = (
   source: string,
   file: ParsedJavaScriptSource,
   accumulator: AnalysisAccumulator,
+  openReceiverFacts?: ReadonlyMap<number, JavaScriptOpenReceiverFact>,
 ): void => {
   traverseJavaScriptAst(file, {
     enter: (node) => {
       accumulator.visitedNodes += 1;
-      inspectNode(source, node, accumulator);
+      inspectNode(source, node, accumulator, openReceiverFacts);
       return undefined;
     },
   });
@@ -95,41 +105,50 @@ const finalizeStaticAnalysis = (
     visited_ast_nodes: accumulator.visitedNodes,
     references: finalizeLocatedFindings(
       accumulator.references,
-      accumulator.modules,
+      accumulator.moduleRangeIndex,
     ),
     endpoints: finalizeLocatedFindings(
       accumulator.endpoints,
-      accumulator.modules,
+      accumulator.moduleRangeIndex,
     ),
-    storage: finalizeLocatedFindings(accumulator.storage, accumulator.modules),
+    storage: finalizeLocatedFindings(
+      accumulator.storage,
+      accumulator.moduleRangeIndex,
+    ),
     bundler_registrations: sortedUnique(
       accumulator.registrations,
       registrationKey,
     ),
-    role_paths: finalizeLocatedFindings(accumulator.roles, accumulator.modules),
+    role_paths: finalizeLocatedFindings(
+      accumulator.roles,
+      accumulator.moduleRangeIndex,
+    ),
     source_map_urls: accumulator.sourceMaps,
     vendors: detectVendors(source),
     electron: {
       browser_windows: finalizeLocatedFindings(
         accumulator.browserWindows,
-        accumulator.modules,
+        accumulator.moduleRangeIndex,
       ),
       context_bridge_apis: finalizeLocatedFindings(
         accumulator.contextBridgeApis,
-        accumulator.modules,
+        accumulator.moduleRangeIndex,
       ),
-      ipc: finalizeLocatedFindings(accumulator.ipc, accumulator.modules),
+      ipc: finalizeLocatedFindings(
+        accumulator.ipc,
+        accumulator.moduleRangeIndex,
+      ),
       sender_validations: finalizeLocatedFindings(
         accumulator.senderValidations,
-        accumulator.modules,
+        accumulator.moduleRangeIndex,
       ),
       utility_processes: finalizeLocatedFindings(
         accumulator.utilityProcesses,
-        accumulator.modules,
+        accumulator.moduleRangeIndex,
       ),
       native_addon_bindings: finalizeLocatedFindings(
         accumulator.nativeAddonBindings,
-        accumulator.modules,
+        accumulator.moduleRangeIndex,
       ),
     },
     limitations,
@@ -140,15 +159,19 @@ const inspectNode = (
   source: string,
   node: t.Node,
   accumulator: AnalysisAccumulator,
+  openReceiverFacts?: ReadonlyMap<number, JavaScriptOpenReceiverFact>,
 ): void => {
   const findings = {
     source,
     accumulator,
+    ...(openReceiverFacts === undefined ? {} : { openReceiverFacts }),
   };
   inspectElectronStaticNode(node, findings);
   if (t.isCallExpression(node)) {
     inspectBundlerRegistration(source, node, accumulator);
     inspectEsbuildWrapper(source, node, accumulator);
+    inspectCall(source, node, findings);
+  } else if (t.isOptionalCallExpression(node)) {
     inspectCall(source, node, findings);
   } else if (t.isNewExpression(node)) inspectCall(source, node, findings);
   if (

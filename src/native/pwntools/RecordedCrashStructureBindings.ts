@@ -85,6 +85,8 @@ export function validateRecordedCrashStructure(
     !header
       .subarray(0, 6)
       .equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1])) ||
+    header[6] !== 1 ||
+    header.readUInt32LE(20) !== 1 ||
     ![0, 3].includes(header[7] ?? -1) ||
     header[8] !== 0 ||
     header.readUInt16LE(16) !== 4 ||

@@ -29,23 +29,28 @@ export const deriveFindings = (
         edge_index: index,
         image: edge.loader,
         basis: "derived",
-        explanation: `dyld searches ${earlier.join(", ")} before ${edge.resolution.image ?? edge.install_name}. A Mach-O placed at an earlier path would load first unless code-signing library validation rejects it; library validation is not evaluated here (see inspect_signature).`,
+        explanation: `The modeled dyld search checks ${earlier.join(", ")} before ${edge.resolution.image ?? edge.install_name}. A compatible Mach-O placed at an earlier modeled path could take precedence over that fallback, subject to unmodeled search inputs and code-signing library validation; library validation is not evaluated here (see inspect_signature).${edge.loader_conditional ? " This loader loads only conditionally; if it never loads, this search never occurs." : ""}${edge.resolution.status === "conditional" ? " Unmodeled environment overrides or earlier unknown candidates may take precedence; placing an image at this rpath does not establish which image dyld will load." : ""}`,
       });
   });
   for (const { image, architecture } of roots) {
     const facts = images.get(image);
-    const environment =
+    const slice =
       facts?.status === "parsed"
-        ? (facts.slices.find((slice) => slice.architecture === architecture)
-            ?.dyld_environment ?? [])
-        : [];
+        ? facts.slices.find(
+            (candidate) => candidate.architecture === architecture,
+          )
+        : undefined;
+    const environment = slice?.dyld_environment ?? [];
     if (environment.length > 0)
       findings.push({
         kind: "dyld-environment-present",
         edge_index: null,
         image,
         basis: "derived",
-        explanation: `${image} (${architecture}) sets dyld environment variables through LC_DYLD_ENVIRONMENT (${environment.join(", ")}); search paths they add are not modeled.`,
+        explanation:
+          slice?.file_type === "execute"
+            ? `${image} (${architecture}) sets dyld environment variables through LC_DYLD_ENVIRONMENT (${environment.join(", ")}); any image-selection overrides they request are not modeled. Diagnostic settings alone do not alter resolution.`
+            : `${image} (${architecture}) contains LC_DYLD_ENVIRONMENT (${environment.join(", ")}). Dyld reads these commands only from the main executable; entries in this non-executable root are observations and do not alter resolution.`,
       });
   }
   return findings;
@@ -77,7 +82,7 @@ const unresolvedFinding = (edge: Edge, index: number): Finding => {
     : {
         ...base,
         kind: "required-load-unresolved",
-        explanation: `${missing}${when}dyld would fail to launch ${edge.root} (${edge.architecture}) unless the image is supplied elsewhere.`,
+        explanation: `${missing}${when}dyld would fail to load this required dependency for ${edge.root} (${edge.architecture}) unless the image is supplied elsewhere.`,
       };
 };
 

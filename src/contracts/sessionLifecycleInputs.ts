@@ -1,12 +1,13 @@
 import { executableFormatHintSchema } from "../domain/dosCom.js";
-import { isAbsoluteLocalPath } from "../domain/localPath.js";
+import {
+  isAbsoluteLocalPath,
+  localPathStringSchema,
+} from "../domain/localPath.js";
 import { z } from "zod";
 import { analysisProviderSelectorSchema } from "./providerSelection.js";
 
 /** Caller-supplied analysis snapshot path; must name its destination absolutely. */
-const snapshotPathSchema = z
-  .string()
-  .min(1)
+const snapshotPathSchema = localPathStringSchema
   .refine(isAbsoluteLocalPath, {
     message:
       "snapshot_path must be an absolute local filesystem path (for example /tmp/rea/analysis.json or C:\\rea\\analysis.json)",
@@ -16,9 +17,7 @@ const snapshotPathSchema = z
   );
 
 /** Caller-supplied analysis target path; must name the target absolutely. */
-const binaryTargetPathSchema = z
-  .string()
-  .min(1)
+const binaryTargetPathSchema = localPathStringSchema
   .refine(isAbsoluteLocalPath, {
     message:
       "path must be an absolute local filesystem path (for example /tmp/fixture.bin or C:\\analysis\\fixture.bin)",

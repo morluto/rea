@@ -49,6 +49,7 @@ const call = async (name, args) => {
 };
 const fingerprint = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const counts = [];
+let finalReport;
 try {
   const fixtures = await buildRecoveryFixtures(
     root,
@@ -128,19 +129,18 @@ try {
       });
     }
   }
-  console.log(
-    JSON.stringify({
-      engine: "wakaru 1.13.0",
-      toolchains: fixtures.toolchains,
-      results: counts,
-      verified: true,
-    }),
-  );
+  finalReport = {
+    engine: "wakaru 1.13.0",
+    toolchains: fixtures.toolchains,
+    results: counts,
+    verified: true,
+  };
 } finally {
   await client.close();
   await transport.close();
   await rm(root, { recursive: true, force: true });
 }
+console.log(JSON.stringify(finalReport));
 
 async function assertRecoveredArtifacts(evidence, result, fixture) {
   assert.deepEqual(result.options, {

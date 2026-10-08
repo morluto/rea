@@ -78,6 +78,7 @@ export interface FakeOptions {
   readonly redirectFromDisallowedOrigin?: boolean;
   readonly redirectWithinOrigin?: boolean;
   readonly malformedRedirectResponse?: boolean;
+  readonly omitRedirectResponse?: boolean;
   readonly redirectResponseUrl?: string;
   readonly redirectResponseEnvelope?: unknown;
   readonly responseAfterMalformedUrl?: string;

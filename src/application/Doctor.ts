@@ -14,6 +14,7 @@ import {
   readLinuxDistribution,
   type LinuxDistribution,
 } from "./LinuxHopper.js";
+import { canonicalSkillNeedsInstall } from "./SetupSkill.js";
 import { CATALOG_IDENTITY } from "../catalogIdentity.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../identity.js";
 import {
@@ -95,11 +96,13 @@ export interface DoctorHost {
   ilspyCmdVersion?(path: string): Promise<string | undefined>;
 }
 
-/** Parsed identity committed by an installed REA skill. */
+/** Observed skill metadata and comparison with the packaged instruction bundle. */
 interface InstalledSkillIdentity {
   readonly version: string | null;
   readonly toolCount: number | null;
   readonly catalogDigest: string | null;
+  /** Whether all managed instruction and reference files match this package. */
+  readonly canonical: boolean;
 }
 
 /** Structured result returned by the read-only doctor workflow. */
@@ -139,6 +142,7 @@ interface DoctorIdentity {
   readonly skill: {
     readonly installed_version: string | null;
     readonly installed_tool_count: number | null;
+    /** Legacy catalog digest observed in older bundles; current bundles omit it. */
     readonly installed_catalog_digest: string | null;
     readonly state: "aligned" | "stale" | "missing";
     readonly remediation: string | null;
@@ -211,7 +215,7 @@ const collectDoctorIdentity = async (
       ...registrations
         .filter(
           (registration): registration is UnhealthyClientRegistrationStatus =>
-            registration.state !== "aligned",
+            registration.state !== "aligned" && registration.state !== "manual",
         )
         .map(registrationCheck),
     ],
@@ -253,7 +257,7 @@ const skillIdentityAligned = (
 ): boolean =>
   identity?.version === PRODUCT_IDENTITY.skillVersion &&
   identity.toolCount === CATALOG_IDENTITY.counts.mcp_tools &&
-  identity.catalogDigest === CATALOG_IDENTITY.digests.combined_sha256;
+  identity.canonical;
 
 const skillIdentityCheck = (
   identity: InstalledSkillIdentity | undefined,
@@ -507,6 +511,7 @@ const installedSkillIdentity = async (
     const content = await readInstalledSkill(home);
     const countText = /^\s{2}tool_count:\s*(\d+)\s*$/mu.exec(content)?.[1];
     return {
+      canonical: !(await canonicalSkillNeedsInstall(home)),
       version: /^\s{2}version:\s*"([^"]+)"\s*$/mu.exec(content)?.[1] ?? null,
       toolCount:
         countText === undefined ? null : Number.parseInt(countText, 10),

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -98,6 +99,59 @@ it("preserves graph commitments and export shapes when consuming file-local IR",
         ?.semantic?.ir.callables.map(({ name }) => name),
     ).toContain("unexported");
     expect(parseJavaScriptSemanticGraph(semantic)).toEqual(semantic);
+  } finally {
+    await reader.close();
+  }
+});
+
+it("reports semantic value resource limits in application graph coverage", async () => {
+  const root = await createTestTempDirectory("rea-javascript-semantic-limit-");
+  const expression = Array.from(
+    { length: 20 },
+    () => '(true ? "a" : "b")',
+  ).join(" + ");
+  await writeFile(
+    join(root, "app.js"),
+    `const answer = { nested: ${expression} };`,
+  );
+  const declarations = ['const value0 = "x";'];
+  for (let index = 1; index <= 30; index += 1) {
+    const previous = `value${String(index - 1)}`;
+    declarations.push(
+      `const value${String(index)} = ${previous} + ${previous};`,
+    );
+  }
+  declarations.push("const answer = value30;");
+  await writeFile(join(root, "growth.js"), declarations.join("\n"));
+  const snapshot = await scanCanonicalArtifactInventory(root, {});
+  const reader = createJavaScriptArtifactReader(root, "directory");
+  try {
+    const files = await readJavaScriptArtifactFiles(reader, snapshot);
+    const analysis = analyzeJavaScriptArtifactFiles(files);
+    const graph = buildJavaScriptArtifactGraph(snapshot, files, analysis);
+
+    expect(graph.coverage).toMatchObject({
+      status: "partial",
+      omitted_count: null,
+      limits: expect.arrayContaining([
+        expect.objectContaining({
+          name: "javascript_semantic_primitive_candidates",
+          unit: "items",
+        }),
+        expect.objectContaining({
+          name: "javascript_semantic_primitive_bytes",
+          unit: "bytes",
+        }),
+      ]),
+    });
+    expect(graph.limitations).toContain(
+      "Primitive candidate budget exceeded (maximum 256 alternatives).",
+    );
+    expect(graph.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/primitive string-byte budget exceeded/i),
+      ]),
+    );
   } finally {
     await reader.close();
   }
@@ -453,3 +507,66 @@ const fixtureDirectory = async (): Promise<string> => {
   await writeJavaScriptArtifactFixture(root);
   return root;
 };
+
+for (const extension of ["ts", "tsx", "mts", "cts", "js", "mjs", "cjs"]) {
+  it.each(["directory", "asar"] as const)(
+    `retains ${extension} source facts from a real %s artifact`,
+    async (format) => {
+      const root = await createTestTempDirectory("rea-nodenext-artifacts-");
+      const directory = join(root, "source");
+      await mkdir(directory);
+      const path = `selected.${extension}`;
+      const parameter = ["ts", "tsx", "mts", "cts"].includes(extension)
+        ? "value: string"
+        : "value";
+      const source = `
+        globalThis.__rea_nodenext_executed = true;
+        throw new Error("fixture must remain inert");
+        export function selected_feature(${parameter}) { return { value }; }
+      `;
+      await writeFile(join(directory, path), source);
+      let inputPath = directory;
+      if (format === "asar") {
+        inputPath = join(root, "application.asar");
+        await createPackageWithOptions(directory, inputPath, {});
+      }
+      Reflect.deleteProperty(globalThis, "__rea_nodenext_executed");
+      const result = await reconstructJavaScriptArtifact({
+        input_path: inputPath,
+        format,
+      });
+      expect(
+        Reflect.get(globalThis, "__rea_nodenext_executed"),
+      ).toBeUndefined();
+      expect(result.statistics).toMatchObject({
+        relevant_files: 1,
+        parsed_javascript_files: 1,
+        text_bytes_read: Buffer.byteLength(source),
+        parse_failures: 0,
+      });
+      const asset = result.graph.nodes.find(
+        ({ kind, observations }) =>
+          kind === "javascript-asset" &&
+          observations.some(({ properties }) => properties.path === path),
+      );
+      expect(asset?.identity).toMatchObject({
+        sha256: createHash("sha256").update(source).digest("hex"),
+      });
+      expect(asset?.observations[0]?.properties).toMatchObject({
+        path,
+        bytes: Buffer.byteLength(source),
+        file_kind: "javascript",
+        parse_status: "complete",
+      });
+      expect(
+        result.semantic_graph.nodes.some(
+          ({ identity }) => identity.module_path === path,
+        ),
+      ).toBe(true);
+      expect(result.graph.coverage).toMatchObject({
+        status: "complete",
+        truncated: false,
+      });
+    },
+  );
+}

@@ -27,6 +27,7 @@ class SilentLauncher implements BridgeLauncher {
           },
         ),
         ownsProcessLifetime: true as const,
+        providerLifetime: "launcher-process" as const,
         shutdownMode: "bridge-request" as const,
       }),
     );
@@ -52,7 +53,10 @@ class CancelThenFixtureLauncher implements BridgeLauncher {
 }
 
 class ExitingLauncher implements BridgeLauncher {
-  constructor(readonly code: number) {}
+  constructor(
+    readonly code: number,
+    readonly ownsProcessLifetime = true,
+  ) {}
 
   launch() {
     return Promise.resolve(
@@ -60,7 +64,10 @@ class ExitingLauncher implements BridgeLauncher {
         process: spawn(process.execPath, ["-e", `process.exit(${this.code})`], {
           stdio: ["ignore", "ignore", "pipe"],
         }),
-        ownsProcessLifetime: true as const,
+        ownsProcessLifetime: this.ownsProcessLifetime,
+        providerLifetime: this.ownsProcessLifetime
+          ? ("launcher-process" as const)
+          : ("external-application" as const),
         shutdownMode: "bridge-request" as const,
       }),
     );
@@ -97,6 +104,7 @@ class DiagnosticExitingLauncher implements BridgeLauncher {
           { stdio: ["ignore", "ignore", "pipe"] },
         ),
         ownsProcessLifetime: true as const,
+        providerLifetime: "launcher-process" as const,
         shutdownMode: "bridge-request" as const,
       }),
     );
@@ -120,6 +128,40 @@ const clients: HopperClient[] = [];
 
 afterEach(async () => {
   await Promise.all(clients.splice(0).map((client) => client.close()));
+});
+
+describe("HopperClient startup deadline", () => {
+  it("applies one deadline to launcher, socket, and health startup phases", async () => {
+    const launcher = new LateSilentLauncher();
+    const client = new HopperClient({ launcher, startupTimeoutMs: 500 });
+    clients.push(client);
+
+    const result = await client.start();
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "HopperTimeoutError", timeoutMs: 500 },
+    });
+    expect(client.operationHealth()).toMatchObject({
+      state: "not_started",
+      stage: "launch",
+      retryAction: "retry",
+      exitCode: null,
+    });
+    if (!result.ok)
+      expect(projectAnalysisError(result.error).details).toMatchObject({
+        stage: "startup",
+      });
+    expect(launcher.directories).toHaveLength(1);
+    await expect(access(launcher.directories[0] ?? "")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    const process = launcher.processes[0];
+    expect(
+      process !== undefined &&
+        (process.exitCode !== null || process.signalCode !== null),
+    ).toBe(true);
+  });
 });
 
 describe("HopperClient startup failures", () => {
@@ -181,28 +223,6 @@ describe("HopperClient startup failures", () => {
       ok: true,
       value: { value: "retried" },
     });
-  });
-
-  it("applies one deadline to launcher, socket, and health startup phases", async () => {
-    const launcher = new LateSilentLauncher();
-    const client = new HopperClient({ launcher, startupTimeoutMs: 500 });
-    clients.push(client);
-
-    const result = await client.start();
-
-    expect(result).toMatchObject({
-      ok: false,
-      error: { _tag: "HopperTimeoutError", timeoutMs: 500 },
-    });
-    expect(launcher.directories).toHaveLength(1);
-    await expect(access(launcher.directories[0] ?? "")).rejects.toMatchObject({
-      code: "ENOENT",
-    });
-    const process = launcher.processes[0];
-    expect(
-      process !== undefined &&
-        (process.exitCode !== null || process.signalCode !== null),
-    ).toBe(true);
   });
 
   it.each([70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80])(
@@ -269,7 +289,7 @@ describe("HopperClient startup failures", () => {
 
   it("allows a short-lived launcher to hand off bridge startup", async () => {
     const client = new HopperClient({
-      launcher: new ExitingLauncher(0),
+      launcher: new ExitingLauncher(0, false),
       startupTimeoutMs: 100,
     });
     clients.push(client);

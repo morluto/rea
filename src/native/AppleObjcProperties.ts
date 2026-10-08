@@ -1,6 +1,7 @@
 import type { z } from "zod";
 
 import type { objcPropertySchema } from "../domain/native/objcSwiftMetadata.js";
+import { issue, type DecodeIssue } from "./AppleDispatchDecodeFacts.js";
 
 type ObjcProperty = z.infer<typeof objcPropertySchema>;
 
@@ -89,14 +90,20 @@ export const readObjcPropertiesOf = (
   context: {
     readonly owner: string;
     readonly admit: () => boolean;
-    readonly failures: string[];
+    readonly issues: DecodeIssue[];
+    readonly location?: string;
   },
 ): ObjcProperty[] => {
   try {
     return readObjcPropertyList(read, list, context.admit);
   } catch (cause: unknown) {
-    context.failures.push(
-      `Properties of ${context.owner}: ${cause instanceof Error ? cause.message : String(cause)}`,
+    context.issues.push(
+      issue(
+        "objc_properties_categories",
+        "property_decode_failed",
+        `${context.owner}: ${cause instanceof Error ? cause.message : String(cause)}`,
+        context.location,
+      ),
     );
     return [];
   }

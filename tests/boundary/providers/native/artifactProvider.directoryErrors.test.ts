@@ -30,8 +30,7 @@ describe("artifact directory diagnostics", () => {
       await chmod(blockedPath, 0);
       try {
         const target = await parseBinaryTarget(appPath);
-        expect(target.ok).toBe(true);
-        if (!target.ok) return;
+        if (!target.ok) throw target.error;
         const result = await new ArtifactProvider()
           .createClient(target.value)
           .execute("inventory_artifact", {});

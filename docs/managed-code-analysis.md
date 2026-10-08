@@ -25,7 +25,7 @@ part of the current tool set.
 
 This guide describes the implementation and verification of
 [ADR-0003](adr/0003-managed-code-evidence-and-provider-boundary.md). The canonical
-tool inventory is [`product-catalog.json`](https://github.com/morluto/rea/blob/main/docs/product-catalog.json).
+tool inventory is the [build-generated catalog](mcp-contracts.md#generated-catalog).
 
 ## Shipped scope
 
@@ -136,6 +136,12 @@ provider evidence; names or vtable similarity alone do not prove that a native
 function implements a specific managed method.
 
 ## Evidence record shape
+
+Member comparison, application graph projection, and managed/native verification
+authenticate supplied inspection Evidence and check that any subject SHA-256
+matches the normalized artifact SHA-256. A valid Evidence ID alone does not
+establish that those two identities agree. Evidence without a subject remains
+usable, with no subject digest available to cross-check.
 
 Every planned operation returns a provider result and Evidence with four
 commitment groups:

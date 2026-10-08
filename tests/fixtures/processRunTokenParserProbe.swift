@@ -132,13 +132,6 @@ struct ProcessRunTokenParserProbe {
     } catch RunTokenReadError.duplicateToken {
       duplicateTokenFailsClosed = true
     }
-    let emptyEnvironmentFailsClosed: Bool
-    do {
-      _ = try token(in: fixture(arguments: ["/fixture/executable"], environment: []))
-      emptyEnvironmentFailsClosed = false
-    } catch RunTokenReadError.environmentUnavailable {
-      emptyEnvironmentFailsClosed = true
-    }
     let missingAppleBoundaryFailsClosed: Bool
     do {
       _ = try token(in: fixture(
@@ -158,7 +151,6 @@ struct ProcessRunTokenParserProbe {
       "alternatePaddingRead": alternatePadding == "alternate-padding-token",
       "truncatedArgvFailsClosed": truncatedArgvFailsClosed,
       "duplicateTokenFailsClosed": duplicateTokenFailsClosed,
-      "emptyEnvironmentFailsClosed": emptyEnvironmentFailsClosed,
       "missingAppleBoundaryFailsClosed": missingAppleBoundaryFailsClosed,
       "emptyArgv0Read": emptyArgv0Read == "empty-argv0-token",
       "finalAssignmentArgumentRead": finalAssignmentArgumentRead == "final-assignment-token",

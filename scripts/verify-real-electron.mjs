@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { PlaywrightElectronActiveProvider } from "../dist/browser/PlaywrightElectronActiveProvider.js";
 import { electronActiveObservationInputSchema } from "../dist/domain/javascript/electronActiveObservation.js";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+import { verifyElectronToolContracts } from "./verify/electron/tool-contracts.mjs";
 
 const executable = process.env.REA_ELECTRON_EXECUTABLE;
 if (executable === undefined || executable.length === 0)
@@ -14,6 +15,7 @@ if (executable === undefined || executable.length === 0)
   );
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
+await verifyElectronToolContracts({ executable, repositoryRoot });
 const applicationRoot =
   process.env.REA_ELECTRON_APPLICATION_ROOT ??
   join(repositoryRoot, "tests/conformance/readiness/electron");
@@ -60,6 +62,7 @@ const output = {
   timeline: result.value.timeline,
   windows: result.value.windows,
   verified:
+    result.value.coverage.status === "partial_attach" &&
     result.value.actions.every(({ status }) => status === "completed") &&
     result.value.actions.some(
       ({ kind, window_index }) =>
@@ -104,8 +107,8 @@ const output = {
         kind === "process-lifecycle" && event === "child.spawn",
     ),
 };
+process.stdout.write(`${JSON.stringify(output)}\n`);
 if (!output.verified)
   throw new Error(
     "real Electron verifier did not observe the readiness IPC round trip",
   );
-process.stdout.write(`${JSON.stringify(output)}\n`);
