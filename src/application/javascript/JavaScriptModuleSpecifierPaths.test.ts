@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -167,6 +167,165 @@ describe("ESM module URL decoding", () => {
           files: filesFor([`app/${declaredPath.slice(2)}`]),
         }),
       ).toMatchObject({ resolved_path: null, resolution_status: "rejected" });
+    },
+  );
+});
+
+const packageEntryUrlCases = [
+  ["exports", "./actual%20file.cjs", "actual file.cjs"],
+  ["exports", "./actual.cjs?variant", "actual.cjs"],
+  ["exports", "./actual.cjs#variant", "actual.cjs"],
+  ["exports", "./actual%23file.cjs", "actual#file.cjs"],
+  ["exports", "./actual%3Ffile.cjs", "actual?file.cjs"],
+  ["exports", "./actual%252Ffile.cjs", "actual%2Ffile.cjs"],
+  ["exports", "./actual.cjs", "actual.cjs"],
+  ["main", "./actual%20file.cjs", "actual%20file.cjs"],
+  ["main", "./actual?file.cjs", "actual?file.cjs"],
+  ["main", "./actual#file.cjs", "actual#file.cjs"],
+] as const;
+
+describe("package exports URL paths", () => {
+  it.each(
+    (["import", "require"] as const).flatMap((moduleKind) =>
+      packageEntryUrlCases.map(([field, declaredPath, target]) => ({
+        moduleKind,
+        field,
+        declaredPath,
+        target,
+      })),
+    ),
+  )(
+    "matches Node $moduleKind for $field $declaredPath",
+    async ({ moduleKind, field, declaredPath, target }) => {
+      const root = await createTestTempDirectory("rea-package-export-url-");
+      const packageRoot = join(root, "node_modules", "fixture");
+      await mkdir(packageRoot, { recursive: true });
+      await writeFile(
+        join(packageRoot, "package.json"),
+        JSON.stringify({
+          name: "fixture",
+          [field]: declaredPath,
+        }),
+      );
+      await writeFile(
+        join(packageRoot, target),
+        `module.exports=${JSON.stringify(target)};`,
+      );
+      const literal = declaredPath.slice(2).split("?", 1)[0]?.split("#", 1)[0];
+      if (literal !== undefined && literal !== target)
+        await writeFile(
+          join(packageRoot, literal),
+          'module.exports="literal decoy";',
+        );
+      const main = join(
+        root,
+        moduleKind === "import" ? "main.mjs" : "main.cjs",
+      );
+      await writeFile(
+        main,
+        moduleKind === "import"
+          ? 'import value from "fixture"; console.log(value);'
+          : 'console.log(require("fixture"));',
+      );
+      const native = await promisify(execFile)(process.execPath, [main], {
+        timeout: 5_000,
+      });
+      expect(native.stdout.trim()).toBe(target);
+      const result = await analyzeJavaScriptApplication({
+        input_path: root,
+        format: "directory",
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw result.error;
+      const { graph } = javascriptApplicationAnalysisResultSchema.parse(
+        result.value.normalized_result,
+      );
+      const imports = graph.edges.filter(
+        (edge) =>
+          edge.relation === "imports" &&
+          edge.properties.specifier === "fixture",
+      );
+      expect(imports.length).toBeGreaterThan(0);
+      for (const edge of imports)
+        expect(edge.properties.resolved_path).toBe(
+          `node_modules/fixture/${target}`,
+        );
+    },
+  );
+
+  it.each(
+    (["import", "require"] as const).flatMap((moduleKind) =>
+      [
+        "./actual%file.cjs",
+        "./actual%E0%A4file.cjs",
+        "./actual%00file.cjs",
+        "./actual%2Ffile.cjs",
+        "./actual%5Cfile.cjs",
+        "./actual%2Efile.cjs",
+        "./../../../../escape.cjs",
+      ].map((declaredPath) => ({ moduleKind, declaredPath })),
+    ),
+  )(
+    "rejects $moduleKind URL $declaredPath without borrowing a literal decoy",
+    ({ moduleKind, declaredPath }) => {
+      const packagePath = "app/node_modules/fixture/package.json";
+      const files = filesFor([
+        packagePath,
+        `app/node_modules/fixture/${declaredPath.slice(2)}`,
+      ]);
+      const metadata = files.get(packagePath);
+      if (metadata === undefined) throw new Error("Missing fixture metadata");
+      files.set(packagePath, {
+        ...metadata,
+        kind: "package-json",
+        text: {
+          included: true,
+          value: JSON.stringify({ exports: declaredPath }),
+        },
+      });
+      expect(
+        resolveArtifactPathByContext({
+          declaredPath: "fixture",
+          sourcePath: "app/main.js",
+          context: "module-specifier",
+          moduleKind,
+          files,
+        }),
+      ).toMatchObject({ resolved_path: null, resolution_status: "rejected" });
+    },
+  );
+
+  it.each(["import", "require"] as const)(
+    "keeps %s exports inside their inventoried container",
+    (moduleKind) => {
+      const packagePath = "app/node_modules/fixture/package.json";
+      const target = "app/node_modules/fixture/actual file.cjs";
+      const files = filesFor([packagePath, target]);
+      const metadata = files.get(packagePath);
+      const crossContainer = files.get(target);
+      if (metadata === undefined || crossContainer === undefined)
+        throw new Error("Missing fixture files");
+      files.set(packagePath, {
+        ...metadata,
+        kind: "package-json",
+        text: {
+          included: true,
+          value: '{"exports":"./actual%20file.cjs"}',
+        },
+      });
+      files.set(target, {
+        ...crossContainer,
+        container_sha256: "c".repeat(64),
+      });
+      expect(
+        resolveArtifactPathByContext({
+          declaredPath: "fixture",
+          sourcePath: "app/main.js",
+          context: "module-specifier",
+          moduleKind,
+          files,
+        }),
+      ).toMatchObject({ resolved_path: null, resolution_status: "not-found" });
     },
   );
 });

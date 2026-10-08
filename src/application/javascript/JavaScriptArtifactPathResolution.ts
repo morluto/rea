@@ -86,10 +86,11 @@ const resolvePackagePath = (
   input: ResolveArtifactPathInput,
   packageChain: ReadonlySet<string>,
   mode: "full" | "files-and-index" = "full",
+  exportsTargetUrl = false,
 ): ArtifactPathResolution => {
   const rejected = rejectDeclaration(input);
   if (rejected !== null) return rejected;
-  const candidate = contextualCandidate(input);
+  const candidate = contextualCandidate(input, exportsTargetUrl);
   if (typeof candidate !== "string") return candidate;
   const confined = confineCandidate(input, candidate);
   if (typeof confined !== "string") return confined;
@@ -124,11 +125,13 @@ const rejectDeclaration = (
 
 const contextualCandidate = (
   input: ResolveArtifactPathInput,
+  exportsTargetUrl: boolean,
 ): string | ArtifactPathResolution => {
   const { context } = input;
   let declared =
     context === "html-reference" ||
     context === "url-reference" ||
+    exportsTargetUrl ||
     (context === "module-specifier" && input.moduleKind !== "require")
       ? stripQueryAndFragment(input.declaredPath)
       : input.declaredPath;
@@ -142,24 +145,28 @@ const contextualCandidate = (
       ]);
     if (!declared.startsWith(".") && !declared.startsWith("/"))
       return bareModuleCandidate(input, declared);
-    if (input.moduleKind !== "require") {
-      try {
-        declared = decodeURIComponent(declared);
-      } catch (cause: unknown) {
-        void cause;
-        return unresolvedOutcome(input, "rejected", [
-          "The module URL path contains malformed percent encoding.",
-        ]);
-      }
-      if (declared.includes("\0"))
-        return unresolvedOutcome(input, "rejected", [
-          "The decoded module URL path contains NUL.",
-        ]);
-    }
   } else if (looksExternal(declared))
     return unresolvedOutcome(input, "external", [
       "URL schemes and protocol-relative URLs are outside this local artifact path context.",
     ]);
+  // Exports targets use URL paths for both loaders; legacy main fields remain literal.
+  if (
+    exportsTargetUrl ||
+    (context === "module-specifier" && input.moduleKind !== "require")
+  ) {
+    try {
+      declared = decodeURIComponent(declared);
+    } catch (cause: unknown) {
+      void cause;
+      return unresolvedOutcome(input, "rejected", [
+        "The module URL path contains malformed percent encoding.",
+      ]);
+    }
+    if (declared.includes("\0"))
+      return unresolvedOutcome(input, "rejected", [
+        "The decoded module URL path contains NUL.",
+      ]);
+  }
   const relative = declared.startsWith("/") ? declared.slice(1) : declared;
   return declared.startsWith("/")
     ? relative
@@ -367,7 +374,9 @@ const resolveCandidate = (
     if (index !== null) return index;
   }
   // Preserve recursive artifact package lookup only after legacy file/index fallbacks.
-  return candidateOutcome(resolvePackagePath(entryInput, chain));
+  return candidateOutcome(
+    resolvePackagePath(entryInput, chain, "full", main.source === "exports"),
+  );
 };
 
 const candidateOutcome = (
