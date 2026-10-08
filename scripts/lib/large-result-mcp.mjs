@@ -10,7 +10,10 @@ export const withLargeResultMcp = async (
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [entrypoint, "mcp"],
-    env: environment,
+    env: {
+      ...environment,
+      REA_MCP_MAX_RESPONSE_BYTES: String(maxBufferSize),
+    },
     stderr: "inherit",
     maxBufferSize,
   });
