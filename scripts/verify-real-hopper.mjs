@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import { readdir } from "node:fs/promises";
 import { promisify } from "node:util";
 
 import { Client } from "@modelcontextprotocol/client";
@@ -12,6 +11,7 @@ import {
   requirePseudocode,
 } from "../dist/application/RealHopperAssertions.js";
 import { HOPPER_PROVIDER_IDENTITY } from "../dist/hopper/HopperProvider.js";
+import { HOPPER_TARGET_LEASE_DIRECTORY } from "../dist/hopper/HopperTargetLease.js";
 import { REA_WORKFLOW_PROVIDER } from "../dist/application/InvestigationProviders.js";
 import { loadRealHopperFixtureTargets } from "./lib/real-hopper-fixture.mjs";
 import {
@@ -34,6 +34,7 @@ import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 import { requireHopperSelection } from "./lib/real-hopper-selection.mjs";
 import { verifyHopperInventories } from "./lib/real-hopper-inventory.mjs";
 import { startUnrelatedHopperSentinel } from "./lib/unrelated-hopper-sentinel.mjs";
+import { snapshotHopperRuntime } from "./lib/real-hopper-cleanup.mjs";
 const execFileAsync = promisify(execFile);
 const verifierRun = createVerifierRun();
 const timeout = 180_000;
@@ -47,8 +48,9 @@ const parseServerArgs = (encoded) => {
   return parsed;
 };
 
-const sessionsBefore = new Set(
-  (await readdir("/tmp")).filter((name) => name.startsWith("rea-")),
+const sessionsBefore = await snapshotHopperRuntime(
+  "/tmp",
+  HOPPER_TARGET_LEASE_DIRECTORY,
 );
 const textValue = mcpTextValue;
 const requireSuccessfulTool = requireMcpResult;
@@ -491,11 +493,21 @@ try {
 }
 
 await new Promise((resolve) => setTimeout(resolve, 500));
-const sessionsAfter = (await readdir("/tmp")).filter(
-  (name) => name.startsWith("rea-") && !sessionsBefore.has(name),
-);
+const sessionsAfter = [
+  ...(await snapshotHopperRuntime("/tmp", HOPPER_TARGET_LEASE_DIRECTORY)),
+]
+  .filter((path) => !sessionsBefore.has(path))
+  .sort();
 if (sessionsAfter.length > 0) {
-  throw new Error("The MCP runtime leaked a bridge session directory");
+  await writeVerificationReport({
+    ...summary,
+    unrelatedHopperSurvived,
+    cleanShutdown: false,
+    retainedRuntimePaths: sessionsAfter,
+  });
+  throw new Error(
+    `The MCP runtime retained Hopper resources: ${sessionsAfter.join(", ")}`,
+  );
 }
 const afterCloseProcesses = await execFileAsync("ps", [
   "-ax",
@@ -514,12 +526,18 @@ if (
 if (summary === undefined)
   throw new Error("Real-Hopper verification did not produce a summary");
 const completedVerifierRun = await completeVerifierRun(verifierRun);
-await new Promise((resolve, reject) => {
-  process.stdout.write(
-    `${JSON.stringify({ verifier_run: completedVerifierRun, ...summary, unrelatedHopperSurvived, cleanShutdown: true }, null, 2)}\n`,
-    (cause) => {
+await writeVerificationReport({
+  verifier_run: completedVerifierRun,
+  ...summary,
+  unrelatedHopperSurvived,
+  cleanShutdown: true,
+});
+
+async function writeVerificationReport(report) {
+  await new Promise((resolve, reject) => {
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`, (cause) => {
       if (cause) reject(cause);
       else resolve();
-    },
-  );
-});
+    });
+  });
+}

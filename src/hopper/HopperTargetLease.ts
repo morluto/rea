@@ -23,7 +23,11 @@ export type HopperTargetLeaseAcquisition =
   | { readonly acquired: true; readonly lease: HopperTargetLease }
   | { readonly acquired: false; readonly owner: HopperTargetLeaseOwner };
 
-const leaseDirectory = join("/tmp", `rea-hopper-${process.getuid?.() ?? 0}`);
+/** Shared private parent of per-target lease sockets; it outlives individual sessions. */
+export const HOPPER_TARGET_LEASE_DIRECTORY = join(
+  "/tmp",
+  `rea-hopper-${process.getuid?.() ?? 0}`,
+);
 
 /** Keep two REA processes from opening duplicate Hopper documents for one target/profile. */
 export const acquireHopperTargetLease = async (input: {
@@ -33,7 +37,7 @@ export const acquireHopperTargetLease = async (input: {
   readonly runId: string;
   readonly directory?: string;
 }): Promise<HopperTargetLeaseAcquisition> => {
-  const directory = input.directory ?? leaseDirectory;
+  const directory = input.directory ?? HOPPER_TARGET_LEASE_DIRECTORY;
   await ensureLeaseDirectory(directory);
   // The canonical path only derives the lease key; it never authorizes access.
   // Common expected `realpath` failures include a missing target or path
