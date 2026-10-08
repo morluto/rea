@@ -1,5 +1,70 @@
 # Changelog
 
+## [5.1.0](https://github.com/morluto/rea/compare/rea-agents-5.0.0...rea-agents-5.1.0) (2026-10-08)
+
+
+### Features
+
+* **artifacts:** trace Mach-O dylib resolution in bundles ([78d594c](https://github.com/morluto/rea/commit/78d594cacd376725f833a99402069c103aae9aac))
+* **browser:** inspect historical web network captures ([#992](https://github.com/morluto/rea/issues/992)) ([2bf3663](https://github.com/morluto/rea/commit/2bf3663f654386c9fd8c1437c49659df97bd4697))
+* **evm:** inspect offline bytecode interfaces through EVMole ([#1051](https://github.com/morluto/rea/issues/1051)) ([7af7bc8](https://github.com/morluto/rea/commit/7af7bc88ce0e8f084eaa0db1e8f834d495440fd9))
+* **ghidra:** support native x86 PE applications on Windows ([#1030](https://github.com/morluto/rea/issues/1030)) ([c6dad93](https://github.com/morluto/rea/commit/c6dad932084032bcb32acc61e8066a7784497710))
+* **native:** inspect offline ELF layout through pwntools ([#1037](https://github.com/morluto/rea/issues/1037)) ([4fc6565](https://github.com/morluto/rea/commit/4fc6565b0ffb36d7105b3524e08d0c5d603ae07d))
+* **native:** inspect recorded crashes through pwntools and pwndbg ([#1054](https://github.com/morluto/rea/issues/1054)) ([163ee09](https://github.com/morluto/rea/commit/163ee09a7425479385e0ed0b5d74043e2587eab2))
+* **native:** observe function and Objective-C method calls under LLDB ([1d13cef](https://github.com/morluto/rea/commit/1d13cef5f46f5e07f594bde7b1a4725f189b9a5e))
+
+
+### Bug Fixes
+
+* **ci:** avoid slow Azure archive for the native cross compiler ([#1016](https://github.com/morluto/rea/issues/1016)) ([51956c1](https://github.com/morluto/rea/commit/51956c1a49a7dc9ed70a6fba480a670a7e7b2b9b))
+* **ci:** decouple stdio smoke tests from Linux display probes ([#1014](https://github.com/morluto/rea/issues/1014)) ([93731e1](https://github.com/morluto/rea/commit/93731e17ddea76db86dfa84bb54536dcf8ebfa0b))
+* **cli:** stream large JavaScript JSON results ([#1024](https://github.com/morluto/rea/issues/1024)) ([0e25bef](https://github.com/morluto/rea/commit/0e25befe78f220691abe5d0291cc04a75c9cc877))
+* **javascript:** complete large-ASAR analysis with file-local projection ([#1055](https://github.com/morluto/rea/issues/1055)) ([b9fb438](https://github.com/morluto/rea/commit/b9fb43883570bef7cb29fd16f27c25d5a7e5bb54))
+* **javascript:** recognize digits in artifact URI schemes ([#1045](https://github.com/morluto/rea/issues/1045)) ([03424ae](https://github.com/morluto/rea/commit/03424ae91ef22efd57db1bdde9379a3ac450b8f7))
+* **javascript:** reconstruct HTML script loads accurately ([#1042](https://github.com/morluto/rea/issues/1042)) ([1154f2f](https://github.com/morluto/rea/commit/1154f2f03c0b0bb6cb6c5da09b8d8e1c837febc4))
+* **javascript:** report application analysis progress on the CLI ([#1008](https://github.com/morluto/rea/issues/1008)) ([7b18c58](https://github.com/morluto/rea/commit/7b18c581409848077de7a9cb6d7d1a0b91a02e12))
+* **javascript:** resolve module URLs and reject invalid exports targets ([#1031](https://github.com/morluto/rea/issues/1031)) ([8d5c88f](https://github.com/morluto/rea/commit/8d5c88f17cde4ab4fa54c5142f0a45e612619a53))
+* **javascript:** resolve root package exports arrays ([#1046](https://github.com/morluto/rea/issues/1046)) ([53409ab](https://github.com/morluto/rea/commit/53409ab1968d60c77f98feedefe237a08859a95c))
+* **mcp:** advertise JSON values without recursive schemas ([#995](https://github.com/morluto/rea/issues/995)) ([7425f70](https://github.com/morluto/rea/commit/7425f70fd0247a7ea7192deb959fd6f48ba83a21)), closes [#919](https://github.com/morluto/rea/issues/919)
+* **mcp:** bound capture comparison input schema depth ([#1005](https://github.com/morluto/rea/issues/1005)) ([6b55de0](https://github.com/morluto/rea/commit/6b55de017badc9066642e1ff2561eb1da0ff93f8))
+* **process:** preserve partial evidence and verify detached cleanup ([#1011](https://github.com/morluto/rea/issues/1011)) ([63cf28f](https://github.com/morluto/rea/commit/63cf28fd8f8acaf656e993300a2a24280b2fd692))
+* **release:** support built-in credentials and refresh release boundary ([6a278a6](https://github.com/morluto/rea/commit/6a278a68dd4fa69b9153697ecb7bba7de4c55c32))
+* **release:** support default credentials and record 5.0.0 boundary ([#1012](https://github.com/morluto/rea/issues/1012)) ([6a278a6](https://github.com/morluto/rea/commit/6a278a68dd4fa69b9153697ecb7bba7de4c55c32))
+* **release:** sync 5.0.0 checkpoint back to main ([966cca8](https://github.com/morluto/rea/commit/966cca8efe5ed08b3285cd06409688d871eb5e6b))
+* **snapshot:** replay validated workflow evidence ([#984](https://github.com/morluto/rea/issues/984)) ([1d62e54](https://github.com/morluto/rea/commit/1d62e54e1f976e64130e4e9b651c3180aa4fa727))
+* **windows:** allow Java to read retained target snapshots ([#1027](https://github.com/morluto/rea/issues/1027)) ([28d5c39](https://github.com/morluto/rea/commit/28d5c397c83f901e4086083868041711371ad32a))
+
+
+### Performance Improvements
+
+* **artifacts:** replace quadratic ZIP overlap checks ([#1013](https://github.com/morluto/rea/issues/1013)) ([76e7e51](https://github.com/morluto/rea/commit/76e7e510bb2d7d37728ca50749d524beb5890cf8))
+* **javascript:** cache canonical export comparison sort keys ([#1028](https://github.com/morluto/rea/issues/1028)) ([63ba742](https://github.com/morluto/rea/commit/63ba7424c0ab69b94397e8913f8e231de111583f))
+
+
+### Code Refactoring
+
+* **artifacts:** move inventory and extraction into provider owners ([#1032](https://github.com/morluto/rea/issues/1032)) ([6e4535c](https://github.com/morluto/rea/commit/6e4535c1011f1982e9ab07b7ebcd600c19cd494d))
+* remove abandoned test-only analysis scaffolding ([c93422a](https://github.com/morluto/rea/commit/c93422a898fdbedb7d28709144b4337a2669440b))
+
+
+### Documentation
+
+* improve Korean wording and particles ([#1047](https://github.com/morluto/rea/issues/1047)) ([c5d165b](https://github.com/morluto/rea/commit/c5d165bd03fed95a0b0105661d3ba7e0efbfa449))
+* simplify the English README and organize guides ([#1043](https://github.com/morluto/rea/issues/1043)) ([28f10cf](https://github.com/morluto/rea/commit/28f10cf2bc7b7c590700b50d47072015f3e3c66e))
+
+
+### Tests
+
+* **browser:** consolidate CDP workflows and colocate parser coverage ([2682904](https://github.com/morluto/rea/commit/26829045d0f0e744bb60d6babc2dc3312f4bfa53))
+* **ci:** stabilize browser source identity fixture delivery ([#1023](https://github.com/morluto/rea/issues/1023)) ([ed725da](https://github.com/morluto/rea/commit/ed725dace4a689e4e5c804dc6bf06c7fc663c7c9))
+* **cli:** reduce repeated startup and filesystem setup ([d88d6c1](https://github.com/morluto/rea/commit/d88d6c1897740ccbd6c57f4ba01861fc751fb3a8))
+* consolidate service and process fixtures ([f8a53a8](https://github.com/morluto/rea/commit/f8a53a8c065f1ccbdaa051a4e1ef267a2047d759))
+* **javascript:** consolidate source analysis and export regressions ([f517a5a](https://github.com/morluto/rea/commit/f517a5a1d7c0766ed50f8dfd5ee69e65525ac744))
+* **javascript:** cover plain long-line loader identities ([#1025](https://github.com/morluto/rea/issues/1025)) ([984fc27](https://github.com/morluto/rea/commit/984fc27ce19d57f708bdae688a258cf8663cdea6))
+* **mcp:** consolidate SDK schema checks and scenario ports ([9c3479e](https://github.com/morluto/rea/commit/9c3479ed95100d8ee5ed4d9158a4550e4ac2a752))
+* **providers:** verify framing through client socket boundaries ([1fd1989](https://github.com/morluto/rea/commit/1fd1989d342375a01b6d14b282ad58001b7d1800))
+* prune redundant conformance checks and document test priorities ([aafdf8a](https://github.com/morluto/rea/commit/aafdf8a01b42fb6fd927c0f2a66e758e1a510abc))
+
 ## [5.0.0](https://github.com/morluto/rea/compare/rea-agents-4.1.0...rea-agents-5.0.0) (2026-10-07)
 
 
