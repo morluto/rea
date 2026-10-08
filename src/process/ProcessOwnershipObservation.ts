@@ -192,19 +192,22 @@ export const createSystemProcessOwnershipHost = (
     if (platform === "win32") return [];
     const { stdout } = await execFileOutput(
       "ps",
-      ["-axo", "pid=,ppid=,pgid=,stat=,command="],
+      ["-axo", "pid=,ppid=,pgid=,uid=,stat=,command="],
       { env: hostEnvironment, ...(signal === undefined ? {} : { signal }) },
     );
     return stdout
       .split("\n")
-      .map((line) => /\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.*)/u.exec(line))
+      .map((line) =>
+        /\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.*)/u.exec(line),
+      )
       .filter((match): match is RegExpExecArray => match !== null)
       .map((match) => ({
         pid: Number(match[1]),
         parentPid: Number(match[2]),
         processGroupId: Number(match[3]),
-        state: match[4] ?? "",
-        command: match[5] ?? "",
+        uid: Number(match[4]),
+        state: match[5] ?? "",
+        command: match[6] ?? "",
       }));
   };
   const processIdentities: NonNullable<

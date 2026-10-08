@@ -704,10 +704,18 @@ export const releaseProcessResources = async (options: {
           "owned process cleanup is unverifiable on Windows without process-job authority",
       };
     } else {
+      const terminalPid = options.terminal.pid;
+      const relation = {
+        leaderPid: terminalPid,
+        processGroupId: terminalPid,
+        ...(options.sampledProcessGroupIds === undefined
+          ? {}
+          : { sampledProcessGroupIds: options.sampledProcessGroupIds }),
+      };
       const cleaned = await host.cleanupProcessGroup({
         runId: options.runId,
-        leaderPid: options.terminal.pid,
-        processGroupId: options.terminal.pid,
+        leaderPid: terminalPid,
+        processGroupId: terminalPid,
         sweepTokenOwnedProcesses: true,
         ...(options.sampledProcessGroupIds === undefined
           ? {}
@@ -724,6 +732,7 @@ export const releaseProcessResources = async (options: {
             options.runId,
             undefined,
             options.captureBaseline,
+            relation,
           ),
         );
         if (!verified.cleaned)

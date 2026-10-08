@@ -99,7 +99,7 @@ describe("capture-local process ownership", () => {
     expect(signalGroup).toHaveBeenCalledWith(process.processGroupId, "SIGKILL");
   });
 
-  it("cleans verified owners before reporting an unrelated opaque process", async () => {
+  it("cleans verified owners and records unrelated opaque candidates as unverified", async () => {
     const owned: ProcessTableEntry = {
       pid: 905,
       parentPid: 1,
@@ -112,22 +112,25 @@ describe("capture-local process ownership", () => {
       parentPid: 1,
       processGroupId: 906,
       state: "S",
-      command: "unrelated-process",
+      command: "/usr/bin/unrelated-process",
     };
     const malformed: ProcessTableEntry = {
       ...opaque,
       pid: 907,
       processGroupId: 907,
-      command: "malformed-procargs-process",
+      uid: process.getuid?.() === 0 ? 1 : 0,
+      command: "/usr/bin/malformed-procargs-process",
     };
     const sysctlDenied: ProcessTableEntry = {
       ...opaque,
       pid: 908,
       processGroupId: 908,
-      command: "sysctl-denied-process",
+      uid: process.getuid?.() === 0 ? 1 : 0,
+      command: "/usr/bin/sysctl-denied-process",
     };
     const signalGroup = vi.fn();
     const host: ProcessOwnershipHost = {
+      platform: "darwin",
       listProcesses: () =>
         Promise.resolve([owned, opaque, malformed, sysctlDenied]),
       environment: (pid) =>
@@ -148,7 +151,7 @@ describe("capture-local process ownership", () => {
                         ? ("malformed_procargs" as const)
                         : pid === sysctlDenied.pid
                           ? ("sysctl_failed_1" as const)
-                          : ("environment_unavailable" as const),
+                          : ("platform_binary_environment_withheld" as const),
                   },
             ]),
           ),
@@ -167,9 +170,13 @@ describe("capture-local process ownership", () => {
         host,
       ),
     ).resolves.toMatchObject({
-      cleaned: false,
-      reason:
-        "process ownership token could not be read for 3 live process(es): environment_unavailable=1, malformed_procargs=1, sysctl_errno_1=1",
+      cleaned: true,
+      signaled: true,
+      unverified: [
+        { pid: 906, diagnostic: "platform_binary_environment_withheld" },
+        { pid: 907, diagnostic: "malformed_procargs" },
+        { pid: 908, diagnostic: "sysctl_failed_1" },
+      ],
     });
     expect(signalGroup).toHaveBeenCalledWith(owned.processGroupId, "SIGKILL");
     expect(signalGroup).not.toHaveBeenCalledWith(

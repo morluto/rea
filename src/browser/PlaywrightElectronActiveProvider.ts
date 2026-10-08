@@ -297,6 +297,13 @@ const cleanupElectronProcesses = async (
     ownership.runId,
     undefined,
     ownership.captureBaseline,
+    {
+      leaderPid: ownership.leaderPid,
+      processGroupId: ownership.processGroupId,
+      ...(ownership.sampledProcessGroupIds === undefined
+        ? {}
+        : { sampledProcessGroupIds: ownership.sampledProcessGroupIds }),
+    },
   );
   if (!remaining.cleaned) return remaining;
   return { cleaned: true, signaled };
