@@ -135,7 +135,10 @@ const sendEchoWithProgress = (send, request) => {
         terminal: true,
       },
     });
-    send({ id: request.id, result: request.params ?? {} });
+    send(
+      { id: request.id, result: request.params ?? {} },
+      request.params?.fragmented === true,
+    );
   };
   if (typeof request.params?.gate === "string")
     heldReplies.set(request.id, reply);
@@ -149,9 +152,12 @@ const server = createServer((socket) => {
   const send = (message, fragmented = false) => {
     const line = `${JSON.stringify(message)}\n`;
     if (!fragmented) return socket.write(line);
-    const midpoint = Math.floor(line.length / 2);
-    socket.write(line.slice(0, midpoint));
-    setTimeout(() => socket.write(line.slice(midpoint)), 2);
+    const bytes = Buffer.from(line, "utf8");
+    const unicodeOffset = bytes.indexOf(Buffer.from("雪", "utf8"));
+    const midpoint =
+      unicodeOffset >= 0 ? unicodeOffset + 1 : Math.floor(bytes.length / 2);
+    socket.write(bytes.subarray(0, midpoint));
+    setTimeout(() => socket.write(bytes.subarray(midpoint)), 2);
   };
   socket.on("data", (chunk) => {
     buffer += chunk;
@@ -187,6 +193,9 @@ const server = createServer((socket) => {
         if (shutdownMode !== "cleanup-required") setTimeout(closeServer, 2);
       } else if (request.method === "hang") {
         // Deliberately leave the request pending.
+      } else if (request.method === "partial_then_wait") {
+        socket.write(`{"id":${request.id},"result":"stale`);
+        process.send?.({ id: request.id, method: "fixture_partial_write" });
       } else if (request.method === "exit") {
         process.exit(7);
       } else if (request.method === "malformed") {

@@ -33,7 +33,7 @@ export const ensureGeneratedFile = async ({
     return { changed: false };
   if (check)
     throw new Error(
-      `${path} is missing or stale. Run \`${generateCommand}\` and commit the result.`,
+      `${path} is missing or stale. Run \`${generateCommand}\` to regenerate it; commit the result if the file is tracked.`,
     );
   await writeFile(path, preserveLineEndings(source, existing), "utf8");
   return { changed: true };

@@ -7,12 +7,8 @@ import { parseCliJsonInput } from "../../../src/cliJsonInput.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("CLI JSON input", () => {
-  it("preserves JSON scalars and distinguishes malformed inline text from files", async () => {
-    for (const value of [null, false, 0, "text", [], {}])
-      expect(
-        await parseCliJsonInput(JSON.stringify(value), "test-input"),
-      ).toEqual({ ok: true, value });
-    expect(await parseCliJsonInput("{", "test-input")).toMatchObject({
+  it("distinguishes malformed inline text from files and preserves bracket-prefixed paths", async () => {
+    expect(await parseCliJsonInput("[", "test-input")).toMatchObject({
       ok: false,
       error: {
         details: { issues: [{ reason: "invalid_format", expected: "JSON" }] },
@@ -30,6 +26,10 @@ describe("CLI JSON input", () => {
     expect(await parseCliJsonInput(path, "test-input")).toEqual({
       ok: true,
       value: { value: 1 },
+    });
+    expect(await parseCliJsonInput("false", "test-input")).toEqual({
+      ok: true,
+      value: false,
     });
     const bracketPath = join(root, "[input].json");
     await writeFile(bracketPath, '["preserved"]');

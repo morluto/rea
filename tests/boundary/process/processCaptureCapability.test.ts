@@ -4,7 +4,7 @@ import {
   processCaptureProbeFailureReason,
   processCaptureOwnershipUnavailableReason,
   probeProcessCaptureCapability,
-} from "../../../src/application/ProcessCaptureCapability.js";
+} from "../../../src/process/capture/ProcessCaptureCapability.js";
 
 describe("process capture capability diagnostics", () => {
   it("distinguishes missing native modules from runtime ABI mismatches", () => {
@@ -50,6 +50,31 @@ describe("process capture capability diagnostics", () => {
     expect(
       processCaptureProbeFailureReason(new Error("spawn EACCES")),
     ).toContain("spawn EACCES");
+  });
+
+  it("prepares Darwin ownership inspection before probing or admitting a PTY", async () => {
+    let loaded = false;
+    const capability = await probeProcessCaptureCapability({
+      platform: "darwin",
+      prepareOwnershipInspector: async () => {
+        throw new Error(
+          "macOS process ownership inspection requires the Apple Swift compiler via xcrun",
+        );
+      },
+      loadPty: async () => {
+        loaded = true;
+        return await import("@lydell/node-pty");
+      },
+    });
+
+    expect(loaded).toBe(false);
+    expect(capability).toEqual({
+      available: false,
+      backend: "node-pty",
+      reason: expect.stringContaining(
+        "requires the Apple Swift compiler via xcrun",
+      ),
+    });
   });
 
   it("keeps the ownership limitation separate from native PTY support", () => {

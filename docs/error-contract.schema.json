@@ -38,6 +38,74 @@
     {
       "type": "object",
       "properties": {
+        "code": { "type": "string", "const": "access_denied" },
+        "category": {
+          "type": "string",
+          "enum": [
+            "invalid_input",
+            "unsupported_provider",
+            "integrity_mismatch",
+            "truncated",
+            "cancelled",
+            "timeout",
+            "unavailable",
+            "execution_failure"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "remediation": {
+          "type": "object",
+          "properties": { "action": { "type": "string", "minLength": 1 } },
+          "required": ["action"],
+          "additionalProperties": false
+        },
+        "details": {
+          "type": "object",
+          "propertyNames": { "type": "string" },
+          "additionalProperties": {}
+        }
+      },
+      "required": ["code", "category", "message", "retryable", "remediation"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "const": "artifact_changed" },
+        "category": {
+          "type": "string",
+          "enum": [
+            "invalid_input",
+            "unsupported_provider",
+            "integrity_mismatch",
+            "truncated",
+            "cancelled",
+            "timeout",
+            "unavailable",
+            "execution_failure"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "remediation": {
+          "type": "object",
+          "properties": { "action": { "type": "string", "minLength": 1 } },
+          "required": ["action"],
+          "additionalProperties": false
+        },
+        "details": {
+          "type": "object",
+          "propertyNames": { "type": "string" },
+          "additionalProperties": {}
+        }
+      },
+      "required": ["code", "category", "message", "retryable", "remediation"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
         "code": { "type": "string", "const": "unreadable_output" },
         "category": {
           "type": "string",

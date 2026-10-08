@@ -14,7 +14,7 @@ import { mcpProgressReporter } from "./mcpProgress.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { toCallToolResult } from "./toolResult.js";
-import { createArtifactExtractionDestination } from "../application/ArtifactExtractionDestination.js";
+import { createArtifactExtractionDestination } from "../application/artifacts/ArtifactExtractionDestination.js";
 
 interface EvidenceToolRegistration {
   readonly logger: Logger;

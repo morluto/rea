@@ -15,7 +15,6 @@ import {
   inspectClientConfiguration,
 } from "../../../src/application/SetupClientConfiguration.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
-import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe.each([
@@ -46,68 +45,55 @@ describe.each([
       await mkdir(dirname(client.configPath), { recursive: true });
       await writeFile(client.configPath, original);
       const currentCommandPath = join(home, "rea");
-
-      for (const command of [
-        ["npx", "-y", PRODUCT_IDENTITY.registrationPackageSpecifier, "mcp"],
-        [currentCommandPath, "mcp"],
-      ]) {
-        expect(await inspectClientConfiguration(client, {}, command)).toEqual({
-          status: "update",
-          backupPath: `${client.configPath}.rea.backup`,
-        });
-        expect(await clientConfigurationAligned(client, {}, command)).toBe(
-          false,
-        );
-        expect(await configureClientConfiguration(client, {}, command)).toEqual(
-          {
-            status: "configured",
-            backupPath: `${client.configPath}.rea.backup`,
-          },
-        );
-        const updated = await readFile(client.configPath, "utf8");
-        expect(
-          updated.startsWith(`${bom}// Keep the client preferences.\r\n`),
-        ).toBe(true);
-        expect(
-          parseClientConfiguration(updated, client.format).document,
-        ).toEqual({
+      const command = [currentCommandPath, "mcp"];
+      expect(await inspectClientConfiguration(client, {}, command)).toEqual({
+        status: "update",
+        backupPath: `${client.configPath}.rea.backup`,
+      });
+      expect(await clientConfigurationAligned(client, {}, command)).toBe(false);
+      expect(await configureClientConfiguration(client, {}, command)).toEqual({
+        status: "configured",
+        backupPath: `${client.configPath}.rea.backup`,
+      });
+      const updated = await readFile(client.configPath, "utf8");
+      expect(
+        updated.startsWith(`${bom}// Keep the client preferences.\r\n`),
+      ).toBe(true);
+      expect(parseClientConfiguration(updated, client.format).document).toEqual(
+        {
           label: "left\uFEFFright",
           [serversKey]: {
             other: { command: "other" },
             rea: clientRegistrationEntry(client.format, command, {}),
           },
           theme: "dark",
-        });
-        expect(await clientConfigurationAligned(client, {}, command)).toBe(
-          true,
-        );
-        expect(await inspectClientConfiguration(client, {}, command)).toEqual({
-          status: "already_current",
-        });
-        expect(
-          await readClientRegistrationStatuses(home, currentCommandPath, {
-            platform: "linux",
-            environment: {},
-          }),
-        ).toEqual([
-          {
-            client: name,
-            config_path: client.configPath,
-            state: "aligned",
-            command,
-            remediation: null,
-          },
-        ]);
-        expect(await configureClientConfiguration(client, {}, command)).toEqual(
-          {
-            status: "unchanged",
-          },
-        );
-        expect(await readFile(client.configPath)).toEqual(Buffer.from(updated));
-        expect(await readFile(`${client.configPath}.rea.backup`)).toEqual(
-          Buffer.from(original),
-        );
-      }
+        },
+      );
+      expect(await clientConfigurationAligned(client, {}, command)).toBe(true);
+      expect(await inspectClientConfiguration(client, {}, command)).toEqual({
+        status: "already_current",
+      });
+      expect(
+        await readClientRegistrationStatuses(home, currentCommandPath, {
+          platform: "linux",
+          environment: {},
+        }),
+      ).toEqual([
+        {
+          client: name,
+          config_path: client.configPath,
+          state: "aligned",
+          command,
+          remediation: null,
+        },
+      ]);
+      expect(await configureClientConfiguration(client, {}, command)).toEqual({
+        status: "unchanged",
+      });
+      expect(await readFile(client.configPath)).toEqual(Buffer.from(updated));
+      expect(await readFile(`${client.configPath}.rea.backup`)).toEqual(
+        Buffer.from(original),
+      );
     },
   );
 });

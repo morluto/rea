@@ -32,6 +32,8 @@ const generic = <Code extends string>(code: Code) =>
 /** Stable discriminated schema shared by every CLI and MCP error surface. */
 export const analysisErrorProjectionSchema = z.discriminatedUnion("code", [
   generic("invalid_request"),
+  generic("access_denied"),
+  generic("artifact_changed"),
   generic("unreadable_output"),
   generic("capability_unavailable"),
   generic("provider_unavailable"),

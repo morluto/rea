@@ -3,6 +3,8 @@
 This guide describes repository main. npm 4.1.0 includes the Windows
 native bundle; check the [release boundary](installation.md#released-package-and-main)
 before applying these instructions to an older published package.
+Native x86 (32-bit) PE support is available on repository main; npm releases
+through 5.0.0 admit x86-64 PE targets on Windows.
 
 Status: experimental Windows x64 support for the read-only P0 boundary. Windows
 package builds bundle native process, filesystem, and DACL controls. REA
@@ -15,7 +17,7 @@ additional permission flag or degraded mode is required.
 - Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+;
 - an operator-installed Ghidra 12.1.x distribution (verified with 12.1.4);
 - a 64-bit full JDK inside that installation's declared Java range (JDK 21 or newer, with no maximum, for current 12.1 releases);
-- an explicit native, non-managed, non-DLL x86-64 PE application; and
+- an explicit native, non-managed, non-DLL x86 or x86-64 PE application; and
 - the 25 read-only Ghidra inventory, memory, and function-analysis operations.
 
 Loaded memory reads and file offsets preserve Ghidra's observed source mappings.
@@ -98,7 +100,7 @@ and artifact SHA-256 before loading the package-owned addon. Native failure
 reasons remain distinct from a valid installation and an unsupported target.
 
 PE header classification and SHA-256 come from the same open file. The Windows
-provider admits native x86-64 PE applications and rejects unsupported roles,
+provider admits native x86 and x86-64 PE applications and rejects unsupported roles,
 architectures, managed images, and malformed headers. The original selected
 source coordinate is preserved for native admission.
 
@@ -156,6 +158,8 @@ artifact and manifest.
 ```powershell
 npm run verify:windows-native
 npm run verify:ghidra:windows
+npm run verify:ghidra:windows -- --x86
+npm run verify:ghidra:windows:package -- --x86
 npm run verify:ghidra:windows:package -- C:\fixtures\installed-rea C:\fixtures\sample.exe
 ```
 

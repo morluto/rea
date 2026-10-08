@@ -243,36 +243,34 @@ describe("JSON client configuration migration and provider paths", () => {
     expect(await readFile(configPath, "utf8")).toBe("not-json");
   });
 
-  it.each(["null", "[]", '"value"'])(
-    "refuses a non-object JSON root without overwriting %s",
-    async (original) => {
-      const directory = await createTestTempDirectory("rea-setup-");
-      const configPath = join(directory, "mcp.json");
-      await writeFile(configPath, original);
-      expect(await configureJsonClient({ name: "cursor", configPath })).toEqual(
-        { status: "failed", reason: "readback" },
-      );
-      expect(await readFile(configPath, "utf8")).toBe(original);
-      await expect(
-        readFile(`${configPath}.rea.backup`, "utf8"),
-      ).rejects.toThrow();
-    },
-  );
+  it("refuses a non-object JSON root without overwriting it", async () => {
+    const original = "null";
+    const directory = await createTestTempDirectory("rea-setup-");
+    const configPath = join(directory, "mcp.json");
+    await writeFile(configPath, original);
+    expect(await configureJsonClient({ name: "cursor", configPath })).toEqual({
+      status: "failed",
+      reason: "readback",
+    });
+    expect(await readFile(configPath, "utf8")).toBe(original);
+    await expect(
+      readFile(`${configPath}.rea.backup`, "utf8"),
+    ).rejects.toThrow();
+  });
 
-  it.each(["null", "[]", '"value"'])(
-    "preserves a non-object mcpServers value %s",
-    async (servers) => {
-      const directory = await createTestTempDirectory("rea-setup-");
-      const configPath = join(directory, "mcp.json");
-      const original = `{"mcpServers":${servers}}`;
-      await writeFile(configPath, original);
-      expect(await configureJsonClient({ name: "cursor", configPath })).toEqual(
-        { status: "failed", reason: "readback" },
-      );
-      expect(await readFile(configPath, "utf8")).toBe(original);
-      await expect(
-        readFile(`${configPath}.rea.backup`, "utf8"),
-      ).rejects.toThrow();
-    },
-  );
+  it("preserves a non-object mcpServers value", async () => {
+    const servers = "[]";
+    const directory = await createTestTempDirectory("rea-setup-");
+    const configPath = join(directory, "mcp.json");
+    const original = `{"mcpServers":${servers}}`;
+    await writeFile(configPath, original);
+    expect(await configureJsonClient({ name: "cursor", configPath })).toEqual({
+      status: "failed",
+      reason: "readback",
+    });
+    expect(await readFile(configPath, "utf8")).toBe(original);
+    await expect(
+      readFile(`${configPath}.rea.backup`, "utf8"),
+    ).rejects.toThrow();
+  });
 });

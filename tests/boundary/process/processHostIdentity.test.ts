@@ -1,10 +1,12 @@
 import { expect, it } from "vitest";
 
-import { parseProcessScenario } from "../../../src/domain/processScenario.js";
+import { parseProcessScenario } from "../../../src/domain/process/processScenario.js";
 import {
   createRunManifest,
+  observeLaunchedExecutable,
+  observeSelectedExecutable,
   observeSettlement,
-} from "../../../src/application/ProcessCaptureLifecycle.js";
+} from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 
 it("uses one selected host identity for manifest and settlement", async () => {
   const scenario = parseProcessScenario({
@@ -16,10 +18,14 @@ it("uses one selected host identity for manifest and settlement", async () => {
     platform: "win32" as const,
     architecture: "arm64" as const,
   };
+  const selectedExecutable = await observeSelectedExecutable(
+    scenario.executable,
+  );
   const manifest = await createRunManifest(
     scenario,
     new Date(0),
     new Date(1),
+    observeLaunchedExecutable(scenario.executable, selectedExecutable),
     selectedHost,
   );
   const settlement = await observeSettlement(

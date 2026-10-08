@@ -167,7 +167,7 @@ Firmware region inspection and explicit extraction use caller-supplied Binwalk a
 
 Static APK analysis uses a separately supplied headless JADX JAR and a full JDK, with no emulator or APK execution. See [Android analysis](docs/android-analysis.md) for setup, CLI/MCP operations, coverage and public test fixtures. Authenticated IPA and macOS `.app`, ZIP, or DMG inventory Evidence can be projected into bundle anatomy, such as XPC services, app extensions, login items, privileged helpers, and launchd plists, with [Apple application analysis](docs/apple-application-analysis.md).
 
-Repository main and npm 4.1.0 include experimental Windows x64 Ghidra support for native x86-64 PE applications on local NTFS, with bundled Job Object, private-DACL, and path-admission controls. Check the [release boundary](docs/installation.md#released-package-and-main) before expecting this from an older npm package. See [Windows Ghidra P0](docs/windows-ghidra-p0.md) for prerequisites and verified scope.
+Repository main includes experimental Windows x64 Ghidra support for native x86 and x86-64 PE applications on local NTFS, with bundled Job Object, private-DACL, and path-admission controls. Native x86 support requires the main implementation until its next npm release; published versions through 5.0.0 admit x86-64 targets. Check the [release boundary](docs/installation.md#released-package-and-main) before choosing a package version. See [Windows Ghidra P0](docs/windows-ghidra-p0.md) for prerequisites and verified scope.
 
 If something is not working, run:
 
@@ -226,7 +226,7 @@ Ghidra also imports DOS MZ executables with an explicit 16-bit x86 real-mode pro
 See [optional NativeAOT metadata recovery](docs/ghidra-nativeaot.md) for the pinned
 headless adapter, supported layout and existing native-tool workflow.
 
-Windows Ghidra P0 uses bundled native controls for its read-only native x86-64 PE boundary on local NTFS; see the [Windows Ghidra P0 guide](docs/windows-ghidra-p0.md). See [Ghidra installation](docs/installation.md#ghidra), [provider evaluation](docs/provider-evaluation.md), and [testing](docs/testing.md) for configuration details, coverage, and real-provider verification.
+Windows Ghidra P0 uses bundled native controls for its read-only native x86 and x86-64 PE boundary on local NTFS; see the [Windows Ghidra P0 guide](docs/windows-ghidra-p0.md). See [Ghidra installation](docs/installation.md#ghidra), [provider evaluation](docs/provider-evaluation.md), and [testing](docs/testing.md) for configuration details, coverage, and real-provider verification.
 
 To remove only REA-owned MCP registrations and the managed skill:
 
@@ -410,7 +410,7 @@ See [native investigation](docs/native-investigation.md) for keyed archives, ins
 | Managed PE/CLI            |     7 | .NET identity, metadata, CIL instructions, native dependencies, reconstruction imports, and build comparisons                                                                                            |
 | Firmware                  |     2 | Linux firmware region inspection and explicit extraction                                                                                                                                                 |
 | Android APK               |     5 | package and manifest declarations, class search, member inventories, method decompilation, and incoming static references                                                                                |
-| Browser observation       |    11 | page structure, network metadata, scripts, source maps, WebMCP discovery, screenshots, and capture comparisons                                                                                           |
+| Browser observation       |    12 | page structure, network metadata, scripts, source maps, WebMCP discovery, screenshots, and capture comparisons                                                                                           |
 | Electron analysis         |     5 | renderer observation, static app mapping, and static/runtime reconciliation                                                                                                                              |
 | JavaScript runtime        |     2 | Node/Electron Inspector target discovery, script locations, and execution-context events                                                                                                                 |
 | Application workflows     |    13 | captured website script export; Android/Apple inventory projections; cross-layer feature traces, build comparisons, historical source mapping, static return-shape comparison, and reconstruction checks |
@@ -460,7 +460,7 @@ Static Android APK inspection supports Linux and macOS; the current metadata bri
 - **Open questions:** Track unresolved findings, contradictions, and follow-up probes. Reconstruction checks report pass, fail, or unknown rather than treating missing evidence as a pass.
 - **Guided workflows:** Start six [MCP investigation workflows](docs/mcp-prompts.md) with suggestions based on your current session.
 
-Windows x64 Ghidra P0 supports native, non-managed, non-DLL x86-64 PE applications on fixed local NTFS with 25 read-only operations. Linux/macOS Ghidra additionally supports atomic session-scoped function names and entry comments. Ghidra has no GUI controls; Windows P0 has no mutation authority.
+Windows x64 Ghidra P0 supports native, non-managed, non-DLL x86 and x86-64 PE applications on fixed local NTFS with 25 read-only operations. Linux/macOS Ghidra additionally supports atomic session-scoped function names and entry comments. Ghidra has no GUI controls; Windows P0 has no mutation authority.
 
 ### Website observation with CDP
 
@@ -472,6 +472,14 @@ rea inspect-web-page http://127.0.0.1:9222 TARGET_ID --json
 ```
 
 The eight passive browser tools work through both CLI and MCP. They inspect the selected page without navigating, clicking, or evaluating its JavaScript. Credentials, cookies, authorization headers, and raw payload values are not retained. A request selects whether to include script sources, accessibility text, screenshots, or console and payload summaries. REA cannot observe activity that happened before it attached. See [browser observation](docs/browser-observation.md) for browser startup, capture options, and limits.
+
+### Historical web network captures
+
+For retained HAR or native mitmproxy evidence, use `inspect_web_network_capture`
+or `inspect-web-network-capture`. It runs offline, preserves producer identities
+and exposed bytes, and does not invent live attribution. See
+[historical web network captures](docs/web-network-captures.md) for upstream
+profiles, caller-selected records and credential exclusions.
 
 ### Controlled browser scenarios
 
@@ -553,7 +561,7 @@ Setup offers supported agent integrations for selection. Existing REA registrati
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@4.1.0", "mcp"]
+      "args": ["-y", "rea-agents@5.0.0", "mcp"]
     }
   }
 }
@@ -658,7 +666,7 @@ Use `--provider`, or `provider_id` in MCP, to choose Hopper, Ghidra, or IDA for 
 
 With `auto`, REA selects the only available tool that supports the target. If both are available, specify one before opening the target. The session keeps that choice until you explicitly switch or close it; a failure never silently switches tools. Artifact-only analysis can work without a native analysis tool.
 
-Run `rea providers` and `rea capabilities` to check availability and supported operations. Ghidra supports inspection and atomic function annotation edits on Linux and macOS. Its database edits are discarded on close; GUI controls require Hopper. Windows Ghidra P0 supports read-only analysis of native x86-64 PE applications on local NTFS with bundled native controls.
+Run `rea providers` and `rea capabilities` to check availability and supported operations. Ghidra supports inspection and atomic function annotation edits on Linux and macOS. Its database edits are discarded on close; GUI controls require Hopper. Windows Ghidra P0 supports read-only analysis of native x86 and x86-64 PE applications on local NTFS with bundled native controls.
 
 The session also reports active work and cleanup status. If a caller times out, the analysis tool may still be busy; `analysis_activity` reports that state. A `cleanup_incomplete` result identifies resources whose shutdown or removal could not be verified. See [provider selection and analysis profiles](docs/adr/0001-provider-selection-and-analysis-profiles.md) for session, cache, and process-tracking details.
 
@@ -743,7 +751,7 @@ Analysis runs locally. REA communicates with Hopper and Ghidra through authentic
 
 Runtime requests act on the declared target and lifecycle. Analysis tools and launched targets run with your user permissions, and native UI capture still depends on macOS Accessibility and Screen Recording access. Static JavaScript analysis does not execute extracted modules; use direct browser, Electron, or process capture when runtime behavior is needed.
 
-Windows Ghidra P0 automatically uses native Job Objects, protected private-runtime DACLs, and handle-based admission. Its experimental scope is native x86-64 PE applications on local NTFS. Report vulnerabilities through the private process in [SECURITY.md](SECURITY.md).
+Windows Ghidra P0 automatically uses native Job Objects, protected private-runtime DACLs, and handle-based admission. Its experimental scope is native x86 and x86-64 PE applications on local NTFS. Report vulnerabilities through the private process in [SECURITY.md](SECURITY.md).
 
 ## FAQ
 

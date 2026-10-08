@@ -12,7 +12,18 @@ afterEach(closeEnhancedToolResources);
 
 describe("enhanced MCP tools", () => {
   it("returns Evidence IDs and a complete call path", async () => {
-    const client = await connect();
+    const client = await connect({
+      execute: async (_name, arguments_) => {
+        const procedure = arguments_.procedure;
+        return ok(
+          procedure === "0x1"
+            ? ["0x2", "0x3"]
+            : procedure === "0x2"
+              ? ["0x1"]
+              : [],
+        );
+      },
+    });
     const result = await client.callTool({
       name: "trace_call_path",
       arguments: {

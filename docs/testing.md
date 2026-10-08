@@ -6,10 +6,27 @@ from real captured inputs. Keep focused module tests for distinct failure or
 semantic cases that these workflows cannot reliably reproduce. A test's path
 or suite name does not establish its behavioral depth.
 
+Avoid tests that mirror getters, enum mappings, fixture helpers, or prescribed
+call sequences. Prefer one representative workflow over a Cartesian matrix
+when every row crosses the same boundary. Keep distinct command handlers,
+producer representations, failure reasons, and lifecycle states covered.
+Consolidate their shared setup without hiding the inputs or expected evidence.
+
 Tests are grouped into Vitest projects so ownership, allowed dependencies and
-runtime cost are visible from their paths. Before pruning a test, identify the
-replacement scenario and its assertions; passing success journeys do not
-replace malformed input, cancellation, permission or cleanup coverage.
+runtime cost are visible from their paths. Before pruning a distinct boundary
+regression, identify the replacement scenario and its assertions; passing
+success journeys do not replace malformed input, cancellation, permission or
+cleanup coverage. Trivial helper checks do not need a replacement. If only
+tests consume a production module, trace CLI/MCP and verifier imports,
+including imports of compiled files, and remove abandoned scaffolding with its
+tests when it has no runtime consumer.
+
+Measure slow files before removing capacity regressions. Optimize repeated
+process startup, fixture construction, and production algorithms when they
+dominate runtime. Keep at least one input beyond each formerly failing size or
+depth; smaller fixtures do not establish that truncation or stack exhaustion
+has been fixed. Record the toolchain, coverage mode, and cache conditions when
+comparing durations.
 
 ## Behavioral depths
 
@@ -103,6 +120,15 @@ names remain unchanged.
 The existing Apple CI job also runs the host Swift-demangling CLI/MCP regression
 suites, including option-like symbols, carriage returns and multiline rejection.
 
+Process semantics/tests live in `src/domain/process/`; PTY capture implementation
+and forked helper tests live in `src/process/capture/`. Evidence projection and
+file workflows live in `src/application/process/`; producer-backed Evidence/host
+cases run in the serial `tests/boundary/process/` lane. Installed-package probes
+load the compiled capture capability owner, including the missing-optional-module
+case. Real capture tests preserve actual descendant and cleanup checks.
+The existing Apple job also exercises the relocated filesystem snapshot identity,
+cancellation and descriptor cleanup regressions on macOS.
+
 MCP SDK transport tests with recording providers remain integration tests.
 They are useful for schema drift and failure projection but do not prove that
 Hopper, Ghidra or another substituted engine works. `verify:package` proves
@@ -171,7 +197,7 @@ prove behavior on the verified Ghidra 12.1.4 and JDK 21 build.
 | `npm run verify:ghidra:switch`             | Linux x64 ELF; GCC/Clang optimized and stripped switch fixtures                    | GCC, Clang, GNU nm/objdump/strip, Ghidra 12.1.4, and full JDK 21    |
 | `npm run verify:ghidra:aarch64-jump-table` | Any supported Ghidra host; AArch64 ELF; byte/halfword tables; host ARM64 Mach-O    | Clang with AArch64 target support, Ghidra 12.1.4, and full JDK 21   |
 | `npm run verify:ghidra:cross-format`       | Any supported Ghidra host; also analyzes AArch64 ELF, x86-64 PE, and x86-64 Mach-O | `clang`, LLD, and `lld-link` in addition to host-lane prerequisites |
-| `npm run verify:ghidra:windows`            | Controlled Windows x64 with native x86-64 PE                                       | Ghidra 12.1.4, full JDK 21, and the matching native artifact        |
+| `npm run verify:ghidra:windows`            | Controlled Windows x64 with native x86-64 PE; `-- --x86` selects native x86 PE     | Ghidra 12.1.4, full JDK 21, and the matching native artifact        |
 
 Windows native conformance runs with `npm run verify:windows-native` and does
 not require Ghidra or Java. An optional independently compiled Windows fixture
@@ -551,6 +577,18 @@ checks an installed package after building the verifier dependencies. The separa
 conditional `real-web-source-map` CI job supplies Chrome and an isolated pinned
 fixture compiler; static/unit checks do not acquire a browser. See
 [the source location guide](web-source-location.md) for the verified decoder profile.
+
+### JavaScript large-output lane
+
+`npm run verify:javascript:output` exercises the CLI JSON result surface beyond
+the running Node engine's single-string limit. Shared input leaves keep the
+fixture's graph small; the verifier writes one temporary output file, checks its
+complete byte count and an independent digest, then removes it. It requires only
+Node and the built REA runtime, with space for the output plus a 1 GiB reserve.
+Run `npm run verify:javascript:output -- jsonl` for compact JSONL coverage. This
+opt-in lane is separate from routine tests and the canonical hash check
+`npm run verify:javascript:digests`. It verifies serialization rather than an
+arbitrary third-party application's parsing cost or MCP client capacity.
 
 ### Website runtime attribution lane
 

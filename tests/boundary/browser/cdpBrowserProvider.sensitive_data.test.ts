@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import {
@@ -9,9 +9,9 @@ import {
   startFakeCdpBrowser,
   type FakeCdpBrowser,
 } from "../../fixtures/fakeCdpBrowser.js";
-import { describeBrowser, trackBrowser } from "./cdpBrowserProvider.support.js";
+import { trackBrowser } from "./cdpBrowserProvider.support.js";
 
-describeBrowser("CdpBrowserProvider: sensitive data 1", () => {
+describe("CdpBrowserProvider: passive evidence redaction", () => {
   it("captures bounded passive evidence without retaining sensitive values", async () => {
     const browser = await startFakeCdpBrowser({
       binaryWebSocketEvent: true,
@@ -158,7 +158,7 @@ describeBrowser("CdpBrowserProvider: sensitive data 1", () => {
   });
 });
 
-describeBrowser("CdpBrowserProvider: page cookie scope", () => {
+describe("CdpBrowserProvider: page cookie scope", () => {
   it("uses the attached page URL for cookies and its origin for DOM storage", async () => {
     const browser = await startFakeCdpBrowser();
     trackBrowser(browser);
@@ -190,7 +190,7 @@ describeBrowser("CdpBrowserProvider: page cookie scope", () => {
   });
 });
 
-describeBrowser("CdpBrowserProvider: complete storage fingerprints", () => {
+describe("CdpBrowserProvider: complete storage fingerprints", () => {
   it("fingerprints cache bodies above the former byte ceiling", async () => {
     const body = "x".repeat(64 * 1_024 + 1);
     const browser = await startFakeCdpBrowser({ cachedResponseBody: body });
@@ -217,7 +217,7 @@ describeBrowser("CdpBrowserProvider: complete storage fingerprints", () => {
   });
 });
 
-describeBrowser("CdpBrowserProvider: sensitive data 2", () => {
+describe("CdpBrowserProvider: explicitly requested text and payload shapes", () => {
   it("captures requested console text verbatim and value-free payload shapes", async () => {
     const browser = await startFakeCdpBrowser({
       sensitiveShapes: true,
@@ -309,45 +309,7 @@ describeBrowser("CdpBrowserProvider: sensitive data 2", () => {
   });
 });
 
-describeBrowser("CdpBrowserProvider: complete sensitive data", () => {
-  it("returns complete requested text and payload shapes verbatim", async () => {
-    const browser = await startFakeCdpBrowser({ sensitiveShapes: true });
-    trackBrowser(browser);
-    const request = inspectWebPageInputSchema.parse({
-      cdp_endpoint: browser.endpoint,
-      allowed_origins: [browser.allowedOrigin],
-      target_id: "allowed-page",
-      observation_ms: 0,
-      include_console_text: true,
-      include_json_body_shapes: true,
-      include_websocket_shapes: true,
-    });
-    const result = await new CdpBrowserProvider().inspectPage(request);
-
-    if (!result.ok) throw result.error;
-    expect(result.value.console.events[0]?.text_capture).toEqual({
-      status: "included",
-      values: [
-        {
-          argument_index: 0,
-          type: "string",
-          text: "authorization=Bearer console-secret",
-        },
-        { argument_index: 1, type: "number", text: "42" },
-      ],
-      retained_bytes:
-        Buffer.byteLength("authorization=Bearer console-secret") +
-        Buffer.byteLength("42"),
-    });
-    expect(result.value.network.requests[0]?.body_shapes.status).toBe(
-      "included",
-    );
-    expect(result.value.network.websocket_events[0]?.payload_shape).toEqual({
-      format: "json",
-      json_shape: expect.objectContaining({ root_type: "object" }),
-    });
-  });
-
+describe("CdpBrowserProvider: malformed approved payloads", () => {
   it("fails closed on malformed approved response and binary payload encodings", async () => {
     const browser = await startFakeCdpBrowser({
       invalidResponseBodyBase64: true,

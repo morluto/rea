@@ -385,6 +385,30 @@ claims. Actual Swift/Xcode, assetutil, native NIB, bundle signing and DMG lifecy
 claims require the real Apple lane. Native binary API/value-flow semantics and
 shared cross-domain contract aggregates keep their separate owners.
 
+## Artifact inventory and extraction ownership
+
+`src/artifacts/inventory/` owns format classification, reader selection, inventory
+policy, canonical scanning and artifact graph construction. The shared artifact
+provider and JavaScript reconstruction workflow consume this owner. Snapshot
+semantics remain in `src/domain/artifactInventorySnapshot.ts`.
+
+`src/artifacts/extraction/` owns member selection, integrity checks and transactional
+materialization through the existing readers and safe output tree. Reader cleanup,
+cancellation, rollback, archive containment and caller-visible results retain their
+existing behavior. Acquisition guards reject imports from these producer owners
+into application workflows, production composition or CLI/MCP adapters.
+
+`src/application/artifacts/ArtifactExtractionDestination.ts` owns the caller's
+default temporary output-root choice for both CLI and MCP. The adapters pass this
+destination to the existing provider operation; format handling and member writes
+remain in the artifact owner.
+
+Add format-specific acquisition behavior beside the inventory readers and exercise
+its actual producer representation in filesystem boundary tests. Add caller
+workflow behavior in the application owner and verify both adapters. The installed
+package lane checks inventory identity and extraction through CLI and MCP; the
+real Apple bundle lane separately establishes DMG mount and detach behavior.
+
 ## Binary production composition closure
 
 `src/composition/binary.ts` is the shared production owner for deep candidate
@@ -425,3 +449,29 @@ native-value verifier locations are retained until their own proof lanes migrate
 interactive macOS UI success and real dependency tracing require their respective
 host/engine workflows. Portable source fixtures and injected call-route tests
 establish their narrower boundaries, without expanding provider/platform support.
+
+## Process capture and analyst workflow ownership
+
+`src/domain/process/` owns scenario/capture validation, portable process trees,
+trace specifications, observations, comparisons and the canonical process Evidence
+identity. The standalone contract example lives in `src/contracts/process/`;
+shared session contracts retain their broader investigation owner.
+
+`src/process/capture/` owns the actual PTY boundary, terminal rendering, sampling,
+selected child environment, filesystem snapshots/effects, runtime path admission,
+event journal, settlement and resource cleanup. It reuses `src/process/` ownership
+primitives and the Windows host substrate. Its identity import follows the
+existing pure declaration directly. A source guard rejects outward application,
+composition and caller imports; no new provider or lifecycle interface is added.
+
+`src/application/process/` retains Evidence projection and file-backed CLI
+capture/comparison workflows. Capture helper tests use the forked adapter lane;
+Evidence/host integration tests use the serial process-boundary lane. Their
+fixtures and assertions remain unchanged. Installed capability-probe URLs follow
+the new compiled adapter path, including the optional-dependency failure probe.
+
+Windows PTY capture retains its existing unavailable outcome because descendant
+cleanup is not yet verified. Native Job Objects and a PTY binary do not establish
+that capture workflow. Real POSIX capture/cleanup and installed terminal/PTY module
+resolution require their actual host and package lanes; portable comparison
+fixtures establish their separate evidence semantics.

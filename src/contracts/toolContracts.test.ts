@@ -17,6 +17,7 @@ import { APPLICATION_TOOL_CONTRACTS } from "./applicationToolContracts.js";
 import { JAVASCRIPT_RECOVERY_TOOL_CONTRACTS } from "./javascript/javascriptRecoveryToolContracts.js";
 import { WEB_SCRIPT_TOOL_CONTRACTS } from "./webScriptToolContracts.js";
 import { WEB_RUNTIME_TOOL_CONTRACTS } from "./webRuntimeToolContracts.js";
+import { WEB_NETWORK_CAPTURE_TOOL_CONTRACTS } from "./webNetworkCaptureToolContracts.js";
 
 const GROUPS = {
   official: OFFICIAL_TOOL_CONTRACTS,
@@ -34,6 +35,7 @@ const GROUPS = {
   javascript_recovery: JAVASCRIPT_RECOVERY_TOOL_CONTRACTS,
   web_script_export: WEB_SCRIPT_TOOL_CONTRACTS,
   web_runtime: WEB_RUNTIME_TOOL_CONTRACTS,
+  web_network_capture: WEB_NETWORK_CAPTURE_TOOL_CONTRACTS,
   session: SESSION_TOOL_CONTRACTS,
 } as const;
 

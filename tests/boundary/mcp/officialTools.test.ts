@@ -1,5 +1,4 @@
-import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
-import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -10,52 +9,6 @@ import { err } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { createServer } from "../../../src/server/createServer.js";
-
-const VALID_INPUTS: Readonly<
-  Record<string, Readonly<Record<string, JsonValue>>>
-> = {
-  annotate_native_function: { procedure: "0x1000", name: "entry" },
-  inspect_native_load_image: {},
-  address_name: {},
-  inspect_native_instruction: { address: "0x1000" },
-  resolve_native_call_targets: { address: "0x1000" },
-  inspect_native_data_type: { type: "/Missing" },
-  comment: {},
-  current_address: {},
-  current_procedure: {},
-  current_document: {},
-  goto_address: { address: "0x1000" },
-  inline_comment: {},
-  list_bookmarks: {},
-  list_documents: {},
-  list_names: {},
-  list_procedures: {},
-  list_segments: {},
-  list_strings: {},
-  next_address: {},
-  prev_address: {},
-  procedure_address: { procedure: "main" },
-  procedure_assembly: { procedure: "main" },
-  procedure_callees: { procedure: "main" },
-  procedure_callers: { procedure: "main" },
-  procedure_info: { procedure: "main" },
-  read_function_instructions: { procedure: "main" },
-  read_bytes: { address: "0x1000", length: 4 },
-  address_to_file_offset: { address: "0x1000" },
-  procedure_references: { procedure: "main" },
-  procedure_pseudo_code: { procedure: "main" },
-  resolve_containing_procedure: { address: "0x1000" },
-  search_procedures: { pattern: "main" },
-  search_strings: { pattern: "hello" },
-  set_address_name: { address: "0x1000", name: "entry" },
-  set_addresses_names: { names: { "0x1000": "entry" } },
-  set_bookmark: { address: "0x1000" },
-  set_comment: { address: "0x1000", comment: "entry point" },
-  set_current_document: { document: "fixture" },
-  set_inline_comment: { address: "0x1000", comment: "entry point" },
-  unset_bookmark: { address: "0x1000" },
-  xrefs: {},
-};
 
 interface Invocation {
   readonly name: string;
@@ -128,204 +81,54 @@ const connect = async (analysis: AnalysisOperationPort) => {
   return client;
 };
 
-const inventory: JsonValue = [];
-
-const outputFor = (name: string): JsonValue => {
-  if (name === "annotate_native_function") {
-    const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
-    return {
-      annotations: {
-        address: dossier.procedure.address,
-        name: dossier.procedure.name,
-        comment: null,
-        inline_comment: null,
-      },
-      dossier,
-      effects: {
-        scope: "session-analysis-database",
-        source_bytes_modified: false,
-        persists_after_close: false,
-      },
-    };
-  }
-  if (name === "inspect_native_load_image")
-    return {
-      status: "unsupported",
-      reason: "Fixture provider has no load-image verifier",
-      observations: {
-        executable_format: "ELF",
-        language_id: "x86:LE:64:default",
-        compiler_spec_id: "gcc",
-        image_base: "0x0",
-        default_address_space: "ram",
-        source_files: [],
-        mappings: [],
-        relocations: [],
-        entry_context: [],
-        entry_points: [],
-      },
-      limitations: ["Transport fixture only"],
-    };
-  if (name === "inspect_native_instruction")
-    return {
-      address: "0x1000",
-      status: "decoded",
-      procedure: "0x1000",
-      architecture: "x86:LE:64:default",
-      mode: "default",
-      bytes: "c3",
-      length: 1,
-      mnemonic: "RET",
-      raw_disassembly: "RET",
-      operands: [],
-      flow: {
-        kind: "terminal",
-        conditional: false,
-        computed: false,
-        direct_destinations: [],
-      },
-      references: [],
-      limitations: ["Provider decoder observation"],
-    };
-  if (name === "resolve_native_call_targets")
-    return {
-      call_site: "0x1000",
-      procedure: "0x1000",
-      status: "not-call",
-      mechanism: "unavailable",
-      targets: [],
-      limitations: [],
-    };
-  if (name === "inspect_native_data_type")
-    return {
-      status: "unavailable",
-      reason: "Type absent",
-      id: null,
-      name: null,
-      kind: "unavailable",
-      source: "analysis-database",
-      source_archive: null,
-      address: null,
-      size_bytes: null,
-      alignment_bytes: null,
-      packing_enabled: null,
-      referenced_type: null,
-      array_count: null,
-      array_stride_bytes: null,
-      fields: [],
-      members: [],
-      total_fields: 0,
-      truncated: false,
-      limitations: [],
-    };
-  if (["list_procedures", "list_names", "list_strings"].includes(name))
-    return inventory;
-  if (["address_name", "comment", "inline_comment"].includes(name)) return null;
-  if (["procedure_callees", "procedure_callers", "xrefs"].includes(name))
-    return [];
-  if (["list_bookmarks", "list_documents", "list_segments"].includes(name))
-    return [];
-  if (
-    [
-      "set_address_name",
-      "set_bookmark",
-      "set_comment",
-      "set_inline_comment",
-      "unset_bookmark",
-    ].includes(name)
-  )
-    return true;
-  if (name === "set_addresses_names") return { "0x1000": true };
-  if (["search_procedures", "search_strings"].includes(name)) return inventory;
-  if (name === "procedure_info")
-    return {
-      name: "main",
-      entrypoint: "0x1000",
-      basicblock_count: 1,
-      length: 4,
-      signature: null,
-      locals: [],
-    };
-  if (name === "resolve_containing_procedure")
-    return {
-      query_address: "0x1000",
-      found: true,
-      procedure: { address: "0x1000", name: "main" },
-    };
-  if (name === "read_function_instructions")
-    return {
-      procedure: { address: "0x1000", name: "main" },
-      instructions: ["0x1000: ret"],
-      limitations: ["Provider-specific instruction text."],
-    };
-  if (name === "read_bytes")
-    return {
-      address: "0x1000",
-      requested_bytes: 4,
-      returned_bytes: 4,
-      bytes_hex: "c3c3c3c3",
-      complete: true,
-    };
-  if (name === "address_to_file_offset")
-    return { address: "0x1000", file_offset: 0 };
-  if (name === "procedure_references")
-    return {
-      procedure: { address: "0x1000", name: "main" },
-      direction: "outgoing",
-      references: [],
-    };
-  return name.includes("address") ? "0x1000" : "fixture";
-};
-
-describe("official Hopper proxy tools", () => {
-  it("executes every handler and projects omitted Python optionals to null", async () => {
+describe("official tool input contracts", () => {
+  it("rejects misspelled top-level inputs before dispatch and keeps record keys open", async () => {
     const invocations: Invocation[] = [];
     const client = await connect({
       execute: (name, arguments_) => {
         invocations.push({ name, arguments_ });
-        return Promise.resolve(ok(outputFor(name)));
+        return Promise.resolve(ok(null));
       },
     });
-
+    const { tools } = await client.listTools();
+    const advertisedByName = new Map(tools.map((tool) => [tool.name, tool]));
     for (const contract of OFFICIAL_TOOL_CONTRACTS) {
-      const result = await client.callTool({
-        name: contract.name,
-        arguments: VALID_INPUTS[contract.name],
-      });
-      expect(result.isError).not.toBe(true);
+      expect(advertisedByName.get(contract.name)?.inputSchema).toHaveProperty(
+        "additionalProperties",
+        false,
+      );
     }
+    const advertised = tools.find(({ name }) => name === "address_name");
+    const recordTool = tools.find(({ name }) => name === "set_addresses_names");
+    if (advertised === undefined || recordTool === undefined)
+      throw new Error("Official tools were not advertised");
 
-    expect(
-      invocations.find(({ name }) => name === "annotate_native_function")
-        ?.arguments_,
-    ).toEqual({ procedure: "0x1000", name: "entry" });
-    expect(invocations.map(({ name }) => name)).toEqual(
-      OFFICIAL_TOOL_CONTRACTS.map(({ name }) => name),
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    const validateAddressName = ajv.compile(advertised.inputSchema);
+    const validateRecordInput = ajv.compile(recordTool.inputSchema);
+    const typoInput = { adress: "0x1234" };
+    expect(advertised.inputSchema).toHaveProperty(
+      "additionalProperties",
+      false,
     );
+    expect(validateAddressName(typoInput)).toBe(false);
     expect(
-      invocations.find(({ name }) => name === "address_name")?.arguments_,
-    ).toEqual({
-      document: null,
-      address: null,
-    });
-    expect(
-      invocations.find(({ name }) => name === "search_procedures")?.arguments_,
-    ).toEqual({
-      pattern: "main",
-      mode: "literal",
-      case_sensitive: false,
-      document: null,
-    });
-    expect(
-      invocations.find(({ name }) => name === "search_strings")?.arguments_,
-    ).toEqual({
-      pattern: "hello",
-      mode: "literal",
-      case_sensitive: false,
-      document: null,
-    });
-  });
+      OFFICIAL_TOOL_CONTRACTS.find(
+        ({ name }) => name === "address_name",
+      )?.inputSchema.safeParse(typoInput).success,
+    ).toBe(false);
+    expect(validateRecordInput({ names: { "0x1000": "entry" } })).toBe(true);
 
+    const result = await client.callTool({
+      name: "address_name",
+      arguments: typoInput,
+    });
+    expect(result.isError).toBe(true);
+    expect(invocations).toEqual([]);
+  });
+});
+
+describe("official Hopper proxy tools", () => {
   it("returns stable safe MCP error content", async () => {
     const client = await connect({
       execute: () => Promise.resolve(err(new HopperRemoteError(-1, "denied"))),
@@ -341,7 +144,7 @@ describe("official Hopper proxy tools", () => {
     });
   });
 
-  it("returns every procedure inline without caller-authored page calls", async () => {
+  it("binds list_procedures and projects its omitted Python document option", async () => {
     const invocations: Invocation[] = [];
     const client = await connect({
       execute: (name, arguments_) => {
@@ -367,6 +170,7 @@ describe("official Hopper proxy tools", () => {
       ],
     });
     expect(invocations).toHaveLength(1);
+    expect(invocations[0]?.name).toBe("list_procedures");
     expect(invocations[0]?.arguments_).toEqual({ document: null });
     expect(
       (await client.listTools()).tools.find(

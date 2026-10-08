@@ -7,19 +7,19 @@ import { functionComparisonResultSchema } from "./functionComparison.js";
 import {
   PROCESS_PROVIDER,
   isProcessEvidenceProvider,
-} from "./processEvidenceProvider.js";
+} from "./process/processEvidenceProvider.js";
 import {
   comparisonStatusSchema,
   deriveProcessComparisonStatus,
   PROCESS_COMPARISON_DIMENSIONS,
   processCaptureComparisonSchema,
-} from "./processCapture.js";
+} from "./process/processCapture.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 
 /** Input for aggregating existing comparison Evidence. */
-export const changedBehaviorInputSchema = z.object({
+export const changedBehaviorInputSchema = z.strictObject({
   comparisons: z.array(evidenceSchema).default([]),
 });
 

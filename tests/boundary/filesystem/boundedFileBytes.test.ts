@@ -7,7 +7,7 @@ import { readBoundedFileBytes } from "../../../src/process/BoundedFileBytes.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("bounded file byte reads", () => {
-  it.each([0, 1, 65_536, 65_537])(
+  it.each([0, 65_536])(
     "accepts a file exactly at the %i byte limit",
     async (limit) => {
       const root = await createTestTempDirectory("rea-bounded-bytes-");

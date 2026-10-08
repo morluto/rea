@@ -68,13 +68,18 @@ selects the npm release, and persistent MCP registrations are pinned to the
 version that performed setup. Installing newer instructions does not update a
 running server or its registration.
 
-The release checked on **2026-10-06** was **4.1.0** (125 MCP tools). That artifact
-includes main's Windows native control bundle, Android/JADX and firmware
-tools, Ghidra function annotation workflow, and retained application-Evidence
-references.
-Main's catalog describes the current code; a source build or a subsequent
-release containing later changes is required for anything newer. Package startup alone does not verify a
-provider's real platform workflow.
+The release checked on **2026-10-07** was **5.0.0** (133 MCP tools), published
+from the fixed checkpoint
+[`b33236ec`](https://github.com/morluto/rea/releases/tag/rea-agents-5.0.0).
+The public CLI, MCP catalog and target-free session, and isolated update from
+4.1.0 to 5.0.0 were verified through npm. The artifact includes Windows native
+controls, Android/JADX and firmware tools, Ghidra function annotations, and
+retained application-Evidence references.
+
+Main's catalog describes the current code. A source build or a subsequent
+release containing changes after this checkpoint is required for newer
+functionality. Package startup alone does not verify a provider's real
+platform workflow.
 
 To check the published version, run `npm view rea-agents dist-tags.latest`.
 Use the connected server's actual tool list and advertised input schemas for
@@ -289,7 +294,7 @@ entry comments atomically and returns refreshed analysis. These session metadata
 edits leave executable bytes unchanged and are discarded on close. GUI controls
 require Hopper; Windows P0 remains read-only.
 
-Windows P0 admits native x86-64 PE applications on fixed local NTFS volumes.
+Windows P0 admits native x86 and x86-64 PE applications on fixed local NTFS volumes.
 The npm package bundles native Job Object ownership, protected private runtime
 DACLs, and handle-based path admission; no separate addon installation is needed.
 See the [Windows Ghidra P0 guide](windows-ghidra-p0.md) for verified scope and
@@ -408,7 +413,7 @@ For a client that requires manual configuration, use:
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@4.1.0", "mcp"]
+      "args": ["-y", "rea-agents@5.0.0", "mcp"]
     }
   }
 }

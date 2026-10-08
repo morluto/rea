@@ -16,6 +16,7 @@ import { registerWebScriptCommands } from "./cli/webScriptCommands.js";
 import { registerWebModuleCommands } from "./cli/webModuleCommands.js";
 import { registerWebSourceLocationCommands } from "./cli/webSourceLocationCommands.js";
 import { registerWebRuntimeCommands } from "./cli/webRuntimeCommands.js";
+import { registerWebNetworkCaptureCommands } from "./cli/webNetworkCaptureCommands.js";
 import { registerJavaScriptRecoveryCommands } from "./cli/javascriptRecoveryCommands.js";
 import { registerAdvancedBrowserCommands } from "./cli/browserAdvancedCommands.js";
 import { registerBrowserScenarioCommands } from "./cliBrowserScenarioCommands.js";
@@ -23,6 +24,7 @@ import { registerElectronCommands } from "./cli/electronCommands.js";
 import { registerJavaScriptRuntimeObservationCommands } from "./cliJavaScriptRuntimeCommands.js";
 import { registerApplicationCommands } from "./cli/applicationCommands.js";
 import type { CliInstance } from "./cli/types.js";
+import type { CliResultOutput } from "./cli/streamedJsonOutput.js";
 
 /**
  * Build the one-shot Incur CLI without starting Hopper at import time.
@@ -31,6 +33,7 @@ import type { CliInstance } from "./cli/types.js";
  */
 export const createCli = (
   environment: Readonly<Record<string, string | undefined>> = process.env,
+  resultOutput?: CliResultOutput,
 ): CliInstance => {
   const logger = createLogger(
     "cli",
@@ -50,7 +53,7 @@ export const createCli = (
   });
 
   registerSetupCommands(cli, logger);
-  registerCoreAnalysisCommands(cli, logger);
+  registerCoreAnalysisCommands(cli, logger, resultOutput);
   registerUtilityCommands(cli, logger, environment);
   registerArtifactCommands(cli, logger);
   registerManagedCommands(cli, logger);
@@ -63,10 +66,11 @@ export const createCli = (
   registerWebModuleCommands(cli, logger, environment);
   registerWebSourceLocationCommands(cli, logger, environment);
   registerWebRuntimeCommands(cli, logger);
+  registerWebNetworkCaptureCommands(cli, logger, environment);
   registerJavaScriptRecoveryCommands(cli, logger, environment);
   registerAdvancedBrowserCommands(cli, logger);
   registerBrowserScenarioCommands(cli, logger);
-  registerElectronCommands(cli, logger);
+  registerElectronCommands(cli, logger, resultOutput);
   registerJavaScriptRuntimeObservationCommands(cli, logger);
   registerApplicationCommands(cli, logger);
   return cli;

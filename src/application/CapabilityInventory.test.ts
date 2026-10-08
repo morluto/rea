@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { toolAvailability } from "../contracts/toolOutputSchemaPrimitives.js";
 import { buildCapabilityInventory } from "./CapabilityInventory.js";
 
 it("reports module syntax and native resolution availability separately", () => {
@@ -247,6 +248,23 @@ describe("capability inventory: caller guidance", () => {
         expect(availability.remediation).toEqual(expect.any(String));
         expect(availability.remediation?.length).toBeGreaterThan(0);
       }
+  });
+
+  it("keeps the public availability schema consistent with generated states", () => {
+    const inventory = buildCapabilityInventory(status(), enabledPolicy);
+    const unavailable = inventory.find(({ available }) => !available);
+    expect(unavailable).toBeDefined();
+    expect(toolAvailability.safeParse(unavailable).success).toBe(true);
+    expect(
+      toolAvailability.safeParse({ ...unavailable, available: true }).success,
+    ).toBe(false);
+    expect(
+      toolAvailability.safeParse({
+        ...unavailable,
+        available: false,
+        reason: "available",
+      }).success,
+    ).toBe(false);
   });
 
   it("does not require interactive elicitation for process capture", () => {

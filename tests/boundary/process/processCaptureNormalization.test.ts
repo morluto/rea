@@ -4,13 +4,13 @@ import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { z } from "zod";
 
-import { captureProcessScenario } from "../../../src/application/ProcessHarness.js";
-import { createProcessCaptureEvidence } from "../../../src/application/ProcessEvidence.js";
+import { captureProcessScenario } from "../../../src/process/capture/ProcessHarness.js";
+import { createProcessCaptureEvidence } from "../../../src/application/process/ProcessEvidence.js";
 import {
   digestProcessCommitment,
   parseProcessCapture,
   parseProcessScenario,
-} from "../../../src/domain/processCapture.js";
+} from "../../../src/domain/process/processCapture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { itWithCaptureCapability } from "./processCaptureCapability.js";
 
@@ -41,7 +41,6 @@ itWithLinuxCaptureCapability.each([false, true])(
       idle_timeout_ms: 10_000,
     });
     const result = await captureProcessScenario(scenario);
-    expect(result.ok).toBe(true);
     if (!result.ok) throw result.error;
     const capture = result.value;
     const identity = identitySchema.parse(

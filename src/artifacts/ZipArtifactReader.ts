@@ -53,6 +53,9 @@ export class ZipArtifactReader implements ArtifactReader {
     this.#reader = new ZipReader(this.#source, {
       checkSignature: true,
       checkOverlappingEntry: true,
+      // REA applies its own provider-neutral path validation in scanReader and
+      // must preserve that typed failure instead of zip.js rejecting first.
+      filenameValidation: "tolerant",
     });
   }
 

@@ -82,7 +82,12 @@ it.each(
       });
     } else {
       const result = await provider.observeExecution(
-        observeWebExecutionInputSchema.parse({ ...scope, observation_ms: 5 }),
+        observeWebExecutionInputSchema.parse({
+          ...scope,
+          // This fixture sends a real WebSocket event after the armed receipt.
+          // Leave room for transport delivery on a shared CI runner.
+          observation_ms: 100,
+        }),
         {
           progress: {
             report: async (update) => {
@@ -124,8 +129,17 @@ it.each(
           ({ script_id }) => script_id === "script-a",
         ),
       ).toBe(false);
-      expect(result.value.requests[0]?.callsites[0]?.source_association).toBe(
-        "unknown",
+      expect(result.value.window.end_reason).toBe("window_elapsed");
+      expect(result.value.requests).toContainEqual(
+        expect.objectContaining({
+          request_id: "source-completion-request",
+          callsites: expect.arrayContaining([
+            expect.objectContaining({
+              script_id: "script-a",
+              source_association: "unknown",
+            }),
+          ]),
+        }),
       );
       expect(result.value.script_inventory.main_document_scripts).toBe(1);
       expect(

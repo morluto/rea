@@ -17,6 +17,55 @@ import {
 import { createEvidence } from "./evidence.js";
 import { createEvidenceBundle } from "./evidenceBundle.js";
 
+const snapshotWithHistoricalEvidence = () => {
+  const target = snapshotTarget(ANALYSIS_SNAPSHOT_TARGET);
+  const binding = snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE);
+  const parameters = { procedure: "main" };
+  const makeEvidence = (result: string) =>
+    createEvidence(ANALYSIS_SNAPSHOT_TARGET, ANALYSIS_SNAPSHOT_PROVIDER, {
+      operation: "analyze_function",
+      parameters,
+      result: { summary: result },
+      analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
+    });
+  const current = makeEvidence("cached");
+  const entry = {
+    query_id: analysisQueryId(target, binding, "analyze_function", parameters),
+    operation: "analyze_function",
+    parameters,
+    execution: {
+      result: { summary: "cached" },
+      raw_result: null,
+      provider: binding.provider,
+      limitations: [],
+      locations: [],
+      subject: {
+        path: ANALYSIS_SNAPSHOT_TARGET.path,
+        sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
+        format: ANALYSIS_SNAPSHOT_TARGET.format,
+        architecture: ANALYSIS_SNAPSHOT_TARGET.architecture ?? null,
+      },
+    },
+  };
+  return {
+    current,
+    snapshot: {
+      target,
+      binding,
+      entries: [entry],
+      evidence_bundle: createEvidenceBundle([
+        makeEvidence("older"),
+        current,
+        createEvidence(ANALYSIS_SNAPSHOT_TARGET, ANALYSIS_SNAPSHOT_PROVIDER, {
+          operation: "legacy_query",
+          parameters: {},
+          result: { summary: "legacy" },
+        }),
+      ]),
+    } satisfies AnalysisSnapshot,
+  };
+};
+
 describe("analysis snapshot contract", () => {
   it("preserves DOS MZ target and subject formats with the x86 family", () => {
     const target = {
@@ -91,31 +140,7 @@ describe("analysis snapshot contract", () => {
 
 describe("analysis snapshot Evidence binding", () => {
   it("finds only Evidence committed to the exact binding and profile", () => {
-    const evidence = createEvidence(
-      ANALYSIS_SNAPSHOT_TARGET,
-      ANALYSIS_SNAPSHOT_PROVIDER,
-      {
-        operation: "analyze_function",
-        parameters: { procedure: "main" },
-        result: { summary: "cached" },
-        analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
-      },
-    );
-    const legacy = createEvidence(
-      ANALYSIS_SNAPSHOT_TARGET,
-      ANALYSIS_SNAPSHOT_PROVIDER,
-      {
-        operation: "legacy_query",
-        parameters: {},
-        result: { summary: "legacy" },
-      },
-    );
-    const snapshot: AnalysisSnapshot = {
-      target: snapshotTarget(ANALYSIS_SNAPSHOT_TARGET),
-      binding: snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE),
-      entries: [],
-      evidence_bundle: createEvidenceBundle([evidence, legacy]),
-    };
+    const { current, snapshot } = snapshotWithHistoricalEvidence();
     expect(
       snapshotEvidenceForQuery(snapshot, {
         target: ANALYSIS_SNAPSHOT_TARGET,
@@ -125,7 +150,7 @@ describe("analysis snapshot Evidence binding", () => {
         provider: ANALYSIS_SNAPSHOT_PROVIDER,
         evidenceProfile: ANALYSIS_SNAPSHOT_PROFILE,
       }),
-    ).toEqual(evidence);
+    ).toEqual(current);
     expect(
       snapshotEvidenceForQuery(snapshot, {
         target: ANALYSIS_SNAPSHOT_TARGET,

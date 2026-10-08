@@ -108,11 +108,22 @@ const handleRequest = (socket, server, request, state) => {
   if (state.mode === "exit_tools" && request.method !== "shutdown")
     process.exit(74);
   if (state.mode === "hang_tools" && request.method !== "shutdown") return;
-  const inventory = inventoryResultFor(request.method);
+  const inventory =
+    request.method === "list_strings" && state.mode === "fragmented"
+      ? [stringItem("0x2000", "fixture 雪🦊")]
+      : request.method === "list_strings" && state.mode === "oversized_result"
+        ? [stringItem("0x2000", "x".repeat(64 * 1024 * 1024 + 1))]
+        : inventoryResultFor(request.method);
   if (inventory !== undefined) {
-    socket.write(
-      `${JSON.stringify({ id: request.id, ok: true, result: inventory })}\n`,
-    );
+    const response = `${JSON.stringify({ id: request.id, ok: true, result: inventory })}\n`;
+    if (state.mode === "fragmented") {
+      const bytes = Buffer.from(response, "utf8");
+      const unicodeOffset = bytes.indexOf(Buffer.from("雪", "utf8"));
+      const midpoint =
+        unicodeOffset >= 0 ? unicodeOffset + 1 : Math.floor(bytes.length / 2);
+      socket.write(bytes.subarray(0, midpoint));
+      setTimeout(() => socket.write(bytes.subarray(midpoint)), 5);
+    } else socket.write(response);
     return;
   }
   if (request.method === "shutdown") {
@@ -304,7 +315,7 @@ const stringItem = (address, value) => ({
   string: {
     encoding: "UTF-8",
     termination: "present_or_not_required",
-    byte_length: value.length + 1,
+    byte_length: Buffer.byteLength(value, "utf8") + 1,
   },
 });
 

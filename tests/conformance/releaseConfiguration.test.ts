@@ -63,14 +63,32 @@ describe("release configuration", () => {
     "marks the versioned package example in %s",
     async (path) => {
       const content = await readFile(path, "utf8");
+      const packageJson = (await readJson("package.json")) as {
+        version: string;
+      };
       const versionBlock =
         /<!-- x-release-please-start-version -->[\s\S]*?<!-- x-release-please-end -->/u.exec(
           content,
         )?.[0];
 
-      expect(versionBlock).toMatch(/rea-agents@\d+\.\d+\.\d+/u);
+      expect(versionBlock).toContain(`rea-agents@${packageJson.version}`);
     },
   );
+
+  it("keeps the release baseline, lockfile, and changelog aligned with the package version", async () => {
+    const packageJson = (await readJson("package.json")) as {
+      version: string;
+    };
+    expect(await readJson(".release-please-manifest.json")).toEqual({
+      ".": packageJson.version,
+    });
+    expect(await readJson("package-lock.json")).toMatchObject({
+      version: packageJson.version,
+      packages: { "": { version: packageJson.version } },
+    });
+    const changelog = await readFile("CHANGELOG.md", "utf8");
+    expect(/^## \[([^\]]+)\]/mu.exec(changelog)?.[1]).toBe(packageJson.version);
+  });
 
   it("keeps the npm package and MCP Registry metadata aligned", async () => {
     const packageJson = (await readJson("package.json")) as {

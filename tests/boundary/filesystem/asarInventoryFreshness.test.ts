@@ -5,7 +5,7 @@ import { buffer } from "node:stream/consumers";
 import { createPackage, listPackage, uncache } from "@electron/asar";
 import { describe, expect, it } from "vitest";
 
-import { inventoryArtifact } from "../../../src/application/ArtifactInventory.js";
+import { inventoryArtifact } from "../../../src/artifacts/inventory/ArtifactInventory.js";
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 

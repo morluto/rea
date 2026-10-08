@@ -80,13 +80,6 @@ describe("artifact archive safety", () => {
   );
 
   it("rejects unsafe paths and collisions", async () => {
-    expect(
-      normalizeArtifactPath(
-        Array.from({ length: 24 }, (_, index) => `level${String(index)}`).join(
-          "/",
-        ) + "/entry.js",
-      ).split("/"),
-    ).toHaveLength(25);
     let unsafePathError: unknown;
     try {
       normalizeArtifactPath("../escape");

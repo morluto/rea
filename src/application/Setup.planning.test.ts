@@ -165,15 +165,6 @@ describe("setup workflow lifecycle and provider planning", () => {
         remediation: null,
       },
     ];
-    host.productRegistrations = [
-      {
-        client: "codex",
-        config_path: "/codex.toml",
-        command: ["rea", "mcp"],
-        state: "aligned",
-        remediation: null,
-      },
-    ];
     const progress: SetupProgressEvent[] = [];
     await runSetup(
       { ...options(true), onProgress: (event) => progress.push(event) },

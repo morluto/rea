@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { fragmentInventoryEvidence } from "../../fixtures/artifactEvidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { inventoryArtifact } from "../../../src/application/ArtifactInventory.js";
+import { inventoryArtifact } from "../../../src/artifacts/inventory/ArtifactInventory.js";
 import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph.js";
 import {
   artifactComparisonResultSchema,

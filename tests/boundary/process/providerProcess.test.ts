@@ -8,7 +8,10 @@ import { PendingOperations } from "../../../src/process/PendingOperations.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { ProviderStartupDeadline } from "../../../src/process/ProviderDeadline.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
-import { observeOwnedProcessLineage } from "../../../src/process/ProcessOwnershipObservation.js";
+import {
+  observeOwnedProcessLineage,
+  systemProcessOwnershipHost,
+} from "../../../src/process/ProcessOwnershipObservation.js";
 import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
@@ -369,6 +372,52 @@ describe("provider process host injection", () => {
         );
     }
   });
+});
+
+describe("provider startup cancellation", () => {
+  it("rejects an already cancelled launch before preparing or spawning", async () => {
+    const controller = new AbortController();
+    const cancellation = new Error("provider launch already cancelled");
+    controller.abort(cancellation);
+
+    await expect(
+      spawnOwnedProviderProcess({
+        command: `${tmpdir()}/rea-provider-must-not-spawn-after-cancel`,
+        arguments: [],
+        runId: "provider-process-pre-aborted-run",
+        signal: controller.signal,
+      }),
+    ).rejects.toBe(cancellation);
+  });
+
+  it.skipIf(process.platform !== "darwin")(
+    "forwards cancellation through native ownership preparation before spawning",
+    async () => {
+      const controller = new AbortController();
+      const cancellation = new Error("cancelled during native preparation");
+      const prepare = vi.spyOn(systemProcessOwnershipHost, "prepare");
+      prepare.mockImplementation(async (signal) => {
+        expect(signal).toBe(controller.signal);
+        await new Promise<void>((resolve) => {
+          signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+      });
+
+      try {
+        const starting = spawnOwnedProviderProcess({
+          command: `${tmpdir()}/rea-provider-must-not-spawn-after-cancel`,
+          arguments: [],
+          runId: "provider-process-cancelled-preparation-run",
+          signal: controller.signal,
+        });
+        controller.abort(cancellation);
+        await expect(starting).rejects.toBe(cancellation);
+        expect(prepare).toHaveBeenCalledOnce();
+      } finally {
+        prepare.mockRestore();
+      }
+    },
+  );
 });
 
 describe("provider process spawning primitives", () => {

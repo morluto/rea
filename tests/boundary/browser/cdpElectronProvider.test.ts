@@ -199,25 +199,6 @@ describe("CdpElectronProvider target selection", () => {
   });
 });
 
-describe("Electron request schemas", () => {
-  it("rejects unknown request fields", () => {
-    expect(
-      listElectronTargetsInputSchema.safeParse({
-        cdp_endpoint: "http://127.0.0.1:9223",
-        unknown_field: true,
-      }).success,
-    ).toBe(false);
-    expect(
-      inspectElectronPageInputSchema.safeParse({
-        cdp_endpoint: "http://127.0.0.1:9223",
-        target_id: "page-1",
-        observation_ms: 0,
-        unknown_field: true,
-      }).success,
-    ).toBe(false);
-  });
-});
-
 describe("CdpElectronProvider capture", () => {
   it("captures Electron script source only after separate approval", async () => {
     const root = await electronFixture();

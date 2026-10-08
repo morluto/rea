@@ -5,7 +5,6 @@ import {
   isDigest,
   isPrefixedDigest,
   prefixedDigestSchema,
-  SHA256_PATTERN,
 } from "./digests.js";
 
 const DIGEST = "a".repeat(64);
@@ -58,10 +57,5 @@ describe("digest shapes", () => {
     expect(prefixedDigestSchema("jag").parse(`jag_${OTHER_DIGEST}`)).toBe(
       `jag_${OTHER_DIGEST}`,
     );
-  });
-
-  it("exposes the pattern for callers that cannot use zod", () => {
-    expect(SHA256_PATTERN.test(DIGEST)).toBe(true);
-    expect(SHA256_PATTERN.test(DIGEST.toUpperCase())).toBe(false);
   });
 });
