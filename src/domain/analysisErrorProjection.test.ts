@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AnalysisCapabilityUnavailableError,
+  AnalysisUnsupportedTargetError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisCancelledError,
@@ -27,6 +28,32 @@ const retainedOutput = {
   stderr: "upstream warning",
   truncated: true,
 };
+
+it("distinguishes unsupported target formats from unavailable provider capabilities", () => {
+  const projected = projectAnalysisError(
+    new AnalysisUnsupportedTargetError(
+      "inspect_evm_interface",
+      "/selected/runtime.hex",
+      "EOF-style EF00 container is unsupported.",
+      { capturedOutput: retainedOutput },
+    ),
+  );
+  expect(projected).toMatchObject({
+    code: "unsupported_target",
+    category: "unsupported_target",
+    retryable: false,
+    details: {
+      operation: "inspect_evm_interface",
+      path: "/selected/runtime.hex",
+      reason: "EOF-style EF00 container is unsupported.",
+      captured_output: retainedOutput,
+    },
+  });
+  expect(projected.message).toContain("EF00");
+  expect(projected.remediation.action).toContain("target format");
+  expect(projected.remediation.action).not.toContain("doctor");
+  expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(true);
+});
 
 it.each([
   ["memory", null],

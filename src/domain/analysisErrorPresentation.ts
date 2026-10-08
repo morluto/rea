@@ -2,6 +2,7 @@ import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisInputError,
+  AnalysisUnsupportedTargetError,
   AnalysisResourceConstraintError,
 } from "./analysisErrorCore.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
@@ -33,6 +34,8 @@ import { type AnalysisErrorProjection } from "./analysisErrorProjection.js";
 export const analysisErrorRemediationAction = (
   error: AnalysisError,
 ): string => {
+  if (error instanceof AnalysisUnsupportedTargetError)
+    return "Select a target supported by this operation or choose an operation supporting the reported target format.";
   if (error instanceof AnalysisResourceConstraintError)
     return error.resource === "cpu"
       ? "Review the reported worker CPU limits and observed signal. Retry with sufficient CPU time or a smaller artifact; REA retains tighter inherited limits."
@@ -125,6 +128,7 @@ const STATIC_ERROR_CATEGORIES: Readonly<
   AnalysisAccessDeniedError: "unavailable",
   AnalysisArtifactChangedError: "integrity_mismatch",
   AnalysisCapabilityUnavailableError: "unsupported_provider",
+  AnalysisUnsupportedTargetError: "unsupported_target",
   ProviderSelectionError: "unsupported_provider",
   EvidenceIntegrityError: "integrity_mismatch",
   AnalysisCancelledError: "cancelled",
@@ -137,6 +141,7 @@ const STATIC_ERROR_CATEGORIES: Readonly<
 };
 
 export const analysisErrorUserMessage = (error: AnalysisError): string => {
+  if (error instanceof AnalysisUnsupportedTargetError) return error.message;
   if (error instanceof AnalysisResourceConstraintError) return error.reason;
   if (error instanceof AnalysisAccessDeniedError)
     return "Host filesystem permissions denied read access to the selected path.";
@@ -270,6 +275,7 @@ const KNOWN_ERROR_TAGS = {
   AnalysisArtifactChangedError: true,
   AnalysisOutputError: true,
   AnalysisCapabilityUnavailableError: true,
+  AnalysisUnsupportedTargetError: true,
   AnalysisCancelledError: true,
   AnalysisTimeoutError: true,
   AnalysisResourceConstraintError: true,

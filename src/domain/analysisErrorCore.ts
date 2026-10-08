@@ -4,6 +4,19 @@ import {
   type AnalysisErrorOptions,
 } from "./analysisErrorBase.js";
 
+/** A readable supplied artifact lies outside this operation's supported target formats. */
+export class AnalysisUnsupportedTargetError extends AnalysisError {
+  readonly _tag = "AnalysisUnsupportedTargetError";
+  constructor(
+    readonly operation: string,
+    readonly path: string,
+    readonly reason: string,
+    options?: AnalysisErrorOptions,
+  ) {
+    super(`Unsupported target for ${operation} at ${path}: ${reason}`, options);
+  }
+}
+
 /** Provider reported a resource failure, distinct from malformed input or unsupported coverage. */
 export class AnalysisResourceConstraintError extends AnalysisError {
   readonly _tag = "AnalysisResourceConstraintError";

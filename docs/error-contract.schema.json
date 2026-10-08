@@ -10,6 +10,7 @@
           "enum": [
             "invalid_input",
             "unsupported_provider",
+            "unsupported_target",
             "integrity_mismatch",
             "truncated",
             "cancelled",
@@ -45,6 +46,7 @@
           "enum": [
             "invalid_input",
             "unsupported_provider",
+            "unsupported_target",
             "integrity_mismatch",
             "truncated",
             "cancelled",
@@ -80,6 +82,7 @@
           "enum": [
             "invalid_input",
             "unsupported_provider",
+            "unsupported_target",
             "integrity_mismatch",
             "truncated",
             "cancelled",
@@ -115,6 +118,7 @@
           "enum": [
             "invalid_input",
             "unsupported_provider",
+            "unsupported_target",
             "integrity_mismatch",
             "truncated",
             "cancelled",
@@ -150,6 +154,43 @@
           "enum": [
             "invalid_input",
             "unsupported_provider",
+            "unsupported_target",
+            "integrity_mismatch",
+            "truncated",
+            "cancelled",
+            "timeout",
+            "resource_constraint",
+            "unavailable",
+            "execution_failure"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "remediation": {
+          "type": "object",
+          "properties": { "action": { "type": "string", "minLength": 1 } },
+          "required": ["action"],
+          "additionalProperties": false
+        },
+        "details": {
+          "type": "object",
+          "propertyNames": { "type": "string" },
+          "additionalProperties": {}
+        }
+      },
+      "required": ["code", "category", "message", "retryable", "remediation"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "const": "unsupported_target" },
+        "category": {
+          "type": "string",
+          "enum": [
+            "invalid_input",
+            "unsupported_provider",
+            "unsupported_target",
             "integrity_mismatch",
             "truncated",
             "cancelled",
@@ -185,6 +226,7 @@
           "enum": [
             "invalid_input",
             "unsupported_provider",
+            "unsupported_target",
             "integrity_mismatch",
             "truncated",
             "cancelled",
@@ -220,6 +262,7 @@
           "enum": [
             "invalid_input",
             "unsupported_provider",
+            "unsupported_target",
             "integrity_mismatch",
             "truncated",
             "cancelled",
@@ -255,6 +298,7 @@
           "enum": [
             "invalid_input",
             "unsupported_provider",
+            "unsupported_target",
             "integrity_mismatch",
             "truncated",
             "cancelled",
@@ -290,6 +334,7 @@
           "enum": [
             "invalid_input",
             "unsupported_provider",
+            "unsupported_target",
             "integrity_mismatch",
             "truncated",
             "cancelled",
@@ -325,6 +370,7 @@
           "enum": [
             "invalid_input",
             "unsupported_provider",
+            "unsupported_target",
             "integrity_mismatch",
             "truncated",
             "cancelled",
@@ -382,6 +428,7 @@
           "enum": [
             "invalid_input",
             "unsupported_provider",
+            "unsupported_target",
             "integrity_mismatch",
             "truncated",
             "cancelled",
@@ -417,6 +464,7 @@
           "enum": [
             "invalid_input",
             "unsupported_provider",
+            "unsupported_target",
             "integrity_mismatch",
             "truncated",
             "cancelled",
@@ -452,6 +500,7 @@
           "enum": [
             "invalid_input",
             "unsupported_provider",
+            "unsupported_target",
             "integrity_mismatch",
             "truncated",
             "cancelled",
@@ -487,6 +536,7 @@
           "enum": [
             "invalid_input",
             "unsupported_provider",
+            "unsupported_target",
             "integrity_mismatch",
             "truncated",
             "cancelled",
@@ -522,6 +572,7 @@
           "enum": [
             "invalid_input",
             "unsupported_provider",
+            "unsupported_target",
             "integrity_mismatch",
             "truncated",
             "cancelled",
@@ -557,6 +608,7 @@
           "enum": [
             "invalid_input",
             "unsupported_provider",
+            "unsupported_target",
             "integrity_mismatch",
             "truncated",
             "cancelled",
@@ -592,6 +644,7 @@
           "enum": [
             "invalid_input",
             "unsupported_provider",
+            "unsupported_target",
             "integrity_mismatch",
             "truncated",
             "cancelled",
@@ -627,6 +680,7 @@
           "enum": [
             "invalid_input",
             "unsupported_provider",
+            "unsupported_target",
             "integrity_mismatch",
             "truncated",
             "cancelled",
@@ -662,6 +716,7 @@
           "enum": [
             "invalid_input",
             "unsupported_provider",
+            "unsupported_target",
             "integrity_mismatch",
             "truncated",
             "cancelled",

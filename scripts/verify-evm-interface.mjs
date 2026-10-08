@@ -266,7 +266,11 @@ try {
     const path = join(root.path, "eof." + encoding);
     await writeFile(path, data);
     for (const mode of ["cli", "mcp"]) {
-      await inspect(mode, path, encoding, "unsupported_provider");
+      const failure = await inspect(mode, path, encoding, "unsupported_target");
+      assert.equal(failure.code, "unsupported_target");
+      assert.equal(failure.details.path, path);
+      assert.match(failure.details.reason, /EF00/);
+      assert.match(failure.remediation.action, /target format/);
       cases++;
     }
   }
@@ -462,7 +466,7 @@ try {
       "\n",
     )) {
       if (/execve(?:at)?\(/.test(line)) {
-        const match = /^execve\("([^\"]+)"/.exec(line);
+        const match = /^execve\("([^"]+)"/.exec(line);
         assert.notEqual(match, null, `Unresolved executable identity: ${line}`);
         assert.ok(
           line.endsWith(" = 0") || / = -1 [A-Z]+/.test(line),
@@ -546,7 +550,7 @@ if (failures.length !== 0)
   );
 
 function permitsStdioSocketObservation(line, localDescriptors) {
-  if (/^socketpair\(AF_UNIX,/.test(line)) {
+  if (line.startsWith('socketpair(AF_UNIX,')) {
     const pair = /\[(\d+), (\d+)\]\)\s+= 0$/.exec(line);
     if (pair !== null) {
       localDescriptors.add(pair[1]);
@@ -560,7 +564,7 @@ function permitsStdioSocketObservation(line, localDescriptors) {
     return true;
   }
   // A failed descriptor query performs no request and identifies no socket.
-  if (/^getsockname\(/.test(line) && / = -1 ENOTSOCK/.test(line)) return true;
+  if (line.startsWith('getsockname(') && / = -1 ENOTSOCK/.test(line)) return true;
   const metadata =
     /^(?:getsockopt\((\d+), SOL_SOCKET, SO_TYPE,|setsockopt\((\d+), SOL_SOCKET, SO_(?:RCVBUF|SNDBUF),|shutdown\((\d+), SHUT_WR\))/.exec(
       line,

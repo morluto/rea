@@ -11,6 +11,7 @@ import {
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
+  AnalysisUnsupportedTargetError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisTimeoutError,
@@ -140,6 +141,7 @@ const STATIC_ERROR_CODES = {
   AnalysisAccessDeniedError: "access_denied",
   AnalysisArtifactChangedError: "artifact_changed",
   AnalysisCapabilityUnavailableError: "capability_unavailable",
+  AnalysisUnsupportedTargetError: "unsupported_target",
   AnalysisCancelledError: "cancelled",
   HopperCancelledError: "cancelled",
   AnalysisTimeoutError: "provider_timeout",
@@ -187,6 +189,12 @@ const errorDetails = (
 const requestErrorDetails = (
   error: AnalysisError,
 ): Readonly<Record<string, JsonValue>> | undefined => {
+  if (error instanceof AnalysisUnsupportedTargetError)
+    return {
+      operation: error.operation,
+      path: error.path,
+      reason: error.reason,
+    };
   if (error instanceof AnalysisResourceConstraintError)
     return {
       operation: error.operation,
@@ -420,6 +428,7 @@ export interface AnalysisErrorProjection extends Readonly<
     | "artifact_changed"
     | "unreadable_output"
     | "capability_unavailable"
+    | "unsupported_target"
     | "provider_unavailable"
     | "provider_timeout"
     | "resource_constraint"
@@ -437,6 +446,7 @@ export interface AnalysisErrorProjection extends Readonly<
   readonly category:
     | "invalid_input"
     | "unsupported_provider"
+    | "unsupported_target"
     | "integrity_mismatch"
     | "truncated"
     | "cancelled"

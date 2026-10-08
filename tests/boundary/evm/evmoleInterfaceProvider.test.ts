@@ -285,7 +285,7 @@ it
             scenario === "format"
               ? "AnalysisInputError"
               : scenario === "unsupported"
-                ? "AnalysisCapabilityUnavailableError"
+                ? "AnalysisUnsupportedTargetError"
                 : "AnalysisOutputError",
         },
       });

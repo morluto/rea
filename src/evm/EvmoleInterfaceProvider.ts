@@ -19,6 +19,7 @@ import type {
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
+  AnalysisUnsupportedTargetError,
   AnalysisInputError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
@@ -221,11 +222,11 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
       }
       if (!reply.ok) {
         if (reply.reason === "unsupported")
-          throw new AnalysisCapabilityUnavailableError(
-            EVMOLE_PROVIDER_IDENTITY.id,
+          throw new AnalysisUnsupportedTargetError(
             OPERATION,
+            input.path,
             reply.message,
-            { userMessage: reply.message, capturedOutput },
+            { capturedOutput },
           );
         if (reply.reason === "format")
           throw new AnalysisInputError(OPERATION, { capturedOutput }, [

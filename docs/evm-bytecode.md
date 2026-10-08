@@ -18,7 +18,9 @@ rea inspect-evm-interface ./runtime.bin raw --json
 ```
 
 Initial real verification covers flat legacy bytecode on Linux x64 and unchanged
-bundled EVMole 0.9.3. EOF-style EF00 containers are explicitly unsupported.
+bundled EVMole 0.9.3. EOF-style EF00 containers return `unsupported_target`,
+with the selected path and format reason. Provider/configuration failures retain
+their distinct unavailable-provider or capability classification.
 The host must already provide util-linux `prlimit`, normally `/usr/bin/prlimit`;
 `REA_EVM_PRLIMIT_COMMAND` can select another absolute executable. REA installs
 no system tools and changes no user configuration. [Upstream provenance and
