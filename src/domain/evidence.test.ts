@@ -51,14 +51,15 @@ it("applies the JSON depth boundary to owned immutable results", () => {
   let result: JsonValue = 1;
   for (let index = 0; index <= MAX_JSON_DEPTH; index += 1)
     result = { nested: result };
-  for (const value of [result, freezeJsonSnapshot(result)])
-    expect(() =>
-      createEvidence(TARGET, PROVIDER, {
-        operation: "inspect",
-        parameters: {},
-        result: value,
-      }),
-    ).toThrow("maximum nesting depth");
+  const observe = () =>
+    createEvidence(TARGET, PROVIDER, {
+      operation: "inspect",
+      parameters: {},
+      result,
+    });
+  expect(observe).toThrow("maximum nesting depth");
+  freezeJsonSnapshot(result);
+  expect(observe).toThrow("maximum nesting depth");
 });
 
 it("preserves prototype-named own members when reusing an owned result", () => {
