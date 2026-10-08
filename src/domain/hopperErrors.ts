@@ -13,6 +13,16 @@ import {
 /** Base class for failures produced specifically by the Hopper provider. */
 export abstract class HopperError extends AnalysisError {}
 
+/** Observed launcher outcome; a helper exit does not establish GUI lifetime. */
+export type HopperLauncherOutcome = {
+  readonly exit_code: number | null;
+  readonly signal: string | null;
+  readonly stdout: { readonly text: string; readonly bytes: number };
+  readonly stderr: { readonly text: string; readonly bytes: number };
+  readonly output_closed: boolean;
+  readonly diagnostic_truncated: boolean;
+};
+
 /** Hopper did not respond within the configured operation deadline. */
 export class HopperTimeoutError extends HopperError {
   readonly _tag = "HopperTimeoutError";
@@ -93,6 +103,7 @@ export class HopperProcessError extends HopperError {
     readonly requestId?: number,
     providerState?: HopperProcessProviderState,
     stage?: ProviderFailureStage,
+    readonly launcherFailure?: HopperLauncherOutcome,
   ) {
     super(`Hopper bridge stopped unexpectedly with code ${String(exitCode)}`);
     const failure = hopperStartupFailure(exitCode);
@@ -115,15 +126,18 @@ export class HopperStartError extends HopperError {
   readonly _tag = "HopperStartError";
   override readonly userMessage: string | undefined;
   readonly ownerRunId: string | undefined;
+  readonly launcherFailure: HopperLauncherOutcome | undefined;
 
   constructor(
     options?: ErrorOptions & {
       readonly userMessage?: string;
       readonly ownerRunId?: string;
+      readonly launcherFailure?: HopperLauncherOutcome;
     },
   ) {
     super("Hopper application bridge could not be started", options);
     this.userMessage = options?.userMessage;
     this.ownerRunId = options?.ownerRunId;
+    this.launcherFailure = options?.launcherFailure;
   }
 }

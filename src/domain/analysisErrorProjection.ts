@@ -352,7 +352,7 @@ const providerErrorDetails = (
       provider_state: error.providerState,
       retry_action: providerRetryAction(
         error.providerState,
-        error.failureCode !== undefined,
+        error.failureCode !== undefined || error.stage === "launch",
       ),
       ...(error.failureCode === undefined
         ? {}
@@ -362,6 +362,9 @@ const providerErrorDetails = (
       ...(error.diagnostic === undefined
         ? {}
         : { diagnostics: { ...error.diagnostic } }),
+      ...(error.launcherFailure === undefined
+        ? {}
+        : { launcher: error.launcherFailure }),
     };
   }
   if (error instanceof HopperStartError)
@@ -372,6 +375,9 @@ const providerErrorDetails = (
       ...(error.ownerRunId === undefined
         ? {}
         : { owner_run_id: error.ownerRunId }),
+      ...(error.launcherFailure === undefined
+        ? {}
+        : { launcher: error.launcherFailure }),
     };
   return undefined;
 };

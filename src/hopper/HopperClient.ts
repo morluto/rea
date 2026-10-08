@@ -8,6 +8,7 @@ import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.
 import {
   HopperCancelledError,
   type HopperError,
+  type HopperLauncherOutcome,
   HopperProcessError,
   HopperProtocolError,
   HopperRemoteError,
@@ -76,7 +77,6 @@ type HopperClientCloseOptions = {
   readonly retainDocument?: boolean;
 };
 
-/** Safe launcher telemetry; stderr content is intentionally never exposed. */
 /**
  * Owns one authenticated NDJSON-over-Unix-socket bridge session.
  *
@@ -503,17 +503,18 @@ export class HopperClient {
       if (this.#closing) return err(new HopperProcessError(null));
       if (
         this.#launcherExitCode !== undefined &&
-        hopperStartupFailure(this.#launcherExitCode) !== undefined
-      )
-        return err(
-          new HopperProcessError(
-            this.#launcherExitCode,
-            this.#launcherFailureDiagnostic,
-            undefined,
-            undefined,
-            "exited",
-          ),
+        this.#launch !== undefined &&
+        (this.#launch.ownsProcessLifetime || this.#launcherExitCode !== 0)
+      ) {
+        const failure = await this.#launcherStartupFailure(
+          this.#launch.ownsProcessLifetime,
+          this.#launcherExitCode,
+          deadline,
         );
+        return deadline.interruption === "cancelled"
+          ? err(startupInterruption(deadline))
+          : err(failure);
+      }
       try {
         await access(socketPath);
       } catch (cause: unknown) {
@@ -536,6 +537,52 @@ export class HopperClient {
         return err(startupInterruption(deadline));
     }
     return err(new HopperTimeoutError(this.#options.startupTimeoutMs));
+  }
+
+  async #launcherStartupFailure(
+    ownsProcessLifetime: boolean,
+    exitCode: number | null,
+    deadline: ProviderStartupDeadline,
+  ): Promise<HopperError> {
+    const process = this.#process;
+    const token = this.#token;
+    // Descendants may inherit the helper's pipes. Bound drainage independently
+    // from readiness, and report whether producer output actually closed.
+    const outputClosed =
+      (await process?.waitForOutputClose(
+        Math.min(1_000, deadline.remainingMs()),
+      )) ?? false;
+    const snapshot = process?.snapshot();
+    const redact = (text: string): string =>
+      token === undefined
+        ? text
+        : text.replaceAll(token, "[redacted transport credential]");
+    const launcherFailure: HopperLauncherOutcome | undefined =
+      snapshot === undefined
+        ? undefined
+        : {
+            exit_code: exitCode,
+            signal: snapshot.signal ?? null,
+            stdout: { ...snapshot.stdout, text: redact(snapshot.stdout.text) },
+            stderr: { ...snapshot.stderr, text: redact(snapshot.stderr.text) },
+            output_closed: outputClosed,
+            diagnostic_truncated: snapshot.diagnosticTruncated === true,
+          };
+    if (ownsProcessLifetime)
+      return new HopperProcessError(
+        exitCode,
+        this.#launcherFailureDiagnostic,
+        undefined,
+        undefined,
+        "exited",
+        "launch",
+        launcherFailure,
+      );
+    return new HopperStartError({
+      userMessage:
+        "Hopper's launcher helper failed before bridge readiness. Review details.launcher and complete Hopper setup before retrying.",
+      ...(launcherFailure === undefined ? {} : { launcherFailure }),
+    });
   }
 
   async #request(
@@ -726,7 +773,9 @@ export class HopperClient {
     const previous = this.#operationFailure;
     const state = processFailureState(error);
     const startupFailure =
-      error.failureCode !== undefined || previous?.startupFailure === true;
+      error.stage === "launch" ||
+      error.failureCode !== undefined ||
+      previous?.startupFailure === true;
     const merged = mergeFailedRequests(previous?.requests ?? [], requests);
     if (
       previous !== undefined &&
