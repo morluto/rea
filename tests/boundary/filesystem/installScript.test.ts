@@ -172,6 +172,22 @@ describe("curl installer scenarios", { timeout: 20_000 }, () => {
   });
 });
 
+describe("native macOS installer", { timeout: 20_000 }, () => {
+  it("installs on Darwin with an empty prefix argument array", async () => {
+    const fixture = await createFixture();
+    const result = await runInstaller(fixture, ["--version", "0.3.0"], {
+      FAKE_PLATFORM: "Darwin",
+      FAKE_NPM_PREFIX: join(fixture.home, "npm global prefix"),
+    });
+    expect(result.stdout).toContain("REA 0.3.0 is installed");
+    expect(await readFile(fixture.npmLog, "utf8")).toBe(
+      "prefix --global\ninstall --global rea-agents@0.3.0\n",
+    );
+    expect(await readFile(fixture.reaLog, "utf8")).toBe("--version\n");
+    expect(await readdir(fixture.temporary)).toEqual([]);
+  });
+});
+
 describe("installer semantic version parsing", { timeout: 20_000 }, () => {
   it.each(["1.2.3-01"])(
     "rejects malformed semantic versions before invoking npm: %s",
@@ -309,6 +325,7 @@ printf '%s\n' "$*" >> "$FAKE_NPM_LOG"
 [ "$1" = "prefix" ] && { [ "\${FAKE_NPM_PREFIX_FAIL:-}" = "1" ] && exit 1; printf '%s\n' "$FAKE_NPM_PREFIX"; exit 0; }
 [ "\${FAKE_NPM_FAIL:-}" = "1" ] && exit 1
 prefix="$HOME/.local"
+[ "\${FAKE_PLATFORM:-Linux}" = "Darwin" ] && prefix="$FAKE_NPM_PREFIX"
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "--prefix" ]; then shift; prefix="$1"; fi
   shift
