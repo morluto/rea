@@ -404,6 +404,93 @@ try {
       }
     }
   }
+  // Malformed references must fail before the decoder reads unrelated bytes.
+  const neededTagOffsets = [];
+  let stringSizeTagOffset;
+  for (
+    let offset = Number(BigInt(dynamicSegment.offset));
+    offset <
+    Number(BigInt(dynamicSegment.offset) + BigInt(dynamicSegment.file_size));
+    offset += 16
+  ) {
+    const tag = sectionBearingBytes.readBigUInt64LE(offset);
+    if (tag === 0n) break;
+    if (tag === 1n) neededTagOffsets.push(offset + 8);
+    if (tag === 10n) stringSizeTagOffset = offset + 8;
+  }
+  assert.ok(neededTagOffsets.length > 0);
+  assert.notEqual(stringSizeTagOffset, undefined);
+  for (const [profile, original] of [
+    ["section-bearing", sectionBearingBytes],
+    ["sectionless", sectionlessBytes],
+  ]) {
+    for (const problem of ["offset-at-end", "truncated-table"]) {
+      const bytes = Buffer.from(original);
+      if (problem === "offset-at-end")
+        bytes.writeBigUInt64LE(
+          bytes.readBigUInt64LE(stringSizeTagOffset),
+          neededTagOffsets[0],
+        );
+      else {
+        assert.ok(bytes.readBigUInt64LE(neededTagOffsets[0]) > 0n);
+        bytes.writeBigUInt64LE(1n, stringSizeTagOffset);
+      }
+      const path = join(root.path, `invalid-dependency-${profile}-${problem}`);
+      await writeFile(path, bytes);
+      for (const mode of ["cli", "mcp"]) {
+        await inspect(mode, path, "invalid_input");
+        cases++;
+      }
+      assert.deepEqual(await readFile(path), bytes);
+    }
+  }
+  for (const type of ["SHT_SYMTAB", "SHT_DYNSYM"]) {
+    const table = protectedReport.sections.find(
+      (section) => section.type === type,
+    );
+    const other = protectedReport.sections.find(
+      (section) => section.type === "SHT_PROGBITS",
+    );
+    assert.notEqual(table, undefined);
+    assert.notEqual(other, undefined);
+    const header = Number(BigInt(table.header_location.offset));
+    const strings = protectedReport.sections[table.link];
+    assert.equal(strings.type, "SHT_STRTAB");
+    for (const problem of [
+      "out-of-range",
+      "null",
+      "wrong-type",
+      "undeclared-header",
+    ]) {
+      let bytes = Buffer.from(sectionBearingBytes);
+      let link =
+        problem === "null"
+          ? 0
+          : problem === "wrong-type"
+            ? other.index
+            : protectedReport.sections.length + 100;
+      if (problem === "undeclared-header") {
+        // Upstream can read an otherwise valid header beyond declared e_shnum.
+        const end =
+          Number(bytes.readBigUInt64LE(40)) +
+          protectedReport.sections.length * bytes.readUInt16LE(58);
+        const extended = Buffer.alloc(Math.max(bytes.length, end + 64));
+        bytes.copy(extended);
+        const start = Number(BigInt(strings.header_location.offset));
+        bytes.copy(extended, end, start, start + 64);
+        bytes = extended;
+        link = protectedReport.sections.length;
+      }
+      bytes.writeUInt32LE(link, header + 40);
+      const path = join(root.path, `invalid-symbol-link-${type}-${problem}`);
+      await writeFile(path, bytes);
+      for (const mode of ["cli", "mcp"]) {
+        await inspect(mode, path, "invalid_input");
+        cases++;
+      }
+      assert.deepEqual(await readFile(path), bytes);
+    }
+  }
   const shortDynamic = Buffer.from(sectionBearingBytes);
   shortDynamic.writeBigUInt64LE(
     16n,

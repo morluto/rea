@@ -241,6 +241,16 @@ export const binaryLayoutSchema = binaryLayoutObjectSchema.superRefine(
           "Entry meaning must distinguish zero/unused fields from an actual linked address.",
       });
     for (const [index, section] of value.sections.entries()) {
+      if (
+        (section.type === "SHT_SYMTAB" || section.type === "SHT_DYNSYM") &&
+        value.sections[section.link]?.type !== "SHT_STRTAB"
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["sections", index, "link"],
+          message:
+            "Symbol tables must link to an existing string-table section.",
+        });
       if (section.index !== index)
         context.addIssue({
           code: "custom",

@@ -52,6 +52,11 @@ uses isolated mode and an owned cache. Exact upstream profiles are recorded in
   Positive indices resolve through a validated symbol table; symbol index zero
   means a zero symbol value without a table lookup, including when no table is
   linked. Malformed references fail with the affected section and symbol index.
+- Symbol tables require a declared SHT_STRTAB link. Name offsets and terminators
+  must stay inside the declared string table; malformed references fail before
+  unrelated bytes can become names. Dynamic dependencies use DT_STRTAB/DT_STRSZ
+  with a unique file-backed mapping; ambiguous or unbacked mappings are
+  explicitly unsupported.
 - Name display strings use UTF-8 replacement for opaque bytes, including
   sectionless dependency names and interpreter paths. Raw name
   bytes and string-table ranges retain observed identity where resolvable;

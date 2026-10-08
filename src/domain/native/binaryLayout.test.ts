@@ -220,6 +220,8 @@ it.each([
   "inactive-target",
   "false-resolved-zero-target",
   "wrong-unknown-target",
+  "missing-string-table",
+  "wrong-string-table-kind",
 ])("validates relocation symbol reference semantics: %s", (problem) => {
   const value = binaryLayoutSchema.parse(report());
   value.artifact.bytes = 512;
@@ -230,6 +232,7 @@ it.each([
       ...base,
       index: 1,
       type: "SHT_SYMTAB",
+      link: 3,
       header_location: { offset: "0x40", bytes: "0x40" },
       offset: "0x100",
       size: "0x30",
@@ -245,6 +248,14 @@ it.each([
       size: "0x18",
       entry_size: "0x18",
       link: 1,
+      file_backing: "file",
+    },
+    {
+      ...base,
+      index: 3,
+      type: "SHT_STRTAB",
+      offset: "0x40",
+      size: "0x7",
       file_backing: "file",
     },
   );
@@ -287,6 +298,8 @@ it.each([
   if (problem === "missing-table")
     owner.link = relocation.symbol_table_index = 99;
   if (problem === "wrong-table-kind") table.type = "SHT_PROGBITS";
+  if (problem === "missing-string-table") table.link = 99;
+  if (problem === "wrong-string-table-kind") table.link = 0;
   if (problem === "missing-symbol") value.symbols = [];
   if (problem === "symbol-outside-table") table.size = "0x18";
   if (problem === "owner-link-mismatch") owner.link = 0;
@@ -317,12 +330,12 @@ it.each([
       )
     ) {
       if (problem === "inactive-target")
-        value.sections.push({ ...base, index: 3, type: "SHT_NULL" });
+        value.sections.push({ ...base, index: 4, type: "SHT_NULL" });
       owner.info =
         problem === "undefined-target"
           ? 0
           : problem === "inactive-target"
-            ? 3
+            ? 4
             : 1;
       relocation.target = {
         kind: "unknown-section",

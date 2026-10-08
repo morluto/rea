@@ -47,23 +47,26 @@ def name_reference(display, section, offset, content):
 def name_in_table(display, table_start, table_size, offset, content):
     location(table_start, table_size, len(content))
     if not 0 <= offset < table_size:
-        return {"display": display, "bytes_base64": None, "location": None,
-                "unknown_reason": "Reported name offset lies outside the referenced string table."}
+        raise LayoutFailure("format", f"ELF name offset {offset} lies outside its declared string table of {table_size} bytes at file offset {table_start}.")
     start = table_start + offset
     limit = table_start + table_size
     end = content.find(b"\0", start, limit)
     if end < 0:
         raise LayoutFailure("format", "ELF name lacks a terminator within its reported string table.")
     raw = content[start:end]
-    return {"display": display, "bytes_base64": base64.b64encode(raw).decode("ascii"),
+    return {"display": raw.decode("utf-8", "replace") if display is None else display, "bytes_base64": base64.b64encode(raw).decode("ascii"),
             "location": location(start, len(raw) + 1, len(content)), "unknown_reason": None}
 
 
-def dynamic_name_reference(display, string_table, tags, offset, image, content):
-    if getattr(string_table, "header", None) is not None:
-        return name_reference(display, string_table, offset, content)
+def dynamic_name_reference(tags, offset, image, content):
     starts = [tag.d_val for tag in tags if tag.d_tag == "DT_STRTAB"]
     sizes = [tag.d_val for tag in tags if tag.d_tag == "DT_STRSZ"]
+    if not starts or not sizes:
+        raise LayoutFailure("format", "ELF dependency requires DT_STRTAB and DT_STRSZ.")
+    if len(starts) != 1 or len(sizes) != 1:
+        raise LayoutFailure("unsupported", "ELF dependency string-table tags are ambiguous: " + repr({"DT_STRTAB": starts, "DT_STRSZ": sizes}))
+    if not 0 <= offset < sizes[0]:
+        raise LayoutFailure("format", f"ELF dependency name offset {offset} lies outside declared DT_STRSZ {sizes[0]}.")
     offsets = set()
     if len(starts) == 1 and len(sizes) == 1:
         for segment in image.iter_segments_by_type("PT_LOAD"):
@@ -71,9 +74,8 @@ def dynamic_name_reference(display, string_table, tags, offset, image, content):
             if starts[0] >= h.p_vaddr and starts[0] + sizes[0] <= h.p_vaddr + h.p_filesz:
                 offsets.add(h.p_offset + starts[0] - h.p_vaddr)
     if len(offsets) != 1:
-        return {"display": display, "bytes_base64": None, "location": None,
-                "unknown_reason": "Dynamic string table lacks a unique file-backed DT_STRTAB/DT_STRSZ mapping."}
-    return name_in_table(display, offsets.pop(), sizes[0], offset, content)
+        raise LayoutFailure("unsupported", "Dynamic string table lacks a unique file-backed mapping: " + repr({"DT_STRTAB": starts, "DT_STRSZ": sizes, "candidate_file_offsets": sorted(offsets)}))
+    return name_in_table(None, offsets.pop(), sizes[0], offset, content)
 
 
 def symbol_value_meaning(raw, image_type, sections):
@@ -163,7 +165,9 @@ def inspect_elf(path, cache):
                 if h.sh_type in ("SHT_SYMTAB", "SHT_DYNSYM"):
                     if h.sh_entsize < image.structs.Elf_Sym.sizeof():
                         raise LayoutFailure("format", "ELF symbol entry is smaller than the decoded Elf64_Sym structure.")
-                    strings = all_sections[h.sh_link] if h.sh_link < len(all_sections) else None
+                    if h.sh_link >= len(all_sections) or all_sections[h.sh_link].header.sh_type != "SHT_STRTAB":
+                        raise LayoutFailure("format", f"ELF symbol table {index} links to invalid string table {h.sh_link}.")
+                    strings = all_sections[h.sh_link]
                     for entry, symbol in enumerate(section.iter_symbols()):
                         raw = symbol.entry
                         symbols.append({
@@ -228,16 +232,9 @@ def inspect_elf(path, cache):
                             break
                     else:
                         raise LayoutFailure("format", f"ELF dynamic segment {index} has no complete DT_NULL terminator within its reported file range.")
-                    string_table = segment._get_stringtable()
                     for tag in tags:
                         if tag.d_tag == "DT_NEEDED":
-                            try:
-                                display = string_table.get_string(tag.d_val)
-                            except UnicodeDecodeError as error:
-                                # The unchanged decoder exposes the exact bytes it
-                                # attempted to decode; replace only display text.
-                                display = error.object.decode("utf-8", "replace")
-                            needed.append(dynamic_name_reference(display, string_table, tags, tag.d_val, image, content))
+                            needed.append(dynamic_name_reference(tags, tag.d_val, image, content))
                 if h.p_type == "PT_INTERP":
                     raw = content[h.p_offset:h.p_offset + h.p_filesz]
                     end = raw.find(b"\0")
