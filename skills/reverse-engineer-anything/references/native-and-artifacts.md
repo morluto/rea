@@ -9,6 +9,12 @@ cross-references. Addresses and recovered pseudocode are analysis observations,
 not original source. Provider unavailability and unsupported metadata remain
 unknown rather than false.
 
+To see which functions or Objective-C methods a Mach-O actually calls in one
+run, use `observe_native_calls` with explicit breakpoints and a bounded
+`duration_ms`/`max_events`. It launches a new process under LLDB, so the target
+runs and may change files or use the network. Hardened-runtime targets need the
+`get-task-allow` entitlement.
+
 Use `binary_session` with no arguments to check the open target, selected
 provider, and alignment. Its default `result.tool_availability` includes the
 complete tool inventory with availability reasons and remediation. When choosing

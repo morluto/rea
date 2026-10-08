@@ -159,6 +159,47 @@ owned helper per scenario, removes its temporary compiler cache and stops its
 helper on cancellation. It does not launch or own the selected application. UI
 actions may change application data or trigger network activity.
 
+## Native call observation
+
+`observe_native_calls` / `rea observe-native-calls <app-or-mach-o> <input-json>`
+launches the active Mach-O as a new, owned process under LLDB. It stops at
+caller-selected entries, records them and continues:
+
+- functions by exact symbol name, optionally limited to one image;
+- Objective-C methods by selector, optionally limited to one class and to
+  instance or class methods.
+
+```sh
+rea observe-native-calls /Applications/Example.app '{"breakpoints":[{"kind":"objc-method","class_name":"NSURLSession","selector":"dataTaskWithRequest:completionHandler:"},{"kind":"function","name":"open","module":"libsystem_kernel.dylib"}],"duration_ms":5000,"backtrace_frames":4}' --json
+```
+
+Each event is an observation: thread, image, symbol, load and file address,
+the raw integer argument registers, optional caller frames and, for an
+Objective-C method, the selector read from `_cmd` and the receiver's dynamic
+class. Breakpoints stop at the symbol itself, so the registers hold the ABI
+arguments. The receiver class comes from LLDB's Objective-C runtime reader
+without running target code; no expression is evaluated, and REA never
+attaches to a process it did not launch.
+
+The run ends when the process exits, `max_events` entries are recorded, or
+`duration_ms` elapses. In the last two cases the process is killed, and REA
+confirms that it is gone. The result reports:
+
+- the outcome, exit status and captured stdout/stderr (1 MiB kept per stream);
+- signal or exception stops;
+- every breakpoint's resolved locations; a breakpoint that matched no loaded
+  code makes coverage partial;
+- limitations.
+
+Only entries are observed: return values, floating-point and stack arguments,
+and inlined or `objc_direct` calls are not. The target runs with the current
+user's permissions and may change files, show UI or use the network.
+
+Debugging must be allowed for the user (Developer Tools access). A
+hardened-runtime target without `com.apple.security.get-task-allow` cannot be
+debugged; `inspect_signature` reports this as the debugger-attach facet, and
+the tool fails with a `debugger-attach-denied` reason.
+
 ## Provider and verification boundaries
 
 Install a Ghidra 12.1.x release and the 64-bit full JDK it declares, then configure REA to

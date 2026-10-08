@@ -237,18 +237,23 @@ describe("unmatched package export conditions", () => {
     },
   );
   it("does not report valid metadata as malformed", async () => {
-    const { outcome } = await compareWithNode({ default: 7 }, "import");
-    expect(outcome.resolution_status).toBe("unavailable");
-    expect(outcome.limitations[0]).toContain("not valid package JSON");
+    const { node_error, outcome } = await compareWithNode(
+      { default: 7 },
+      "import",
+    );
+    expect(node_error).toBe("ERR_INVALID_PACKAGE_TARGET");
+    expect(outcome.resolution_status).toBe("rejected");
+    expect(outcome.limitations[0]).toContain("exports target 7");
+    expect(outcome.limitations[0]).not.toContain("not valid package JSON");
   });
 });
 
 describe("package exports fallback refusal reasons", () => {
   it.each([
-    [{ import: [42, 7] }, "ERR_INVALID_PACKAGE_TARGET", "unavailable"],
+    [{ import: [42, 7] }, "ERR_INVALID_PACKAGE_TARGET", "rejected"],
     [{ import: [null, null] }, "ERR_PACKAGE_PATH_NOT_EXPORTED", "external"],
     [{ import: [42, null] }, "ERR_PACKAGE_PATH_NOT_EXPORTED", "external"],
-    [{ import: [null, 42] }, "ERR_INVALID_PACKAGE_TARGET", "unavailable"],
+    [{ import: [null, 42] }, "ERR_INVALID_PACKAGE_TARGET", "rejected"],
     [
       { import: { node: null }, default: "./default.cjs" },
       "ERR_PACKAGE_PATH_NOT_EXPORTED",
@@ -265,6 +270,10 @@ describe("package exports fallback refusal reasons", () => {
       expect(node_error).toBe(code);
       expect(outcome.resolved_path).toBeNull();
       expect(outcome.resolution_status).toBe(status);
+      if (code === "ERR_INVALID_PACKAGE_TARGET") {
+        expect(outcome.limitations[0]).toContain("exports target");
+        expect(outcome.limitations[0]).not.toContain("not valid package JSON");
+      }
     },
   );
 });

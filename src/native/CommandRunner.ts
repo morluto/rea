@@ -124,7 +124,8 @@ const ALLOWED_TOOLS = new Set([
   "vtool",
 ]);
 
-const resolveXcrunTool = async (
+/** Locate an Xcode tool through `xcrun --find` and pin its executable digest. */
+export const resolveXcrunTool = async (
   tool: string,
   signal?: AbortSignal,
 ): Promise<Result<ResolvedTool, NativeCommandFailure>> => {

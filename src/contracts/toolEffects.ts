@@ -185,6 +185,15 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     mayDiscardData: true,
     idempotent: false,
   }),
+  // The owned process can change files, show UI and use the network.
+  observe_native_calls: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    changesUiState: true,
+    idempotent: false,
+  }),
   inspect_macho: nativeEvidence,
   inspect_signature: nativeEvidence,
   inspect_plist: nativeEvidence,

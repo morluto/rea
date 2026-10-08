@@ -4,6 +4,7 @@ import { nativeLoadImageSchema } from "../domain/native/nativeLoadImage.js";
 import { nativeUiResultSchema } from "../domain/native/nativeUiObservation.js";
 import { nativeValueTraceSchema } from "../domain/native/nativeValueTrace.js";
 import { nativeDataTypeSchema } from "../domain/native/nativeDataType.js";
+import { nativeCallObservationResultSchema } from "../domain/native/nativeCallObservation.js";
 import {
   nativeInstructionSchema,
   nativeCallTargetsSchema,
@@ -322,6 +323,7 @@ export const enhancedOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
 export const nativeOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   observe_native_ui: resultOf(nativeUiResultSchema),
   capture_native_ui_scenario: resultOf(nativeUiResultSchema),
+  observe_native_calls: resultOf(nativeCallObservationResultSchema),
   inspect_macho: resultOf(inspectMachoSchema),
   inspect_signature: resultOf(inspectSignatureSchema),
   inspect_plist: resultOf(inspectPlistSchema),

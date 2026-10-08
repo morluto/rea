@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { nativeCallObservationInputSchema } from "../../domain/native/nativeCallObservation.js";
 import {
   nativeUiObservationInputSchema,
   nativeUiScenarioInputSchema,
@@ -22,6 +23,19 @@ const examples: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
     steps: [{ kind: "wait", milliseconds: 100 }],
   },
   demangle_swift: { symbols: ["$s4Test3fooyyF"] },
+  observe_native_calls: {
+    breakpoints: [
+      {
+        kind: "objc-method",
+        class_name: "NSURLSession",
+        selector: "dataTaskWithRequest:completionHandler:",
+      },
+      { kind: "function", name: "open", module: "libsystem_kernel.dylib" },
+    ],
+    arguments: ["--help"],
+    duration_ms: 5000,
+    backtrace_frames: 4,
+  },
 };
 
 const native = <Name extends string, Schema extends z.ZodObject>(
@@ -70,6 +84,11 @@ export const NATIVE_TOOL_CONTRACTS = [
     "capture_native_ui_scenario",
     "Run selected-element press, increment/decrement scroll, AXValue text entry and bounded wait steps in one exact native app window. Returns ordered before/after captures and action/capture failures. Actions can change app data, network activity and persistent state; application state is left as-is and restoration is not attempted.",
     nativeUiScenarioInputSchema,
+  ),
+  native(
+    "observe_native_calls",
+    "Launch the active Mach-O as an owned process under LLDB and record each entry into caller-selected functions or Objective-C methods: thread, module, symbol, load and file address, raw argument registers, selector, receiver class and optional caller frames. Every hit auto-continues. No expression is evaluated and no other process is attached. The process is killed when max_events or duration_ms is reached; exit status, captured stdout/stderr, unresolved breakpoints and limitations are returned inline. The process runs with the current user's permissions and may change files, show UI or use the network. A hardened-runtime target needs the get-task-allow entitlement.",
+    nativeCallObservationInputSchema,
   ),
   native(
     "inspect_macho",

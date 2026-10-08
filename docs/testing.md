@@ -520,6 +520,17 @@ conformance/vtable fixture.
   `positive_e2e: false`; it must not be reported as capture/action proof.
   Both commands reject a changed executable digest and clean up the fixture
   process and helper. These lanes require an interactive macOS desktop. See [native investigation](native-investigation.md)
+
+`npm run verify:native-calls` needs only macOS with Command Line Tools (`clang`,
+`lldb`, `codesign`, `nm`). It compiles `tests/conformance/native/calls.m` and
+runs `observe-native-calls` through the CLI and stdio MCP. It checks:
+
+- the receiver class, selector and argument registers of every entry, and that
+  breakpoint addresses equal `nm`'s symbol addresses;
+- captured stdout and an environment override;
+- the event-limit and duration outcomes, with the process confirmed gone;
+- that a hardened-runtime copy is refused with `debugger-attach-denied`, and
+  that the same copy signed with `get-task-allow` is traced.
   for the exact ABI, authority, graph and observation boundaries.
 
 ### Firmware adapters
