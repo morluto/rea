@@ -25,33 +25,58 @@ import {
   PWNTOOLS_FILE_SIZE_FAILURE_EXIT,
 } from "./PwntoolsRelease.js";
 
-const OPERATION = "inspect_binary_layout";
+/** Operation identity supplied by each adapter sharing the pwntools boundary. */
+export interface PwntoolsFailureContext {
+  readonly operation: string;
+  readonly providerId: string;
+  readonly precedingOutput?: AnalysisCapturedOutput;
+}
+const DEFAULT_CONTEXT = {
+  operation: "inspect_binary_layout",
+  providerId: PWNTOOLS_PROVIDER_IDENTITY.id,
+};
 
 /** Keep read, engine, output and owned-lifecycle failure reasons distinct. */
-export const pwntoolsLayoutFailure = (
+export const pwntoolsDecoderFailure = (
   cause: unknown,
   phase: string,
   path: string,
   executablePath = path,
   failureEvidence: PwntoolsFailureEvidence = {},
+  context: PwntoolsFailureContext = DEFAULT_CONTEXT,
 ): AnalysisError => {
   const limitReport = failureEvidence.limits;
   if (cause instanceof AnalysisError) return cause;
   if (cause instanceof OwnedCommandFailure) {
-    const outputOptions =
+    const currentOutput =
       cause.snapshot === null
         ? undefined
-        : { capturedOutput: capturedPwntoolsOutput(cause.snapshot) };
+        : capturedPwntoolsOutput(cause.snapshot);
+    const combinedOutput =
+      context.precedingOutput === undefined
+        ? currentOutput
+        : currentOutput === undefined
+          ? context.precedingOutput
+          : {
+              stdout: `[core decoder]\n${context.precedingOutput.stdout}\n[debugger]\n${currentOutput.stdout}`,
+              stderr: `[core decoder]\n${context.precedingOutput.stderr}\n[debugger]\n${currentOutput.stderr}`,
+              truncated:
+                context.precedingOutput.truncated || currentOutput.truncated,
+            };
+    const outputOptions =
+      combinedOutput === undefined
+        ? undefined
+        : { capturedOutput: combinedOutput };
     if (cause.cleanupFailure !== null)
       return new ProviderCleanupError(
-        PWNTOOLS_PROVIDER_IDENTITY.id,
+        context.providerId,
         cause.resources,
         {
           reason: cause.cleanupFailure,
-          ...(cause.snapshot === null
+          ...(combinedOutput === undefined
             ? {}
             : {
-                captured_output: { ...capturedPwntoolsOutput(cause.snapshot) },
+                captured_output: { ...combinedOutput },
               }),
           previous_error: {
             failure_kind: cause.reason,
@@ -62,18 +87,22 @@ export const pwntoolsLayoutFailure = (
             stderr: cause.snapshot?.stderr.text ?? null,
           },
         },
-        { operation: OPERATION, cause },
+        { operation: context.operation, cause },
       );
     if (cause.reason === "cancelled")
-      return new AnalysisCancelledError(OPERATION, outputOptions);
+      return new AnalysisCancelledError(context.operation, outputOptions);
     if (cause.reason === "timeout")
       return new AnalysisTimeoutError(
-        OPERATION,
+        context.operation,
         PWNTOOLS_LIMITS.timeoutMs,
         outputOptions,
       );
     if (cause.reason === "output-limit")
-      return new AnalysisOutputError(OPERATION, cause.message, outputOptions);
+      return new AnalysisOutputError(
+        context.operation,
+        cause.message,
+        outputOptions,
+      );
     if (
       cause.reason === "process" &&
       (cause.snapshot?.signal === "SIGXFSZ" ||
@@ -82,7 +111,7 @@ export const pwntoolsLayoutFailure = (
           cause.snapshot.signal === null))
     )
       return new AnalysisResourceConstraintError(
-        OPERATION,
+        context.operation,
         "file-size",
         (cause.snapshot.signal === "SIGXFSZ"
           ? "Owned Python terminated with SIGXFSZ; the exact signal cause is unknown."
@@ -95,7 +124,7 @@ export const pwntoolsLayoutFailure = (
       );
     if (cause.reason === "process" && cause.snapshot?.signal === "SIGXCPU")
       return new AnalysisResourceConstraintError(
-        OPERATION,
+        context.operation,
         "cpu",
         "Owned Python terminated with SIGXCPU; the exact signal cause is unknown." +
           (limitReport?.failure === null || limitReport === undefined
@@ -111,7 +140,7 @@ export const pwntoolsLayoutFailure = (
       cause.snapshot.signal === null
     )
       return new AnalysisResourceConstraintError(
-        OPERATION,
+        context.operation,
         "memory",
         "The owned Python bridge reported a memory allocation failure without a structured reply; the exact allocation cause is unknown." +
           (limitReport?.failure === null || limitReport === undefined
@@ -132,20 +161,27 @@ export const pwntoolsLayoutFailure = (
       `Selected Python could not launch (${String(cause.code)}): ${executablePath}. Check the configured executable, its interpreter and host execute access.`,
       executablePath,
       String(cause.code),
+      undefined,
+      context,
     );
   if (cause instanceof ArtifactReaderFailure) {
     if (cause.reason === "integrity")
-      return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
-        cause,
-      });
+      return new AnalysisArtifactChangedError(
+        context.operation,
+        path,
+        cause.message,
+        {
+          cause,
+        },
+      );
     if (cause.reason === "cancelled")
-      return new AnalysisCancelledError(OPERATION);
+      return new AnalysisCancelledError(context.operation);
     if (
       cause.reason === "limit" ||
       cause.reason === "path" ||
       cause.reason === "format"
     )
-      return new AnalysisInputError(OPERATION, { cause }, [
+      return new AnalysisInputError(context.operation, { cause }, [
         {
           path: ["path"],
           reason: cause.reason === "limit" ? "out_of_range" : "invalid_format",
@@ -159,19 +195,26 @@ export const pwntoolsLayoutFailure = (
         `Selected Python executable is unavailable (${String(cause.code)}): ${path}. Check the caller-selected path and execute access.`,
         path,
         String(cause.code),
+        undefined,
+        context,
       );
     if (
       phase === "artifact-read" &&
       (cause.code === "EACCES" || cause.code === "EPERM")
     )
-      return new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
-        cause,
-      });
+      return new AnalysisAccessDeniedError(
+        context.operation,
+        path,
+        cause.code,
+        {
+          cause,
+        },
+      );
     if (
       phase === "artifact-read" &&
       (cause.code === "ENOENT" || cause.code === "ENOTDIR")
     )
-      return new AnalysisInputError(OPERATION, { cause }, [
+      return new AnalysisInputError(context.operation, { cause }, [
         {
           path: ["path"],
           reason: "invalid_value",
@@ -179,11 +222,14 @@ export const pwntoolsLayoutFailure = (
         },
       ]);
   }
-  return new ProviderAdapterError(PWNTOOLS_PROVIDER_IDENTITY.id, OPERATION, {
+  return new ProviderAdapterError(context.providerId, context.operation, {
     cause,
     diagnostics: {
       phase,
       path,
+      ...(context.precedingOutput === undefined
+        ? {}
+        : { preceding_output: { ...context.precedingOutput } }),
       reason: cause instanceof Error ? cause.message : String(cause),
       ...(failureEvidence.marker === undefined
         ? {}
@@ -214,16 +260,17 @@ export const pwntoolsUnavailable = (
   path: string,
   systemCode?: string,
   capturedOutput?: AnalysisCapturedOutput,
+  context: PwntoolsFailureContext = DEFAULT_CONTEXT,
 ): ProviderSelectionError =>
   new ProviderSelectionError({
     ...(capturedOutput === undefined ? {} : { capturedOutput }),
-    operation: OPERATION,
+    operation: context.operation,
     reason: "provider_unavailable",
-    requestedProviderId: PWNTOOLS_PROVIDER_IDENTITY.id,
-    candidateIds: [PWNTOOLS_PROVIDER_IDENTITY.id],
+    requestedProviderId: context.providerId,
+    candidateIds: [context.providerId],
     rejections: [
       {
-        providerId: PWNTOOLS_PROVIDER_IDENTITY.id,
+        providerId: context.providerId,
         code: "provider_unavailable",
         reason,
         diagnostics: {

@@ -653,6 +653,28 @@ unknowns, malformed carriers and independent cleanup. An optional positional
 entrypoint verifies a fresh installed package. It acquires no engine, compiler
 or chain dependency and does not execute a contract on a chain.
 
+### Recorded crash evidence
+
+`npm run verify:recorded:crash` is a separate Linux x64 lane. It requires GCC,
+GDB, absolute `REA_PWNTOOLS_PYTHON` with the offline ELF profile above,
+`REA_PWNDBG_GDBINIT` and `REA_PWNDBG_VENV_PATH` with unchanged pwndbg 2026.09.15,
+and `REA_VERIFY_STRACE_COMMAND`. Its disposable CI runner installs GDB, checks out the exact upstream
+commit and installs its frozen lockfile in isolated runner storage. No developer
+host configuration or core-pattern setting changes.
+
+Fixture generation explicitly runs an owned source-built two-thread program
+under GDB to create a recording. Subsequent public CLI/MCP inspection verifies
+lossless high registers, signed signals, note source bytes, malformed/missing
+notes, unfamiliar owners, optional core-only mapping context and actionable
+missing/unsupported plugin errors. A historical-PID collision fixture references
+an owned live sentinel; inspection syscall traces reject process attach/memory
+access, provider lookups of that PID's `/proc` files and attempted Internet sockets. Traces admit
+the observed upstream startup helpers (`iconv -l`, the selected checkout's Git
+version lookup) and REA ownership inspection separately from target execution.
+This is fixture evidence, not a sandbox claim. Inputs remain unchanged and the
+sentinel must stay alive; owned cleanup and empty verifier descendants are required. Pass an
+installed package entrypoint as the script's first argument for package coverage.
+
 ## Agent evaluation and conformance records
 
 Evaluate native, JavaScript, managed and browser investigation tasks through a

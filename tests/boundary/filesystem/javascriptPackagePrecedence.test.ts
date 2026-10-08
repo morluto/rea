@@ -1,6 +1,10 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join, relative, sep } from "node:path";
+
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 import { expect, it } from "vitest";
 
@@ -153,6 +157,111 @@ it.each(cases)(
         properties.specifier === specifier,
     );
 
+    expect(edge?.properties).toMatchObject({
+      resolution_status: "resolved",
+      resolved_path: expected,
+    });
+    expect(result.graph.coverage.status).toBe("complete");
+  },
+);
+
+const runNode = promisify(execFile);
+
+it.each([
+  {
+    name: "import uses main before bundler module",
+    kind: "import",
+    metadata: { main: "actual.cjs", module: "bundler.mjs" },
+  },
+  {
+    name: "import ignores a module-only entry",
+    kind: "import",
+    metadata: { module: "bundler.mjs" },
+  },
+  {
+    name: "require ignores a module-only entry",
+    kind: "require",
+    metadata: { module: "bundler.mjs" },
+  },
+  {
+    name: "import preserves a main-only entry",
+    kind: "import",
+    metadata: { main: "actual.cjs" },
+  },
+  {
+    name: "require preserves main before bundler module",
+    kind: "require",
+    metadata: { main: "actual.cjs", module: "bundler.mjs" },
+  },
+  {
+    name: "import preserves declared exports before legacy entries",
+    kind: "import",
+    metadata: {
+      main: "actual.cjs",
+      module: "bundler.mjs",
+      exports: { import: "./exported.mjs", require: "./actual.cjs" },
+    },
+  },
+] as const)(
+  "matches the native Node loader when $name",
+  async ({ kind, metadata }) => {
+    const root = await createTestTempDirectory("rea-node-package-fields-");
+    const entry = kind === "import" ? "main.mjs" : "main.cjs";
+    const source =
+      kind === "import"
+        ? `import value from "fixture"; console.log(JSON.stringify({value, resolved: import.meta.resolve("fixture")}));`
+        : `const value = require("fixture"); console.log(JSON.stringify({value, resolved: require.resolve("fixture")}));`;
+    const files = {
+      "package.json": JSON.stringify({
+        name: "app",
+        main: entry,
+        type: kind === "import" ? "module" : "commonjs",
+      }),
+      [entry]: source,
+      "node_modules/fixture/package.json": JSON.stringify({
+        name: "fixture",
+        ...metadata,
+      }),
+      "node_modules/fixture/actual.cjs": "module.exports = 'actual.cjs';",
+      "node_modules/fixture/index.js": "module.exports = 'index.js';",
+      "node_modules/fixture/bundler.mjs": "export default 'bundler.mjs';",
+      "node_modules/fixture/exported.mjs": "export default 'exported.mjs';",
+    };
+    await Promise.all(
+      Object.entries(files).map(async ([path, text]) => {
+        await mkdir(dirname(join(root, path)), { recursive: true });
+        await writeFile(join(root, path), text);
+      }),
+    );
+    const { stdout } = await runNode(process.execPath, [join(root, entry)], {
+      cwd: root,
+    });
+    const oracle: unknown = JSON.parse(stdout);
+    expect(oracle).toMatchObject({
+      value: expect.any(String),
+      resolved: expect.any(String),
+    });
+    if (typeof oracle !== "object" || oracle === null)
+      throw new Error("Node returned no package identity");
+    const resolved: unknown = Reflect.get(oracle, "resolved");
+    if (typeof resolved !== "string")
+      throw new Error("Node returned no resolved path");
+    const expected = relative(
+      await realpath(root),
+      kind === "import" ? fileURLToPath(resolved) : resolved,
+    )
+      .split(sep)
+      .join("/");
+    expect(Reflect.get(oracle, "value")).toBe(expected.split("/").at(-1));
+    const result = await reconstructJavaScriptArtifact({
+      input_path: root,
+      format: "directory",
+    });
+    const edge = result.graph.edges.find(
+      ({ properties }) =>
+        properties.module_link_kind === kind &&
+        properties.specifier === "fixture",
+    );
     expect(edge?.properties).toMatchObject({
       resolution_status: "resolved",
       resolved_path: expected,

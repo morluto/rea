@@ -1,4 +1,8 @@
 import {
+  inspectRecordedCrashInputSchema,
+  recordedCrashSchema,
+} from "../../domain/native/recordedCrash.js";
+import {
   inspectBinaryLayoutInputSchema,
   binaryLayoutSchema,
 } from "../../domain/native/binaryLayout.js";
@@ -20,6 +24,28 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
       {
         title: "Inspect ELF linked and file layout",
         input: { path: "/artifacts/application.elf" },
+      },
+    ],
+  },
+  {
+    name: "inspect_recorded_crash",
+    ...toolContractMetadata("inspect_recorded_crash"),
+    kind: "native-provider",
+    description:
+      "Inspect a supplied Linux ELF64 amd64 little-endian core without launching its target or attaching to any live PID. Returns all recorded segments, raw note owners/descriptors and source ranges, every Linux CORE PRSTATUS thread/register and SIGINFO fields inline with SHA-256 Evidence. Historical PID is recorded metadata; current process/file identity, note coverage and signal-thread associations stay unknown. Optionally add derived core-only GDB/pwndbg mapping candidates through explicit BYO configuration; zero map flags mean unknown permissions. Uses the same stable snapshot for both stages, bounded complete output and owned cleanup. Initial Linux x64 profile: unchanged pwntools 4.15.0/pyelftools 0.33/Unicorn 2.1.2; optional unchanged pwndbg 2026.09.15. No implicit executable/library pairing, GDB command language, host configuration changes or dependency installation.",
+    inputSchema: inspectRecordedCrashInputSchema,
+    outputSchema: evidenceResultOf(recordedCrashSchema),
+    examples: [
+      {
+        title: "Inspect recorded registers and signal evidence",
+        input: { path: "/artifacts/crash.core" },
+      },
+      {
+        title: "Add core-only debugger mapping candidates",
+        input: {
+          path: "/artifacts/crash.core",
+          include_debugger_context: true,
+        },
       },
     ],
   },

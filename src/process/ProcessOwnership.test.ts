@@ -199,71 +199,75 @@ describe("opaque process neighbors during cleanup", () => {
 });
 
 describe("related sweep candidates during cleanup", () => {
-  it("fails closed when a related candidate token cannot be read", async () => {
-    const processes = [
-      {
-        pid: 100,
-        parentPid: 1,
-        processGroupId: 100,
-        state: "S",
-        command: "capture",
-      },
-      {
-        pid: 101,
-        parentPid: 100,
-        processGroupId: 100,
-        state: "S",
-        command: "ready-hang",
-      },
-    ];
-    const signalGroup = vi.fn();
-    const identities = new Map(
-      processes.map(({ pid }) => [
-        pid,
-        { state: "readable" as const, identity: `start-${String(pid)}` },
-      ]),
-    );
-    const adapter: ProcessOwnershipHost = {
-      listProcesses: () => Promise.resolve(processes),
-      environment: (pid) =>
-        pid === 100
-          ? Promise.resolve({ REA_PROCESS_RUN_ID: "run-token" })
-          : Promise.reject(new Error("EACCES: permission denied")),
-      processIdentities: () => Promise.resolve(identities),
-      runTokens: (members) =>
-        Promise.resolve(
-          new Map(
-            members.map(({ pid }) => [
-              pid,
-              pid === 100
-                ? { state: "readable" as const, runId: "run-token" }
-                : {
-                    state: "unavailable" as const,
-                    reason: "environment_unavailable",
-                  },
-            ]),
+  it.each(["environment_unavailable", "platform_binary_environment_withheld"])(
+    "fails closed for a related candidate with %s",
+    async (diagnostic) => {
+      const processes = [
+        {
+          pid: 100,
+          parentPid: 1,
+          processGroupId: 100,
+          state: "S",
+          command: "capture",
+        },
+        {
+          pid: 101,
+          parentPid: 100,
+          processGroupId: 100,
+          state: "S",
+          uid: process.getuid?.() === 0 ? 1 : 0,
+          command: "ready-hang",
+        },
+      ];
+      const signalGroup = vi.fn();
+      const identities = new Map(
+        processes.map(({ pid }) => [
+          pid,
+          { state: "readable" as const, identity: `start-${String(pid)}` },
+        ]),
+      );
+      const adapter: ProcessOwnershipHost = {
+        listProcesses: () => Promise.resolve(processes),
+        environment: (pid) =>
+          pid === 100
+            ? Promise.resolve({ REA_PROCESS_RUN_ID: "run-token" })
+            : Promise.reject(new Error("EACCES: permission denied")),
+        processIdentities: () => Promise.resolve(identities),
+        runTokens: (members) =>
+          Promise.resolve(
+            new Map(
+              members.map(({ pid }) => [
+                pid,
+                pid === 100
+                  ? { state: "readable" as const, runId: "run-token" }
+                  : {
+                      state: "unavailable" as const,
+                      reason: diagnostic,
+                    },
+              ]),
+            ),
           ),
+        signalGroup,
+      };
+
+      const result = await cleanupOwnedProcessGroup(
+        {
+          ...ownership,
+          sweepTokenOwnedProcesses: true,
+          captureBaseline: [],
+        },
+        adapter,
+      );
+
+      expect(result).toMatchObject({
+        cleaned: false,
+        reason: expect.stringContaining(
+          "process ownership token could not be read",
         ),
-      signalGroup,
-    };
-
-    const result = await cleanupOwnedProcessGroup(
-      {
-        ...ownership,
-        sweepTokenOwnedProcesses: true,
-        captureBaseline: [],
-      },
-      adapter,
-    );
-
-    expect(result).toMatchObject({
-      cleaned: false,
-      reason: expect.stringContaining(
-        "process ownership token could not be read",
-      ),
-    });
-    expect(signalGroup).not.toHaveBeenCalled();
-  });
+      });
+      expect(signalGroup).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("sampled detached process groups during cleanup", () => {

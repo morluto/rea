@@ -7,7 +7,11 @@ import {
   type AnalysisProfileCommitment,
 } from "./analysisProfile.js";
 import type { BinaryTarget } from "./binaryTarget.js";
-import { jsonValueSchema, type JsonValue } from "./jsonValue.js";
+import {
+  jsonObjectSchema,
+  jsonValueSchema,
+  type JsonValue,
+} from "./jsonValue.js";
 import { digestSchema } from "./../domain/digests.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 
@@ -89,7 +93,7 @@ const evidenceBaseSchema = z
     provider: providerSchema,
     predicate_type: z.string().min(1),
     operation: z.string().min(1),
-    parameters: z.record(z.string(), jsonValueSchema),
+    parameters: jsonObjectSchema,
     raw_result: jsonValueSchema.nullable(),
     normalized_result: jsonValueSchema,
     confidence: z.enum(["observed", "derived", "inferred"]),

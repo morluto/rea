@@ -26,7 +26,7 @@ graph TD
     end
 
     subgraph "Provider Layers"
-        PWNTOOLS["src/native/pwntools/<br/>BYO offline ELF adapter<br/>owned Python process, unchanged upstream tables/heuristics"]
+        PWNTOOLS["src/native/pwntools/ + src/native/pwndbg/<br/>BYO offline ELF/core adapters<br/>owned snapshots/Python and optional core-only GDB<br/>unchanged upstream parsers, ABI structures and mapping API"]
         EVM["src/evm/<br/>unchanged EVMole/WASM in bounded owned worker<br/>explicit carrier parsing and inferred interface adapter"]
         HOPPER["src/hopper/<br/>Hopper launch & Unix-socket protocol<br/>BridgeLauncher, HopperClient, protocol"]
         GHIDRA["src/ghidra/<br/>Ghidra discovery, profile & function analysis<br/>snapshot, Unix/Windows transport, bounded lifecycle"]

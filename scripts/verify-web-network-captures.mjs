@@ -260,14 +260,16 @@ try {
     );
     const original = await readFile(path);
     for (const mode of ["cli", "mcp"]) {
-      const error = await inspect(
-        mode,
-        { capture_path: path, format },
-        "unsupported_provider",
-      );
-      assert.ok(
-        JSON.stringify(error).includes("JSON schema boundary cannot preserve"),
-      );
+      const value = await inspect(mode, { capture_path: path, format });
+      const reported =
+        format === "har"
+          ? value.container.reported._extension
+          : value.records[0].reported.metadata;
+      assert.equal(Object.hasOwn(reported, "__proto__"), true);
+      assert.deepEqual(reported["__proto__"], { preserved: 7 });
+      assert.equal(Object.getPrototypeOf(reported), Object.prototype);
+      assert.equal(Reflect.get(Object.prototype, "preserved"), undefined);
+      if (format === "har") assert.equal(reported.constructor, "ordinary");
       assert.deepEqual(await readFile(path), original);
       cases++;
     }

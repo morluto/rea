@@ -26,6 +26,7 @@ import {
   type OwnedProcessGroup,
   type ProcessCleanupResult,
   type ProcessLineageObservation,
+  type OwnershipSweepUnverifiedProcess,
 } from "../process/ProcessOwnership.js";
 import {
   observeOwnedProcessLineage,
@@ -238,6 +239,17 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
           ),
         );
       if (closeError !== undefined) return err(providerError(closeError));
+      if (outcome.ok && cleanup.unverified !== undefined)
+        outcome = ok({
+          ...outcome.value,
+          limitations: [
+            ...outcome.value.limitations,
+            ...cleanup.unverified.map(
+              ({ pid, diagnostic }) =>
+                `Ownership of unrelated process ${String(pid)} could not be verified; it was left untouched: ${diagnostic}`,
+            ),
+          ],
+        });
     }
     return outcome;
   }
@@ -280,6 +292,7 @@ const cleanupElectronProcesses = async (
     })),
   );
   let signaled = false;
+  const unverified: OwnershipSweepUnverifiedProcess[] = [];
   for (const processGroupId of groupIds) {
     const cleanupOwnership: OwnedProcessGroup =
       processGroupId === ownership.processGroupId
@@ -292,6 +305,7 @@ const cleanupElectronProcesses = async (
     const result = await cleanupOwnedProcessGroup(cleanupOwnership);
     if (!result.cleaned) return result;
     signaled ||= result.signaled;
+    unverified.push(...(result.unverified ?? []));
   }
   const remaining = await verifyNoTokenOwnedProcesses(
     ownership.runId,
@@ -306,7 +320,23 @@ const cleanupElectronProcesses = async (
     },
   );
   if (!remaining.cleaned) return remaining;
-  return { cleaned: true, signaled };
+  unverified.push(...(remaining.unverified ?? []));
+  return {
+    cleaned: true,
+    signaled,
+    ...(unverified.length === 0
+      ? {}
+      : {
+          unverified: [
+            ...new Map(
+              unverified.map((item) => [
+                `${String(item.pid)}:${item.diagnostic}`,
+                item,
+              ]),
+            ).values(),
+          ],
+        }),
+  };
 };
 
 const createResult = (

@@ -724,6 +724,7 @@ export const releaseProcessResources = async (options: {
           ? {}
           : { captureBaseline: options.captureBaseline }),
       });
+      const unverified = [...(cleaned.unverified ?? [])];
       if (!cleaned.cleaned) {
         ownedProcessGroup = { state: "unverified", reason: cleaned.reason };
       } else {
@@ -735,9 +736,22 @@ export const releaseProcessResources = async (options: {
             relation,
           ),
         );
+        unverified.push(...(verified.unverified ?? []));
         if (!verified.cleaned)
           ownedProcessGroup = { state: "unverified", reason: verified.reason };
       }
+      if (unverified.length > 0)
+        ownedProcessGroup = {
+          ...ownedProcessGroup,
+          unverified_processes: [
+            ...new Map(
+              unverified.map(({ pid, diagnostic }) => [
+                `${String(pid)}:${diagnostic}`,
+                { pid, reason: diagnostic },
+              ]),
+            ).values(),
+          ],
+        };
     }
   }
   let temporaryRoot: ProcessCaptureCleanupReport["temporary_root"] = {
@@ -901,7 +915,8 @@ export const resolveProcessResult = (
   }
   if (capture === undefined)
     throw new ProcessCaptureError("process capture produced no result");
-  if ("cleanup" in capture) return capture;
+  const unverifiedProcesses = cleanup.owned_process_group.unverified_processes;
+  if ("cleanup" in capture && unverifiedProcesses === undefined) return capture;
 
   const settlement: UnverifiedProcessCapture["settlement"] =
     capture.settlement.state === "quiesced"
@@ -911,9 +926,20 @@ export const resolveProcessResult = (
     return parseProcessCapture({
       ...capture,
       settlement,
+      residual_unknowns: [
+        ...capture.residual_unknowns,
+        ...(unverifiedProcesses ?? []).map(({ pid, reason }) => ({
+          scope: "process" as const,
+          reason: `Ownership of unrelated process ${String(pid)} could not be verified; it was left untouched: ${reason}`,
+        })),
+      ],
       cleanup: {
+        ...("cleanup" in capture ? capture.cleanup : {}),
         owned_process_group: "verified",
         temporary_root: "removed",
+        ...(unverifiedProcesses === undefined
+          ? {}
+          : { unverified_processes: unverifiedProcesses }),
       },
     });
   } catch (cause: unknown) {

@@ -1,5 +1,8 @@
 import type { ToolContract } from "../contracts/toolContracts.js";
-import { toolInputSchemaWithMetadata } from "../contracts/toolSchemaMetadata.js";
+import {
+  toolInputSchemaWithMetadata,
+  toolOutputSchemaWithMetadata,
+} from "../contracts/toolSchemaMetadata.js";
 
 /** Project the canonical Zod contracts directly into SDK registration. */
 export const toolRegistrationOptions = <Contract extends ToolContract>(
@@ -14,6 +17,6 @@ export const toolRegistrationOptions = <Contract extends ToolContract>(
   title: contract.title,
   description: contract.description,
   inputSchema: toolInputSchemaWithMetadata(contract),
-  outputSchema: contract.outputSchema,
+  outputSchema: toolOutputSchemaWithMetadata(contract),
   annotations: contract.annotations,
 });

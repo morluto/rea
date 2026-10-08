@@ -1,16 +1,16 @@
 {
   "package": {
     "name": "rea-agents",
-    "version": "5.0.0",
+    "version": "6.0.0",
     "sdk": {
       "server": "2.3.1",
       "client": "2.3.1",
       "core": "2.3.1"
     },
-    "skill_version": "32"
+    "skill_version": "33"
   },
   "tools": {
-    "total": 138,
+    "total": 139,
     "families": [
       {
         "id": "direct",
@@ -84,13 +84,14 @@
       {
         "id": "native",
         "surface": "native-provider",
-        "count": 9,
+        "count": 10,
         "tools": [
           "capture_native_ui_scenario",
           "demangle_swift",
           "inspect_binary_layout",
           "inspect_macho",
           "inspect_plist",
+          "inspect_recorded_crash",
           "inspect_signature",
           "list_architectures",
           "observe_native_calls",
@@ -385,7 +386,7 @@
       "id": "pwntools-elf",
       "name": "REA pwntools ELF adapter",
       "version": "pwntools@4.15.0;pyelftools@0.33;unicorn@2.1.2",
-      "capabilities": ["inspect_binary_layout"]
+      "capabilities": ["inspect_binary_layout", "inspect_recorded_crash"]
     },
     {
       "id": "rea-android-application",
@@ -601,7 +602,7 @@
     }
   ],
   "cli": {
-    "primary_count": 93,
+    "primary_count": 94,
     "commands": [
       "address-to-file-offset",
       "analyze",
@@ -658,6 +659,7 @@
       "inspect-native-instruction",
       "inspect-native-load-image",
       "inspect-plist",
+      "inspect-recorded-crash",
       "inspect-signature",
       "inspect-web-event-listeners",
       "inspect-web-network-capture",
@@ -706,15 +708,15 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 93,
-      "mcp_tools": 138,
+      "cli_commands": 94,
+      "mcp_tools": 139,
       "mcp_prompts": 6
     },
     "digests": {
-      "tools_sha256": "61b501f81acddb52ea80408c936ceec19b73e08331f8fdd05eb503708373e0fa",
+      "tools_sha256": "0ac2316e6bd007d273c60f69e132341fc06a3dcb6879408ecfdd3271f30a8230",
       "prompts_sha256": "ef2de8814390b340623c32001610aa2709d90bed51537b6e562ab3abf144ab4d",
-      "combined_sha256": "8ed2bd4b71684e3e391f909841edf32b68da20eede1f46f0dd6081e235644260",
-      "providers_sha256": "44935c127fd040af492f2da591dfcd782d766770d306b91242216674220047ed"
+      "combined_sha256": "20cc1432b29f11c20206cbaeacafab927dcfd68c81a82cf198ad058f54f06eac",
+      "providers_sha256": "954b499c76514890062d2b6c936d73cb3a9c45412d522a081125a325e81cdec5"
     }
   }
 }

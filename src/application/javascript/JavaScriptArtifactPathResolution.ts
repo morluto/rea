@@ -461,10 +461,12 @@ const packageEntry = (
         ? { ...exported, source: "exports" }
         : exported;
     }
-    const preferred =
-      moduleKind === "import"
-        ? [Reflect.get(value, "module"), Reflect.get(value, "main")]
-        : [Reflect.get(value, "main"), Reflect.get(value, "module")];
+    // Node imports and requires ignore the bundler-only module field. Keep
+    // that fallback for callers without an explicit module-loading kind.
+    const preferred = [
+      Reflect.get(value, "main"),
+      ...(moduleKind === undefined ? [Reflect.get(value, "module")] : []),
+    ];
     const entry = preferred.find((candidate) => candidate !== undefined);
     if (entry === undefined) return { status: "missing" };
     const legacy = packagePathValue(entry);
