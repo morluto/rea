@@ -52,7 +52,8 @@ uses isolated mode and an owned cache. Exact upstream profiles are recorded in
   Positive indices resolve through a validated symbol table; symbol index zero
   means a zero symbol value without a table lookup, including when no table is
   linked. Malformed references fail with the affected section and symbol index.
-- Name display strings may contain upstream replacement characters. Raw name
+- Name display strings use UTF-8 replacement for opaque bytes, including
+  sectionless dependency names and interpreter paths. Raw name
   bytes and string-table ranges retain observed identity where resolvable;
   ranges include the terminating NUL and base64 bytes exclude it.
 - NOBITS and NULL sections provide no file bytes. Reported file-backed ranges

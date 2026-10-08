@@ -72,7 +72,13 @@ it("cancels before invocation and after an acquired observation", async () => {
       { path: "/artifacts/source-owned.elf" },
       { signal: controller.signal },
     ),
-  ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
+  ).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisCancelledError",
+      capturedOutput: binaryLayoutFixture().diagnostics,
+    },
+  });
   const untouched = new BinaryLayoutService({
     identity: BINARY_LAYOUT_TEST_PROVIDER,
     inspect: () => {
@@ -114,6 +120,12 @@ it.each(["different-path", "invalid-digest", "outside-range"])(
     });
     expect(
       await service.inspect({ path: "/artifacts/source-owned.elf" }),
-    ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
+    ).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisOutputError",
+        capturedOutput: fixture.diagnostics,
+      },
+    });
   },
 );

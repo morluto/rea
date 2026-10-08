@@ -49,14 +49,21 @@ export class BinaryLayoutService {
       );
     const inspected = await this.provider.inspect(input.data, options);
     if (!inspected.ok) return inspected;
+    const diagnostics = binaryLayoutSchema.shape.diagnostics.safeParse(
+      inspected.value.diagnostics,
+    );
+    const outputOptions = diagnostics.success
+      ? { capturedOutput: diagnostics.data }
+      : undefined;
     if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION));
+      return err(new AnalysisCancelledError(OPERATION, outputOptions));
     const report = binaryLayoutSchema.safeParse(inspected.value);
     if (!report.success || report.data.artifact.path !== input.data.path)
       return err(
         new AnalysisOutputError(
           OPERATION,
           "Binary layout provider returned malformed evidence or changed the selected artifact identity.",
+          outputOptions,
         ),
       );
     const value = report.data;

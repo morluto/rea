@@ -352,6 +352,47 @@ try {
   );
   assert.notEqual(dynamicSegment, undefined);
   assert.notEqual(interpreterSegment, undefined);
+  const dependency = protectedReport.linkage.needed_libraries[0];
+  assert.notEqual(dependency, undefined);
+  assert.notEqual(dependency.location, null);
+  for (const [profile, original] of [
+    ["section-bearing", sectionBearingBytes],
+    ["sectionless", sectionlessBytes],
+  ]) {
+    for (const facet of ["dependency", "interpreter"]) {
+      const bytes = Buffer.from(original);
+      const reference =
+        facet === "dependency"
+          ? dependency
+          : protectedReport.linkage.interpreters[0];
+      assert.notEqual(reference, undefined);
+      assert.notEqual(reference.location, null);
+      const raw = Buffer.from(reference.bytes_base64, "base64");
+      const changedIndex = facet === "dependency" ? 0 : 1;
+      raw[changedIndex] = 0xff;
+      bytes[Number(BigInt(reference.location.offset)) + changedIndex] = 0xff;
+      const path = join(root.path, `opaque-${profile}-${facet}`);
+      await writeFile(path, bytes);
+      for (const mode of ["cli", "mcp"]) {
+        const value = await inspect(mode, path);
+        const actual =
+          facet === "dependency"
+            ? value.linkage.needed_libraries[0]
+            : value.linkage.interpreters[0];
+        assert.deepEqual(actual, {
+          ...reference,
+          display: raw.toString("utf8"),
+          bytes_base64: raw.toString("base64"),
+        });
+        assert.equal(
+          value.artifact.sha256,
+          createHash("sha256").update(bytes).digest("hex"),
+        );
+        assert.deepEqual(await readFile(path), bytes);
+        cases++;
+      }
+    }
+  }
   const shortDynamic = Buffer.from(sectionBearingBytes);
   shortDynamic.writeBigUInt64LE(
     16n,

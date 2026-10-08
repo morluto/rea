@@ -62,8 +62,8 @@ def name_in_table(display, table_start, table_size, offset, content):
 def dynamic_name_reference(display, string_table, tags, offset, image, content):
     if getattr(string_table, "header", None) is not None:
         return name_reference(display, string_table, offset, content)
-    starts = [tag.entry.d_val for tag in tags if tag.entry.d_tag == "DT_STRTAB"]
-    sizes = [tag.entry.d_val for tag in tags if tag.entry.d_tag == "DT_STRSZ"]
+    starts = [tag.d_val for tag in tags if tag.d_tag == "DT_STRTAB"]
+    sizes = [tag.d_val for tag in tags if tag.d_tag == "DT_STRSZ"]
     offsets = set()
     if len(starts) == 1 and len(sizes) == 1:
         for segment in image.iter_segments_by_type("PT_LOAD"):
@@ -220,22 +220,30 @@ def inspect_elf(path, cache):
                 })
                 if h.p_type == "PT_DYNAMIC":
                     tag_size = image.structs.Elf_Dyn.sizeof()
+                    tags = []
                     for tag_index in range(h.p_filesz // tag_size):
-                        if segment._get_tag(tag_index).d_tag == "DT_NULL":
+                        tag = segment._get_tag(tag_index)
+                        tags.append(tag)
+                        if tag.d_tag == "DT_NULL":
                             break
                     else:
                         raise LayoutFailure("format", f"ELF dynamic segment {index} has no complete DT_NULL terminator within its reported file range.")
                     string_table = segment._get_stringtable()
-                    tags = list(segment.iter_tags())
                     for tag in tags:
-                        if tag.entry.d_tag == "DT_NEEDED":
-                            needed.append(dynamic_name_reference(tag.needed, string_table, tags, tag.entry.d_val, image, content))
+                        if tag.d_tag == "DT_NEEDED":
+                            try:
+                                display = string_table.get_string(tag.d_val)
+                            except UnicodeDecodeError as error:
+                                # The unchanged decoder exposes the exact bytes it
+                                # attempted to decode; replace only display text.
+                                display = error.object.decode("utf-8", "replace")
+                            needed.append(dynamic_name_reference(display, string_table, tags, tag.d_val, image, content))
                 if h.p_type == "PT_INTERP":
                     raw = content[h.p_offset:h.p_offset + h.p_filesz]
                     end = raw.find(b"\0")
                     if end < 0:
                         raise LayoutFailure("format", "ELF interpreter lacks a reported terminator.")
-                    interpreters.append({"display": segment.get_interp_name(), "bytes_base64": base64.b64encode(raw[:end]).decode("ascii"), "location": location(h.p_offset, end + 1, length), "unknown_reason": None})
+                    interpreters.append({"display": raw[:end].decode("utf-8", "replace"), "bytes_base64": base64.b64encode(raw[:end]).decode("ascii"), "location": location(h.p_offset, end + 1, length), "unknown_reason": None})
             return {
                 "format": "elf", "architecture": {"machine": image.header.e_machine, "bits": image.bits, "byte_order": image.endian},
                 "image_type": image.header.e_type,
