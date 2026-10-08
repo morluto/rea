@@ -1,15 +1,29 @@
-import { chmod, mkdir, rename, rm, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import {
+  chmod,
+  copyFile,
+  lstat,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
 import {
-  bindSignatureTarget,
+  withSignatureTarget,
   verifySignatureTarget,
 } from "../../../../src/native/SignatureTargetBinding.js";
 import {
   NativeCommandFailure,
+  XcrunCommandRunner,
   type NativeCommandRunner,
 } from "../../../../src/native/CommandRunner.js";
+import { inspectSignatureSchema } from "../../../../src/domain/native/nativeInspection.js";
 import { err } from "../../../../src/domain/result.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import {
@@ -257,18 +271,26 @@ it("returns typed cancellation during target acquisition before commands run", a
 
 it("returns typed cancellation at binding entry and final verification", async () => {
   const { target } = await fixture();
-  const binding = await bindSignatureTarget(target);
-  if (!binding.ok) throw binding.error;
   const signal = AbortSignal.abort();
-  await expect(bindSignatureTarget(target, signal)).resolves.toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisCancelledError" },
-  });
   await expect(
-    verifySignatureTarget(target, binding.value, signal),
+    withSignatureTarget(
+      target,
+      async () => {
+        throw new Error("Cancelled acquisition must not invoke inspection");
+      },
+      signal,
+    ),
   ).resolves.toMatchObject({
     ok: false,
     error: { _tag: "AnalysisCancelledError" },
+  });
+  await withSignatureTarget(target, async (binding) => {
+    const result = await verifySignatureTarget(target, binding, signal);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError" },
+    });
+    return result;
   });
 });
 
@@ -286,3 +308,127 @@ it("preserves cancellation after a capture instead of classifying it as invalid 
     error: { _tag: "AnalysisCancelledError" },
   });
 });
+
+it.each(["success", "failure", "cancellation", "throw"] as const)(
+  "releases the verified snapshot after %s",
+  async (outcome) => {
+    const { target } = await fixture();
+    const controller = new AbortController();
+    let snapshotPath: string | undefined;
+    const runner: NativeCommandRunner = {
+      async run(tool, args) {
+        snapshotPath = args.at(-1);
+        if (snapshotPath === undefined)
+          throw new Error("Missing command target");
+        expect(snapshotPath).not.toBe(target.path);
+        expect(await readFile(snapshotPath, "utf8")).toBe(CONTENT);
+        if (outcome === "throw") throw new Error("Unexpected native failure");
+        if (outcome === "failure")
+          return err(new NativeCommandFailure(tool, "io"));
+        if (outcome === "cancellation") controller.abort();
+        return new NativeFixtureRunner().run(tool, args);
+      },
+    };
+    const result = await new NativeMacOSProvider(runner, "darwin")
+      .createClient(target)
+      .execute("inspect_signature", {}, { signal: controller.signal });
+    expect(result.ok).toBe(outcome === "success");
+    if (snapshotPath === undefined)
+      throw new Error("Expected snapshot capture");
+    await expect(lstat(dirname(snapshotPath))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  },
+);
+
+it("copies and hashes the same bytes across multiple snapshot chunks", async () => {
+  const { path } = await fixture();
+  const bytes = Buffer.alloc(128 * 1024 + 13, 42);
+  await writeFile(path, bytes);
+  const target = await nativeMachoTargetForFile(path);
+  await withSignatureTarget(target, async (binding) => {
+    expect(await readFile(binding.snapshotPath)).toEqual(bytes);
+    return verifySignatureTarget(target, binding);
+  });
+});
+
+it("cleans the private snapshot when inspection throws", async () => {
+  const { target } = await fixture();
+  let snapshotPath: string | undefined;
+  await expect(
+    withSignatureTarget(target, async (binding) => {
+      snapshotPath = binding.snapshotPath;
+      throw new Error("Invalid parsed output");
+    }),
+  ).rejects.toThrow("Invalid parsed output");
+  if (snapshotPath === undefined) throw new Error("Expected snapshot");
+  await expect(lstat(dirname(snapshotPath))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+});
+
+it.skipIf(process.platform !== "darwin")(
+  "keeps real codesign bound to registered bytes during an ancestor directory swap",
+  async () => {
+    const root = await createTestTempDirectory("rea-signature-swap-");
+    const selected = join(root, "selected");
+    const replacement = join(root, "replacement");
+    const saved = join(root, "saved");
+    await mkdir(selected);
+    await mkdir(replacement);
+    const path = join(selected, "program");
+    const replacementPath = join(replacement, "program");
+    const run = promisify(execFile);
+    for (const [program, identifier] of [
+      [path, "rea.original"],
+      [replacementPath, "rea.replacement"],
+    ] as const) {
+      await copyFile("/usr/bin/true", program);
+      await run("/usr/bin/codesign", [
+        "-s",
+        "-",
+        "-f",
+        "--identifier",
+        identifier,
+        program,
+      ]);
+    }
+    const target = await nativeMachoTargetForFile(path);
+    const real = new XcrunCommandRunner();
+    let capturedPath: string | undefined;
+    const runner: NativeCommandRunner = {
+      async run(tool, args, options) {
+        capturedPath = args.at(-1);
+        await rename(selected, saved);
+        await rename(replacement, selected);
+        try {
+          expect(await readFile(path)).not.toEqual(
+            await readFile(join(saved, "program")),
+          );
+          return await real.run(tool, args, options);
+        } finally {
+          await rename(selected, replacement);
+          await rename(saved, selected);
+        }
+      },
+    };
+    const result = await new NativeMacOSProvider(runner, "darwin")
+      .createClient(target)
+      .execute("inspect_signature", {});
+    expect(result.ok && result.value.result).toMatchObject({
+      signed: true,
+      identifier: "rea.original",
+    });
+    if (!result.ok) throw result.error;
+    expect(
+      inspectSignatureSchema
+        .parse(result.value.result)
+        .provenance.map(({ command }) => command.at(-1)),
+    ).toEqual(["$ARTIFACT", "$ARTIFACT", "$ARTIFACT"]);
+    if (capturedPath === undefined)
+      throw new Error("Expected codesign invocation");
+    await expect(lstat(dirname(capturedPath))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  },
+);

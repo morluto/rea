@@ -55,7 +55,7 @@ import {
   type NativeCommandRunner,
 } from "./CommandRunner.js";
 import {
-  bindSignatureTarget,
+  withSignatureTarget,
   verifySignatureTarget,
   type SignatureTargetBinding,
 } from "./SignatureTargetBinding.js";
@@ -323,11 +323,20 @@ class NativeMacOSClient implements AnalysisClient {
   async #inspectSignature(
     signal?: AbortSignal,
   ): Promise<Result<NativeObservation, AnalysisError>> {
-    const binding = await bindSignatureTarget(this.target, signal);
-    if (!binding.ok) return binding;
+    return withSignatureTarget(
+      this.target,
+      (binding) => this.#inspectBoundSignature(binding, signal),
+      signal,
+    );
+  }
+
+  async #inspectBoundSignature(
+    binding: SignatureTargetBinding,
+    signal?: AbortSignal,
+  ): Promise<Result<NativeObservation, AnalysisError>> {
     const display = await this.#captureSignature(
-      binding.value,
-      ["-d", "--verbose=4", this.target.path],
+      binding,
+      ["-d", "--verbose=4"],
       signal,
     );
     if (!display.ok) return display;
@@ -335,16 +344,16 @@ class NativeMacOSClient implements AnalysisClient {
     const displayFailure = codeSignCaptureFailure(display.value);
     if (displayFailure !== null) return err(displayFailure);
     const requirements = await this.#captureSignature(
-      binding.value,
-      ["-d", "-r-", this.target.path],
+      binding,
+      ["-d", "-r-"],
       signal,
     );
     if (!requirements.ok) return requirements;
     const requirementsFailure = codeSignCaptureFailure(requirements.value);
     if (requirementsFailure !== null) return err(requirementsFailure);
     const entitlements = await this.#captureSignature(
-      binding.value,
-      ["-d", "--entitlements", ":-", this.target.path],
+      binding,
+      ["-d", "--entitlements", ":-"],
       signal,
     );
     if (!entitlements.ok) return entitlements;
@@ -352,8 +361,8 @@ class NativeMacOSClient implements AnalysisClient {
     if (entitlementsFailure !== null) return err(entitlementsFailure);
     // codesign echoes the resolved executable path in its diagnostics.
     const parsed = parseCodeSignature(display.value.stderr, unsigned, [
-      this.target.path,
-      ...(await canonicalPath(this.target.path)),
+      binding.snapshotPath,
+      ...(await canonicalPath(binding.snapshotPath)),
     ]);
     // The requirement is printed to stdout; stderr echoes the path.
     const requirementText =
@@ -363,6 +372,7 @@ class NativeMacOSClient implements AnalysisClient {
     const captures = [display.value, requirements.value, entitlements.value];
     const limitations = [
       ...parsed.limitations,
+      "Inspected a digest-verified Mach-O byte snapshot; filesystem-bound signing context and trust validation are not examined.",
       ...(entitlementValue.omittedPrototypeKeys === 0
         ? []
         : [
@@ -375,7 +385,7 @@ class NativeMacOSClient implements AnalysisClient {
         isNonzeroUnsignedObservation(entitlements.value));
     if (mixedSigning) {
       const slices = await this.#inspectMixedSignatureSlices(
-        binding.value,
+        binding,
         parsed.format,
         {
           requirements: requirements.value.exitCode,
@@ -388,13 +398,9 @@ class NativeMacOSClient implements AnalysisClient {
       limitations.push(...slices.value.limitations);
     }
     const provenance = captures.map((capture) =>
-      invocation(capture, this.target.path),
+      invocation(capture, binding.snapshotPath),
     );
-    const version = await verifySignatureTarget(
-      this.target,
-      binding.value,
-      signal,
-    );
+    const version = await verifySignatureTarget(this.target, binding, signal);
     if (!version.ok) return version;
     const result = inspectSignatureSchema.parse({
       ...parsed,
@@ -426,7 +432,7 @@ class NativeMacOSClient implements AnalysisClient {
     for (const architecture of codeSignArchitectures(format, this.target)) {
       const slice = await this.#captureSignature(
         binding,
-        ["-d", "-a", architecture, "--verbose=4", this.target.path],
+        ["-d", "-a", architecture, "--verbose=4"],
         signal,
       );
       if (!slice.ok) return slice;
@@ -465,10 +471,15 @@ class NativeMacOSClient implements AnalysisClient {
     if (!before.ok) return before;
     let capture: Result<NativeCommandCapture, AnalysisError>;
     try {
-      capture = await this.#run("inspect_signature", "codesign", args, {
-        signal,
-        acceptNonZero: true,
-      });
+      capture = await this.#run(
+        "inspect_signature",
+        "codesign",
+        [...args, binding.snapshotPath],
+        {
+          signal,
+          acceptNonZero: true,
+        },
+      );
     } catch (cause: unknown) {
       capture = err(
         new ProviderAdapterError(IDENTITY.id, "inspect_signature", {

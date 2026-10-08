@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
-import { lstat, open } from "node:fs/promises";
+import { lstat, mkdtemp, open, rm, type FileHandle } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
@@ -16,6 +18,7 @@ import { NATIVE_MACOS_PROVIDER_IDENTITY } from "./NativeMacOSProviderMetadata.js
 /** Binding of commands to the selected executable's registered content/version. */
 export interface SignatureTargetBinding {
   readonly identity: string;
+  readonly snapshotPath: string;
 }
 
 const identity = (stat: BigIntStats): string =>
@@ -30,6 +33,7 @@ const signatureReadFailure = (
   target: BinaryTarget,
   cause: unknown,
 ): AnalysisError => {
+  if (cause instanceof AnalysisError) return cause;
   const code =
     cause instanceof Error && "code" in cause ? cause.code : undefined;
   if (code === "EACCES" || code === "EPERM")
@@ -61,9 +65,121 @@ const signatureReadFailure = (
   );
 };
 
-/** Establish a bounded-memory digest/version baseline before external commands run. */
-export const bindSignatureTarget = async (
+/** Inspect a digest-verified private copy, releasing it on every exit path. */
+export const withSignatureTarget = async <T>(
   target: BinaryTarget,
+  inspect: (
+    binding: SignatureTargetBinding,
+  ) => Promise<Result<T, AnalysisError>>,
+  signal?: AbortSignal,
+): Promise<Result<T, AnalysisError>> => {
+  let directory: string;
+  try {
+    signal?.throwIfAborted();
+    directory = await mkdtemp(join(tmpdir(), "rea-signature-"));
+  } catch (cause: unknown) {
+    return err(
+      signal?.aborted
+        ? new AnalysisCancelledError("inspect_signature")
+        : snapshotFailure(target, "create", cause),
+    );
+  }
+  let result: Result<T, AnalysisError>;
+  let cleanup: Result<void, AnalysisError>;
+  try {
+    const binding = await bindSignatureTarget(
+      target,
+      join(directory, basename(target.path)),
+      signal,
+    );
+    result = binding.ok ? await inspect(binding.value) : binding;
+  } finally {
+    try {
+      await rm(directory, { recursive: true, force: true });
+      cleanup = ok(undefined);
+    } catch (cause: unknown) {
+      cleanup = err(snapshotFailure(target, "cleanup", cause));
+    }
+  }
+  // Cleanup cannot replace the operation's original actionable failure.
+  return result.ok && !cleanup.ok ? cleanup : result;
+};
+
+const snapshotFailure = (
+  target: BinaryTarget,
+  phase: string,
+  cause: unknown,
+): AnalysisError =>
+  new ProviderAdapterError(
+    NATIVE_MACOS_PROVIDER_IDENTITY.id,
+    "inspect_signature",
+    {
+      cause,
+      diagnostics: {
+        path: target.path,
+        phase: `signature-snapshot-${phase}`,
+        reason: cause instanceof Error ? cause.message : String(cause),
+      },
+    },
+  );
+
+const snapshotIO = async <T>(
+  target: BinaryTarget,
+  phase: string,
+  operation: () => Promise<T>,
+): Promise<T> => {
+  try {
+    return await operation();
+  } catch (cause: unknown) {
+    throw snapshotFailure(target, phase, cause);
+  }
+};
+
+const copySignatureBytes = async (
+  target: BinaryTarget,
+  source: { readonly file: FileHandle; readonly stat: BigIntStats },
+  snapshot: FileHandle,
+  signal?: AbortSignal,
+): Promise<string> => {
+  const size = Number(source.stat.size);
+  if (!Number.isSafeInteger(size))
+    throw new AnalysisResourceConstraintError(
+      "inspect_signature",
+      "file-size",
+      `Signature target size is not exactly representable: ${target.path}`,
+      null,
+    );
+  const hash = createHash("sha256");
+  const chunk = Buffer.alloc(64 * 1024);
+  let position = 0;
+  while (position < size) {
+    signal?.throwIfAborted();
+    const { bytesRead } = await source.file.read(
+      chunk,
+      0,
+      Math.min(chunk.length, size - position),
+      position,
+    );
+    signal?.throwIfAborted();
+    if (bytesRead === 0)
+      throw new AnalysisArtifactChangedError(
+        "inspect_signature",
+        target.path,
+        `Signature target was truncated while hashing: ${target.path}`,
+      );
+    const bytes = chunk.subarray(0, bytesRead);
+    hash.update(bytes);
+    // writeFile retries short writes; memory remains bounded to this chunk.
+    await snapshotIO(target, "write", () => snapshot.writeFile(bytes));
+    position += bytesRead;
+  }
+  return hash.digest("hex");
+};
+
+/** Hash and copy the same descriptor bytes, without reopening the mutable path. */
+const bindSignatureTarget = async (
+  target: BinaryTarget,
+  snapshotPath: string,
   signal?: AbortSignal,
 ): Promise<Result<SignatureTargetBinding, AnalysisError>> => {
   try {
@@ -87,54 +203,37 @@ export const bindSignatureTarget = async (
           target,
           `Signature target changed before open: ${target.path}`,
         );
-      const size = Number(opened.size);
-      if (!Number.isSafeInteger(size))
-        return err(
-          new AnalysisResourceConstraintError(
-            "inspect_signature",
-            "file-size",
-            `Signature target size is not exactly representable: ${target.path}`,
-            null,
-          ),
+      const snapshot = await snapshotIO(target, "create-file", () =>
+        open(snapshotPath, "wx", 0o600),
+      );
+      try {
+        const observed = await copySignatureBytes(
+          target,
+          { file, stat: opened },
+          snapshot,
+          signal,
         );
-      const hash = createHash("sha256");
-      const chunk = Buffer.alloc(64 * 1024);
-      let position = 0;
-      while (position < size) {
-        signal?.throwIfAborted();
-        const { bytesRead } = await file.read(
-          chunk,
-          0,
-          Math.min(chunk.length, size - position),
-          position,
-        );
-        signal?.throwIfAborted();
-        if (bytesRead === 0)
+        if (observed !== target.sha256)
           return changedTarget(
             target,
-            `Signature target was truncated while hashing: ${target.path}`,
+            `Signature target digest changed: ${target.path}; expected ${target.sha256}, observed ${observed}`,
           );
-        hash.update(chunk.subarray(0, bytesRead));
-        position += bytesRead;
+        const after = await file.stat({ bigint: true });
+        const current = await lstat(target.path, { bigint: true });
+        signal?.throwIfAborted();
+        if (
+          identity(after) !== identity(opened) ||
+          identity(current) !== identity(opened)
+        )
+          return changedTarget(
+            target,
+            `Signature target changed while establishing its version: ${target.path}`,
+          );
+        await snapshotIO(target, "seal", () => snapshot.chmod(0o400));
+        return ok({ identity: identity(opened), snapshotPath });
+      } finally {
+        await snapshotIO(target, "close", () => snapshot.close());
       }
-      const observed = hash.digest("hex");
-      if (observed !== target.sha256)
-        return changedTarget(
-          target,
-          `Signature target digest changed: ${target.path}; expected ${target.sha256}, observed ${observed}`,
-        );
-      const after = await file.stat({ bigint: true });
-      const current = await lstat(target.path, { bigint: true });
-      signal?.throwIfAborted();
-      if (
-        identity(after) !== identity(opened) ||
-        identity(current) !== identity(opened)
-      )
-        return changedTarget(
-          target,
-          `Signature target changed while establishing its version: ${target.path}`,
-        );
-      return ok({ identity: identity(opened) });
     } finally {
       await file.close();
     }
