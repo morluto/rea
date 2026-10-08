@@ -17,6 +17,9 @@ import { err, type Result } from "../domain/result.js";
 
 export type HopperRequestResult = Result<JsonValue, HopperError>;
 
+/** Node timer ceiling; larger deadlines would be clamped instead of honored. */
+const MAX_TIMEOUT_MS = 2_147_483_647;
+
 export interface HopperRequestQueueOptions {
   readonly signal?: AbortSignal;
   /** Caller deadline from admission, including time waiting in the FIFO. */
@@ -77,12 +80,12 @@ export class HopperRequestQueue {
       timeoutMs !== undefined &&
       (!Number.isInteger(timeoutMs) ||
         timeoutMs < 0 ||
-        timeoutMs > 2_147_483_647)
+        timeoutMs > MAX_TIMEOUT_MS)
     )
       return Promise.resolve(
         err(
           new HopperProtocolError(
-            "Hopper timeoutMs must be an integer between 0 and 2147483647",
+            `Hopper timeoutMs must be an integer between 0 and ${String(MAX_TIMEOUT_MS)}`,
           ),
         ),
       );
@@ -93,7 +96,7 @@ export class HopperRequestQueue {
             0,
             method,
             id,
-            "busy",
+            "not_started",
             hopperOperationStage(method),
           ),
         ),
