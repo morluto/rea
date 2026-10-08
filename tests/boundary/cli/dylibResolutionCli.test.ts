@@ -265,6 +265,8 @@ cliTest(
       ["DYLD_PRINT_LIBRARIES=1", "resolved"],
       ["DYLD_FALLBACK_LIBRARY_PATH=/external", "resolved"],
       ["DYLD_FRAMEWORK_PATH=/external", "resolved"],
+      ["DYLD_ROOT_PATH=/external", "resolved"],
+      ["DYLD_OVERLAY_PATH=/external", "resolved"],
     ] as const) {
       const app = await fixtureApp();
       await writeFiles(app, {

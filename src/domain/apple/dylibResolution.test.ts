@@ -955,3 +955,67 @@ it.each([
     expect(trace.coverage.status).toBe(coverage);
   },
 );
+
+it.each([
+  ["DYLD_ROOT_PATH=/root", [1], "@loader_path/child.dylib"],
+  ["DYLD_ROOT_PATH=/root", [7], "@loader_path/child.dylib"],
+  ["DYLD_ROOT_PATH=/root", [8], "@executable_path/child.dylib"],
+  ["DYLD_ROOT_PATH=/root", [9], "@rpath/child.dylib"],
+  ["DYLD_ROOT_PATH=/root", [12], "@rpath/child.dylib"],
+  ["DYLD_OVERLAY_PATH=/overlay", [1], "@rpath/child.dylib"],
+  ["DYLD_OVERLAY_PATH=/overlay", [7], "@loader_path/child.dylib"],
+  ["DYLD_ROOT_PATH=", [7], "@loader_path/child.dylib"],
+  ["DYLD_OVERLAY_PATH=", [1], "@loader_path/child.dylib"],
+] as const)(
+  "limits prefix setting %s on platforms %j for %s",
+  async (setting, platforms, install_name) => {
+    const child = "Contents/MacOS/child.dylib";
+    const trace = await traceDylibLoading(
+      memoryView({
+        [MAIN]: executable({
+          platforms: [...platforms],
+          dyld_environment: [setting],
+          rpaths: ["@executable_path"],
+          dependencies: [dependency(install_name)],
+        }),
+        [child]: parsed(slice({ platforms: [...platforms] })),
+      }),
+      { roots: [MAIN] },
+    );
+    expect(trace.edges[0]?.resolution.status).toBe("resolved");
+    expect(trace.coverage.status).toBe("complete");
+    expect(
+      trace.images.find(({ path }) => path === MAIN)?.slices[0]
+        ?.dyld_environment,
+    ).toEqual([setting]);
+  },
+);
+
+it.each([
+  ["DYLD_ROOT_PATH=/root", [1], "complete"],
+  ["DYLD_ROOT_PATH=/root", [2], "complete"],
+  ["DYLD_ROOT_PATH=/root", [6], "complete"],
+  ["DYLD_ROOT_PATH=/root", [7], "partial"],
+  ["DYLD_ROOT_PATH=/root", [8], "partial"],
+  ["DYLD_ROOT_PATH=/root", [9], "partial"],
+  ["DYLD_ROOT_PATH=/root", [12], "partial"],
+  ["DYLD_ROOT_PATH=/root", [], "partial"],
+  ["DYLD_ROOT_PATH=/root", [99], "partial"],
+  ["DYLD_OVERLAY_PATH=/overlay", [1], "partial"],
+] as const)(
+  "retains only possible absolute-path prefix uncertainty for %s on %j",
+  async (setting, platforms, coverage) => {
+    const trace = await traceDylibLoading(
+      memoryView({
+        [MAIN]: executable({
+          platforms: [...platforms],
+          dyld_environment: [setting],
+          dependencies: [dependency("/usr/lib/child.dylib")],
+        }),
+      }),
+      { roots: [MAIN] },
+    );
+    expect(trace.edges[0]?.resolution.status).toBe("undetermined");
+    expect(trace.coverage.status).toBe(coverage);
+  },
+);

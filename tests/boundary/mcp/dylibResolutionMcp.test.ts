@@ -211,6 +211,8 @@ it.each([
   "DYLD_PRINT_RPATHS=1",
   "DYLD_FALLBACK_LIBRARY_PATH=/external",
   "DYLD_FRAMEWORK_PATH=/external",
+  "DYLD_ROOT_PATH=/external",
+  "DYLD_OVERLAY_PATH=/external",
 ])("preserves %s and its resolution semantics through MCP", async (setting) => {
   const root = await createTestTempDirectory("rea-dylib-environment-mcp-");
   const program = join(root, "program");

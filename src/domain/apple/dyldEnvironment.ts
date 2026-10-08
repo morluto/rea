@@ -1,7 +1,7 @@
 /** Search phase and image kind affected by one embedded dyld setting. */
 export interface DyldSearchOverride {
   readonly phase: "override" | "fallback";
-  readonly scope: "library" | "framework" | "all";
+  readonly scope: "library" | "framework" | "prefix" | "all";
   readonly variable: string;
   readonly value: string;
 }
@@ -9,6 +9,7 @@ export interface DyldSearchOverride {
 /** Retain recognized image-selection settings separately from diagnostic observations. */
 export const embeddedDyldOverrides = (
   environment: readonly string[],
+  platforms: readonly number[],
 ): DyldSearchOverride[] => {
   const overrides: DyldSearchOverride[] = [];
   for (const setting of environment) {
@@ -18,9 +19,19 @@ export const embeddedDyldOverrides = (
     const value = setting.slice(delimiter + 1);
     const effect = overrideEffect(variable);
     if (effect === undefined) continue;
+    // ROOT_PATH is accepted only for simulator processes. Missing or unknown
+    // platform metadata cannot establish that dyld ignores it.
+    if (
+      variable === "DYLD_ROOT_PATH" &&
+      platforms.length > 0 &&
+      platforms.every((platform) => platform >= 1 && platform <= 12) &&
+      !platforms.some((platform) => [7, 8, 9, 12].includes(platform))
+    )
+      continue;
     if (
       (variable === "DYLD_INSERT_LIBRARIES" ||
-        variable === "DYLD_IMAGE_SUFFIX") &&
+        variable === "DYLD_IMAGE_SUFFIX" ||
+        effect.scope === "prefix") &&
       value === ""
     )
       continue;
@@ -47,9 +58,10 @@ const overrideEffect = (
     case "DYLD_VERSIONED_FRAMEWORK_PATH":
     case "DYLD_INSERT_LIBRARIES":
     case "DYLD_IMAGE_SUFFIX":
+      return { phase: "override", scope: "all" };
     case "DYLD_ROOT_PATH":
     case "DYLD_OVERLAY_PATH":
-      return { phase: "override", scope: "all" };
+      return { phase: "override", scope: "prefix" };
     default:
       return undefined;
   }
@@ -84,6 +96,8 @@ export const hasApplicableDyldOverrides = (
   return overrides.some(
     ({ phase, scope }) =>
       (phase === "override" || !ordinarySearchFoundImage) &&
-      (scope === "all" || scope === kind),
+      (scope === "all" ||
+        scope === kind ||
+        (scope === "prefix" && !installName.startsWith("@"))),
   );
 };

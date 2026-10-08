@@ -564,7 +564,10 @@ export const traceDylibLoading = async (
     );
     if (slices.length === 0) withoutArchitecture.push(root);
     for (const slice of slices) {
-      const searchOverrides = embeddedDyldOverrides(slice.dyld_environment);
+      const searchOverrides = embeddedDyldOverrides(
+        slice.dyld_environment,
+        slice.platforms,
+      );
       // Inserted libraries introduce unexamined images even without dependencies.
       if (
         searchOverrides.some(
