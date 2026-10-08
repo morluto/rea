@@ -23,6 +23,8 @@ export const invalidInterfaceBuilderEncodings = [
   "utf8-declared-utf16",
   "utf16-declared-utf8",
   "invalid-utf8",
+  "unsupported-declaration",
+  "latin1-declaration",
 ] as const;
 type Encoding =
   | (typeof interfaceBuilderEncodings)[number]

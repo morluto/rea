@@ -124,6 +124,10 @@ try JSONSerialization.data(withJSONObject: oracle, options: [.sortedKeys])
 try Data([0xff, 0xfe, 0x3c]).write(to: output.appendingPathComponent("incomplete-utf16.nib"))
 try Data(utf16Text.utf8).write(to: output.appendingPathComponent("utf8-declared-utf16.nib"))
 try (Data([0xff, 0xfe]) + text.data(using: .utf16LittleEndian)!).write(to: output.appendingPathComponent("utf16-declared-utf8.nib"))
+try Data(text.replacingOccurrences(of: "UTF-8", with: "REA-UNSUPPORTED").utf8)
+    .write(to: output.appendingPathComponent("unsupported-declaration.nib"))
+try Data(text.replacingOccurrences(of: "UTF-8", with: "ISO-8859-1").utf8)
+    .write(to: output.appendingPathComponent("latin1-declaration.nib"))
 
 guard let identifierRange = original.range(of: Data("Café".utf8)) else {
     fatalError("Expected literal UTF-8 identifier in generated XML")

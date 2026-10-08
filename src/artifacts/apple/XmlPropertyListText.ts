@@ -9,13 +9,21 @@ export const decodeXmlPlistText = (bytes: Buffer): string => {
         ? "utf-16be"
         : "utf-8";
   const text = new TextDecoder(encoding, { fatal: true }).decode(bytes);
-  const declared = /^<\?xml\s[^?]*\bencoding\s*=\s*["']([^"']+)["']/u
-    .exec(text)?.[1]
-    ?.toLowerCase();
+  const declaration = /^<\?xml\s[^?]*\bencoding\s*=\s*["']([^"']+)["']/u.exec(
+    text,
+  )?.[1];
+  const declared = declaration?.toLowerCase();
   if (
     declared !== undefined &&
-    ((encoding !== "utf-8" && declared !== encoding && declared !== "utf-16") ||
-      (encoding === "utf-8" && declared.startsWith("utf-16")))
+    !["utf-8", "utf-16", "utf-16le", "utf-16be"].includes(declared)
+  )
+    throw new TypeError(
+      `Unsupported XML encoding declaration: ${declaration}. Supported encodings are UTF-8 and BOM-marked UTF-16 in either byte order.`,
+    );
+  if (
+    declared !== undefined &&
+    declared !== encoding &&
+    !(encoding !== "utf-8" && declared === "utf-16")
   )
     throw new TypeError("XML encoding declaration disagrees with its bytes");
   return text;
