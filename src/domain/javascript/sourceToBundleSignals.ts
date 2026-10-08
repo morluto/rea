@@ -135,6 +135,12 @@ export const candidateIdsForSource = (
   return output;
 };
 
+/** Whether an indexed candidate carries any content digest to compare. */
+export const candidateHasDigest = (
+  index: SourceToBundleCandidateIndex,
+  nodeId: string,
+): boolean => (index.nodes.get(nodeId)?.digests.size ?? 0) > 0;
+
 /** Score one indexed candidate from explicit, caller-visible signals. */
 export const scoreSourceToBundleCandidate = (
   source: SourceFile,

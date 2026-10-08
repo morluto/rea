@@ -136,6 +136,56 @@ describe("historical source to bundle comparison", () => {
   });
 });
 
+describe("source to bundle digest changes", () => {
+  it("reports a located source with a different digest as modified", () => {
+    const node = createJavaScriptApplicationNode({
+      kind: "source-module",
+      identity: {
+        strategy: "source-map-original",
+        stability: "source-map-exact",
+        source_map_sha256: HASH.artifact,
+        original_source: "webpack://fixture/./src/modified.ts",
+        source_sha256: HASH.unchanged,
+      },
+      observations: [
+        {
+          label: "src/modified.ts",
+          properties: { source_sha256: HASH.unchanged },
+          evidence: artifactEvidence(HASH.artifact, "dist/main.js.map"),
+        },
+      ],
+    });
+    const graph = createJavaScriptApplicationGraph({
+      schema: "JavaScriptApplicationGraph",
+      root_node_ids: [node.node_id],
+      nodes: [node],
+      edges: [],
+      coverage: {
+        status: "complete",
+        truncated: false,
+        omitted_count: 0,
+        limits: [],
+      },
+      limitations: [],
+    });
+    const result = compareSourceToBundle({
+      reference: historicalGraph("complete", ["src/modified.ts"]),
+      application: {
+        evidenceId: EVIDENCE_ID,
+        rootArtifactSha256: HASH.artifact,
+        graph,
+      },
+    });
+
+    expect(result.summary).toMatchObject({ modified: 1, unknown: 0 });
+    expect(item(result, "src/modified.ts")).toMatchObject({
+      status: "modified",
+      confidence: "high",
+      current_node_ids: [node.node_id],
+    });
+  });
+});
+
 describe("source to bundle path syntax", () => {
   it.each(["src/modified#part.ts", "src/modified?part.ts"])(
     "preserves literal filesystem punctuation in %s",
