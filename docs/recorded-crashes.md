@@ -12,6 +12,9 @@ The selected Python needs unchanged pwntools 4.15.0, pyelftools 0.33 and Unicorn
 REA does not install these dependencies. ELFFile/its original ELF structures and
 pwntools' original Linux amd64 ctypes provide parsing and ABI layout. The adapter
 adds bounds, representation preservation and lifecycle ownership.
+The initial Linux note profile accepts System V/unspecified and GNU/Linux OSABI
+with ABI version zero. Other declared ABIs return `unsupported_target` before
+note interpretation; an unspecified OSABI alone does not prove OS origin.
 
 ## Recorded observations
 
@@ -58,6 +61,8 @@ Mapping names are producer display metadata, with unknown current file identity.
 Map permissions are derived from reported flags; zero/unfamiliar flags leave
 permissions unknown. These maps do not establish page contents or an executable
 match. Core source bytes remain available independently of this enrichment.
+An Evidence envelope containing these maps is `derived`; inspection without
+debugger context is `observed`.
 
 ## Bounds and verification
 

@@ -5,6 +5,8 @@ export const recordedCrashFixture = (
   path = "/artifacts/source-owned.core",
 ): RecordedCrash => {
   const descriptor = Buffer.alloc(336);
+  descriptor.writeInt32LE(123, 32);
+  descriptor.writeInt16LE(11, 12);
   descriptor.writeBigUInt64LE(0x1122334455667788n, 112);
   return {
     artifact: { path, sha256: "a".repeat(64), bytes: 512 },
@@ -66,6 +68,42 @@ export const recordedCrashFixture = (
     diagnostics: { stdout: "decoder diagnostic", stderr: "", truncated: false },
     limitations: ["Historical PID is recorded metadata."],
   };
+};
+
+/** Source-owned SIGSEGV descriptor for scalar/source binding regressions. */
+export const recordedCrashSignalFixture = (path?: string): RecordedCrash => {
+  const value = recordedCrashFixture(path);
+  const descriptor = Buffer.alloc(32);
+  descriptor.writeInt32LE(11, 0);
+  descriptor.writeInt32LE(-2, 4);
+  descriptor.writeInt32LE(1, 8);
+  descriptor.writeBigUInt64LE(0x1122334455667788n, 16);
+  value.artifact.bytes = 640;
+  value.segments = value.segments.map((segment) => ({
+    ...segment,
+    file_size: "0x198",
+  }));
+  value.notes.push({
+    index: 1,
+    segment_index: 0,
+    type: "NT_SIGINFO",
+    location: { offset: "0x1e4", bytes: "0x34" },
+    owner_location: { offset: "0x1f0", bytes: "0x5" },
+    owner_bytes_base64: Buffer.from("CORE\0").toString("base64"),
+    owner_display: "CORE",
+    descriptor_location: { offset: "0x1f8", bytes: "0x20" },
+    descriptor_bytes_base64: descriptor.toString("base64"),
+  });
+  value.signals.push({
+    note_index: 1,
+    number: 11,
+    code: 1,
+    errno: -2,
+    fault_address: "0x1122334455667788",
+    fault_address_meaning: "recorded-sigsegv-address",
+    thread_association: "unknown",
+  });
+  return value;
 };
 
 /** Construct only the original byte ranges consumed by the provider protocol tests. */

@@ -15,6 +15,7 @@ import {
   recordedCrashFixture,
   recordedCrashDebuggerFixture,
   recordedCrashFixtureBytes,
+  recordedCrashSignalFixture,
 } from "../../fixtures/binaryDiagnostics/recordedCrash.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
@@ -30,12 +31,18 @@ it
   .each([
     "success",
     "wrong-register",
+    "wrong-pid",
+    "wrong-current-signal",
+    "wrong-signal-number",
+    "wrong-signal-code",
+    "wrong-signal-errno",
+    "wrong-signal-address",
     "wrong-raw-note",
     "malformed-range",
   ] as const)(
   "validates recorded source bytes and cleanup: %s",
   async (scenario) => {
-    const { path, value, bytes } = await fixture();
+    const { path, value, bytes } = await fixture(true);
     let owned = "";
     const provider = new PwntoolsRecordedCrashProvider(
       { REA_PWNTOOLS_PYTHON: process.execPath },
@@ -50,6 +57,31 @@ it
           payload.threads = payload.threads.map((t) => ({
             ...t,
             registers: t.registers.map((r) => ({ ...r, value: "0x1" })),
+          }));
+        if (scenario === "wrong-pid")
+          payload.threads = payload.threads.map((thread) => ({
+            ...thread,
+            historical_pid: -2,
+          }));
+        if (scenario === "wrong-current-signal")
+          payload.threads = payload.threads.map((thread) => ({
+            ...thread,
+            recorded_current_signal: -1,
+          }));
+        if (scenario.startsWith("wrong-signal"))
+          payload.signals = payload.signals.map((signal) => ({
+            ...signal,
+            ...(scenario === "wrong-signal-number"
+              ? {
+                  number: 10,
+                  fault_address: null,
+                  fault_address_meaning: "unknown" as const,
+                }
+              : scenario === "wrong-signal-code"
+                ? { code: 2 }
+                : scenario === "wrong-signal-errno"
+                  ? { errno: 0 }
+                  : { fault_address: "0x1" }),
           }));
         if (scenario === "wrong-raw-note")
           payload.notes = payload.notes.map((n) => ({
@@ -255,11 +287,13 @@ it
   },
 );
 
-const fixture = async () => {
+const fixture = async (includeSignal = false) => {
   const workspace = await createTestWorkspace("rea-recorded-core-seam-");
   onTestFinished(() => removeTestWorkspace(workspace.root));
   const path = join(workspace.root, "recorded.core");
-  const value = recordedCrashFixture(path);
+  const value = includeSignal
+    ? recordedCrashSignalFixture(path)
+    : recordedCrashFixture(path);
   const bytes = recordedCrashFixtureBytes(value);
   await writeFile(path, bytes);
   return { path, value, bytes, root: workspace.root };

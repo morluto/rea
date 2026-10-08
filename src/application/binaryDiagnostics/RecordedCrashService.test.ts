@@ -3,6 +3,7 @@ import { RecordedCrashService } from "./RecordedCrashService.js";
 import {
   recordedCrashFixture,
   RECORDED_CRASH_TEST_PROVIDER,
+  recordedCrashDebuggerFixture,
 } from "../../../tests/fixtures/binaryDiagnostics/recordedCrash.js";
 import { parseEvidence } from "../../domain/evidence.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
@@ -22,6 +23,23 @@ it("binds original bytes, inline observations, unknowns and producing identity",
   expect(evidence.subject?.digest.sha256).toBe(fixture.artifact.sha256);
   expect(evidence.provider).toEqual(RECORDED_CRASH_TEST_PROVIDER);
   expect(evidence.confidence).toBe("observed");
+});
+
+it("labels an envelope containing debugger-derived maps as derived", async () => {
+  const fixture = recordedCrashFixture();
+  fixture.debugger = recordedCrashDebuggerFixture();
+  const service = new RecordedCrashService({
+    identity: RECORDED_CRASH_TEST_PROVIDER,
+    inspect: () => Promise.resolve(ok(fixture)),
+  });
+  const result = await service.inspect({
+    path: fixture.artifact.path,
+    include_debugger_context: true,
+  });
+  if (!result.ok) throw result.error;
+  const evidence = parseEvidence(result.value);
+  expect(evidence.confidence).toBe("derived");
+  expect(evidence.normalized_result).toEqual(fixture);
 });
 
 it.each([

@@ -32,6 +32,10 @@ def note_header(content, note, **changes):
 
 
 save("truncated-header", original[:32])
+for name, osabi, version in [("linux-osabi", 3, 0), ("solaris-osabi", 6, 0), ("freebsd-osabi", 9, 0), ("unsupported-abi-version", 0, 1)]:
+    content = bytearray(original)
+    content[7:9] = bytes([osabi, version])
+    save(name, content)
 content = bytearray(original)
 note_header(content, status, n_descsz=1)
 save("truncated-status", content)

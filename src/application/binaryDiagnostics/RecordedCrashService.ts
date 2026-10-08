@@ -86,7 +86,8 @@ export class RecordedCrashService {
           parameters: input.data,
           result: value,
           rawResult: value,
-          confidence: "observed",
+          confidence:
+            value.debugger.status === "available" ? "derived" : "observed",
           limitations: value.limitations,
           locations: [{ kind: "artifact-path", path: value.artifact.path }],
         },

@@ -43,6 +43,10 @@ def inspect_core(path, cache):
         raise CoreFailure("unsupported-target", "Initial recorded-core profile requires ELF64 little-endian.")
     if len(content) < 64:
         raise CoreFailure("format", "Selected ELF64 core header is truncated.")
+    # Linux commonly emits ELFOSABI_NONE (0), also accepted as GNU/Linux (3).
+    # Other declared OSABIs must never select Linux note ctypes.
+    if content[7] not in (0, 3) or content[8] != 0:
+        raise CoreFailure("unsupported-target", "Initial recorded-core profile requires System V or GNU/Linux OSABI with ABI version zero; selected OSABI=" + str(content[7]) + ", ABI version=" + str(content[8]) + ".")
     if int.from_bytes(content[16:18], "little") != 4 or int.from_bytes(content[18:20], "little") != 62:
         raise CoreFailure("unsupported-target", "Initial recorded-core profile requires x86-64 ET_CORE.")
     from elftools.common.exceptions import ELFError
@@ -120,7 +124,8 @@ def inspect_core(path, cache):
         return {"format": "elf-core", "architecture": "x86_64-little-endian", "target_execution": "not-performed", "live_process_identity": "unknown",
                 "segments": segments, "notes": notes, "note_padding": padding, "threads": threads, "signals": signals,
                 "note_interpretation_completeness": "unknown",
-                "limitations": ["Historical PID and signal values are recorded metadata, not current process identity or attach authority.",
+                "limitations": ["The initial Linux note profile accepts System V/unspecified or GNU/Linux OSABI with ABI version zero; an unspecified OSABI alone does not prove operating-system origin.",
+                                "Historical PID and signal values are recorded metadata, not current process identity or attach authority.",
                                 "Only exact Linux CORE NT_PRSTATUS/NT_SIGINFO owners are interpreted; every descriptor and owner retains original bytes. Other note semantics remain unknown.",
                                 "NT_SIGINFO thread association is unknown. Only SIGSEGV SEGV_MAPERR/SEGV_ACCERR initially establish a fault-address union meaning.",
                                 "PT_LOAD file bytes are recorded bytes. Undumped memory and current executable/library identity remain unknown; no current host file is resolved from a recorded pathname.",

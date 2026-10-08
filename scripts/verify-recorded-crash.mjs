@@ -185,6 +185,20 @@ try {
     const negative = await basic.inspect(mode, fixtures["negative-pid"]);
     assert.ok(negative.threads.some((thread) => thread.historical_pid === -2));
     cases++;
+    const linux = await basic.inspect(mode, fixtures["linux-osabi"]);
+    assert.deepEqual(linux.threads, report.threads);
+    assert.deepEqual(linux.signals, report.signals);
+    cases++;
+    for (const name of [
+      "solaris-osabi",
+      "freebsd-osabi",
+      "unsupported-abi-version",
+    ]) {
+      await basic.inspect(mode, fixtures[name], {
+        category: "unsupported_target",
+      });
+      cases++;
+    }
     const collision = await basic.inspect(
       mode,
       fixtures["historical-pid-collision"],

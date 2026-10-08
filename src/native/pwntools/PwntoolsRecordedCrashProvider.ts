@@ -9,6 +9,7 @@ import type { RecordedCrashPort } from "../../application/binaryDiagnostics/Reco
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import { PwntoolsDecoder, type PwntoolsLauncher } from "./PwntoolsDecoder.js";
 import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsRelease.js";
+import { validateRecordedCrashScalars } from "./RecordedCrashSourceBindings.js";
 import {
   inspectPwndbgCore,
   recordedCrashStageOutput,
@@ -97,6 +98,7 @@ export class PwntoolsRecordedCrashProvider
           }
           for (const padding of value.note_padding)
             checkBytes(padding.bytes_base64, padding.location);
+          validateRecordedCrashScalars(value, snapshot.bytes, diagnostics);
           for (const thread of value.threads)
             for (const register of thread.registers) {
               const start = Number(BigInt(register.location.offset));

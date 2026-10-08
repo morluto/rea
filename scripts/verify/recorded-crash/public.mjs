@@ -76,6 +76,10 @@ export async function connectRecordedCrash({ entrypoint, environment }) {
         evidence = parseEvidence(JSON.parse(response.stdout));
       }
       const report = recordedCrashSchema.parse(evidence.normalized_result);
+      assert.equal(
+        evidence.confidence,
+        debuggerContext ? "derived" : "observed",
+      );
       assert.deepEqual(evidence.raw_result, report);
       assert.equal(evidence.subject.local_path, path);
       assert.equal(report.artifact.path, path);
