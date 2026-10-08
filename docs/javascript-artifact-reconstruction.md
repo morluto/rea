@@ -221,3 +221,8 @@ paired, ambiguous, and unpaired IPC, validation candidates, utility processes,
 and native binding requests. These fixtures establish parser and artifact-reader
 claims; they do not replace the later operator-supplied real-application
 benchmark.
+
+URI schemes are classified independently of local file names: a reference such
+as `web3:app.js` remains external even when an artifact has that literal name.
+Scheme characters may include digits after the initial letter; a relative path
+such as `./web3:app.js` still names a local artifact.

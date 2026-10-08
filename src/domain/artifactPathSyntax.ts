@@ -17,7 +17,7 @@
 
 /** Whether a reference carries a URI scheme (`https:`, `file:`, …). */
 export const hasScheme = (value: string): boolean =>
-  /^[A-Za-z][A-Za-z+.-]*:/u.test(value);
+  /^[A-Za-z][A-Za-z0-9+.-]*:/u.test(value);
 
 /** Whether a reference is scheme-qualified or protocol-relative. */
 export const looksExternal = (value: string): boolean =>

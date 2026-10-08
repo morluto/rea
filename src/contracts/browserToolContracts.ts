@@ -17,10 +17,7 @@ import {
   discoverWebMcpToolsInputSchema,
   webMcpDiscoverySchema,
 } from "../domain/webMcpDiscovery.js";
-import {
-  browserCaptureComparisonInputSchema,
-  browserCaptureComparisonSchema,
-} from "../domain/browserCaptureComparison.js";
+import { browserCaptureComparisonSchema } from "../domain/browserCaptureComparison.js";
 import {
   captureWebScreenshotInputSchema,
   compareWebScreenshotsInputSchema,
@@ -29,6 +26,7 @@ import {
 } from "../domain/webScreenshot.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import { evidenceResultOf } from "./toolOutputSchemas.js";
+import { browserCaptureToolInputSchema } from "./browserCaptureToolInputSchema.js";
 
 const evidenceResult = evidenceResultOf;
 const listOutputSchema = evidenceResult(browserTargetListSchema);
@@ -215,9 +213,9 @@ export const BROWSER_TOOL_CONTRACTS = [
     name: "compare_web_captures",
     ...toolContractMetadata("compare_web_captures"),
     description:
-      "Compare passive web captures by providing before and after, or compare recorded scenarios by providing before_scenario and after_scenario with an optional normalization policy. Use exactly one input group. Scenario comparison aligns exact step IDs, records deterministic literal normalization, and returns every artifact-level difference plus alignment failures inline. Missing or truncated evidence never proves equality.",
+      "Compare passive web captures by providing before and after, each with the complete inspect_web_page result in inspection and an optional complete discover_webmcp_tools result in webmcp; or compare recorded scenarios by passing complete capture_browser_scenario results in before_scenario and after_scenario with an optional normalization policy. Use exactly one input group. Scenario comparison aligns exact step IDs, records deterministic literal normalization, and returns every artifact-level difference plus alignment failures inline. Missing or truncated evidence never proves equality.",
     kind: "browser-provider",
-    inputSchema: browserCaptureComparisonInputSchema,
+    inputSchema: browserCaptureToolInputSchema,
     outputSchema: captureDiffOutputSchema,
     examples: [
       {
