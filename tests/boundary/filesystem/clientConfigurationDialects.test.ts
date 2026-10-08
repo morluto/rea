@@ -25,7 +25,9 @@ beforeEach(() => {
     "CLAUDE_CONFIG_DIR",
     "CODEX_HOME",
     "COPILOT_HOME",
+    "GROK_HOME",
     "OPENCODE_CONFIG",
+    "SAND_DATA_ROOT",
     "XDG_CONFIG_HOME",
   ])
     vi.stubEnv(name, undefined);
@@ -400,6 +402,40 @@ describe("platform-aware client config paths", () => {
       ).toBe(expected);
     },
   );
+
+  it("honors Grok Build and Grok Bot configuration roots", () => {
+    expect(
+      supportedClients("/home/a", "linux", {
+        GROK_HOME: "/custom/grok",
+        SAND_DATA_ROOT: "/custom/grokbot",
+      }).filter(({ name }) => name === "grok_build" || name === "grok_bot"),
+    ).toEqual([
+      expect.objectContaining({
+        name: "grok_build",
+        displayName: "Grok Build",
+        configPath: "/custom/grok/config.toml",
+        markerPath: "/custom/grok",
+        format: "grok",
+      }),
+      expect.objectContaining({
+        name: "grok_bot",
+        displayName: "Grok Bot",
+        configPath: "/custom/grokbot/mcp.json",
+        markerPath: "/custom/grokbot",
+        format: "json",
+      }),
+    ]);
+    expect(
+      supportedClients("/home/a", "linux", {
+        SAND_DATA_ROOT: "relative/sand",
+      }).find(({ name }) => name === "grok_bot")?.configPath,
+    ).toBe("/home/a/.grokbot/mcp.json");
+    expect(
+      supportedClients("/home/a", "darwin", {}).find(
+        ({ name }) => name === "grok_build",
+      )?.configPath,
+    ).toBe("/home/a/.grok/config.toml");
+  });
 
   it("honors Copilot CLI and Devin platform configuration roots", () => {
     expect(

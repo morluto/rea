@@ -152,7 +152,7 @@ const removeClient = async (
     return item(
       client.name,
       "failed",
-      `Configuration is not valid ${client.format === "toml" ? "TOML" : client.format === "opencode" ? "JSONC" : "JSON"} and was not changed. Repair it, then rerun uninstall.`,
+      `Configuration is not valid ${client.format === "toml" || client.format === "grok" ? "TOML" : client.format === "opencode" ? "JSONC" : "JSON"} and was not changed. Repair it, then rerun uninstall.`,
     );
   }
   const name = PRODUCT_IDENTITY.mcpServerKey;

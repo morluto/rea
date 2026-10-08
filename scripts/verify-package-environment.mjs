@@ -79,6 +79,8 @@ export async function verifyPackageEnvironment({
     CLAUDE_CONFIG_DIR: home,
     CODEX_HOME: codexDir,
     COPILOT_HOME: join(home, ".copilot"),
+    GROK_HOME: join(home, ".grok"),
+    SAND_DATA_ROOT: join(home, ".grokbot"),
     OPENCODE_CONFIG: undefined,
     XDG_CONFIG_HOME: join(home, ".config"),
     PATH: `${fakeBin}:${process.env.PATH ?? ""}`,

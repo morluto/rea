@@ -89,7 +89,7 @@ const configureClientDocument = async (
   let parsed: ClientConfigurationDocument;
   try {
     parsed = parseClientConfiguration(
-      original ?? (format === "toml" ? "" : "{}"),
+      original ?? (format === "toml" || format === "grok" ? "" : "{}"),
       format,
     );
   } catch (cause: unknown) {
@@ -293,7 +293,7 @@ const clientConfigurationDesired = (
   );
   return {
     ...registration,
-    ...(client.name === "codex"
+    ...(client.name === "codex" || client.name === "grok_build"
       ? {
           startup_timeout_sec: MCP_STARTUP_POLICY.codexStartupTimeoutSeconds,
         }

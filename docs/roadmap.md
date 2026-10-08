@@ -67,7 +67,7 @@ REA setup lets you select agent integration and optional Hopper installation.
 It installs the bundled workflow, configures detected agents, and can save
 verified paths for an existing Ghidra installation. It configures Claude Code,
 Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, Devin, OpenCode, Antigravity,
-GitHub Copilot CLI, Command Code, and VS Code using each client's configuration format.
+GitHub Copilot CLI, Command Code, VS Code, Grok Build, and Grok Bot using each client's configuration format.
 
 Ghidra analysis supports Linux x64 and macOS x64/arm64 with Ghidra 12.1.x and the
 64-bit full JDK that installation declares. Current 12.1 releases require JDK 21

@@ -98,7 +98,7 @@ npx rea-agents setup
 
 セットアップ後にエージェントを再起動し、理解したいアプリや機能を[説明してください](#エージェントに頼むだけ)。Hopper はデモモードでも動作します。初回起動の画面が表示されたら、デモを選ぶか既存のライセンスを入力してください。
 
-REA は Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI、Windsurf、Devin、OpenCode、Antigravity、GitHub Copilot CLI、Command Code、VS Code に対応しています。セットアップでは既存の REA 登録が最初から選択され、それ以外の検出済みエージェントは選択するまで対象になりません。その他のエージェントは[手動の MCP 設定](#他のコーディングエージェントで使う)を使えます。
+REA は Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI、Windsurf、Devin、OpenCode、Antigravity、GitHub Copilot CLI、Command Code、VS Code、Grok Build、Grok Bot に対応しています。セットアップでは既存の REA 登録が最初から選択され、それ以外の検出済みエージェントは選択するまで対象になりません。その他のエージェントは[手動の MCP 設定](#他のコーディングエージェントで使う)を使えます。
 
 ### AI コーディングアシスタント向けスキル（任意）
 
@@ -263,7 +263,7 @@ TypeScript と SQLite を使って私のプロジェクト向けに実装して�
 
 ## 他のコーディングエージェントで使う
 
-セットアップは Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI、Windsurf、Devin、OpenCode、Antigravity、GitHub Copilot CLI、Command Code、VS Code に対応しています。既存の REA 登録は最初から選択され、それ以外の検出済みエージェントは選択するまで対象になりません。ローカル MCP サーバーに対応するエージェントであれば、次の設定でも接続できます。
+セットアップは Claude Code、Claude Desktop、Codex、Cursor、Gemini CLI、Windsurf、Devin、OpenCode、Antigravity、GitHub Copilot CLI、Command Code、VS Code、Grok Build、Grok Bot に対応しています。既存の REA 登録は最初から選択され、それ以外の検出済みエージェントは選択するまで対象になりません。ローカル MCP サーバーに対応するエージェントであれば、次の設定でも接続できます。
 
 <!-- x-release-please-start-version -->
 

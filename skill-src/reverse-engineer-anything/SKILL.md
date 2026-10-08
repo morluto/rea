@@ -31,7 +31,7 @@ When tools are absent or registration is stale:
    `npx -y rea-agents@latest doctor --client codex --json`. Substitute the current
    supported client: `claude_code`, `claude_desktop`, `codex`, `cursor`,
    `gemini_cli`, `windsurf`, `devin`, `opencode`, `antigravity`, `copilot_cli`,
-   `commandcode`, or `vscode`. If the client is unknown, use `doctor --json` and
+   `commandcode`, `vscode`, `grok_build`, or `grok_bot`. If the client is unknown, use `doctor --json` and
    inspect its registration results before choosing a setup scope.
 2. Distinguish the reason. Missing, malformed, or stale registration needs a
    scoped configuration repair. An aligned registration with no tools in the

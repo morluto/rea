@@ -1,12 +1,29 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
+
+beforeEach(() => {
+  for (const name of [
+    "APPDATA",
+    "CLAUDE_CONFIG_DIR",
+    "CODEX_HOME",
+    "COPILOT_HOME",
+    "GROK_HOME",
+    "OPENCODE_CONFIG",
+    "SAND_DATA_ROOT",
+    "XDG_CONFIG_HOME",
+  ])
+    vi.stubEnv(name, undefined);
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe("client registration status", () => {
   it("discovers Claude Code from its config file without a marker directory", async () => {
@@ -200,6 +217,28 @@ describe("Node-wrapped registration policy", () => {
       expect(statuses).toEqual([
         expect.objectContaining({
           client: "codex",
+          state: timeout === 30 ? "aligned" : "stale",
+        }),
+      ]);
+    },
+  );
+
+  it.each([1, 30])(
+    "checks Grok Build startup timeout %d independently of launcher",
+    async (timeout) => {
+      const home = await createTestTempDirectory("rea-grok-registration-");
+      await mkdir(join(home, ".grok"));
+      const entry = resolve("scripts/rea.mjs");
+      await writeFile(
+        join(home, ".grok/config.toml"),
+        `[mcp_servers.rea]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(entry)}, "mcp"]\nstartup_timeout_sec = ${String(timeout)}\n`,
+      );
+      const statuses = await readClientRegistrationStatuses(home, entry, {
+        environment: {},
+      });
+      expect(statuses).toEqual([
+        expect.objectContaining({
+          client: "grok_build",
           state: timeout === 30 ? "aligned" : "stale",
         }),
       ]);

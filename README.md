@@ -70,7 +70,7 @@ Choose your agents, review the proposed changes, and approve them. Setup adds
 REA's MCP server and matching workflow instructions, with backups of existing
 configuration. Restart your agent afterward.
 
-Setup supports Claude Code, Codex, Cursor, Gemini CLI and
+Setup supports Claude Code, Codex, Cursor, Gemini CLI, Grok Build, Grok Bot and
 [other agents](docs/installation.md#supported-agents). See
 [installation and setup](docs/installation.md) for provider configuration and
 manual MCP registration.

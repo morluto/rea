@@ -80,7 +80,9 @@ export const readClientRegistrationStatuses = async (
           CLAUDE_CONFIG_DIR: options.environment.CLAUDE_CONFIG_DIR,
           CODEX_HOME: options.environment.CODEX_HOME,
           COPILOT_HOME: options.environment.COPILOT_HOME,
+          GROK_HOME: options.environment.GROK_HOME,
           OPENCODE_CONFIG: options.environment.OPENCODE_CONFIG,
+          SAND_DATA_ROOT: options.environment.SAND_DATA_ROOT,
           XDG_CONFIG_HOME: options.environment.XDG_CONFIG_HOME,
         },
   )) {
@@ -148,7 +150,7 @@ const registrationAligned = (
   if (!isOwnedClientRegistrationCommand(command, currentCommandPath))
     return false;
   if (
-    client.name === "codex" &&
+    (client.name === "codex" || client.name === "grok_build") &&
     registration.startup_timeout_sec !==
       MCP_STARTUP_POLICY.codexStartupTimeoutSeconds
   )

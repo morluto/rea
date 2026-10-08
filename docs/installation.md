@@ -135,11 +135,25 @@ Setup can configure these clients for REA's local MCP server:
 | GitHub Copilot CLI | `copilot_cli`    |
 | Command Code       | `commandcode`    |
 | VS Code            | `vscode`         |
+| Grok Build         | `grok_build`     |
+| Grok Bot           | `grok_bot`       |
 
 For OpenCode, setup writes the V1 `mcp.rea` entry, which OpenCode V1 and V2
 both load. If the configuration already uses OpenCode V2's native
 `mcp.servers` table, setup registers REA there instead and replaces any earlier
 `mcp.rea` entry from REA.
+
+Grok Build loads `[mcp_servers.rea]` from `$GROK_HOME/config.toml`, or from
+`~/.grok/config.toml` when `GROK_HOME` is unset. Setup edits only that server
+table and `[mcp_servers.rea.env]`, and sets `startup_timeout_sec = 30`. The
+shared skill installed under `~/.agents/skills` is already on Grok Build's
+skill path.
+
+Grok Bot is detected from `~/.grokbot`, or from `SAND_DATA_ROOT` when that
+value is an absolute path. Setup writes `mcpServers.rea` to `mcp.json` in that
+directory. The desktop app keeps the connectors it actually runs in the
+signed-in account. That file is the registration to add there; setup does not
+call the account API.
 
 ## Review setup changes
 
@@ -209,7 +223,7 @@ rea setup --yes --all-detected --install-hopper --json
 
 Setup pins package-runner MCP registrations to the exact installed REA version,
 installs the matching skill and on-demand references in the same plan, and adds
-`startup_timeout_sec = 30` for Codex. `rea update` installs the exact resolved
+`startup_timeout_sec = 30` for Codex and Grok Build. `rea update` installs the exact resolved
 release into the npm prefix that owns the running package, then checks the new
 executable's version before reporting success. It does not reopen onboarding.
 Release lookup and installation both use npm's configured registry.

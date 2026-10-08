@@ -101,6 +101,8 @@ export async function verifyPackageUpdate({
       CLAUDE_CONFIG_DIR: home,
       CODEX_HOME: join(home, ".codex"),
       COPILOT_HOME: join(home, ".copilot"),
+      GROK_HOME: join(home, ".grok"),
+      SAND_DATA_ROOT: join(home, ".grokbot"),
       XDG_CONFIG_HOME: join(home, ".config"),
       OPENCODE_CONFIG: join(home, ".config", "opencode", "opencode.json"),
       npm_config_prefix: prefix,
