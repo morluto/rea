@@ -12,10 +12,12 @@ const properties = (schema: z.ZodType) =>
     .parse(z.toJSONSchema(schema, { io: "output" })).properties;
 
 describe("web runtime coordinate contract", () => {
-  it("advertises zero-based CDP lines and UTF-16 columns", () => {
+  it("advertises zero-based resource-relative CDP lines and UTF-16 columns", () => {
     const location = properties(webRuntimeLocationSchema);
     expect(location.line_number).toMatchObject({
-      description: expect.stringContaining("Zero-based line"),
+      description: expect.stringContaining(
+        "Zero-based line in the script's enclosing resource",
+      ),
     });
     expect(location.column_number).toMatchObject({
       description: expect.stringContaining("Zero-based UTF-16 column"),
@@ -24,7 +26,9 @@ describe("web runtime coordinate contract", () => {
       webRuntimeSourceSchema.shape.resource_start.unwrap(),
     );
     expect(start.line_number).toMatchObject({
-      description: expect.stringContaining("Zero-based line"),
+      description: expect.stringContaining(
+        "Zero-based line where the script text starts",
+      ),
     });
   });
 });
