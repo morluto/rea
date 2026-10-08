@@ -1,8 +1,15 @@
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
-import type { RecordedCrash } from "../../domain/native/recordedCrash.js";
+import {
+  RECORDED_LINUX_AMD64_REGISTERS,
+  type RecordedCrash,
+} from "../../domain/native/recordedCrash.js";
 
-/** Check interpreted scalars against the selected Linux amd64 recording bytes. */
-export function validateRecordedCrashScalars(
+const registerOffsets = new Map<string, number>(
+  RECORDED_LINUX_AMD64_REGISTERS.map((name, index) => [name, 112 + index * 8]),
+);
+
+/** Bind interpreted values and register identities to Linux amd64 source bytes. */
+export function validateRecordedCrashSources(
   report: RecordedCrash,
   snapshot: Buffer,
   diagnostics: RecordedCrash["decoder_diagnostics"],
@@ -31,6 +38,21 @@ export function validateRecordedCrashScalars(
       thread.recorded_current_signal !== bytes.readInt16LE(12)
     )
       fail();
+    const note = report.notes[thread.note_index];
+    if (note === undefined) return fail();
+    for (const register of thread.registers) {
+      const offset = registerOffsets.get(register.name);
+      if (
+        offset === undefined ||
+        BigInt(register.location.offset) !==
+          BigInt(note.descriptor_location.offset) + BigInt(offset)
+      )
+        throw new AnalysisOutputError(
+          "inspect_recorded_crash",
+          "Reported register source does not match its Linux amd64 register identity.",
+          { capturedOutput: diagnostics },
+        );
+    }
   }
   for (const signal of report.signals) {
     const bytes = descriptor(signal.note_index, 32);

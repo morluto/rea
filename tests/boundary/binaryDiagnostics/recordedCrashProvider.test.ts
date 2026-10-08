@@ -31,6 +31,12 @@ it
   .each([
     "success",
     "wrong-register",
+    "wrong-register-source",
+    "missing-thread",
+    "duplicate-thread",
+    "missing-signal",
+    "duplicate-signal",
+    "missing-register",
     "wrong-pid",
     "wrong-current-signal",
     "wrong-signal-number",
@@ -53,6 +59,30 @@ it
         );
         expect(await readFile(request.snapshot_path)).toEqual(bytes);
         const payload = structuredClone(value);
+        if (scenario === "wrong-register-source")
+          payload.threads = payload.threads.map((thread) => ({
+            ...thread,
+            registers: thread.registers.map((register) =>
+              register.name === "rdi"
+                ? {
+                    ...register,
+                    value: "0x0",
+                    location: { offset: "0x104", bytes: "0x8" },
+                  }
+                : register,
+            ),
+          }));
+        if (scenario === "missing-thread") payload.threads = [];
+        if (scenario === "duplicate-thread")
+          payload.threads = [...payload.threads, ...payload.threads];
+        if (scenario === "missing-signal") payload.signals = [];
+        if (scenario === "duplicate-signal")
+          payload.signals = [...payload.signals, ...payload.signals];
+        if (scenario === "missing-register")
+          payload.threads = payload.threads.map((thread) => ({
+            ...thread,
+            registers: thread.registers.slice(1),
+          }));
         if (scenario === "wrong-register")
           payload.threads = payload.threads.map((t) => ({
             ...t,

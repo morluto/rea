@@ -7,7 +7,7 @@ export const recordedCrashFixture = (
   const descriptor = Buffer.alloc(336);
   descriptor.writeInt32LE(123, 32);
   descriptor.writeInt16LE(11, 12);
-  descriptor.writeBigUInt64LE(0x1122334455667788n, 112);
+  descriptor.writeBigUInt64LE(0x1122334455667788n, 224);
   return {
     artifact: { path, sha256: "a".repeat(64), bytes: 512 },
     format: "elf-core",
@@ -49,12 +49,41 @@ export const recordedCrashFixture = (
         historical_pid: 123,
         recorded_current_signal: 11,
         registers: [
-          {
-            name: "rdi",
-            value: "0x1122334455667788",
-            location: { offset: "0x104", bytes: "0x8" },
+          "r15",
+          "r14",
+          "r13",
+          "r12",
+          "rbp",
+          "rbx",
+          "r11",
+          "r10",
+          "r9",
+          "r8",
+          "rax",
+          "rcx",
+          "rdx",
+          "rsi",
+          "rdi",
+          "orig_rax",
+          "rip",
+          "cs",
+          "eflags",
+          "rsp",
+          "ss",
+          "fs_base",
+          "gs_base",
+          "ds",
+          "es",
+          "fs",
+          "gs",
+        ].map((name, index) => ({
+          name,
+          value: name === "rdi" ? "0x1122334455667788" : "0x0",
+          location: {
+            offset: `0x${(148 + 112 + index * 8).toString(16)}`,
+            bytes: "0x8",
           },
-        ],
+        })),
       },
     ],
     signals: [],

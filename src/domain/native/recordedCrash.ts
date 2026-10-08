@@ -17,6 +17,38 @@ const diagnostics = z.strictObject({
 // Exact b"CORE\0"; a lossy display label cannot establish the Linux note ABI.
 const LINUX_CORE_OWNER_BASE64 = "Q09SRQA=";
 
+/** Complete register identities in the supported Linux amd64 PRSTATUS ABI order. */
+export const RECORDED_LINUX_AMD64_REGISTERS: readonly string[] = [
+  "r15",
+  "r14",
+  "r13",
+  "r12",
+  "rbp",
+  "rbx",
+  "r11",
+  "r10",
+  "r9",
+  "r8",
+  "rax",
+  "rcx",
+  "rdx",
+  "rsi",
+  "rdi",
+  "orig_rax",
+  "rip",
+  "cs",
+  "eflags",
+  "rsp",
+  "ss",
+  "fs_base",
+  "gs_base",
+  "ds",
+  "es",
+  "fs",
+  "gs",
+];
+const supportedRegisters = new Set(RECORDED_LINUX_AMD64_REGISTERS);
+
 /** Select an explicit recording and optionally request debugger-derived mapping context. */
 export const inspectRecordedCrashInputSchema = z.strictObject({
   path: z
@@ -230,6 +262,23 @@ export const recordedCrashSchema = recordedCrashObjectSchema.superRefine(
       )
         fail("Invalid recorded note padding range.");
     }
+    for (const [kind, rows] of [
+      ["NT_PRSTATUS", value.threads],
+      ["NT_SIGINFO", value.signals],
+    ] as const) {
+      const matchingNotes = value.notes.filter(
+        (note) =>
+          note.type === kind &&
+          note.owner_bytes_base64 === LINUX_CORE_OWNER_BASE64,
+      );
+      if (
+        rows.length !== matchingNotes.length ||
+        new Set(rows.map(({ note_index }) => note_index)).size !== rows.length
+      )
+        fail(
+          "Each supported raw note requires exactly one corresponding interpretation.",
+        );
+    }
     for (const thread of value.threads) {
       const note = value.notes[thread.note_index];
       if (
@@ -241,10 +290,14 @@ export const recordedCrashSchema = recordedCrashObjectSchema.superRefine(
         continue;
       }
       if (
+        thread.registers.length !== RECORDED_LINUX_AMD64_REGISTERS.length ||
+        !thread.registers.every(({ name }) => supportedRegisters.has(name)) ||
         new Set(thread.registers.map(({ name }) => name)).size !==
-        thread.registers.length
+          thread.registers.length
       )
-        fail("Register names repeat within one recorded thread.");
+        fail(
+          "Each recorded thread requires every supported register exactly once.",
+        );
       for (const register of thread.registers)
         if (
           BigInt(register.location.bytes) !== 8n ||

@@ -3,16 +3,53 @@ import {
   inspectRecordedCrashInputSchema,
   recordedCrashSchema,
 } from "./recordedCrash.js";
-import { recordedCrashFixture } from "../../../tests/fixtures/binaryDiagnostics/recordedCrash.js";
+import {
+  recordedCrashFixture,
+  recordedCrashSignalFixture,
+} from "../../../tests/fixtures/binaryDiagnostics/recordedCrash.js";
 
 it("preserves high uint64 registers and historical thread identity", () => {
   const value = recordedCrashSchema.parse(recordedCrashFixture());
-  expect(value.threads[0]?.registers[0]?.value).toBe("0x1122334455667788");
+  expect(
+    value.threads[0]?.registers.find(({ name }) => name === "rdi")?.value,
+  ).toBe("0x1122334455667788");
   expect(value.live_process_identity).toBe("unknown");
   expect(
     inspectRecordedCrashInputSchema.parse({ path: "/selected.core" })
       .include_debugger_context,
   ).toBe(false);
+});
+
+it.each([
+  "missing-thread",
+  "duplicate-thread",
+  "missing-signal",
+  "duplicate-signal",
+  "missing-register",
+  "unknown-register",
+])("rejects an incomplete or duplicate interpretation: %s", (scenario) => {
+  const value = recordedCrashSignalFixture();
+  if (scenario === "missing-thread") value.threads = [];
+  if (scenario === "duplicate-thread")
+    value.threads = [...value.threads, ...value.threads];
+  if (scenario === "missing-signal") value.signals = [];
+  if (scenario === "duplicate-signal")
+    value.signals = [...value.signals, ...value.signals];
+  if (scenario === "missing-register")
+    value.threads = value.threads.map((thread) => ({
+      ...thread,
+      registers: thread.registers.slice(1),
+    }));
+  if (scenario === "unknown-register")
+    value.threads = value.threads.map((thread) => ({
+      ...thread,
+      registers: thread.registers.map((register) =>
+        register.name === "rdi"
+          ? { ...register, name: "unrecognized" }
+          : register,
+      ),
+    }));
+  expect(recordedCrashSchema.safeParse(value).success).toBe(false);
 });
 
 it.each([
