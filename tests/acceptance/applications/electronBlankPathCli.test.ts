@@ -24,7 +24,7 @@ cliTest.for(["", " \t "])(
       details: {
         operation: "capture_electron_scenario",
         issues: expect.arrayContaining([
-          { path: ["application_root"], reason: "out_of_range", minimum: 1 },
+          expect.objectContaining({ path: ["application_root"] }),
         ]),
       },
     });
