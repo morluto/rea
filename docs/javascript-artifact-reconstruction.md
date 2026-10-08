@@ -140,6 +140,9 @@ missing bytes. This allows static JavaScript/Electron reconstruction to proceed
 for the embedded files while preserving the missing native/resource bytes as an
 unknown instead of silently treating them as absent or verified.
 
+Plain `.ts` artifact sources use TypeScript syntax without JSX, including
+angle-bracket type assertions. `.tsx` and `.jsx` retain JSX parsing.
+
 Selected bounded text is then parsed as inert data to recover:
 
 - `package.json` metadata and declared main or renderer entrypoints;
@@ -162,6 +165,12 @@ Selected bounded text is then parsed as inert data to recover:
   visible check enforces a complete policy;
 - utility-process entrypoints and native `.node` binding requests without
   parsing or executing the add-on.
+
+Overloaded `.open` calls use lexical receiver facts: ambient browser window and
+document receivers are treated as browsing-context or document operations,
+while locally shadowed receivers can still contribute network endpoint
+candidates. A template recovered with a parser error and no cooked value stays
+dynamic; its raw spelling is not treated as a valid JavaScript string.
 
 Each recovered bundle module retains the exact factory-source digest. A complete
 bounded AST also receives a `babel-ast-v1` structural fingerprint that ignores

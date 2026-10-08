@@ -23,6 +23,13 @@ it("classifies overloaded open calls from lexical receiver facts", async () => {
       }
       const xhr = new XMLHttpRequest();
       xhr.open(method, "/api");
+      parent.open("GET", "/parent-target");
+      self.open("POST", "/self-target");
+      document.open("GET", "/document-target");
+      {
+        const parent = new XMLHttpRequest();
+        parent.open(method, "/shadowed-parent");
+      }
       indexedDB.open("records", "2");
     `,
   );
@@ -46,6 +53,6 @@ it("classifies overloaded open calls from lexical receiver facts", async () => {
     .flatMap(({ observations }) =>
       observations.map(({ properties }) => properties.storage_kind),
     );
-  expect(endpoints).toEqual(["/api", "/dav"]);
+  expect(endpoints).toEqual(["/api", "/dav", "/shadowed-parent"]);
   expect(storage).toEqual(["indexed-db"]);
 });

@@ -101,7 +101,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "list_bookmarks",
-    "List every bookmark in the selected Hopper document as address and name pairs. Use bookmarks as analyst-authored navigation aids; this does not discover code references.",
+    "List every bookmark in the selected Hopper document as address and name pairs; unnamed bookmarks retain a null name. Use bookmarks as analyst-authored navigation aids; this does not discover code references.",
     z.object({ document }),
   ),
   official(
@@ -208,7 +208,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "set_addresses_names",
-    "Assign analyst names to multiple addresses in one call and return per-address success booleans. This mutates analysis metadata; verify failures individually.",
+    "Assign analyst names to multiple addresses in one call and return per-address success booleans. Hopper validates every address before applying names. This mutates analysis metadata; verify failures individually.",
     z.object({ names: z.record(z.string(), z.string()), document }),
   ),
   official(
@@ -218,17 +218,12 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "set_comment",
-    "Write a regular analysis comment at a hexadecimal address and return whether readback matched. This mutates the Hopper document; use comments to record evidence IDs or reasoning.",
+    "Write a regular analysis comment at a hexadecimal address and return whether readback matched. An empty comment clears it. This mutates the Hopper document; use comments to record evidence IDs or reasoning.",
     z.object({ address, comment: z.string(), document }),
   ),
   official(
-    "set_current_document",
-    "Select an already-open Hopper document by exact document name. This changes subsequent default-document routing; list_documents can supply names when needed, while explicit document inputs keep calls reproducible.",
-    z.object({ document: z.string() }),
-  ),
-  official(
     "set_inline_comment",
-    "Write an inline instruction comment at a hexadecimal address and return whether readback matched. This mutates analysis metadata.",
+    "Write an inline instruction comment at a hexadecimal address and return whether readback matched. An empty comment clears it; Hopper may flatten newlines, producing false on exact readback. This mutates analysis metadata.",
     z.object({ address, comment: z.string(), document }),
   ),
   official(

@@ -13,7 +13,6 @@ import socket
 from typing import Any, Optional, Protocol, Sequence
 
 BAD_ADDRESSES = (-1, 0xFFFFFFFFFFFFFFFF, None)
-_selected_document = None
 _rea_session_document = None
 _search_inventory_cache = {}
 _pseudocode_cache = {}
@@ -89,9 +88,11 @@ def _session_document():
     global _rea_session_document
     documents = _api().documents()
     if _rea_session_document is not None:
+        # Hopper recreates Python wrappers; equality compares native handles.
+        # Retain our bound wrapper so cache identity stays stable across calls.
         return (
             _rea_session_document
-            if any(document is _rea_session_document for document in documents)
+            if any(document == _rea_session_document for document in documents)
             else None
         )
     return _bind_session_document(documents)
@@ -174,46 +175,46 @@ def _json_safe(value):
 
 
 def _document(name=None):
-    """Resolve an explicit or session-selected document without changing Hopper UI."""
-    global _selected_document
-    api = _api()
-    documents = api.documents()
-    if name is not None:
-        matches = [candidate for candidate in documents if candidate.getDocumentName() == name]
-        if len(matches) == 1:
-            return matches[0]
-        if len(matches) > 1:
-            current = api.current_document()
-            if current is not None and current.getDocumentName() == name:
-                return current
-            raise InvalidRequestError("Hopper document name is ambiguous")
-        raise InvalidRequestError("Unknown Hopper document")
-    if _selected_document is not None:
-        for candidate in documents:
-            if candidate.getDocumentName() == _selected_document:
-                return candidate
+    """Keep observations and mutations bound to the active REA target."""
+    documents = _api().documents()
     session_document = _session_document()
-    if session_document is not None:
-        return session_document
-    current = api.current_document()
-    if current is None:
-        raise CapabilityUnavailableError("No Hopper document is loaded")
-    return current
+    if session_document is None:
+        raise CapabilityUnavailableError("The active REA target's Hopper document is no longer open; reopen the target with open_binary")
+    if name is not None:
+        # A document name is display metadata; scope it to the bound native
+        # handle even when another open target happens to have the same name.
+        if session_document.getDocumentName() == name:
+            return session_document
+        if any(candidate.getDocumentName() == name for candidate in documents):
+            raise InvalidRequestError("Hopper document belongs to another target; use open_binary to select that target")
+        raise InvalidRequestError("Unknown Hopper document")
+    return session_document
 
 
 def _address(document, value=None):
-    """Resolve hexadecimal addresses first, then fall back to Hopper symbol names."""
+    """Keep explicit hexadecimal coordinates distinct from symbol names."""
     if value is None:
         return document.getCurrentAddress()
     if not isinstance(value, str):
         raise InvalidRequestError("Address must be a string")
-    try:
-        return int(value, 16)
-    except ValueError:
-        result = document.getAddressForName(value)
-        if result in BAD_ADDRESSES:
-            raise InvalidRequestError("Unknown Hopper address or name")
-        return result
+    if value.lower().startswith("0x"):
+        try:
+            address = int(value, 16)
+        except ValueError as error:
+            raise InvalidRequestError("Invalid hexadecimal Hopper address: %s" % value) from error
+    else:
+        # Names such as `add` and `face` are valid hexadecimal strings too.
+        # Prefer an observed symbol, retaining bare-hex compatibility only
+        # when Hopper has no symbol with the supplied name.
+        address = document.getAddressForName(value)
+        if address in BAD_ADDRESSES:
+            try:
+                address = int(value, 16)
+            except ValueError as error:
+                raise InvalidRequestError("Unknown Hopper address or name: %s" % value) from error
+    if not 0 <= address < 0xFFFFFFFFFFFFFFFF:
+        raise InvalidRequestError("Address is outside Hopper's usable unsigned 64-bit range: %s" % value)
+    return address
 
 
 def _segment(document, address):
@@ -588,7 +589,6 @@ def _analyze_function(document, params):
 
 def _dispatch(method, params):
     """Dispatch only the closed operation set implemented by REA's public tools."""
-    global _selected_document
     if method == "health":
         return {"name": "REA Hopper bridge", "version": "1.0.0", "run_id": REA_RUN_ID}
     if method in ("shutdown", "shutdown_document"):
@@ -622,14 +622,9 @@ def _dispatch(method, params):
             "document_closed": document_closed,
         }
     if method == "list_documents":
-        return [document.getDocumentName() for document in Document.getAllDocuments()]
+        return [document.getDocumentName() for document in _api().documents()]
     if method == "current_document":
         return _document().getDocumentName()
-    if method == "set_current_document":
-        document = _document(params.get("document"))
-        _selected_document = document.getDocumentName()
-        return _selected_document
-
     document = _document(params.get("document"))
     if method in EXHAUSTIVE_ANALYSIS_METHODS:
         _api().require_analysis_complete(document, method)
@@ -650,10 +645,17 @@ def _dispatch(method, params):
                 "Hopper's public Python API does not expose readBytes"
             )
         address = _address(document, params.get("address"))
-        value = reader(address, length)
+        segment = _segment(document, address)
+        # Document.readBytes delegates to one Segment and returns False when
+        # the requested range crosses its end. Preserve the readable prefix.
+        available = segment.getStartingAddress() + segment.getLength() - address
+        value = reader(address, min(length, available))
+        if value is False or value is None:
+            raise InvalidRequestError("Hopper could not read the requested byte range at %s" % _hex(address))
         if not isinstance(value, (bytes, bytearray)):
             raise CapabilityUnavailableError(
-                "Hopper's public Python API returned an unsupported byte representation"
+                "Hopper readBytes returned %s for the requested %s-byte range at %s"
+                % (type(value).__name__, length, _hex(address))
             )
         data = bytes(value)
         return {
@@ -678,6 +680,15 @@ def _dispatch(method, params):
             or offset < 0
         ):
             raise InvalidRequestError("Address has no authoritative file-offset mapping")
+        inverse = getattr(document, "getAddressFromFileOffset", None)
+        if not callable(inverse):
+            raise CapabilityUnavailableError(
+                "Hopper's public Python API cannot verify the file-offset mapping by reverse lookup"
+            )
+        # Synthetic memory can report offset zero, which belongs to the actual
+        # file header. An integer alone does not prove source-file provenance.
+        if inverse(offset) != address:
+            raise InvalidRequestError("Address has no authoritative file-offset mapping: reverse lookup disagrees at %s" % _hex(address))
         return {"address": _hex(address), "file_offset": offset}
     if method == "resolve_containing_procedure":
         address = _address(document, params.get("address"))
@@ -797,8 +808,11 @@ def _dispatch(method, params):
             _invalidate_pseudocode(document)
         return result
     if method == "set_addresses_names":
+        # Validate all destinations before applying any annotation. A malformed
+        # later address must not discard the result of an earlier mutation.
+        names = [(key, _address(document, key), value) for key, value in params["names"].items()]
         try:
-            result = {key: document.setNameAtAddress(_address(document, key), value) for key, value in params["names"].items()}
+            result = {key: document.setNameAtAddress(address, value) for key, address, value in names}
         finally:
             _invalidate_search_inventory(document)
             _invalidate_pseudocode(document)
@@ -810,7 +824,8 @@ def _dispatch(method, params):
         getter = segment.getCommentAtAddress if method == "set_comment" else segment.getInlineCommentAtAddress
         setter(address, params["comment"])
         _invalidate_pseudocode(document)
-        return getter(address) == params["comment"]
+        observed = getter(address)
+        return observed == params["comment"] or (params["comment"] == "" and observed is None)
     if method == "list_bookmarks":
         return [{"address": _hex(item), "name": document.getBookmarkName(item)} for item in document.getBookmarks()]
     if method == "set_bookmark":
@@ -913,14 +928,14 @@ def _diagnostic_type(error):
 
 
 def _safe_diagnostic(error):
-    """Project one exception without retaining provider or credential text."""
+    """Preserve bridge validation reasons while excluding transport credentials."""
     diagnostic_type = _diagnostic_type(error)
     if diagnostic_type == "capability_unavailable":
         message = str(error)
     elif diagnostic_type == "authorization":
         message = "Invalid bridge capability"
     elif diagnostic_type == "invalid_request":
-        message = "Invalid Hopper bridge request"
+        message = str(error)
     else:
         message = "%s: Hopper bridge operation failed" % type(error).__name__
     return {"code": -32000, "message": message, "type": diagnostic_type}

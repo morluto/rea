@@ -331,6 +331,11 @@ const decodeCommands = (
     decodeCommand(command, body, index, slice);
     offset += size;
   }
+  if (offset !== bytes.byteLength)
+    throw new MachoFormatIssue(
+      "malformed",
+      `load commands declare ${header.commandCount} commands but sizeofcmds holds ${bytes.byteLength} bytes`,
+    );
   return slice;
 };
 

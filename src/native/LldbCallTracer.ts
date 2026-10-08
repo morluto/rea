@@ -15,6 +15,7 @@ import type {
   AnalysisCleanupObservation,
   AnalysisError,
 } from "../domain/analysisErrorBase.js";
+import type { NativeCallPartialObservation } from "../domain/native/nativeCallPartialObservation.js";
 import {
   nativeCallEventSchema,
   nativeCodeLocationSchema,
@@ -40,6 +41,12 @@ import {
 } from "../process/ProviderDeadline.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { resolveXcrunTool, type ResolvedTool } from "./CommandRunner.js";
+import {
+  readLldbObservationJournal,
+  readBoundedPrefix,
+  readPartialCapture,
+  projectLldbPartialObservation,
+} from "./LldbRetainedObservations.js";
 
 const OPERATION = "observe_native_calls";
 const PROVIDER = "native-macos";
@@ -82,6 +89,7 @@ const tracedSchema = z.strictObject({
     stable: z.boolean(),
   }),
   resource_limit_reached: z.boolean(),
+  breakpoint_locations_truncated: z.boolean().optional(),
   target_output: z.strictObject({
     stdout_bytes: z.number().int().nonnegative(),
     stderr_bytes: z.number().int().nonnegative(),
@@ -155,11 +163,16 @@ const ATTACH_REMEDIATION =
 
 /** Production tracer: `lldb --batch` running the REA LLDB bridge. */
 export class LldbCallTracer implements NativeCallTracer {
+  constructor(
+    private readonly launch: typeof runLldb = runLldb,
+    private readonly resolveTool: typeof resolveXcrunTool = resolveXcrunTool,
+  ) {}
+
   async trace(
     request: Parameters<NativeCallTracer["trace"]>[0],
     signal?: AbortSignal,
   ): Promise<Result<NativeCallTrace, AnalysisError>> {
-    const lldb = await resolveXcrunTool("lldb", signal);
+    const lldb = await this.resolveTool("lldb", signal);
     if (!lldb.ok)
       return err(
         lldb.error.reason === "cancelled"
@@ -193,6 +206,7 @@ export class LldbCallTracer implements NativeCallTracer {
       stderr: join(directory, "stderr"),
       stdoutCapture: join(directory, "stdout.capture"),
       stderrCapture: join(directory, "stderr.capture"),
+      observations: join(directory, "observations.jsonl"),
     };
     const { input } = request;
     await writeFile(
@@ -221,11 +235,12 @@ export class LldbCallTracer implements NativeCallTracer {
         result_path: paths.result,
         pid_path: paths.pid,
         identity_ack_path: paths.identityAck,
+        observation_path: paths.observations,
       }),
       { mode: 0o600 },
     );
     await prepareProcessOwnershipInspection(signal);
-    const exited = await runLldb(
+    const exited = await this.launch(
       lldb.path,
       [
         "--batch",
@@ -271,27 +286,61 @@ export class LldbCallTracer implements NativeCallTracer {
         : {
             reason: cleanupDetails.join("; "),
             resources: [
-              `native-target:${String((await readTargetPid(paths.pid)) ?? "unknown")}`,
+              ...(exited.cleanupFailure === undefined
+                ? []
+                : ["lldb-process-group"]),
+              ...(terminated
+                ? []
+                : [
+                    `native-target:${String((await readTargetPid(paths.pid)) ?? "unknown")}`,
+                  ]),
             ],
           };
+    const partialReason =
+      exited.kind === "cancelled"
+        ? "cancelled"
+        : exited.kind === "timeout"
+          ? "timeout"
+          : exited.cleanupFailure !== undefined
+            ? "cleanup-failure"
+            : "tracer-failure";
+    const getPartialObservation = (
+      reason: NativeCallPartialObservation["coverage"]["reason"] = partialReason,
+    ): Promise<NativeCallPartialObservation> =>
+      partialNativeObservation({
+        request,
+        pidPath: paths.pid,
+        stdoutPath: paths.stdoutCapture,
+        stderrPath: paths.stderrCapture,
+        observationPath: paths.observations,
+        version: output?.status === "traced" ? output.version : null,
+        reason,
+      });
     if (exited.kind === "cancelled")
       return err(
-        new AnalysisCancelledError(
-          OPERATION,
-          lifecycleCleanup === undefined
-            ? undefined
-            : { cleanup: lifecycleCleanup },
-        ),
+        new AnalysisCancelledError(OPERATION, {
+          ...(lifecycleCleanup === undefined
+            ? {}
+            : { cleanup: lifecycleCleanup }),
+          partialObservation: await getPartialObservation(),
+        }),
       );
     if (exited.kind === "timeout")
       return err(
         new AnalysisTimeoutError(
           OPERATION,
           input.duration_ms + DEADLINE_GRACE_MS,
-          lifecycleCleanup === undefined
-            ? undefined
-            : { cleanup: lifecycleCleanup },
+          {
+            ...(lifecycleCleanup === undefined
+              ? {}
+              : { cleanup: lifecycleCleanup }),
+            partialObservation: await getPartialObservation(),
+          },
         ),
+      );
+    if (output !== undefined && output.status !== "traced")
+      return err(
+        tracerFailure(output, lifecycleCleanup, await getPartialObservation()),
       );
     if (exited.cleanupFailure !== undefined)
       return err(
@@ -307,6 +356,7 @@ export class LldbCallTracer implements NativeCallTracer {
               ? {}
               : { target_cleanup: lifecycleCleanup }),
           },
+          partialObservation: await getPartialObservation(),
         }),
       );
     if (output === undefined)
@@ -320,14 +370,12 @@ export class LldbCallTracer implements NativeCallTracer {
               ? {}
               : { target_cleanup: lifecycleCleanup }),
           },
+          partialObservation: await getPartialObservation(),
           ...(lifecycleCleanup === undefined
             ? {}
             : { cleanup: lifecycleCleanup }),
         }),
       );
-    if (output.status !== "traced") {
-      return err(tracerFailure(output, lifecycleCleanup));
-    }
     const stdout = await capturedOutput(
       paths.stdoutCapture,
       output.target_output.stdout_bytes,
@@ -340,9 +388,11 @@ export class LldbCallTracer implements NativeCallTracer {
       output.target_output.stderr_truncated,
       output.target_output.stderr_complete,
     );
-    if (!stdout.ok || !stderr.ok)
+    if (!stdout.ok || !stderr.ok) {
+      const partial = await getPartialObservation("capture-failure");
       return err(
         new ProviderAdapterError(PROVIDER, OPERATION, {
+          partialObservation: partial,
           diagnostics: {
             reason: "LLDB target output capture could not be read",
             ...(stdout.ok ? {} : { stdout_capture_error: stdout.error }),
@@ -351,8 +401,12 @@ export class LldbCallTracer implements NativeCallTracer {
               ? {}
               : { target_cleanup: lifecycleCleanup }),
           },
+          ...(lifecycleCleanup === undefined
+            ? {}
+            : { cleanup: lifecycleCleanup }),
         }),
       );
+    }
     return ok({
       debugger: { ...lldb, version: output.version },
       run: output,
@@ -367,6 +421,7 @@ export class LldbCallTracer implements NativeCallTracer {
 const quote = (value: string): string =>
   `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 
+/** Preserve a decoded bridge failure's type independently of cleanup outcome. */
 const tracerFailure = (
   output: {
     readonly status:
@@ -378,8 +433,12 @@ const tracerFailure = (
     readonly error: string | null;
   },
   cleanup?: AnalysisCleanupObservation,
+  partialObservation?: NativeCallPartialObservation,
 ): AnalysisError => {
-  const options = cleanup === undefined ? undefined : { cleanup };
+  const options = {
+    ...(cleanup === undefined ? {} : { cleanup }),
+    ...(partialObservation === undefined ? {} : { partialObservation }),
+  };
   const message = output.error ?? "no LLDB error text";
   if (output.status === "target-integrity-error")
     return new EvidenceIntegrityError(
@@ -422,6 +481,44 @@ const tracerFailure = (
       );
 };
 
+const partialNativeObservation = async (options: {
+  readonly request: Parameters<NativeCallTracer["trace"]>[0];
+  readonly pidPath: string;
+  readonly stdoutPath: string;
+  readonly stderrPath: string;
+  readonly observationPath: string;
+  readonly version: string | null;
+  readonly reason: NativeCallPartialObservation["coverage"]["reason"];
+}): Promise<NativeCallPartialObservation> => {
+  const [journal, pid, stdout, stderr] = await Promise.all([
+    readLldbObservationJournal(options.observationPath),
+    readTargetPid(options.pidPath),
+    readPartialCapture(options.stdoutPath),
+    readPartialCapture(options.stderrPath),
+  ]);
+  return projectLldbPartialObservation({
+    target: {
+      path: options.request.executable,
+      sha256: options.request.expectedSha256,
+      architecture: options.request.architecture,
+      arguments: options.request.input.arguments,
+      environment: options.request.input.environment,
+      working_directory: options.request.input.working_directory ?? null,
+    },
+    pid,
+    stdout: stdout?.capture ?? null,
+    stderr: stderr?.capture ?? null,
+    version: options.version,
+    journal: journal.parsed,
+    journalLimitations: journal.limitations,
+    limitations: [
+      ...(stdout?.limitations ?? []),
+      ...(stderr?.limitations ?? []),
+    ],
+    reason: options.reason,
+  });
+};
+
 const readTracerOutput = async (
   path: string,
 ): Promise<z.infer<typeof tracerOutputSchema> | undefined> => {
@@ -447,8 +544,12 @@ const capturedOutput = async (
   try {
     handle = await open(path, "r");
     const { size } = await handle.stat();
-    const buffer = Buffer.alloc(Math.min(size, MAX_OUTPUT_BYTES));
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const captureHandle = handle;
+    const { buffer, bytesRead } = await readBoundedPrefix(
+      Math.min(size, MAX_OUTPUT_BYTES),
+      async (target, offset, length, position) =>
+        (await captureHandle.read(target, offset, length, position)).bytesRead,
+    );
     const captured = {
       text: buffer.subarray(0, bytesRead).toString("utf8"),
       bytes: observedBytes,

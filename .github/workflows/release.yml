@@ -1,6 +1,8 @@
 name: Release
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       release_branch:
@@ -18,12 +20,27 @@ env:
   HUSKY: "0"
 
 concurrency:
-  group: release-${{ inputs.release_branch }}
+  group: release-${{ inputs.release_branch || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
+  release-proposal:
+    name: Update release proposal
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          target-branch: main
+          skip-github-release: true
+
   release-please:
     name: Release Please
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: write

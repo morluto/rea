@@ -113,6 +113,12 @@ covers `trace-dylib-resolution`:
 - for the main executable and an XPC service, a predicted load order equal to
   the images dyld actually loads under `DYLD_PRINT_LIBRARIES`.
 
+The lane also compiles executable/library pairs with empty embedded directory,
+versioned-path, and suffix settings. It checks present and removed dependencies
+through CLI and MCP, and compares actual `DYLD_PRINT_SEARCHING` diagnostics for
+root-level candidates. These cases distinguish an empty search directory from
+an empty versioned scan or a suffix that only repeats the original path.
+
 It runs in macOS CI.
 
 Apple artifact verifiers live in `scripts/verify/apple/`, with the macOS bundle
@@ -144,6 +150,17 @@ Hopper, Ghidra or another substituted engine works. `verify:package` proves
 packaging/install behavior and fake-provider integration; use the corresponding
 real-provider lanes for engine claims. Real Apple dispatch and Interface
 Builder verifiers currently prove format integration through production readers.
+
+`verify:hopper` exercises an installed Hopper through the production stdio MCP
+server and CLI. It checks source-owned call chains, CFG edges, references and
+complete large inventories, then probes unnamed bookmarks, annotation clearing,
+batch validation before mutation, malformed addresses and regexes, segment-end
+partial reads, and synthetic file-offset rejection. Advertised schemas are
+validated in their JSON Schema dialect and successful replies are checked against
+their advertised output schemas. Disposable binary copies prove that switching
+and closing actually removes the native document, and that CLI byte results and
+invalid-address diagnostics agree with MCP. No provider is mocked in this lane.
+The Linux demo lane remains a separate `verify:hopper:linux` command.
 
 Golden tests use immutable captured text inputs with producer/source provenance
 under `tests/fixtures/golden/`. Expected results are reviewed for the semantic
@@ -463,7 +480,9 @@ provider evidence.
 Each Vitest project uses up to two workers, bounded by available host parallelism.
 Default-group projects can run together. Only `process-boundary` runs in the
 later sequence group and serializes its files because process-tree observations
-share host sampling resources. Acceptance and process-global files retain isolated
+share host sampling resources. Tests that launch the real process harness belong
+in `tests/boundary/process/`, including CLI command and environment tests.
+Acceptance and process-global files retain isolated
 forks but are not serialized; isolation does not imply serial scheduling. CI uses
 the same per-project worker bound.
 The pure domain/contracts and recording-port service projects share one worker

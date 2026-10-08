@@ -217,6 +217,18 @@ The bridge limits retained event JSON to 8 MiB and caller frames to 65,536
 across the run. It checks admission before retaining another complete event;
 `resource-limit` reports which observations could not be completed without
 silently changing the requested event or frame settings.
+Resolved breakpoint locations have a separate aggregate 8 MiB metadata budget.
+If their details exceed it, `location_count` retains the full observed match
+count, coverage is partial, and `breakpoint_locations_truncated` is true. This
+post-run metadata limit does not imply that the target was killed.
+
+Accepted entries and signal stops are also flushed to a bounded 8 MiB journal.
+If cancellation, timeout, capture failure, or a later bridge error prevents a
+full result, the error retains this evidence in `details.partial_observation`
+with partial coverage. Available output prefixes remain inline; their byte
+counts are observed lower bounds when final drain counters are unavailable.
+The original failure classification and cleanup uncertainty remain separate.
+An interrupted journal row is ignored with an explicit limitation.
 
 Only entries are observed: return values, floating-point and stack arguments,
 and inlined or `objc_direct` calls are not. The target runs with the current
@@ -258,3 +270,10 @@ GUI authority, and REA never falls back automatically to Hopper.
 macOS ARM64 is the real host verified during this implementation. Admission of
 macOS Intel does not claim an Intel verification run. Unsupported metadata and
 unresolved runtime/value semantics remain visible in results.
+
+## Interface Builder hierarchy coverage
+
+A keyed-archive hierarchy UID without an object-table entry marks the hierarchy
+as partial while preserving decoded objects and known links. UID 0 remains
+archived nil and does not count as a missing reference. Archive and evidence
+digests identify the original serialized bytes.

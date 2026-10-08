@@ -148,11 +148,6 @@ const literalValue = (
   if (node === null || node === undefined) return { found: false };
   const literal = readExactJavaScriptLiteral(node);
   if (literal.found) return literal;
-  if (t.isTemplateLiteral(node) && node.expressions.length === 0)
-    return {
-      found: true,
-      value: node.quasis[0]?.value.cooked ?? node.quasis[0]?.value.raw ?? "",
-    };
   if (
     t.isUnaryExpression(node, { operator: "-" }) &&
     t.isNumericLiteral(node.argument)

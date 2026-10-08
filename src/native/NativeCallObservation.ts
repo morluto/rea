@@ -105,9 +105,11 @@ export const projectNativeCalls = (
     .map(({ index }) => index);
   const eventLimit = run.outcome === "event-limit";
   const resourceLimit = run.outcome === "resource-limit";
+  const breakpointLocationLimit = run.breakpoint_locations_truncated === true;
   const partial =
     eventLimit ||
     resourceLimit ||
+    breakpointLocationLimit ||
     run.outcome === "duration-elapsed" ||
     run.outcome === "stop-limit" ||
     unresolved.length > 0;
@@ -155,6 +157,9 @@ export const projectNativeCalls = (
       status: partial ? "partial" : "complete",
       event_limit_reached: eventLimit,
       resource_limit_reached: resourceLimit,
+      ...(breakpointLocationLimit
+        ? { breakpoint_locations_truncated: true }
+        : {}),
       unresolved_breakpoints: unresolved,
     },
     limitations: [
@@ -195,6 +200,11 @@ export const projectNativeCalls = (
       )
         ? [
             "Breakpoints with many matching locations list only the first 64; location_count gives the total.",
+          ]
+        : []),
+      ...(breakpointLocationLimit
+        ? [
+            "Resolved breakpoint locations exceeded the aggregate 8 MiB metadata budget; omitted locations are counted in location_count. This metadata limit does not change the process outcome.",
           ]
         : []),
       ...(trace.stdout.truncated || trace.stderr.truncated

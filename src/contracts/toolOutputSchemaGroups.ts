@@ -18,6 +18,7 @@ import {
   processCaptureSchema,
 } from "../domain/process/processCapture.js";
 import {
+  analysisBookmarkSchema,
   functionInstructionWindowSchema,
   referenceKindSchema,
 } from "../domain/hopperValues.js";
@@ -82,7 +83,10 @@ const contextFacetSchema = z.discriminatedUnion("state", [
   }),
 ]);
 const bookmarkFacetSchema = z.discriminatedUnion("state", [
-  z.object({ state: z.literal("available"), value: z.array(addressedEntry) }),
+  z.object({
+    state: z.literal("available"),
+    value: z.array(analysisBookmarkSchema),
+  }),
   z.object({
     state: z.literal("unavailable"),
     reason: z.string(),
@@ -116,7 +120,7 @@ export const officialOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   current_document: resultOf(z.string()),
   goto_address: resultOf(z.string()),
   inline_comment: resultOf(nullableText),
-  list_bookmarks: resultOf(z.array(addressedEntry)),
+  list_bookmarks: resultOf(z.array(analysisBookmarkSchema)),
   list_documents: resultOf(z.array(z.string())),
   list_names: resultOf(z.array(addressedValue)),
   list_procedures: resultOf(z.array(addressedValue)),
@@ -176,7 +180,6 @@ export const officialOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   set_addresses_names: resultOf(z.record(z.string(), z.boolean())),
   set_bookmark: resultOf(z.boolean()),
   set_comment: resultOf(z.boolean()),
-  set_current_document: resultOf(z.string()),
   set_inline_comment: resultOf(z.boolean()),
   unset_bookmark: resultOf(z.boolean()),
   xrefs: resultOf(addressList),

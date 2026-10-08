@@ -167,6 +167,34 @@ describe("inert JavaScript path resolution", () => {
     );
   });
 
+  it("keeps recovered templates with invalid escapes unknown as paths", () => {
+    const expression = ["`", String.raw`\unicode`, "`"].join("");
+    const { analysis } = analyzePathConsumers(expression);
+
+    expect(analysis.parse_status).toBe("partial");
+    expect(analysis.parse_error_count).toBe(3);
+    expect(analysis.role_paths).toEqual([]);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      {
+        preload_path: null,
+        preload_resolution_context: null,
+        web_preferences: [
+          {
+            name: "preload",
+            value: { status: "dynamic", value: null, expression },
+          },
+        ],
+      },
+    ]);
+    expect(analysis.electron.utility_processes).toEqual([
+      expect.objectContaining({
+        module_path: null,
+        module_resolution_context: null,
+        module_expression: expression,
+      }),
+    ]);
+  });
+
   it.each([
     "path.join()",
     "path.join(__dirname)",

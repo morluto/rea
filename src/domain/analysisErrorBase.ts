@@ -49,6 +49,7 @@ export interface AnalysisCleanupObservation {
 export interface AnalysisErrorOptions extends ErrorOptions {
   readonly capturedOutput?: AnalysisCapturedOutput;
   readonly cleanup?: AnalysisCleanupObservation;
+  readonly partialObservation?: AnalysisPartialObservation;
 }
 
 /** Base class for expected analysis, provider, and session failures. */
@@ -66,16 +67,22 @@ export abstract class AnalysisError extends Error {
     this.cleanup = options?.cleanup;
     this.cleanupIncomplete = options?.cleanup !== undefined;
     this.cleanupResources = options?.cleanup?.resources ?? [];
+    this.partialObservation = options?.partialObservation;
   }
   abstract readonly _tag: AnalysisErrorTag;
   readonly userMessage: string | undefined = undefined;
   readonly userCategory: "cancelled" | undefined = undefined;
   readonly executionFailure: string | undefined = undefined;
-  readonly partialObservation: PartialProcessCaptureObservation | undefined =
-    undefined;
+  readonly partialObservation: AnalysisPartialObservation | undefined;
   readonly cleanupReport: ProcessCaptureCleanupReport | undefined = undefined;
 }
 import type {
   PartialProcessCaptureObservation,
   ProcessCaptureCleanupReport,
 } from "./process/processCapture.js";
+import type { NativeCallPartialObservation } from "./native/nativeCallPartialObservation.js";
+
+/** Provider-neutral evidence collected before a typed analysis failure. */
+export type AnalysisPartialObservation =
+  | PartialProcessCaptureObservation
+  | NativeCallPartialObservation;

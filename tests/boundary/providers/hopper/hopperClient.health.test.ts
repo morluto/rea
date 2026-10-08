@@ -40,7 +40,10 @@ class LifecycleLauncher implements BridgeLauncher {
     await this.fixture.launch(session);
     return ok({
       process: this.observed,
-      ownsProcessLifetime: this.owned,
+      ownsProcessLifetime: true as const,
+      providerLifetime: this.owned
+        ? ("launcher-process" as const)
+        : ("external-application" as const),
       shutdownMode: "bridge-request" as const,
     });
   }
@@ -58,19 +61,6 @@ const start = async (owned: boolean) => {
 };
 
 describe("Hopper provider lifecycle health", () => {
-  it("keeps a live bridge healthy after a non-owning launcher helper exits", async () => {
-    const { client, launcher } = await start(false);
-    launcher.observed.exit(0);
-    expect(client.operationHealth().state).toBe("idle");
-    expect(await client.callTool("echo", { label: "GUI still alive" })).toEqual(
-      {
-        ok: true,
-        value: { label: "GUI still alive" },
-      },
-    );
-    expect(client.operationHealth().state).toBe("idle");
-  });
-
   it("settles disconnected requests without attributing the helper exit to the GUI", async () => {
     const { client, launcher } = await start(false);
     launcher.observed.exit(0);

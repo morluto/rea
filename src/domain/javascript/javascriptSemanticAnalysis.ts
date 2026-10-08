@@ -179,6 +179,10 @@ export const classifyParsedJavaScriptOpenReceivers = (
         if (fact !== undefined) facts.set(node.start ?? -1, fact);
         return;
       }
+      // A lexically bound receiver overrides ambient browser globals. Mark an
+      // otherwise unresolved local as local so name-based window.open
+      // heuristics do not hide its XHR-like overloads.
+      facts.set(node.start ?? -1, "local");
       if (receiver === "indexedDB" || receiver === "caches") {
         facts.set(
           node.start ?? -1,
@@ -235,7 +239,17 @@ export const classifyParsedJavaScriptOpenReceivers = (
 const openGlobalFact = (
   name: string,
 ): JavaScriptOpenReceiverFact | undefined => {
-  if (name === "window") return "window";
+  if (
+    name === "window" ||
+    name === "self" ||
+    name === "globalThis" ||
+    name === "top" ||
+    name === "parent" ||
+    name === "opener" ||
+    name === "frames" ||
+    name === "document"
+  )
+    return "window";
   if (name === "indexedDB") return "indexed-db";
   if (name === "caches") return "cache-storage";
   return undefined;

@@ -23,6 +23,34 @@ import { UnknownRegistryError } from "./unknownRegistryError.js";
 import { projectAnalysisError } from "./analysisErrorProjection.js";
 import { ProviderSelectionError } from "./providerSelectionError.js";
 import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
+import { nativeCallPartialObservationSchema } from "./native/nativeCallPartialObservation.js";
+
+const nativeCallPartialObservation = nativeCallPartialObservationSchema.parse({
+  kind: "native-call-observation",
+  target: {
+    path: "/tmp/selected-app",
+    sha256: "a".repeat(64),
+    architecture: "arm64",
+    arguments: [],
+    environment: {},
+    working_directory: null,
+  },
+  process: {
+    pid: 4242,
+    stdout: {
+      text: "partial stdout",
+      bytes: 13,
+      truncated: false,
+      complete: false,
+    },
+    stderr: null,
+    other_stops: [],
+  },
+  debugger: { version: null },
+  events: [],
+  coverage: { status: "partial", reason: "cancelled" },
+  limitations: ["Observation ended before the requested window completed."],
+});
 
 const retainedOutput = {
   stdout: "selected output\u0000",
@@ -177,6 +205,50 @@ it("retains the original failure tag and code when cleanup is incomplete", () =>
       execution_failure: "evidence_integrity_mismatch",
     },
   });
+});
+
+it("projects native partial observations through healthy cancellation failures", () => {
+  const projected = projectAnalysisError(
+    new AnalysisCancelledError("observe_native_calls", {
+      partialObservation: nativeCallPartialObservation,
+    }),
+  );
+
+  expect(projected).toMatchObject({
+    code: "cancelled",
+    details: {
+      operation: "observe_native_calls",
+      cleanup: "complete",
+      partial_observation: nativeCallPartialObservation,
+    },
+  });
+  expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(true);
+});
+
+it("retains native partial observations and cleanup uncertainty on provider failures", () => {
+  const projected = projectAnalysisError(
+    new ProviderAdapterError("native-lldb", "observe_native_calls", {
+      partialObservation: nativeCallPartialObservation,
+      cleanup: {
+        reason: "target process termination could not be verified",
+        resources: ["native-target:4242"],
+      },
+    }),
+  );
+
+  expect(projected).toMatchObject({
+    code: "cleanup_incomplete",
+    details: {
+      provider_id: "native-lldb",
+      operation: "observe_native_calls",
+      cleanup: "incomplete",
+      cleanup_reason: "target process termination could not be verified",
+      resources: ["native-target:4242"],
+      execution_failure: "execution_failure",
+      partial_observation: nativeCallPartialObservation,
+    },
+  });
+  expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(true);
 });
 
 describe("analysis error projection: provider failures", () => {

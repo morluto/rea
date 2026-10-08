@@ -65,6 +65,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
   let omittedObjects = 0;
   let omittedConnections = 0;
   let omittedGraphNodes = 0;
+  let omittedHierarchyReferences = 0;
   for (const document of input.documents.slice(0, input.limits.max_documents)) {
     const parsed = parseInterfaceBuilderRecords(document.raw);
     const prefix = `ib:${document.relativePath}:`;
@@ -403,6 +404,8 @@ export const buildInterfaceBuilderAnalysis = (input: {
     }
     const objectsTruncated =
       parsed.omittedObjects > 0 || parsed.objects.length > documentObjectCount;
+    const parserOmittedHierarchyReferences = parsed.omittedHierarchyReferences;
+    omittedHierarchyReferences += parserOmittedHierarchyReferences;
     const parserOmittedConnections = parsed.omittedConnections;
     const connectionsTruncated =
       parserOmittedConnections > 0 ||
@@ -419,7 +422,10 @@ export const buildInterfaceBuilderAnalysis = (input: {
       document_kind: document.documentKind,
       object_count: parsed.objectCount,
       connection_count: parsed.connections.length + parserOmittedConnections,
-      hierarchy_complete: parsed.hierarchy.length > 0 && !truncated,
+      hierarchy_complete:
+        parsed.hierarchy.length > 0 &&
+        !truncated &&
+        parserOmittedHierarchyReferences === 0,
     });
     coverage.push(
       {
@@ -456,19 +462,24 @@ export const buildInterfaceBuilderAnalysis = (input: {
       {
         facet: `hierarchy:${document.relativePath}`,
         status:
-          parsed.hierarchy.length === 0
-            ? "unsupported"
-            : hierarchyTruncated || documentOmittedHierarchyEdges > 0
-              ? "partial"
-              : "complete",
+          parserOmittedHierarchyReferences > 0
+            ? "partial"
+            : parsed.hierarchy.length === 0
+              ? "unsupported"
+              : hierarchyTruncated || documentOmittedHierarchyEdges > 0
+                ? "partial"
+                : "complete",
         reason:
-          parsed.hierarchy.length === 0
-            ? "archive_hierarchy_not_decoded"
-            : hierarchyTruncated || documentOmittedHierarchyEdges > 0
-              ? "graph_limit_reached"
-              : null,
+          parserOmittedHierarchyReferences > 0
+            ? "archive_hierarchy_references_missing"
+            : parsed.hierarchy.length === 0
+              ? "archive_hierarchy_not_decoded"
+              : hierarchyTruncated || documentOmittedHierarchyEdges > 0
+                ? "graph_limit_reached"
+                : null,
         examined: hierarchyCount,
-        omitted: documentOmittedHierarchyEdges,
+        omitted:
+          documentOmittedHierarchyEdges + parserOmittedHierarchyReferences,
       },
       {
         facet: `classes:${document.relativePath}`,
@@ -514,7 +525,11 @@ export const buildInterfaceBuilderAnalysis = (input: {
       nodes: [...nodes.values()],
       edges,
       coverage,
-      truncated: truncated || omittedObjects > 0 || omittedConnections > 0,
+      truncated:
+        truncated ||
+        omittedObjects > 0 ||
+        omittedConnections > 0 ||
+        omittedHierarchyReferences > 0,
     },
     limitations: [
       "The graph reflects recognized Interface Builder archive fields and connections; omitted private or unrecognized archive fields remain unknown.",

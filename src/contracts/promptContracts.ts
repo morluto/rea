@@ -104,7 +104,7 @@ export const PROMPT_CONTRACTS = [
       target_path: optional(
         "Absolute target path; omit when the intended target is already open",
       ),
-      document: optional("Open Hopper document to inspect", "document"),
+      document: optional("Active target's provider document name", "document"),
       procedure: optional(
         "Known procedure name or address to prioritize",
         "procedure",
@@ -121,9 +121,9 @@ export const PROMPT_CONTRACTS = [
           "For a JavaScript/Electron application directory, call analyze_javascript_application with input_path=target_path directly; no open_binary call is needed. For a file or macOS app bundle, open target_path only when the required target is not active.",
       },
       {
-        tools: ["list_documents", "set_current_document"],
+        tools: ["current_document"],
         instruction:
-          "Select a document only when needed for the requested analysis.",
+          "Analysis stays bound to the active target's provider document. Use open_binary to switch targets; document names never select another artifact.",
       },
       {
         tools: ["search_strings", "search_procedures", "procedure_address"],

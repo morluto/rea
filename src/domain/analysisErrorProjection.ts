@@ -61,6 +61,11 @@ export const projectAnalysisError = (
     ...(error.capturedOutput === undefined
       ? {}
       : { captured_output: { ...error.capturedOutput } }),
+    ...(error.partialObservation === undefined
+      ? {}
+      : {
+          partial_observation: jsonValueSchema.parse(error.partialObservation),
+        }),
   };
   return {
     code,
@@ -77,6 +82,11 @@ export const projectAnalysisError = (
 const underlyingErrorCode = (
   error: AnalysisError,
 ): AnalysisErrorProjection["code"] => {
+  if (
+    error instanceof HopperRemoteError &&
+    error.diagnosticType === "invalid_request"
+  )
+    return "invalid_request";
   if (error instanceof ProviderSelectionError)
     return error.reason === "provider_unavailable"
       ? "provider_unavailable"
@@ -352,7 +362,7 @@ const providerErrorDetails = (
       provider_state: error.providerState,
       retry_action: providerRetryAction(
         error.providerState,
-        error.failureCode !== undefined,
+        error.failureCode !== undefined || error.stage === "launch",
       ),
       ...(error.failureCode === undefined
         ? {}
@@ -362,6 +372,9 @@ const providerErrorDetails = (
       ...(error.diagnostic === undefined
         ? {}
         : { diagnostics: { ...error.diagnostic } }),
+      ...(error.launcherFailure === undefined
+        ? {}
+        : { launcher: error.launcherFailure }),
     };
   }
   if (error instanceof HopperStartError)
@@ -372,6 +385,9 @@ const providerErrorDetails = (
       ...(error.ownerRunId === undefined
         ? {}
         : { owner_run_id: error.ownerRunId }),
+      ...(error.launcherFailure === undefined
+        ? {}
+        : { launcher: error.launcherFailure }),
     };
   return undefined;
 };
@@ -439,13 +455,6 @@ const lifecycleErrorDetails = (
       ...(error.executionFailure === undefined
         ? {}
         : { execution_failure: error.executionFailure }),
-      ...(error.partialObservation === undefined
-        ? {}
-        : {
-            partial_observation: jsonValueSchema.parse(
-              error.partialObservation,
-            ),
-          }),
     };
   if (error._tag === "ProcessCaptureError") {
     const details = {
@@ -458,13 +467,6 @@ const lifecycleErrorDetails = (
       ...(error.executionFailure === undefined
         ? {}
         : { execution_failure: error.executionFailure }),
-      ...(error.partialObservation === undefined
-        ? {}
-        : {
-            partial_observation: jsonValueSchema.parse(
-              error.partialObservation,
-            ),
-          }),
     };
     return Object.keys(details).length === 0 ? undefined : details;
   }

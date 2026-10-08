@@ -39,7 +39,12 @@ async function git(
   return result.stdout.trim();
 }
 
-async function metadata(directory: string, version: string, notes: string) {
+async function metadata(
+  directory: string,
+  version: string,
+  notes: string,
+  versioning?: string,
+) {
   await mkdir(join(directory, "docs"), { recursive: true });
   await mkdir(join(directory, "src"), { recursive: true });
   const files = {
@@ -51,6 +56,7 @@ async function metadata(directory: string, version: string, notes: string) {
       packages: [{ identifier: "rea-agents", version }],
     },
     "release-please-config.json": {
+      ...(versioning === undefined ? {} : { versioning }),
       "changelog-sections": [
         { type: "feat", hidden: false },
         { type: "fix", hidden: false },
@@ -74,15 +80,15 @@ async function metadata(directory: string, version: string, notes: string) {
 async function fixture(
   subject = "fix(contracts)!: require absolute paths (#948)",
   footer = "",
-  options: { mergePullRequest?: boolean } = {},
+  options: { mergePullRequest?: boolean; versioning?: string } = {},
 ) {
   const directory = await createTestTempDirectory("rea-release-ancestry-");
   await git(directory, ["init", "--initial-branch=main"]);
-  await metadata(directory, "4.0.0", "Initial release");
+  await metadata(directory, "4.0.0", "Initial release", options.versioning);
   await git(directory, ["add", "."]);
   await git(directory, ["commit", "-m", "chore: seed"], "2026-01-01T00:00:00Z");
   await git(directory, ["switch", "-c", "release/5.0.0"]);
-  await metadata(directory, "5.0.0", "Previous release");
+  await metadata(directory, "5.0.0", "Previous release", options.versioning);
   await git(directory, ["add", "."]);
   await git(
     directory,
@@ -130,7 +136,13 @@ async function fixture(
     "chore: sync published baseline",
   ]);
   const sourceSha = await git(directory, ["rev-parse", "HEAD"]);
-  return { directory, sourceSha, changedSha, releasedSha };
+  return {
+    directory,
+    sourceSha,
+    changedSha,
+    releasedSha,
+    versioning: options.versioning,
+  };
 }
 
 type Fixture = Awaited<ReturnType<typeof fixture>>;
@@ -140,7 +152,7 @@ async function candidate(
   version: string,
   notes = "### ⚠ BREAKING CHANGES\n\n* MCP callers must use absolute paths; CLI paths remain compatible. See #948.",
 ) {
-  await metadata(f.directory, version, notes);
+  await metadata(f.directory, version, notes, f.versioning);
   await git(f.directory, ["add", "."]);
   await git(
     f.directory,
@@ -235,6 +247,51 @@ it("rejects a requested minor that omits the breaking ancestry", async () => {
   await expect(verify(f, "5.1.0", "prepare", "source")).rejects.toMatchObject({
     code: 1,
     stderr: expect.stringContaining("contains unreleased breaking markers"),
+  });
+});
+
+it.each([
+  { subject: "fix(contracts)!: require absolute paths (#948)", footer: "" },
+  {
+    subject: "fix(contracts): change path inputs (#948)",
+    footer: "BREAKING CHANGE: relative MCP paths are rejected",
+  },
+])(
+  "accepts a breaking minor under always-bump-minor: $subject",
+  async ({ subject, footer }) => {
+    const f = await fixture(subject, footer, {
+      versioning: "always-bump-minor",
+    });
+    await expect(
+      verify(f, "5.1.0", "prepare", "source"),
+    ).resolves.toMatchObject({
+      stderr: "",
+    });
+    const candidateSha = await candidate(f, "5.1.0");
+    const report = reportSchema.parse(
+      JSON.parse((await verify(f, "5.1.0")).stdout),
+    );
+    expect(report.expectedVersion).toBe("5.1.0");
+    expect(report.missingNotes).toEqual([]);
+    expect(report.commits).toContainEqual({
+      sha: f.changedSha,
+      subject,
+      breaking: true,
+    });
+    await expect(
+      verify({ ...f, sourceSha: candidateSha }, "5.1.0", "publish", "source"),
+    ).resolves.toMatchObject({ stderr: "" });
+  },
+);
+
+it("still requires migration notes for breaking minor releases", async () => {
+  const f = await fixture(undefined, "", { versioning: "always-bump-minor" });
+  await candidate(f, "5.1.0", "### Bug Fixes\n\nSee #948.");
+  await expect(verify(f, "5.1.0")).rejects.toMatchObject({
+    code: 1,
+    stderr: expect.stringContaining(
+      "migration notes omit unreleased breaking changes",
+    ),
   });
 });
 

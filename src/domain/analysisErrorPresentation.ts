@@ -56,7 +56,9 @@ export const analysisErrorRemediationAction = (
       ? "Check the Hopper launcher and target details, then retry opening the target."
       : `Use the active REA session ${error.ownerRunId} or close it before opening this target again.`;
   if (error instanceof HopperRemoteError)
-    return "Review the Hopper diagnostic details; correct the request or retry if the failure was transient.";
+    return error.diagnosticType === "invalid_request"
+      ? "Correct the reported address, document, or arguments and retry."
+      : "Review the Hopper diagnostic details; correct the request or retry if the failure was transient.";
   if (error instanceof EvidenceReferenceError)
     return "Use an exact Evidence reference retained by this session, supply the complete inline Evidence, re-run its producer, or import its Evidence bundle. close_binary clears retained records.";
   if (
@@ -87,6 +89,11 @@ export const analysisErrorCategory = (
     return error.userCategory ?? "execution_failure";
   if (error instanceof BrowserObservationError)
     return browserErrorCategory(error.reason);
+  if (
+    error instanceof HopperRemoteError &&
+    error.diagnosticType === "invalid_request"
+  )
+    return "invalid_input";
   if (
     error instanceof HopperRemoteError &&
     error.diagnosticType === "authorization"
@@ -209,6 +216,8 @@ const RESTART_OWNED_PROVIDER =
 const hopperProcessRemediation = (error: HopperProcessError): string => {
   if (error.failureCode !== undefined && error.userMessage !== undefined)
     return error.userMessage;
+  if (error.stage === "launch")
+    return "Review the captured launcher diagnostics and Hopper setup, then retry opening the target.";
   if (providerRetryAction(error.providerState) === "restart_provider")
     return RESTART_OWNED_PROVIDER;
   return "Read binary_session.provider_operation_health for this request before retrying or restarting the owned provider.";
@@ -229,7 +238,9 @@ const hopperProcessMessage = (error: HopperProcessError): string => {
         ? "no exit code was observed"
         : `exit code ${String(error.exitCode)}`;
     const recovery =
-      error.failureCode === undefined ? ` ${RESTART_OWNED_PROVIDER}` : "";
+      error.failureCode === undefined && stage !== "launch"
+        ? ` ${RESTART_OWNED_PROVIDER}`
+        : "";
     return `Hopper exited during ${where} (${exit}).${startup}${recovery}${request}`;
   }
   if (error.providerState === "unreachable")

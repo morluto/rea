@@ -138,11 +138,13 @@ Describe the behavior change and verification performed in the pull request. Nev
 
 ## Maintainer release checklist
 
-Use the [checkpoint release guide](docs/releasing.md). Releases start from an
-explicit `release/VERSION` branch cut at a recorded commit. Manually prepare
-the bot PR, wait for its exact-head CI and review, merge into that frozen
-branch, and manually publish through the official Release workflow. Main
-pushes do not update release PRs or publish packages. Both publishers build
+Use the [checkpoint release guide](docs/releasing.md). Main pushes automatically
+refresh a release proposal with the next version and changelog. Keep this preview
+PR unmerged until it is superseded by the published release's metadata sync.
+Publication starts from an explicit `release/VERSION` branch cut at a recorded
+application commit. Manually prepare its bot PR, wait for its exact-head CI and
+review, merge into that frozen branch, and manually publish through the official
+Release workflow. Main pushes cannot publish packages. Both publishers build
 the exact SHA tagged by Release Please.
 
 Keep new implementation commits on main for the next release. The workflow

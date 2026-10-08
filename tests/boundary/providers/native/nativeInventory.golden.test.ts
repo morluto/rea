@@ -1,4 +1,11 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { expect, it } from "vitest";
+import {
+  CPU,
+  fatImage,
+  machoImage,
+} from "../../../../src/artifacts/apple/MachoImage.fixture.js";
 import { err, ok } from "../../../../src/domain/result.js";
 import {
   NativeCommandFailure,
@@ -13,7 +20,28 @@ import {
   NativeFixtureRunner as FixtureRunner,
   nativeFixture as fixture,
   nativeMachoTarget as machoTarget,
+  nativeMachoTargetForFile,
 } from "../../../fixtures/nativeCommands.js";
+import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+
+const signatureTarget = async (
+  signedArchitecture: "arm64" | "arm64e" = "arm64",
+) => {
+  const path = join(
+    await createTestTempDirectory("rea-native-inventory-"),
+    "fixture",
+  );
+  await writeFile(
+    path,
+    fatImage(
+      [CPU.x86_64, CPU[signedArchitecture]].map((cpu) => ({
+        cpu,
+        bytes: machoImage({ cpu }),
+      })),
+    ),
+  );
+  return nativeMachoTargetForFile(path);
+};
 
 it("distinguishes a codesign execution failure from an observed unsigned artifact", async () => {
   for (const kind of ["missing", "unsigned"] as const) {
@@ -25,7 +53,7 @@ it("distinguishes a codesign execution failure from an observed unsigned artifac
         1,
       ),
       "darwin",
-    ).createClient(machoTarget("/private/fixture"));
+    ).createClient(await signatureTarget());
     const execution = await client.execute("inspect_signature", {});
     if (kind === "missing")
       expect(execution).toMatchObject({
@@ -44,7 +72,7 @@ it("reports unsigned slices when a universal Mach-O has mixed signatures", async
   const signedFixture = await fixture("codesign.txt");
   const unsigned = await fixture("dyld-inventory/codesign-unsigned.txt");
   const entitlements = await fixture("entitlements.xml");
-  for (const signedArchitecture of ["arm64", "arm64e"]) {
+  for (const signedArchitecture of ["arm64", "arm64e"] as const) {
     const signed = signedFixture.replace(
       /^Format=.*$/mu,
       `Format=Mach-O universal (x86_64 ${signedArchitecture})`,
@@ -52,7 +80,7 @@ it("reports unsigned slices when a universal Mach-O has mixed signatures", async
     const client = new NativeMacOSProvider(
       signatureRunner({ signed, unsigned, entitlements }),
       "darwin",
-    ).createClient(machoTarget("/private/fixture"));
+    ).createClient(await signatureTarget(signedArchitecture));
 
     const execution = await client.execute("inspect_signature", {});
 
@@ -98,7 +126,7 @@ it("rejects nonzero supplemental codesign output that is not an unsigned observa
       entitlements,
     }),
     "darwin",
-  ).createClient(machoTarget("/private/fixture"));
+  ).createClient(await signatureTarget());
 
   const execution = await client.execute("inspect_signature", {});
 

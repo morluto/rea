@@ -10,6 +10,11 @@ import {
 } from "./dyldPaths.js";
 import { digestSchema } from "../digests.js";
 import {
+  hasApplicableDyldOverrides,
+  embeddedDyldOverrides,
+  type DyldSearchOverride,
+} from "./dyldEnvironment.js";
+import {
   DYLIB_RESOLUTION_LIMITATIONS,
   deriveFindings,
 } from "./dylibResolutionFindings.js";
@@ -207,6 +212,8 @@ interface ProcessContext {
   readonly view: DylibTreeView;
   readonly root: string;
   readonly architecture: string;
+  readonly searchOverrides: readonly DyldSearchOverride[];
+  readonly environmentRoots: Set<string>;
   readonly platforms: readonly number[];
   readonly executable: string | null;
   readonly loaded: Map<string, LoadedImage>;
@@ -290,8 +297,9 @@ const evaluateCandidate = async (
   else {
     const slice = compatibleSlice(facts.slices, context.architecture);
     if (slice === undefined) outcome = "architecture-missing";
-    else if (![2, 6, 7, 8].includes(slice.file_type_code))
-      outcome = "not-loadable";
+    // Dependency commands require a dylib; generic dyld image loadability
+    // also admits main executables and bundles for different operations.
+    else if (slice.file_type_code !== 6) outcome = "not-loadable";
     else {
       const platformResult = platformLoadability(
         context.platforms,
@@ -425,7 +433,23 @@ const resolveDependency = async (
       // dyld stops at the first loadable candidate.
       if (candidate.outcome === "resolved") break;
     }
-  const searched = resolution(candidates);
+  const modeled = resolution(candidates);
+  const searchUnknown =
+    loaded === undefined &&
+    hasApplicableDyldOverrides(
+      context.searchOverrides,
+      dependency.install_name,
+      modeled.image !== null,
+    );
+  if (searchUnknown) context.environmentRoots.add(context.root);
+  // Fallbacks cannot preempt a modeled hit, and framework paths do not
+  // override ordinary dylibs. Reuse inherits uncertainty from the first load.
+  const searched: Edge["resolution"] = searchUnknown
+    ? {
+        ...modeled,
+        status: modeled.image === null ? "undetermined" : "conditional",
+      }
+    : modeled;
   // Reusing an image that itself loads only conditionally is conditional too.
   const resolved: Edge["resolution"] =
     loaded !== undefined &&
@@ -528,6 +552,7 @@ export const traceDylibLoading = async (
   const roots: DylibTrace["roots"][number][] = [];
   const edges: Edge[] = [];
   const withoutArchitecture: string[] = [];
+  const environmentRoots = new Set<string>();
   for (const root of request.roots) {
     const facts = await view.image(root);
     images.set(root, facts);
@@ -539,6 +564,20 @@ export const traceDylibLoading = async (
     );
     if (slices.length === 0) withoutArchitecture.push(root);
     for (const slice of slices) {
+      const executable = slice.file_type === "execute" ? root : null;
+      // Only the main executable supplies the process's embedded environment.
+      const searchOverrides =
+        executable === null
+          ? []
+          : embeddedDyldOverrides(slice.dyld_environment, slice.platforms);
+      // Inserted libraries introduce unexamined images even without dependencies.
+      if (
+        searchOverrides.some(
+          ({ variable, value }) =>
+            variable === "DYLD_INSERT_LIBRARIES" && value !== "",
+        )
+      )
+        environmentRoots.add(root);
       roots.push({ image: root, architecture: slice.architecture });
       edges.push(
         ...(await traceProcess(
@@ -546,8 +585,10 @@ export const traceDylibLoading = async (
             view,
             root,
             architecture: slice.architecture,
+            searchOverrides,
+            environmentRoots,
             platforms: slice.platforms,
-            executable: slice.file_type === "execute" ? root : null,
+            executable,
             loaded: new Map(),
             byInstallName: new Map(),
             images,
@@ -581,13 +622,22 @@ export const traceDylibLoading = async (
     findings: deriveFindings(edges, roots, images),
     coverage: {
       status:
-        unparsed.length === 0 && withoutArchitecture.length === 0
+        unparsed.length === 0 &&
+        withoutArchitecture.length === 0 &&
+        environmentRoots.size === 0
           ? "complete"
           : "partial",
       unparsed_images: unparsed,
       roots_without_architecture: withoutArchitecture,
     },
-    limitations: DYLIB_RESOLUTION_LIMITATIONS,
+    limitations: [
+      ...DYLIB_RESOLUTION_LIMITATIONS,
+      ...(environmentRoots.size === 0
+        ? []
+        : [
+            `Roots ${[...environmentRoots].join(", ")} request applicable image-selection inputs through LC_DYLD_ENVIRONMENT that are not modeled; affected dependencies or inserted images remain uncertain.`,
+          ]),
+    ],
   };
 };
 

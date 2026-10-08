@@ -57,7 +57,9 @@ export function requireBridgeDiagnostic(chunks) {
       (diagnostic) =>
         diagnostic.type === "bridge-diagnostic" &&
         diagnostic.category === "invalid_request" &&
-        diagnostic.message === "Invalid Hopper bridge request",
+        diagnostic.message.includes(
+          "Unknown Hopper address or name: __rea_missing_procedure__",
+        ),
     )
   )
     throw new Error("The MCP runtime omitted the correlated Hopper diagnostic");
@@ -153,7 +155,13 @@ export async function verifyRealHopperFixture({
 }
 
 /** Reject malformed, unsafe, or unexpected failure diagnostics from MCP. */
-export function requireSafeDiagnostics(chunks) {
+export function requireSafeDiagnostics(
+  chunks,
+  expectedErrorTools = ["procedure_info"],
+  expectedErrorTags = ["HopperRemoteError"],
+) {
+  const expected = new Set(expectedErrorTools);
+  const tags = new Set(expectedErrorTags);
   const lines = chunks
     .join("")
     .split("\n")
@@ -173,10 +181,8 @@ export function requireSafeDiagnostics(chunks) {
       typeof diagnostic.level !== "number" ||
       diagnostic.level >= 50 ||
       (diagnostic.level >= 40 &&
-        diagnostic.errorTag !== "HopperRemoteError" &&
-        !(
-          diagnostic.tool === "procedure_info" && diagnostic.status === "error"
-        ))
+        !tags.has(diagnostic.errorTag) &&
+        !(expected.has(diagnostic.tool) && diagnostic.status === "error"))
     )
       throw new Error(`The MCP runtime emitted unsafe stderr: ${line}`);
   }

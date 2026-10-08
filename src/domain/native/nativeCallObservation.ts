@@ -127,7 +127,8 @@ export const nativeCallEventSchema = z.strictObject({
   backtrace: z.array(nativeCodeLocationSchema),
 });
 
-const capturedOutputSchema = z.strictObject({
+/** Retained native output with explicit stream completeness and byte counts. */
+export const nativeCapturedOutputSchema = z.strictObject({
   text: z.string(),
   /** Bytes observed by the bridge, not a total when complete is false. */
   bytes: z.number().int().nonnegative(),
@@ -177,8 +178,8 @@ export const nativeCallObservationResultSchema = z.strictObject({
     /** REA confirmed the process is gone when observation ended. */
     terminated: z.boolean(),
     elapsed_ms: z.number().nonnegative(),
-    stdout: capturedOutputSchema,
-    stderr: capturedOutputSchema,
+    stdout: nativeCapturedOutputSchema,
+    stderr: nativeCapturedOutputSchema,
     /** Signal and exception stops LLDB reported; the process continued past each. */
     other_stops: z.array(z.string()),
   }),
@@ -205,6 +206,8 @@ export const nativeCallObservationResultSchema = z.strictObject({
     status: z.enum(["complete", "partial"]),
     event_limit_reached: z.boolean(),
     resource_limit_reached: z.boolean(),
+    /** Aggregate breakpoint-location metadata exhausted its retained-byte budget. */
+    breakpoint_locations_truncated: z.boolean().optional(),
     /** Requests that matched no code in any image loaded while observing. */
     unresolved_breakpoints: z.array(z.number().int().nonnegative()),
   }),

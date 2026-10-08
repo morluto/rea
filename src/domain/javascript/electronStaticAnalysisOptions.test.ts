@@ -44,4 +44,24 @@ describe("Electron option evidence", () => {
       service_name: null,
     });
   });
+
+  it("keeps recovered templates with invalid escapes dynamic", () => {
+    const source = [
+      "new BrowserWindow({ webPreferences: { sandbox: `",
+      String.raw`\unicode`,
+      "` } });",
+    ].join("");
+    const analysis = analyzeJavaScriptStaticSource(source);
+
+    expect(analysis.parse_status).toBe("partial");
+    expect(analysis.parse_error_count).toBe(1);
+    expect(
+      analysis.electron.browser_windows[0]?.web_preferences,
+    ).toContainEqual(
+      expect.objectContaining({
+        name: "sandbox",
+        value: expect.objectContaining({ status: "dynamic", value: null }),
+      }),
+    );
+  });
 });

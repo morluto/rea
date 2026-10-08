@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -6,7 +7,10 @@ import { expect, it } from "vitest";
 import { z } from "zod";
 
 import { nativeCallObservationResultSchema } from "../../../src/domain/native/nativeCallObservation.js";
-import { ok } from "../../../src/domain/result.js";
+import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
+import { nativeCallPartialObservationSchema } from "../../../src/domain/native/nativeCallPartialObservation.js";
+import { err, ok } from "../../../src/domain/result.js";
+import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import type { NativeCallTracer } from "../../../src/native/LldbCallTracer.js";
 import { NativeMacOSProvider } from "../../../src/native/NativeMacOSProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -130,3 +134,169 @@ it("routes observe_native_calls through MCP with schema-checked input and output
     await server.close();
   }
 });
+
+it.each([
+  ["cancelled", "cancelled", undefined],
+  [
+    "tracer failure with cleanup uncertainty",
+    "cleanup_incomplete",
+    {
+      reason: "target process termination could not be verified",
+      resources: ["native-target:4242"],
+    },
+  ],
+] as const)(
+  "preserves typed native partial observations over MCP after %s",
+  async (_label, expectedCode, cleanup) => {
+    const directory = await createTestTempDirectory(
+      "rea-native-calls-partial-mcp-",
+    );
+    const path = join(directory, "Tool");
+    const selectedBytes = machoHeader();
+    const sha256 = createHash("sha256").update(selectedBytes).digest("hex");
+    await writeFile(path, selectedBytes);
+    const launchArguments = ["--fixture", "selected argument"];
+    const launchEnvironment = { REA_NATIVE_FIXTURE: "selected value" };
+    const workingDirectory = directory;
+    const partialObservation = nativeCallPartialObservationSchema.parse({
+      kind: "native-call-observation",
+      target: {
+        path,
+        sha256,
+        architecture: "arm64",
+        arguments: launchArguments,
+        environment: launchEnvironment,
+        working_directory: workingDirectory,
+      },
+      process: {
+        pid: 4242,
+        stdout: {
+          text: "partial target output",
+          bytes: 21,
+          truncated: true,
+          complete: false,
+        },
+        stderr: {
+          text: "debugger diagnostic",
+          bytes: 19,
+          truncated: false,
+          complete: false,
+        },
+        other_stops: ["signal SIGSTOP"],
+      },
+      debugger: { version: "lldb-fixture" },
+      events: [
+        {
+          sequence: 0,
+          elapsed_ms: 4,
+          thread_id: 3,
+          breakpoint_index: 0,
+          load_address: "0x1000",
+          file_address: "0x1000",
+          module: "Tool",
+          module_path: path,
+          symbol: "open",
+          receiver_class: null,
+          selector: null,
+          registers: [{ name: "x0", value: "0x2" }],
+          backtrace: [],
+        },
+      ],
+      coverage: {
+        status: "partial",
+        reason: cleanup === undefined ? "cancelled" : "cleanup-failure",
+      },
+      limitations: ["Observation ended before the requested window completed."],
+    });
+    const tracer: NativeCallTracer = {
+      trace: () =>
+        Promise.resolve(
+          err(
+            cleanup === undefined
+              ? new AnalysisCancelledError("observe_native_calls", {
+                  partialObservation,
+                })
+              : new ProviderAdapterError(
+                  "native-macos",
+                  "observe_native_calls",
+                  {
+                    cleanup,
+                    partialObservation,
+                  },
+                ),
+          ),
+        ),
+    };
+    const session = createTestBinarySession(
+      new NativeMacOSProvider(new NativeFixtureRunner(), "darwin", tracer),
+    );
+    const server = createServer(session, session);
+    const client = new Client({
+      name: "native-calls-partial-mcp-test",
+      version: "1",
+    });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const opened = await client.callTool({
+        name: "open_binary",
+        arguments: { path },
+      });
+      expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
+
+      const called = await client.callTool({
+        name: "observe_native_calls",
+        arguments: {
+          breakpoints: [{ kind: "function", name: "open" }],
+          arguments: launchArguments,
+          environment: launchEnvironment,
+          working_directory: workingDirectory,
+          duration_ms: 1000,
+        },
+      });
+
+      expect(called.isError).toBe(true);
+      expect(called.structuredContent).toMatchObject({
+        error: {
+          code: expectedCode,
+          details: {
+            ...(cleanup === undefined
+              ? { cleanup: "complete" }
+              : {
+                  execution_failure: "execution_failure",
+                  cleanup: "incomplete",
+                  cleanup_reason: cleanup.reason,
+                }),
+            partial_observation: {
+              kind: "native-call-observation",
+              target: {
+                path,
+                sha256,
+                architecture: "arm64",
+                arguments: launchArguments,
+                environment: launchEnvironment,
+                working_directory: workingDirectory,
+              },
+              debugger: { version: "lldb-fixture" },
+              process: {
+                pid: 4242,
+                stdout: {
+                  text: "partial target output",
+                  bytes: 21,
+                  truncated: true,
+                  complete: false,
+                },
+              },
+              events: [{ sequence: 0, symbol: "open" }],
+            },
+          },
+        },
+      });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  },
+);

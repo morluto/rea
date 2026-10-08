@@ -32,7 +32,6 @@ it("captures one command's terminal output, selected files, and owned cleanup", 
         filesystem_observation_paths: ["."],
       }),
     );
-    expect(result.ok).toBe(true);
     if (!result.ok) throw result.error;
     expect(result.value.frames.map(({ data }) => data).join("")).toContain(
       "value:caller-selected",

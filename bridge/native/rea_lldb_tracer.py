@@ -30,6 +30,8 @@ MAX_REPORTED_LOCATIONS = 64
 MAX_OTHER_STOPS = 256
 MAX_TRACE_BYTES = 8 * 1024 * 1024
 MAX_TRACE_FRAMES = 65_536
+MAX_OBSERVATION_JOURNAL_BYTES = MAX_TRACE_BYTES
+MAX_BREAKPOINT_LOCATION_BYTES = 8 * 1024 * 1024
 MAX_TARGET_OUTPUT_BYTES = 1024 * 1024
 OUTPUT_DRAIN_BYTES_PER_PASS = 1024 * 1024
 OUTPUT_EOF_WAIT_SECONDS = 1.0
@@ -65,6 +67,24 @@ def _estimated_json_size(value):
 
 def _fits_trace_budget(value, remaining_bytes):
     return _estimated_json_size(value) <= remaining_bytes
+
+
+class _ObservationJournal:
+    """Flush a bounded JSONL prefix so observations survive tracer failure."""
+
+    def __init__(self, handle, max_bytes=MAX_OBSERVATION_JOURNAL_BYTES):
+        self.handle = handle
+        self.max_bytes = max_bytes
+        self.bytes = 0
+
+    def append(self, record):
+        encoded = (json.dumps(record) + "\n").encode("utf-8")
+        if self.bytes + len(encoded) > self.max_bytes:
+            return False
+        self.handle.write(encoded)
+        self.handle.flush()
+        self.bytes += len(encoded)
+        return True
 
 
 def _set_launch_flags(launch):
@@ -412,13 +432,24 @@ def _handle_stop(context, events, other_stops):
                         return "resource-limit"
                     record["backtrace"].append(location)
                     record_bytes += addition
+                journal = context.get("observation_journal")
+                if journal is not None and not journal.append(
+                    {"kind": "event", "event": record}
+                ):
+                    return "resource-limit"
                 events.append(record)
                 context["retained_frames"] += event_frame_count
                 context["retained_trace_bytes"] += record_bytes
             if len(events) >= context["config"]["max_events"]:
                 return "event-limit"
         elif reason in (lldb.eStopReasonSignal, lldb.eStopReasonException):
-            other_stops.append(thread.GetStopDescription(256))
+            stop_description = thread.GetStopDescription(256)
+            journal = context.get("observation_journal")
+            if journal is not None and not journal.append(
+                {"kind": "other-stop", "reason": stop_description}
+            ):
+                return "resource-limit"
+            other_stops.append(stop_description)
             if len(other_stops) >= MAX_OTHER_STOPS:
                 return "stop-limit"
     return None
@@ -426,6 +457,8 @@ def _handle_stop(context, events, other_stops):
 
 def _breakpoint_report(target, created, config):
     report = []
+    retained_location_bytes = 0
+    locations_truncated = False
     for index, breakpoints in enumerate(created):
         locations = []
         count = 0
@@ -437,9 +470,21 @@ def _breakpoint_report(target, created, config):
                     continue
                 count += 1
                 if len(locations) < MAX_REPORTED_LOCATIONS:
+                    remaining_bytes = (
+                        MAX_BREAKPOINT_LOCATION_BYTES - retained_location_bytes
+                    )
+                    if not _fits_trace_budget(location, remaining_bytes):
+                        locations_truncated = True
+                        continue
+                    location_bytes = len(json.dumps(location).encode("utf-8"))
+                    addition = location_bytes + (1 if locations else 0)
+                    if addition > remaining_bytes:
+                        locations_truncated = True
+                        continue
                     locations.append(location)
+                    retained_location_bytes += addition
         report.append({"index": index, "location_count": count, "locations": locations})
-    return report
+    return report, locations_truncated
 
 
 def _launch_info(target, config, listener):
@@ -518,9 +563,15 @@ def trace(debugger, config):
         raise
     stdout.start()
     stderr.start()
+    observation_journal = None
     started = time.monotonic()
     process = None
     try:
+        observation_path = config.get("observation_path")
+        if observation_path:
+            observation_journal = _ObservationJournal(
+                open(observation_path, "wb")
+            )
         process = target.Launch(_launch_info(target, config, listener), error)
         if not error.Success() or not process.IsValid():
             stdout.close()
@@ -596,6 +647,7 @@ def trace(debugger, config):
             "breakpoint_index": breakpoint_index,
             "retained_frames": 0,
             "retained_trace_bytes": 0,
+            "observation_journal": observation_journal,
         }
         events = []
         other_stops = []
@@ -641,6 +693,9 @@ def trace(debugger, config):
             and module_uuid_before is not None
             and module_uuid_after == module_uuid_before
         )
+        breakpoint_report, breakpoint_locations_truncated = _breakpoint_report(
+            target, created, config
+        )
         return {
             "status": "traced",
             "version": lldb.SBDebugger.GetVersionString().splitlines()[0],
@@ -651,7 +706,8 @@ def trace(debugger, config):
             "killed": outcome != "exited",
             "terminated": process.GetState() == lldb.eStateExited,
             "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
-            "breakpoints": _breakpoint_report(target, created, config),
+            "breakpoints": breakpoint_report,
+            "breakpoint_locations_truncated": breakpoint_locations_truncated,
             "events": events,
             "resource_limit_reached": outcome == "resource-limit",
             "target_output": {
@@ -677,6 +733,11 @@ def trace(debugger, config):
         }
 
     finally:
+        if observation_journal is not None:
+            try:
+                observation_journal.handle.close()
+            except Exception:
+                pass
         if process is not None:
             try:
                 if process.IsValid() and process.GetState() != lldb.eStateExited:

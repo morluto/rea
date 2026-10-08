@@ -212,6 +212,53 @@ describe("observe_native_calls projection: projects completed observations", () 
 });
 
 describe("observe_native_calls projection: reports partial observation coverage", () => {
+  it("retains normal exit and location counts when breakpoint metadata is bounded", async () => {
+    const observed = await observe(
+      new FixtureTracer(
+        ok({
+          debugger: {
+            path: "/usr/bin/lldb",
+            sha256: "a".repeat(64),
+            version: null,
+          },
+          run: run({
+            breakpoint_locations_truncated: true,
+            breakpoints: [
+              { index: 0, location_count: 64, locations: [LOCATION] },
+              { index: 1, location_count: 64, locations: [] },
+            ],
+          }),
+          stdout: { text: "", bytes: 0, truncated: false, complete: true },
+          stderr: { text: "", bytes: 0, truncated: false, complete: true },
+          terminated: true,
+        }),
+      ),
+      { breakpoints: BREAKPOINTS },
+    );
+    if (!observed.ok) throw observed.error;
+    const result = nativeCallObservationResultSchema.parse(
+      observed.value.result,
+    );
+    expect(result.process).toMatchObject({
+      outcome: "exited",
+      exit_status: 0,
+      terminated: true,
+    });
+    expect(
+      result.breakpoints.map(({ location_count }) => location_count),
+    ).toEqual([64, 64]);
+    expect(result.coverage).toMatchObject({
+      status: "partial",
+      breakpoint_locations_truncated: true,
+      resource_limit_reached: false,
+      unresolved_breakpoints: [],
+    });
+    expect(result.limitations).toContain(
+      "Resolved breakpoint locations exceeded the aggregate 8 MiB metadata budget; omitted locations are counted in location_count. This metadata limit does not change the process outcome.",
+    );
+    expect(result.limitations.join(" ")).not.toContain("process was killed");
+  });
+
   it("marks event limits, unresolved breakpoints and unconfirmed exits", async () => {
     const tracer = new FixtureTracer(
       ok({

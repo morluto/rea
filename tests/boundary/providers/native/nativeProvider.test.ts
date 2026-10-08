@@ -19,6 +19,7 @@ import {
   NativeFixtureRunner as FixtureRunner,
   nativeFixture as fixture,
   nativeMachoTarget as machoTarget,
+  nativeMachoTargetForFile,
 } from "../../../fixtures/nativeCommands.js";
 
 let directory: string | undefined;
@@ -242,7 +243,7 @@ describe("native macOS provider inspection", () => {
     const client = new NativeMacOSProvider(
       new FixtureRunner(),
       "darwin",
-    ).createClient(machoTarget(executable, app));
+    ).createClient(await nativeMachoTargetForFile(executable, app));
 
     const architectures = await client.execute("list_architectures", {});
     expect(architectures.ok && architectures.value.result).toMatchObject({
@@ -318,10 +319,13 @@ class PrototypeEntitlementsRunner extends FixtureRunner {
 
 describe("native signature entitlements", () => {
   it("reports entitlement entries keyed __proto__ that the result omits", async () => {
+    directory = await createTestTempDirectory("rea-signature-entitlements-");
+    const executable = join(directory, "fixture");
+    await writeFile(executable, "fixture");
     const client = new NativeMacOSProvider(
       new PrototypeEntitlementsRunner(),
       "darwin",
-    ).createClient(machoTarget("/private/fixture"));
+    ).createClient(await nativeMachoTargetForFile(executable));
 
     const signature = await client.execute("inspect_signature", {});
 

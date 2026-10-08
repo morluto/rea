@@ -26,6 +26,7 @@ describe("release configuration", () => {
     const configuration = await readJson("release-please-config.json");
 
     expect(configuration).toMatchObject({
+      versioning: "always-bump-minor",
       packages: {
         ".": {
           "extra-files": [

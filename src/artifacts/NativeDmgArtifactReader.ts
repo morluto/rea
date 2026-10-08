@@ -128,6 +128,7 @@ export class NativeDmgArtifactReader implements ArtifactReader {
 
   async close(): Promise<void> {
     let detachFailure: unknown;
+    const remainingDevices: string[] = [];
     for (const device of [...this.#devices].reverse()) {
       try {
         await runChecked(this.host, ["detach", device], undefined, {
@@ -138,12 +139,19 @@ export class NativeDmgArtifactReader implements ArtifactReader {
         // Detaching a synthesized APFS container also ejects the image that
         // backs it, so a later whole disk of the same image may already be
         // gone. Only a device that is still attached is a cleanup failure.
-        if (await this.#isAttached(device)) detachFailure ??= cause;
+        if (await this.#isAttached(device)) {
+          remainingDevices.push(device);
+          detachFailure ??= cause;
+        }
       }
     }
-    this.#devices = [];
-    if (this.#mountRoot !== undefined)
-      await rm(this.#mountRoot, { recursive: true, force: true }).catch(
+    this.#devices = remainingDevices.reverse();
+    if (this.#devices.length === 0 && this.#mountRoot !== undefined)
+      await rm(this.#mountRoot, { recursive: true, force: true }).then(
+        () => {
+          this.#mountRoot = undefined;
+          this.#directory = undefined;
+        },
         (cause: unknown) => {
           detachFailure ??= cause;
         },
@@ -151,7 +159,7 @@ export class NativeDmgArtifactReader implements ArtifactReader {
     if (detachFailure !== undefined)
       throw new ArtifactReaderFailure(
         "unavailable",
-        "DMG detach or mount-root cleanup failed",
+        `DMG detach or mount-root cleanup failed for ${JSON.stringify(this.path)}: ${failureMessage(detachFailure)}`,
         { cause: detachFailure },
       );
   }
@@ -251,13 +259,16 @@ export class NativeDmgArtifactReader implements ArtifactReader {
       if (cleanupFailure !== undefined)
         throw new ArtifactReaderFailure(
           "unavailable",
-          "DMG attach failed and cleanup could not detach every device",
+          `DMG attach failed and cleanup could not detach every device: ${failureMessage(cause)}; cleanup: ${failureMessage(cleanupFailure)}`,
           { cause: new AggregateError([cause, cleanupFailure]) },
         );
       throw cause;
     }
   }
 }
+
+const failureMessage = (cause: unknown): string =>
+  cause instanceof Error ? cause.message : String(cause);
 
 const runChecked = async (
   host: NativeDmgHost,

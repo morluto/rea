@@ -1,6 +1,8 @@
 """Source-owned tests for the LLDB bridge's bounded retention helpers."""
 
+from io import BytesIO
 import importlib.util
+import json
 import os
 import sys
 import tempfile
@@ -20,6 +22,50 @@ spec.loader.exec_module(tracer)
 
 
 class NativeTraceBudgetTests(unittest.TestCase):
+    def test_journal_keeps_flushed_observations_when_later_execution_fails(self):
+        stream = BytesIO()
+        journal = tracer._ObservationJournal(stream)
+        event = {"sequence": 0, "symbol": "first"}
+        journal.append({"kind": "event", "event": event})
+        with self.assertRaisesRegex(RuntimeError, "later failure"):
+            raise RuntimeError("later failure")
+        stream.write(b'{"kind":"event"')  # Simulate termination during a later row.
+        rows = stream.getvalue().splitlines()
+        self.assertEqual(
+            rows[0],
+            b'{"kind": "event", "event": {"sequence": 0, "symbol": "first"}}',
+        )
+        self.assertEqual(rows[1], b'{"kind":"event"')
+
+    def test_journal_checks_exact_byte_budget_before_writing(self):
+        record = {"kind": "other-stop", "reason": "signal"}
+        encoded_size = len((tracer.json.dumps(record) + "\n").encode("utf-8"))
+        stream = BytesIO()
+        journal = tracer._ObservationJournal(stream, max_bytes=encoded_size - 1)
+        self.assertFalse(journal.append(record))
+        self.assertEqual(stream.getvalue(), b"")
+        self.assertEqual(journal.bytes, 0)
+
+    def test_journal_appends_each_row_once_and_flushes_it(self):
+        class CountingStream(BytesIO):
+            writes = 0
+            flushes = 0
+
+            def write(self, value):
+                self.writes += 1
+                return super().write(value)
+
+            def flush(self):
+                self.flushes += 1
+                return super().flush()
+
+        stream = CountingStream()
+        journal = tracer._ObservationJournal(stream)
+        journal.append({"kind": "event", "event": {"sequence": 0}})
+        journal.append({"kind": "other-stop", "reason": "signal"})
+        self.assertEqual((stream.writes, stream.flushes), (2, 2))
+        self.assertEqual(journal.bytes, len(stream.getvalue()))
+
     def test_aggregate_trace_budget_admits_exact_boundary_and_rejects_next_record(self):
         self.assertTrue(
             tracer._can_retain_trace(
@@ -146,7 +192,7 @@ class NativeTraceBudgetTests(unittest.TestCase):
             def GetLocationAtIndex(self, index):
                 return Location()
 
-        report = tracer._breakpoint_report(
+        report, locations_truncated = tracer._breakpoint_report(
             object(),
             [[Breakpoint()]],
             {
@@ -161,6 +207,81 @@ class NativeTraceBudgetTests(unittest.TestCase):
         )
         self.assertEqual(report[0]["location_count"], 0)
         self.assertEqual(report[0]["locations"], [])
+        self.assertFalse(locations_truncated)
+
+    def test_breakpoint_report_bounds_aggregate_location_json(self):
+        tracer.lldb.LLDB_INVALID_ADDRESS = -1
+        symbol_name = (
+            "-[VeryLongButPlausibleObjectiveCController "
+            "performTransactionWithRequestIdentifier:accountContext:"
+            "securityPolicy:completionHandler:]"
+        )
+        module_path = (
+            "/Applications/Enterprise Product.app/Contents/Frameworks/"
+            "EnterpriseSubsystem.framework/Versions/A/EnterpriseSubsystem"
+        )
+
+        class Symbol:
+            def IsValid(self):
+                return True
+
+            def GetName(self):
+                return symbol_name
+
+        class FileSpec:
+            def GetFilename(self):
+                return "EnterpriseSubsystem"
+
+            def __str__(self):
+                return module_path
+
+        class Module:
+            def IsValid(self):
+                return True
+
+            def GetFileSpec(self):
+                return FileSpec()
+
+        class Address:
+            def GetModule(self):
+                return Module()
+
+            def GetSymbol(self):
+                return Symbol()
+
+            def GetFileAddress(self):
+                return 0x123456789
+
+            def GetLoadAddress(self, target):
+                return 0x7123456789
+
+        class Location:
+            def GetAddress(self):
+                return Address()
+
+        class Breakpoint:
+            def GetNumLocations(self):
+                return 64
+
+            def GetLocationAtIndex(self, index):
+                return Location()
+
+        breakpoint_count = 1000
+        created = [[Breakpoint()] for _ in range(breakpoint_count)]
+        config = {"breakpoints": [{"kind": "objc-method"}] * breakpoint_count}
+        report, locations_truncated = tracer._breakpoint_report(
+            object(), created, config
+        )
+        retained_bytes = sum(
+            len(json.dumps(location).encode("utf-8"))
+            + (1 if index > 0 else 0)
+            for row in report
+            for index, location in enumerate(row["locations"])
+        )
+        self.assertTrue(locations_truncated)
+        self.assertEqual(sum(row["location_count"] for row in report), 64_000)
+        self.assertLess(sum(len(row["locations"]) for row in report), 64_000)
+        self.assertLessEqual(retained_bytes, tracer.MAX_BREAKPOINT_LOCATION_BYTES)
 
 
 if __name__ == "__main__":

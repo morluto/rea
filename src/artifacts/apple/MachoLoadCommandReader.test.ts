@@ -378,3 +378,15 @@ describe("Mach-O load command reader failures", () => {
     });
   });
 });
+
+it.each([true, false])(
+  "rejects unconsumed command bytes in wide=%s headers",
+  async (wide) => {
+    const bytes = machoImage({ wide, commands: [rpathCommand("ignored")] });
+    new DataView(bytes.buffer).setUint32(16, 0, true);
+    expect(await read(bytes)).toMatchObject({
+      status: "malformed",
+      reason: expect.stringContaining("sizeofcmds"),
+    });
+  },
+);

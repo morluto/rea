@@ -4,11 +4,14 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { captureProcessScenarioFile } from "./application/process/ProcessCli.js";
-import { runCapabilityStatus } from "./composition/directAnalysis.js";
-import { probeProcessCaptureCapability } from "./process/capture/ProcessHarness.js";
-import { parseEvidence } from "./domain/evidence.js";
-import { parseProcessCapture } from "./domain/process/processCapture.js";
+import {
+  captureProcessScenarioFile,
+  isProcessCliFailure,
+} from "../../../src/application/process/ProcessCli.js";
+import { runCapabilityStatus } from "../../../src/composition/directAnalysis.js";
+import { probeProcessCaptureCapability } from "../../../src/process/capture/ProcessHarness.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
+import { parseProcessCapture } from "../../../src/domain/process/processCapture.js";
 
 describe("the CLI takes its environment as an input", () => {
   it("resolves from injected PATH and inherits injected env with scenario overrides", async ({
@@ -48,6 +51,10 @@ describe("the CLI takes its environment as an input", () => {
         REA_CAPTURE_INJECTED_MARKER: "injected-value",
         REA_CAPTURE_SCENARIO_OVERRIDE: "host-value",
       });
+      if (isProcessCliFailure(result))
+        throw new Error(
+          `Process capture returned an error: ${JSON.stringify(result)}`,
+        );
       const evidence = parseEvidence(result);
       const capture = parseProcessCapture(evidence.normalized_result);
       expect(capture.frames.map(({ data }) => data).join("")).toContain(

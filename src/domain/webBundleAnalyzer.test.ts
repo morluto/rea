@@ -191,6 +191,17 @@ describe("web bundle static-analysis parity", () => {
         document.open("text/html", "/replace");
         parent.open("GET", "/parent-xhr");
         self.open("post", "/self-xhr");
+        top.open("GET", "/top-target");
+        opener.open("GET", "/opener-target");
+        frames.open("GET", "/frames-target");
+        globalThis.open("GET", "/global-target");
+        document.open("GET", "/document-target");
+        const parentWindow = parent;
+        parentWindow.open("GET", "/alias-target");
+        {
+          const parent = new XMLHttpRequest();
+          parent.open(method, "/shadowed-parent-xhr");
+        }
         xhr.open(method, "api/relative");
         fs.open(path, "w+", done);
         popup.open(url, "_TOP");
@@ -201,14 +212,15 @@ describe("web bundle static-analysis parity", () => {
     ).toEqual([
       "/dav/",
       "/dynamic-method",
-      "/parent-xhr",
-      "/self-xhr",
+      "/shadowed-parent-xhr",
       "/xhr-get",
       "api/relative",
       "https://xhr.example.test/submit",
     ]);
   });
+});
 
+describe("web bundle API classification parity", () => {
   it("reads storage open versions as storage rather than endpoints in both analyzers", () => {
     const source = `
       indexedDB.open(databaseName, "2");
