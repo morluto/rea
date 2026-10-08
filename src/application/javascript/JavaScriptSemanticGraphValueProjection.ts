@@ -4,9 +4,8 @@ import type {
   JavaScriptSemanticValue,
 } from "../../domain/javascript/javascriptSemanticIr.js";
 import {
-  addSemanticGraphNode,
+  retainSemanticGraphNode,
   addSemanticGraphRelation,
-  constructSemanticGraphNode,
 } from "./JavaScriptSemanticGraphConstruction.js";
 import type { SemanticFlowProjectionContext } from "./JavaScriptSemanticGraphFlowProjection.js";
 
@@ -85,22 +84,15 @@ const addLiteralNode = (
   value: string | number | boolean | null,
   role: string,
 ) =>
-  addSemanticGraphNode(
-    context.state,
-    constructSemanticGraphNode(
-      context.file,
-      {
-        kind: "literal",
-        roleKey: `literal:${binding.bindingId}:${role}:${JSON.stringify(value)}`,
-        location: binding.definitions[0]?.location ?? null,
-        label: JSON.stringify(value),
-        functionNodeId:
-          context.bindingNodes.get(binding.bindingId)?.function_node_id ?? null,
-        properties: { value },
-      },
-      context.state,
-    ),
-  );
+  retainSemanticGraphNode(context.state, context.file, {
+    kind: "literal",
+    roleKey: `literal:${binding.bindingId}:${role}:${JSON.stringify(value)}`,
+    location: binding.definitions[0]?.location ?? null,
+    label: JSON.stringify(value),
+    functionNodeId:
+      context.bindingNodes.get(binding.bindingId)?.function_node_id ?? null,
+    properties: { value },
+  });
 
 /** Create one canonical property slot for a binding/property identity. */
 export const semanticPropertySlot = (
@@ -108,22 +100,15 @@ export const semanticPropertySlot = (
   objectBindingId: string,
   name: string,
 ) =>
-  addSemanticGraphNode(
-    context.state,
-    constructSemanticGraphNode(
-      context.file,
-      {
-        kind: "property-slot",
-        roleKey: `property:${objectBindingId}:${name}`,
-        location: null,
-        label: name,
-        functionNodeId:
-          context.bindingNodes.get(objectBindingId)?.function_node_id ?? null,
-        properties: {
-          name,
-          object_binding_id: objectBindingId,
-        } satisfies Readonly<Record<string, JsonValue>>,
-      },
-      context.state,
-    ),
-  );
+  retainSemanticGraphNode(context.state, context.file, {
+    kind: "property-slot",
+    roleKey: `property:${objectBindingId}:${name}`,
+    location: null,
+    label: name,
+    functionNodeId:
+      context.bindingNodes.get(objectBindingId)?.function_node_id ?? null,
+    properties: {
+      name,
+      object_binding_id: objectBindingId,
+    } satisfies Readonly<Record<string, JsonValue>>,
+  });

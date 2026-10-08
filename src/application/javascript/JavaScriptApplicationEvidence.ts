@@ -7,7 +7,6 @@ import type {
   AnalyzeJavaScriptApplicationInput,
   JavaScriptApplicationAnalysisResult,
 } from "../../domain/javascript/javascriptApplicationAnalysis.js";
-import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { JAVASCRIPT_APPLICATION_PROVIDER } from "../InvestigationProviders.js";
 
 /** Create Evidence for one deterministic local JavaScript application graph. */
@@ -26,7 +25,7 @@ export const createJavaScriptApplicationEvidence = (
       predicateType: "rea.javascript-application-analysis",
       operation: "analyze_javascript_application",
       parameters: parameters(input),
-      result: jsonValueSchema.parse(result),
+      result,
       rawResult: null,
       confidence: "derived",
       authority: "shipped-artifact",

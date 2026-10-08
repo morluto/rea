@@ -3,7 +3,7 @@ import {
   createJavaScriptApplicationGraph,
   type JavaScriptApplicationGraph,
 } from "../../domain/javascript/javascriptApplicationGraph.js";
-import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
+import type { JavaScriptModuleArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
 import type { JavaScriptArtifactFileSet } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { JavaScriptArtifactGraphAccumulator } from "./JavaScriptArtifactGraphAccumulator.js";
 import type { JavaScriptArtifactGraphContext } from "./JavaScriptArtifactGraphContext.js";
@@ -37,7 +37,7 @@ import {
 export const buildJavaScriptArtifactGraph = (
   snapshot: ArtifactInventorySnapshot,
   fileSet: JavaScriptArtifactFileSet,
-  analysis: JavaScriptArtifactAnalysis,
+  analysis: JavaScriptModuleArtifactAnalysis,
 ): JavaScriptApplicationGraph => {
   const accumulator = new JavaScriptArtifactGraphAccumulator();
   const root = createJavaScriptArtifactRootNode(accumulator, snapshot);

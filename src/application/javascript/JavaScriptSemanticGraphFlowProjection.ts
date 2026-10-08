@@ -5,17 +5,15 @@ import { sourceRangesEqual } from "../../domain/javascript/javascriptStaticAnaly
 import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
-  addSemanticGraphNode,
+  retainSemanticGraphNode,
   addSemanticGraphRelation,
   addSemanticGraphUnknown,
-  constructSemanticGraphNode,
   type SemanticGraphProjectionState,
 } from "./JavaScriptSemanticGraphConstruction.js";
 import {
   inferredSemanticEvidenceAt,
   unknownSemanticEvidence,
 } from "./JavaScriptSemanticGraphEvidence.js";
-import { semanticNodesWithinRange } from "./JavaScriptSemanticGraphProjection.js";
 
 /** File-local graph state needed by return, capture, and frontier projection. */
 export interface SemanticFlowProjectionContext {
@@ -28,6 +26,12 @@ export interface SemanticFlowProjectionContext {
   readonly callSiteNodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>;
   readonly returnSiteNodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>;
   readonly referenceNodes: readonly JavaScriptSemanticGraphNode[];
+  readonly referenceNodesWithin: (
+    range: JavaScriptSourceRange,
+  ) => JavaScriptSemanticGraphNode[];
+  readonly callSiteAt: (
+    range: JavaScriptSourceRange,
+  ) => JavaScriptSemanticGraphNode | undefined;
 }
 
 /** Find the retained call-site node at one exact semantic source range. */
@@ -35,12 +39,7 @@ export const semanticCallSiteAt = (
   context: SemanticFlowProjectionContext,
   location: JavaScriptSourceRange,
 ): JavaScriptSemanticGraphNode | undefined => {
-  const call = context.ir.callSites.find(({ location: candidate }) =>
-    sourceRangesEqual(candidate, location),
-  );
-  return call === undefined
-    ? undefined
-    : context.callSiteNodes.get(call.callSiteId);
+  return context.callSiteAt(location);
 };
 
 /** Project explicit static Promise/task ownership without runtime claims. */
@@ -53,26 +52,19 @@ export const projectSemanticPromises = (
         operation.ownerCallableId === null
           ? undefined
           : context.callableNodes.get(operation.ownerCallableId);
-      const node = addSemanticGraphNode(
-        context.state,
-        constructSemanticGraphNode(
-          context.file,
-          {
-            kind: operation.kind === "awaited-expression" ? "task" : "promise",
-            roleKey: operation.promiseId,
-            location: operation.location,
-            label: promiseLabel(operation),
-            functionNodeId: owner?.node_id ?? null,
-            properties: {
-              method: operation.method,
-              operation_kind: operation.kind,
-              ownership: operation.ownership,
-              source_resolution: operation.sourceResolution,
-            },
-          },
-          context.state,
-        ),
-      );
+      const node = retainSemanticGraphNode(context.state, context.file, {
+        kind: operation.kind === "awaited-expression" ? "task" : "promise",
+        roleKey: operation.promiseId,
+        location: operation.location,
+        label: promiseLabel(operation),
+        functionNodeId: owner?.node_id ?? null,
+        properties: {
+          method: operation.method,
+          operation_kind: operation.kind,
+          ownership: operation.ownership,
+          source_resolution: operation.sourceResolution,
+        },
+      });
       return node === null ? [] : [[operation.promiseId, node] as const];
     }),
   );
@@ -217,10 +209,7 @@ export const projectSemanticReturnValues = (
   for (const callable of context.ir.callables)
     for (const site of callable.returnSites) {
       const returnNode = context.returnSiteNodes.get(site.returnSiteId);
-      const references = semanticNodesWithinRange(
-        context.referenceNodes,
-        site.location,
-      );
+      const references = context.referenceNodesWithin(site.location);
       for (const reference of references)
         addSemanticGraphRelation(context.state, {
           source: reference,

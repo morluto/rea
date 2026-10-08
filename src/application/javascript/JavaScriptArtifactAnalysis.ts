@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
+import { setImmediate } from "node:timers/promises";
 
 import { analyzeParsedJavaScriptStaticSource } from "../../domain/javascript/javascriptStaticAnalysis.js";
 import { analyzeParsedJavaScriptSemantics } from "../../domain/javascript/javascriptSemanticAnalysis.js";
+import type { JavaScriptSemanticIr } from "../../domain/javascript/javascriptSemanticIr.js";
 import { parseJavaScriptSource } from "../../domain/javascript/javascriptSourceParser.js";
 import { hasValidSourceMapContents } from "../../domain/sourceMapContents.js";
 import { flattenSourceMapLeaves } from "../../domain/sourceMapEnvelope.js";
@@ -18,6 +20,8 @@ import type {
 import type {
   AnalyzedJavaScriptArtifactFile,
   JavaScriptArtifactAnalysis,
+  JavaScriptModuleArtifactAnalysis,
+  JavaScriptModuleSemanticIr,
   JavaScriptHtmlScriptObservation,
   JavaScriptJsonModuleObservation,
   JavaScriptPackageObservation,
@@ -27,8 +31,10 @@ import type {
 import { analyzeJavaScriptJsonModule } from "./JavaScriptJsonModules.js";
 import { htmlArtifactReferences } from "../../domain/javascript/htmlArtifactReferences.js";
 
-interface MutableArtifactAnalysis {
-  readonly files: AnalyzedJavaScriptArtifactFile[];
+interface MutableArtifactAnalysis<
+  SemanticIr extends JavaScriptModuleSemanticIr,
+> {
+  readonly files: AnalyzedJavaScriptArtifactFile<SemanticIr>[];
   readonly packages: JavaScriptPackageObservation[];
   readonly jsonModules: JavaScriptJsonModuleObservation[];
   readonly htmlScripts: JavaScriptHtmlScriptObservation[];
@@ -40,23 +46,88 @@ interface MutableArtifactAnalysis {
   truncatedScopes: number;
 }
 
-interface ArtifactAnalysisContext {
-  readonly state: MutableArtifactAnalysis;
+interface ArtifactAnalysisContext<
+  SemanticIr extends JavaScriptModuleSemanticIr,
+> {
+  readonly state: MutableArtifactAnalysis<SemanticIr>;
+  readonly projectSemantics: (
+    file: JavaScriptArtifactFile,
+    ir: JavaScriptSemanticIr,
+  ) => SemanticIr;
 }
 
 /** Analyze every text source from the artifact without a result quota. */
 export const analyzeJavaScriptArtifactFiles = (
   fileSet: JavaScriptArtifactFileSet,
-): JavaScriptArtifactAnalysis => {
-  const state = emptyArtifactAnalysis();
-  const context = { state };
+): JavaScriptArtifactAnalysis =>
+  analyzeArtifactFiles(fileSet, (_file, ir) => ir);
+
+/** Project each file's full IR immediately, retaining only later module facts. */
+export const analyzeAndProjectJavaScriptArtifactFiles = async (
+  fileSet: JavaScriptArtifactFileSet,
+  projectSemantics: (
+    file: JavaScriptArtifactFile,
+    ir: JavaScriptSemanticIr,
+  ) => void,
+  beforeFile?: (
+    file: JavaScriptArtifactFile,
+    completed: number,
+    total: number,
+  ) => Promise<void>,
+): Promise<JavaScriptModuleArtifactAnalysis> => {
+  const state = emptyArtifactAnalysis<JavaScriptModuleSemanticIr>();
+  const projectFileSemantics = (
+    file: JavaScriptArtifactFile,
+    ir: JavaScriptSemanticIr,
+  ): JavaScriptModuleSemanticIr => {
+    projectSemantics(file, ir);
+    const programScopes = ir.scopes.filter(({ kind }) => kind === "program");
+    const programScopeId = programScopes[0]?.scopeId;
+    const localNames = new Set(
+      ir.moduleLinks.map(({ localName }) => localName),
+    );
+    const callableIds = new Set(
+      ir.moduleLinks.map(({ callableId }) => callableId),
+    );
+    return {
+      scopes: programScopes,
+      bindings: ir.bindings.filter(
+        ({ name, scopeId }) =>
+          scopeId === programScopeId && localNames.has(name),
+      ),
+      callables: ir.callables.filter(({ callableId }) =>
+        callableIds.has(callableId),
+      ),
+      moduleLinks: ir.moduleLinks,
+      coverage: ir.coverage,
+      limitations: ir.limitations,
+    };
+  };
+  const context = { state, projectSemantics: projectFileSemantics };
+  for (const [index, file] of fileSet.files.entries()) {
+    // Let progress, cancellation and garbage collection run between files.
+    await setImmediate();
+    await beforeFile?.(file, index, fileSet.files.length);
+    analyzeArtifactFile(file, context);
+  }
+  return finalizeArtifactAnalysis(state);
+};
+
+const analyzeArtifactFiles = <SemanticIr extends JavaScriptModuleSemanticIr>(
+  fileSet: JavaScriptArtifactFileSet,
+  projectSemantics: ArtifactAnalysisContext<SemanticIr>["projectSemantics"],
+): JavaScriptArtifactAnalysis<SemanticIr> => {
+  const state = emptyArtifactAnalysis<SemanticIr>();
+  const context = { state, projectSemantics };
   for (const file of fileSet.files) analyzeArtifactFile(file, context);
   return finalizeArtifactAnalysis(state);
 };
 
-const finalizeArtifactAnalysis = (
-  state: MutableArtifactAnalysis,
-): JavaScriptArtifactAnalysis => {
+const finalizeArtifactAnalysis = <
+  SemanticIr extends JavaScriptModuleSemanticIr,
+>(
+  state: MutableArtifactAnalysis<SemanticIr>,
+): JavaScriptArtifactAnalysis<SemanticIr> => {
   const truncatedScopes = state.truncatedScopes;
   return {
     files: state.files,
@@ -79,9 +150,9 @@ const finalizeArtifactAnalysis = (
   };
 };
 
-const analyzeArtifactFile = (
+const analyzeArtifactFile = <SemanticIr extends JavaScriptModuleSemanticIr>(
   file: JavaScriptArtifactFile,
-  context: ArtifactAnalysisContext,
+  context: ArtifactAnalysisContext<SemanticIr>,
 ): void => {
   const { state } = context;
   addStructuredObservations(file, state);
@@ -108,7 +179,10 @@ const analyzeArtifactFile = (
   state.files.push({
     file,
     javascript: analysis,
-    semantic: semantics === null ? null : { ir: semantics },
+    semantic:
+      semantics === null
+        ? null
+        : { ir: context.projectSemantics(file, semantics) },
   });
   state.visitedNodes += analysis.visited_ast_nodes;
   state.findings += staticFindings + (semantics?.moduleLinks.length ?? 0);
@@ -121,13 +195,15 @@ const analyzeArtifactFile = (
 
 const addSourceMap = (
   file: JavaScriptArtifactFile,
-  context: ArtifactAnalysisContext,
+  context: ArtifactAnalysisContext<JavaScriptModuleSemanticIr>,
 ): void => {
   const sourceMap = parseSourceMap(file);
   context.state.sourceMaps.push(sourceMap);
 };
 
-const emptyArtifactAnalysis = (): MutableArtifactAnalysis => ({
+const emptyArtifactAnalysis = <
+  SemanticIr extends JavaScriptModuleSemanticIr,
+>(): MutableArtifactAnalysis<SemanticIr> => ({
   files: [],
   packages: [],
   jsonModules: [],
@@ -142,7 +218,7 @@ const emptyArtifactAnalysis = (): MutableArtifactAnalysis => ({
 
 const addStructuredObservations = (
   file: JavaScriptArtifactFile,
-  state: MutableArtifactAnalysis,
+  state: MutableArtifactAnalysis<JavaScriptModuleSemanticIr>,
 ): void => {
   if (file.kind === "package-json") state.packages.push(parsePackage(file));
   if (file.kind !== "json") return;

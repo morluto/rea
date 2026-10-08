@@ -4,13 +4,13 @@ import {
   truncatedApplicationCoverage,
 } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import type {
-  JavaScriptSemanticIr,
   JavaScriptSemanticCallable,
   JavaScriptSemanticModuleLink,
 } from "../../domain/javascript/javascriptSemanticIr.js";
 import { flattenSemanticReturnValue } from "../../domain/javascript/javascriptSemanticReturns.js";
 import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactGraphCoverage } from "./JavaScriptArtifactGraphContext.js";
+import type { JavaScriptModuleSemanticIr } from "./JavaScriptArtifactAnalysisTypes.js";
 
 export interface JavaScriptReturnShapeProjection {
   readonly properties: ReturnType<typeof jsonObjectSchema.parse>;
@@ -21,7 +21,7 @@ export interface JavaScriptReturnShapeProjection {
 
 /** Project one exact export/callable link into shallow bounded graph values. */
 export const projectJavaScriptExportReturnShapes = (input: {
-  readonly ir: JavaScriptSemanticIr;
+  readonly ir: JavaScriptModuleSemanticIr;
   readonly link: JavaScriptSemanticModuleLink;
   readonly modulePath: string;
   readonly baseCoverage: JavaScriptArtifactGraphCoverage;

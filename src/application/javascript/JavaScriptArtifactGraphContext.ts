@@ -6,7 +6,7 @@ import {
 } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraph.js";
 import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
-import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
+import type { JavaScriptModuleArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
 import type {
   JavaScriptArtifactFile,
   JavaScriptArtifactFileSet,
@@ -29,7 +29,7 @@ export interface JavaScriptArtifactGraphContext {
   readonly accumulator: JavaScriptArtifactGraphAccumulator;
   readonly snapshot: ArtifactInventorySnapshot;
   readonly fileSet: JavaScriptArtifactFileSet;
-  readonly analysis: JavaScriptArtifactAnalysis;
+  readonly analysis: JavaScriptModuleArtifactAnalysis;
   readonly root: ApplicationNode;
   readonly filesByPath: ReadonlyMap<string, JavaScriptArtifactFile>;
   readonly fileNodes: Map<string, ApplicationNode>;
@@ -209,7 +209,7 @@ export const addUnavailableStaticParseScope = (
 /** Coverage for one bounded JavaScript AST analysis. */
 export const javascriptAnalysisCoverage = (
   analysis: NonNullable<
-    JavaScriptArtifactAnalysis["files"][number]["javascript"]
+    JavaScriptModuleArtifactAnalysis["files"][number]["javascript"]
   >,
 ): JavaScriptArtifactGraphCoverage =>
   analysis.parse_status === "complete"
