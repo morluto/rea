@@ -2,6 +2,7 @@ import canonicalize from "canonicalize";
 import { z } from "zod";
 
 import type { ProcessCapture } from "./processCapture.js";
+import { AnalysisInputError } from "../analysisErrorCore.js";
 import { jsonValueSchema } from "../jsonValue.js";
 import {
   compareProcessTraces,
@@ -13,6 +14,8 @@ import {
   dimensionsForTraceSources,
   traceCoversObservedDimension,
 } from "./processTraceDimensionProjection.js";
+
+const OPERATION = "compare_process_captures";
 
 /** Comparison classification that never equates incomplete evidence. */
 export const comparisonStatusSchema = z.enum([
@@ -228,21 +231,59 @@ const assertComparable = (
   if (
     left.manifest.comparison_contract_sha256 !==
     right.manifest.comparison_contract_sha256
-  )
-    throw new TypeError(
-      "Process captures have incompatible comparison contracts",
+  ) {
+    const fields = differingContractFields(
+      left.manifest.comparison_contract,
+      right.manifest.comparison_contract,
     );
+    throw new AnalysisInputError(OPERATION, undefined, [
+      {
+        path: ["right"],
+        reason: "invalid_value",
+        message: `Process captures have incompatible comparison contracts${fields.length === 0 ? "" : `; these scenario fields differ: ${fields.join(", ")}`}. Capture both scenarios with the same values for these fields, then compare them.`,
+        expected: fields,
+      },
+    ]);
+  }
   if (options.maxCaptureAgeMs === undefined) return;
   const maxCaptureAgeMs = options.maxCaptureAgeMs;
   const now = (options.now ?? Date.now)();
-  if (
-    [left, right].some(
-      ({ manifest }) =>
-        now - Date.parse(manifest.completed_at) > maxCaptureAgeMs,
-    )
-  )
-    throw new TypeError("Process capture exceeds max_capture_age_ms");
+  const stale = (
+    [
+      ["left", left],
+      ["right", right],
+    ] as const
+  ).flatMap(([side, { manifest }]) => {
+    const age = now - Date.parse(manifest.completed_at);
+    return age > maxCaptureAgeMs
+      ? [
+          `${side} completed at ${manifest.completed_at} (${String(age)} ms ago)`,
+        ]
+      : [];
+  });
+  if (stale.length > 0)
+    throw new AnalysisInputError(OPERATION, undefined, [
+      {
+        path: ["max_capture_age_ms"],
+        reason: "out_of_range",
+        message: `Process capture exceeds max_capture_age_ms ${String(maxCaptureAgeMs)}: ${stale.join("; ")}. Recapture the stale scenario or raise max_capture_age_ms.`,
+      },
+    ]);
 };
+
+/** Name top-level contract fields whose canonical values differ. */
+const differingContractFields = (
+  left: Readonly<Record<string, unknown>>,
+  right: Readonly<Record<string, unknown>>,
+): string[] =>
+  [...new Set([...Object.keys(left), ...Object.keys(right)])]
+    .filter(
+      (field) =>
+        !Object.hasOwn(left, field) ||
+        !Object.hasOwn(right, field) ||
+        canonicalize(left[field]) !== canonicalize(right[field]),
+    )
+    .sort();
 
 const truncatedComparison = (): ProcessCaptureComparison => ({
   status: "truncated",
