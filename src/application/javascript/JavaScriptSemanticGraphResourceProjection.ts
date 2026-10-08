@@ -2,10 +2,9 @@ import { createJavaScriptSemanticGraphUnknown } from "../../domain/javascript/ja
 import type { JavaScriptSemanticGraphNode } from "../../domain/javascript/javascriptSemanticGraph.js";
 import type { JavaScriptSemanticResourceOperation } from "../../domain/javascript/javascriptSemanticIr.js";
 import {
-  addSemanticGraphNode,
+  retainSemanticGraphNode,
   addSemanticGraphRelation,
   addSemanticGraphUnknown,
-  constructSemanticGraphNode,
 } from "./JavaScriptSemanticGraphConstruction.js";
 import { unknownSemanticEvidence } from "./JavaScriptSemanticGraphEvidence.js";
 import {
@@ -39,25 +38,18 @@ const addResourceNode = (
   context: SemanticFlowProjectionContext,
   operation: JavaScriptSemanticResourceOperation,
 ): JavaScriptSemanticGraphNode | null =>
-  addSemanticGraphNode(
-    context.state,
-    constructSemanticGraphNode(
-      context.file,
-      {
-        kind: "resource",
-        roleKey: operation.resourceId,
-        location: operation.location,
-        label: operation.method,
-        functionNodeId:
-          operation.ownerCallableId === null
-            ? null
-            : (context.callableNodes.get(operation.ownerCallableId)?.node_id ??
-              null),
-        properties: { method: operation.method },
-      },
-      context.state,
-    ),
-  );
+  retainSemanticGraphNode(context.state, context.file, {
+    kind: "resource",
+    roleKey: operation.resourceId,
+    location: operation.location,
+    label: operation.method,
+    functionNodeId:
+      operation.ownerCallableId === null
+        ? null
+        : (context.callableNodes.get(operation.ownerCallableId)?.node_id ??
+          null),
+    properties: { method: operation.method },
+  });
 
 const projectRelease = (
   context: SemanticFlowProjectionContext,

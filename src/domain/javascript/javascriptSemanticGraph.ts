@@ -38,7 +38,8 @@ const normalizeEvidence = (
   evidence_ids: uniqueSorted(evidence.evidence_ids),
 });
 
-const nodeId = (
+/** Derive a semantic node ID from its kind and exact artifact identity. */
+export const javaScriptSemanticNodeId = (
   node: Pick<JavaScriptSemanticGraphNode, "kind" | "identity">,
 ): string =>
   `jsrg_node_${canonicalDigest({ kind: node.kind, identity: node.identity }, "JavaScript semantic graph")}`;
@@ -59,7 +60,7 @@ export const createJavaScriptSemanticGraphNode = (
   };
   return javaScriptSemanticNodeSchema.parse({
     ...semantic,
-    node_id: nodeId(semantic),
+    node_id: javaScriptSemanticNodeId(semantic),
   });
 };
 
@@ -129,11 +130,21 @@ export const createJavaScriptSemanticFingerprint = (input: unknown) => {
 
 type GraphRecord = z.infer<typeof javaScriptSemanticGraphRecordSchema>;
 
+type SemanticGraphIssue = {
+  readonly code: "custom";
+  readonly path: PropertyKey[];
+  readonly message: string;
+};
+
+interface GraphIssueReporter {
+  readonly addIssue: (issue: SemanticGraphIssue) => void;
+}
+
 const sortedUniqueIssue = (
   values: readonly string[],
   path: PropertyKey[],
   label: string,
-  context: z.RefinementCtx,
+  context: GraphIssueReporter,
 ): void => {
   for (let index = 1; index < values.length; index += 1) {
     if (compareCodePoints(values[index - 1] ?? "", values[index] ?? "") < 0)
@@ -147,7 +158,10 @@ const sortedUniqueIssue = (
   }
 };
 
-const checkCoverage = (graph: GraphRecord, context: z.RefinementCtx): void => {
+const checkCoverage = (
+  graph: GraphRecord,
+  context: GraphIssueReporter,
+): void => {
   const families = graph.coverage.families.map(({ family }) => family);
   if (
     canonicalJson(families, "JavaScript semantic graph") !==
@@ -221,7 +235,7 @@ const checkCoverage = (graph: GraphRecord, context: z.RefinementCtx): void => {
 
 const checkCanonicalOrder = (
   graph: GraphRecord,
-  context: z.RefinementCtx,
+  context: GraphIssueReporter,
 ): void => {
   sortedUniqueIssue(
     graph.root_node_ids,
@@ -259,10 +273,10 @@ const checkCanonicalOrder = (
 const checkNodes = (
   graph: GraphRecord,
   nodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>,
-  context: z.RefinementCtx,
+  context: GraphIssueReporter,
 ): void => {
   for (const [index, node] of graph.nodes.entries()) {
-    if (node.node_id !== nodeId(node))
+    if (node.node_id !== javaScriptSemanticNodeId(node))
       context.addIssue({
         code: "custom",
         path: ["nodes", index, "node_id"],
@@ -283,7 +297,7 @@ const checkNodes = (
 const checkRoots = (
   graph: GraphRecord,
   nodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>,
-  context: z.RefinementCtx,
+  context: GraphIssueReporter,
 ): void => {
   for (const root of graph.root_node_ids)
     if (!nodes.has(root))
@@ -297,7 +311,7 @@ const checkRoots = (
 const checkRelations = (
   graph: GraphRecord,
   nodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>,
-  context: z.RefinementCtx,
+  context: GraphIssueReporter,
 ): void => {
   for (const [index, relation] of graph.relations.entries()) {
     const { relation_id: identifier, ...semantic } = relation;
@@ -340,7 +354,7 @@ const checkRelations = (
 const checkUnknowns = (
   graph: GraphRecord,
   nodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>,
-  context: z.RefinementCtx,
+  context: GraphIssueReporter,
 ): void => {
   for (const [index, unknown] of graph.unknowns.entries()) {
     const { unknown_id: identifier, ...semantic } = unknown;
@@ -386,7 +400,7 @@ const checkUnknowns = (
 
 const checkUnknownReferences = (
   graph: GraphRecord,
-  context: z.RefinementCtx,
+  context: GraphIssueReporter,
 ): void => {
   const unknownIds = new Set(
     graph.unknowns.map(({ unknown_id }) => unknown_id),
@@ -403,7 +417,7 @@ const checkUnknownReferences = (
 const checkFingerprints = (
   graph: GraphRecord,
   nodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>,
-  context: z.RefinementCtx,
+  context: GraphIssueReporter,
 ): void => {
   for (const [index, fingerprint] of graph.fingerprints.entries()) {
     if (nodes.get(fingerprint.function_node_id)?.kind !== "function")
@@ -449,7 +463,10 @@ const checkFingerprints = (
   }
 };
 
-const checkGraph = (graph: GraphRecord, context: z.RefinementCtx): void => {
+const checkGraphContent = (
+  graph: GraphRecord,
+  context: GraphIssueReporter,
+): void => {
   checkCanonicalOrder(graph, context);
   const nodes = new Map(graph.nodes.map((node) => [node.node_id, node]));
   checkNodes(graph, nodes, context);
@@ -465,6 +482,10 @@ const checkGraph = (graph: GraphRecord, context: z.RefinementCtx): void => {
       path: ["limitations"],
       message: "Non-complete graph coverage requires a limitation",
     });
+};
+
+const checkGraph = (graph: GraphRecord, context: GraphIssueReporter): void => {
+  checkGraphContent(graph, context);
   const { graph_id: identifier, ...semantic } = graph;
   if (
     identifier !==
@@ -523,10 +544,21 @@ export const createJavaScriptSemanticGraph = (
     },
     limitations: uniqueSorted(parsed.limitations),
   };
-  return javaScriptSemanticGraphSchema.parse({
+  // The input schema already cloned and validated every field. Validate the
+  // normalized relationships in place, then derive the only added field. The
+  // public schema still verifies arbitrary records and their commitments.
+  const record: GraphRecord = {
     ...semantic,
     graph_id: `jsrg_${canonicalDigest(semantic, "JavaScript semantic graph")}`,
+  };
+  const issues: SemanticGraphIssue[] = [];
+  checkGraphContent(record, {
+    addIssue: (issue) => {
+      issues.push(issue);
+    },
   });
+  if (issues.length > 0) throw new z.ZodError(issues);
+  return record;
 };
 
 export type { JavaScriptSemanticGraphNode, JavaScriptSemanticGraphRelation };

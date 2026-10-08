@@ -17,6 +17,31 @@ const TARGET: BinaryTarget = {
 const PROVIDER = { id: "fixture", name: "Fixture provider", version: "1" };
 const PROFILE = createAnalysisProfile(PROVIDER, { loader: "default" });
 
+it("snapshots caller-owned payloads before deriving their identity", () => {
+  const result = { nested: { values: ["observed"] } };
+  const rawResult = { entries: [{ value: "raw" }] };
+  const parameters = { selected: ["target"] };
+  const evidence = createEvidence(TARGET, PROVIDER, {
+    operation: "inspect",
+    parameters,
+    result,
+    rawResult,
+  });
+  result.nested.values.push("later");
+  const rawEntry = rawResult.entries[0];
+  if (rawEntry !== undefined) rawEntry.value = "changed";
+  parameters.selected.push("other");
+  expect(evidence.normalized_result).toEqual({
+    nested: { values: ["observed"] },
+  });
+  expect(evidence.raw_result).toEqual({ entries: [{ value: "raw" }] });
+  expect(evidence.parameters).toEqual({ selected: ["target"] });
+  expect(parseEvidence(evidence)).toEqual(evidence);
+  expect(() =>
+    parseEvidence({ ...evidence, normalized_result: result }),
+  ).toThrow(/semantic identifier/u);
+});
+
 describe("analysis evidence identity", () => {
   it("normalizes prototype-named parameter keys", () => {
     const evidence = createEvidence(TARGET, PROVIDER, {

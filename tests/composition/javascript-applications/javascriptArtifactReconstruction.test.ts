@@ -7,12 +7,101 @@ import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { reconstructJavaScriptArtifact } from "../../../src/application/javascript/JavaScriptArtifactReconstruction.js";
+import {
+  analyzeJavaScriptArtifactFiles,
+  analyzeAndProjectJavaScriptArtifactFiles,
+} from "../../../src/application/javascript/JavaScriptArtifactAnalysis.js";
+import { buildJavaScriptArtifactGraph } from "../../../src/application/javascript/JavaScriptArtifactGraphBuilder.js";
+import {
+  buildJavaScriptSemanticGraph,
+  createJavaScriptSemanticGraphProjection,
+} from "../../../src/application/javascript/JavaScriptSemanticGraphBuilder.js";
+import { createJavaScriptArtifactReader } from "../../../src/artifacts/javascript/JavaScriptArtifactReader.js";
+import { readJavaScriptArtifactFiles } from "../../../src/artifacts/javascript/JavaScriptArtifactFiles.js";
+import { scanCanonicalArtifactInventory } from "../../../src/artifacts/inventory/ArtifactInventory.js";
 import { scanArtifactInventory } from "../../../src/artifacts/inventory/ArtifactInventory.js";
 import { parseJavaScriptApplicationGraph } from "../../../src/domain/javascript/javascriptApplicationGraph.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { createJavaScriptSemanticGraph } from "../../../src/domain/javascript/javascriptSemanticGraph.js";
 import { parseJavaScriptSemanticGraph } from "../../../src/domain/javascript/javascriptSemanticGraphSerialization.js";
 import { writeJavaScriptArtifactFixture } from "../../fixtures/javascriptArtifactApplication.js";
+
+it("reports file progress and honors cancellation before the next source", async () => {
+  const root = await fixtureDirectory();
+  const controller = new AbortController();
+  const progress: string[] = [];
+  await expect(
+    reconstructJavaScriptArtifact({ input_path: root }, controller.signal, {
+      report: async (event) => {
+        if (event.phase === "parse_javascript_source") {
+          progress.push(event.message);
+          if (progress.length === 2) controller.abort();
+        }
+      },
+    }),
+  ).rejects.toMatchObject({ reason: "cancelled" });
+  expect(progress).toHaveLength(2);
+  expect(progress[0]).not.toBe(progress[1]);
+});
+
+it("preserves graph commitments and export shapes when consuming file-local IR", async () => {
+  const root = await fixtureDirectory();
+  await writeFile(
+    join(root, "exports.mjs"),
+    `
+    import { readFile } from "node:fs";
+    export { readFile as read };
+    export function create(value) { return { value, nested: { enabled: true } }; }
+    function unexported() { return "private"; }
+  `,
+  );
+  const snapshot = await scanCanonicalArtifactInventory(root, {});
+  const reader = createJavaScriptArtifactReader(root, "directory");
+  try {
+    const files = await readJavaScriptArtifactFiles(reader, snapshot);
+    const full = analyzeJavaScriptArtifactFiles(files);
+    const projection = createJavaScriptSemanticGraphProjection();
+    const compact = await analyzeAndProjectJavaScriptArtifactFiles(
+      files,
+      projection.projectFile,
+    );
+    const graph = buildJavaScriptArtifactGraph(snapshot, files, full);
+    expect(buildJavaScriptArtifactGraph(snapshot, files, compact)).toEqual(
+      graph,
+    );
+    const semantic = projection.finish(
+      snapshot.manifest.root_sha256,
+      graph,
+      compact,
+    );
+    expect(semantic).toEqual(
+      buildJavaScriptSemanticGraph({
+        rootArtifactSha256: snapshot.manifest.root_sha256,
+        applicationGraph: graph,
+        analysis: full,
+      }),
+    );
+    expect(
+      semantic.nodes.some(
+        ({ application_node_ids }) => application_node_ids.length > 0,
+      ),
+    ).toBe(true);
+    const exported = compact.files.find(
+      ({ file }) => file.path === "exports.mjs",
+    );
+    expect(exported?.semantic?.ir.callables.map(({ name }) => name)).toEqual([
+      "create",
+    ]);
+    expect(
+      full.files
+        .find(({ file }) => file.path === "exports.mjs")
+        ?.semantic?.ir.callables.map(({ name }) => name),
+    ).toContain("unexported");
+    expect(parseJavaScriptSemanticGraph(semantic)).toEqual(semantic);
+  } finally {
+    await reader.close();
+  }
+});
 
 it("reconstructs package, Electron roles, Webpack/Rspack modules, and cross-layer facts without execution", async () => {
   const root = await fixtureDirectory();

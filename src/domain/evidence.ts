@@ -274,13 +274,23 @@ export const createEvidence = (
     locations: [...(observation.locations ?? [])],
     evidence_links: [...(observation.evidenceLinks ?? [])],
   } satisfies JsonValue;
-  const normalized = evidenceRecordSchema.parse({
+  // Select the known envelope before parsing. A union otherwise traverses and
+  // clones a legacy result for the profiled branch before rejecting its absent
+  // profile and trying the legacy branch.
+  const schema =
+    observation.analysisProfile === undefined
+      ? evidenceBaseSchema
+      : profiledEvidenceSchema;
+  const normalized = schema.parse({
     ...semantic,
     evidence_id: `ev_${"0".repeat(64)}`,
     subject,
   });
-  return parseEvidence({
+  // The envelope has already been parsed into an independent snapshot. Only
+  // its derived identifier changes here; parsing again clones the full payload
+  // and recomputes the same digest while the previous snapshot is still live.
+  return {
     ...normalized,
     evidence_id: computeEvidenceId(normalized),
-  });
+  };
 };

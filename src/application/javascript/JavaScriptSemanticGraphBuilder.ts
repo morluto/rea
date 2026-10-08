@@ -38,16 +38,17 @@ import {
   type SemanticFlowProjectionContext,
 } from "./JavaScriptSemanticGraphFlowProjection.js";
 import {
-  owningSemanticCallableNode,
+  createSemanticCallableOwnerLookup,
+  createSemanticCallSiteLookup,
+  createSemanticNodeRangeLookup,
   semanticFamilyStatus,
-  semanticNodesWithinRange,
 } from "./JavaScriptSemanticGraphProjection.js";
 import {
   addSemanticFallbackRoot as addFallbackRoot,
-  addSemanticGraphNode as addNode,
+  retainSemanticGraphNode as retainNode,
   addSemanticGraphRelation as addRelation,
-  constructSemanticGraphNode as semanticNode,
   createSemanticGraphProjectionState as emptyState,
+  bindSemanticGraphApplicationNodes,
   type SemanticGraphProjectionState as BuilderState,
 } from "./JavaScriptSemanticGraphConstruction.js";
 
@@ -72,6 +73,9 @@ interface FileContext extends SemanticFlowProjectionContext {
   readonly argumentNodes: Map<string, JavaScriptSemanticGraphNode>;
   readonly referenceNodes: JavaScriptSemanticGraphNode[];
   readonly callResolutions: ReadonlyMap<string, "candidate" | "resolved">;
+  readonly callableOwnerAt: ReturnType<
+    typeof createSemanticCallableOwnerLookup
+  >;
 }
 
 /**
@@ -108,152 +112,170 @@ export const buildJavaScriptSemanticGraph = ({
   applicationGraph,
   analysis,
 }: BuilderInput): JavaScriptSemanticGraph => {
-  const state = emptyState(applicationGraph);
-  const fingerprints: JavaScriptSemanticGraph["fingerprints"][number][] = [];
-  let truncatedFiles = 0;
+  const projection = createJavaScriptSemanticGraphProjection();
   for (const analyzed of analysis.files) {
-    if (analyzed.semantic === null) continue;
-    if (state.nodes.size >= SEMANTIC_GRAPH_NODE_CEILING) {
-      truncatedFiles += 1;
-      continue;
-    }
-    const remainingTreeBudget = SEMANTIC_GRAPH_NODE_CEILING - state.nodes.size;
-    state.fileNodeBudget = Math.min(
-      SEMANTIC_GRAPH_FILE_NODE_CEILING,
-      remainingTreeBudget,
-    );
-    state.fileNodesDropped = false;
-    fingerprints.push(
-      ...projectFile(analyzed.file, analyzed.semantic.ir, state),
-    );
-    // Nodes were dropped only if the budget actually blocked creation. A file
-    // that exactly fills its share ends with a zero budget without dropping
-    // anything, so the remaining budget alone cannot decide truncation.
-    if (state.fileNodesDropped) truncatedFiles += 1;
-    state.fileNodeBudget = null;
+    if (analyzed.semantic !== null)
+      projection.projectFile(analyzed.file, analyzed.semantic.ir);
   }
-  if (state.roots.size === 0) addFallbackRoot(rootArtifactSha256, state);
-  const unknowns = [...state.unknowns.values()];
-  return createJavaScriptSemanticGraph({
-    schema: "JavaScriptSemanticRelationGraph",
-    root_artifact_sha256: rootArtifactSha256,
-    application_graph_id: applicationGraph.graph_id,
-    root_node_ids: [...state.roots],
-    nodes: [...state.nodes.values()],
-    relations: [...state.relations.values()],
-    fingerprints,
-    unknowns,
-    coverage: {
-      status: truncatedFiles > 0 ? "partial" : "unknown",
-      truncated: truncatedFiles > 0,
-      omitted_nodes: truncatedFiles > 0 ? null : 0,
-      omitted_relations: truncatedFiles > 0 ? null : 0,
-      limits:
-        truncatedFiles > 0
-          ? [
-              {
-                name: "semantic_graph_node_ceiling",
-                value: SEMANTIC_GRAPH_NODE_CEILING,
-                unit: "items" as const,
-              },
-            ]
-          : [],
-      families: JAVASCRIPT_SEMANTIC_RELATION_FAMILIES.map((family) => ({
-        family,
-        status: semanticFamilyStatus(family, analysis),
-        retained_relations: [...state.relations.values()].filter(
-          (relation) =>
-            JAVASCRIPT_SEMANTIC_RELATION_FAMILY[relation.relation] === family,
-        ).length,
-        omitted_relations: truncatedFiles > 0 ? null : 0,
-        unknown_ids: unknowns
-          .filter((unknown) => unknown.family === family)
-          .map(({ unknown_id: identifier }) => identifier),
-      })),
-    },
-    limitations: [
-      "The semantic graph contains static syntax observations and conservative relationship candidates; it does not claim runtime execution.",
-      "Local data flow does not claim control-flow-sensitive reaching definitions or arbitrary dynamic property resolution.",
-      "Promise ownership covers explicit unshadowed Promise construction, static factories, aggregation, chaining, and await syntax only.",
-      "Function fingerprints are static candidates; equal digests can remain ambiguous and do not prove behavioral equivalence.",
-      "Event extraction covers EventEmitter-style literal registrations, removals, and dispatch candidates; dynamic names remain unknown.",
-      "Timer extraction covers global or node:timers scheduling and exact local-handle cancellation.",
-      "Child-process extraction covers asynchronous node:child_process creation, literal argv/env/stdio options, exit/error listeners, and kill signals.",
-      "Configuration extraction covers process.env, process.argv, node:fs reads, and direct logical defaults.",
-      "Request extraction covers fetch, WebSocket, node:http/node:https construction, direct option fields, and exact local response consumers.",
-      "Boundary extraction covers unshadowed JSON/global coercions plus parse and validation method candidates.",
-      "Resource extraction covers built-in filesystem/network acquisition and exact local close/destroy/end handles.",
-    ],
-  });
+  return projection.finish(rootArtifactSha256, applicationGraph, analysis);
 };
+
+/** File-local semantic projection that does not retain consumed source IR. */
+export interface JavaScriptSemanticGraphProjection {
+  readonly projectFile: (
+    file: JavaScriptArtifactFile,
+    ir: JavaScriptSemanticIr,
+  ) => void;
+  readonly finish: (
+    rootArtifactSha256: string,
+    applicationGraph: BuilderInput["applicationGraph"],
+    analysis: Pick<JavaScriptArtifactAnalysis, "truncated_scopes">,
+  ) => JavaScriptSemanticGraph;
+}
+
+/** Accumulate semantic nodes while each source IR is still file-local. */
+export const createJavaScriptSemanticGraphProjection =
+  (): JavaScriptSemanticGraphProjection => {
+    const state = emptyState({ nodes: [] });
+    const fingerprints: JavaScriptSemanticGraph["fingerprints"][number][] = [];
+    let truncatedFiles = 0;
+    const projectSource = (
+      file: JavaScriptArtifactFile,
+      ir: JavaScriptSemanticIr,
+    ): void => {
+      if (state.nodes.size >= SEMANTIC_GRAPH_NODE_CEILING) {
+        truncatedFiles += 1;
+        return;
+      }
+      const remainingTreeBudget =
+        SEMANTIC_GRAPH_NODE_CEILING - state.nodes.size;
+      state.fileNodeBudget = Math.min(
+        SEMANTIC_GRAPH_FILE_NODE_CEILING,
+        remainingTreeBudget,
+      );
+      state.fileNodesDropped = false;
+      fingerprints.push(...projectFile(file, ir, state));
+      // Nodes were dropped only if the budget actually blocked creation. A file
+      // that exactly fills its share ends with a zero budget without dropping
+      // anything, so the remaining budget alone cannot decide truncation.
+      if (state.fileNodesDropped) truncatedFiles += 1;
+      state.fileNodeBudget = null;
+    };
+    return {
+      projectFile: projectSource,
+      finish: (rootArtifactSha256, applicationGraph, analysis) => {
+        bindSemanticGraphApplicationNodes(state, applicationGraph);
+        if (state.roots.size === 0) addFallbackRoot(rootArtifactSha256, state);
+        const unknowns = [...state.unknowns.values()];
+        const graph = createJavaScriptSemanticGraph({
+          schema: "JavaScriptSemanticRelationGraph",
+          root_artifact_sha256: rootArtifactSha256,
+          application_graph_id: applicationGraph.graph_id,
+          root_node_ids: [...state.roots],
+          nodes: [...state.nodes.values()],
+          relations: [...state.relations.values()],
+          fingerprints,
+          unknowns,
+          coverage: {
+            status: truncatedFiles > 0 ? "partial" : "unknown",
+            truncated: truncatedFiles > 0,
+            omitted_nodes: truncatedFiles > 0 ? null : 0,
+            omitted_relations: truncatedFiles > 0 ? null : 0,
+            limits:
+              truncatedFiles > 0
+                ? [
+                    {
+                      name: "semantic_graph_node_ceiling",
+                      value: SEMANTIC_GRAPH_NODE_CEILING,
+                      unit: "items" as const,
+                    },
+                  ]
+                : [],
+            families: JAVASCRIPT_SEMANTIC_RELATION_FAMILIES.map((family) => ({
+              family,
+              status: semanticFamilyStatus(family, analysis),
+              retained_relations: [...state.relations.values()].filter(
+                (relation) =>
+                  JAVASCRIPT_SEMANTIC_RELATION_FAMILY[relation.relation] ===
+                  family,
+              ).length,
+              omitted_relations: truncatedFiles > 0 ? null : 0,
+              unknown_ids: unknowns
+                .filter((unknown) => unknown.family === family)
+                .map(({ unknown_id: identifier }) => identifier),
+            })),
+          },
+          limitations: [
+            "The semantic graph contains static syntax observations and conservative relationship candidates; it does not claim runtime execution.",
+            "Local data flow does not claim control-flow-sensitive reaching definitions or arbitrary dynamic property resolution.",
+            "Promise ownership covers explicit unshadowed Promise construction, static factories, aggregation, chaining, and await syntax only.",
+            "Function fingerprints are static candidates; equal digests can remain ambiguous and do not prove behavioral equivalence.",
+            "Event extraction covers EventEmitter-style literal registrations, removals, and dispatch candidates; dynamic names remain unknown.",
+            "Timer extraction covers global or node:timers scheduling and exact local-handle cancellation.",
+            "Child-process extraction covers asynchronous node:child_process creation, literal argv/env/stdio options, exit/error listeners, and kill signals.",
+            "Configuration extraction covers process.env, process.argv, node:fs reads, and direct logical defaults.",
+            "Request extraction covers fetch, WebSocket, node:http/node:https construction, direct option fields, and exact local response consumers.",
+            "Boundary extraction covers unshadowed JSON/global coercions plus parse and validation method candidates.",
+            "Resource extraction covers built-in filesystem/network acquisition and exact local close/destroy/end handles.",
+          ],
+        });
+        state.nodes.clear();
+        state.relations.clear();
+        state.unknowns.clear();
+        state.roots.clear();
+        fingerprints.length = 0;
+        return graph;
+      },
+    };
+  };
 
 const projectFile = (
   file: JavaScriptArtifactFile,
   ir: JavaScriptSemanticIr,
   state: BuilderState,
 ): JavaScriptSemanticGraph["fingerprints"][number][] => {
-  const moduleNode = addNode(
-    state,
-    semanticNode(
-      file,
-      {
-        kind: "module",
-        roleKey: "module",
-        location: null,
-        label: file.path,
-        functionNodeId: null,
-      },
-      state,
-    ),
-  );
+  const moduleNode = retainNode(state, file, {
+    kind: "module",
+    roleKey: "module",
+    location: null,
+    label: file.path,
+    functionNodeId: null,
+  });
   if (moduleNode === null) return [];
   state.roots.add(moduleNode.node_id);
   const callableNodes = new Map(
     ir.callables.flatMap((callable) => {
-      const node = addNode(
-        state,
-        semanticNode(
-          file,
-          {
-            kind: "function",
-            roleKey: `callable:${callable.callableId}`,
-            location: callable.location,
-            label: callable.name,
-            functionNodeId: null,
-            // The label is display text; keep the exact name, which may be "".
-            properties: { name: callable.name },
-          },
-          state,
-        ),
-      );
+      const node = retainNode(state, file, {
+        kind: "function",
+        roleKey: `callable:${callable.callableId}`,
+        location: callable.location,
+        label: callable.name,
+        functionNodeId: null,
+        // The label is display text; keep the exact name, which may be "".
+        properties: { name: callable.name },
+      });
       return node === null ? [] : [[callable.callableId, node] as const];
     }),
   );
+  const callableOwnerAt = createSemanticCallableOwnerLookup(ir, callableNodes);
   const bindingNodes = new Map(
     ir.bindings.flatMap((binding) => {
       const location = binding.definitions[0]?.location ?? null;
       const kind = binding.kind === "parameter" ? "parameter" : "binding";
-      const owner = owningSemanticCallableNode(location, ir, callableNodes);
-      const node = addNode(
-        state,
-        semanticNode(
-          file,
-          {
-            kind,
-            roleKey: `binding:${binding.bindingId}`,
-            location,
-            label: binding.name,
-            functionNodeId: owner?.node_id ?? null,
-          },
-          state,
-        ),
-      );
+      const owner = callableOwnerAt(location);
+      const node = retainNode(state, file, {
+        kind,
+        roleKey: `binding:${binding.bindingId}`,
+        location,
+        label: binding.name,
+        functionNodeId: owner?.node_id ?? null,
+      });
       return node === null ? [] : [[binding.bindingId, node] as const];
     }),
   );
   const returnSiteNodes = createReturnSiteNodes(file, ir, callableNodes, state);
   const callSiteNodes = createCallSiteNodes(file, ir, callableNodes, state);
-  const context: FileContext = {
+  const definitions: Omit<FileContext, "referenceNodesWithin"> = {
     file,
     ir,
     state,
@@ -270,8 +292,16 @@ const projectFile = (
         call.resolution === "exact" ? "resolved" : "candidate",
       ]),
     ),
+    callableOwnerAt,
+    callSiteAt: createSemanticCallSiteLookup(ir, callSiteNodes),
   };
-  projectDefinitionsAndReferences(context);
+  projectDefinitionsAndReferences(definitions);
+  const context: FileContext = {
+    ...definitions,
+    referenceNodesWithin: createSemanticNodeRangeLookup(
+      definitions.referenceNodes,
+    ),
+  };
   projectSemanticValues(context);
   projectSemanticObjects(context);
   projectCalls(context);
@@ -300,20 +330,13 @@ const createReturnSiteNodes = (
     if (owner === undefined) continue;
     for (const site of callable.returnSites) {
       const identifier = site.returnSiteId;
-      const node = addNode(
-        state,
-        semanticNode(
-          file,
-          {
-            kind: "return-site",
-            roleKey: identifier,
-            location: site.location,
-            label: "return",
-            functionNodeId: owner.node_id,
-          },
-          state,
-        ),
-      );
+      const node = retainNode(state, file, {
+        kind: "return-site",
+        roleKey: identifier,
+        location: site.location,
+        label: "return",
+        functionNodeId: owner.node_id,
+      });
       if (node !== null) result.set(identifier, node);
     }
   }
@@ -332,44 +355,32 @@ const createCallSiteNodes = (
       call.callerCallableId === null
         ? null
         : (callables.get(call.callerCallableId)?.node_id ?? null);
-    const node = addNode(
-      state,
-      semanticNode(
-        file,
-        {
-          kind: "call-site",
-          roleKey: `call:${call.callSiteId}`,
-          location: call.location,
-          label: call.kind,
-          functionNodeId: owner,
-        },
-        state,
-      ),
-    );
+    const node = retainNode(state, file, {
+      kind: "call-site",
+      roleKey: `call:${call.callSiteId}`,
+      location: call.location,
+      label: call.kind,
+      functionNodeId: owner,
+    });
     if (node !== null) result.set(call.callSiteId, node);
   }
   return result;
 };
 
-const projectDefinitionsAndReferences = (context: FileContext): void => {
+const projectDefinitionsAndReferences = (
+  context: Omit<FileContext, "referenceNodesWithin">,
+): void => {
   for (const binding of context.ir.bindings) {
     const bindingNode = context.bindingNodes.get(binding.bindingId);
     if (bindingNode === undefined) continue;
     for (const [index, definition] of binding.definitions.entries()) {
-      const definitionNode = addNode(
-        context.state,
-        semanticNode(
-          context.file,
-          {
-            kind: "expression",
-            roleKey: `definition:${binding.bindingId}:${String(index)}`,
-            location: definition.location,
-            label: definition.kind,
-            functionNodeId: bindingNode.function_node_id,
-          },
-          context.state,
-        ),
-      );
+      const definitionNode = retainNode(context.state, context.file, {
+        kind: "expression",
+        roleKey: `definition:${binding.bindingId}:${String(index)}`,
+        location: definition.location,
+        label: definition.kind,
+        functionNodeId: bindingNode.function_node_id,
+      });
       addRelation(context.state, {
         source: definitionNode,
         target: bindingNode,
@@ -379,25 +390,14 @@ const projectDefinitionsAndReferences = (context: FileContext): void => {
     }
   }
   for (const [index, reference] of context.ir.references.entries()) {
-    const expression = addNode(
-      context.state,
-      semanticNode(
-        context.file,
-        {
-          kind: "expression",
-          roleKey: `reference:${String(index)}:${reference.role}:${reference.name}`,
-          location: reference.location,
-          label: reference.name,
-          functionNodeId:
-            owningSemanticCallableNode(
-              reference.location,
-              context.ir,
-              context.callableNodes,
-            )?.node_id ?? null,
-        },
-        context.state,
-      ),
-    );
+    const expression = retainNode(context.state, context.file, {
+      kind: "expression",
+      roleKey: `reference:${String(index)}:${reference.role}:${reference.name}`,
+      location: reference.location,
+      label: reference.name,
+      functionNodeId:
+        context.callableOwnerAt(reference.location)?.node_id ?? null,
+    });
     const binding =
       reference.bindingId === null
         ? undefined
@@ -447,10 +447,7 @@ const projectCalls = (context: FileContext): void => {
           `${call.callSiteId}\u0000${String(argument.index)}`,
           argumentNode,
         );
-      const references = semanticNodesWithinRange(
-        context.referenceNodes,
-        argument.location,
-      );
+      const references = context.referenceNodesWithin(argument.location);
       for (const reference of references)
         addRelation(context.state, {
           source: reference,
@@ -499,19 +496,12 @@ const createArgumentNode = (
   callSiteId: string,
   argument: JavaScriptSemanticCallArgument,
 ): JavaScriptSemanticGraphNode | null =>
-  addNode(
-    context.state,
-    semanticNode(
-      context.file,
-      {
-        kind: "expression",
-        roleKey: `argument:${callSiteId}:${String(argument.index)}`,
-        location: argument.location,
-        label: argument.spread
-          ? "spread argument"
-          : `argument ${String(argument.index)}`,
-        functionNodeId: callNode.function_node_id,
-      },
-      context.state,
-    ),
-  );
+  retainNode(context.state, context.file, {
+    kind: "expression",
+    roleKey: `argument:${callSiteId}:${String(argument.index)}`,
+    location: argument.location,
+    label: argument.spread
+      ? "spread argument"
+      : `argument ${String(argument.index)}`,
+    functionNodeId: callNode.function_node_id,
+  });

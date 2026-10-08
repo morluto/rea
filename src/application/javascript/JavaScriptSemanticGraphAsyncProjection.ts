@@ -5,10 +5,9 @@ import type {
   JavaScriptSemanticTimerOperation,
 } from "../../domain/javascript/javascriptSemanticIr.js";
 import {
-  addSemanticGraphNode,
+  retainSemanticGraphNode,
   addSemanticGraphRelation,
   addSemanticGraphUnknown,
-  constructSemanticGraphNode,
 } from "./JavaScriptSemanticGraphConstruction.js";
 import { unknownSemanticEvidence } from "./JavaScriptSemanticGraphEvidence.js";
 import {
@@ -59,55 +58,41 @@ const addEventNode = (
   operation: JavaScriptSemanticEventOperation,
   eventKey: string,
 ): JavaScriptSemanticGraphNode | null =>
-  addSemanticGraphNode(
-    context.state,
-    constructSemanticGraphNode(
-      context.file,
-      {
-        kind: "event",
-        roleKey: `event:${eventKey}`,
-        location: operation.eventName === null ? operation.location : null,
-        label: operation.eventName,
-        functionNodeId: null,
-        properties: {
-          emitter_key: operation.emitterKey,
-          event_name: operation.eventName,
-        },
-      },
-      context.state,
-    ),
-  );
+  retainSemanticGraphNode(context.state, context.file, {
+    kind: "event",
+    roleKey: `event:${eventKey}`,
+    location: operation.eventName === null ? operation.location : null,
+    label: operation.eventName,
+    functionNodeId: null,
+    properties: {
+      emitter_key: operation.emitterKey,
+      event_name: operation.eventName,
+    },
+  });
 
 const addListenerNode = (
   context: SemanticFlowProjectionContext,
   operation: JavaScriptSemanticEventOperation,
 ): JavaScriptSemanticGraphNode | null =>
-  addSemanticGraphNode(
-    context.state,
-    constructSemanticGraphNode(
-      context.file,
-      {
-        kind: "listener",
-        roleKey: `listener:${operation.eventId}`,
-        location: operation.listenerLocation ?? operation.location,
-        label:
-          operation.eventName === null
-            ? operation.method
-            : `${operation.method}:${operation.eventName}`,
-        functionNodeId:
-          operation.ownerCallableId === null
-            ? null
-            : (context.callableNodes.get(operation.ownerCallableId)?.node_id ??
-              null),
-        properties: {
-          emitter_key: operation.emitterKey,
-          event_name: operation.eventName,
-          method: operation.method,
-        },
-      },
-      context.state,
-    ),
-  );
+  retainSemanticGraphNode(context.state, context.file, {
+    kind: "listener",
+    roleKey: `listener:${operation.eventId}`,
+    location: operation.listenerLocation ?? operation.location,
+    label:
+      operation.eventName === null
+        ? operation.method
+        : `${operation.method}:${operation.eventName}`,
+    functionNodeId:
+      operation.ownerCallableId === null
+        ? null
+        : (context.callableNodes.get(operation.ownerCallableId)?.node_id ??
+          null),
+    properties: {
+      emitter_key: operation.emitterKey,
+      event_name: operation.eventName,
+      method: operation.method,
+    },
+  });
 
 const eventEmitterNode = (
   context: SemanticFlowProjectionContext,
@@ -164,24 +149,17 @@ export const projectSemanticTimers = (
         operation.ownerCallableId === null
           ? undefined
           : context.callableNodes.get(operation.ownerCallableId);
-      const timer = addSemanticGraphNode(
-        context.state,
-        constructSemanticGraphNode(
-          context.file,
-          {
-            kind: "timer",
-            roleKey: operation.timerId,
-            location: operation.location,
-            label: operation.method,
-            functionNodeId: owner?.node_id ?? null,
-            properties: {
-              delay_milliseconds: operation.delayMilliseconds,
-              method: operation.method,
-            },
-          },
-          context.state,
-        ),
-      );
+      const timer = retainSemanticGraphNode(context.state, context.file, {
+        kind: "timer",
+        roleKey: operation.timerId,
+        location: operation.location,
+        label: operation.method,
+        functionNodeId: owner?.node_id ?? null,
+        properties: {
+          delay_milliseconds: operation.delayMilliseconds,
+          method: operation.method,
+        },
+      });
       return timer === null ? [] : [[operation.timerId, timer] as const];
     }),
   );

@@ -6,10 +6,9 @@ import type {
   JavaScriptSemanticRequestOperation,
 } from "../../domain/javascript/javascriptSemanticIr.js";
 import {
-  addSemanticGraphNode,
+  retainSemanticGraphNode,
   addSemanticGraphRelation,
   addSemanticGraphUnknown,
-  constructSemanticGraphNode,
 } from "./JavaScriptSemanticGraphConstruction.js";
 import { unknownSemanticEvidence } from "./JavaScriptSemanticGraphEvidence.js";
 import {
@@ -70,29 +69,22 @@ const addConfigurationNode = (
   context: SemanticFlowProjectionContext,
   operation: JavaScriptSemanticConfigurationOperation,
 ): JavaScriptSemanticGraphNode | null =>
-  addSemanticGraphNode(
-    context.state,
-    constructSemanticGraphNode(
-      context.file,
-      {
-        kind: "config-source",
-        roleKey: operation.configId,
-        location: operation.location,
-        label: operation.key ?? operation.kind,
-        functionNodeId:
-          operation.ownerCallableId === null
-            ? null
-            : (context.callableNodes.get(operation.ownerCallableId)?.node_id ??
-              null),
-        properties: {
-          key: operation.key,
-          source_kind: operation.kind,
-          value: operation.value,
-        },
-      },
-      context.state,
-    ),
-  );
+  retainSemanticGraphNode(context.state, context.file, {
+    kind: "config-source",
+    roleKey: operation.configId,
+    location: operation.location,
+    label: operation.key ?? operation.kind,
+    functionNodeId:
+      operation.ownerCallableId === null
+        ? null
+        : (context.callableNodes.get(operation.ownerCallableId)?.node_id ??
+          null),
+    properties: {
+      key: operation.key,
+      source_kind: operation.kind,
+      value: operation.value,
+    },
+  });
 
 const configurationRelation = (
   operation: JavaScriptSemanticConfigurationOperation,
@@ -144,29 +136,22 @@ const addRequestNode = (
   context: SemanticFlowProjectionContext,
   operation: JavaScriptSemanticRequestOperation,
 ): JavaScriptSemanticGraphNode | null =>
-  addSemanticGraphNode(
-    context.state,
-    constructSemanticGraphNode(
-      context.file,
-      {
-        kind: operation.kind === "request" ? "request" : "response",
-        roleKey: operation.requestId,
-        location: operation.location,
-        label: operation.endpoint ?? operation.method,
-        functionNodeId:
-          operation.ownerCallableId === null
-            ? null
-            : (context.callableNodes.get(operation.ownerCallableId)?.node_id ??
-              null),
-        properties: {
-          endpoint: operation.endpoint,
-          method: operation.method,
-          operation_kind: operation.kind,
-        },
-      },
-      context.state,
-    ),
-  );
+  retainSemanticGraphNode(context.state, context.file, {
+    kind: operation.kind === "request" ? "request" : "response",
+    roleKey: operation.requestId,
+    location: operation.location,
+    label: operation.endpoint ?? operation.method,
+    functionNodeId:
+      operation.ownerCallableId === null
+        ? null
+        : (context.callableNodes.get(operation.ownerCallableId)?.node_id ??
+          null),
+    properties: {
+      endpoint: operation.endpoint,
+      method: operation.method,
+      operation_kind: operation.kind,
+    },
+  });
 
 const projectRequestConstruction = (
   context: SemanticFlowProjectionContext,
@@ -265,28 +250,21 @@ const addBoundaryNode = (
   context: SemanticFlowProjectionContext,
   operation: JavaScriptSemanticBoundaryOperation,
 ): JavaScriptSemanticGraphNode | null =>
-  addSemanticGraphNode(
-    context.state,
-    constructSemanticGraphNode(
-      context.file,
-      {
-        kind: "boundary",
-        roleKey: operation.boundaryId,
-        location: operation.location,
-        label: operation.method,
-        functionNodeId:
-          operation.ownerCallableId === null
-            ? null
-            : (context.callableNodes.get(operation.ownerCallableId)?.node_id ??
-              null),
-        properties: {
-          boundary_kind: operation.kind,
-          method: operation.method,
-        },
-      },
-      context.state,
-    ),
-  );
+  retainSemanticGraphNode(context.state, context.file, {
+    kind: "boundary",
+    roleKey: operation.boundaryId,
+    location: operation.location,
+    label: operation.method,
+    functionNodeId:
+      operation.ownerCallableId === null
+        ? null
+        : (context.callableNodes.get(operation.ownerCallableId)?.node_id ??
+          null),
+    properties: {
+      boundary_kind: operation.kind,
+      method: operation.method,
+    },
+  });
 
 const bindingOrOwner = (
   context: SemanticFlowProjectionContext,
