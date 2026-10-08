@@ -40,6 +40,7 @@ import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import {
   PWNTOOLS_PROVIDER_IDENTITY,
   PWNTOOLS_LIMITS,
+  PWNTOOLS_FILE_SIZE_FAILURE_EXIT,
 } from "./PwntoolsRelease.js";
 
 const OPERATION = "inspect_binary_layout";
@@ -260,7 +261,10 @@ export class PwntoolsLayoutProvider implements BinaryLayoutPort {
       let limitReport: PwntoolsLimitReport | undefined;
       if (
         cause instanceof OwnedCommandFailure &&
-        cause.snapshot?.signal === "SIGXCPU" &&
+        (cause.snapshot?.signal === "SIGXCPU" ||
+          cause.snapshot?.signal === "SIGXFSZ" ||
+          (cause.snapshot?.exitCode === PWNTOOLS_FILE_SIZE_FAILURE_EXIT &&
+            cause.snapshot.signal === null)) &&
         root !== undefined
       ) {
         try {

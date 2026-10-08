@@ -22,6 +22,7 @@ import {
   PWNTOOLS_PROVIDER_IDENTITY,
   PWNTOOLS_LIMITS,
   PWNTOOLS_MEMORY_FAILURE_EXIT,
+  PWNTOOLS_FILE_SIZE_FAILURE_EXIT,
 } from "./PwntoolsRelease.js";
 
 const OPERATION = "inspect_binary_layout";
@@ -72,6 +73,24 @@ export const pwntoolsLayoutFailure = (
       );
     if (cause.reason === "output-limit")
       return new AnalysisOutputError(OPERATION, cause.message, outputOptions);
+    if (
+      cause.reason === "process" &&
+      (cause.snapshot?.signal === "SIGXFSZ" ||
+        (cause.snapshot?.exitCode === PWNTOOLS_FILE_SIZE_FAILURE_EXIT &&
+          cause.snapshot.signal === null))
+    )
+      return new AnalysisResourceConstraintError(
+        OPERATION,
+        "file-size",
+        (cause.snapshot.signal === "SIGXFSZ"
+          ? "Owned Python terminated with SIGXFSZ; the exact signal cause is unknown."
+          : "The owned Python bridge reported EFBIG while writing a file; the exact write failure cause is unknown.") +
+          (limitReport?.failure === null || limitReport === undefined
+            ? ""
+            : ` Effective limit report unavailable: ${limitReport.failure}`),
+        limitReport?.limits ?? null,
+        outputOptions,
+      );
     if (cause.reason === "process" && cause.snapshot?.signal === "SIGXCPU")
       return new AnalysisResourceConstraintError(
         OPERATION,

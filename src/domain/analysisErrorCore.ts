@@ -10,7 +10,7 @@ export class AnalysisResourceConstraintError extends AnalysisError {
 
   constructor(
     readonly operation: string,
-    readonly resource: "memory" | "cpu",
+    readonly resource: "memory" | "cpu" | "file-size",
     readonly reason: string,
     readonly reportedLimits: Readonly<Record<string, JsonValue>> | null,
     options?: AnalysisErrorOptions,

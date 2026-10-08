@@ -20,15 +20,22 @@ const requestSchema = z.strictObject({
   reply_path: z.string(),
 });
 
-it.runIf(!unsupportedHost).each(["reported", "missing", "malformed"])(
-  "preserves observed SIGXCPU and actual or unknown limit evidence: %s",
-  async (scenario) => {
+it.runIf(!unsupportedHost).each([
+  ["SIGXCPU", "reported", "cpu"],
+  ["SIGXCPU", "missing", "cpu"],
+  ["SIGXCPU", "malformed", "cpu"],
+  ["SIGXFSZ", "reported", "file-size"],
+  ["EFBIG", "reported", "file-size"],
+  ["EFBIG", "malformed", "file-size"],
+] as const)(
+  "preserves observed %s with %s limit evidence",
+  async (failure, scenario, resource) => {
     const { path } = await fixture();
     let ownedPath = "";
     const limits = {
       address_space_bytes: 3221225472,
       cpu_seconds: 1,
-      file_size_bytes: 67108864,
+      file_size_bytes: 1024,
     };
     const provider = new PwntoolsLayoutProvider(
       { REA_PWNTOOLS_PYTHON: process.execPath },
@@ -46,26 +53,36 @@ it.runIf(!unsupportedHost).each(["reported", "missing", "malformed"])(
           command: process.execPath,
           arguments: [
             "-e",
-            'process.stdout.write("cpu diagnostic", () => process.kill(process.pid, "SIGXCPU"))',
+            failure === "EFBIG"
+              ? 'process.stdout.write("resource diagnostic", () => { process.exitCode = 76; })'
+              : failure === "SIGXFSZ"
+                ? 'process.on("SIGXFSZ", () => { process.removeAllListeners("SIGXFSZ"); process.kill(process.pid, "SIGXFSZ"); }); process.stdout.write("resource diagnostic", () => process.kill(process.pid, "SIGXFSZ")); setTimeout(() => {}, 1000);'
+                : `process.stdout.write("resource diagnostic", () => process.kill(process.pid, "${failure}"))`,
           ],
         });
       },
     );
     const result = await provider.inspect({ path });
-    if (result.ok) throw new Error("Expected observed CPU signal");
+    if (result.ok) throw new Error("Expected observed resource failure");
     const projected = projectAnalysisError(result.error);
     expect(projected).toMatchObject({
       code: "resource_constraint",
       details: {
-        resource: "cpu",
+        resource,
         reported_limits: scenario === "reported" ? limits : null,
-        captured_output: { stdout: "cpu diagnostic", truncated: false },
+        captured_output: { stdout: "resource diagnostic", truncated: false },
       },
     });
-    expect(result.error.message).toContain("exact signal cause is unknown");
+    expect(result.error.message).toContain(
+      failure === "EFBIG"
+        ? "exact write failure cause is unknown"
+        : "exact signal cause is unknown",
+    );
     if (scenario !== "reported")
       expect(result.error.message).toContain("limit report unavailable");
-    expect(projected.remediation.action).toContain("CPU");
+    expect(projected.remediation.action).toContain(
+      resource === "cpu" ? "CPU" : "file-size",
+    );
     await expect(access(ownedPath)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );

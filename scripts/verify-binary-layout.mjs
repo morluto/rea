@@ -80,6 +80,7 @@ try {
   for (const [source, status] of [
     ["raise MemoryError('source-owned initialization failure')", 75],
     ["raise OSError(12, 'source-owned allocation failure')", 75],
+    ["raise OSError(27, 'source-owned file write failure')", 76],
     [
       "raise OSError(2, 'MemoryError-like text is not an allocation failure')",
       1,
@@ -757,6 +758,53 @@ try {
       await cpuClient.close();
     } finally {
       await cpuTransport.close();
+    }
+  }
+  for (const limit of [1024, 1]) {
+    const wrapper = join(root.path, `python-file-size-${limit}`);
+    await writeFile(
+      wrapper,
+      `#!/bin/sh\nexec /usr/bin/prlimit --fsize=${limit}: --core=0: -- ${quotedPython} "$@"\n`,
+      { mode: 0o700 },
+    );
+    const fileEnvironment = { ...environment, REA_PWNTOOLS_PYTHON: wrapper };
+    const fileClient = new Client({
+      name: "file-size-layout-verifier",
+      version: "1",
+    });
+    const fileTransport = new StdioClientTransport({
+      command: process.execPath,
+      args: [entrypoint, "mcp"],
+      env: fileEnvironment,
+      stderr: "pipe",
+    });
+    try {
+      await fileClient.connect(fileTransport);
+      for (const mode of ["cli", "mcp"]) {
+        const error = await inspect(
+          mode,
+          sectionHeavyPath,
+          "resource_constraint",
+          fileEnvironment,
+          fileClient,
+        );
+        assert.equal(error.details.resource, "file-size");
+        if (limit === 1024)
+          assert.equal(error.details.reported_limits.file_size_bytes, limit);
+        else {
+          assert.equal(error.details.reported_limits, null);
+          assert.ok(JSON.stringify(error).includes("limit report unavailable"));
+        }
+        assert.ok(error.remediation.action.includes("file-size"));
+        cases++;
+      }
+      assert.deepEqual(await readFile(sectionHeavyPath), sectionHeavy);
+    } finally {
+      try {
+        await fileClient.close();
+      } finally {
+        await fileTransport.close();
+      }
     }
   }
   unsupported.writeUInt16LE(183, 18);

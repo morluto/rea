@@ -103,6 +103,9 @@ The small bootstrap also covers catchable MemoryError during adapter imports,
 compilation and initialization. Python interpreter startup failures before the
 bootstrap runs retain their observed process diagnostics without guessed causes.
 SIGXCPU retains a CPU resource diagnostic and CPU-specific recovery advice.
+Observed EFBIG writes or SIGXFSZ termination retain a file-size resource
+diagnostic and file-size-specific recovery advice. If a tight file limit also
+prevents writing the limit record, effective values remain unknown.
 The bridge records actual limits in owned storage before analysis; missing or
 malformed limit reports remain unknown with their read failure preserved. A
 received signal alone does not establish its exact cause. Dynamic tags require
