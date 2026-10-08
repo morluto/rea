@@ -223,6 +223,20 @@ const drain = async (chunks: AsyncIterable<Buffer>): Promise<void> => {
   for await (const chunk of chunks) void chunk;
 };
 
+const crcObservation = (
+  declared: number,
+  observed: number,
+): ArtifactChecksumObservation => ({
+  representation: "decoded",
+  algorithm: "cpio-byte-sum",
+  declared: declared.toString(16).padStart(8, "0"),
+  observed: observed.toString(16).padStart(8, "0"),
+});
+
+/** Same sentence the scanner uses for a streamed regular-file CRC contradiction. */
+const crcMismatchDetail = (observation: ArtifactChecksumObservation): string =>
+  `Declared ${observation.representation} ${observation.algorithm} ${observation.declared} disagrees with observed ${observation.observed}.`;
+
 /** Human-readable limitation for a collected (or skipped) symlink target. */
 const symlinkTargetLimitation = (
   header: CpioHeader,
@@ -274,10 +288,10 @@ export class CpioArtifactReader implements ArtifactReader {
       signal?: AbortSignal,
     ) => Promise<Readable>,
     /**
-     * Integrity mode for iteration-time CRC failures. Streamed data CRCs are
-     * always checked; under record-and-continue a zero-size hard-link header
-     * whose CRC disagrees is yielded as an unavailable occurrence so later
-     * siblings are still inventoried, instead of aborting the archive.
+     * Integrity mode for member CRC failures. Every member representation is
+     * checked before the next header is read. `fail` throws. Under
+     * record-and-continue the disagreement is returned as checksum evidence
+     * so the occurrence and later siblings are still inventoried.
      */
     private readonly integrity: "fail" | "record-and-continue" = "fail",
     readonly decodedBudget: ArtifactDecodedBudget = new ArtifactDecodedBudget(),
@@ -347,7 +361,7 @@ export class CpioArtifactReader implements ArtifactReader {
             "format",
             "cpio trailer declares member data",
           );
-        await drain(this.#verified(source, header, raw));
+        await drain(this.#verified(source, header, raw, undefined, "fail"));
         await source.finish();
         yield* this.#unresolvedLinks();
         return;
@@ -365,17 +379,18 @@ export class CpioArtifactReader implements ArtifactReader {
     const type = header.mode & S_IFMT;
     const path = memberPath(raw);
     if (type === S_IFDIR) {
-      const verified = await this.#recoverIntegrity(() =>
-        drain(this.#verified(source, header, raw)),
-      );
+      const consumed = await this.#consume(source, header, raw, false);
       if (path !== undefined)
         yield entryOf({
           path,
           kind: "directory",
           key,
           header,
-          limitations: "mismatch" in verified ? [verified.mismatch] : [],
-          integrityMismatched: "mismatch" in verified,
+          limitations:
+            consumed.mismatch === undefined
+              ? []
+              : [crcMismatchDetail(consumed.mismatch)],
+          integrityMismatched: consumed.mismatch !== undefined,
         });
       return;
     }
@@ -392,17 +407,15 @@ export class CpioArtifactReader implements ArtifactReader {
       // Zero-size headers carry no bytes, so a CRC archive must declare zero.
       // Under record-and-continue this is the occurrence's own forgotten
       // bytes: yield it unavailable so later siblings still inventory.
-      const verified = await this.#recoverIntegrity(() =>
-        drain(this.#verified(source, header, raw)),
-      );
-      if ("mismatch" in verified) {
+      const consumed = await this.#consume(source, header, raw, false);
+      if (consumed.mismatch !== undefined) {
         yield entryOf({
           path,
           kind: "file",
           key,
           header,
           size: null,
-          limitations: [verified.mismatch],
+          limitations: [crcMismatchDetail(consumed.mismatch)],
           contentUnavailable: true,
         });
         return;
@@ -425,9 +438,7 @@ export class CpioArtifactReader implements ArtifactReader {
     if (type !== S_IFREG) {
       // FIFOs, device nodes, sockets and other types are not expanded; keep
       // an explicit unavailable occurrence instead of dropping the path.
-      const verified = await this.#recoverIntegrity(() =>
-        drain(this.#verified(source, header, raw)),
-      );
+      const consumed = await this.#consume(source, header, raw, false);
       this.#current = undefined;
       yield entryOf({
         path,
@@ -437,7 +448,9 @@ export class CpioArtifactReader implements ArtifactReader {
         size: null,
         limitations: [
           `Unsupported cpio member type ${type.toString(8)}; content not expanded.`,
-          ...("mismatch" in verified ? [verified.mismatch] : []),
+          ...(consumed.mismatch === undefined
+            ? []
+            : [crcMismatchDetail(consumed.mismatch)]),
         ],
         contentUnavailable: true,
       });
@@ -454,10 +467,9 @@ export class CpioArtifactReader implements ArtifactReader {
 
   /**
    * One symlink member. A hostile header can declare a multi-gigabyte target,
-   * so oversized targets stream past. CRC failures surface before the entry
-   * is yielded, outside the scanner's per-entry recovery: under
-   * record-and-continue the symlink becomes an unavailable occurrence so
-   * later siblings still inventory.
+   * so oversized targets stream past. The CRC is resolved before the entry is
+   * yielded; under record-and-continue a disagreement stays on the occurrence
+   * so later siblings are still inventoried.
    */
   async *#symlink(
     source: ByteSource,
@@ -469,21 +481,20 @@ export class CpioArtifactReader implements ArtifactReader {
     path: string | undefined,
   ): AsyncGenerator<ArtifactEntry> {
     const { header, raw, key } = member;
-    const observed = await this.#recoverIntegrity(async () => {
-      if (header.fileSize > MAX_SYMLINK_TARGET_BYTES) {
-        await drain(this.#verified(source, header, raw));
-        return undefined;
-      }
-      return this.#collect(source, header, raw);
-    });
+    const consumed = await this.#consume(
+      source,
+      header,
+      raw,
+      header.fileSize <= MAX_SYMLINK_TARGET_BYTES,
+    );
     if (path === undefined) return;
-    if ("mismatch" in observed) {
+    if (consumed.mismatch !== undefined) {
       yield entryOf({
         path,
         kind: "symlink",
         key,
         header,
-        limitations: [observed.mismatch],
+        limitations: [crcMismatchDetail(consumed.mismatch)],
         contentUnavailable: true,
       });
       return;
@@ -493,25 +504,8 @@ export class CpioArtifactReader implements ArtifactReader {
       kind: "symlink",
       key,
       header,
-      limitations: [symlinkTargetLimitation(header, observed.value)],
+      limitations: [symlinkTargetLimitation(header, consumed.bytes)],
     });
-  }
-
-  /** The one integrity-policy boundary for metadata consumed before yielding an entry. */
-  async #recoverIntegrity<T>(
-    read: () => Promise<T>,
-  ): Promise<{ readonly value: T } | { readonly mismatch: string }> {
-    try {
-      return { value: await read() };
-    } catch (cause: unknown) {
-      if (
-        this.integrity !== "record-and-continue" ||
-        !(cause instanceof ArtifactReaderFailure) ||
-        cause.reason !== "integrity"
-      )
-        throw cause;
-      return { mismatch: cause.message };
-    }
   }
 
   #alias(
@@ -583,7 +577,16 @@ export class CpioArtifactReader implements ArtifactReader {
           current.header,
           await this.#collect(source, current.header, current.path),
         );
-      else await drain(this.#verified(source, current.header, current.path));
+      else
+        await drain(
+          this.#verified(
+            source,
+            current.header,
+            current.path,
+            undefined,
+            "fail",
+          ),
+        );
     }
     const waiting = this.#pending.get(current.header.identity);
     const stored = this.#links.get(current.header.identity);
@@ -615,42 +618,88 @@ export class CpioArtifactReader implements ArtifactReader {
     this.#buffered += bytes.length;
   }
 
+  /**
+   * Member bytes and padding. `sum` receives the unsigned 32-bit total used
+   * by `070702`. Padding is consumed before the caller reports a mismatch, so
+   * a recovered archive stays aligned on the next header.
+   */
+  async *#payload(
+    source: ByteSource,
+    header: CpioHeader,
+    sum: { value: number },
+  ): AsyncGenerator<Buffer> {
+    this.#cancelled();
+    for await (const chunk of source.take(header.fileSize, "member data")) {
+      this.#cancelled();
+      if (header.format === "crc")
+        for (const byte of chunk) sum.value = (sum.value + byte) >>> 0;
+      yield chunk;
+    }
+    await drain(
+      source.take(padding(header.format, header.fileSize), "data padding"),
+    );
+    this.#cancelled();
+  }
+
+  /**
+   * One CRC check for every member kind. `fail` throws with the observation
+   * in the message. record-and-continue returns the observation so callers
+   * keep declared and observed values instead of catching a string.
+   */
+  #crcMismatch(
+    header: CpioHeader,
+    path: string,
+    sum: number,
+    policy: "fail" | "record-and-continue" = this.integrity,
+  ): ArtifactChecksumObservation | undefined {
+    if (header.format !== "crc" || sum === header.check) return undefined;
+    const observation = crcObservation(header.check, sum);
+    if (policy === "fail")
+      throw new ArtifactReaderFailure(
+        "integrity",
+        `cpio CRC disagrees with content: ${path} (${crcMismatchDetail(observation)})`,
+      );
+    return observation;
+  }
+
+  /** Read one member fully. `collect` retains bytes for symlinks and hard links. */
+  async #consume(
+    source: ByteSource,
+    header: CpioHeader,
+    path: string,
+    collect: boolean,
+    policy?: "fail" | "record-and-continue",
+  ): Promise<{
+    readonly bytes: Buffer | undefined;
+    readonly mismatch: ArtifactChecksumObservation | undefined;
+  }> {
+    const sum = { value: 0 };
+    const chunks: Buffer[] = [];
+    for await (const chunk of this.#payload(source, header, sum))
+      if (collect) chunks.push(chunk);
+    return {
+      bytes: collect ? Buffer.concat(chunks) : undefined,
+      mismatch: this.#crcMismatch(header, path, sum.value, policy),
+    };
+  }
+
   /** Member data and its padding, checked against a `070702` CRC. */
   async *#verified(
     source: ByteSource,
     header: CpioHeader,
     path: string,
     record?: (observation: ArtifactChecksumObservation) => void,
+    policy?: "fail" | "record-and-continue",
   ): AsyncGenerator<Buffer> {
-    let sum = 0;
-    this.#cancelled();
-    for await (const chunk of source.take(header.fileSize, "member data")) {
-      this.#cancelled();
-      if (header.format === "crc")
-        for (const byte of chunk) sum = (sum + byte) >>> 0;
-      yield chunk;
-    }
-    // Consume padding before reporting a mismatch: under record-and-continue
-    // iteration resumes after this error, and leftover padding would be read
-    // as the next header's magic.
-    await drain(
-      source.take(padding(header.format, header.fileSize), "data padding"),
+    const sum = { value: 0 };
+    yield* this.#payload(source, header, sum);
+    const mismatch = this.#crcMismatch(
+      header,
+      path,
+      sum.value,
+      policy ?? this.integrity,
     );
-    this.#cancelled();
-    if (header.format === "crc" && sum !== header.check) {
-      if (record !== undefined)
-        record({
-          representation: "decoded",
-          algorithm: "cpio-byte-sum",
-          declared: header.check.toString(16).padStart(8, "0"),
-          observed: sum.toString(16).padStart(8, "0"),
-        });
-      else
-        throw new ArtifactReaderFailure(
-          "integrity",
-          `cpio CRC disagrees with content: ${path}`,
-        );
-    }
+    if (mismatch !== undefined) record?.(mismatch);
   }
 
   async #collect(
@@ -658,10 +707,10 @@ export class CpioArtifactReader implements ArtifactReader {
     header: CpioHeader,
     path: string,
   ): Promise<Buffer> {
-    const chunks: Buffer[] = [];
-    for await (const chunk of this.#verified(source, header, path))
-      chunks.push(chunk);
-    return Buffer.concat(chunks);
+    // Unopened linked bytes are not a recovered occurrence. A disagreement
+    // still fails the archive instead of being remembered as verified content.
+    const consumed = await this.#consume(source, header, path, true, "fail");
+    return consumed.bytes ?? Buffer.alloc(0);
   }
 
   #cancelled(): void {

@@ -154,7 +154,9 @@ it("preserves recovered directory CRC mismatches through graph materialization",
     ),
   ).toMatchObject({
     hash_status: "mismatched",
-    limitations: ["cpio CRC disagrees with content: dir"],
+    limitations: [
+      "Declared decoded cpio-byte-sum 00000001 disagrees with observed 00000000.",
+    ],
   });
   expect(
     inventory.occurrences.find(

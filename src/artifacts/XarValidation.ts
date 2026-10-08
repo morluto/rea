@@ -1,5 +1,29 @@
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 
+/**
+ * Element ceiling for one TOC. The byte cap still allows millions of tiny
+ * elements, and the DOM is built before member collection can charge the
+ * metadata budget.
+ */
+const MAX_TOC_ELEMENTS = 100_000;
+
+/** Reject a TOC whose element count would materialize an unbounded DOM. */
+export const assertXarTocElements = (xml: string): void => {
+  let elements = 0;
+  for (let index = 0; index < xml.length; index += 1) {
+    if (xml[index] !== "<") continue;
+    const next = xml[index + 1];
+    if (next === undefined || next === "/" || next === "?" || next === "!")
+      continue;
+    elements += 1;
+    if (elements > MAX_TOC_ELEMENTS)
+      throw new ArtifactReaderFailure(
+        "limit",
+        `xar TOC exceeds ${MAX_TOC_ELEMENTS} XML elements`,
+      );
+  }
+};
+
 /** Required XAR integer syntax: nonempty unsigned decimal, exactly representable. */
 export const xarInteger = (
   value: string | undefined,

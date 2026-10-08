@@ -258,7 +258,7 @@ it("preserves CRC contradictions for special nodes and reaches later siblings", 
       paths.push(entry.path);
       if (entry.path === "fifo")
         expect(entry.limitations).toContain(
-          "cpio CRC disagrees with content: fifo",
+          "Declared decoded cpio-byte-sum 00000001 disagrees with observed 00000126.",
         );
       if (entry.path === "good")
         expect((await buffer(await reader.open(entry))).toString()).toBe("ok");
@@ -280,6 +280,24 @@ it("does not expose a partial inventory when a previous TOC load failed", async 
       await expect(scan()).rejects.toMatchObject({ reason: "format" });
     },
   );
+});
+
+it("rejects a TOC whose element count would build an unbounded DOM", async () => {
+  const noise = "<n/>".repeat(100_001);
+  const bytes = rewriteXarToc(
+    xarArchive([{ name: "a", data: Buffer.from("ok") }]),
+    (xml) => xml.replace("<toc>", `<toc>${noise}`),
+  );
+  await withReader(bytes, async (reader) => {
+    await expect(
+      (async () => {
+        for await (const entry of reader.entries()) void entry;
+      })(),
+    ).rejects.toMatchObject({
+      reason: "limit",
+      message: "xar TOC exceeds 100000 XML elements",
+    });
+  });
 });
 
 it("rejects a TOC checksum when the fixed header declares none", async () => {
@@ -336,7 +354,8 @@ it("rejects a CRC trailer whose declared checksum is not empty-data zero", async
       })(),
     ).rejects.toMatchObject({
       reason: "integrity",
-      message: "cpio CRC disagrees with content: TRAILER!!!",
+      message:
+        "cpio CRC disagrees with content: TRAILER!!! (Declared decoded cpio-byte-sum 00000001 disagrees with observed 00000000.)",
     });
   } finally {
     await reader.close();
@@ -393,7 +412,7 @@ it("recovers directory CRC contradictions before yielding and reaches regular si
       seen.push(entry.path);
       if (entry.kind === "directory")
         expect(entry.limitations).toContain(
-          "cpio CRC disagrees with content: dir",
+          "Declared decoded cpio-byte-sum 00000001 disagrees with observed 00000000.",
         );
       else
         expect((await buffer(await reader.open(entry))).toString()).toBe("ok");

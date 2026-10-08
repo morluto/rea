@@ -12,6 +12,7 @@ import {
 } from "./ArtifactDecodedBudget.js";
 import { artifactStreamPipeline } from "./ArtifactStreamPipeline.js";
 import {
+  assertXarTocElements,
   xarInteger as integer,
   xarHeapPosition,
   XarPathBudget,
@@ -486,6 +487,7 @@ export class XarArtifactReader implements ArtifactReader {
           { cause },
         );
       }
+      assertXarTocElements(xml);
     } catch (cause: unknown) {
       if (cause instanceof ArtifactReaderFailure) throw cause;
       throw new ArtifactReaderFailure("format", "xar TOC is not zlib data", {
