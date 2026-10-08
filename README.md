@@ -16,10 +16,6 @@
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 [![Discord](https://img.shields.io/discord/1556595354999332884?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/GkcryMnJDM)
 
-🎉 **20,000 GitHub stars — thank you!**
-
-Thanks to everyone using REA, reporting bugs, testing builds, and contributing fixes.
-
 <a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
 
 **[Website](https://morluto.github.io/rea/) · [Guides](https://morluto.github.io/rea/guides/) · [Showcases](https://morluto.github.io/rea/showcase/)**
@@ -319,11 +315,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and checks,
 
 [Website](https://morluto.github.io/rea/) · [npm](https://www.npmjs.com/package/rea-agents) · [skills.sh](https://skills.sh/morluto/rea/reverse-engineer-anything) · [Issues](https://github.com/morluto/rea/issues) · [Security](SECURITY.md)
 
-## License
-
-[MIT](LICENSE)
-
 ## Star history
+
+🎉 **20,000 GitHub stars — thank you!**
+
+Thanks to everyone using REA, reporting bugs, testing builds, and contributing fixes.
 
 <a href="https://www.star-history.com/?repos=morluto%2Frea&amp;type=date">
   <picture>
@@ -336,3 +332,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and checks,
 ## Disclaimer
 
 REA provides tools for lawful reverse-engineering research, analysis, and reconstruction. You are responsible for obtaining any required authorization and complying with applicable laws. The project does not endorse illegal or unauthorized use.
+
+## License
+
+[MIT](LICENSE)

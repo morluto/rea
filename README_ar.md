@@ -15,10 +15,6 @@
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 [![Discord](https://img.shields.io/discord/1556595354999332884?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/GkcryMnJDM)
 
-🎉 **وصلنا إلى 20,000 نجمة على GitHub، شكرًا لكم!**
-
-شكرًا لكل من يستخدم REA ويبلّغ عن الأخطاء ويختبر الإصدارات ويساهم في إصلاحها.
-
 <a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
 
 **[الموقع (بالإنجليزية)](https://morluto.github.io/rea/) · [أدلة الاستخدام](https://morluto.github.io/rea/guides/) · [دراسة حالة DX-Ball](https://morluto.github.io/rea/showcase/dx-ball/)**
@@ -339,6 +335,20 @@ npx -y rea-agents@latest compare /absolute/path/to/left-evidence.json /absolute/
 - [القضايا والطلبات](https://github.com/morluto/rea/issues)
 - [Hopper Disassembler](https://www.hopperapp.com/)
 - [سياسة الأمان](SECURITY.md)
+
+## تاريخ النجوم
+
+🎉 **وصلنا إلى 20,000 نجمة على GitHub، شكرًا لكم!**
+
+شكرًا لكل من يستخدم REA ويبلّغ عن الأخطاء ويختبر الإصدارات ويساهم في إصلاحها.
+
+<a href="https://www.star-history.com/?repos=morluto%2Frea&amp;type=date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=morluto/rea&amp;type=date&amp;theme=dark&amp;legend=top-left" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=morluto/rea&amp;type=date" />
+    <img alt="تاريخ نجوم REA على GitHub" src="https://api.star-history.com/chart?repos=morluto/rea&amp;type=date" />
+  </picture>
+</a>
 
 ## الترخيص
 

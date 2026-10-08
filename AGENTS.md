@@ -54,6 +54,8 @@ Use ESM TypeScript, two-space indentation, and the committed Oxfmt configuration
 
 Treat a boundary as a contract between the producer's actual representation and the consumer's required meaning. When implementing or auditing a boundary, trace the value through parsing, normalization, authorization, serialization, and the CLI/MCP result. Establish affected callers from their code paths; similar tool names or workflows do not prove that they share a schema or failure mode.
 
+When changing boundary behavior, inspect adjacent input representations, failure paths, and affected callers, and correct the underlying assumption across those cases.
+
 Keep portable evidence and scenario validation distinct from host-native execution checks. Absolute filesystem paths, file URLs, and HTTP paths have different semantics; do not substitute one platform's syntax for the domain concept. Interpret provider metadata according to its documented or observed producer behavior. When a transformation loses information, preserve the reported value and an explicit unknown rather than guessing a canonical identity.
 
 Preserve meaningful failure reasons through application and adapter layers. Malformed input is distinct from an unsupported target, unavailable provider, or host operating-system permission denial. Diagnostics should identify the failed constraint and the target or lifecycle request it applies to. Recovery advice must address that reason and point to an available workflow; generic catches must not erase actionable validation details.
