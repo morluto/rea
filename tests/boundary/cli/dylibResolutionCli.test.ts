@@ -366,3 +366,46 @@ cliTest(
     ).toContain("entries in this non-executable root are observations");
   },
 );
+
+cliTest(
+  "distinguishes empty search directories from empty versioned or suffix lists",
+  async ({ cli }) => {
+    for (const [setting, status] of [
+      ["DYLD_FALLBACK_LIBRARY_PATH=", "undetermined"],
+      ["DYLD_VERSIONED_LIBRARY_PATH=", "unresolved"],
+      ["DYLD_IMAGE_SUFFIX=:", "unresolved"],
+    ] as const) {
+      const root = await createTestTempDirectory("rea-dyld-empty-cli-");
+      const path = join(root, "program");
+      await writeFile(
+        path,
+        machoImage({
+          commands: [
+            buildVersionCommand(1),
+            dyldEnvironmentCommand(setting),
+            dylibCommand(LC.LOAD_DYLIB, "@loader_path/missing.dylib"),
+          ],
+        }),
+      );
+      const result = await cli.run({
+        arguments: ["trace-dylib-resolution", path, "--json"],
+        environment: ENVIRONMENT,
+      });
+      expect(result.exitCode, JSON.stringify(result.json)).toBe(0);
+      const trace = dylibResolutionResultSchema.parse(
+        parseEvidence(result.json).normalized_result,
+      );
+      expect(trace.edges[0]?.resolution.status).toBe(status);
+      expect(trace.coverage.status).toBe(
+        status === "undetermined" ? "partial" : "complete",
+      );
+      expect(
+        trace.images.find(({ path }) => path === "program")?.slices[0]
+          ?.dyld_environment,
+      ).toEqual([setting]);
+      expect(
+        trace.findings.some(({ kind }) => kind === "required-load-unresolved"),
+      ).toBe(status === "unresolved");
+    }
+  },
+);

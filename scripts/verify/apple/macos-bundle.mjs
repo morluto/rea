@@ -14,6 +14,7 @@ import {
   buildMacosBundleFixture,
   preflightMacosBundleFixture,
 } from "../../fixtures/apple/macos-bundle.mjs";
+import { verifyDyldEnvironment } from "./dyld-environment.mjs";
 import { verifyDylibResolution } from "./macos-dylib-e2e.mjs";
 
 const exec = promisify(execFile);
@@ -152,6 +153,7 @@ try {
   const { stdout: attached } = await exec("/usr/bin/hdiutil", ["info"]);
   assert.ok(!attached.includes(dmg), "DMG remained attached after inventory");
   const dylibs = await verifyDylibResolution(app);
+  const dyldEnvironment = await verifyDyldEnvironment(root);
 
   process.stdout.write(
     `${JSON.stringify({
@@ -163,6 +165,7 @@ try {
       bundles: EXPECTED_BUNDLES.length,
       dmg_detached: true,
       dylib_resolution: dylibs,
+      dyld_environment: dyldEnvironment,
     })}\n`,
   );
 } finally {

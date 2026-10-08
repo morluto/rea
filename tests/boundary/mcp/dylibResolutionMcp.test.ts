@@ -323,3 +323,55 @@ it("ignores process settings on an explicitly selected library root through MCP"
     ).toContain("entries in this non-executable root are observations");
   });
 });
+
+it.each([
+  ["DYLD_FALLBACK_LIBRARY_PATH=", "undetermined"],
+  ["DYLD_VERSIONED_LIBRARY_PATH=", "unresolved"],
+  ["DYLD_IMAGE_SUFFIX=:", "unresolved"],
+] as const)(
+  "retains the missing-dependency semantics of %s through MCP",
+  async (setting, status) => {
+    const root = await createTestTempDirectory("rea-dyld-empty-mcp-");
+    const path = join(root, "program");
+    await writeFile(
+      path,
+      machoImage({
+        commands: [
+          buildVersionCommand(1),
+          dyldEnvironmentCommand(setting),
+          dylibCommand(LC.LOAD_DYLIB, "@loader_path/missing.dylib"),
+        ],
+      }),
+    );
+    await withClient(async (client) => {
+      const opened = await client.callTool({
+        name: "open_binary",
+        arguments: { path },
+      });
+      expect(opened.isError, JSON.stringify(opened.structuredContent)).not.toBe(
+        true,
+      );
+      const result = await client.callTool({
+        name: "trace_dylib_resolution",
+        arguments: {},
+      });
+      expect(result.isError, JSON.stringify(result.structuredContent)).not.toBe(
+        true,
+      );
+      const trace = dylibResolutionResultSchema.parse(
+        structuredResult(result.structuredContent),
+      );
+      expect(trace.edges[0]?.resolution.status).toBe(status);
+      expect(trace.coverage.status).toBe(
+        status === "undetermined" ? "partial" : "complete",
+      );
+      expect(
+        trace.images.find(({ path }) => path === "program")?.slices[0]
+          ?.dyld_environment,
+      ).toEqual([setting]);
+      expect(
+        trace.findings.some(({ kind }) => kind === "required-load-unresolved"),
+      ).toBe(status === "unresolved");
+    });
+  },
+);

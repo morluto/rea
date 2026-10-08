@@ -186,6 +186,14 @@ cache rather than on disk, so REA does not check them against the host.
   other non-executable roots do not alter resolution or coverage. Applicable
   executable image-selection overrides are not modeled.
 
+Empty dyld settings have different consumers. Modern dyld appends a slash and
+image name to ordinary and fallback directory entries, so an empty entry can
+search `/child.dylib` or `/Foo.framework/Foo`. REA retains uncertainty for those
+unchecked paths; an empty fallback does not preempt an ordinary-search hit.
+Empty versioned-directory lists do not scan a directory, and empty suffixes
+only repeat the original candidate, so they do not add search uncertainty.
+Reported command values are retained in all cases.
+
 `verify:macos-bundle` checks the parser against `otool -l` for every traced
 image. It also compares the predicted load order of two process roots with the
 images dyld actually loads (`DYLD_PRINT_LIBRARIES`).

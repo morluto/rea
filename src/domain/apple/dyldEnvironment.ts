@@ -17,7 +17,7 @@ export const embeddedDyldOverrides = (
     if (delimiter <= 0) continue;
     const variable = setting.slice(0, delimiter);
     const value = setting.slice(delimiter + 1);
-    const effect = overrideEffect(variable);
+    const effect = overrideEffect(variable, value);
     if (effect === undefined) continue;
     // ROOT_PATH is accepted only for simulator processes. Missing or unknown
     // platform metadata cannot establish that dyld ignores it.
@@ -28,13 +28,6 @@ export const embeddedDyldOverrides = (
       !platforms.some((platform) => [7, 8, 9, 12].includes(platform))
     )
       continue;
-    if (
-      (variable === "DYLD_INSERT_LIBRARIES" ||
-        variable === "DYLD_IMAGE_SUFFIX" ||
-        effect.scope === "prefix") &&
-      value === ""
-    )
-      continue;
     overrides.push({ variable, value, ...effect });
   }
   return overrides;
@@ -42,8 +35,11 @@ export const embeddedDyldOverrides = (
 
 const overrideEffect = (
   variable: string,
+  value: string,
 ): Pick<DyldSearchOverride, "phase" | "scope"> | undefined => {
   switch (variable) {
+    // Empty directory components still produce /leaf candidates in dyld.
+    // In particular, an empty fallback value is not a no-op.
     case "DYLD_LIBRARY_PATH":
       return { phase: "override", scope: "library" };
     case "DYLD_FRAMEWORK_PATH":
@@ -56,12 +52,17 @@ const overrideEffect = (
     // so the directory's kind does not establish the replaced image's kind.
     case "DYLD_VERSIONED_LIBRARY_PATH":
     case "DYLD_VERSIONED_FRAMEWORK_PATH":
-    case "DYLD_INSERT_LIBRARIES":
     case "DYLD_IMAGE_SUFFIX":
-      return { phase: "override", scope: "all" };
+      // Versioned paths scan directories; suffixes create path variants.
+      // Empty directories cannot be scanned and empty suffixes repeat a path.
+      return /[^:]/u.test(value)
+        ? { phase: "override", scope: "all" }
+        : undefined;
+    case "DYLD_INSERT_LIBRARIES":
+      return value === "" ? undefined : { phase: "override", scope: "all" };
     case "DYLD_ROOT_PATH":
     case "DYLD_OVERLAY_PATH":
-      return { phase: "override", scope: "prefix" };
+      return value === "" ? undefined : { phase: "override", scope: "prefix" };
     default:
       return undefined;
   }

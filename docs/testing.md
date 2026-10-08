@@ -113,6 +113,12 @@ covers `trace-dylib-resolution`:
 - for the main executable and an XPC service, a predicted load order equal to
   the images dyld actually loads under `DYLD_PRINT_LIBRARIES`.
 
+The lane also compiles executable/library pairs with empty embedded directory,
+versioned-path, and suffix settings. It checks present and removed dependencies
+through CLI and MCP, and compares actual `DYLD_PRINT_SEARCHING` diagnostics for
+root-level candidates. These cases distinguish an empty search directory from
+an empty versioned scan or a suffix that only repeats the original path.
+
 It runs in macOS CI.
 
 Apple artifact verifiers live in `scripts/verify/apple/`, with the macOS bundle

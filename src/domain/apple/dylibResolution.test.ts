@@ -1105,3 +1105,130 @@ it("keeps inserted-library uncertainty scoped to the executable's process", asyn
   expect(limitation).toContain(MAIN);
   expect(limitation).not.toContain(library);
 });
+
+it.each([
+  [
+    "DYLD_LIBRARY_PATH=",
+    "@loader_path/child.dylib",
+    "conditional",
+    "undetermined",
+  ],
+  [
+    "DYLD_LIBRARY_PATH=: ",
+    "@loader_path/child.dylib",
+    "conditional",
+    "undetermined",
+  ],
+  [
+    "DYLD_FRAMEWORK_PATH=",
+    "@loader_path/Foo.framework/Foo",
+    "conditional",
+    "undetermined",
+  ],
+  [
+    "DYLD_FALLBACK_LIBRARY_PATH=",
+    "@loader_path/child.dylib",
+    "resolved",
+    "undetermined",
+  ],
+  [
+    "DYLD_FALLBACK_LIBRARY_PATH=:",
+    "@loader_path/child.dylib",
+    "resolved",
+    "undetermined",
+  ],
+  [
+    "DYLD_FALLBACK_FRAMEWORK_PATH=",
+    "@loader_path/Foo.framework/Foo",
+    "resolved",
+    "undetermined",
+  ],
+  [
+    "DYLD_VERSIONED_LIBRARY_PATH=",
+    "@loader_path/child.dylib",
+    "resolved",
+    "unresolved",
+  ],
+  [
+    "DYLD_VERSIONED_LIBRARY_PATH=:",
+    "@loader_path/child.dylib",
+    "resolved",
+    "unresolved",
+  ],
+  [
+    "DYLD_VERSIONED_FRAMEWORK_PATH=",
+    "@loader_path/Foo.framework/Foo",
+    "resolved",
+    "unresolved",
+  ],
+  [
+    "DYLD_VERSIONED_FRAMEWORK_PATH=::",
+    "@loader_path/Foo.framework/Foo",
+    "resolved",
+    "unresolved",
+  ],
+  [
+    "DYLD_VERSIONED_LIBRARY_PATH= ",
+    "@loader_path/child.dylib",
+    "conditional",
+    "undetermined",
+  ],
+  ["DYLD_IMAGE_SUFFIX=:", "@loader_path/child.dylib", "resolved", "unresolved"],
+  [
+    "DYLD_IMAGE_SUFFIX=::",
+    "@loader_path/Foo.framework/Foo",
+    "resolved",
+    "unresolved",
+  ],
+  [
+    "DYLD_IMAGE_SUFFIX=:_debug:",
+    "@loader_path/child.dylib",
+    "conditional",
+    "undetermined",
+  ],
+  [
+    "DYLD_INSERT_LIBRARIES=",
+    "@loader_path/child.dylib",
+    "resolved",
+    "unresolved",
+  ],
+  [
+    "DYLD_INSERT_LIBRARIES=:",
+    "@loader_path/child.dylib",
+    "conditional",
+    "undetermined",
+  ],
+] as const)(
+  "interprets the empty components of %s according to their consumer for %s",
+  async (setting, installName, foundStatus, missingStatus) => {
+    const child = installName.replace("@loader_path", "Contents/MacOS");
+    for (const [exists, status] of [
+      [true, foundStatus],
+      [false, missingStatus],
+    ] as const) {
+      const trace = await traceDylibLoading(
+        memoryView({
+          [MAIN]: executable({
+            dyld_environment: [setting],
+            dependencies: [dependency(installName)],
+          }),
+          ...(exists ? { [child]: parsed(slice()) } : {}),
+        }),
+        { roots: [MAIN] },
+      );
+      expect(trace.edges[0]?.resolution.status).toBe(status);
+      expect(trace.coverage.status).toBe(
+        status === "conditional" || status === "undetermined"
+          ? "partial"
+          : "complete",
+      );
+      expect(
+        trace.images.find(({ path }) => path === MAIN)?.slices[0]
+          ?.dyld_environment,
+      ).toEqual([setting]);
+      expect(
+        trace.findings.some(({ kind }) => kind === "required-load-unresolved"),
+      ).toBe(status === "unresolved");
+    }
+  },
+);
