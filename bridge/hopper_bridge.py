@@ -318,11 +318,16 @@ def _containing_procedure(document, address):
 
 def _basic_block_end(procedure, block):
     """Normalize native block endpoints to an exclusive byte address."""
+    owner_at = getattr(procedure, "getBasicBlockAtAddress", None)
+    if not callable(owner_at):
+        raise CapabilityUnavailableError(
+            "Instruction enumeration requires Hopper basic-block ownership"
+        )
     end = block.getEndingAddress()
     # Hopper 6.1 returns the final instruction address, despite the Python
     # documentation describing an exclusive end. Membership distinguishes
     # that representation from an actual exclusive endpoint in other builds.
-    if procedure.getBasicBlockAtAddress(end) == block:
+    if owner_at(end) == block:
         instruction = procedure.getSegment().getInstructionAtAddress(end)
         if instruction is not None and instruction.getInstructionLength() > 0:
             return end + instruction.getInstructionLength()
@@ -336,22 +341,17 @@ def _block_instruction_addresses(procedure, block):
     API documenting an exclusive end. Equality compares fresh native wrappers;
     probing ownership also keeps an exclusive endpoint in the next block out.
     """
-    owner_at = getattr(procedure, "getBasicBlockAtAddress", None)
-    if not callable(owner_at):
-        raise CapabilityUnavailableError(
-            "Instruction enumeration requires Hopper basic-block ownership"
-        )
     segment = procedure.getSegment()
     address = block.getStartingAddress()
-    end = block.getEndingAddress()
-    while address <= end:
-        if owner_at(address) != block:
+    end = _basic_block_end(procedure, block)
+    while address < end:
+        if procedure.getBasicBlockAtAddress(address) != block:
             break
         instruction = segment.getInstructionAtAddress(address)
         if instruction is None:
             break
         length = instruction.getInstructionLength()
-        if length <= 0 or (address < end and address + length > end):
+        if length <= 0 or address + length > end:
             break
         yield address
         address += length

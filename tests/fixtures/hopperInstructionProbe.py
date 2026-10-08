@@ -73,6 +73,15 @@ class Procedure:
                 return Block(block.key, block.start, block.end, block.members)
         return None
 
+    def getBasicBlockCount(self):
+        return len(self.blocks)
+
+    def getAllCallees(self):
+        return []
+
+    def getAllCallers(self):
+        return []
+
     def getSegment(self):
         return self.segment
 
@@ -148,16 +157,29 @@ def main():
             print(json.dumps({"error": str(error)}))
             return
         raise AssertionError("Missing ownership API was silently accepted")
-    document = object()
+    class API:
+        def require_analysis_complete(self, document, method):
+            pass
+
+    class Document:
+        def getSegmentsList(self):
+            return []
+
+    document = Document()
+    bridge["_api"] = lambda: API()
+    bridge["_document"] = lambda name=None: document
     bridge["_procedure"] = lambda document, value=None: procedure
     bridge["_segment"] = lambda document, address: segment
     bridge["_containing_procedure"] = lambda document, address: (None, None)
     bridge["_search_inventory"] = lambda document, kind: []
+    dossier = bridge["_analyze_function"](document, {})
     print(json.dumps({
+        "blocks": dossier["basic_blocks"],
+        "length": bridge["_dispatch"]("procedure_info", {})["length"],
         "addresses": bridge["_instruction_addresses"](procedure),
         "assembly": bridge["_assembly"](procedure).splitlines(),
         "fast": bridge["_read_function_instructions"](document, {})["instructions"],
-        "dossier": bridge["_analyze_function"](document, {})["assembly"],
+        "dossier": dossier["assembly"],
         "references": bridge["_procedure_references"](document, {})["references"],
     }))
 

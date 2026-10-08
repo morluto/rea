@@ -14,6 +14,8 @@ const probe = fileURLToPath(
 );
 const resultSchema = z.object({
   addresses: z.array(z.number()),
+  blocks: z.array(z.object({ start: z.string(), end: z.string() })),
+  length: z.number(),
   assembly: z.array(z.string()),
   fast: z.array(z.string()),
   dossier: z.array(z.string()),
@@ -29,6 +31,13 @@ describe("Hopper instruction block boundaries", () => {
       });
       const result = resultSchema.parse(JSON.parse(stdout));
       expect(result.addresses).toEqual([0x1000, 0x1004, 0x1008]);
+      if (scenario !== "duplicate") {
+        expect(result.blocks).toEqual([
+          { start: "0x1000", end: "0x1008" },
+          { start: "0x1008", end: "0x100c" },
+        ]);
+        expect(result.length).toBe(12);
+      }
       const lines = ["0x1000: mov", "0x1004: b.ne", "0x1008: ret"];
       expect(result.assembly).toEqual(lines);
       expect(result.fast).toEqual(lines);
@@ -67,6 +76,11 @@ describe("Hopper instruction block boundaries", () => {
     );
     const result = resultSchema.parse(JSON.parse(stdout));
     expect(result.addresses).toEqual([0x1000, 0x1003, 0x1005]);
+    expect(result.blocks).toEqual([
+      { start: "0x1000", end: "0x1005" },
+      { start: "0x1005", end: "0x1006" },
+    ]);
+    expect(result.length).toBe(6);
     expect(result.assembly).toEqual([
       "0x1000: mov",
       "0x1003: b.ne",
