@@ -68,7 +68,7 @@ npx rea-agents setup
 
 Wähle deine Agenten aus, prüfe die geplanten Änderungen und bestätige sie. Die Einrichtung fügt den MCP-Server von REA und passende Workflow-Anweisungen hinzu und sichert vorhandene Konfigurationen. Starte deinen Agenten anschließend neu.
 
-Die Einrichtung unterstützt Claude Code, Codex, Cursor, Gemini CLI und [weitere Agenten](docs/installation.md#supported-agents). Informationen zur Provider-Konfiguration und manuellen MCP-Registrierung findest du unter [Installation und Einrichtung](docs/installation.md).
+Die Einrichtung unterstützt Claude Code, Codex, Cursor, Gemini CLI, Grok Build, Grok Bot und [weitere Agenten](docs/installation.md#supported-agents). Informationen zur Provider-Konfiguration und manuellen MCP-Registrierung findest du unter [Installation und Einrichtung](docs/installation.md).
 
 ### Deinen Agenten fragen
 
