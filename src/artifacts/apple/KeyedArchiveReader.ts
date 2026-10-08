@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { TextDecoder } from "node:util";
 import { parseBinary } from "plist";
 import { z } from "zod";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
@@ -16,6 +15,8 @@ import {
 } from "../../domain/apple/keyedArchive.js";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
+
+import { decodeXmlPlistText } from "./XmlPropertyListText.js";
 
 const MAX_BYTES = 64 * 1024 * 1024;
 
@@ -45,26 +46,6 @@ export const decodeKeyedArchiveBytes = (
         : [omittedPrototypeKeysLimitation(parsed.omittedPrototypeKeys)]),
     ],
   };
-};
-
-const decodeXmlPlistText = (bytes: Buffer): string => {
-  const encoding =
-    bytes[0] === 0xff && bytes[1] === 0xfe
-      ? "utf-16le"
-      : bytes[0] === 0xfe && bytes[1] === 0xff
-        ? "utf-16be"
-        : "utf-8";
-  const text = new TextDecoder(encoding, { fatal: true }).decode(bytes);
-  const declared = /^<\?xml\s[^?]*\bencoding\s*=\s*["']([^"']+)["']/u
-    .exec(text)?.[1]
-    ?.toLowerCase();
-  if (
-    declared !== undefined &&
-    ((encoding !== "utf-8" && declared !== encoding && declared !== "utf-16") ||
-      (encoding === "utf-8" && declared.startsWith("utf-16")))
-  )
-    throw new TypeError("XML encoding declaration disagrees with its bytes");
-  return text;
 };
 
 const normalizePlist = (value: unknown): JsonValue => {

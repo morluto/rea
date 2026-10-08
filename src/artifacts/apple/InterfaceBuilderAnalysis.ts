@@ -21,6 +21,8 @@ import {
 } from "./NibViewHierarchy.js";
 import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 
+import { decodeXmlPlistText } from "./XmlPropertyListText.js";
+
 const MAX_DOCUMENT_BYTES = 64 * 1024 * 1024;
 
 /** Decode compiled Interface Builder archives from a local app bundle. */
@@ -405,6 +407,6 @@ const decodePlist = (
   const { value, omittedPrototypeKeys } =
     bytes.subarray(0, 8).toString("ascii") === "bplist00"
       ? { value: parseBinary(bytes), omittedPrototypeKeys: 0 }
-      : parseXmlPropertyList(bytes.toString("utf8"));
+      : parseXmlPropertyList(decodeXmlPlistText(bytes));
   return { value: projectPlistValue(value).value, omittedPrototypeKeys };
 };
