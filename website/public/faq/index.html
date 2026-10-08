@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FAQ — REA</title>
+    <meta
+      name="description"
+      content="Answers to common REA questions: installation, updates, analysis tools, coding agents, troubleshooting and sharing examples."
+    />
+    <meta name="theme-color" content="#ffffff" />
+    <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../assets/styles.css" />
+    <script src="../assets/main.js" defer></script>
+  </head>
+  <body id="top">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="../" aria-label="REA home"
+          ><span class="brand-name">REA</span
+          ><span class="brand-caption">Reverse Engineer Anything</span></a
+        >
+        <nav class="navigation" aria-label="Main navigation">
+          <a href="../showcase/">Showcases</a>
+          <a class="nav-start" href="../get-started/">Get started</a>
+          <a href="../guides/">Guides</a>
+          <a href="./" aria-current="page">FAQ</a>
+          <a href="https://github.com/morluto/rea">GitHub</a>
+        </nav>
+      </div>
+    </header>
+    <main id="main" class="container">
+      <div class="page-heading">
+        <p class="breadcrumb"><a href="../">Home</a> / FAQ</p>
+        <h1>REA FAQ.</h1>
+        <p class="lede">Setup, updates, analysis and troubleshooting.</p>
+      </div>
+      <div class="article-layout">
+        <nav class="contents" aria-label="On this page">
+          <p>Topics</p>
+          <ul>
+            <li><a href="#setup">Setup and updates</a></li>
+            <li><a href="#analysis">Analysis</a></li>
+            <li><a href="#troubleshooting">Troubleshooting</a></li>
+            <li><a href="#sharing">Data and sharing</a></li>
+          </ul>
+        </nav>
+        <article
+          class="article"
+          data-faq
+          aria-label="Frequently asked questions about REA"
+        >
+          <section class="article-section" id="setup">
+            <h2>Setup and updates</h2>
+            <div class="faq-list">
+              <details class="faq-item" id="install">
+                <summary>How do I install REA?</summary>
+                <p>
+                  With Node.js and npm available, run setup, choose your coding
+                  agent and review the proposed changes.
+                </p>
+                <div class="code-block">
+                  <div class="code-header">
+                    <span>Terminal · agent setup</span
+                    ><button
+                      class="copy-button"
+                      type="button"
+                      data-copy="faq-setup"
+                      aria-label="Copy REA setup command"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <pre><code id="faq-setup">npx rea-agents@latest setup</code></pre>
+                </div>
+                <p>
+                  Setup registers REA's MCP connection and installs the matching
+                  investigation skill. Restart your agent when it finishes, then
+                  give it a target path and a question.
+                  <a href="../get-started/">Follow the setup guide</a> for
+                  prerequisites and your first analysis.
+                </p>
+              </details>
+              <details class="faq-item" id="agents">
+                <summary>Which coding agents can use REA?</summary>
+                <p>
+                  Any agent that supports local MCP servers. Setup includes
+                  Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI,
+                  Windsurf, Devin, OpenCode, Antigravity, GitHub Copilot CLI,
+                  Command Code and VS Code.
+                </p>
+                <p>
+                  <a href="../get-started/#agent">Connect your coding agent</a>.
+                </p>
+              </details>
+              <details class="faq-item" id="update">
+                <summary>How do I update REA?</summary>
+                <p>
+                  REA releases frequently, including bug fixes. If you installed
+                  the CLI with npm:
+                </p>
+                <div class="code-block">
+                  <div class="code-header">
+                    <span>Terminal · installed CLI</span
+                    ><button
+                      class="copy-button"
+                      type="button"
+                      data-copy="faq-update-cli"
+                      aria-label="Copy REA update command"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <pre><code id="faq-update-cli">rea update</code></pre>
+                </div>
+                <p>
+                  Follow the setup refresh command printed by the update. If you
+                  set up your agent through <code>npx</code>, run:
+                </p>
+                <div class="code-block">
+                  <div class="code-header">
+                    <span>Terminal · refresh agent setup</span
+                    ><button
+                      class="copy-button"
+                      type="button"
+                      data-copy="faq-update-agent"
+                      aria-label="Copy agent setup refresh command"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <pre><code id="faq-update-agent">npx rea-agents@latest setup</code></pre>
+                </div>
+                <p>
+                  Review the changes and restart your agent. Its REA connection
+                  pins a package version, so refreshing setup makes it use the
+                  new release. For one-off CLI commands, use
+                  <code>npx -y rea-agents@latest</code> followed by the command.
+                </p>
+              </details>
+              <details class="faq-item" id="skill">
+                <summary>
+                  Is installing the skill from skills.sh enough?
+                </summary>
+                <p>
+                  The skill gives your agent investigation instructions. Run
+                  <a href="#install">REA setup</a> to connect the MCP server and
+                  install the matching skill, then restart your agent so it can
+                  call the tools.
+                </p>
+              </details>
+            </div>
+          </section>
+
+          <section class="article-section" id="analysis">
+            <h2>Analysis</h2>
+            <div class="faq-list">
+              <details class="faq-item" id="targets">
+                <summary>What can I analyze with REA?</summary>
+                <p>Start with the kind of software you have:</p>
+                <ul>
+                  <li>
+                    <a href="../guides/native/"
+                      >Native executables and libraries</a
+                    >: functions, assembly, pseudocode and references.
+                  </li>
+                  <li>
+                    <a href="../guides/javascript/"
+                      >JavaScript and Electron apps</a
+                    >: modules, imports, IPC and source locations.
+                  </li>
+                  <li>
+                    <a href="../guides/browser/">Browser pages</a>: scripts,
+                    requests and runtime observations.
+                  </li>
+                </ul>
+                <p>
+                  REA also has workflows for managed assemblies, Android APKs,
+                  firmware and packaged resources.
+                  <a href="../showcase/">See the case studies</a> for worked
+                  investigations.
+                </p>
+              </details>
+              <details class="faq-item" id="providers">
+                <summary>Do I need Hopper, Ghidra or IDA?</summary>
+                <p>
+                  Deep native analysis uses one of them. Static JavaScript and
+                  .NET inspection work with the supplied files and do not need a
+                  native analysis engine.
+                </p>
+                <p>
+                  Connect your existing Ghidra or IDA installation, or let setup
+                  detect Hopper and propose an installation. Your host and
+                  target determine which provider can be used.
+                  <a href="../get-started/#native">Set up native analysis</a>.
+                </p>
+              </details>
+              <details class="faq-item" id="cli">
+                <summary>Can I use REA without a coding agent?</summary>
+                <p>
+                  Yes. The CLI uses the same analysis workflows. For a local
+                  JavaScript or Electron app:
+                </p>
+                <div class="code-block">
+                  <div class="code-header">
+                    <span>Terminal · static application analysis</span
+                    ><button
+                      class="copy-button"
+                      type="button"
+                      data-copy="faq-cli-analysis"
+                      aria-label="Copy REA CLI analysis command"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <pre><code id="faq-cli-analysis">npx -y rea-agents@latest analyze-javascript-application \
+  /absolute/path/to/app --json</code></pre>
+                </div>
+                <p>
+                  Replace the path with an extracted application folder or ASAR
+                  file. <a href="../get-started/#terminal">Use the CLI</a> for
+                  installation options.
+                </p>
+              </details>
+              <details class="faq-item" id="code">
+                <summary>What code does REA return?</summary>
+                <p>
+                  Native analysis returns assembly and pseudocode, with calls,
+                  references and relevant constants. JavaScript analysis returns
+                  modules, their relationships and source locations.
+                </p>
+                <p>
+                  Your agent uses these findings to explain the behavior or
+                  write and test an implementation. The
+                  <a href="../showcase/dx-ball/#sound-pan"
+                    >DX-Ball calculation</a
+                  >
+                  and <a href="../showcase/ctf/">CTF flag checker</a> show how
+                  that process works.
+                </p>
+              </details>
+              <details class="faq-item" id="prompt">
+                <summary>What should I ask my agent?</summary>
+                <p>
+                  Give it a local target and one behavior to investigate. For a
+                  JavaScript or Electron app:
+                </p>
+                <div class="agent-terminal">
+                  <div class="terminal-header">
+                    <span class="terminal-title"
+                      ><span class="terminal-dots" aria-hidden="true"
+                        ><i></i><i></i><i></i></span
+                      >Your coding agent</span
+                    ><button
+                      class="copy-button"
+                      type="button"
+                      data-copy="faq-analysis-prompt"
+                      aria-label="Copy example analysis prompt"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <p class="terminal-prompt">
+                    <span class="prompt-symbol" aria-hidden="true">›</span
+                    ><span id="faq-analysis-prompt"
+                      >Use REA to analyze /absolute/path/to/app and explain how
+                      it exports data. Show the relevant code and source
+                      locations.</span
+                    ><span class="terminal-cursor" aria-hidden="true"></span>
+                  </p>
+                </div>
+                <p class="caption">
+                  Replace the path with your target. The
+                  <a href="../guides/">guides</a> provide prompts for native,
+                  Electron and browser examples.
+                </p>
+              </details>
+            </div>
+          </section>
+
+          <section class="article-section" id="troubleshooting">
+            <h2>Troubleshooting</h2>
+            <div class="faq-list">
+              <details class="faq-item" id="connection">
+                <summary>Why can't my agent see the REA tools?</summary>
+                <p>
+                  Restart or reconnect your agent after setup. Check its REA
+                  registration with <code>doctor</code>; for Codex:
+                </p>
+                <div class="code-block">
+                  <div class="code-header">
+                    <span>Terminal · check one client</span
+                    ><button
+                      class="copy-button"
+                      type="button"
+                      data-copy="faq-doctor"
+                      aria-label="Copy client diagnosis command"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <pre><code id="faq-doctor">npx -y rea-agents@latest doctor --client codex --json</code></pre>
+                </div>
+                <p>
+                  Replace <code>codex</code> with your client ID, such as
+                  <code>claude_code</code> or <code>cursor</code>. If the report
+                  shows a missing or stale registration, run setup for that
+                  client:
+                </p>
+                <div class="code-block">
+                  <div class="code-header">
+                    <span>Terminal · repair one client's setup</span
+                    ><button
+                      class="copy-button"
+                      type="button"
+                      data-copy="faq-repair"
+                      aria-label="Copy scoped setup command"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <pre><code id="faq-repair">npx rea-agents@latest setup --client codex</code></pre>
+                </div>
+                <p>
+                  Review its plan and restart the client. If registration is
+                  healthy but tools remain absent, check the client's MCP
+                  connection error.
+                  <a href="../get-started/#help">More setup diagnostics</a>.
+                </p>
+              </details>
+              <details class="faq-item" id="hopper">
+                <summary>Do I need to start Hopper first?</summary>
+                <p>
+                  REA starts Hopper when an operation needs it. On macOS,
+                  complete the first-run choice of demo mode or license
+                  activation before unattended analysis.
+                  <a href="../get-started/#native">See native provider setup</a
+                  >.
+                </p>
+              </details>
+              <details class="faq-item" id="bugs">
+                <summary>What should I do if I hit a bug?</summary>
+                <p>
+                  <a href="#update">Update REA</a>, restart your agent and retry
+                  the same task. A recent release may already fix the problem.
+                </p>
+                <p>
+                  If it persists,
+                  <a href="https://github.com/morluto/rea/issues/new/choose"
+                    >open an issue</a
+                  >
+                  with your REA version, operating system, target type, steps to
+                  reproduce and error output. Include the provider name when the
+                  problem involves native analysis.
+                </p>
+              </details>
+            </div>
+          </section>
+
+          <section class="article-section" id="sharing">
+            <h2>Data and sharing</h2>
+            <div class="faq-list">
+              <details class="faq-item" id="privacy">
+                <summary>Does REA upload my app?</summary>
+                <p>
+                  REA analyzes targets on your machine. Your agent receives the
+                  results, and its model provider's data policy applies to those
+                  results.
+                </p>
+              </details>
+              <details class="faq-item" id="contribute">
+                <summary>How can I share an example or contribute?</summary>
+                <p>
+                  Have a useful REA example? We'd love to see it. Share the
+                  target, your question, the findings and how you checked them
+                  in an
+                  <a href="https://github.com/morluto/rea/issues/new/choose"
+                    >issue</a
+                  >
+                  or
+                  <a href="https://github.com/morluto/rea/pulls">pull request</a
+                  >. Short code excerpts and figures help others follow the
+                  investigation.
+                </p>
+                <p>
+                  Bug reports, feature requests, documentation and code
+                  improvements are welcome too. You can also discuss an example
+                  in the <a href="https://discord.gg/GkcryMnJDM">community</a>.
+                </p>
+              </details>
+            </div>
+          </section>
+        </article>
+      </div>
+    </main>
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <p>REA · Reverse Engineer Anything</p>
+        <div class="footer-links">
+          <a href="https://github.com/morluto/rea">Source</a
+          ><a href="https://github.com/morluto/rea/blob/main/LICENSE"
+            >MIT license</a
+          ><a href="https://discord.gg/GkcryMnJDM">Community</a>
+        </div>
+      </div>
+    </footer>
+    <p class="sr-only" id="copy-status" role="status" aria-live="polite"></p>
+    <a class="back-to-top" href="#top" aria-label="Back to top"
+      ><span aria-hidden="true">↑</span> Top</a
+    >
+  </body>
+</html>

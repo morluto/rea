@@ -1,8 +1,20 @@
-import { AnalysisError } from "./analysisErrorBase.js";
+import {
+  AnalysisError,
+  type AnalysisErrorOptions,
+} from "./analysisErrorBase.js";
 
 /** Evidence identity, schema, or bundle manifests failed integrity checks. */
 export class EvidenceIntegrityError extends AnalysisError {
   readonly _tag = "EvidenceIntegrityError";
+  override readonly userMessage: string | undefined;
+
+  constructor(
+    message: string,
+    options?: AnalysisErrorOptions & { readonly userMessage?: string },
+  ) {
+    super(message, options);
+    this.userMessage = options?.userMessage;
+  }
 }
 
 /** A session Evidence reference is missing or has the wrong semantic identity. */

@@ -336,6 +336,20 @@ npx -y rea-agents@latest compare /absolute/path/to/left-evidence.json /absolute/
 - [Hopper Disassembler](https://www.hopperapp.com/)
 - [سياسة الأمان](SECURITY.md)
 
+## تاريخ النجوم
+
+🎉 **وصلنا إلى 20,000 نجمة على GitHub، شكرًا لكم!**
+
+شكرًا لكل من يستخدم REA ويبلّغ عن الأخطاء ويختبر الإصدارات ويساهم في إصلاحها.
+
+<a href="https://www.star-history.com/?repos=morluto%2Frea&amp;type=date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=morluto/rea&amp;type=date&amp;theme=dark&amp;legend=top-left" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=morluto/rea&amp;type=date" />
+    <img alt="تاريخ نجوم REA على GitHub" src="https://api.star-history.com/chart?repos=morluto/rea&amp;type=date" />
+  </picture>
+</a>
+
 ## الترخيص
 
 [MIT](LICENSE)

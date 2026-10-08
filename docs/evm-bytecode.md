@@ -24,7 +24,7 @@ their distinct unavailable-provider or capability classification.
 The host must already provide util-linux `prlimit`, normally `/usr/bin/prlimit`;
 `REA_EVM_PRLIMIT_COMMAND` can select another absolute executable. REA installs
 no system tools and changes no user configuration. [Upstream provenance and
-license](../third_party/evmole/README.md) are packaged.
+license](https://github.com/morluto/rea/blob/main/third_party/evmole/README.md) are packaged.
 
 ## Evidence semantics
 

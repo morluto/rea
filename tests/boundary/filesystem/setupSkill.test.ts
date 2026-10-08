@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -14,6 +15,7 @@ import {
 import { createDoctorHostFixture } from "../../../src/application/Doctor.fixture.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
+import { z } from "zod";
 import { skillReferenceIssues } from "../../../scripts/lib/docs-facts.mjs";
 
 describe("canonical skill transaction", () => {
@@ -88,6 +90,7 @@ describe("canonical skill transaction", () => {
     expect(installedSkill).toContain(
       `tool_count: ${String(TOOL_CONTRACTS.length)}`,
     );
+    expect(installedSkill).not.toContain("catalog_digest:");
     expect(await readFile(sibling, "utf8")).toBe("unrelated skill\n");
     expect(
       await readFile(
@@ -101,6 +104,45 @@ describe("canonical skill transaction", () => {
     expect(await canonicalSkillNeedsInstall(home)).toBe(false);
     expect(await installCanonicalSkill(home)).toBe("unchanged");
     expect(await skillReferenceIssues(dirname(destination))).toEqual([]);
+  });
+
+  it("binds portable conformance to the generated skill bytes that setup installs", async () => {
+    const home = await createTestTempDirectory("rea-skill-commitment-");
+    expect(await installCanonicalSkill(home)).toBe("installed");
+    const paths = [
+      "SKILL.md",
+      "references/android-applications.md",
+      "references/evidence-workflows.md",
+      "references/javascript-applications.md",
+      "references/native-and-artifacts.md",
+      "references/runtime-observation.md",
+    ];
+    const records = await Promise.all(
+      paths.map(async (path) => {
+        const bytes = await readFile(
+          join(home, ".agents/skills/reverse-engineer-anything", path),
+        );
+        return `${path}\0${createHash("sha256").update(bytes).digest("hex")}\n`;
+      }),
+    );
+    const manifest = z
+      .object({
+        skill_digests: z.array(
+          z.object({ skill_id: z.string(), sha256: z.string() }),
+        ),
+      })
+      .parse(
+        JSON.parse(
+          await readFile(
+            "docs/verification/managed-conformance-manifest.json",
+            "utf8",
+          ),
+        ),
+      );
+    expect(manifest.skill_digests).toContainEqual({
+      skill_id: "reverse-engineer-anything",
+      sha256: createHash("sha256").update(records.join("")).digest("hex"),
+    });
   });
 });
 
