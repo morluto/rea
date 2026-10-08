@@ -27,6 +27,7 @@ class SilentLauncher implements BridgeLauncher {
           },
         ),
         ownsProcessLifetime: true as const,
+        providerLifetime: "launcher-process" as const,
         shutdownMode: "bridge-request" as const,
       }),
     );
@@ -64,6 +65,9 @@ class ExitingLauncher implements BridgeLauncher {
           stdio: ["ignore", "ignore", "pipe"],
         }),
         ownsProcessLifetime: this.ownsProcessLifetime,
+        providerLifetime: this.ownsProcessLifetime
+          ? ("launcher-process" as const)
+          : ("external-application" as const),
         shutdownMode: "bridge-request" as const,
       }),
     );
@@ -100,6 +104,7 @@ class DiagnosticExitingLauncher implements BridgeLauncher {
           { stdio: ["ignore", "ignore", "pipe"] },
         ),
         ownsProcessLifetime: true as const,
+        providerLifetime: "launcher-process" as const,
         shutdownMode: "bridge-request" as const,
       }),
     );

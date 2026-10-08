@@ -55,6 +55,7 @@ export class HopperFixtureLauncher implements BridgeLauncher {
       ok({
         process: child,
         ownsProcessLifetime: true as const,
+        providerLifetime: "launcher-process" as const,
         shutdownMode: "bridge-request" as const,
       }),
     );

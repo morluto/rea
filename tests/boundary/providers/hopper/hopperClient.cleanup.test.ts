@@ -45,6 +45,7 @@ class OwnedFixtureLauncher implements BridgeLauncher {
     return ok({
       process: started.process,
       ownsProcessLifetime: true as const,
+      providerLifetime: "launcher-process" as const,
       ownership: started.ownership,
       shutdownMode: "process-cleanup" as const,
       cleanup: () => cleanupOwnedProcessGroup(started.ownership),
@@ -68,6 +69,7 @@ class UnconfirmedFixtureLauncher implements BridgeLauncher {
           { stdio: ["ignore", "ignore", "pipe"] },
         ),
         ownsProcessLifetime: false,
+        providerLifetime: "external-application" as const,
         shutdownMode: "bridge-request" as const,
       }),
     );
@@ -90,6 +92,7 @@ class UnconfirmedOwnedFixtureLauncher implements BridgeLauncher {
           { stdio: ["ignore", "ignore", "pipe"] },
         ),
         ownsProcessLifetime: true as const,
+        providerLifetime: "launcher-process" as const,
         shutdownMode: "bridge-request" as const,
       }),
     );

@@ -30,6 +30,7 @@ const processCleanupLaunch = (): BridgeLaunch => ({
     kill: () => true,
   }),
   ownsProcessLifetime: true,
+  providerLifetime: "launcher-process",
   shutdownMode: "process-cleanup",
   cleanup: () =>
     Promise.resolve({

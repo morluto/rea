@@ -122,9 +122,12 @@ export class HopperClient {
   readonly #onSocketClose = (): void => {
     if (this.#closing) return;
     const launch = this.#launch;
-    if (launch?.ownsProcessLifetime && this.#launcherExitCode !== undefined)
+    if (
+      launch?.providerLifetime === "launcher-process" &&
+      this.#launcherExitCode !== undefined
+    )
       return;
-    if (launch?.ownsProcessLifetime) {
+    if (launch?.providerLifetime === "launcher-process") {
       setImmediate(() => {
         if (this.#closing || this.#launcherExitCode !== undefined) return;
         const exitCode = launch.process.exitCode ?? null;
@@ -504,10 +507,11 @@ export class HopperClient {
       if (
         this.#launcherExitCode !== undefined &&
         this.#launch !== undefined &&
-        (this.#launch.ownsProcessLifetime || this.#launcherExitCode !== 0)
+        (this.#launch.providerLifetime === "launcher-process" ||
+          this.#launcherExitCode !== 0)
       ) {
         const failure = await this.#launcherStartupFailure(
-          this.#launch.ownsProcessLifetime,
+          this.#launch.providerLifetime === "launcher-process",
           this.#launcherExitCode,
           deadline,
         );
@@ -540,7 +544,7 @@ export class HopperClient {
   }
 
   async #launcherStartupFailure(
-    ownsProcessLifetime: boolean,
+    ownsProviderLifetime: boolean,
     exitCode: number | null,
     deadline: ProviderStartupDeadline,
   ): Promise<HopperError> {
@@ -568,7 +572,7 @@ export class HopperClient {
             output_closed: outputClosed,
             diagnostic_truncated: snapshot.diagnosticTruncated === true,
           };
-    if (ownsProcessLifetime)
+    if (ownsProviderLifetime)
       return new HopperProcessError(
         exitCode,
         this.#launcherFailureDiagnostic,
@@ -701,7 +705,7 @@ export class HopperClient {
       type: "launcher-exit",
       code: event.code,
     });
-    if (launch.ownsProcessLifetime && !this.#closing) {
+    if (launch.providerLifetime === "launcher-process" && !this.#closing) {
       this.#rememberExit(event.code);
       this.#failAll(
         new HopperProcessError(

@@ -40,7 +40,10 @@ class LifecycleLauncher implements BridgeLauncher {
     await this.fixture.launch(session);
     return ok({
       process: this.observed,
-      ownsProcessLifetime: this.owned,
+      ownsProcessLifetime: true as const,
+      providerLifetime: this.owned
+        ? ("launcher-process" as const)
+        : ("external-application" as const),
       shutdownMode: "bridge-request" as const,
     });
   }
