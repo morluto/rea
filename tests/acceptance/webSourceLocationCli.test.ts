@@ -36,6 +36,7 @@ cliTest(
       environment: {
         REA_LOG_LEVEL: "silent",
         REA_BROWSER_EXECUTABLE: "relative-unconfigured-browser",
+        CLANG_MODULE_CACHE_PATH: map,
       },
       timeoutMs: 45000,
     });
@@ -56,7 +57,11 @@ cliTest(
         fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url)),
         "mcp",
       ],
-      env: { ...getDefaultEnvironment(), REA_LOG_LEVEL: "silent" },
+      env: {
+        ...getDefaultEnvironment(),
+        REA_LOG_LEVEL: "silent",
+        CLANG_MODULE_CACHE_PATH: map,
+      },
       stderr: "pipe",
     });
     const client = new Client({

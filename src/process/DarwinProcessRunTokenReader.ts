@@ -149,6 +149,9 @@ export const createDarwinProcessRunTokenReader = (
       exitCleanupInstalled = true;
       if (signal.aborted || closed) throw abortReason(signal);
       const output = join(operationRoot, "reader");
+      const compilerEnvironment = { ...process.env };
+      // Use Swift's reusable default cache for REA's internal helper compilation.
+      delete compilerEnvironment.CLANG_MODULE_CACHE_PATH;
       try {
         await execFileOutput(
           options.xcrun ?? "/usr/bin/xcrun",
@@ -157,6 +160,7 @@ export const createDarwinProcessRunTokenReader = (
             timeout: 60_000,
             maxBuffer: 1024 * 1024,
             signal,
+            env: compilerEnvironment,
           },
         );
       } catch (cause: unknown) {
@@ -166,7 +170,9 @@ export const createDarwinProcessRunTokenReader = (
             ? String(cause.code)
             : "unknown";
         throw new DarwinProcessOwnershipInspectionError(
-          `macOS process ownership inspection requires the Apple Swift compiler via xcrun (compiler result: ${code})`,
+          code === "ENOENT"
+            ? `macOS process ownership inspection requires the Apple Swift compiler via xcrun (compiler result: ${code})`
+            : `macOS process ownership helper compilation failed via xcrun (compiler result: ${code}): ${cause instanceof Error ? cause.message : String(cause)}`,
           { cause },
         );
       }
