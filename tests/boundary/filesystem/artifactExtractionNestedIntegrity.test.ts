@@ -26,7 +26,8 @@ it("does not claim unmaterialized nested integrity contradictions were extracted
 
   const result = await extractArtifact({
     inputPath: app,
-    inputFormat: "directory",
+    // A directory path is read as a directory before this format is consulted.
+    inputFormat: "zip",
     outputRoot: join(root, "out"),
     integrity: { mode: "record-and-continue" },
   });
