@@ -107,7 +107,7 @@ if [[ "$dry_run" == true ]]; then
 fi
 
 printf 'Installing %s@%s...\n' "$PACKAGE" "$version"
-npm install --global "${prefix_args[@]}" "$PACKAGE@$version" || fail "npm could not install REA. Check registry access and npm permissions, then retry."
+npm install --global ${prefix_args[@]+"${prefix_args[@]}"} "$PACKAGE@$version" || fail "npm could not install REA. Check registry access and npm permissions, then retry."
 [[ -x "$install_bin" ]] || fail "npm completed without installing the rea command. Check the npm global bin directory and PATH, then retry."
 installed_version="$("$install_bin" --version 2>/dev/null | tr -d '[:space:]')" || fail "the installed REA version could not be read. Reinstall the requested version, then retry."
 [[ "$installed_version" == "$version" ]] || fail "installed version $installed_version does not match $version. Reinstall the requested version, then retry."
