@@ -14,6 +14,7 @@ import {
   readLinuxDistribution,
   type LinuxDistribution,
 } from "./LinuxHopper.js";
+import { canonicalSkillNeedsInstall } from "./SetupSkill.js";
 import { CATALOG_IDENTITY } from "../catalogIdentity.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../identity.js";
 import {
@@ -100,6 +101,8 @@ interface InstalledSkillIdentity {
   readonly version: string | null;
   readonly toolCount: number | null;
   readonly catalogDigest: string | null;
+  /** Whether all managed instruction and reference files match this package. */
+  readonly canonical: boolean;
 }
 
 /** Structured result returned by the read-only doctor workflow. */
@@ -253,7 +256,7 @@ const skillIdentityAligned = (
 ): boolean =>
   identity?.version === PRODUCT_IDENTITY.skillVersion &&
   identity.toolCount === CATALOG_IDENTITY.counts.mcp_tools &&
-  identity.catalogDigest === CATALOG_IDENTITY.digests.combined_sha256;
+  identity.canonical;
 
 const skillIdentityCheck = (
   identity: InstalledSkillIdentity | undefined,
@@ -507,6 +510,7 @@ const installedSkillIdentity = async (
     const content = await readInstalledSkill(home);
     const countText = /^\s{2}tool_count:\s*(\d+)\s*$/mu.exec(content)?.[1];
     return {
+      canonical: !(await canonicalSkillNeedsInstall(home)),
       version: /^\s{2}version:\s*"([^"]+)"\s*$/mu.exec(content)?.[1] ?? null,
       toolCount:
         countText === undefined ? null : Number.parseInt(countText, 10),

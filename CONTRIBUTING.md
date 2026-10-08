@@ -76,6 +76,15 @@ the same configuration. Pre-commit formats and lints staged files; pre-push runs
 `check:fast`.
 `docs:check` checks committed generated metadata. `docs:generate` regenerates
 those files, and the docs CI lane checks them.
+The committed product catalog contains documented facts and their provider
+identity, rather than full runtime schema hashes. The managed skill contains
+instructions and inventory metadata; doctor compares its installed files with
+the canonical bundle. Schema-only fixes should not change these files or the
+skill commitment in the conformance manifest. Runtime schema identity remains
+available through doctor and `binary_session`. If a branch conflicts only in
+these generated files, merge the source changes first, then run
+`npm run docs:generate` to regenerate from the merged sources; keep hand-written
+skill instructions from both branches.
 Real-provider execution remains uncached; deterministic builds use Turbo.
 
 Local `npm test` runs every deterministic Vitest project without coverage or

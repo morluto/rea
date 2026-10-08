@@ -19,13 +19,12 @@ const withCount = current.replace(
   /^\s{2}tool_count:\s*\d+\s*$/mu,
   `  tool_count: ${String(CATALOG_IDENTITY.counts.mcp_tools)}`,
 );
-const digestLine = `  catalog_digest: "${CATALOG_IDENTITY.digests.combined_sha256}"`;
-const source = /^\s{2}catalog_digest:/mu.test(withCount)
-  ? withCount.replace(
-      /^\s{2}catalog_digest:\s*"[a-f0-9]{64}"\s*$/mu,
-      digestLine,
-    )
-  : withCount.replace(/^(\s{2}tool_count:\s*\d+\s*)$/mu, `$1\n${digestLine}`);
+// Skill identity follows the installed instruction bundle. Runtime schema identity
+// is still reported independently by doctor and binary_session.
+const source = withCount.replace(
+  /^ {2}catalog_digest:[^\r\n]*(?:\r?\n|$)/mu,
+  "",
+);
 
 await ensureGeneratedFile({
   path,

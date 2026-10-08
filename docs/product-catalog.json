@@ -713,9 +713,6 @@
       "mcp_prompts": 6
     },
     "digests": {
-      "tools_sha256": "18a0131bdea6a7af17c052bc97d343e1f833e1a35218e0098eba9695e9f821a2",
-      "prompts_sha256": "ef2de8814390b340623c32001610aa2709d90bed51537b6e562ab3abf144ab4d",
-      "combined_sha256": "b40971d45fb56386599e5f8e904c21ee491b20ef23b089ceb28750641eb58ae7",
       "providers_sha256": "954b499c76514890062d2b6c936d73cb3a9c45412d522a081125a325e81cdec5"
     }
   }

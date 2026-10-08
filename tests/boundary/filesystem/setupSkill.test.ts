@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -7,6 +7,11 @@ import {
   canonicalSkillNeedsInstall,
   installCanonicalSkill,
 } from "../../../src/application/SetupSkill.js";
+import {
+  runDoctor,
+  systemDoctorHost,
+} from "../../../src/application/Doctor.js";
+import { createDoctorHostFixture } from "../../../src/application/Doctor.fixture.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { skillReferenceIssues } from "../../../scripts/lib/docs-facts.mjs";
@@ -97,4 +102,50 @@ describe("canonical skill transaction", () => {
     expect(await installCanonicalSkill(home)).toBe("unchanged");
     expect(await skillReferenceIssues(dirname(destination))).toEqual([]);
   });
+});
+
+it("doctor verifies installed instructions and references even when metadata is current", async () => {
+  const home = await createTestTempDirectory("rea-skill-doctor-");
+  const destination = join(
+    home,
+    ".agents/skills/reverse-engineer-anything/SKILL.md",
+  );
+  const reference = join(
+    dirname(destination),
+    "references/evidence-workflows.md",
+  );
+  const system = systemDoctorHost({
+    environment: { HOME: home, USERPROFILE: home },
+  });
+  const host = createDoctorHostFixture({
+    installedSkillIdentity: () =>
+      system.installedSkillIdentity?.() ?? Promise.resolve(undefined),
+  });
+  expect((await runDoctor(undefined, host)).identity?.skill.state).toBe(
+    "missing",
+  );
+  expect(await installCanonicalSkill(home)).toBe("installed");
+  expect((await runDoctor(undefined, host)).identity?.skill).toMatchObject({
+    state: "aligned",
+    installed_catalog_digest: null,
+  });
+  for (const path of [destination, reference]) {
+    const canonical = await readFile(path, "utf8");
+    await writeFile(path, `${canonical}\nLocally changed instructions.\n`);
+    expect((await runDoctor(undefined, host)).identity?.skill.state).toBe(
+      "stale",
+    );
+    expect(await installCanonicalSkill(home)).toBe("installed");
+    expect((await runDoctor(undefined, host)).identity?.skill.state).toBe(
+      "aligned",
+    );
+  }
+  await rm(reference);
+  expect((await runDoctor(undefined, host)).identity?.skill.state).toBe(
+    "stale",
+  );
+  expect(await installCanonicalSkill(home)).toBe("installed");
+  expect((await runDoctor(undefined, host)).identity?.skill.state).toBe(
+    "aligned",
+  );
 });
