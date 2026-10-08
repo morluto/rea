@@ -753,14 +753,17 @@ try {
       await memoryTransport.close();
     }
   }
-  const cpuSectionCount = 60000;
+  // Extended section numbering keeps this valid while providing enough work
+  // to reach the one-second CPU limit even on faster CI runners.
+  const cpuSectionCount = 300000;
   const cpuHeavy = Buffer.alloc(sectionOffset + cpuSectionCount * sectionSize);
   sectionHeavy.copy(cpuHeavy);
   for (let index = sectionCount; index < cpuSectionCount; index++) {
     cpuHeavy.writeUInt32LE(1, sectionOffset + index * sectionSize + 4);
     cpuHeavy.writeBigUInt64LE(1n, sectionOffset + index * sectionSize + 48);
   }
-  cpuHeavy.writeUInt16LE(cpuSectionCount, 60);
+  cpuHeavy.writeUInt16LE(0, 60);
+  cpuHeavy.writeBigUInt64LE(BigInt(cpuSectionCount), sectionOffset + 32);
   const cpuHeavyPath = join(root.path, "cpu-section-heavy.o");
   await writeFile(cpuHeavyPath, cpuHeavy);
   const cpuWrapper = join(root.path, "python-cpu-constraint");
@@ -1072,8 +1075,9 @@ async function inspect(
     envelope = value.evidence;
     assert.deepEqual(value.result, envelope.normalized_result);
   } else {
+    let response;
     try {
-      const response = await execute(
+      response = await execute(
         process.execPath,
         [entrypoint, "inspect-binary-layout", path, "--json"],
         {
@@ -1082,15 +1086,15 @@ async function inspect(
           maxBuffer: 64 * 1024 * 1024,
         },
       );
-      assert.equal(category, undefined, "Expected selected input to fail");
-      envelope = JSON.parse(response.stdout);
     } catch (cause) {
       if (category === undefined) throw cause;
-      assert.equal(typeof cause.code, "number");
+      if (typeof cause.code !== "number") throw cause;
       const error = JSON.parse(cause.stdout);
       assert.equal(error.category, category, JSON.stringify(error));
       return error;
     }
+    assert.equal(category, undefined, "Expected selected input to fail");
+    envelope = JSON.parse(response.stdout);
   }
   const evidence = parseEvidence(envelope);
   assert.equal(evidence.subject.local_path, path);
