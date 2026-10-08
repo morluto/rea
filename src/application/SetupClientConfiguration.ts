@@ -17,6 +17,7 @@ import writeFileAtomic from "write-file-atomic";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { MCP_STARTUP_POLICY } from "../mcpStartupPolicy.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
+import { windowsShellInvocation } from "./ClientRegistrationIdentity.js";
 import type {
   ClientConfigurationInspection,
   ClientConfigurationResult,
@@ -24,12 +25,17 @@ import type {
 } from "./SetupTypes.js";
 import type { SetupClient } from "./SupportedClients.js";
 
-const defaultCommand = (): readonly string[] => [
-  "npx",
-  "-y",
-  PRODUCT_IDENTITY.registrationPackageSpecifier,
-  "mcp",
-];
+const defaultCommand = (
+  platform: NodeJS.Platform = process.platform,
+): readonly string[] => {
+  const invocation = [
+    "npx",
+    "-y",
+    PRODUCT_IDENTITY.registrationPackageSpecifier,
+    "mcp",
+  ];
+  return platform === "win32" ? windowsShellInvocation(invocation) : invocation;
+};
 
 /** Back up, atomically update, and semantically read back one JSON MCP configuration. */
 export const configureJsonClient = (

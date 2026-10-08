@@ -3,11 +3,33 @@ import { valid } from "semver";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 
+const SHELL_WRAPPER = /^cmd(?:\.exe)?$/iu;
+const SHELL_COMMAND_FLAG = /^\/c$/iu;
+
+/**
+ * Wrap one invocation so shell-less Windows clients can spawn it: `npx` is a
+ * batch shim that requires cmd.exe to execute.
+ */
+export const windowsShellInvocation = (
+  command: readonly string[],
+): readonly string[] => ["cmd", "/c", ...command];
+
+/** Strip one `cmd /c` shell wrapper from a registration command. */
+export const unwrapShellInvocation = (
+  command: readonly string[],
+): readonly string[] =>
+  command.length > 2 &&
+  SHELL_WRAPPER.test(command[0] ?? "") &&
+  SHELL_COMMAND_FLAG.test(command[1] ?? "")
+    ? command.slice(2)
+    : command;
+
 /** Check that one parsed command points to REA's MCP entry point. */
 export const isOwnedClientRegistrationCommand = (
   command: readonly string[],
   currentCommandPath: string = resolve(process.argv[1] ?? "unknown"),
 ): boolean => {
+  command = unwrapShellInvocation(command);
   if (
     command.length === 3 &&
     command[2] === "mcp" &&

@@ -115,6 +115,37 @@ describe("client registration status", () => {
     },
   );
 
+  it("recognizes a cmd-wrapped npx registration as aligned", async () => {
+    const home = await createTestTempDirectory("rea-registrations-");
+    await mkdir(join(home, ".codex"));
+    await writeFile(
+      join(home, ".codex/config.toml"),
+      `[mcp_servers.rea]\ncommand = "cmd"\nargs = ["/c", "npx", "-y", "${PRODUCT_IDENTITY.registrationPackageSpecifier}", "mcp"]\nstartup_timeout_sec = 30\n`,
+    );
+
+    const statuses = await readClientRegistrationStatuses(
+      home,
+      "/current/rea",
+      { environment: {} },
+    );
+
+    expect(statuses).toEqual([
+      expect.objectContaining({
+        client: "codex",
+        command: [
+          "cmd",
+          "/c",
+          "npx",
+          "-y",
+          PRODUCT_IDENTITY.registrationPackageSpecifier,
+          "mcp",
+        ],
+        state: "aligned",
+        remediation: null,
+      }),
+    ]);
+  });
+
   it("reports an unversioned npx registration as stale", async () => {
     const home = await createTestTempDirectory("rea-registrations-");
     await mkdir(join(home, ".codex"));

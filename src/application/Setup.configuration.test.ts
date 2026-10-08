@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { FakeSetupHost, options } from "./Setup.fixture.js";
 import { runSetup } from "./Setup.js";
 import { setupRegistrationCommand } from "./SetupHost.js";
+import { PRODUCT_IDENTITY } from "../identity.js";
 
 describe("setup workflow", () => {
   it("omits an aligned managed skill from an otherwise empty plan", async () => {
@@ -258,6 +259,23 @@ describe("setup workflow action selection", () => {
     expect(setupRegistrationCommand("win32", false)).toEqual([
       process.execPath,
       resolve(process.argv[1] ?? "rea"),
+      "mcp",
+    ]);
+  });
+
+  it("wraps the npm runner invocation for shell-less Windows clients", () => {
+    expect(setupRegistrationCommand("win32", true)).toEqual([
+      "cmd",
+      "/c",
+      "npx",
+      "-y",
+      PRODUCT_IDENTITY.registrationPackageSpecifier,
+      "mcp",
+    ]);
+    expect(setupRegistrationCommand("linux", true)).toEqual([
+      "npx",
+      "-y",
+      PRODUCT_IDENTITY.registrationPackageSpecifier,
       "mcp",
     ]);
   });

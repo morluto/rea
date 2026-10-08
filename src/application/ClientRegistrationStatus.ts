@@ -9,7 +9,10 @@ import { z } from "zod";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { MCP_STARTUP_POLICY } from "../mcpStartupPolicy.js";
-import { isOwnedClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
+import {
+  isOwnedClientRegistrationCommand,
+  unwrapShellInvocation,
+} from "./ClientRegistrationIdentity.js";
 import { supportedClients } from "./SupportedClients.js";
 import type { SetupClient } from "./SupportedClients.js";
 
@@ -133,7 +136,10 @@ const registrationAligned = (
   client: SetupClient,
   currentCommandPath: string,
 ): boolean => {
-  const command = [registration.command, ...registration.args];
+  const command = unwrapShellInvocation([
+    registration.command,
+    ...registration.args,
+  ]);
   if (registration.disabled === true || registration.enabled === false)
     return false;
   if (!isOwnedClientRegistrationCommand(command, currentCommandPath))

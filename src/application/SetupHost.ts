@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { windowsShellInvocation } from "./ClientRegistrationIdentity.js";
 import {
   SUPPORTED_NODE_VERSION_PROSE,
   supportsNodeVersion,
@@ -33,16 +34,21 @@ import type { DoctorScope } from "./Doctor.js";
 export const setupRegistrationCommand = (
   platform: NodeJS.Platform,
   useNpmRunner: boolean = process.env.npm_command === "exec",
-): readonly string[] =>
-  useNpmRunner
-    ? PRODUCT_IDENTITY.mcpCommand.split(" ")
-    : platform === "win32"
-      ? [
-          process.execPath,
-          resolve(process.argv[1] ?? PRODUCT_IDENTITY.cliBinary),
-          "mcp",
-        ]
-      : [resolve(process.argv[1] ?? PRODUCT_IDENTITY.cliBinary), "mcp"];
+): readonly string[] => {
+  if (useNpmRunner) {
+    const invocation = PRODUCT_IDENTITY.mcpCommand.split(" ");
+    return platform === "win32"
+      ? windowsShellInvocation(invocation)
+      : invocation;
+  }
+  return platform === "win32"
+    ? [
+        process.execPath,
+        resolve(process.argv[1] ?? PRODUCT_IDENTITY.cliBinary),
+        "mcp",
+      ]
+    : [resolve(process.argv[1] ?? PRODUCT_IDENTITY.cliBinary), "mcp"];
+};
 
 export const filterClientsNeedingConfigure = async (
   host: SetupHost,
