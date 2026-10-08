@@ -10,6 +10,7 @@ import type { BinaryTarget } from "./binaryTarget.js";
 import {
   jsonObjectSchema,
   jsonValueSchema,
+  jsonValueValidationIssue,
   type JsonValue,
 } from "./jsonValue.js";
 import {
@@ -149,7 +150,13 @@ export const evidenceRecordSchema = z.union([
 
 export type Evidence = z.infer<typeof evidenceRecordSchema>;
 const immutableEvidenceSnapshots = new WeakMap<object, Evidence>();
-const immutableResultSchema = z.custom<JsonValue>(isImmutableJsonSnapshot);
+const immutableResultSchema = z
+  .custom<JsonValue>(isImmutableJsonSnapshot)
+  .superRefine((value, context) => {
+    const issue = jsonValueValidationIssue(value);
+    if (issue !== undefined)
+      context.addIssue({ code: "custom", message: issue });
+  });
 export type EvidenceLocation = z.infer<typeof evidenceLocationSchema>;
 
 /** Minimal immutable local artifact identity accepted by Evidence. */

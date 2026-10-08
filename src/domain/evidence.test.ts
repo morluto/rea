@@ -9,7 +9,7 @@ import {
   evidenceSchema,
   parseEvidence,
 } from "./evidence.js";
-import { MAX_JSON_DEPTH } from "./jsonValue.js";
+import { MAX_JSON_DEPTH, type JsonValue } from "./jsonValue.js";
 import { createEvidenceBundle } from "./evidenceBundle.js";
 import { freezeJsonSnapshot } from "./immutableJson.js";
 
@@ -45,6 +45,35 @@ it("preserves identity and bytes when reusing an owned immutable result", () => 
   expect(() =>
     parseEvidence({ ...frozen, normalized_result: { changed: true } }),
   ).toThrow("semantic identifier");
+});
+
+it("applies the JSON depth boundary to owned immutable results", () => {
+  let result: JsonValue = 1;
+  for (let index = 0; index <= MAX_JSON_DEPTH; index += 1)
+    result = { nested: result };
+  for (const value of [result, freezeJsonSnapshot(result)])
+    expect(() =>
+      createEvidence(TARGET, PROVIDER, {
+        operation: "inspect",
+        parameters: {},
+        result: value,
+      }),
+    ).toThrow("maximum nesting depth");
+});
+
+it("preserves prototype-named own members when reusing an owned result", () => {
+  const result = { ["__proto__"]: { preserved: 7 }, constructor: "ordinary" };
+  const observation = { operation: "inspect", parameters: {}, result };
+  const ordinary = createEvidence(TARGET, PROVIDER, observation);
+  const owned = createEvidence(TARGET, PROVIDER, {
+    ...observation,
+    result: freezeJsonSnapshot(result),
+  });
+  expect(owned.normalized_result).toBe(result);
+  expect(owned).toEqual(ordinary);
+  expect(parseEvidence(JSON.parse(JSON.stringify(owned)))).toEqual(owned);
+  expect(Object.getPrototypeOf(owned.normalized_result)).toBe(Object.prototype);
+  expect(Reflect.get(Object.prototype, "preserved")).toBeUndefined();
 });
 
 it("preserves producer envelope admission and profile validation", () => {
