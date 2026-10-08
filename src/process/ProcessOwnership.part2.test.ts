@@ -215,34 +215,37 @@ describe("process environment permission diagnostics", () => {
     },
   );
 
-  it("records a foreign-uid unreadable candidate as unverified without signaling", async () => {
-    const foreignUid = process.getuid?.() === 0 ? 1 : 0;
-    const signalGroup = vi.fn();
-    const adapter: ProcessOwnershipHost = {
-      listProcesses: () =>
-        Promise.resolve([
-          {
-            pid: 900,
-            parentPid: 1,
-            processGroupId: 900,
-            uid: foreignUid,
-            state: "S",
-            command: "unverifiable-process",
-          },
-        ]),
-      environment: () => Promise.reject(new Error("EINVAL: sysctl failed")),
-      signalGroup,
-    };
-    await expect(
-      cleanupOwnedProcessGroup(
-        { ...ownership, sweepTokenOwnedProcesses: true },
-        adapter,
-      ),
-    ).resolves.toMatchObject({
-      cleaned: true,
-      signaled: false,
-      unverified: [{ pid: 900, diagnostic: "EINVAL: sysctl failed" }],
-    });
-    expect(signalGroup).not.toHaveBeenCalled();
-  });
+  it.skipIf(typeof process.getuid !== "function")(
+    "records a foreign-uid unreadable candidate as unverified without signaling",
+    async () => {
+      const foreignUid = process.getuid?.() === 0 ? 1 : 0;
+      const signalGroup = vi.fn();
+      const adapter: ProcessOwnershipHost = {
+        listProcesses: () =>
+          Promise.resolve([
+            {
+              pid: 900,
+              parentPid: 1,
+              processGroupId: 900,
+              uid: foreignUid,
+              state: "S",
+              command: "unverifiable-process",
+            },
+          ]),
+        environment: () => Promise.reject(new Error("EINVAL: sysctl failed")),
+        signalGroup,
+      };
+      await expect(
+        cleanupOwnedProcessGroup(
+          { ...ownership, sweepTokenOwnedProcesses: true },
+          adapter,
+        ),
+      ).resolves.toMatchObject({
+        cleaned: true,
+        signaled: false,
+        unverified: [{ pid: 900, diagnostic: "EINVAL: sysctl failed" }],
+      });
+      expect(signalGroup).not.toHaveBeenCalled();
+    },
+  );
 });
