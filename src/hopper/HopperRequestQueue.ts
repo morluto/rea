@@ -10,6 +10,7 @@ import {
   HopperProcessError,
   HopperProtocolError,
   HopperRemoteError,
+  HopperTimeoutError,
 } from "../domain/hopperErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, type Result } from "../domain/result.js";
@@ -18,6 +19,8 @@ export type HopperRequestResult = Result<JsonValue, HopperError>;
 
 export interface HopperRequestQueueOptions {
   readonly signal?: AbortSignal;
+  /** Caller deadline from admission, including time waiting in the FIFO. */
+  readonly timeoutMs?: number;
   readonly progress?: ProgressReporter;
 }
 
@@ -50,6 +53,7 @@ interface QueuedRequest {
   callerSettled: boolean;
   startedAt: number | undefined;
   heartbeat: NodeJS.Timeout | undefined;
+  deadline: NodeJS.Timeout | undefined;
 }
 
 /** FIFO that keeps the wire serialized until Hopper actually replies. */
@@ -59,7 +63,7 @@ export class HopperRequestQueue {
 
   constructor(private readonly send: RequestSender) {}
 
-  /** Queue one request until Hopper replies or the caller cancels it. */
+  /** Settle the caller on reply, cancellation, or deadline; retain active wire work. */
   run(
     id: number,
     method: string,
@@ -68,6 +72,32 @@ export class HopperRequestQueue {
   ): Promise<HopperRequestResult> {
     if (options.signal?.aborted === true)
       return Promise.resolve(err(new HopperCancelledError()));
+    const timeoutMs = options.timeoutMs;
+    if (
+      timeoutMs !== undefined &&
+      (!Number.isInteger(timeoutMs) ||
+        timeoutMs < 0 ||
+        timeoutMs > 2_147_483_647)
+    )
+      return Promise.resolve(
+        err(
+          new HopperProtocolError(
+            "Hopper timeoutMs must be an integer between 0 and 2147483647",
+          ),
+        ),
+      );
+    if (timeoutMs === 0)
+      return Promise.resolve(
+        err(
+          new HopperTimeoutError(
+            0,
+            method,
+            id,
+            "busy",
+            hopperOperationStage(method),
+          ),
+        ),
+      );
     return new Promise((resolve) => {
       let entry: QueuedRequest;
       const onAbort =
@@ -84,10 +114,26 @@ export class HopperRequestQueue {
         callerSettled: false,
         startedAt: undefined,
         heartbeat: undefined,
+        deadline: undefined,
       };
       this.#queue.push(entry);
       if (onAbort !== undefined)
         options.signal?.addEventListener("abort", onAbort, { once: true });
+      if (timeoutMs !== undefined)
+        entry.deadline = setTimeout(
+          () =>
+            this.#cancel(
+              entry,
+              new HopperTimeoutError(
+                timeoutMs,
+                method,
+                id,
+                "busy",
+                hopperOperationStage(method),
+              ),
+            ),
+          timeoutMs,
+        );
       if (this.#active !== undefined || this.#queue.length > 1)
         this.#report(
           entry,
@@ -195,14 +241,25 @@ export class HopperRequestQueue {
     this.#active = entry;
     entry.startedAt = performance.now();
     this.#report(entry, `${entry.method} started on Hopper's serial bridge`);
-    entry.heartbeat = setInterval(() => {
-      if (entry.callerSettled || entry.startedAt === undefined) return;
-      const elapsed = Math.round(performance.now() - entry.startedAt);
-      this.#report(
-        entry,
-        `${entry.method} is still running in Hopper (${String(elapsed)} ms elapsed)`,
-      );
-    }, 1_000);
+    // A progress observer may cancel or tear down synchronously before send.
+    // No native work exists yet, so it is safe to release this reserved slot.
+    if (this.#active !== entry || entry.callerSettled) {
+      if (this.#active === entry) {
+        this.#active = undefined;
+        this.#releaseWire(entry);
+        this.#drain();
+      }
+      return;
+    }
+    if (!entry.callerSettled)
+      entry.heartbeat = setInterval(() => {
+        if (entry.callerSettled || entry.startedAt === undefined) return;
+        const elapsed = Math.round(performance.now() - entry.startedAt);
+        this.#report(
+          entry,
+          `${entry.method} is still running in Hopper (${String(elapsed)} ms elapsed)`,
+        );
+      }, 1_000);
     try {
       this.send(
         { id: entry.id, method: entry.method, params: entry.params },
@@ -229,16 +286,19 @@ export class HopperRequestQueue {
     }
   }
 
-  #cancel(entry: QueuedRequest): void {
+  #cancel(
+    entry: QueuedRequest,
+    error: HopperError = new HopperCancelledError(),
+  ): void {
     if (entry.callerSettled) return;
     if (this.#active === entry) {
-      this.#settleCaller(entry, err(new HopperCancelledError()), "cancelled");
+      this.#settleCaller(entry, err(error), "cancelled");
       return;
     }
     const index = this.#queue.indexOf(entry);
     if (index < 0) return;
     this.#queue.splice(index, 1);
-    this.#settleCaller(entry, err(new HopperCancelledError()), "cancelled");
+    this.#settleCaller(entry, err(error), "cancelled");
   }
 
   #settleCaller(
@@ -249,6 +309,8 @@ export class HopperRequestQueue {
     if (entry.callerSettled) return;
     entry.callerSettled = true;
     entry.callerState = callerState;
+    if (entry.deadline !== undefined) clearTimeout(entry.deadline);
+    entry.deadline = undefined;
     if (this.#active === entry && entry.heartbeat !== undefined) {
       clearInterval(entry.heartbeat);
       entry.heartbeat = undefined;

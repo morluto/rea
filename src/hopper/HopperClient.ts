@@ -405,6 +405,8 @@ export class HopperClient {
     arguments_: Readonly<Record<string, JsonValue>> = {},
     options: {
       readonly signal?: AbortSignal;
+      /** Deadline after startup, including waiting for Hopper's serial bridge. */
+      readonly timeoutMs?: number;
       readonly progress?: ProgressReporter;
     } = {},
   ): Promise<Result<JsonValue, AnalysisError>> {
@@ -618,6 +620,9 @@ export class HopperClient {
     const startedAt = performance.now();
     const result = await this.#requests.run(id, method, params, {
       ...(options.signal === undefined ? {} : { signal: options.signal }),
+      ...(options.timeoutMs === undefined
+        ? {}
+        : { timeoutMs: options.timeoutMs }),
       ...(options.progress !== undefined ? { progress: options.progress } : {}),
     });
     this.#retainRequestHealth(result, id, method);
