@@ -45,6 +45,7 @@ export const parseInterfaceBuilderRecords = (
   readonly objectCount: number;
   readonly omittedObjects: number;
   readonly omittedConnections: number;
+  readonly omittedHierarchyReferences: number;
 } => {
   const root = record(value);
   const keyed = parseKeyedArchive(root);
@@ -114,6 +115,7 @@ export const parseInterfaceBuilderRecords = (
     objectCount: objectEntries.length,
     omittedObjects: Math.max(0, objectEntries.length - 20_000),
     omittedConnections,
+    omittedHierarchyReferences: 0,
   };
 };
 
@@ -194,7 +196,8 @@ const keyedArchiveTable = (objectTable: readonly unknown[]) => {
     }
     return output;
   };
-  const hierarchy = (start: unknown): unknown[] => {
+  const hierarchy = (start: unknown) => {
+    let omittedReferences = 0;
     const visited = new Set<number>();
     const root: unknown[] = [];
     const pending: { readonly value: unknown; readonly output: unknown[] }[] = [
@@ -227,9 +230,15 @@ const keyedArchiveTable = (objectTable: readonly unknown[]) => {
       const { value, output } = entry;
       const uid = archiveUid(value);
       if (uid !== undefined) {
+        // UID0 is archived nil, not a missing hierarchy object.
+        if (uid === 0) continue;
+        const target = objectTable[uid];
+        if (target === undefined) {
+          omittedReferences += 1;
+          continue;
+        }
         if (visited.has(uid)) continue;
         visited.add(uid);
-        const target = objectTable[uid];
         if (Array.isArray(target)) {
           for (let index = target.length - 1; index >= 0; index -= 1) {
             const child = target[index];
@@ -260,7 +269,7 @@ const keyedArchiveTable = (objectTable: readonly unknown[]) => {
         appendNode(record(value), undefined, output);
       }
     }
-    return root;
+    return { items: root, omittedReferences };
   };
   const archivedArrayClass = (classReference: unknown): boolean => {
     const uid = archiveUid(classReference);
@@ -386,11 +395,12 @@ const parseKeyedArchive = (
   return {
     objects,
     connections,
-    hierarchy,
+    hierarchy: hierarchy.items,
     classes,
     objectCount,
     omittedObjects: Math.max(0, objectCount - 20_000),
     omittedConnections,
+    omittedHierarchyReferences: hierarchy.omittedReferences,
   };
 };
 

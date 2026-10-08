@@ -238,3 +238,10 @@ GUI authority, and REA never falls back automatically to Hopper.
 macOS ARM64 is the real host verified during this implementation. Admission of
 macOS Intel does not claim an Intel verification run. Unsupported metadata and
 unresolved runtime/value semantics remain visible in results.
+
+## Interface Builder hierarchy coverage
+
+A keyed-archive hierarchy UID without an object-table entry marks the hierarchy
+as partial while preserving decoded objects and known links. UID 0 remains
+archived nil and does not count as a missing reference. Archive and evidence
+digests identify the original serialized bytes.
