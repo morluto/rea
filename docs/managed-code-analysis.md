@@ -25,7 +25,7 @@ part of the current tool set.
 
 This guide describes the implementation and verification of
 [ADR-0003](adr/0003-managed-code-evidence-and-provider-boundary.md). The canonical
-tool inventory is [`product-catalog.json`](https://github.com/morluto/rea/blob/main/docs/product-catalog.json).
+tool inventory is the [build-generated catalog](mcp-contracts.md#generated-catalog).
 
 ## Shipped scope
 

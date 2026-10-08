@@ -65,9 +65,9 @@ export const createProductCatalog = async (root) => {
   };
 };
 
-/** Stable checked-in representation of the product catalog. */
+/** Stable build-generated representation of the product catalog. */
 export const serializeProductCatalog = (catalog) =>
   formatGeneratedFile(
-    "docs/product-catalog.json",
+    "docs/public/product-catalog.json",
     JSON.stringify(catalog, null, 2),
   );

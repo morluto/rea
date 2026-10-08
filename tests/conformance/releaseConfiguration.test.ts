@@ -47,11 +47,6 @@ describe("release configuration", () => {
               path: "server.json",
               jsonpath: "$.packages[0].version",
             },
-            {
-              type: "json",
-              path: "docs/product-catalog.json",
-              jsonpath: "$.package.version",
-            },
           ],
         },
       },

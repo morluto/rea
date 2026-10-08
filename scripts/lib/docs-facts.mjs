@@ -77,7 +77,12 @@ export const documentationFactIssues = async (root, catalog) => {
     requireText(issues, path, content, "MCP-tool_catalog");
     if (path === "README.md") {
       requireText(issues, path, content, "(docs/installation.md");
-      requireText(issues, path, content, "(docs/product-catalog.json)");
+      requireText(
+        issues,
+        path,
+        content,
+        "(docs/mcp-contracts.md#generated-catalog)",
+      );
       continue;
     }
     for (const client of catalog.setup_clients)
@@ -99,11 +104,16 @@ export const documentationFactIssues = async (root, catalog) => {
     requireText(issues, installationPath, installation, client.display_name);
 
   const agents = await readFile(join(root, "AGENTS.md"), "utf8");
-  requireText(issues, "AGENTS.md", agents, "docs/product-catalog.json");
+  requireText(issues, "AGENTS.md", agents, "docs/public/product-catalog.json");
 
   const templatePath = ".github/pull_request_template.md";
   const template = await readFile(join(root, templatePath), "utf8");
-  requireText(issues, templatePath, template, "docs/product-catalog.json");
+  requireText(
+    issues,
+    templatePath,
+    template,
+    "docs/public/product-catalog.json",
+  );
 
   return issues;
 };

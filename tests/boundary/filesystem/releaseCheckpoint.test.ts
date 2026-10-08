@@ -50,7 +50,6 @@ async function metadata(directory: string, version: string, notes: string) {
       version,
       packages: [{ identifier: "rea-agents", version }],
     },
-    "docs/product-catalog.json": { package: { version } },
     "release-please-config.json": {
       "changelog-sections": [
         { type: "feat", hidden: false },
@@ -371,7 +370,6 @@ it("validates candidate options before inspecting the working directory", async 
 it.each([
   "package-lock.json",
   "server.json",
-  "docs/product-catalog.json",
   "src/generatedPackageMetadata.ts",
 ])("rejects inconsistent version metadata in %s", async (path) => {
   const f = await fixture();

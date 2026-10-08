@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { CATALOG_IDENTITY } from "../dist/catalogIdentity.js";
 
 import { exec } from "./lib/verify-package-core.mjs";
 import { verifyPackedBridge } from "./verify-packed-bridge.mjs";
@@ -28,6 +29,28 @@ export async function verifyPackagePack({ root, workspace }) {
     throw new Error("package did not expose both rea command entry points");
   if (packedManifest.mcpName !== "io.github.morluto/rea")
     throw new Error("package did not retain its MCP Registry ownership marker");
+  if (packedFiles.some((path) => path.startsWith("package/skill-src/")))
+    throw new Error(
+      "package included authored skill sources instead of only the generated bundle",
+    );
+  const skill = (
+    await exec("tar", [
+      "-xOf",
+      join(root, tarball),
+      "package/skills/reverse-engineer-anything/SKILL.md",
+    ])
+  ).stdout;
+  if (
+    !skill.includes(
+      `  tool_count: ${String(CATALOG_IDENTITY.counts.mcp_tools)}\n`,
+    ) ||
+    !skill.includes(
+      `  catalog_digest: "${CATALOG_IDENTITY.digests.combined_sha256}"\n`,
+    )
+  )
+    throw new Error(
+      "packaged skill metadata did not match the catalog shipped in the package",
+    );
   if (
     packedFiles.some(
       (path) => path.includes("__pycache__") || path.endsWith(".pyc"),
