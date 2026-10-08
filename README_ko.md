@@ -109,7 +109,7 @@ AI 코딩 어시스턴트에 스킬을 추가하면 더 풍부한 컨텍스트�
 npx skills add morluto/rea --skill reverse-engineer-anything
 ```
 
-이 스킬은 REA의 조사 워크플로를 제공합니다. 위 setup을 실행해 REA를 에이전트에 연결하고 분석 도구를 설정하세요. Setup은 기본적으로 버전에 맞는 스킬을 설치합니다. 이 명령은 저장소 버전의 스킬을 설치합니다.
+이 스킬은 REA의 조사 워크플로를 제공합니다. 위 Setup을 실행해 REA를 에이전트에 연결하고 분석 도구를 설정하세요. Setup은 기본적으로 버전에 맞는 스킬을 설치합니다. 이 명령은 저장소 버전의 스킬을 설치합니다.
 
 압축을 해제한 JavaScript/Electron 앱 트리나 ASAR라면 MCP 설정이나 네이티브 엔진 없이 바로 분석할 수 있습니다.
 
@@ -117,7 +117,7 @@ npx skills add morluto/rea --skill reverse-engineer-anything
 npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
 ```
 
-경로를 조사 대상으로 바꾸세요(Windows에서는 `"D:/apps/example"` 같은 경로). 이 정적 워크플로에서는 이런 경로도 지원됩니다. 네이티브 분석에는 전용 엔진 설정이 필요합니다.
+경로를 조사 대상의 경로로 바꾸세요(Windows에서는 `"D:/apps/example"` 같은 경로). 이 정적 워크플로에서는 이런 경로도 지원됩니다. 네이티브 분석에는 전용 엔진 설정이 필요합니다.
 
 ### rea 명령 설치하기
 
@@ -144,7 +144,7 @@ rea setup
 
 네이티브 바이너리 분석에는 Hopper 또는 Ghidra가 필요합니다. Hopper는 별도 소프트웨어입니다. 데모에는 공급업체의 제한이 있지만 유료 라이선스가 필수는 아닙니다.
 
-Ghidra는 Linux x64와 macOS x64/arm64를 지원합니다. Ghidra 12.1.x와 그 설치본이 선언한 완전한 64비트 JDK(`application.java.min`부터 `application.java.max`까지)를 별도로 설치한 뒤 REA가 사용하도록 설정하세요. 현재 12.1 릴리스는 JDK 21 이상을 요구하고 상한은 없습니다. 브리지는 Ghidra 12.1.4와 JDK 21에서 검증됩니다. macOS에서는 호스트 아키텍처에 맞는 네이티브 디컴파일러도 필요합니다.
+Ghidra는 Linux x64와 macOS x64/arm64를 지원합니다. Ghidra 12.1.x와 그 설치본이 선언한 완전한 64비트 JDK(`application.java.min`부터 `application.java.max`까지)를 별도로 설치한 뒤 REA에서 사용하도록 설정하세요. 현재 12.1 릴리스는 JDK 21 이상을 요구하고 상한은 없습니다. 브리지는 Ghidra 12.1.4와 JDK 21에서 검증됩니다. macOS에서는 호스트 아키텍처에 맞는 네이티브 디컴파일러도 필요합니다.
 
 Setup은 설치를 확인하고 경로를 저장할 수 있습니다. Ghidra, Java, Node.js, npm, Homebrew를 설치하거나 업데이트하지 않습니다.
 
@@ -164,7 +164,7 @@ Linux에서는 실행 가능한 `/opt/hopper/bin/Hopper`를 우선 사용하고,
 
 ## 현재 지원 범위
 
-저장소의 현재 기능과 플랫폼 요구 사항은 [영문 지원 가이드](README.md#current-status)에 설명되어 있습니다. main은 [npm 릴리스](docs/installation.md#released-package-and-main)보다 앞설 수 있습니다.
+저장소의 현재 기능과 플랫폼 요구 사항은 [영문 지원 가이드](README.md#current-status)에 설명되어 있습니다. main은 [npm 릴리스](docs/installation.md#released-package-and-main)보다 앞선 내용이 포함될 수 있습니다.
 
 - Ghidra는 Linux x64, macOS x64/arm64, 실험적인 Windows x64 P0 경계에서 25개의 읽기 전용 작업을 제공합니다. Linux/macOS에서는 원자적 세션 함수 주석도 추가로 지원합니다. Windows P0는 읽기 전용이며 Ghidra에는 GUI 제어가 없습니다.
 - 정적 Android 검사는 별도로 준비한 JADX/Java가 필요합니다. 실제 제공자 검증은 Linux를 대상으로 합니다. [Android 분석](docs/android-analysis.md)을 참고하세요.
@@ -187,7 +187,7 @@ TypeScript와 SQLite를 사용해 제 프로젝트에 맞는 버전을 구현해
 |    5 | 관련 루틴 디컴파일      | `procedure_pseudo_code`, `procedure_assembly`, `batch_decompile` |
 |    6 | 프로젝트에 기능 구현    | 기술 스택, 제품, 요구 사항에 맞는 코드                           |
 
-REA는 1–5단계의 바이너리 분석을 처리합니다. 6단계는 에이전트가 일반 파일 편집 및 테스트 도구로 수행합니다.
+REA는 1~5단계의 바이너리 분석을 처리합니다. 6단계는 에이전트가 일반 파일 편집 및 테스트 도구로 수행합니다.
 
 ## 에이전트가 할 수 있는 일
 
@@ -273,7 +273,7 @@ rea --help
 rea mcp
 ```
 
-REA는 Mac의 `.app` 폴더를 직접 열 수 있습니다. 에이전트가 앱을 찾지 못하면 설치 위치를 알려 주세요.
+REA는 macOS의 `.app` 폴더를 직접 열 수 있습니다. 에이전트가 앱을 찾지 못하면 설치 위치를 알려 주세요.
 
 ## Hopper 앱 동작
 
