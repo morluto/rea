@@ -16,7 +16,6 @@
     ".": {
       "package-name": "rea-agents",
       "extra-files": [
-        { "type": "generic", "path": "README.md" },
         { "type": "generic", "path": "README_zh.md" },
         { "type": "generic", "path": "README_ja.md" },
         { "type": "generic", "path": "README_ko.md" },

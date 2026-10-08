@@ -20,6 +20,30 @@ validation, provider prerequisites, target identity, cancellation, and owned
 resource cleanup remain part of each tool's contract. Setup still discloses
 installation changes and requires approval before writing or installing.
 
+## Planned work
+
+The [website guides](https://morluto.github.io/rea/guides/) and
+[generated catalog](product-catalog.json) describe available workflows.
+Current development priorities are:
+
+- Keep generated metadata and narrative documentation aligned with tools,
+  providers, setup options and releases.
+- Expand native architecture, type and indirect-call verification across
+  Hopper and Ghidra.
+- Connect additional static extractors and runtime observations to
+  cross-layer feature traces.
+- Improve obfuscated .NET comparisons and links between managed findings
+  and verified native analysis.
+- Extend process, protocol, filesystem, reconnect and build-comparison
+  coverage, plus browser and Electron scenario actions.
+- Evaluate native runtime observation through LLDB, Frida, system logs and
+  API tracing, and additional tools and targets such as Binary Ninja, Rizin,
+  LIEF, Windows-native workflows, mobile applications and firmware.
+
+Provider additions and platform support require the corresponding real
+verification lanes; see [testing](testing.md) and
+[provider evaluation](provider-evaluation.md).
+
 ## Remaining evidence and provider work
 
 The [platform roadmap](https://github.com/morluto/rea/issues/32),

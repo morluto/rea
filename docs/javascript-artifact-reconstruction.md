@@ -57,6 +57,21 @@ manifest and graph commitments, JavaScript Application Graph, static
 Electron summary, reconstruction statistics, and explicit limitations. It does
 not require a live Hopper, Ghidra, browser, or Electron process.
 
+## ASAR integrity
+
+ASAR inventory checks Electron integrity metadata for embedded archive entries
+and supplied `.asar.unpacked` companion files. An integrity failure identifies
+the logical path, declared and calculated SHA-256 values, and whether the entry
+was unpacked. By default, a mismatch is returned as a failure with its artifact
+context. Requests that support `integrity_policy` can explicitly select
+`record-and-continue` to inspect verified siblings while retaining the mismatch.
+
+An unpacked entry whose companion bytes were not supplied remains
+`unavailable`. REA continues analyzing embedded JavaScript and records the
+missing native/resource bytes as unknown. See [what is reconstructed](#what-is-reconstructed)
+for the inventory fields and [MCP integrity handling](mcp-contracts.md#integrity-record-and-continue)
+for the tool-result contract.
+
 ## Large results
 
 Graph and Evidence identifiers hash canonical JSON incrementally, without

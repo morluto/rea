@@ -115,7 +115,7 @@ npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --
 It returns the complete Evidence record directly and requires no native engine.
 Provider failures in doctor do not prevent unrelated target-free tools. To check
 readiness for one task instead of auditing every integration, see
-[Check readiness for the task at hand](https://github.com/morluto/rea/blob/main/README.md#check-readiness-for-the-task-at-hand).
+[Check readiness for your task](#check-readiness-for-your-task).
 
 ## Supported agents
 
@@ -218,11 +218,43 @@ installed REA skill. Run the returned scoped setup command to review and approve
 those changes, then restart affected agents. The plan is returned in terminal,
 non-TTY, and JSON modes without applying configuration changes.
 
+## Check readiness for your task
+
+Run `rea doctor` when you need diagnosis. It reads host prerequisites and agent
+configuration without changing them. Without options, it audits every detected
+registration, the installed skill and optional analysis engines; its overall
+`healthy` value can be false while your chosen workflow works.
+
+Select the part you want to check:
+
+| Task                                | Readiness check                                                          |
+| ----------------------------------- | ------------------------------------------------------------------------ |
+| Static JavaScript/Electron analysis | Run `rea analyze-javascript-application PATH --json` directly.           |
+| One analysis engine                 | `rea doctor --provider ghidra --json` (or `hopper`, `ida`)               |
+| One agent registration              | `rea doctor --client codex --json` (see [client IDs](#supported-agents)) |
+| Installed workflow instructions     | `rea doctor --skill --json`                                              |
+
+A scoped report has `scope.mode: "explicit"`. Its `scope_checks` determine
+`healthy` and the exit status. Other checks appear in `informational_checks`;
+`environment_healthy` summarizes the full audit. `--target` adds a target check,
+but the report remains audit-wide unless a scope option is also supplied.
+
+Follow the remediation for the failed check. If a native target has several
+available providers, choose one with `--provider` on the CLI or `provider_id`
+on `open_binary`. A `capability_unavailable` failure carries
+`details.selection_reason`: `ambiguous` asks you to choose from
+`details.candidate_ids`, while `provider_unavailable` asks you to repair the
+selected engine. See [provider selection](cli.md#choose-a-provider).
+
 ## Hopper
 
 Hopper is separate commercial software with its own license. Its free demo has
 vendor-defined limits, and a paid license is optional. REA reuses any detected
 installation and preserves Hopper during uninstall.
+
+The supported native host baseline is macOS 12+, Ubuntu 24.04+, Fedora 41+,
+64-bit Arch Linux, or CachyOS. Ghidra and IDA have their own provider-specific
+host requirements; Windows Ghidra uses the [experimental P0 boundary](windows-ghidra-p0.md).
 
 On macOS, approved setup downloads the official DMG, checks its published size
 and digest, validates the application bundle, and atomically installs it to
@@ -251,6 +283,40 @@ mount namespace with a private mode-1777 tmpfs over that directory only. The
 host mount and the rest of `/tmp` remain unchanged; this fallback never invokes
 `sudo`. `rea doctor --provider hopper --json` reports the selected
 strategy and both host and effective mount facts.
+
+### Launcher paths and troubleshooting
+
+On macOS, REA uses
+`/Applications/Hopper Disassembler.app/Contents/MacOS/hopper` by default.
+On Linux, it prefers executable `/opt/hopper/bin/Hopper`, then executable
+`~/.local/share/rea/hopper/bin/Hopper`; if neither exists, the former remains
+the diagnostic fallback. `HOPPER_LAUNCHER_PATH` overrides those choices:
+
+```bash
+export HOPPER_LAUNCHER_PATH=/absolute/path/to/Hopper
+rea doctor --provider hopper --json
+```
+
+If a Linux launcher exists but cannot start, inspect its shared libraries:
+
+```bash
+ldd /absolute/path/to/Hopper | grep 'not found'
+```
+
+Install the missing packages and rerun the scoped check. Linux demo sessions
+need Xvfb, Python 3, X11 and XTEST; approved setup installs those dependencies
+on supported distributions. Add the curl installer's reported executable
+directory, commonly `~/.local/bin`, to your shell `PATH` if needed.
+
+REA starts Hopper when needed. On macOS, its launcher can bring a window or
+first-run dialog forward; choose demo mode or activate your existing license.
+Hopper serializes analysis requests. Cancelling a wait can leave provider work
+running, which the session reports. Successful decompilation is cached until
+a relevant rename or comment changes it.
+
+Closing a session shuts down REA's bridge and removes its temporary socket
+directory while preserving the Hopper application. A `cleanup_incomplete`
+result identifies resources whose cleanup could not be verified.
 
 ### Hopper in CI
 
@@ -393,6 +459,17 @@ Ghidra/JDK installation; neither is inferred from startup alone.
 ## Diagnose, update, and remove
 
 `rea doctor --json` is strictly read-only. `rea update` updates only the npm installation that owns the running CLI. Source checkouts and package-runner copies must be updated through the mechanism that owns them; a fresh package-runner invocation can use `npx rea-agents@latest`. `rea uninstall` removes only REA-owned agent registrations and skill files; `--purge-data` additionally removes REA cache and state paths.
+
+```bash
+rea update
+rea uninstall
+rea uninstall --purge-data
+```
+
+Uninstall preserves Hopper, Node.js, Evidence files, captures, unrelated skills
+and other MCP servers. Purging removes only REA's cache and state under
+`~/.rea`; malformed client configuration or purge-path symlinks stop the
+operation. See the [CLI guide](cli.md#output-and-exit-status) for exit statuses.
 
 ## MCP Registry
 

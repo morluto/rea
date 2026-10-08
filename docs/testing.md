@@ -605,3 +605,26 @@ same checks through an isolated installed package. The conditional
 compiler. Ordinary unit/static gates acquire no browser. See
 [website runtime attribution](web-runtime.md) for effects, resource bounds and
 coverage limits.
+
+## Agent evaluation and conformance records
+
+Evaluate native, JavaScript, managed and browser investigation tasks through a
+real local Codex CLI with:
+
+```bash
+npm run verify:agent
+```
+
+Its report records tool selection, repeated calls, token use, completion quality,
+and handling of permissions and unknowns.
+
+Regenerate the managed conformance manifest and Evidence completion ledger from
+live verification results, or check them for drift:
+
+```bash
+npm run evidence:generate
+npm run evidence:check
+```
+
+The records preserve unsupported and unverified coverage as explicit unknowns.
+Run the matching real-tool prerequisites described in this guide.

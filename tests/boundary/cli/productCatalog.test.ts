@@ -292,6 +292,8 @@ describe("canonical product catalog drift", () => {
       true,
     );
     expect(issues.some((issue) => issue.includes("Future Client"))).toBe(true);
+    expect(issues).toContain("docs/installation.md: missing Future Client");
+    expect(issues).not.toContain("README.md: missing Future Client");
   });
 
   it("changes the provider projection digest when provider facts drift", async () => {
