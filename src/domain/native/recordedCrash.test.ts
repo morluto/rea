@@ -81,6 +81,16 @@ it.each([
     }),
   ],
   [
+    "raw owner ABI hidden by a CORE display label",
+    (v: ReturnType<typeof recordedCrashFixture>) => ({
+      ...v,
+      notes: v.notes.map((n) => ({
+        ...n,
+        owner_bytes_base64: Buffer.from("EVIL\0").toString("base64"),
+      })),
+    }),
+  ],
+  [
     "duplicate register",
     (v: ReturnType<typeof recordedCrashFixture>) => ({
       ...v,
@@ -95,6 +105,32 @@ it.each([
     recordedCrashSchema.safeParse(change(recordedCrashFixture())).success,
   ).toBe(false),
 );
+
+it("does not interpret a signal through a mislabeled raw owner ABI", () => {
+  const value = recordedCrashFixture();
+  expect(
+    recordedCrashSchema.safeParse({
+      ...value,
+      threads: [],
+      notes: value.notes.map((note) => ({
+        ...note,
+        type: "NT_SIGINFO",
+        owner_bytes_base64: Buffer.from("EVIL\0").toString("base64"),
+      })),
+      signals: [
+        {
+          note_index: 0,
+          number: 11,
+          code: 1,
+          errno: 0,
+          fault_address: "0x123",
+          fault_address_meaning: "recorded-sigsegv-address",
+          thread_association: "unknown",
+        },
+      ],
+    }).success,
+  ).toBe(false);
+});
 
 it("keeps absent map flags unknown and validates reported permission bits", () => {
   const value = recordedCrashFixture();

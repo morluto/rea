@@ -56,6 +56,11 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      - name: Install GDB on the disposable CI runner
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install --yes --no-install-recommends gdb
       - name: Acquire exact unchanged upstreams in isolated runner storage
         shell: bash
         run: |

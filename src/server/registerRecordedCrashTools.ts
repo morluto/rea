@@ -7,7 +7,7 @@ import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { toCallToolResult } from "./toolResult.js";
 
-/** Bind offline layout inspection to its named contract and session Evidence owner. */
+/** Bind recorded crash inspection to its named contract and session Evidence owner. */
 export const registerRecordedCrashTools = (
   server: McpServer,
   service: RecordedCrashService,

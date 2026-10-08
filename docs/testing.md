@@ -658,7 +658,7 @@ or chain dependency and does not execute a contract on a chain.
 `npm run verify:recorded:crash` is a separate Linux x64 lane. It requires GCC,
 GDB, absolute `REA_PWNTOOLS_PYTHON` with the offline ELF profile above,
 `REA_PWNDBG_GDBINIT` and `REA_PWNDBG_VENV_PATH` with unchanged pwndbg 2026.09.15,
-and `REA_VERIFY_STRACE_COMMAND`. Its conditional CI checks out the exact upstream
+and `REA_VERIFY_STRACE_COMMAND`. Its disposable CI runner installs GDB, checks out the exact upstream
 commit and installs its frozen lockfile in isolated runner storage. No developer
 host configuration or core-pattern setting changes.
 

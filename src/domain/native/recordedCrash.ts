@@ -14,6 +14,8 @@ const diagnostics = z.strictObject({
   stderr: z.string(),
   truncated: z.boolean(),
 });
+// Exact b"CORE\0"; a lossy display label cannot establish the Linux note ABI.
+const LINUX_CORE_OWNER_BASE64 = "Q09SRQA=";
 
 /** Select an explicit recording and optionally request debugger-derived mapping context. */
 export const inspectRecordedCrashInputSchema = z.strictObject({
@@ -230,7 +232,11 @@ export const recordedCrashSchema = recordedCrashObjectSchema.superRefine(
     }
     for (const thread of value.threads) {
       const note = value.notes[thread.note_index];
-      if (note?.type !== "NT_PRSTATUS" || note.owner_display !== "CORE") {
+      if (
+        note?.type !== "NT_PRSTATUS" ||
+        note.owner_display !== "CORE" ||
+        note.owner_bytes_base64 !== LINUX_CORE_OWNER_BASE64
+      ) {
         fail("Thread references a different note kind.");
         continue;
       }
@@ -254,7 +260,9 @@ export const recordedCrashSchema = recordedCrashObjectSchema.superRefine(
     for (const signal of value.signals) {
       if (
         value.notes[signal.note_index]?.type !== "NT_SIGINFO" ||
-        value.notes[signal.note_index]?.owner_display !== "CORE"
+        value.notes[signal.note_index]?.owner_display !== "CORE" ||
+        value.notes[signal.note_index]?.owner_bytes_base64 !==
+          LINUX_CORE_OWNER_BASE64
       )
         fail("Signal references a different note kind.");
       const known =
