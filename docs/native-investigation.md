@@ -361,3 +361,20 @@ A keyed-archive hierarchy UID without an object-table entry marks the hierarchy
 as partial while preserving decoded objects and known links. UID 0 remains
 archived nil and does not count as a missing reference. Archive and evidence
 digests identify the original serialized bytes.
+
+## Keyed archive integer precision
+
+The archive reader observes XML number element types and binary number markers.
+Integers beyond the exact range of a JSON number are reported with the original
+decimal text as `{ "$plist_type": "integer", "decimal": "<exact digits>" }` when
+that source value can be associated unambiguously. Integral real values remain
+numbers. Colliding integer/real values, unclassified numbers, and malformed UID
+markers remain decoded with an explicit precision limitation. The limitation
+also counts observed unsafe integer literals, including observations outside the
+selected object page. Incomplete supplemental metadata produces an explicit
+precision note without rejecting an archive accepted by the byte decoder.
+
+Value projection preserves serialized node kinds, IDs, references and pagination.
+Exact and ambiguous value counts describe emitted root/object value instances;
+a root and an object may contain the same value. Archive digests identify the
+original bytes.

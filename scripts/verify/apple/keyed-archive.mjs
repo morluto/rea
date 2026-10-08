@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -151,6 +151,26 @@ try {
       [{ source: null, path: ["UID"], target: 1, status: "resolved" }],
     );
   }
+  const numericTests = spawnSync(
+    "npm",
+    [
+      "run",
+      "test:focused",
+      "--",
+      "tests/boundary/filesystem/keyedArchiveNativeIntegers.test.ts",
+    ],
+    {
+      cwd: fileURLToPath(new URL("../../../", import.meta.url)),
+      stdio: "inherit",
+      timeout: 240_000,
+    },
+  );
+  if (numericTests.error) throw numericTests.error;
+  assert.equal(
+    numericTests.status,
+    0,
+    "Native Foundation integer cases failed",
+  );
   report = {
     ok: true,
     mocked: false,

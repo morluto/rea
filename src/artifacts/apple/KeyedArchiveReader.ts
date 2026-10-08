@@ -4,6 +4,11 @@ import { z } from "zod";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { projectPlistValue } from "../../domain/apple/plistValue.js";
+import { createPlistNumberProjection } from "../../domain/apple/plistNumbers.js";
+import {
+  binaryPlistNumberLiterals,
+  xmlPlistNumberLiterals,
+} from "./PlistNumberLiterals.js";
 import {
   omittedPrototypeKeysLimitation,
   parseXmlPropertyList,
@@ -32,15 +37,36 @@ export const decodeKeyedArchiveBytes = (
       "Selected file is a compiled NIBArchive, not a Foundation plist archive; decode it with decode_interface_builder",
     );
   const binary = bytes.subarray(0, 8).toString("ascii") === "bplist00";
+  const xmlText = binary ? undefined : decodeXmlPlistText(bytes);
   const parsed = binary
     ? { value: parseBinary(bytes), omittedPrototypeKeys: 0 }
-    : parseXmlPropertyList(decodeXmlPlistText(bytes));
+    : parseXmlPropertyList(xmlText ?? "");
   const graph = projectKeyedArchive(normalizePlist(parsed.value), selection);
+  const numbers = createPlistNumberProjection(
+    binary
+      ? binaryPlistNumberLiterals(bytes)
+      : xmlPlistNumberLiterals(xmlText ?? ""),
+  );
+  // Classify the serialized graph before projecting values to typed decimals.
+  // Numeric IDs, node kinds, references and pagination retain their original meaning.
+  const roots = Object.fromEntries(
+    Object.entries(graph.roots).map(([name, value]) => [
+      name,
+      numbers.project(value),
+    ]),
+  );
+  const objects = graph.objects.map((object) => ({
+    ...object,
+    value: numbers.project(object.value),
+  }));
   return {
     archive_format: binary ? ("binary-plist" as const) : ("xml-plist" as const),
     ...graph,
+    roots,
+    objects,
     limitations: [
       ...graph.limitations,
+      ...numbers.limitations(),
       ...(parsed.omittedPrototypeKeys === 0
         ? []
         : [omittedPrototypeKeysLimitation(parsed.omittedPrototypeKeys)]),
