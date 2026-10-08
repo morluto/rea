@@ -11,6 +11,17 @@ import { analyzeInterfaceBuilderBundle } from "../../../src/artifacts/apple/Inte
 import { encodeNibArchiveFixture } from "../../../src/artifacts/apple/NibArchive.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
+import { interfaceBuilderAnalysisSchema } from "../../../src/domain/apple/interfaceBuilderGraph.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
+import {
+  createInterfaceBuilderEncodingFixture,
+  expectInterfaceBuilderEncoding,
+  expectInvalidInterfaceBuilderEncoding,
+  interfaceBuilderEncodings,
+  invalidInterfaceBuilderEncodings,
+} from "../../fixtures/interfaceBuilderEncoding.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
+
 const compile = promisify(execFile);
 
 type PlistValue =
@@ -591,3 +602,81 @@ describe("compiled UIKit NIB connections", () => {
     );
   });
 });
+
+// This exact file is already selected by the unchanged native Apple CI lane.
+describe.skipIf(process.platform !== "darwin")(
+  "Foundation Interface Builder XML encodings",
+  () => {
+    it.each(interfaceBuilderEncodings)(
+      "filesystem preserves native %s graph and original bytes",
+      async (encoding) => {
+        const fixture = await createInterfaceBuilderEncodingFixture(encoding);
+        const result = await analyzeInterfaceBuilderBundle({
+          bundlePath: fixture.app,
+          targetSha256: "e".repeat(64),
+        });
+        expectInterfaceBuilderEncoding(
+          result,
+          fixture.expected,
+          fixture.bytes,
+          fixture.oracle,
+        );
+      },
+    );
+
+    cliTest.for(interfaceBuilderEncodings)(
+      "built CLI preserves native $0 graph and original bytes",
+      async (encoding, { cli }) => {
+        const fixture = await createInterfaceBuilderEncodingFixture(encoding);
+        const output = await cli.run({
+          arguments: ["decode-interface-builder", fixture.app, "--json"],
+          environment: {
+            REA_LOG_LEVEL: "silent",
+            REA_ANALYSIS_PROVIDER: "auto",
+          },
+        });
+        expect(output.exitCode).toBe(0);
+        const result = interfaceBuilderAnalysisSchema.parse(
+          parseEvidence(output.json).normalized_result,
+        );
+        expectInterfaceBuilderEncoding(
+          result,
+          fixture.expected,
+          fixture.bytes,
+          fixture.oracle,
+        );
+      },
+    );
+
+    it.each(invalidInterfaceBuilderEncodings)(
+      "filesystem rejects %s without graph substitution",
+      async (encoding) => {
+        const fixture = await createInterfaceBuilderEncodingFixture(encoding);
+        const result = await analyzeInterfaceBuilderBundle({
+          bundlePath: fixture.app,
+          targetSha256: "e".repeat(64),
+        });
+        expectInvalidInterfaceBuilderEncoding(result);
+      },
+    );
+
+    cliTest.for(invalidInterfaceBuilderEncodings)(
+      "built CLI reports $0 as invalid archive bytes",
+      async (encoding, { cli }) => {
+        const fixture = await createInterfaceBuilderEncodingFixture(encoding);
+        const output = await cli.run({
+          arguments: ["decode-interface-builder", fixture.app, "--json"],
+          environment: {
+            REA_LOG_LEVEL: "silent",
+            REA_ANALYSIS_PROVIDER: "auto",
+          },
+        });
+        expect(output.exitCode).toBe(0);
+        const result = interfaceBuilderAnalysisSchema.parse(
+          parseEvidence(output.json).normalized_result,
+        );
+        expectInvalidInterfaceBuilderEncoding(result);
+      },
+    );
+  },
+);
