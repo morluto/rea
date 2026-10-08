@@ -35,3 +35,30 @@ it("still parses only JSON values at runtime", () => {
   for (const value of [undefined, Number.NaN, Infinity, () => 0, [undefined]])
     expect(jsonValueSchema.safeParse(value).success).toBe(false);
 });
+
+it("preserves prototype-named members without prototype mutation", () => {
+  const input = JSON.parse(
+    '{"__proto__":{"preserved":7},"constructor":"ordinary","prototype":[1],"nested":{"\\u005f\\u005fproto\\u005f\\u005f":"escaped"},"list":[{"__proto__":null}]}',
+  ) as Record<string, unknown>;
+  expect(Object.hasOwn(input, "__proto__")).toBe(true);
+  const parsed = jsonValueSchema.parse(input) as Record<string, unknown>;
+  expect(Object.getPrototypeOf(parsed)).toBe(Object.prototype);
+  for (const key of ["__proto__", "constructor", "prototype", "nested", "list"])
+    expect(Object.hasOwn(parsed, key)).toBe(true);
+  expect(parsed["__proto__"]).toEqual({ preserved: 7 });
+  expect(parsed["constructor"]).toBe("ordinary");
+  expect(parsed["prototype"]).toEqual([1]);
+  const nested = parsed["nested"] as Record<string, unknown>;
+  expect(Object.getPrototypeOf(nested)).toBe(Object.prototype);
+  expect(Object.hasOwn(nested, "__proto__")).toBe(true);
+  expect(nested["__proto__"]).toBe("escaped");
+  const list = parsed["list"] as readonly unknown[];
+  const first = list[0] as Record<string, unknown>;
+  expect(Object.hasOwn(first, "__proto__")).toBe(true);
+  expect(first["__proto__"]).toBeNull();
+  expect(Object.getPrototypeOf(first)).toBe(Object.prototype);
+  expect(({} as Record<string, unknown>)["preserved"]).toBeUndefined();
+  expect(JSON.parse(JSON.stringify(parsed))).toEqual(
+    JSON.parse(JSON.stringify(input)),
+  );
+});

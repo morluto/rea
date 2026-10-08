@@ -32,9 +32,9 @@ HAR uses unchanged `har-schema@2.0.0` draft-06 schemas, `ajv@8.20.0`,
 `lossless-json@4.3.1` numeric representations, pinned in the npm lockfile.
 Only the HAR 1.2 profile is supported. Unknown extensions remain reported
 evidence. Duplicate object keys, including equal values and escaped spellings,
-are rejected before materialization. A `__proto__` member returns an explicit
-unsupported-boundary error in both formats: the current shared JSON schema
-cannot preserve this member. Original capture files remain unchanged.
+are rejected before materialization. Prototype-named members such as
+`__proto__` are preserved as ordinary own JSON members without prototype
+mutation. Original capture files remain unchanged.
 The observed mitmproxy 12.2.3 `SaveHar` profile can emit `postData.text: null`
 for a missing request body. REA preserves that reported null, omitting the
 optional field only from its validation copy for this exact producer profile;

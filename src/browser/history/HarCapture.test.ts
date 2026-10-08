@@ -161,14 +161,19 @@ it("rejects identical duplicate core fields before schema validation", () => {
   expect(() => decodeHarCapture(text, [])).toThrow("duplicate");
 });
 
-it("reports an unsupported JSON schema boundary instead of dropping a producer property", () => {
+it("preserves prototype-named producer members through the capture boundary", () => {
   const text = JSON.stringify(historicalHar()).replace(
     '"cache":{}',
     '"cache":{},"_extension":{"__proto__":{"preserved":7},"constructor":"ordinary"}',
   );
-  expect(() => decodeHarCapture(text, [])).toThrow(
-    "JSON schema boundary cannot preserve",
-  );
+  const result = decodeHarCapture(text, []);
+  const reported = result.records[0]?.reported as Record<string, unknown>;
+  const extension = reported["_extension"] as Record<string, unknown>;
+  expect(Object.getPrototypeOf(extension)).toBe(Object.prototype);
+  expect(Object.hasOwn(extension, "__proto__")).toBe(true);
+  expect(extension["__proto__"]).toEqual({ preserved: 7 });
+  expect(extension["constructor"]).toBe("ordinary");
+  expect(({} as Record<string, unknown>)["preserved"]).toBeUndefined();
 });
 
 it("preserves Unicode, offsets, sizes, duplicate URLs and opaque extensions without inventing bytes", () => {

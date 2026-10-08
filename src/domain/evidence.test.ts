@@ -5,6 +5,7 @@ import { createAnalysisProfile } from "./analysisProfile.js";
 import type { BinaryTarget } from "./binaryTarget.js";
 import { createEvidence, evidenceSchema, parseEvidence } from "./evidence.js";
 import { createEvidenceBundle } from "./evidenceBundle.js";
+import type { JsonValue } from "./jsonValue.js";
 
 const TARGET: BinaryTarget = {
   path: "/tmp/fixture",
@@ -229,4 +230,28 @@ describe("DOS analysis evidence identity", () => {
         .evidence_id,
     );
   });
+});
+
+it("preserves prototype-named result members with an aligned semantic id", () => {
+  const result = JSON.parse(
+    '{"__proto__":{"preserved":7},"constructor":"ordinary"}',
+  ) as JsonValue;
+  const evidence = createEvidence(TARGET, PROVIDER, {
+    operation: "health",
+    parameters: {},
+    result,
+  });
+  const parsed = parseEvidence(evidence);
+  const normalized = parsed.normalized_result as Record<string, unknown>;
+  expect(Object.getPrototypeOf(normalized)).toBe(Object.prototype);
+  expect(Object.hasOwn(normalized, "__proto__")).toBe(true);
+  expect(normalized["__proto__"]).toEqual({ preserved: 7 });
+  expect(normalized["constructor"]).toBe("ordinary");
+  expect(({} as Record<string, unknown>)["preserved"]).toBeUndefined();
+  const stripped = createEvidence(TARGET, PROVIDER, {
+    operation: "health",
+    parameters: {},
+    result: { constructor: "ordinary" },
+  });
+  expect(stripped.evidence_id).not.toBe(evidence.evidence_id);
 });
