@@ -46,7 +46,7 @@ for (const relativePath of paths) {
             "\n",
           ),
     check,
-    generateCommand: "npm run build:cached",
+    generateCommand: "npm run docs:generate",
   });
 }
 if (
@@ -54,7 +54,7 @@ if (
   JSON.stringify(await filePaths(outputRoot)) !== JSON.stringify(paths)
 )
   throw new Error(
-    "Generated skill file inventory drifted; run npm run build:cached",
+    "Generated skill file inventory drifted; run npm run docs:generate",
   );
 
 async function filePaths(directory, prefix = "") {
