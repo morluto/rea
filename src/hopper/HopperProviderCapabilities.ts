@@ -79,6 +79,11 @@ export const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
       }),
       limitations: Object.freeze([
         "Results depend on Hopper's completed static analysis.",
+        ...(operation === "address_to_file_offset"
+          ? [
+              "Original-file coordinates require source bytes matching the selected executable digest. A changed, unavailable, or database-only source retains native mapping facts in partial error evidence.",
+            ]
+          : []),
         ...(operation === "search_strings" || operation === "search_procedures"
           ? [
               "Regex mode uses ECMAScript Unicode semantics in a supervised worker with a five-second matching deadline. Cancellation or deadline failure stops matching without blocking Hopper; literal mode retains native casefold semantics.",

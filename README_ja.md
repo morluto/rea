@@ -68,7 +68,7 @@ npx rea-agents setup
 
 使うエージェントを選び、予定されている変更を確認して承認してください。セットアップは REA の MCP サーバーと対応するワークフローの手順を追加し、既存の設定をバックアップします。完了後にエージェントを再起動してください。
 
-セットアップは Claude Code、Codex、Cursor、Gemini CLI、および[その他のエージェント](docs/installation.md#supported-agents)に対応しています。プロバイダーの設定と MCP の手動登録については、[インストールとセットアップ](docs/installation.md)を参照してください。
+セットアップは Claude Code、Codex、Cursor、Gemini CLI、Grok Build、および[その他のエージェント](docs/installation.md#supported-agents)に対応しています。プロバイダーの設定と MCP の手動登録については、[インストールとセットアップ](docs/installation.md)を参照してください。
 
 ### エージェントに依頼する
 

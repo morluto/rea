@@ -1,0 +1,178 @@
+import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
+
+/** Exercise complete oversized results and recovery through real CLI/MCP adapters. */
+export async function verifyGhidraLargeResults({
+  call,
+  reject,
+  target,
+  entrypoint,
+  env,
+}) {
+  const exec = promisify(execFile);
+  const compiler = process.env.REA_CC ?? "cc";
+  try {
+    await exec(compiler, ["--version"], { env, timeout: 30000 });
+  } catch (cause) {
+    throw new Error(
+      `Ghidra large-result verification requires a working host C compiler '${compiler}'.`,
+      { cause },
+    );
+  }
+  // Hex encoding, Evidence projection and the two MCP representations multiply
+  // the source size. Derive the fixture from the pinned SDK's receive budget.
+  const length = Math.ceil(STDIO_DEFAULT_MAX_BUFFER_SIZE / 4);
+  const workspace = await mkdtemp(join(tmpdir(), "rea-ghidra-large-results-"));
+  const path = join(workspace, "large-results");
+  const source = fileURLToPath(
+    new URL("../../tests/conformance/ghidra/large-results.c", import.meta.url),
+  );
+  try {
+    await exec(
+      compiler,
+      ["-O0", `-DREA_PAYLOAD_BYTES=${length}`, source, "-o", path],
+      { env, timeout: 30000 },
+    );
+    const bytes = await readFile(path);
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    await call("close_binary");
+    await call("open_binary", { path, provider_id: "ghidra" });
+    const names = await call("list_names");
+    const payload = names.find(({ value }) =>
+      /(?:^|_)rea_large_payload$/u.test(value),
+    );
+    const entry = names.find(({ value }) =>
+      /(?:^|_)rea_large_entry$/u.test(value),
+    );
+    assert.ok(payload);
+    assert.ok(entry);
+    const mapping = await call("address_to_file_offset", {
+      address: payload.address,
+    });
+    const expected = bytes.subarray(
+      mapping.file_offset,
+      mapping.file_offset + length,
+    );
+    assert.equal(expected.length, length);
+    assert.equal(expected[0], 0x5a);
+    assert.equal(expected.at(-1), 0xa5);
+    const before = await call("binary_session");
+    const readError = await reject("read_bytes", {
+      address: payload.address,
+      length,
+    });
+    const readId = retainedReference(readError, "read_bytes");
+    const comment =
+      "REA_BIG_COMMENT:" +
+      "x".repeat(Math.ceil(STDIO_DEFAULT_MAX_BUFFER_SIZE / 10));
+    const annotationError = await reject("annotate_native_function", {
+      procedure: entry.address,
+      name: "rea_frame_probe",
+      comment,
+      inline_comment: comment,
+    });
+    const annotationId = retainedReference(
+      annotationError,
+      "annotate_native_function",
+    );
+    assert.equal(
+      await call("procedure_address", { procedure: "rea_frame_probe" }),
+      entry.address,
+      "A delivery constraint must preserve the successfully committed edit",
+    );
+    const dossierError = await reject("analyze_function", {
+      procedure: "rea_frame_probe",
+    });
+    const dossierId = retainedReference(dossierError, "analyze_function");
+    const after = await call("binary_session");
+    assert.equal(after.analysis_run.run_id, before.analysis_run.run_id);
+    assert.equal(after.sha256, sha256);
+    assert.equal(
+      (await call("read_bytes", { address: payload.address, length: 1 }))
+        .bytes_hex,
+      "5a",
+    );
+    const lastAddress = `0x${(BigInt(payload.address) + BigInt(length - 1)).toString(16)}`;
+    assert.equal(
+      (await call("read_bytes", { address: lastAddress, length: 1 })).bytes_hex,
+      "a5",
+    );
+    const bundlePath = join(workspace, "bundle.json");
+    await call("export_evidence_bundle", { path: bundlePath });
+    const bundle = JSON.parse(await readFile(bundlePath, "utf8"));
+    const retained = (id) => {
+      const record = bundle.records.find(
+        ({ evidence_id }) => evidence_id === id,
+      );
+      assert.ok(record, `Missing exported retained record ${id}`);
+      assert.equal(record.provider.id, "ghidra");
+      assert.equal(record.subject.digest.sha256, sha256);
+      return record;
+    };
+    const readRecord = retained(readId);
+    const read = readRecord.normalized_result;
+    assert.equal(read.requested_bytes, length);
+    assert.equal(read.returned_bytes, length);
+    assert.equal(read.complete, true);
+    assert.equal(read.bytes_hex, expected.toString("hex"));
+    assert.equal(readRecord.raw_result.bytes_hex, read.bytes_hex);
+    const annotationRecord = retained(annotationId);
+    const annotation = annotationRecord.normalized_result;
+    assert.equal(annotation.annotations.name, "rea_frame_probe");
+    assert.equal(annotation.annotations.comment, comment);
+    assert.equal(annotation.annotations.inline_comment, comment);
+    assert.equal(annotationRecord.raw_result.annotations.comment, comment);
+    assert.equal(
+      annotationRecord.raw_result.annotations.inline_comment,
+      comment,
+    );
+    const dossierRecord = retained(dossierId);
+    const dossier = dossierRecord.normalized_result;
+    assert.equal(dossier.procedure.name, "rea_frame_probe");
+    assert.ok(dossier.comments.some(({ text }) => text === comment));
+    assert.ok(
+      dossierRecord.raw_result.comments.some(({ text }) => text === comment),
+    );
+    const { stdout } = await exec(
+      process.execPath,
+      [
+        entrypoint,
+        "read-bytes",
+        path,
+        payload.address,
+        "--length",
+        String(length),
+        "--provider",
+        "ghidra",
+        "--json",
+      ],
+      { env, timeout: 240000, maxBuffer: 72 * 1024 * 1024 },
+    );
+    assert.deepEqual(JSON.parse(stdout).normalized_result, read);
+    assert.deepEqual(await readFile(path), bytes);
+    await call("close_binary");
+    await call("open_binary", { path: target.path, provider_id: "ghidra" });
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+}
+
+function retainedReference(error, operation) {
+  assert.equal(error.code, "resource_constraint");
+  assert.equal(error.details.operation, operation);
+  assert.equal(error.details.resource, "transport");
+  const limits = error.details.reported_limits;
+  assert.equal(limits.boundary, "mcp-response");
+  assert.equal(limits.constraint, "receive-buffer");
+  assert.ok(limits.response_bytes_at_least > limits.result_budget_bytes);
+  assert.equal(limits.evidence_reference.kind, "retained-evidence");
+  assert.match(limits.evidence_reference.evidence_id, /^ev_[a-f0-9]{64}$/u);
+  return limits.evidence_reference.evidence_id;
+}

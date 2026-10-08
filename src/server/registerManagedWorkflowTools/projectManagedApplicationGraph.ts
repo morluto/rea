@@ -4,7 +4,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { projectManagedApplicationGraphEvidence } from "../../application/managed/ManagedApplicationGraphService.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
-import { toCallToolResult } from "../toolResult.js";
+import { toCallToolResult, toEvidenceToolResult } from "../toolResult.js";
 import { managedWorkflowContract } from "./contract.js";
 import {
   resolveManagedArtifactEvidence,
@@ -63,9 +63,7 @@ export const registerProjectManagedApplicationGraph = (
       if (!recordedSources.ok)
         return toCallToolResult(recordedSources, graphContract);
       const recorded = options.recordEvidence?.(result.value);
-      if (recorded !== undefined && !recorded.ok)
-        return toCallToolResult(recorded, graphContract);
-      return toCallToolResult(result, graphContract);
+      return toEvidenceToolResult(result.value, graphContract, recorded);
     },
   );
 };

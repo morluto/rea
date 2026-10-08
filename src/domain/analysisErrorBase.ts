@@ -84,9 +84,11 @@ import type {
   PartialProcessCaptureObservation,
   ProcessCaptureCleanupReport,
 } from "./process/processCapture.js";
+import type { FileOffsetPartialObservation } from "./native/fileOffsetPartialObservation.js";
 import type { NativeCallPartialObservation } from "./native/nativeCallPartialObservation.js";
 
 /** Provider-neutral evidence collected before a typed analysis failure. */
 export type AnalysisPartialObservation =
   | PartialProcessCaptureObservation
-  | NativeCallPartialObservation;
+  | NativeCallPartialObservation
+  | FileOffsetPartialObservation;

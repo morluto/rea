@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { lstatSync } from "node:fs";
 
 /** One supported client configuration location. */
@@ -14,6 +14,7 @@ export interface SetupClient {
     | "copilot_cli"
     | "opencode"
     | "commandcode"
+    | "grok"
     | "unsupported";
 }
 
@@ -27,7 +28,9 @@ interface ClientPathContext {
     readonly CLAUDE_CONFIG_DIR?: string | undefined;
     readonly CODEX_HOME?: string | undefined;
     readonly COPILOT_HOME?: string | undefined;
+    readonly GROK_HOME?: string | undefined;
     readonly OPENCODE_CONFIG?: string | undefined;
+    readonly SAND_DATA_ROOT?: string | undefined;
     readonly XDG_CONFIG_HOME?: string | undefined;
   };
 }
@@ -76,6 +79,32 @@ const claudeCodeMarkerDirectory = ({ home, env }: ClientPathContext): string =>
 
 const codexDirectory = ({ home, env }: ClientPathContext): string =>
   env.CODEX_HOME ?? join(home, ".codex");
+
+const grokDirectory = ({ home, env }: ClientPathContext): string =>
+  env.GROK_HOME ?? join(home, ".grok");
+
+/** Grok Bot uses an absolute SAND_DATA_ROOT; anything else stays ~/.grokbot. */
+const grokBotDirectory = ({ home, env }: ClientPathContext): string => {
+  const root = env.SAND_DATA_ROOT;
+  return root !== undefined && root !== "" && isAbsolute(root)
+    ? root
+    : join(home, ".grokbot");
+};
+
+/**
+ * Grok Bot stores connectors in the signed-in account and runs them on its
+ * hosted computer. The data directory is only a detection marker.
+ */
+export const GROK_BOT_MANUAL_REGISTRATION_REMEDIATION =
+  "Grok Bot keeps connectors in the signed-in account and runs them on its hosted computer. Setup does not write that account store, and a data-directory mcp.json is not a registration. In the Grok Bot chat, add a custom MCP server named rea that runs on the Bot's computer with `npx -y rea-agents@<version> mcp`. Do not put credentials in the command or arguments. A stdio server on this machine is not attached.";
+
+/** Remediation for a client whose connector is not a local configuration file. */
+export const manualRegistrationRemediation = (
+  clientName: string,
+): string | undefined =>
+  clientName === "grok_bot"
+    ? GROK_BOT_MANUAL_REGISTRATION_REMEDIATION
+    : undefined;
 
 const copilotDirectory = ({ home, env }: ClientPathContext): string =>
   env.COPILOT_HOME ?? join(home, ".copilot");
@@ -212,6 +241,21 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     markerPath: vscodeUserDirectory,
     format: "vscode",
   },
+  {
+    name: "grok_build",
+    displayName: "Grok Build",
+    configPath: (context: ClientPathContext) =>
+      join(grokDirectory(context), "config.toml"),
+    markerPath: grokDirectory,
+    format: "grok",
+  },
+  {
+    name: "grok_bot",
+    displayName: "Grok Bot",
+    configPath: grokBotDirectory,
+    markerPath: grokBotDirectory,
+    format: "unsupported",
+  },
 ] as const satisfies readonly ClientDefinition[];
 
 const resolvePath = (path: ClientPath, context: ClientPathContext): string =>
@@ -226,7 +270,9 @@ export const supportedClients = (
     CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
     CODEX_HOME: process.env.CODEX_HOME,
     COPILOT_HOME: process.env.COPILOT_HOME,
+    GROK_HOME: process.env.GROK_HOME,
     OPENCODE_CONFIG: process.env.OPENCODE_CONFIG,
+    SAND_DATA_ROOT: process.env.SAND_DATA_ROOT,
     XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
   },
 ): readonly SetupClient[] => {

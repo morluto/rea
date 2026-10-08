@@ -27,7 +27,7 @@ import type { Logger } from "../logger.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { toCallToolResult } from "./toolResult.js";
+import { toCallToolResult, toEvidenceToolResult } from "./toolResult.js";
 import { executeFunctionAnalysisEvidence } from "../application/FunctionAnalysisEvidence.js";
 
 /** Optional session services used by enhanced tool registration. */
@@ -271,7 +271,7 @@ const executeEnhancedTool = async (
       recordUnknown: registration.recordUnknown,
     });
     if (!unknowns.ok) return toCallToolResult(unknowns, contract);
-    return toCallToolResult({ ok: true, value: evidence }, contract);
+    return toEvidenceToolResult(evidence, contract, recorded);
   }
   return toCallToolResult(result, contract);
 };
@@ -308,12 +308,12 @@ const executeFunctionTool = async (
     message: result.ok ? "completed" : "failed",
     terminal: true,
   });
-  if (result.ok) {
-    const recorded = registration.recordEvidence?.(result.value);
-    if (recorded !== undefined && !recorded.ok)
-      return toCallToolResult(recorded, contract);
-  }
-  return toCallToolResult(result, contract);
+  if (!result.ok) return toCallToolResult(result, contract);
+  return toEvidenceToolResult(
+    result.value,
+    contract,
+    registration.recordEvidence?.(result.value),
+  );
 };
 
 const jsonParameters = (

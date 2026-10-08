@@ -119,7 +119,8 @@ readiness for one task instead of auditing every integration, see
 
 ## Supported agents
 
-Setup can configure these clients for REA's local MCP server:
+Setup can configure these clients for REA's local MCP server. Grok Bot is
+listed after the table because its connector is not one of these files:
 
 | Client             | `--client` value |
 | ------------------ | ---------------- |
@@ -135,11 +136,36 @@ Setup can configure these clients for REA's local MCP server:
 | GitHub Copilot CLI | `copilot_cli`    |
 | Command Code       | `commandcode`    |
 | VS Code            | `vscode`         |
+| Grok Build         | `grok_build`     |
 
 For OpenCode, setup writes the V1 `mcp.rea` entry, which OpenCode V1 and V2
 both load. If the configuration already uses OpenCode V2's native
 `mcp.servers` table, setup registers REA there instead and replaces any earlier
 `mcp.rea` entry from REA.
+
+Grok Build loads `[mcp_servers.rea]` from `$GROK_HOME/config.toml`, or from
+`~/.grok/config.toml` when `GROK_HOME` is unset. Setup edits that server
+table, `[mcp_servers.rea.env]`, and a root `disabled_mcp_servers` entry that
+names `rea`. It sets `startup_timeout_sec = 30` and leaves every other name
+in that list. The shared skill installed under `~/.agents/skills` is already
+on Grok Build's skill path.
+
+Grok Bot (`grok_bot`) is detected from `~/.grokbot`, or from `SAND_DATA_ROOT`
+when that value is an absolute path. A relative or empty `SAND_DATA_ROOT`
+stays on `~/.grokbot`. That directory is not the connector store. Grok Bot
+keeps connectors in the signed-in account and runs them on its hosted
+computer. It does not import `mcp.json` from the data directory, and it does
+not attach a stdio server running on this machine. Setup does not call the
+account connector API, does not write a registration file, and does not report
+the data directory as aligned. Ask the Grok Bot chat to add a custom MCP
+server named `rea` that runs on the Bot's computer:
+
+```bash
+npx -y rea-agents@<version> mcp
+```
+
+Do not put credentials in that command or its arguments. `rea doctor --client grok_bot`
+reports this manual step. `rea uninstall` does not remove the account connector.
 
 ## Review setup changes
 
@@ -209,7 +235,7 @@ rea setup --yes --all-detected --install-hopper --json
 
 Setup pins package-runner MCP registrations to the exact installed REA version,
 installs the matching skill and on-demand references in the same plan, and adds
-`startup_timeout_sec = 30` for Codex. `rea update` installs the exact resolved
+`startup_timeout_sec = 30` for Codex and Grok Build. `rea update` installs the exact resolved
 release into the npm prefix that owns the running package, then checks the new
 executable's version before reporting success. It does not reopen onboarding.
 Release lookup and installation both use npm's configured registry.

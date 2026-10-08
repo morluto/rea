@@ -22,6 +22,10 @@ import { mcpTextValue, requireMcpResult } from "./lib/mcp-verifier-results.mjs";
 import { snapshotHopperRuntime } from "./lib/real-hopper-cleanup.mjs";
 import { HOPPER_TARGET_LEASE_DIRECTORY } from "../dist/hopper/HopperTargetLease.js";
 import { parseConfig } from "../dist/config.js";
+import {
+  verifyHopperSourceBinding,
+  relocateSingleFatSlice,
+} from "./lib/real-hopper-source-binding.mjs";
 
 const run = promisify(execFile);
 const verifyFat64 = process.argv[2] === "--fat64";
@@ -86,6 +90,7 @@ transport.stderr?.on("data", (chunk) => process.stderr.write(chunk));
 const ajv = new Ajv({ strict: false });
 addFormats(ajv);
 const observations = [];
+const sourceBinding = [];
 try {
   await run(toolPaths.clang, [
     "-isysroot",
@@ -241,11 +246,13 @@ try {
     const procedures = await call("list_procedures");
     const entry = procedures.find((item) => item.value.endsWith("rea_entry"));
     assert.ok(entry, "compiler fixture omitted rea_entry");
+    let entryMapping;
     for (const address of [
       entry.address,
       `0x${(BigInt(entry.address) + 1n).toString(16)}`,
     ]) {
       const mapping = await call("address_to_file_offset", { address });
+      if (address === entry.address) entryMapping = mapping;
       const bytes = await call("read_bytes", { address, length: 16 });
       assert.equal(
         mapping.file_offset,
@@ -322,6 +329,20 @@ try {
       sourceHash,
       "native analysis modified source executable bytes",
     );
+    sourceBinding.push({
+      path,
+      ...(await verifyHopperSourceBinding({
+        client,
+        call,
+        path,
+        file,
+        address: entry.address,
+        mapping: entryMapping,
+        ...(path === singleFat || path.endsWith("c-single-fat64")
+          ? { relocate: relocateSingleFatSlice }
+          : {}),
+      })),
+    });
     await call("close_binary");
   }
   for (const { path, reason } of invalidFat64) {
@@ -405,6 +426,7 @@ console.log(
     {
       observations,
       cliMcpParity: true,
+      sourceBinding,
       fat64: verifyFat64 ? "verified" : "not_run",
       malformedFat64Rejected: invalidFat64.length,
       preparedImageRemovedOnMcpShutdown: preparedImagePath !== undefined,

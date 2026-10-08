@@ -363,7 +363,6 @@ const bridgeBootstrapSource = (
     `REA_TOKEN = ${JSON.stringify(session.token)}`,
     `REA_RUN_ID = ${JSON.stringify(session.runId)}`,
     `REA_TARGET_PATH = ${JSON.stringify(loadedPath)}`,
-    `REA_ORIGINAL_EXECUTABLE_PATH = ${options.targetKind === "executable" ? JSON.stringify(options.targetPath) : "None"}`,
     `REA_OWNS_PROCESS_LIFETIME = ${ownsProcessLifetime ? "True" : "False"}`,
     `exec(compile(open(${JSON.stringify(options.bridgeScriptPath)}, 'rb').read(), ${JSON.stringify(options.bridgeScriptPath)}, 'exec'))`,
     "",

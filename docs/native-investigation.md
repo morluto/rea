@@ -12,6 +12,21 @@ input file and include the observed lipo slice offset for universal binaries.
 If that offset is unavailable, segment evidence locations are omitted with an
 explicit limitation; architecture inventory locations remain available.
 
+Hopper's `address_to_file_offset` combines the native image-relative mapping with
+original-file coordinates only after checking the source against the session's
+SHA-256. FAT tables and embedded Mach-O headers come from that same hashing pass.
+A changed or nonregular source reports `artifact_changed`; an unreadable or
+missing source reports its access or filesystem failure. Those errors retain the native offset,
+loaded header and provider source path in `details.partial_observation`, with the
+original-file coordinate explicitly unavailable. Restore the original bytes or
+reopen the changed executable to obtain verified coordinates. Snapshot replay
+remains historical evidence for its recorded artifact identity.
+
+A selected Hopper database's digest identifies the database rather than its
+original executable. Original-file mapping is unavailable for that selection;
+native mapping facts remain in partial evidence, and `read_bytes` still reads
+the loaded database. Open the original executable to verify source coordinates.
+
 Native Xcode command execution uses shared process supervision with a 60-second
 deadline and a 64 MiB aggregate stdout/stderr budget. Timeout, cancellation,
 stream failure, and output exhaustion retain the captured output, exit details,

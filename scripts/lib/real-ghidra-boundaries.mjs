@@ -7,10 +7,12 @@ import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import Ajv from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
+import { analysisErrorProjectionSchema } from "../../dist/contracts/errorSchemas.js";
 import { mcpTextValue, requireMcpResult } from "./mcp-verifier-results.mjs";
 import { verifyLegacyGhidraReferenceSnapshot } from "./ghidra-reference-snapshot-e2e.mjs";
 import { verifyGhidraSnapshotLifecycle } from "./real-ghidra-snapshot-lifecycle.mjs";
 import { verifyGhidraTargetAdmission } from "./real-ghidra-target-admission.mjs";
+import { verifyGhidraLargeResults } from "./real-ghidra-large-results.mjs";
 import { verifyGhidraNamespaceAnnotations } from "./real-ghidra-namespace-annotations.mjs";
 
 /** Probe real Ghidra location, annotation and error contracts through public adapters. */
@@ -53,6 +55,15 @@ export async function verifyGhidraBoundaries(
       true,
       `${name} accepted ${JSON.stringify(args)}`,
     );
+    // SDK input-schema rejections are text-only; application errors use the
+    // canonical structured error projection, separately from success schemas.
+    if (reply.structuredContent !== undefined) {
+      analysisErrorProjectionSchema.parse(reply.structuredContent.error);
+      assert.deepEqual(
+        reply.structuredContent,
+        JSON.parse(mcpTextValue(reply)),
+      );
+    }
     if (diagnostic !== undefined) {
       const error = reply.structuredContent?.error;
       assert.equal(error?.code, "invalid_request");
@@ -664,6 +675,13 @@ export async function verifyGhidraBoundaries(
     entrypoint,
     env,
   });
+  await verifyGhidraLargeResults({
+    call,
+    reject: invalid,
+    target,
+    entrypoint,
+    env,
+  });
   await assert.rejects(access(socketRoot), { code: "ENOENT" });
   await assert.rejects(access(runtimeRoot), { code: "ENOENT" });
   assert.equal(await call("procedure_address", { procedure: name }), address);
@@ -705,6 +723,7 @@ export async function verifyGhidraBoundaries(
     imported_source_identity_retained: true,
     equivalent_instruction_address_spellings: true,
     qualified_annotation_name_roundtrip: true,
+    oversized_result_retention_and_complete_export: true,
     source_immutable: true,
     reopen_discards_edits: true,
     long_tmpdir_private_socket_cleanup: true,

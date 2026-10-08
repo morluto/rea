@@ -68,7 +68,7 @@ npx rea-agents setup
 
 اختر الوكلاء، وراجع التغييرات المقترحة، ثم وافق عليها. يضيف الإعداد خادم MCP الخاص بـ REA وتعليمات سير العمل المطابقة، مع الاحتفاظ بنسخ احتياطية من الإعدادات الموجودة. أعد تشغيل وكيلك بعد ذلك.
 
-يدعم الإعداد Claude Code وCodex وCursor وGemini CLI و[وكلاء آخرين](docs/installation.md#supported-agents). راجع [التثبيت والإعداد](docs/installation.md) لتهيئة موفّري التحليل وتسجيل MCP يدويًا.
+يدعم الإعداد Claude Code وCodex وCursor وGemini CLI وGrok Build و[وكلاء آخرين](docs/installation.md#supported-agents). راجع [التثبيت والإعداد](docs/installation.md) لتهيئة موفّري التحليل وتسجيل MCP يدويًا.
 
 ### اطلب من وكيلك
 

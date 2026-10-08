@@ -23,6 +23,7 @@ import {
   hopperLoaderArgsForTarget,
   resolveHopperAnalysisProfile,
 } from "./HopperAnalysisProfile.js";
+import { mapHopperFileOffset } from "./HopperFileOffset.js";
 import { HopperRegexSearch } from "./HopperRegexSearch.js";
 import { HopperClient } from "./HopperClient.js";
 import { hopperMachOImageSchema } from "./HopperMachOImage.js";
@@ -239,10 +240,16 @@ export class HopperProvider implements AnalysisProviderCandidate {
           parameters.mode === "regex"
             ? await regexSearch.execute(operation, parameters, options)
             : await client.callTool(operation, parameters, options);
-        return result.ok
+        if (!result.ok) return result;
+        const mapped =
+          operation === "address_to_file_offset"
+            ? await mapHopperFileOffset(target, result.value, options?.signal)
+            : result;
+        return mapped.ok
           ? {
               ok: true,
-              value: createAnalysisExecution(result.value, executionProvider, {
+              value: createAnalysisExecution(mapped.value, executionProvider, {
+                rawResult: result.value,
                 ...(profile === undefined ? {} : { analysisProfile: profile }),
                 limitations: [
                   ...(preparedImage === undefined
@@ -266,7 +273,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
                 ],
               }),
             }
-          : result;
+          : mapped;
       },
       runtimeLineageSnapshots: () => {
         const observation = client.runtimeLineage();

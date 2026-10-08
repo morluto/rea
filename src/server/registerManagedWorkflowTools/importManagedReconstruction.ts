@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { importManagedReconstructionEvidenceValidated } from "../../application/managed/ManagedReconstructionService.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
-import { toCallToolResult } from "../toolResult.js";
+import { toCallToolResult, toEvidenceToolResult } from "../toolResult.js";
 import { managedWorkflowContract } from "./contract.js";
 import { resolveManagedEvidence } from "./evidence.js";
 import type { ManagedWorkflowToolRegistration } from "./types.js";
@@ -41,9 +41,11 @@ export const registerImportManagedReconstruction = (
       if (recordedSource !== undefined && !recordedSource.ok)
         return toCallToolResult(recordedSource, reconstructionContract);
       const recorded = options.recordEvidence?.(result.value);
-      if (recorded !== undefined && !recorded.ok)
-        return toCallToolResult(recorded, reconstructionContract);
-      return toCallToolResult(result, reconstructionContract);
+      return toEvidenceToolResult(
+        result.value,
+        reconstructionContract,
+        recorded,
+      );
     },
   );
 };

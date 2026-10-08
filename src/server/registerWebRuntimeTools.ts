@@ -6,7 +6,7 @@ import type { Logger } from "../logger.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { toCallToolResult } from "./toolResult.js";
+import { toCallToolResult, toEvidenceToolResult } from "./toolResult.js";
 
 /** Bind distinct runtime operations to named contracts and the session's Evidence owner. */
 export const registerWebRuntimeTools = (
@@ -29,9 +29,7 @@ export const registerWebRuntimeTools = (
       );
       if (!result.ok) return toCallToolResult(result, execution);
       const recorded = recordEvidence?.(result.value);
-      return recorded !== undefined && !recorded.ok
-        ? toCallToolResult(recorded, execution)
-        : toCallToolResult(result, execution);
+      return toEvidenceToolResult(result.value, execution, recorded);
     },
   );
   server.registerTool(
@@ -43,9 +41,7 @@ export const registerWebRuntimeTools = (
       );
       if (!result.ok) return toCallToolResult(result, listeners);
       const recorded = recordEvidence?.(result.value);
-      return recorded !== undefined && !recorded.ok
-        ? toCallToolResult(recorded, listeners)
-        : toCallToolResult(result, listeners);
+      return toEvidenceToolResult(result.value, listeners, recorded);
     },
   );
 };

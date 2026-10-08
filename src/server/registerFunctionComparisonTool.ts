@@ -17,7 +17,7 @@ import { recordSessionEvidenceSources } from "./sessionEvidence.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
 import { FUNCTION_COMPARISON_PROVIDER } from "./sessionToolPolicies.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { toCallToolResult } from "./toolResult.js";
+import { toCallToolResult, toEvidenceToolResult } from "./toolResult.js";
 
 /** Register explicit Evidence-backed function comparison. */
 export const registerFunctionComparisonTool = (
@@ -89,7 +89,7 @@ export const registerFunctionComparisonTool = (
           rightIds,
         }),
       );
-      return toCallToolResult(recorded, contract);
+      return toEvidenceToolResult(evidence, contract, recorded);
     },
   );
 };

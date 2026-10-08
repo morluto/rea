@@ -184,7 +184,9 @@ MCP SDK transport tests with recording providers remain integration tests.
 They are useful for schema drift and failure projection but do not prove that
 Hopper, Ghidra or another substituted engine works. `verify:package` proves
 packaging/install behavior and fake-provider integration; use the corresponding
-real-provider lanes for engine claims. Real Apple dispatch and Interface
+real-provider lanes for engine claims. Packed-bridge checks verify shipped files
+and Python syntax without deleted mock fixtures or source-spelling assertions.
+Real Apple dispatch and Interface
 Builder verifiers currently prove format integration through production readers.
 
 `verify:hopper` exercises an installed Hopper through the production stdio MCP
@@ -225,8 +227,13 @@ The Linux demo lane remains a separate `verify:hopper:linux` command.
 existing Xcode clang/lipo toolchain. It compiles arm64/x86-64 thin executables and
 one- and two-slice FAT32 containers, verifies exact/interior address mappings
 against bytes in the original files, checks CLI/MCP parity, and checks owned
-runtime cleanup. `verify:hopper:fat64` additionally checks FAT64 preparation through
-Hopper's native Mach-O loader, source-container mappings, profile identity,
+runtime cleanup. Source byte changes, removal, permission denial (for non-root
+callers), and nonregular replacement must retain native partial mapping facts,
+reject unverified original-file coordinates,
+and recover after restoration. Single-slice FAT cases also relocate the slice
+without changing its loaded bytes. `verify:hopper:fat64` additionally checks
+FAT64 preparation through Hopper's native Mach-O loader, source-container
+mappings, profile identity,
 malformed and ambiguous slice rejection, and temporary-image lifetime. Both
 lanes have been verified on Hopper 6.1.0-demo; this establishes REA's prepared
 FAT64 workflow, not native FAT64-loader support.
@@ -354,6 +361,13 @@ workflow verifies leaf and qualified renames, repeated reuse of fully qualified
 readback, lookup by the returned name, literal namespace-like leaf names,
 rejection of empty qualified leaf names without changing comments, CLI
 behavior, and independent CLI/MCP database ownership.
+Large-result probes compile initialized host-native data sized from the pinned
+MCP SDK receive budget. Real byte reads, annotation edits and function dossiers
+exceed that budget while preserving the connection and active analysis run.
+Each delivery error must identify its successfully retained Evidence record;
+export must recover every source byte and complete annotation, with CLI parity
+and an unchanged executable. The focused formatter check retains only the
+separate case where recording was not acknowledged.
 Malformed annotation readback, memory completeness, and inventory data remain separate
 SDK/provider integration cases; success from a real
 provider cannot establish rejection of a contradictory provider response.

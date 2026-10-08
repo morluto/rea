@@ -136,7 +136,7 @@ export class AnalysisAccessDeniedError extends AnalysisError {
     readonly operation: string,
     readonly path: string,
     readonly systemCode: "EACCES" | "EPERM",
-    options?: ErrorOptions,
+    options?: AnalysisErrorOptions,
   ) {
     super(
       `Host filesystem read access denied (${systemCode}) for ${path} during ${operation}`,
@@ -152,7 +152,7 @@ export class AnalysisArtifactChangedError extends AnalysisError {
     readonly operation: string,
     readonly path: string,
     readonly reason: string,
-    options?: ErrorOptions,
+    options?: AnalysisErrorOptions,
   ) {
     super(`Selected artifact changed during acquisition: ${reason}`, options);
   }

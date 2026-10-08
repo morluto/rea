@@ -9,7 +9,6 @@ import json
 import hmac
 import os
 import socket
-import struct
 from typing import Any, Optional, Protocol, Sequence
 
 BAD_ADDRESSES = (-1, 0xFFFFFFFFFFFFFFFF, None)
@@ -275,76 +274,6 @@ def _procedure(document, value=None):
     if result is None:
         raise InvalidRequestError("No procedure exists at the requested address")
     return result
-
-
-def _original_file_offset(document, offset):
-    """Translate Hopper's image-relative mapping using the observed loaded header."""
-    if offset > 9007199254740991:
-        raise CapabilityUnavailableError("Provider file offset exceeds the exact JSON integer range")
-    path = globals().get("REA_ORIGINAL_EXECUTABLE_PATH") or document.getExecutableFilePath()
-    if not path:
-        raise CapabilityUnavailableError("Hopper did not identify the original executable for file-offset verification")
-    try:
-        with open(path, "rb") as source:
-            size = os.fstat(source.fileno()).st_size
-            header = source.read(8)
-            formats = {
-                b"\xca\xfe\xba\xbe": (">", False),
-                b"\xbe\xba\xfe\xca": ("<", False),
-                b"\xca\xfe\xba\xbf": (">", True),
-                b"\xbf\xba\xfe\xca": ("<", True),
-            }
-            fat = formats.get(header[:4])
-            if fat is None:
-                if offset >= size:
-                    raise InvalidRequestError("Mapped offset is outside the original executable file at %s" % path)
-                return offset, path, 0
-            if len(header) != 8:
-                raise CapabilityUnavailableError("Original FAT executable has a truncated header at %s" % path)
-            byte_order, wide = fat
-            count = struct.unpack(byte_order + "I", header[4:])[0]
-            stride = 32 if wide else 20
-            table_end = 8 + count * stride
-            if count == 0 or table_end > size:
-                raise CapabilityUnavailableError("Original FAT executable has an invalid architecture table at %s" % path)
-            header_address = document.getAddressFromFileOffset(0)
-            reader = getattr(document, "readBytes", None)
-            if header_address in BAD_ADDRESSES or document.getSegmentAtAddress(header_address) is None or not callable(reader):
-                raise CapabilityUnavailableError("Hopper did not expose a readable loaded Mach-O header to identify its FAT slice")
-            loaded = reader(header_address, 12)
-            if not isinstance(loaded, (bytes, bytearray)) or len(loaded) != 12:
-                raise CapabilityUnavailableError("Hopper did not expose the loaded Mach-O header to identify its FAT slice")
-            loaded_order = {b"\xce\xfa\xed\xfe": "<", b"\xcf\xfa\xed\xfe": "<", b"\xfe\xed\xfa\xce": ">", b"\xfe\xed\xfa\xcf": ">"}.get(bytes(loaded[:4]))
-            if loaded_order is None:
-                raise CapabilityUnavailableError("Hopper's loaded header is not a supported Mach-O image")
-            identity = struct.unpack(loaded_order + "II", loaded[4:12])
-            selected = None
-            for index in range(count):
-                source.seek(8 + index * stride)
-                entry = source.read(stride)
-                if len(entry) != stride:
-                    raise CapabilityUnavailableError("Original FAT executable architecture table changed during verification")
-                cpu, subtype, start, length, alignment = struct.unpack(byte_order + ("IIQQI" if wide else "IIIII"), entry[:28] if wide else entry)
-                if length < 12 or start < table_end or start > size or length > size - start or alignment > 52 or start % (1 << alignment):
-                    raise CapabilityUnavailableError("Original FAT executable has an invalid slice range at index %s" % index)
-                if (cpu, subtype) != identity:
-                    continue
-                source.seek(start)
-                if source.read(12) != bytes(loaded):
-                    raise CapabilityUnavailableError("FAT slice declaration disagrees with Hopper's loaded header")
-                if selected is not None:
-                    raise CapabilityUnavailableError("Multiple FAT slices match Hopper's loaded header; original-file mapping is ambiguous")
-                selected = (start, length)
-            if selected is None:
-                raise CapabilityUnavailableError("No original FAT slice matches Hopper's loaded header")
-            start, length = selected
-            if offset >= length:
-                raise InvalidRequestError("Mapped offset is outside Hopper's loaded FAT slice")
-            if start + offset > 9007199254740991:
-                raise CapabilityUnavailableError("Original file offset exceeds the exact JSON integer range")
-            return start + offset, path, start
-    except OSError as error:
-        raise CapabilityUnavailableError("Cannot read the original executable for file-offset verification at %s: %s" % (path, error)) from error
 
 
 def _procedure_name(procedure):
@@ -873,8 +802,17 @@ def _dispatch(method, params):
         # file header. An integer alone does not prove source-file provenance.
         if inverse(offset) != address:
             raise InvalidRequestError("Address has no authoritative file-offset mapping: reverse lookup disagrees at %s" % _hex(address))
-        original_offset, source_path, image_base = _original_file_offset(document, offset)
-        return {"address": _hex(address), "file_offset": original_offset, "provider_file_offset": offset, "image_base_file_offset": image_base, "source_path": source_path}
+        if offset > 9007199254740991:
+            raise CapabilityUnavailableError("Provider file offset exceeds the exact JSON integer range")
+        header_address = inverse(0)
+        reader = getattr(document, "readBytes", None)
+        header = reader(header_address, 12) if header_address not in BAD_ADDRESSES and document.getSegmentAtAddress(header_address) is not None and callable(reader) else None
+        return {
+            "address": _hex(address),
+            "provider_file_offset": offset,
+            "provider_source_path": document.getExecutableFilePath(),
+            "provider_image_header_hex": bytes(header).hex() if isinstance(header, (bytes, bytearray)) and len(header) == 12 else None,
+        }
     if method == "resolve_containing_procedure":
         address = _address(document, params.get("address"))
         procedure, reason = _containing_procedure(document, address)

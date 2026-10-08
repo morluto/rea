@@ -2,6 +2,7 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 
 import type { ToolContract } from "../contracts/toolContracts.js";
+import type { Evidence } from "../domain/evidence.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -27,6 +28,22 @@ export const toCallToolResult = (
   result.ok
     ? successResult(result.value, contract, context)
     : errorResult(result.error);
+
+/** Deliver Evidence using the producer's explicit recording acknowledgment. */
+export const toEvidenceToolResult = (
+  evidence: Evidence,
+  contract: ToolContract,
+  recorded: Result<unknown, AnalysisError> | undefined,
+): CallToolResult =>
+  recorded !== undefined && !recorded.ok
+    ? errorResult(recorded.error)
+    : toCallToolResult(
+        { ok: true, value: evidence },
+        contract,
+        recorded === undefined
+          ? undefined
+          : { retainedEvidenceId: evidence.evidence_id },
+      );
 
 const errorResult = (error: AnalysisError): CallToolResult => {
   const projected = projectAnalysisError(error);
@@ -66,8 +83,8 @@ const successResult = (
         contract.name,
         "transport",
         encoded.constraint === "string-length"
-          ? "The complete MCP response exceeds Node's single-string representation limit. Use a focused retained-Evidence query or export to consume the complete analysis."
-          : "The complete MCP response exceeds the stdio response budget. The analysis result was not truncated; use a focused retained-Evidence query or export to consume it.",
+          ? "The operation completed, but its complete MCP response exceeds Node's single-string representation limit. Export retained evidence to consume the complete analysis, or use complete CLI JSON output."
+          : "The operation completed, but its complete MCP response exceeds the stdio response budget. The analysis result was not truncated; export retained evidence to consume it, or use complete CLI JSON output.",
         {
           boundary: "mcp-response",
           default_receive_buffer_bytes: STDIO_DEFAULT_MAX_BUFFER_SIZE,

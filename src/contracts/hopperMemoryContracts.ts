@@ -16,7 +16,7 @@ export const HOPPER_MEMORY_TOOL_DEFINITIONS = [
   {
     name: "address_to_file_offset",
     description:
-      "Map one provider-normalized virtual address to its original nonnegative file offset. Hopper translates FAT Mach-O image-relative offsets using the observed loaded header, preserving its provider coordinate, image base, and source path. Unmapped addresses fail explicitly, and unavailable or ambiguous original-file mappings return typed capability unavailability.",
+      "Map one provider-normalized virtual address to its original nonnegative file offset. Hopper verifies the original bytes against the selected executable digest and translates FAT image-relative offsets using the loaded header. Results preserve the provider coordinate, image base, and source path. Unmapped addresses fail explicitly; changed or unavailable sources return typed errors retaining native mapping facts as partial evidence.",
     inputSchema: z.object({ address, document }),
   },
 ] as const;

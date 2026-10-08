@@ -2,6 +2,7 @@ import {
   clientRegistrationEntry,
   clientConfigurationValuesEqual,
   clientServerPath,
+  grokServerListedDisabled,
   legacyClientServerPath,
   parseClientConfiguration,
   serializeClientConfiguration,
@@ -58,7 +59,7 @@ const configureClientDocument = async (
   let parsed: ClientConfigurationDocument;
   try {
     parsed = parseClientConfiguration(
-      original ?? (format === "toml" ? "" : "{}"),
+      original ?? (format === "toml" || format === "grok" ? "" : "{}"),
       format,
     );
   } catch (cause: unknown) {
@@ -234,7 +235,7 @@ const restoreConfig = async (
   }
 };
 
-/** Whether REA's entry matches and no conflicting legacy entry remains. */
+/** Whether REA's entry matches, no legacy entry remains, and Grok is not suppressing it. */
 const registrationCurrent = (
   parsed: ClientConfigurationDocument,
   desired: unknown,
@@ -242,7 +243,12 @@ const registrationCurrent = (
   clientConfigurationValuesEqual(
     parsed.servers[PRODUCT_IDENTITY.mcpServerKey],
     desired,
-  ) && !Object.hasOwn(parsed.legacyServers, PRODUCT_IDENTITY.mcpServerKey);
+  ) &&
+  !Object.hasOwn(parsed.legacyServers, PRODUCT_IDENTITY.mcpServerKey) &&
+  !(
+    parsed.dialect === "grok" &&
+    grokServerListedDisabled(parsed.document, PRODUCT_IDENTITY.mcpServerKey)
+  );
 
 const clientConfigurationDesired = (
   client: SetupClient,
@@ -262,7 +268,7 @@ const clientConfigurationDesired = (
   );
   return {
     ...registration,
-    ...(client.name === "codex"
+    ...(client.name === "codex" || client.name === "grok_build"
       ? {
           startup_timeout_sec: MCP_STARTUP_POLICY.codexStartupTimeoutSeconds,
         }
