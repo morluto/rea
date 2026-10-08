@@ -10,7 +10,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { promisify } from "node:util";
 
 import { z } from "zod";
@@ -100,8 +100,8 @@ export const installMacHopper = async (
     if (destinationExists && options.replaceExisting !== true)
       return { status: "failed", reason: "destination_exists" };
     temporary = await host.createTemporaryDirectory();
-    const packagePath = join(temporary, "hopper.dmg");
-    const mountPath = join(temporary, "mounted");
+    const packagePath = posix.join(temporary, "hopper.dmg");
+    const mountPath = posix.join(temporary, "mounted");
     await host.createMountDirectory(mountPath);
     await host.writePackage(packagePath, archive.bytes);
     if (!(await host.mount(packagePath, mountPath)))
@@ -115,7 +115,7 @@ export const installMacHopper = async (
       !(await host.installBundle(source, destination, stage, destinationExists))
     )
       return { status: "failed", reason: "copy" };
-    const launcherPath = join(destination, "Contents/MacOS/hopper");
+    const launcherPath = posix.join(destination, "Contents/MacOS/hopper");
     if (!(await host.launcherReady(launcherPath)))
       return { status: "failed", reason: "launcher_missing" };
     await host.openApplication(destination);
@@ -126,7 +126,7 @@ export const installMacHopper = async (
     return { status: "failed", reason: "download" };
   } finally {
     if (temporary !== undefined) {
-      const mountPath = join(temporary, "mounted");
+      const mountPath = posix.join(temporary, "mounted");
       if (mounted) await host.unmount(mountPath);
       await host.cleanup(temporary);
     }

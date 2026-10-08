@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { promisify } from "node:util";
 
 import { execFileOutput } from "../process/ExecFileOutput.js";
@@ -200,7 +200,10 @@ export const installLinuxHopper = async (
     if (!packageIntegrityMatches(archiveDownload.bytes, release))
       return { status: "failed", reason: "integrity" };
     temporary = await host.createTemporaryDirectory();
-    const archive = join(temporary, `hopper.${distribution.packageFamily}`);
+    const archive = posix.join(
+      temporary,
+      `hopper.${distribution.packageFamily}`,
+    );
     await host.writeArchive(archive, archiveDownload.bytes);
     if (!(await host.installPackage(distribution.packageFamily, archive)))
       return { status: "failed", reason: "authorization_or_package_manager" };
@@ -223,7 +226,7 @@ export const installLinuxHopper = async (
 
 /** Canonical launcher path for a legacy user-local Linux Hopper installation. */
 export const linuxHopperLauncherPath = (home: string): string =>
-  join(home, ".local/share/rea/hopper/bin/Hopper");
+  posix.join(home, ".local/share/rea/hopper/bin/Hopper");
 
 const systemLinuxHopperInstallHost = (): LinuxHopperInstallHost => ({
   distribution: readLinuxDistribution,
