@@ -329,6 +329,8 @@ jobs:
         run: npm run test:focused -- tests/boundary/cli/nativePlistCli.test.ts tests/boundary/cli/nativePlistPrototypeKeyCli.test.ts tests/boundary/cli/nativePlistSelectionFailureCli.test.ts
       - name: Native Swift demangling CLI and MCP regressions
         run: npm run test:focused -- tests/boundary/cli/nativeDemangleCli.test.ts tests/boundary/mcp/nativeDemangleMcp.test.ts
+      - name: Native signature target binding and CLI/MCP recovery regressions
+        run: npm run test:focused -- tests/boundary/providers/native/nativeSignatureTargetBinding.test.ts tests/boundary/cli/nativeSignatureCli.test.ts tests/boundary/mcp/nativeSignatureTargetBindingMcp.test.ts
       - name: Process filesystem snapshot descriptor regressions
         run: npm run test:focused -- src/process/capture/FilesystemSnapshot.test.ts
       - name: Native Darwin ownership and process cleanup regressions
