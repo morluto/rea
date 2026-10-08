@@ -7,10 +7,10 @@
       "client": "2.3.1",
       "core": "2.3.1"
     },
-    "skill_version": "31"
+    "skill_version": "32"
   },
   "tools": {
-    "total": 137,
+    "total": 138,
     "families": [
       {
         "id": "direct",
@@ -100,14 +100,15 @@
       {
         "id": "artifact",
         "surface": "artifact-provider",
-        "count": 6,
+        "count": 7,
         "tools": [
           "decode_interface_builder",
           "extract_artifact",
           "inspect_artifact",
           "inspect_asset_catalog",
           "inspect_evm_interface",
-          "inspect_keyed_archive"
+          "inspect_keyed_archive",
+          "trace_dylib_resolution"
         ]
       },
       {
@@ -407,7 +408,8 @@
         "extract_artifact",
         "inspect_artifact",
         "inspect_asset_catalog",
-        "inspect_keyed_archive"
+        "inspect_keyed_archive",
+        "trace_dylib_resolution"
       ]
     },
     {
@@ -599,7 +601,7 @@
     }
   ],
   "cli": {
-    "primary_count": 92,
+    "primary_count": 93,
     "commands": [
       "address-to-file-offset",
       "analyze",
@@ -684,6 +686,7 @@
       "trace",
       "trace-android-references",
       "trace-application-feature",
+      "trace-dylib-resolution",
       "trace-javascript-semantics",
       "trace-native-ui-action",
       "trace-native-values",
@@ -703,15 +706,15 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 92,
-      "mcp_tools": 137,
+      "cli_commands": 93,
+      "mcp_tools": 138,
       "mcp_prompts": 6
     },
     "digests": {
-      "tools_sha256": "bbf98e121ceebbbde9ddcb772214fb1a3586c9f555794598a3782dff29b98def",
+      "tools_sha256": "61b501f81acddb52ea80408c936ceec19b73e08331f8fdd05eb503708373e0fa",
       "prompts_sha256": "ef2de8814390b340623c32001610aa2709d90bed51537b6e562ab3abf144ab4d",
-      "combined_sha256": "a97175781209916e1faa643e2695f1c74c848f947449046cae08f1f22f968cc1",
-      "providers_sha256": "3e818806f5ebd1842e5b88dc35fd75142afa029c79f659cbe249f8fdf6045dca"
+      "combined_sha256": "8ed2bd4b71684e3e391f909841edf32b68da20eede1f46f0dd6081e235644260",
+      "providers_sha256": "44935c127fd040af492f2da591dfcd782d766770d306b91242216674220047ed"
     }
   }
 }

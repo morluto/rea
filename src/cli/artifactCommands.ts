@@ -15,6 +15,7 @@ export const registerArtifactCommands = (
   registerExtractionCommand(cli, logger);
   registerInterfaceBuilderCommand(cli, logger);
   registerAssetCatalogCommand(cli, logger);
+  registerDylibResolutionCommand(cli, logger);
   cli.command(CLI_COMMANDS.inspectKeyedArchive, {
     description:
       "Inspect a Foundation keyed archive as an object-reference graph",
@@ -51,6 +52,45 @@ export const registerArtifactCommands = (
             offset: options.offset,
             limit: options.limit,
             ...(options.root === undefined ? {} : { root: options.root }),
+          },
+          logger,
+        ),
+      ),
+  });
+};
+
+const registerDylibResolutionCommand = (
+  cli: CliInstance,
+  logger: Logger,
+): void => {
+  cli.command(CLI_COMMANDS.traceDylibResolution, {
+    description:
+      "Trace dyld load-path resolution for a Mach-O or every executable in an app bundle",
+    args: z.object({
+      path: z.string().describe("Mach-O file or Apple .app bundle path"),
+    }),
+    options: z.object({
+      root: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Process root relative to the bundle or the Mach-O's directory (repeatable)",
+        ),
+      architecture: z
+        .enum(["arm64", "arm64e", "x86_64"])
+        .optional()
+        .describe("Trace only this slice of each root"),
+    }),
+    run: ({ args, options }) =>
+      logCliCommand(logger, CLI_COMMANDS.traceDylibResolution, () =>
+        runProviderAnalysis(
+          args.path,
+          "trace_dylib_resolution",
+          {
+            ...(options.root === undefined ? {} : { roots: options.root }),
+            ...(options.architecture === undefined
+              ? {}
+              : { architecture: options.architecture }),
           },
           logger,
         ),

@@ -104,7 +104,16 @@ extension, a login item, a privileged helper, launchd plists, and a helper tool,
 signed ad hoc. It packs the app as a directory, a `ditto` ZIP, and an APFS DMG,
 then checks that `inspect-artifact` plus `project-apple-application-graph`
 report the same bundle anatomy for all three through the CLI, with stdio MCP
-parity. It also checks that the DMG is detached afterwards. It runs in macOS CI.
+parity. It also checks that the DMG is detached afterwards. The same app
+covers `trace-dylib-resolution`:
+
+- each resolution status and finding, with CLI/MCP parity;
+- for every traced image, dependencies, rpaths, and install names equal to
+  `otool -l`;
+- for the main executable and an XPC service, a predicted load order equal to
+  the images dyld actually loads under `DYLD_PRINT_LIBRARIES`.
+
+It runs in macOS CI.
 
 Apple artifact verifiers live in `scripts/verify/apple/`, with the macOS bundle
 builder under `scripts/fixtures/apple/` and NIB byte fixtures beside the decoder

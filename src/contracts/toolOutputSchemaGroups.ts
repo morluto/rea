@@ -32,6 +32,7 @@ import {
 import { artifactExtractionResultSchema } from "../domain/artifactGraph.js";
 import { artifactInspectionResultSchema } from "../domain/artifactInspection.js";
 import { interfaceBuilderAnalysisSchema } from "../domain/apple/interfaceBuilderGraph.js";
+import { dylibResolutionResultSchema } from "../domain/apple/dylibResolution.js";
 import { keyedArchiveResultSchema } from "../domain/apple/keyedArchive.js";
 import { appleAssetCatalogResultSchema } from "../domain/apple/appleAssetCatalog.js";
 import {
@@ -338,6 +339,7 @@ export const artifactOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   decode_interface_builder: resultOf(interfaceBuilderAnalysisSchema),
   inspect_keyed_archive: resultOf(keyedArchiveResultSchema),
   inspect_asset_catalog: resultOf(appleAssetCatalogResultSchema),
+  trace_dylib_resolution: resultOf(dylibResolutionResultSchema),
 };
 
 /** Exact Evidence schema for execution-free managed static analysis. */

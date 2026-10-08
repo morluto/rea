@@ -83,6 +83,13 @@ helpers, launchd plists, symlinks, and each bundle's `info_plist_path` and
 executable candidates. Roles are path conventions, not parsed plists; read the
 listed plists with `inspect_plist`.
 
+After `open_binary` on a `.app` or Mach-O, use `trace_dylib_resolution` to see
+which file each `@rpath`, `@loader_path` and `@executable_path` load reaches for
+every executable in the bundle. It also lists missing or weak loads and earlier
+`@rpath` candidates that are absent. Narrow large bundles with `roots` or
+`architecture`. System paths stay undetermined because the dyld shared cache
+provides them.
+
 Use `extract_artifact` when materialized files are needed. It takes no arguments
 and materializes all regular files into a fresh temporary directory chosen by
 REA. Symlinks and encrypted entries are inventory facts, not extractable files.

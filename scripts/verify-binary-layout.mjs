@@ -1157,7 +1157,7 @@ try {
       "\n",
     )) {
       if (!/execve(?:at)?\(/.test(line)) continue;
-      const match = /^execve\("([^\"]+)"/.exec(line);
+      const match = /^execve\("([^"]+)"/.exec(line);
       assert.notEqual(
         match,
         null,

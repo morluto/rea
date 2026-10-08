@@ -138,7 +138,11 @@ const char *core_chain(void) { return sibling_value() == 7 ? chain_variant() : "
   return join(version, "Core");
 };
 
-/** The main executable, with a weak dependency deleted after linking. */
+/**
+ * The main executable. It searches a missing `Overrides` rpath before
+ * `Frameworks`, weakly links a library deleted after linking, and
+ * delay-links a library, which the linker encodes as `dylib_use_command`.
+ */
 const buildMainExecutable = async (root, contents, coreBinary) => {
   const gone = join(contents, "Frameworks", "libgone.dylib");
   await clang(root, {
@@ -147,22 +151,33 @@ const buildMainExecutable = async (root, contents, coreBinary) => {
     output: gone,
     flags: ["-dynamiclib", "-install_name", "@rpath/libgone.dylib"],
   });
+  const delayed = join(contents, "Frameworks", "libdelay.dylib");
+  await clang(root, {
+    name: "delay",
+    source: `int delay_value(void) { return 3; }\n`,
+    output: delayed,
+    flags: ["-dynamiclib", "-install_name", "@rpath/libdelay.dylib"],
+  });
   const executable = join(contents, "MacOS", "MacFixture");
   await clang(root, {
     name: "main",
     source: `#include <stdio.h>
 const char *core_chain(void);
+int delay_value(void);
 extern int gone_value(void) __attribute__((weak_import));
 int main(void) {
+  if (delay_value() != 3) return 1;
   printf("chain=%s weak=%s\\n", core_chain(), gone_value ? "present" : "absent");
   return 0;
 }
 `,
     output: executable,
     flags: [
+      "-Wl,-rpath,@executable_path/../Overrides",
       "-Wl,-rpath,@executable_path/../Frameworks",
       coreBinary,
       `-Wl,-weak_library,${gone}`,
+      `-Wl,-delay_library,${delayed}`,
     ],
   });
   await rm(gone);
@@ -191,7 +206,12 @@ const buildNestedBundles = async (root, contents, coreBinary) => {
 int main(void) { return core_chain()[0] == 'b'; }
 `,
     output: join(service, "MacOS", "Svc"),
-    flags: ["-Wl,-rpath,@executable_path/../../../../Frameworks", coreBinary],
+    // An absolute rpath outside the bundle precedes the bundled framework.
+    flags: [
+      "-Wl,-rpath,/opt/rea-fixture-absent/lib",
+      "-Wl,-rpath,@executable_path/../../../../Frameworks",
+      coreBinary,
+    ],
   });
   await write(
     join(service, "Info.plist"),

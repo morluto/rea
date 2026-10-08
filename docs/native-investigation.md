@@ -12,6 +12,13 @@ input file and include the observed lipo slice offset for universal binaries.
 If that offset is unavailable, segment evidence locations are omitted with an
 explicit limitation; architecture inventory locations remain available.
 
+- `trace_dylib_resolution` / `rea trace-dylib-resolution <app-or-mach-o>`
+  parses Mach-O load commands in TypeScript and follows dyld's path expansion
+  for every executable in an app bundle, or for one Mach-O within its directory.
+  It reports each `@rpath`, `@loader_path` and `@executable_path` candidate with
+  its outcome. Paths outside the analyzed root, including shared-cache system
+  libraries, stay undetermined. See
+  [Apple application analysis](apple-application-analysis.md#dylib-load-resolution).
 - `inspect_asset_catalog` / `rea inspect-asset-catalog <app>` reads compiled
   `Assets.car` metadata through macOS `assetutil --info`. Catalog digests, raw
   rendition fields, pagination and exact UI resource-name matches are returned.

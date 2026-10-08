@@ -218,6 +218,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   decode_interface_builder: evidence,
   inspect_asset_catalog: nativeEvidence,
   inspect_keyed_archive: evidence,
+  trace_dylib_resolution: evidence,
   inspect_managed_artifact: evidence,
   inspect_managed_members: evidence,
   inspect_managed_native_boundaries: evidence,
