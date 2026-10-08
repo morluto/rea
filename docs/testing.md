@@ -221,6 +221,15 @@ decompilation, reference and search operations. A literal `--help` trace query p
 that selector data is preserved independently of global CLI flags.
 Unmapped annotation destinations and
 oversized later batch names fail before any earlier edit is applied.
+
+`verify:hopper:deadlines` checks the native client's optional request deadlines
+on macOS with an owned source-built fixture. Zero and elapsed deadlines must
+leave native comments unchanged, including when a synchronous progress observer
+delays timer dispatch. It also observes a short analysis deadline and verifies
+subsequent wire recovery and clean shutdown. Caller timeout does not interrupt
+Hopper's synchronous native operation. Socket boundary tests deterministically
+cover active and queued expiry, late replies and timer cleanup.
+
 The Linux demo lane remains a separate `verify:hopper:linux` command.
 
 `verify:hopper:fat` is a separate macOS lane requiring installed Hopper and the
