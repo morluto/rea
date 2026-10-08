@@ -32,6 +32,7 @@ Open <http://127.0.0.1:4173/>. Refresh the browser after editing a file.
 - `public/showcase/th04/index.html`: TH04's 16-bit DOS bullet-angle calculation and compiler checks.
 - `public/showcase/ctf/index.html`: DownUnderCTF's masked-squares flag checker, extracted equations and real process captures.
 - `public/get-started/index.html`: agent setup, first CLI result and provider guides.
+- `public/faq/index.html`: concise answers about setup, updates, analysis and troubleshooting.
 - `public/guides/`: a guide hub and native, JavaScript/Electron and browser examples.
 - `public/examples/`: downloadable Electron source and an interactive Notes browser app.
 - `public/assets/`: shared styles, interactions, favicon and explanatory figures.
@@ -69,6 +70,13 @@ Reading pages share a small `↑ Top` link at the bottom right. It appears after
 scrolling and returns to the page header, with smooth scrolling when reduced
 motion is disabled. Keyboard activation returns focus to the first navigation
 link. Without JavaScript, the link stays visible and uses its `#top` anchor.
+
+The FAQ uses native `<details>` for its answers. Keep replies short and link to
+on-site guides for the next step. Individual answers have stable fragment IDs;
+the shared script opens an answer when its fragment is visited. The questions
+and disclosure controls remain usable without JavaScript. Check FAQ commands
+and support statements against the English README and relevant guides when
+updating them.
 
 DX-Ball figures and findings refer to the linked 7 October 2026 checkpoint,
 commit `a55dca27ec0a07018c1b2c95ae2be027f7d8c3c4`. Update those links and figures
