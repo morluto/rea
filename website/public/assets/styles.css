@@ -872,7 +872,8 @@ pre code {
 .th04-overview {
   margin-bottom: 3.2rem;
 }
-.th04-ring-figure img {
+.th04-ring-figure img,
+.ctf-mask-figure img {
   min-width: 680px;
 }
 .th04-preview img {
