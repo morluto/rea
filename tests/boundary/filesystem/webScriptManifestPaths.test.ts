@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { join, relative, sep } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 import { expect, it } from "vitest";
 import { LocalWebScriptArtifacts } from "../../../src/browser/assets/LocalWebScriptArtifacts.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
@@ -21,14 +21,17 @@ const materialize = async () => {
   return { root, artifact, sourcePath, manifestPath };
 };
 
-it("reads native, forward-slash, dot-segment, and relative manifest paths without changing reported identity", async () => {
+it("reads equivalent local manifest spellings without changing reported identity", async () => {
   const fixture = await materialize();
   const paths = new Set([
     fixture.manifestPath,
     fixture.manifestPath.replaceAll("\\", "/"),
     `${fixture.root}${sep}nested${sep}..${sep}manifest.json`,
-    `.${sep}${relative(process.cwd(), fixture.manifestPath)}`,
   ]);
+  const fromWorkingDirectory = relative(process.cwd(), fixture.manifestPath);
+  // A target on another Windows drive has no relative path from this cwd.
+  if (!isAbsolute(fromWorkingDirectory))
+    paths.add(`.${sep}${fromWorkingDirectory}`);
   for (const operation of [
     "trace_web_module_imports",
     "trace_web_source_location",
