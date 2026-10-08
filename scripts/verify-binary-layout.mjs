@@ -1032,8 +1032,8 @@ try {
       "invalid_input",
     ],
     ["undersized-program-header", undersizedProgramHeader, "invalid_input"],
-    ["arm64", unsupported, "unsupported_provider"],
-    ["core", core, "unsupported_provider"],
+    ["arm64", unsupported, "unsupported_target"],
+    ["core", core, "unsupported_target"],
   ]) {
     const path = join(root.path, name);
     await writeFile(path, bytes);

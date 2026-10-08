@@ -20,6 +20,7 @@ export interface SessionAvailabilityDefaults {
     | "javascriptRecoveryEnabled"
     | "webModuleResolutionEnabled"
     | "binaryLayoutEnabled"
+    | "recordedCrashEnabled"
     | "firmwareInspectionEnabled"
     | "firmwareExtractionEnabled"
   >;
@@ -36,6 +37,8 @@ export const sessionAvailabilityPolicy = (
       evmInterfaceEnabled:
         defaults.optionalFeatures?.evmInterfaceEnabled ?? false,
       processCaptureEnabled: platform !== "win32",
+      recordedCrashEnabled:
+        defaults.optionalFeatures?.recordedCrashEnabled ?? false,
       binaryLayoutEnabled:
         defaults.optionalFeatures?.binaryLayoutEnabled ?? false,
       firmwareInspectionEnabled:

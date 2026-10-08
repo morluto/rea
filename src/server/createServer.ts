@@ -1,6 +1,9 @@
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
 import { createEvmInterfaceService } from "../composition/evm.js";
 import { registerEvmTools } from "./registerEvmTools.js";
+import { registerRecordedCrashTools } from "./registerRecordedCrashTools.js";
+import { createRecordedCrashService } from "../composition/binaryDiagnostics.js";
+import type { RecordedCrashService } from "../application/binaryDiagnostics/RecordedCrashService.js";
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
 import { createBinaryLayoutService } from "../composition/binaryDiagnostics.js";
 import type { BinaryLayoutService } from "../application/binaryDiagnostics/BinaryLayoutService.js";
@@ -68,6 +71,7 @@ export interface CreateServerOptions {
   readonly evmInterface?: EvmInterfaceService;
   readonly logger?: Logger;
   readonly binaryLayout?: BinaryLayoutService;
+  readonly recordedCrash?: RecordedCrashService;
   readonly firmwareAnalysis?: FirmwareAnalysisPort;
   readonly javascriptRecovery?: JavaScriptRecoveryPort;
   readonly webModuleTrace?: WebModuleTraceService;
@@ -99,6 +103,11 @@ const installSessionToolAvailability = (
       webModuleResolutionEnabled:
         options.webModuleTrace !== undefined ||
         isAbsolute(process.env.REA_BROWSER_EXECUTABLE ?? ""),
+      recordedCrashEnabled:
+        options.recordedCrash !== undefined ||
+        (process.platform === "linux" &&
+          process.arch === "x64" &&
+          isAbsolute(process.env.REA_PWNTOOLS_PYTHON ?? "")),
       binaryLayoutEnabled:
         options.binaryLayout !== undefined ||
         (process.platform === "linux" &&
@@ -215,6 +224,12 @@ export const createServer = (
   registerEvmTools(
     server,
     options.evmInterface ?? createEvmInterfaceService(),
+    toolLogger,
+    recordEvidence,
+  );
+  registerRecordedCrashTools(
+    server,
+    options.recordedCrash ?? createRecordedCrashService(),
     toolLogger,
     recordEvidence,
   );

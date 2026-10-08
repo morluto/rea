@@ -35,6 +35,7 @@ export type AvailabilityPolicy = {
   readonly processCaptureEnabled: boolean;
   readonly optionalProviderLoadFailures?: OptionalProviderLoadFailures;
   readonly binaryLayoutEnabled?: boolean;
+  readonly recordedCrashEnabled?: boolean;
   readonly firmwareInspectionEnabled?: boolean;
   readonly firmwareExtractionEnabled?: boolean;
   readonly androidAnalysisEnabled?: boolean;
@@ -297,6 +298,14 @@ const workflowAvailabilityFor = ({
           reason: "provider_missing",
           remediation:
             "The bundled offline EVM interface profile is currently real-verified on Linux x64. No active binary target or chain endpoint is required.",
+        };
+  if (name === "inspect_recorded_crash")
+    return policy.recordedCrashEnabled === true
+      ? { reason: "available", remediation: null }
+      : {
+          reason: "provider_missing",
+          remediation:
+            "On Linux x64, set absolute REA_PWNTOOLS_PYTHON to caller-supplied Python with pwntools 4.15.0. No active binary target is required.",
         };
   if (kind === "firmware-provider") {
     const enabled =

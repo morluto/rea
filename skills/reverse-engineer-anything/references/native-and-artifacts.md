@@ -1,5 +1,21 @@
 # Native, managed, and packaged artifacts
 
+## Recorded Linux crashes
+
+Use `inspect_recorded_crash` with an explicit Linux x86-64 ELF core path to
+inspect historical thread registers, signals, raw notes and original file
+ranges. It is independent of the active disassembler target. Source-bound
+register values and note bytes are observations; missing notes, signal-thread
+association and current executable/library identity remain unknown. PIDs are
+historical metadata and never authorize live attach or control.
+
+The optional `include_debugger_context` facet adds mapping candidates through
+caller-supplied GDB/pwndbg in an owned core-only session. Display names do not
+establish current file identity; zero reported flags leave permissions unknown.
+Requested unavailable context fails with setup guidance. See
+[recorded crashes](https://github.com/morluto/rea/blob/main/docs/recorded-crashes.md)
+for exact upstream profiles, bounds and verification coverage.
+
 ## Native targets
 
 After `open_binary`, use focused search, procedure, or function tools directly.

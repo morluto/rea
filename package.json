@@ -68,7 +68,15 @@
     "bridge/pwntools/layout_impl.py",
     "third_party/pwntools/README.md",
     "third_party/evmole/README.md",
-    "third_party/evmole/LICENSE"
+    "third_party/evmole/LICENSE",
+    "bridge/pwntools/decoder_runtime.py",
+    "bridge/pwntools/recorded_crash.py",
+    "bridge/pwntools/recorded_crash_impl.py",
+    "bridge/pwndbg/launch.py",
+    "bridge/pwndbg/launch_impl.py",
+    "bridge/pwndbg/core_context.py",
+    "third_party/pwndbg/README.md",
+    "third_party/pwndbg/LICENSE.md"
   ],
   "scripts": {
     "deps:check": "node scripts/check-dependency-install.mjs",
@@ -202,7 +210,8 @@
     "verify:browser:runtime": "npm run build:cached && node scripts/verify-browser-runtime.mjs",
     "verify:web:network-captures": "npm run build:cached && node scripts/verify-web-network-captures.mjs",
     "verify:binary:layout": "npm run build:cached && node scripts/verify-binary-layout.mjs",
-    "verify:evm:interface": "npm run build:cached && node scripts/verify-evm-interface.mjs"
+    "verify:evm:interface": "npm run build:cached && node scripts/verify-evm-interface.mjs",
+    "verify:recorded:crash": "npm run build:cached && node scripts/verify-recorded-crash.mjs"
   },
   "lint-staged": {
     "*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}": [

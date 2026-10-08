@@ -65,7 +65,7 @@ def dynamic_name_reference(tags, offset, image, content):
     if not starts or not sizes:
         raise LayoutFailure("format", "ELF dependency requires DT_STRTAB and DT_STRSZ.")
     if len(starts) != 1 or len(sizes) != 1:
-        raise LayoutFailure("unsupported", "ELF dependency string-table tags are ambiguous: " + repr({"DT_STRTAB": starts, "DT_STRSZ": sizes}))
+        raise LayoutFailure("unsupported-target", "ELF dependency string-table tags are ambiguous: " + repr({"DT_STRTAB": starts, "DT_STRSZ": sizes}))
     if not 0 <= offset < sizes[0]:
         raise LayoutFailure("format", f"ELF dependency name offset {offset} lies outside declared DT_STRSZ {sizes[0]}.")
     offsets = set()
@@ -75,7 +75,7 @@ def dynamic_name_reference(tags, offset, image, content):
             if starts[0] >= h.p_vaddr and starts[0] + sizes[0] <= h.p_vaddr + h.p_filesz:
                 offsets.add(h.p_offset + starts[0] - h.p_vaddr)
     if len(offsets) != 1:
-        raise LayoutFailure("unsupported", "Dynamic string table lacks a unique file-backed mapping: " + repr({"DT_STRTAB": starts, "DT_STRSZ": sizes, "candidate_file_offsets": sorted(offsets)}))
+        raise LayoutFailure("unsupported-target", "Dynamic string table lacks a unique file-backed mapping: " + repr({"DT_STRTAB": starts, "DT_STRSZ": sizes, "candidate_file_offsets": sorted(offsets)}))
     return name_in_table(None, offsets.pop(), sizes[0], offset, content)
 
 
@@ -117,13 +117,13 @@ def inspect_elf(path, cache):
     if len(content) < 16:
         raise LayoutFailure("format", "Selected ELF identification is truncated.")
     if content[4] != 2 or content[5] != 1:
-        raise LayoutFailure("unsupported", "Initial layout profile requires ELF64 little-endian objects.")
+        raise LayoutFailure("unsupported-target", "Initial layout profile requires ELF64 little-endian objects.")
     if len(content) < 64:
         raise LayoutFailure("format", "Selected ELF64 header is truncated.")
     if int.from_bytes(content[18:20], "little") != 62:
-        raise LayoutFailure("unsupported", "Initial layout profile requires x86-64 ELF objects.")
+        raise LayoutFailure("unsupported-target", "Initial layout profile requires x86-64 ELF objects.")
     if int.from_bytes(content[16:18], "little") not in (1, 2, 3):
-        raise LayoutFailure("unsupported", "Selected ELF type is outside the EXEC/DYN/REL layout profile; recorded core analysis is separate.")
+        raise LayoutFailure("unsupported-target", "Selected ELF type is outside the EXEC/DYN/REL layout profile; recorded core analysis is separate.")
     from pwnlib.context import context
     with context.local(cache_dir=str(cache), log_level="warning"):
         from elftools.common.exceptions import ELFError
@@ -169,9 +169,9 @@ def inspect_elf(path, cache):
         try:
             image = LayoutELF(str(path), checksec=False)
             if image.arch != "amd64" or image.bits != 64 or image.endian != "little":
-                raise LayoutFailure("unsupported", "Initial layout profile requires x86-64 ELF64 little-endian objects.")
+                raise LayoutFailure("unsupported-target", "Initial layout profile requires x86-64 ELF64 little-endian objects.")
             if image.header.e_type not in ("ET_EXEC", "ET_DYN", "ET_REL"):
-                raise LayoutFailure("unsupported", "Selected ELF type is outside the EXEC/DYN/REL layout profile; recorded core analysis is separate.")
+                raise LayoutFailure("unsupported-target", "Selected ELF type is outside the EXEC/DYN/REL layout profile; recorded core analysis is separate.")
             length = len(content)
             all_sections = list(image.iter_sections())
             shstrings = image.get_section(section_name_index) if all_sections and section_name_index != 0 else None
@@ -301,56 +301,9 @@ def inspect_elf(path, cache):
             raise LayoutFailure("format", "Selected ELF failed unchanged upstream structural parsing: " + str(error)) from error
 
 
-def lower_resource_limits():
-    limits = {}
-    for name, kind, maximum in (
-        ("address_space_bytes", resource.RLIMIT_AS, 3 * 1024**3),
-        ("cpu_seconds", resource.RLIMIT_CPU, 30),
-        ("file_size_bytes", resource.RLIMIT_FSIZE, OUTPUT_BYTES),
-    ):
-        soft, hard = resource.getrlimit(kind)
-        finite = [maximum] + [value for value in (soft, hard) if value != resource.RLIM_INFINITY]
-        effective = min(finite)
-        # Preserve the inherited hard boundary and never raise a caller's soft limit.
-        resource.setrlimit(kind, (effective, hard))
-        limits[name] = effective
-    return limits
-
-
-def main(request_path):
-    request = json.loads(Path(request_path).read_text(encoding="utf-8"))
-    os.environ["PWNLIB_NOTERM"] = "1"
-    os.environ["PWNLIB_CACHE_DIR"] = str(Path(request_path).parent / "cache")
-    limits = None
-    # Release bounded emergency headroom before constructing a MemoryError reply.
-    # The outer exit-status contract also covers allocation failure during serialization.
-    memory_reserve = bytearray(1024 * 1024)
-    try:
-        limits = lower_resource_limits()
-        descriptor = os.open(Path(request_path).parent / "limits.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            json.dump(limits, handle)
-        value = inspect_elf(Path(request["snapshot_path"]), Path(request_path).parent / "cache")
-        value["limitations"].append("Effective owned Python resource soft limits: " + json.dumps(limits, sort_keys=True) + ". Inherited tighter limits are retained.")
-        reply = {"ok": True, "profile": PROFILE, "value": value}
-    except LayoutFailure as error:
-        reply = {"ok": False, "reason": error.reason, "message": str(error)}
-    except MemoryError:
-        memory_reserve = None
-        reply = {"ok": False, "reason": "resource-limit", "message": "pwntools memory allocation failed under the effective resource limits; the exact allocation cause is unknown.", "reported_limits": limits}
-    except Exception as error:
-        if isinstance(error, OSError) and error.errno == 12:
-            memory_reserve = None
-            reply = {"ok": False, "reason": "resource-limit", "message": "pwntools reported OSError(ENOMEM); the exact allocation cause is unknown.", "reported_limits": limits}
-        else:
-            reply = {"ok": False, "reason": "decoder", "message": type(error).__name__ + ": " + str(error)}
-    encoded = json.dumps(reply, ensure_ascii=True, allow_nan=False).encode("utf-8")
-    if len(encoded) > OUTPUT_BYTES:
-        encoded = json.dumps({"ok": False, "reason": "output-limit", "message": "Complete ELF layout exceeds the 64 MiB reply budget."}).encode("utf-8")
-    descriptor = os.open(request["reply_path"], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(descriptor, "wb") as handle:
-        handle.write(encoded)
-
 
 if __name__ == "__main__":
-    main(sys.argv[-1])
+    runtime_path = Path(__file__).with_name("decoder_runtime.py")
+    runtime = {"__file__": str(runtime_path), "__name__": "rea_decoder_runtime"}
+    exec(compile(runtime_path.read_bytes(), str(runtime_path), "exec"), runtime)
+    runtime["main"](sys.argv[-1], inspect_elf, LayoutFailure, PROFILE)
