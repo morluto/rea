@@ -147,10 +147,14 @@ const parseCaptureEvidence = (input: unknown) => {
 const parseTraceSpecification = (input: unknown) => {
   const parsed = processTraceSpecificationSchema.safeParse(input);
   if (parsed.success) return parsed.data;
+  // Match the MCP boundary: the operation name and a trace_spec-rooted path.
   throw new AnalysisInputError(
-    "compare-process-captures",
+    "compare_process_captures",
     { cause: parsed.error },
-    projectInputIssues(parsed.error.issues, input),
+    projectInputIssues(parsed.error.issues, input).map((issue) => ({
+      ...issue,
+      path: ["trace_spec", ...issue.path],
+    })),
   );
 };
 

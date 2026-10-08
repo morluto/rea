@@ -114,3 +114,22 @@ it("names the stale capture that exceeds max_capture_age_ms", async () => {
     },
   });
 });
+
+it("reports CLI trace specification issues like the MCP trace_spec input", async () => {
+  const root = await createTestTempDirectory("rea-process-trace-spec-");
+  const capturePath = join(root, "capture.json");
+  const specPath = join(root, "spec.json");
+  await writeFile(capturePath, JSON.stringify(captureEvidence("left")));
+  await writeFile(specPath, JSON.stringify({ language: {} }));
+  expect(
+    await compareProcessEvidenceFiles(capturePath, capturePath, specPath),
+  ).toMatchObject({
+    code: "invalid_request",
+    details: {
+      operation: "compare_process_captures",
+      issues: expect.arrayContaining([
+        expect.objectContaining({ path: ["trace_spec", "events"] }),
+      ]),
+    },
+  });
+});
