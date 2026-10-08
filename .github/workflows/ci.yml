@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, "release/*"]
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
@@ -102,6 +102,8 @@ jobs:
         with:
           name: rea-dist
           path: dist
+      - name: Generate source catalog from downloaded build
+        run: node scripts/generate-mcp-tool-catalog.mjs
       - run: npm run test:ci:shard:run -- --shard=${{ matrix.shard }}
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
@@ -229,7 +231,16 @@ jobs:
         with:
           node-version-file: .nvmrc
       - name: Prepare cross compiler
-        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y g++-mingw-w64-x86-64
+        run: |
+          # Slow Azure archive transfers can exhaust the job before compilation.
+          # Keep the same signed packages and avoid slow HTTP mirror fallback.
+          for source in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+            if [ -f "$source" ]; then
+              sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g; s|http://archive.ubuntu.com|https://archive.ubuntu.com|g' "$source"
+            fi
+          done
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y g++-mingw-w64-x86-64
       - run: npm run build:windows-native
       - run: npm run verify:windows-native:artifact
       - uses: actions/upload-artifact@v4
@@ -314,6 +325,8 @@ jobs:
         run: npm run test:focused -- tests/boundary/cli/nativePlistCli.test.ts tests/boundary/cli/nativePlistPrototypeKeyCli.test.ts tests/boundary/cli/nativePlistSelectionFailureCli.test.ts
       - name: Native Swift demangling CLI and MCP regressions
         run: npm run test:focused -- tests/boundary/cli/nativeDemangleCli.test.ts tests/boundary/mcp/nativeDemangleMcp.test.ts
+      - name: Process filesystem snapshot descriptor regressions
+        run: npm run test:focused -- src/process/capture/FilesystemSnapshot.test.ts
 
   reconstruction-readiness:
     name: Reconstruction readiness
@@ -433,7 +446,6 @@ jobs:
           tests/boundary/filesystem/asarInventoryFreshness.test.ts
           tests/composition/javascript-applications/javascriptArtifactReconstruction.test.ts
           tests/conformance/providers/ghidra/windowsCapabilities.test.ts
-          tests/conformance/providers/ghidra/ghidraWindowsFixture.test.ts
           src/ghidra/GhidraInstallation.test.ts
           tests/boundary/providers/ghidra/ghidraTransport.test.ts
           tests/boundary/providers/ghidra/ghidraTargetSnapshot.test.ts

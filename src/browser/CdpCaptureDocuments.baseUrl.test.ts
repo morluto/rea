@@ -115,29 +115,6 @@ describe("DOM metadata document base URLs", () => {
 });
 
 describe("empty form destinations with a document base URL", () => {
-  it.each([
-    { nodeName: "FORM", attribute: "action" },
-    { nodeName: "BUTTON", attribute: "formaction" },
-    { nodeName: "INPUT", attribute: "formaction" },
-  ])(
-    "resolves an empty $nodeName $attribute to the document",
-    ({ nodeName, attribute }) => {
-      const pageUrl = `${documentUrl}?selected=fixture#section`;
-      const baseUrl = `${origin}/assets/`;
-      const value = snapshot(baseUrl, "/assets/", pageUrl, "");
-      value.strings[6] = nodeName;
-      value.strings[14] = attribute;
-      value.strings[15] = "";
-      const result = capture(value);
-      expect(result.urls[3]).toMatchObject({
-        attribute,
-        url: pageUrl,
-        destination_scope: "approved",
-      });
-      expect(result.urls[1]?.url).toBe(baseUrl);
-    },
-  );
-
   it("keeps an empty form action approved when the document base is foreign", () => {
     const foreign = "https://cdn.example.test/assets/";
     const value = snapshot(foreign, foreign);

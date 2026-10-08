@@ -8,7 +8,7 @@ import type { RuntimeDependencies } from "../../../src/main/types.js";
 import { createRuntimeState } from "../../../src/main/state.js";
 
 describe("runtime configuration reload", () => {
-  it("applies a valid configuration reload", () => {
+  it("applies valid reloads and keeps the last valid config after an invalid reload", () => {
     const env: NodeJS.ProcessEnv = { REA_LOG_LEVEL: "info" };
     const runtime = setupReload(env);
 
@@ -16,16 +16,11 @@ describe("runtime configuration reload", () => {
     runtime.reload();
 
     expect(runtime.state.currentConfig.logLevel).toBe("debug");
-  });
-
-  it("retains the last valid configuration after an invalid reload", () => {
-    const env: NodeJS.ProcessEnv = { REA_LOG_LEVEL: "info" };
-    const runtime = setupReload(env);
 
     env.REA_LOG_LEVEL = "invalid";
     runtime.reload();
 
-    expect(runtime.state.currentConfig.logLevel).toBe("info");
+    expect(runtime.state.currentConfig.logLevel).toBe("debug");
   });
 });
 

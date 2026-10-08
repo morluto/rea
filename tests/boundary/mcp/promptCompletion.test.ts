@@ -8,6 +8,7 @@ import type { AnalysisClient } from "../../../src/application/AnalysisProvider.j
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../../../src/contracts/artifactComparisonExample.js";
 import { PROCESS_CAPTURE_REFERENCE } from "../../../src/contracts/investigationExamples.js";
+import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { createArtifactInspection } from "../../../src/domain/artifactInspection.js";
 import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph.js";
@@ -57,6 +58,36 @@ describe("guided prompt completion from live analysis", () => {
 });
 
 describe("guided prompt completion from investigation records", () => {
+  it("completes process captures imported in the original v3 format", async () => {
+    const session = createTestBinarySession(() => client([]));
+    const {
+      selected_executable_sha256: _selectedDigest,
+      executable_identity: _identity,
+      executable_sha256,
+      ...legacyManifest
+    } = EMPTY_PROCESS_CAPTURE_EXAMPLE.manifest;
+    const legacyCapture = {
+      ...EMPTY_PROCESS_CAPTURE_EXAMPLE,
+      manifest: { ...legacyManifest, executable_sha256 },
+    };
+    const evidence = createEvidence(undefined, fixtureProvider, {
+      operation: "capture_process_scenario",
+      parameters: {},
+      result: legacyCapture,
+      confidence: "observed",
+      authority: "controlled-replay",
+      environment: fixtureEnvironment,
+    });
+    expect(session.recordEvidence(evidence).ok).toBe(true);
+    const completion = createPromptCompletionSource(session, session);
+
+    expect(
+      await completion.complete("capture", evidence.evidence_id.slice(0, 8)),
+    ).toEqual([evidence.evidence_id]);
+
+    await session.close();
+  });
+
   it("projects only validated typed identifiers from the evidence ledger", async () => {
     const session = createTestBinarySession(() => client([]));
     const invalidCapture = createEvidence(undefined, fixtureProvider, {

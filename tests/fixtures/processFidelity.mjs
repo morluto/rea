@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { writeFile } from "node:fs/promises";
 
 const mode = process.argv[2];
 
@@ -62,6 +63,32 @@ if (mode === "interactive") {
   process.stderr.write("intentional-crash\n");
   process.exit(23);
 } else if (mode === "hang") {
+  setInterval(() => undefined, 1_000);
+} else if (mode === "ready-hang") {
+  await writeFile(process.argv[3], "ready");
+  process.stdout.write("ready\n");
+  setInterval(() => undefined, 1_000);
+} else if (mode === "detached-cleanup") {
+  const owned = spawn(process.execPath, [process.argv[1], "detached-child"], {
+    detached: true,
+    stdio: "ignore",
+  });
+  const unowned = spawn(process.execPath, [process.argv[1], "detached-child"], {
+    detached: true,
+    env: { ...process.env, REA_PROCESS_RUN_ID: "unowned-neighbor" },
+    stdio: "ignore",
+  });
+  if (owned.pid === undefined || unowned.pid === undefined)
+    throw new Error("detached fixture children did not receive PIDs");
+  owned.unref();
+  unowned.unref();
+  await writeFile(
+    process.argv[3],
+    JSON.stringify({ ownedPid: owned.pid, unownedPid: unowned.pid }),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  process.stdout.write("detached-ready\n");
+} else if (mode === "detached-child") {
   setInterval(() => undefined, 1_000);
 } else {
   process.stderr.write("unknown fixture mode\n");

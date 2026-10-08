@@ -7,6 +7,28 @@ import {
 } from "./ManagedPe.fixture.js";
 
 describe("managed member inspection", () => {
+  it("keeps metadata handles distinct from calls and field accesses", () => {
+    const il = Buffer.from([
+      0xd0, 0x01, 0, 0, 0x06, 0x26, 0xd0, 0x01, 0, 0, 0x04, 0x26, 0x28, 0x01, 0,
+      0, 0x0a, 0x7b, 0x01, 0, 0, 0x04, 0x26, 0x2a,
+    ]);
+    const bytes = buildManagedPeFixture({
+      ilBody: Buffer.concat([Buffer.from([(il.length << 2) | 2]), il]),
+    });
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.methods[0]?.body.anchors.map(({ opcode }) => opcode)).toEqual(
+      ["ldtoken", "ldtoken", "call", "ldfld"],
+    );
+    expect(result.call_edges.map(({ opcode }) => opcode)).toEqual(["call"]);
+    expect(result.field_accesses.map(({ opcode }) => opcode)).toEqual([
+      "ldfld",
+    ]);
+  });
+
   it("inspects metadata members, signatures, CIL hashes, call edges, and field anchors", () => {
     const bytes = buildManagedPeFixture();
     const result = inspectManagedMembersBytes(

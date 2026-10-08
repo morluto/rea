@@ -114,6 +114,21 @@ const browserNetworkRequestSchema = z.object({
   status: z.number().nullable(),
   mime_type: z.string().nullable(),
   encoded_data_length: z.number().min(0).nullable(),
+  redirects: z
+    .array(
+      z.object({
+        url: z.string(),
+        response_url: z.string(),
+        method: z.string(),
+        resource_type: z.string().nullable(),
+        status: z.number().nullable(),
+        mime_type: z.string().nullable(),
+        encoded_data_length: z.number().min(0).nullable(),
+        request_timestamp: z.number().nullable(),
+        redirect_event_timestamp: z.number().nullable(),
+      }),
+    )
+    .optional(),
   initiator: z.object({
     type: z.string(),
     url: z.string().nullable(),

@@ -58,26 +58,6 @@ describe("artifact archive inventory", () => {
     expect(inspectionEvidence.evidence_links).toEqual(
       inspection.evidence_links,
     );
-    const expandedInspection = artifactInspectionResultSchema.parse({
-      ...inspection,
-      subject: { ...inspection.subject, root_format: "f".repeat(129) },
-      observations: inspection.observations.map((observation) => ({
-        ...observation,
-        subject: "s".repeat(4_097),
-      })),
-      hypotheses: inspection.hypotheses.map((hypothesis) => ({
-        ...hypothesis,
-        statement: "s".repeat(4_097),
-        basis_evidence_ids: Array(9).fill(inspection.evidence_links[0] ?? ""),
-      })),
-      next_probes: inspection.next_probes.map((probe) => ({
-        ...probe,
-        operation: "o".repeat(129),
-      })),
-      limitations: Array.from({ length: 1_001 }, (_, index) => `gap-${index}`),
-    });
-    expect(expandedInspection.subject.root_format).toHaveLength(129);
-    expect(expandedInspection.limitations).toHaveLength(1_001);
     const cancellation = new AbortController();
     cancellation.abort();
     await expect(

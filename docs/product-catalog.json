@@ -1,16 +1,16 @@
 {
   "package": {
     "name": "rea-agents",
-    "version": "4.1.0",
+    "version": "5.0.0",
     "sdk": {
       "server": "2.3.1",
       "client": "2.3.1",
       "core": "2.3.1"
     },
-    "skill_version": "27"
+    "skill_version": "28"
   },
   "tools": {
-    "total": 133,
+    "total": 134,
     "families": [
       {
         "id": "direct",
@@ -142,7 +142,7 @@
       {
         "id": "browser",
         "surface": "browser-provider",
-        "count": 11,
+        "count": 12,
         "tools": [
           "analyze_web_bundle",
           "capture_browser_scenario",
@@ -151,6 +151,7 @@
           "compare_web_screenshots",
           "discover_webmcp_tools",
           "inspect_web_event_listeners",
+          "inspect_web_network_capture",
           "inspect_web_page",
           "list_browser_targets",
           "observe_web_execution",
@@ -269,6 +270,12 @@
       ]
     },
     {
+      "id": "har-schema/lossless-json",
+      "name": "REA HAR capture adapter",
+      "version": "har-schema@2.0.0;jsonc-parser@3.3.1;lossless-json@4.3.1",
+      "capabilities": ["inspect_web_network_capture"]
+    },
+    {
       "id": "hopper",
       "name": "Hopper Disassembler",
       "version": null,
@@ -342,6 +349,12 @@
         "search_android_classes",
         "trace_android_references"
       ]
+    },
+    {
+      "id": "mitmproxy-native-tnetstring",
+      "name": "REA offline native mitmproxy adapter",
+      "version": "12.2.3",
+      "capabilities": ["inspect_web_network_capture"]
     },
     {
       "id": "native-macos",
@@ -570,7 +583,7 @@
     }
   ],
   "cli": {
-    "primary_count": 88,
+    "primary_count": 89,
     "commands": [
       "address-to-file-offset",
       "analyze",
@@ -627,6 +640,7 @@
       "inspect-plist",
       "inspect-signature",
       "inspect-web-event-listeners",
+      "inspect-web-network-capture",
       "inspect-web-page",
       "instructions",
       "list-architectures",
@@ -670,15 +684,15 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 88,
-      "mcp_tools": 133,
+      "cli_commands": 89,
+      "mcp_tools": 134,
       "mcp_prompts": 6
     },
     "digests": {
-      "tools_sha256": "8816080083d86cb4c05db8d1ef452938abef2e6fdeead566252592ffbb55d828",
+      "tools_sha256": "e043febb950a93c7d37597ed286cb43794432bb6f5b8f8de84a25bb83cbcb476",
       "prompts_sha256": "ef2de8814390b340623c32001610aa2709d90bed51537b6e562ab3abf144ab4d",
-      "combined_sha256": "9b4e896d2585645f1ed1f9f3eef270cf798f08035c70091178b7bd6119b22bf5",
-      "providers_sha256": "aea15f517c822d80918ccaba57a4fa06557f484cf27b8acbaed4e1a660fac896"
+      "combined_sha256": "d9d74efe01bdc451a4d05a16d6e6ee87a0cc301d13331a19e7f015102f580bf2",
+      "providers_sha256": "e601cdceb5981ee04d6f431492f961f8867b1faa4f08ca0ecd29be2a239bc467"
     }
   }
 }

@@ -1,9 +1,8 @@
-import { writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect } from "vitest";
 
-import { parseCliJsonInput } from "../../../src/cliJsonInput.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -30,46 +29,63 @@ const JSON_COMMANDS = [
 
 describe("compiled CLI JSON input failure status", () => {
   for (const [command, operation] of JSON_COMMANDS)
-    for (const kind of ["inline", "file", "missing"] as const)
-      cliTest(
-        `${command} rejects malformed or unreadable ${kind} input before dispatch`,
-        async ({ cli }) => {
-          const root = await createTestTempDirectory("rea-cli-json-status-");
-          const input = kind === "inline" ? "{" : join(root, "input.json");
-          if (kind === "file") await writeFile(input, "{");
-          const parsed = await parseCliJsonInput(input, operation);
-          if (parsed.ok)
-            throw new Error("Expected JSON input to fail before dispatch");
+    cliTest(
+      `${command} rejects malformed inline input before dispatch`,
+      async ({ cli }) => {
+        const root = await createTestTempDirectory("rea-cli-json-status-");
+        const input = "{";
+        const result = await cli.run({
+          arguments: [command, input, "--json"],
+          environment: {
+            HOME: root,
+            XDG_CONFIG_HOME: root,
+            XDG_CACHE_HOME: root,
+          },
+        });
 
-          const result = await cli.run({
-            arguments: [command, input, "--json"],
-            environment: {
-              HOME: root,
-              XDG_CONFIG_HOME: root,
-              XDG_CACHE_HOME: root,
-            },
-          });
+        expect(result.json).toMatchObject({
+          code: "invalid_request",
+          category: "invalid_input",
+          details: { operation },
+        });
+        expect(result.stderr).toBe("");
+        expect(result.exitCode).toBe(1);
+      },
+    );
 
-          expect(result.stdout).toBe(
-            `${JSON.stringify(parsed.error, null, 2)}\n`,
-          );
-          expect(result.json).toMatchObject({
-            code: "invalid_request",
-            category: "invalid_input",
-            ...(kind === "missing" ? {} : { details: { operation } }),
-            ...(kind === "inline"
-              ? {}
-              : {
-                  input_path: input,
-                  input_reason:
-                    kind === "file" ? "invalid-json" : "read-failed",
-                }),
-          });
-          expect(result.stderr).toBe("");
-          expect(result.exitCode).toBe(1);
-        },
-      );
+  for (const kind of ["file", "missing"] as const)
+    cliTest(
+      `preserves ${kind} JSON input diagnostics through a real command`,
+      async ({ cli }) => {
+        const root = await createTestTempDirectory("rea-cli-json-status-");
+        const input = join(root, "input.json");
+        if (kind === "file") await writeFile(input, "{");
 
+        const result = await cli.run({
+          arguments: ["compare-javascript-export-shapes", input, "--json"],
+          environment: {
+            HOME: root,
+            XDG_CONFIG_HOME: root,
+            XDG_CACHE_HOME: root,
+          },
+        });
+
+        expect(result.json).toMatchObject({
+          code: "invalid_request",
+          category: "invalid_input",
+          input_path: input,
+          input_reason: kind === "file" ? "invalid-json" : "read-failed",
+          ...(kind === "file"
+            ? { details: { operation: "compare-javascript-export-shapes" } }
+            : {}),
+        });
+        expect(result.stderr).toBe("");
+        expect(result.exitCode).toBe(1);
+      },
+    );
+});
+
+describe("compiled CLI JSON input diagnostic preservation", () => {
   for (const [format, flags] of [
     ["JSON", ["--json"]],
     ["JSONL", ["--format", "jsonl"]],
@@ -171,6 +187,73 @@ describe("compiled CLI JSON input failure status", () => {
         input_reason: "read-failed",
       });
       expect(result.exitCode).toBe(1);
+    },
+  );
+});
+
+describe("compiled CLI JSON path ambiguity", () => {
+  cliTest(
+    "classifies malformed inline JSON when a path prefix is a regular file",
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-cli-json-not-dir-");
+      await writeFile(join(root, "[prefix"), "regular file");
+      const input = "[prefix/rest";
+      const result = await cli.run({
+        arguments: ["capture-browser-scenario", input, "--json"],
+        cwd: root,
+        environment: {
+          HOME: root,
+          XDG_CONFIG_HOME: root,
+          XDG_CACHE_HOME: root,
+        },
+      });
+
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        category: "invalid_input",
+        details: {
+          operation: "capture_browser_scenario",
+          issues: [{ path: [], reason: "invalid_format", expected: "JSON" }],
+        },
+      });
+      expect(result.json).not.toHaveProperty("input_path");
+      expect(result.stdout).not.toContain("read-failed");
+      expect(result.stderr).toBe("");
+      expect(result.exitCode).toBe(1);
+    },
+  );
+
+  cliTest.runIf(process.platform !== "win32" && process.getuid?.() !== 0)(
+    "preserves permission errors for malformed path-like JSON input",
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-cli-json-denied-");
+      const denied = join(root, "[locked");
+      const input = "[locked/rest";
+      await mkdir(denied);
+      await chmod(denied, 0);
+      try {
+        await expect(readFile(join(root, input))).rejects.toMatchObject({
+          code: "EACCES",
+        });
+        const result = await cli.run({
+          arguments: ["capture-browser-scenario", input, "--json"],
+          cwd: root,
+          environment: {
+            HOME: root,
+            XDG_CONFIG_HOME: root,
+            XDG_CACHE_HOME: root,
+          },
+        });
+
+        expect(result.json).toMatchObject({
+          code: "invalid_request",
+          input_path: input,
+          input_reason: "read-failed",
+        });
+        expect(result.exitCode).toBe(1);
+      } finally {
+        await chmod(denied, 0o700);
+      }
     },
   );
 });

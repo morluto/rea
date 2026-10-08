@@ -1,0 +1,75 @@
+name: Real historical web network captures
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/real-web-network-captures.yml"
+      - "bridge/mitmproxy/**"
+      - "src/browser/history/**"
+      - "src/domain/webNetworkCapture*.ts"
+      - "src/domain/analysisError*.ts"
+      - "src/contracts/errorSchemas.ts"
+      - "src/domain/explicitSensitive*.ts"
+      - "src/application/WebNetworkCapture*"
+      - "src/composition/webNetworkCaptures.ts"
+      - "src/cli/webNetworkCaptureCommands.ts"
+      - "src/server/registerWebNetworkCaptureTool.ts"
+      - "src/server/createServer.ts"
+      - "src/server/toolRegistrationOptions.ts"
+      - "src/cli.ts"
+      - "src/cliCommandNames.ts"
+      - "src/contracts/toolContracts.ts"
+      - "src/contracts/toolEffects.ts"
+      - "src/process/OwnedCommand.ts"
+      - "src/process/ProviderProcess.ts"
+      - "src/process/ProviderDeadline.ts"
+      - "src/process/ProcessOwnership*.ts"
+      - "src/process/PrivateRuntimeRoot.ts"
+      - "src/process/capture/ProcessCaptureLifecycle.ts"
+      - "src/artifacts/readStableArtifact*.ts"
+      - "src/artifacts/ArtifactReader.ts"
+      - "src/contracts/webNetworkCaptureToolContracts.ts"
+      - "scripts/verify-web-network-captures.mjs"
+      - "scripts/fixtures/generate-mitmproxy-capture.py"
+      - "package.json"
+      - "package-lock.json"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: real-web-network-captures-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  HUSKY: "0"
+  NODE_OPTIONS: --max-old-space-size=768
+
+jobs:
+  real-web-network-captures:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Use pinned package manager
+        run: npm install --global npm@11.16.0
+      - run: npm ci
+      - name: Acquire fixed upstream native profile in runner temporary storage
+        shell: bash
+        run: |
+          capture_tool_root="${RUNNER_TEMP}/rea-mitmproxy-12.2.3"
+          mkdir -p "${capture_tool_root}"
+          curl --fail --location --retry 3 --max-time 180 \
+            https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz \
+            --output "${capture_tool_root}/mitmproxy.tar.gz"
+          echo '2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5  mitmproxy.tar.gz' \
+            | (cd "${capture_tool_root}" && sha256sum --check --strict)
+          tar -xzf "${capture_tool_root}/mitmproxy.tar.gz" -C "${capture_tool_root}"
+          echo "REA_MITMDUMP_COMMAND=${capture_tool_root}/mitmdump" >> "${GITHUB_ENV}"
+      - name: Verify upstream producer fixtures through public CLI and MCP
+        run: npm run verify:web:network-captures

@@ -101,17 +101,33 @@ const entrySchema = z.object({
     subject: subjectSchema.nullable(),
   }),
 });
+const workflowEntrySchema = z.object({
+  query_id: prefixedDigestSchema("query"),
+  operation: z.string().min(1),
+  parameters: jsonObjectSchema,
+  execution: z.object({
+    result: jsonValueSchema,
+    raw_result: jsonValueSchema.nullable(),
+    provider: committedProviderSchema,
+    analysis_profile: analysisProfileSchema,
+    limitations: z.array(z.string()),
+    locations: z.array(evidenceLocationSchema),
+    subject: subjectSchema.nullable(),
+  }),
+});
 
 /** Provider- and profile-exact cache of successful immutable analysis calls. */
 export const analysisSnapshotSchema = z.object({
   target: targetSchema,
   binding: bindingSchema,
   entries: z.array(entrySchema),
+  workflow_entries: z.array(workflowEntrySchema).optional(),
   evidence_bundle: evidenceBundleSchema,
 });
 
 export type AnalysisSnapshot = z.infer<typeof analysisSnapshotSchema>;
 export type AnalysisSnapshotEntry = z.infer<typeof entrySchema>;
+export type AnalysisSnapshotWorkflowEntry = z.infer<typeof workflowEntrySchema>;
 export type AnalysisSnapshotTarget = z.infer<typeof targetSchema>;
 export type AnalysisSnapshotBinding = z.infer<typeof bindingSchema>;
 
@@ -208,6 +224,19 @@ export const snapshotEvidenceForQuery = (
   if (!snapshotMatchesBinding(snapshot, target, bindingProfile))
     return undefined;
   const encodedParameters = canonicalJson(parameters);
+  const queryId = analysisQueryId(
+    snapshot.target,
+    snapshot.binding,
+    operation,
+    parameters,
+  );
+  const entry = snapshot.entries.find(
+    (candidate) => candidate.query_id === queryId,
+  );
+  const workflowEntry = snapshot.workflow_entries?.find(
+    (candidate) => candidate.query_id === queryId,
+  );
+  if (entry === undefined && workflowEntry === undefined) return undefined;
   return snapshot.evidence_bundle.records.find(
     (record) =>
       record.subject?.digest.sha256 === target.sha256 &&
@@ -217,9 +246,76 @@ export const snapshotEvidenceForQuery = (
       record.provider.version === provider.version &&
       "analysis_profile" in record &&
       analysisProfilesEqual(record.analysis_profile, evidenceProfile) &&
-      canonicalJson(record.parameters) === encodedParameters,
+      canonicalJson(record.parameters) === encodedParameters &&
+      ((entry !== undefined && evidenceMatchesEntry(record, entry, snapshot)) ||
+        (workflowEntry !== undefined &&
+          evidenceMatchesWorkflowEntry(record, workflowEntry, snapshot))),
   );
 };
+
+/** Create one exact replay record for a derived application workflow result. */
+export const createAnalysisSnapshotWorkflowEntry = (input: {
+  readonly target: AnalysisSnapshotTarget;
+  readonly binding: AnalysisSnapshotBinding;
+  readonly operation: string;
+  readonly parameters: Readonly<Record<string, JsonValue>>;
+  readonly execution: SnapshotExecution & {
+    readonly analysisProfile: AnalysisProfileCommitment;
+  };
+}): AnalysisSnapshotWorkflowEntry => {
+  const { target, binding, operation, parameters, execution } = input;
+  if (
+    execution.provider.id !== execution.analysisProfile.provider.id ||
+    execution.provider.name !== execution.analysisProfile.provider.name ||
+    execution.provider.version !== execution.analysisProfile.provider.version
+  )
+    throw new TypeError(
+      "Workflow snapshot execution provider does not match its profile",
+    );
+  return {
+    query_id: analysisQueryId(target, binding, operation, parameters),
+    operation,
+    parameters: jsonObjectSchema.parse(parameters),
+    execution: {
+      result: execution.result,
+      raw_result: execution.rawResult,
+      provider: execution.analysisProfile.provider,
+      analysis_profile: execution.analysisProfile,
+      limitations: [...execution.limitations],
+      locations: [...execution.locations],
+      subject:
+        execution.subject === null
+          ? null
+          : {
+              ...execution.subject,
+              architecture: execution.subject.architecture ?? null,
+            },
+    },
+  };
+};
+
+const evidenceMatchesEntry = (
+  evidence: Evidence,
+  entry: AnalysisSnapshotEntry,
+  snapshot: Pick<AnalysisSnapshot, "target" | "binding">,
+): boolean =>
+  isCorrespondingEvidence(evidence, snapshot) &&
+  canonicalJson({
+    query: evidenceQueryKey(evidence),
+    normalized_result: evidence.normalized_result,
+    raw_result: evidence.raw_result,
+    limitations: evidence.limitations,
+    locations: evidence.locations,
+    subject:
+      evidence.subject === null
+        ? null
+        : {
+            local_path: evidence.subject.local_path,
+            sha256: evidence.subject.digest.sha256,
+            format: evidence.subject.format,
+            architecture: evidence.subject.architecture,
+          },
+  }) === entryEvidenceKey(entry, snapshot.binding);
 
 /** Compute the stable lookup key for one provider/profile-specific query. */
 export const analysisQueryId = (
@@ -286,7 +382,9 @@ export const parseAnalysisSnapshot = (input: unknown): AnalysisSnapshot => {
     );
   const ids = new Set<string>();
   const boundEntries: AnalysisSnapshotEntry[] = [];
+  const boundWorkflowEntries: AnalysisSnapshotWorkflowEntry[] = [];
   const index = createEvidenceIndex(parsed);
+  const workflowIndex = createWorkflowEvidenceIndex(parsed);
   for (const entry of parsed.entries) {
     if (
       entry.execution.provider.id !== parsed.binding.provider.id ||
@@ -316,12 +414,60 @@ export const parseAnalysisSnapshot = (input: unknown): AnalysisSnapshot => {
     }
     boundEntries.push(entry);
   }
+  for (const entry of parsed.workflow_entries ?? []) {
+    if (
+      entry.execution.provider.id !==
+        entry.execution.analysis_profile.provider.id ||
+      entry.execution.provider.name !==
+        entry.execution.analysis_profile.provider.name ||
+      entry.execution.provider.version !==
+        entry.execution.analysis_profile.provider.version
+    )
+      throw new TypeError(
+        "Analysis snapshot workflow entry provider does not match its profile",
+      );
+    const expected = analysisQueryId(
+      parsed.target,
+      parsed.binding,
+      entry.operation,
+      entry.parameters,
+    );
+    if (entry.query_id !== expected)
+      throw new TypeError(
+        "Analysis snapshot workflow query identifier does not match",
+      );
+    if (ids.has(entry.query_id))
+      throw new TypeError("Analysis snapshot contains duplicate queries");
+    ids.add(entry.query_id);
+    if (!workflowEntryHasMatchingEvidence(entry, workflowIndex)) {
+      if (workflowEntryHasCorrespondingEvidence(entry, workflowIndex))
+        throw new TypeError(
+          `Analysis snapshot workflow entry ${entry.operation} differs from its Evidence record`,
+        );
+      continue;
+    }
+    boundWorkflowEntries.push(entry);
+  }
   const sorted = [...parsed.entries].sort((left, right) =>
     left.query_id.localeCompare(right.query_id),
   );
   if (JSON.stringify(parsed.entries) !== JSON.stringify(sorted))
     throw new TypeError("Analysis snapshot entries are not canonical");
-  return { ...parsed, entries: boundEntries };
+  const sortedWorkflows = [...(parsed.workflow_entries ?? [])].sort(
+    (left, right) => left.query_id.localeCompare(right.query_id),
+  );
+  if (
+    parsed.workflow_entries !== undefined &&
+    JSON.stringify(parsed.workflow_entries) !== JSON.stringify(sortedWorkflows)
+  )
+    throw new TypeError("Analysis snapshot workflow entries are not canonical");
+  return {
+    ...parsed,
+    entries: boundEntries,
+    ...(parsed.workflow_entries === undefined
+      ? {}
+      : { workflow_entries: boundWorkflowEntries }),
+  };
 };
 
 /** Check that a cached provider execution is represented by bundled Evidence. */
@@ -428,6 +574,108 @@ const entryEvidenceKey = (
             architecture: entry.execution.subject.architecture,
           },
   });
+
+const workflowEntryQueryKey = (entry: AnalysisSnapshotWorkflowEntry): string =>
+  canonicalJson({
+    operation: entry.operation,
+    parameters: entry.parameters,
+    provider: entry.execution.provider,
+    analysis_profile: entry.execution.analysis_profile,
+  });
+
+const workflowEntryEvidenceKey = (
+  entry: AnalysisSnapshotWorkflowEntry,
+): string =>
+  canonicalJson({
+    query: workflowEntryQueryKey(entry),
+    normalized_result: entry.execution.result,
+    raw_result: entry.execution.raw_result,
+    limitations: entry.execution.limitations,
+    locations: entry.execution.locations,
+    subject:
+      entry.execution.subject === null
+        ? null
+        : {
+            local_path: entry.execution.subject.path,
+            sha256: entry.execution.subject.sha256,
+            format: entry.execution.subject.format,
+            architecture: entry.execution.subject.architecture,
+          },
+  });
+
+const isWorkflowEvidence = (
+  evidence: Evidence,
+  snapshot: Pick<AnalysisSnapshot, "target">,
+  entry: AnalysisSnapshotWorkflowEntry,
+): boolean =>
+  evidence.predicate_type === "rea.analysis" &&
+  evidence.confidence === "derived" &&
+  evidence.authority === "shipped-artifact" &&
+  evidence.subject?.digest.sha256 === snapshot.target.sha256 &&
+  "analysis_profile" in evidence &&
+  analysisProfilesEqual(
+    evidence.analysis_profile,
+    entry.execution.analysis_profile,
+  ) &&
+  evidence.provider.id === entry.execution.provider.id &&
+  evidence.provider.name === entry.execution.provider.name &&
+  evidence.provider.version === entry.execution.provider.version;
+
+const createWorkflowEvidenceIndex = (
+  snapshot: Pick<AnalysisSnapshot, "target" | "evidence_bundle">,
+): EvidenceIndex => {
+  const matching = new Set<string>();
+  const corresponding = new Set<string>();
+  for (const evidence of snapshot.evidence_bundle.records) {
+    if (
+      evidence.predicate_type !== "rea.analysis" ||
+      evidence.confidence !== "derived" ||
+      evidence.authority !== "shipped-artifact" ||
+      evidence.subject?.digest.sha256 !== snapshot.target.sha256 ||
+      !("analysis_profile" in evidence)
+    )
+      continue;
+    corresponding.add(evidenceQueryKey(evidence));
+    matching.add(canonicalJson(evidenceContentProjection(evidence)));
+  }
+  return { matching, corresponding };
+};
+
+const workflowEntryHasMatchingEvidence = (
+  entry: AnalysisSnapshotWorkflowEntry,
+  index: EvidenceIndex,
+): boolean => index.matching.has(workflowEntryEvidenceKey(entry));
+
+const workflowEntryHasCorrespondingEvidence = (
+  entry: AnalysisSnapshotWorkflowEntry,
+  index: EvidenceIndex,
+): boolean => index.corresponding.has(workflowEntryQueryKey(entry));
+
+const evidenceMatchesWorkflowEntry = (
+  evidence: Evidence,
+  entry: AnalysisSnapshotWorkflowEntry,
+  snapshot: Pick<AnalysisSnapshot, "target">,
+): boolean =>
+  isWorkflowEvidence(evidence, snapshot, entry) &&
+  canonicalJson(evidenceContentProjection(evidence)) ===
+    workflowEntryEvidenceKey(entry);
+
+const evidenceContentProjection = (evidence: Evidence) => ({
+  query: evidenceQueryKey(evidence),
+  normalized_result: evidence.normalized_result,
+  raw_result: evidence.raw_result,
+  limitations: evidence.limitations,
+  locations: evidence.locations,
+  subject:
+    evidence.subject === null
+      ? null
+      : {
+          local_path: evidence.subject.local_path,
+          sha256: evidence.subject.digest.sha256,
+          format: evidence.subject.format,
+          architecture: evidence.subject.architecture,
+        },
+});
 
 /** Serialize a validated snapshot with byte-stable canonical entry ordering. */
 export const serializeAnalysisSnapshot = (snapshot: AnalysisSnapshot): string =>

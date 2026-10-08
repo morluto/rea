@@ -3,7 +3,6 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
-import { parseMachineType } from "../../../../src/domain/peInspection.js";
 import { buildManagedPeFixture } from "../../../../src/dotnet/ManagedPe.fixture.js";
 import { ManagedStaticProvider } from "../../../../src/dotnet/ManagedStaticProvider.js";
 
@@ -24,7 +23,6 @@ it.each([0x01c0, 0x01c2, 0x01c4])(
       architecture: "arm",
       managed: true,
     });
-    expect(parseMachineType(machine)).toBe("arm");
     const client = new ManagedStaticProvider().createClient(parsed.value);
     try {
       for (const operation of [

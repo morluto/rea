@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-import { browserContext } from "./cliBrowserContext.js";
-import { CdpBrowserProvider } from "./browser/CdpBrowserProvider.js";
 import { HopperProvider } from "./hopper/HopperProvider.js";
 import { silentLogger } from "./logger.js";
 import { parseConfig } from "./config.js";
@@ -34,10 +32,4 @@ describe("host platform is injected, not read from the ambient process", () => {
       expect(provider.inspectAvailability().code).not.toBe("unsupported_host");
     },
   );
-});
-
-describe("browser CLI provider setup", () => {
-  it("does not require permission policy configuration", () => {
-    expect(browserContext().provider).toBeInstanceOf(CdpBrowserProvider);
-  });
 });

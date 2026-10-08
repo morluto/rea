@@ -122,6 +122,7 @@ export const runFirmwareCommand = async (context: {
     runId,
     cwd: context.cwd,
     hostEnvironment: context.environment,
+    signal,
     env: {
       TMPDIR: context.cwd,
       OMP_NUM_THREADS: "1",

@@ -101,8 +101,11 @@ export const runWakaruCommand = async (context: WakaruCommandContext) => {
     runId,
     cwd: context.cwd,
     hostEnvironment: context.environment,
+    ...(context.signal === undefined ? {} : { signal: context.signal }),
     env: { TMPDIR: context.cwd, RAYON_NUM_THREADS: "1", NO_COLOR: "1" },
   }).catch((cause: unknown) => {
+    if (context.signal?.aborted === true)
+      throw new AnalysisCancelledError(OPERATION);
     throw new ProviderAdapterError("wakaru", OPERATION, {
       cause,
       diagnostics: {

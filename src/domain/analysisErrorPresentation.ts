@@ -1,4 +1,8 @@
-import { AnalysisInputError } from "./analysisErrorCore.js";
+import {
+  AnalysisAccessDeniedError,
+  AnalysisArtifactChangedError,
+  AnalysisInputError,
+} from "./analysisErrorCore.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
 import {
   BinaryTargetError,
@@ -47,6 +51,10 @@ export const analysisErrorRemediationAction = (
     error.constraint === "directory_requires_file"
   )
     return "For a JavaScript/Electron application directory, call analyze_javascript_application with input_path or run `rea analyze <directory>`. For binary analysis, select its executable file.";
+  if (error instanceof AnalysisAccessDeniedError)
+    return "Check the current process's read access to the selected path. Retry with a readable local file.";
+  if (error instanceof AnalysisArtifactChangedError)
+    return "Wait until the selected file is stable, then retry this operation.";
   if (error instanceof AnalysisInputError)
     return "Correct the listed arguments and retry.";
   if (error instanceof UnknownRegistryError && error.reason === "not-found")
@@ -107,6 +115,8 @@ const STATIC_ERROR_CATEGORIES: Readonly<
   Partial<Record<AnalysisErrorTag, AnalysisErrorProjection["category"]>>
 > = {
   AnalysisInputError: "invalid_input",
+  AnalysisAccessDeniedError: "unavailable",
+  AnalysisArtifactChangedError: "integrity_mismatch",
   AnalysisCapabilityUnavailableError: "unsupported_provider",
   ProviderSelectionError: "unsupported_provider",
   EvidenceIntegrityError: "integrity_mismatch",
@@ -119,6 +129,10 @@ const STATIC_ERROR_CATEGORIES: Readonly<
 };
 
 export const analysisErrorUserMessage = (error: AnalysisError): string => {
+  if (error instanceof AnalysisAccessDeniedError)
+    return "Host filesystem permissions denied read access to the selected path.";
+  if (error instanceof AnalysisArtifactChangedError)
+    return "The selected artifact changed during acquisition; no stable snapshot was decoded.";
   if (error instanceof AnalysisInputError)
     return "Analysis input is invalid. Check the arguments and try again.";
   const hopperMessage = hopperErrorUserMessage(error);
@@ -243,6 +257,8 @@ const evidenceFileMessage = (reason: EvidenceFileError["reason"]): string => {
 const KNOWN_ERROR_TAGS = {
   AnalysisProtocolError: true,
   AnalysisInputError: true,
+  AnalysisAccessDeniedError: true,
+  AnalysisArtifactChangedError: true,
   AnalysisOutputError: true,
   AnalysisCapabilityUnavailableError: true,
   AnalysisCancelledError: true,

@@ -18,21 +18,23 @@ import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "../logger.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { parseCliJsonInput } from "../cliJsonInput.js";
+import { parseCliJsonInput, resolveCliJsonPaths } from "../cliJsonInput.js";
 import {
   electronPageInspectionOptions,
   javascriptApplicationOptions,
 } from "../cliObservationOptions.js";
 import { runCliJavaScriptApplicationAnalysis } from "./javascriptApplicationAnalysis.js";
+import type { CliResultOutput } from "./streamedJsonOutput.js";
 
 /** Register CLI equivalents of the Electron MCP tools. */
 export const registerElectronCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
+  resultOutput?: CliResultOutput,
 ): void => {
   registerElectronObservationCommands(cli, logger);
   registerElectronActiveCommand(cli, logger);
-  registerJavaScriptApplicationCommand(cli, logger);
+  registerJavaScriptApplicationCommand(cli, logger, resultOutput);
   registerJavaScriptRuntimeReconciliationCommand(cli, logger);
 };
 
@@ -57,7 +59,11 @@ const registerElectronActiveCommand = (
         );
         if (!input.ok) return input.error;
         const parsed = electronActiveObservationInputSchema.safeParse(
-          input.value,
+          resolveCliJsonPaths(input.value, [
+            ["executable_path"],
+            ["application_path"],
+            ["application_root"],
+          ]),
         );
         if (!parsed.success)
           return inputError(
@@ -168,6 +174,7 @@ const registerElectronPageInspection = (
 const registerJavaScriptApplicationCommand = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
+  resultOutput?: CliResultOutput,
 ): void => {
   cli.command(CLI_COMMANDS.analyzeJavaScriptApplication, {
     description:
@@ -176,12 +183,18 @@ const registerJavaScriptApplicationCommand = (
       path: z.string().describe("ASAR or extracted application path"),
     }),
     options: javascriptApplicationOptions,
-    run: ({ args, options }) =>
+    run: ({ args, options, format }) =>
       logCliCommand(logger, CLI_COMMANDS.analyzeJavaScriptApplication, () =>
-        runCliJavaScriptApplicationAnalysis({
-          input_path: args.path,
-          format: options.artifactFormat,
-        }),
+        runCliJavaScriptApplicationAnalysis(
+          { input_path: args.path, format: options.artifactFormat },
+          resultOutput === undefined
+            ? undefined
+            : {
+                output: resultOutput,
+                command: CLI_COMMANDS.analyzeJavaScriptApplication,
+                format,
+              },
+        ),
       ),
   });
 };

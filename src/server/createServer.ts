@@ -25,6 +25,9 @@ import type { WebSourceLocationService } from "../application/WebSourceLocationS
 import type { WebRuntimeService } from "../application/WebRuntimeService.js";
 import { createWebRuntimeService } from "../composition/webRuntime.js";
 import { registerWebRuntimeTools } from "./registerWebRuntimeTools.js";
+import type { WebNetworkCaptureService } from "../application/WebNetworkCaptureService.js";
+import { createWebNetworkCaptureService } from "../composition/webNetworkCaptures.js";
+import { registerWebNetworkCaptureTool } from "./registerWebNetworkCaptureTool.js";
 import { registerJavaScriptRecoveryTool } from "./registerJavaScriptRecoveryTool.js";
 import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
 import type { JavaScriptRecoveryPort } from "../application/javascript/JavaScriptRecoveryPort.js";
@@ -62,6 +65,7 @@ export interface CreateServerOptions {
   readonly webModuleTrace?: WebModuleTraceService;
   readonly webSourceLocation?: WebSourceLocationService;
   readonly webRuntime?: WebRuntimeService;
+  readonly webNetworkCapture?: WebNetworkCaptureService;
   readonly androidAnalysis?: AndroidAnalysisPort;
   readonly browserObservation?: BrowserObservationPort;
   readonly browserScenarioCapture?: BrowserScenarioCapturePort;
@@ -210,6 +214,12 @@ export const createServer = (
   registerWebRuntimeTools(
     server,
     options.webRuntime ?? createWebRuntimeService(),
+    toolLogger,
+    recordEvidence,
+  );
+  registerWebNetworkCaptureTool(
+    server,
+    options.webNetworkCapture ?? createWebNetworkCaptureService(),
     toolLogger,
     recordEvidence,
   );

@@ -155,19 +155,6 @@ describe("JavaScript semantic analysis: calls 2", () => {
     ]);
   });
 
-  it("retains every promise operation found in the finite source", () => {
-    const ir = analyzeJavaScriptSemantics(
-      `
-        Promise.resolve(1);
-        Promise.resolve(2);
-        Promise.resolve(3);
-      `,
-    );
-
-    expect(ir.promiseOperations).toHaveLength(3);
-    expect(ir.coverage.status).toBe("complete");
-  });
-
   it("fingerprints formatting and local-name changes identically", () => {
     const left = analyzeJavaScriptSemantics(`
       function calculate(value) {

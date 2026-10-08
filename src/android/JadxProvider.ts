@@ -316,6 +316,7 @@ export class JadxProvider implements AndroidAnalysisPort {
             ],
             cwd: root.path,
             hostEnvironment: this.environment,
+            signal,
           },
           this.launcher,
         );

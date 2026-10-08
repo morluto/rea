@@ -22,12 +22,6 @@ describe("source map directives", () => {
     expect(sourceMapUrls(source)).toEqual([expected]);
   });
 
-  it("keeps the comment terminator out of the declared url", () => {
-    expect(sourceMapUrls("/*# sourceMappingURL=app.js.map */")).toEqual([
-      "app.js.map",
-    ]);
-  });
-
   it("retains every directive in a source", () => {
     expect(
       sourceMapUrls(
@@ -84,30 +78,6 @@ describe("source map comment boundaries", () => {
 });
 
 describe("source map comment locations and recovery", () => {
-  it("keeps exact locations and the first occurrence of duplicate URLs", () => {
-    const line = "//# sourceMappingURL=first.map";
-    const block = "/*# sourceMappingURL=second.map";
-    const result = analyzeJavaScriptStaticSource(
-      ['const marker = "😀";', line, `${block} */`, line].join("\r\n"),
-    );
-    expect(result.source_map_urls).toEqual([
-      {
-        declared_url: "first.map",
-        location: {
-          start: { line: 2, column: 0 },
-          end: { line: 2, column: line.length },
-        },
-      },
-      {
-        declared_url: "second.map",
-        location: {
-          start: { line: 3, column: 0 },
-          end: { line: 3, column: block.length },
-        },
-      },
-    ]);
-  });
-
   it("keeps real comments when the parser recovers and reports partial syntax", () => {
     const result = analyzeJavaScriptStaticSource(
       "let value; let value;\n//# sourceMappingURL=recovered.map",

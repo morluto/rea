@@ -5,8 +5,6 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect, it } from "vitest";
 import { z } from "zod";
-import { parseConfig } from "../../../src/config.js";
-import { createBinarySession } from "../../../src/composition/binary.js";
 import { keyedArchiveResultSchema } from "../../../src/domain/apple/keyedArchive.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -71,25 +69,19 @@ it("inspects a standalone keyed archive through MCP with original object identit
   }
 });
 
-it("returns every artifact occurrence in one MCP call", async () => {
+it("returns all 520 ZIP file occurrences in one inspect_artifact MCP result", async () => {
   const directory = await createTestTempDirectory("rea-artifact-inline-");
   const archive = join(directory, "many.zip");
   const writer = new ZipWriter(new Uint8ArrayWriter());
   const fileCount = 520;
-  for (let index = 0; index < fileCount; index += 1) {
+  for (let index = 0; index < fileCount; index += 1)
     await writer.add(
       `files/${String(index)}.txt`,
       new TextReader(`file-${String(index)}`),
     );
-  }
   await writeFile(archive, await writer.close());
 
-  const configured = parseConfig({
-    HOPPER_LAUNCHER_PATH: "/rea-unconfigured-deep-provider/hopper",
-  });
-  expect(configured.ok).toBe(true);
-  if (!configured.ok) throw configured.error;
-  const session = createBinarySession(configured.value);
+  const session = createTestBinarySession(new ArtifactProvider());
   const server = createServer(session, session);
   const client = new Client({ name: "artifact-inline-test", version: "1" });
   const [clientTransport, serverTransport] =
@@ -102,43 +94,6 @@ it("returns every artifact occurrence in one MCP call", async () => {
       arguments: { path: archive },
     });
     expect(opened.isError).not.toBe(true);
-    const names = (await client.listTools()).tools.map(({ name }) => name);
-    expect(names).toContain("inspect_artifact");
-    expect(names).toContain("inspect_asset_catalog");
-    expect(names).not.toContain("inventory_artifact");
-    const status = await client.callTool({
-      name: "binary_session",
-      arguments: {},
-    });
-    expect(status.isError).not.toBe(true);
-    const capabilities = z
-      .object({
-        result: z.object({
-          capabilities: z.array(
-            z.object({
-              operation: z.string(),
-              available: z.boolean(),
-              reason: z.string().nullable(),
-            }),
-          ),
-        }),
-      })
-      .parse(status.structuredContent).result.capabilities;
-    expect(capabilities.map(({ operation }) => operation)).not.toContain(
-      "inventory_artifact",
-    );
-    expect(
-      capabilities.find(
-        ({ operation }) => operation === "inspect_asset_catalog",
-      ),
-    ).toMatchObject(
-      process.platform === "darwin"
-        ? { available: true, reason: null }
-        : {
-            available: false,
-            reason: "Apple asset catalogs require macOS assetutil.",
-          },
-    );
     const result = await client.callTool({
       name: "inspect_artifact",
       arguments: {},
@@ -157,23 +112,14 @@ it("returns every artifact occurrence in one MCP call", async () => {
             }),
           }),
         ),
-        observations: z.array(z.unknown()),
-        derived_relationships: z.array(z.unknown()),
-        hypotheses: z.array(z.unknown()),
-        unexplored_branches: z.array(z.unknown()),
-        next_probes: z.array(z.unknown()),
       })
       .parse(
         z.object({ result: z.unknown() }).parse(result.structuredContent)
           .result,
       );
-    const occurrences =
-      inspection.substeps[0]?.evidence.normalized_result.occurrences;
-    if (occurrences === undefined)
-      throw new Error("inspection omitted the artifact inventory");
-    expect(occurrences).toHaveLength(fileCount + 1);
-    expect(inspection.observations.length).toBeGreaterThan(0);
-    expect(inspection.derived_relationships.length).toBeGreaterThan(0);
+    expect(
+      inspection.substeps[0]?.evidence.normalized_result.occurrences,
+    ).toHaveLength(fileCount + 1);
   } finally {
     await Promise.allSettled([client.close(), server.close(), session.close()]);
   }

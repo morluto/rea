@@ -88,6 +88,21 @@ describe("JavaScript export return-shape comparison", () => {
     expect(result.coverage.status).toBe("partial");
   });
 
+  it("orders multiple changed paths deterministically across Unicode names", async () => {
+    const graphs = await analyzeSources({
+      left: `export default () => ({ type: "item", zeta: 1, alpha: 1, "éclair": 1 });`,
+      right: `export default () => ({ type: "item", zeta: 2, alpha: 2, "éclair": 2 });`,
+    });
+    const first = compare(...graphs);
+    const second = compare(...graphs);
+
+    expect(new Set(first.changes.map(({ path }) => path))).toEqual(
+      new Set(["/alpha", "/zeta", "/éclair"]),
+    );
+    expect(first.changes).toEqual(second.changes);
+    expect(first.comparison_id).toBe(second.comparison_id);
+  });
+
   it("does not pair discriminants that an unknown trailing spread can overwrite", async () => {
     const [left, right] = await analyzeSources({
       left: `

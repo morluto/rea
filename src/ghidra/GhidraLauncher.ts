@@ -147,6 +147,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           platform,
           command.command,
         ),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
       await writeGhidraRuntimeFile(
         paths.ownershipPath,

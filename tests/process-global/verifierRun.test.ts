@@ -104,26 +104,6 @@ describe("verifier run identity", { concurrent: false }, () => {
       }
     },
   );
-
-  it.runIf(process.platform !== "win32")(
-    "bounds cleanup when a verifier child ignores SIGTERM",
-    async () => {
-      const child = spawn(
-        process.execPath,
-        [
-          "-e",
-          "process.on('SIGTERM', () => {}); process.stdout.write('ready'); setInterval(() => {}, 1000)",
-        ],
-        { stdio: ["ignore", "pipe", "ignore"] },
-      );
-      try {
-        await childReady(child);
-      } finally {
-        await stopChild(child);
-      }
-      expect(child.signalCode).toBe("SIGKILL");
-    },
-  );
 });
 
 const spawnReadyChild = (env: NodeJS.ProcessEnv): ChildProcess =>

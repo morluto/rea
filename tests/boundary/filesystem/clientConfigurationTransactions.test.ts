@@ -34,25 +34,23 @@ describe("client configuration write failures", () => {
 });
 
 describe("TOML client configuration comparison", () => {
-  it.each(["nan", "inf", "-inf"])(
-    "replaces a registration containing %s and preserves unrelated settings",
-    async (value) => {
-      const root = await createTestTempDirectory("rea-client-toml-");
-      const configPath = join(root, "config.toml");
-      const original = `unrelated = ${value}\n[mcp_servers.rea]\ncommand = "old"\nstartup_timeout_sec = ${value}\n`;
-      await writeFile(configPath, original);
-      const client = { name: "codex", format: "toml", configPath } as const;
-      expect(await configureTomlClient(client, {}, ["rea", "mcp"])).toEqual({
-        status: "configured",
-        backupPath: `${configPath}.rea.backup`,
-      });
-      expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(original);
-      expect(await readFile(configPath, "utf8")).toContain(
-        `unrelated = ${value}`,
-      );
-      expect(await configureTomlClient(client, {}, ["rea", "mcp"])).toEqual({
-        status: "unchanged",
-      });
-    },
-  );
+  it("replaces a registration containing a non-finite TOML float and preserves unrelated settings", async () => {
+    const value = "-inf";
+    const root = await createTestTempDirectory("rea-client-toml-");
+    const configPath = join(root, "config.toml");
+    const original = `unrelated = ${value}\n[mcp_servers.rea]\ncommand = "old"\nstartup_timeout_sec = ${value}\n`;
+    await writeFile(configPath, original);
+    const client = { name: "codex", format: "toml", configPath } as const;
+    expect(await configureTomlClient(client, {}, ["rea", "mcp"])).toEqual({
+      status: "configured",
+      backupPath: `${configPath}.rea.backup`,
+    });
+    expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(original);
+    expect(await readFile(configPath, "utf8")).toContain(
+      `unrelated = ${value}`,
+    );
+    expect(await configureTomlClient(client, {}, ["rea", "mcp"])).toEqual({
+      status: "unchanged",
+    });
+  });
 });

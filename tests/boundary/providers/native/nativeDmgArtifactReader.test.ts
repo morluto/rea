@@ -273,19 +273,26 @@ describe("native DMG real verification diagnostics", () => {
       const root = await createTestTempDirectory(
         "rea-dmg-checksum-corruption-",
       );
-      const source = join(root, "source");
-      await mkdir(source);
-      await writeFile(join(source, "payload.bin"), Buffer.alloc(65_536, 0x5a));
+      const writableImagePath = join(root, "writable.dmg");
       const imagePath = join(root, "fixture.dmg");
       await execFileOutput("/usr/bin/hdiutil", [
         "create",
         "-quiet",
-        "-srcfolder",
-        source,
-        "-volname",
-        "Fixture",
+        "-size",
+        "1m",
+        "-layout",
+        "NONE",
+        "-type",
+        "UDIF",
+        writableImagePath,
+      ]);
+      await execFileOutput("/usr/bin/hdiutil", [
+        "convert",
+        "-quiet",
+        writableImagePath,
         "-format",
         "UDRO",
+        "-o",
         imagePath,
       ]);
       const valid = await execFileOutput("/usr/bin/hdiutil", [

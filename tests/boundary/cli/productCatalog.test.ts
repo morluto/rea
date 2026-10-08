@@ -19,6 +19,10 @@ import {
   MANAGED_WORKFLOW_PROVIDER,
 } from "../../../src/application/InvestigationProviders.js";
 import { CDP_BROWSER_PROVIDER_IDENTITY } from "../../../src/browser/CdpBrowserProvider.js";
+import {
+  HAR_CAPTURE_PROVIDER_IDENTITY,
+  MITMPROXY_CAPTURE_PROVIDER_IDENTITY,
+} from "../../../src/browser/history/CaptureRelease.js";
 import { CDP_ELECTRON_PROVIDER_IDENTITY } from "../../../src/browser/CdpElectronProvider.js";
 import { PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY } from "../../../src/browser/PlaywrightElectronActiveProvider.js";
 import { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "../../../src/browser/PlaywrightBrowserScenarioProvider.js";
@@ -106,6 +110,8 @@ describe("canonical product catalog", () => {
         BINWALK_PROVIDER_IDENTITY,
         UNBLOB_PROVIDER_IDENTITY,
         WAKARU_PROVIDER_IDENTITY,
+        HAR_CAPTURE_PROVIDER_IDENTITY,
+        MITMPROXY_CAPTURE_PROVIDER_IDENTITY,
         GHIDRA_PROVIDER_IDENTITY,
         IDA_PROVIDER_IDENTITY,
         NATIVE_MACOS_PROVIDER_IDENTITY,

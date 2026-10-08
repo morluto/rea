@@ -1,4 +1,5 @@
 import { z } from "incur";
+import { resolve } from "node:path";
 import { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
 import { createFirmwareAnalysisProvider } from "../composition/firmware.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -38,7 +39,8 @@ export const registerFirmwareCommands = (
       execute(
         CLI_COMMANDS.inspectFirmwareRegions,
         "inspect_firmware_regions",
-        args,
+        // CLI paths are operator-relative; resolve before shared validation.
+        { path: resolve(args.path) },
       ),
   });
   cli.command(CLI_COMMANDS.extractFirmware, {
@@ -81,8 +83,8 @@ export const registerFirmwareCommands = (
     }),
     run: ({ args, options }) =>
       execute(CLI_COMMANDS.extractFirmware, "extract_firmware", {
-        path: args.path,
-        output_directory: args.outputDirectory,
+        path: resolve(args.path),
+        output_directory: resolve(args.outputDirectory),
         ...(options.offset === undefined && options.length === undefined
           ? {}
           : { range: { offset: options.offset, length: options.length } }),

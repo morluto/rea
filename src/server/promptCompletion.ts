@@ -7,7 +7,7 @@ import type { BinarySessionPort } from "../application/binary/BinarySession.js";
 import type { PromptCompletionKind } from "../contracts/promptContracts.js";
 import { artifactInventoryResultSchema } from "../domain/artifactGraph.js";
 import { artifactInspectionResultSchema } from "../domain/artifactInspection.js";
-import { processCaptureSchema } from "../domain/processCapture.js";
+import { parseProcessCapture } from "../domain/process/processCapture.js";
 
 const documentListSchema = z.array(z.string().min(1));
 const providerStatusSchema = z.object({
@@ -171,8 +171,13 @@ const evidenceValues = (
 
 const isProcessCaptureEvidence = (evidence: LedgerEvidence): boolean => {
   if (evidence.operation !== "capture_process_scenario") return false;
-  const capture = processCaptureSchema.safeParse(evidence.normalized_result);
-  return capture.success;
+  try {
+    parseProcessCapture(evidence.normalized_result);
+    return true;
+  } catch (cause: unknown) {
+    if (cause instanceof TypeError || cause instanceof z.ZodError) return false;
+    throw cause;
+  }
 };
 
 const unknownCandidates = (

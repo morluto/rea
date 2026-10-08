@@ -79,6 +79,48 @@ describe("HopperClient protocol", () => {
     expect(results).toHaveLength(HOPPER_OPERATIONS.length);
     expect(results.every((result) => result.ok)).toBe(true);
   });
+});
+
+describe("HopperClient response lifecycle", () => {
+  it("reassembles a fragmented Unicode reply from the owned socket", async () => {
+    const client = await startClient();
+
+    await expect(
+      client.callTool("echo", { label: "雪🦊", fragmented: true }),
+    ).resolves.toEqual({
+      ok: true,
+      value: { label: "雪🦊", fragmented: true },
+    });
+  });
+
+  it("accepts an owned-socket response above the former 10 MiB ceiling", async () => {
+    const client = await startClient();
+    const label = "x".repeat(10 * 1024 * 1024 + 1);
+
+    const result = await client.callTool("echo", { label });
+
+    expect(result).toEqual({ ok: true, value: { label } });
+  });
+
+  it("clears a partial reply when closing and restarting the owned session", async () => {
+    const launcher = new FixtureLauncher();
+    const client = await startClient(launcher);
+    const partialReply = client.callTool("partial_then_wait", {});
+    const request = await launcher.waitForRequest("partial_then_wait");
+    const partialWrite = await launcher.waitForRequest("fixture_partial_write");
+    expect(partialWrite.id).toBe(request.id);
+
+    await client.close();
+    await expect(partialReply).resolves.toMatchObject({
+      ok: false,
+      error: { _tag: "HopperProcessError" },
+    });
+    await expect(client.start()).resolves.toMatchObject({ ok: true });
+    await expect(client.callTool("echo", { label: "fresh" })).resolves.toEqual({
+      ok: true,
+      value: { label: "fresh" },
+    });
+  });
 
   it("rejects a bridge session with the wrong capability token", async () => {
     const client = new HopperClient({

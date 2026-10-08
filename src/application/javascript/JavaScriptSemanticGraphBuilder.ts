@@ -74,7 +74,35 @@ interface FileContext extends SemanticFlowProjectionContext {
   readonly callResolutions: ReadonlyMap<string, "candidate" | "resolved">;
 }
 
-/** Project per-file semantic IR into an artifact-bound companion graph. */
+/**
+ * Resource-safety ceiling on retained semantic nodes.
+ *
+ * The semantic projection emits one node per AST expression, call site, binding
+ * and property slot. That is unbounded in input size. A small tree of five files
+ * already yields on the order of 170,000 nodes, and larger trees yield millions,
+ * exhausting the heap before the result can be serialized.
+ *
+ * This is a real resource-safety constraint, not a presentation preference, so
+ * the ceiling is applied and reported through the graph's own `coverage` fields
+ * (`truncated`, `omitted_nodes`, `omitted_relations`, `limits`) rather than
+ * silently dropping data.
+ *
+ * Sizing: a retained semantic node costs roughly 3 KB once serialized, and V8
+ * additionally caps a single string at 512 MB. The result is serialized after the
+ * object graph is built and validated, so both phases must fit together. A single
+ * minified vendor bundle can account for most of a tree's nodes, so a whole-tree
+ * ceiling without a per-file ceiling does not bound the work. Both are applied.
+ */
+export const SEMANTIC_GRAPH_NODE_CEILING = 100_000;
+
+/**
+ * Per-file share of the semantic node budget.
+ *
+ * Bound each source file independently so one large bundled library cannot
+ * consume the whole tree's budget and starve the application's own modules.
+ */
+export const SEMANTIC_GRAPH_FILE_NODE_CEILING = 20_000;
+
 export const buildJavaScriptSemanticGraph = ({
   rootArtifactSha256,
   applicationGraph,
@@ -82,11 +110,27 @@ export const buildJavaScriptSemanticGraph = ({
 }: BuilderInput): JavaScriptSemanticGraph => {
   const state = emptyState(applicationGraph);
   const fingerprints: JavaScriptSemanticGraph["fingerprints"][number][] = [];
+  let truncatedFiles = 0;
   for (const analyzed of analysis.files) {
     if (analyzed.semantic === null) continue;
+    if (state.nodes.size >= SEMANTIC_GRAPH_NODE_CEILING) {
+      truncatedFiles += 1;
+      continue;
+    }
+    const remainingTreeBudget = SEMANTIC_GRAPH_NODE_CEILING - state.nodes.size;
+    state.fileNodeBudget = Math.min(
+      SEMANTIC_GRAPH_FILE_NODE_CEILING,
+      remainingTreeBudget,
+    );
+    state.fileNodesDropped = false;
     fingerprints.push(
       ...projectFile(analyzed.file, analyzed.semantic.ir, state),
     );
+    // Nodes were dropped only if the budget actually blocked creation. A file
+    // that exactly fills its share ends with a zero budget without dropping
+    // anything, so the remaining budget alone cannot decide truncation.
+    if (state.fileNodesDropped) truncatedFiles += 1;
+    state.fileNodeBudget = null;
   }
   if (state.roots.size === 0) addFallbackRoot(rootArtifactSha256, state);
   const unknowns = [...state.unknowns.values()];
@@ -100,11 +144,20 @@ export const buildJavaScriptSemanticGraph = ({
     fingerprints,
     unknowns,
     coverage: {
-      status: "unknown",
-      truncated: false,
-      omitted_nodes: 0,
-      omitted_relations: 0,
-      limits: [],
+      status: truncatedFiles > 0 ? "partial" : "unknown",
+      truncated: truncatedFiles > 0,
+      omitted_nodes: truncatedFiles > 0 ? null : 0,
+      omitted_relations: truncatedFiles > 0 ? null : 0,
+      limits:
+        truncatedFiles > 0
+          ? [
+              {
+                name: "semantic_graph_node_ceiling",
+                value: SEMANTIC_GRAPH_NODE_CEILING,
+                unit: "items" as const,
+              },
+            ]
+          : [],
       families: JAVASCRIPT_SEMANTIC_RELATION_FAMILIES.map((family) => ({
         family,
         status: semanticFamilyStatus(family, analysis),
@@ -112,7 +165,7 @@ export const buildJavaScriptSemanticGraph = ({
           (relation) =>
             JAVASCRIPT_SEMANTIC_RELATION_FAMILY[relation.relation] === family,
         ).length,
-        omitted_relations: 0,
+        omitted_relations: truncatedFiles > 0 ? null : 0,
         unknown_ids: unknowns
           .filter((unknown) => unknown.family === family)
           .map(({ unknown_id: identifier }) => identifier),

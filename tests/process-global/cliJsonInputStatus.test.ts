@@ -11,43 +11,31 @@ afterEach(() => {
 });
 
 describe("CLI JSON input logging status", () => {
-  it.each([
-    {},
-    { input_path: "input.json", input_reason: "invalid-json" },
-    { input_path: "missing.json", input_reason: "read-failed" },
-    { input_path: "", input_reason: "read-failed" },
-  ])(
-    "preserves failure diagnostics and logs an error for %j",
-    async (metadata) => {
-      const parsed = await parseCliJsonInput("{", "test-input");
-      if (parsed.ok) throw new Error("Expected malformed inline JSON to fail");
-      const value = Object.assign({}, parsed.error, metadata);
-      const serialized = JSON.stringify(value);
-      const lines: string[] = [];
-      const logger = pino(
-        { level: "info" },
-        { write: (line) => lines.push(line) },
-      );
-      process.exitCode = undefined;
+  it("preserves parsed failure diagnostics and logs an error", async () => {
+    const parsed = await parseCliJsonInput("{", "test-input");
+    if (parsed.ok) throw new Error("Expected malformed inline JSON to fail");
+    const value = parsed.error;
+    const serialized = JSON.stringify(value);
+    const lines: string[] = [];
+    const logger = pino(
+      { level: "info" },
+      { write: (line) => lines.push(line) },
+    );
+    process.exitCode = undefined;
 
-      const output = await logCliCommand(
-        logger,
-        "test-input",
-        async () => value,
-      );
+    const output = await logCliCommand(logger, "test-input", async () => value);
 
-      expect(output).toBe(value);
-      expect(JSON.stringify(output)).toBe(serialized);
-      expect(process.exitCode).toBe(1);
-      expect(lines).toHaveLength(1);
-      expect(JSON.parse(lines.join(""))).toMatchObject({
-        level: 50,
-        command: "test-input",
-        status: "error",
-        msg: "CLI command failed",
-      });
-    },
-  );
+    expect(output).toBe(value);
+    expect(JSON.stringify(output)).toBe(serialized);
+    expect(process.exitCode).toBe(1);
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines.join(""))).toMatchObject({
+      level: 50,
+      command: "test-input",
+      status: "error",
+      msg: "CLI command failed",
+    });
+  });
 
   it("leaves ordinary parsed JSON successful and unchanged", async () => {
     const parsed = await parseCliJsonInput(

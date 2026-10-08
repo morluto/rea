@@ -5,7 +5,6 @@ import { pathToFileURL } from "node:url";
 
 import { afterAll, beforeAll, expect, it } from "vitest";
 
-import { authorizeRuntimeLocation } from "./JavaScriptRuntimeScope.js";
 import { finalizeInspectorCapture } from "./V8InspectorCaptureProjection.js";
 import type { CaptureState } from "./V8InspectorProvider.js";
 
@@ -17,6 +16,48 @@ afterAll(async () => {
   if (root !== undefined) await rm(root, { recursive: true, force: true });
 });
 
+const target = {
+  id: "target-1",
+  type: "node",
+  url: "file:///tmp/target.js",
+  attached: false,
+  webSocketUrl: "ws://127.0.0.1:9222/target-1",
+  location: { kind: "file" as const, file_path: "/tmp/target.js" },
+};
+const stateFor = (scripts: CaptureState["scripts"]): CaptureState => ({
+  scripts,
+  contexts: new Map(),
+  eventsObserved: scripts.length,
+  eventsRetained: scripts.length,
+  eventsDropped: 0,
+  metadataBytes: 0,
+  scriptsObserved: scripts.length,
+  invalidScripts: 0,
+  truncated: false,
+  truncationReasons: new Set(),
+});
+const finalize = (
+  state: CaptureState,
+  authorizeLocation?: Parameters<
+    typeof finalizeInspectorCapture
+  >[0]["authorizeLocation"],
+) =>
+  finalizeInspectorCapture({
+    input: {
+      inspector_endpoint: "http://127.0.0.1:9222",
+      target_id: target.id,
+      observation_ms: 100,
+    },
+    runtime: {
+      product: "Node.js/v24.18.0",
+      protocol_version: "1.3",
+      v8_version: null,
+    },
+    target,
+    state,
+    ...(authorizeLocation === undefined ? {} : { authorizeLocation }),
+  });
+
 it("authorizes distinct Inspector locations and preserves stable deduplication", async () => {
   const firstPath = join(root, "first.js");
   const secondPath = join(root, "second.js");
@@ -26,8 +67,8 @@ it("authorizes distinct Inspector locations and preserves stable deduplication",
   ]);
   const firstUrl = pathToFileURL(firstPath).href;
   const secondUrl = pathToFileURL(secondPath).href;
-  const state: CaptureState = {
-    scripts: [
+  const result = await finalize(
+    stateFor([
       {
         rawUrl: firstUrl,
         executionContextKey: "1",
@@ -56,38 +97,8 @@ it("authorizes distinct Inspector locations and preserves stable deduplication",
         length: 0,
         isModule: false,
       },
-    ],
-    contexts: new Map(),
-    eventsObserved: 4,
-    eventsRetained: 4,
-    eventsDropped: 0,
-    metadataBytes: 0,
-    scriptsObserved: 4,
-    invalidScripts: 0,
-    truncated: false,
-    truncationReasons: new Set(),
-  };
-  const result = await finalizeInspectorCapture({
-    input: {
-      inspector_endpoint: "http://127.0.0.1:9222",
-      target_id: "target-1",
-      observation_ms: 100,
-    },
-    runtime: {
-      product: "Node.js/v24.18.0",
-      protocol_version: "1.3",
-      v8_version: null,
-    },
-    target: {
-      id: "target-1",
-      type: "node",
-      url: "file:///tmp/target.js",
-      attached: false,
-      webSocketUrl: "ws://127.0.0.1:9222/target-1",
-      location: { kind: "file", file_path: "/tmp/target.js" },
-    },
-    state,
-  });
+    ]),
+  );
 
   expect(result.scripts.items.map(({ location }) => location)).toEqual(
     expect.arrayContaining([
@@ -102,7 +113,7 @@ it("authorizes distinct Inspector locations and preserves stable deduplication",
   });
 });
 
-it("authorizes every unique script location through a bounded worker pool", async () => {
+it("authorizes each unique script location through a bounded worker pool", async () => {
   const drafts = Array.from({ length: 200 }, (_, index) => ({
     rawUrl: `file:///fixture/script-${String(index)}.js`,
     executionContextKey: "1",
@@ -110,64 +121,29 @@ it("authorizes every unique script location through a bounded worker pool", asyn
     length: 7,
     isModule: false,
   }));
-  const state: CaptureState = {
-    scripts: [
-      ...drafts,
-      ...drafts.slice(0, 1),
-      {
-        rawUrl: "ftp://example.test/unapproved.js",
-        executionContextKey: null,
-        cdpHash: null,
-        length: 0,
-        isModule: false,
-      },
-    ],
-    contexts: new Map(),
-    eventsObserved: 202,
-    eventsRetained: 202,
-    eventsDropped: 0,
-    metadataBytes: 0,
-    scriptsObserved: 202,
-    invalidScripts: 0,
-    truncated: false,
-    truncationReasons: new Set(),
-  };
+  const state = stateFor([
+    ...drafts,
+    ...drafts.slice(0, 1),
+    {
+      rawUrl: "ftp://example.test/unapproved.js",
+      executionContextKey: null,
+      cdpHash: null,
+      length: 0,
+      isModule: false,
+    },
+  ]);
   const activeUrls = new Set<string>();
   const authorizedUrls = new Set<string>();
   let maximumActive = 0;
-  const result = await finalizeInspectorCapture({
-    input: {
-      inspector_endpoint: "http://127.0.0.1:9222",
-      target_id: "target-1",
-      observation_ms: 100,
-    },
-    runtime: {
-      product: "Node.js/v24.18.0",
-      protocol_version: "1.3",
-      v8_version: null,
-    },
-    target: {
-      id: "target-1",
-      type: "node",
-      url: "file:///tmp/target.js",
-      attached: false,
-      webSocketUrl: "ws://127.0.0.1:9222/target-1",
-      location: { kind: "file", file_path: "/tmp/target.js" },
-    },
-    state,
-    authorizeLocation: async (rawUrl) => {
-      activeUrls.add(rawUrl);
-      authorizedUrls.add(rawUrl);
-      maximumActive = Math.max(maximumActive, activeUrls.size);
-      await new Promise((resolve) => setTimeout(resolve, 1));
-      activeUrls.delete(rawUrl);
-      return rawUrl.startsWith("ftp:")
-        ? { allowed: false, reason: "unsupported_url" }
-        : {
-            allowed: true,
-            location: { kind: "file", file_path: rawUrl },
-          };
-    },
+  const result = await finalize(state, async (rawUrl) => {
+    activeUrls.add(rawUrl);
+    authorizedUrls.add(rawUrl);
+    maximumActive = Math.max(maximumActive, activeUrls.size);
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    activeUrls.delete(rawUrl);
+    return rawUrl.startsWith("ftp:")
+      ? { allowed: false, reason: "unsupported_url" }
+      : { allowed: true, location: { kind: "file", file_path: rawUrl } };
   });
 
   expect(maximumActive).toBeGreaterThan(1);
@@ -190,20 +166,8 @@ it("waits for active authorization workers to settle before returning a failure"
     length: 0,
     isModule: false,
   }));
-  const state: CaptureState = {
-    scripts,
-    contexts: new Map(),
-    eventsObserved: scripts.length,
-    eventsRetained: scripts.length,
-    eventsDropped: 0,
-    metadataBytes: 0,
-    scriptsObserved: scripts.length,
-    invalidScripts: 0,
-    truncated: false,
-    truncationReasons: new Set(),
-  };
   const startedUrls: string[] = [];
-  const pendingAuthorizations = new Map<
+  const pending = new Map<
     string,
     { readonly resolve: () => void; readonly reject: (error: Error) => void }
   >();
@@ -212,47 +176,27 @@ it("waits for active authorization workers to settle before returning a failure"
   let maximumActive = 0;
   let failureInjected = false;
 
-  const finalization = finalizeInspectorCapture({
-    input: {
-      inspector_endpoint: "http://127.0.0.1:9222",
-      target_id: "target-1",
-      observation_ms: 100,
-    },
-    runtime: {
-      product: "Node.js/v24.18.0",
-      protocol_version: "1.3",
-      v8_version: null,
-    },
-    target: {
-      id: "target-1",
-      type: "node",
-      url: "file:///tmp/target.js",
-      attached: false,
-      webSocketUrl: "ws://127.0.0.1:9222/target-1",
-      location: { kind: "file", file_path: "/tmp/target.js" },
-    },
-    state,
-    authorizeLocation: async (rawUrl) => {
-      startedUrls.push(rawUrl);
-      if (failureInjected)
-        return { allowed: true, location: { kind: "file", file_path: rawUrl } };
-      active += 1;
-      maximumActive = Math.max(maximumActive, active);
-      return new Promise<Awaited<ReturnType<typeof authorizeRuntimeLocation>>>(
-        (resolve, reject) => {
-          pendingAuthorizations.set(rawUrl, {
-            resolve: () =>
-              resolve({
-                allowed: true,
-                location: { kind: "file", file_path: rawUrl },
-              }),
-            reject,
-          });
-        },
-      ).finally(() => {
-        active -= 1;
+  const finalization = finalize(stateFor(scripts), async (rawUrl) => {
+    startedUrls.push(rawUrl);
+    if (failureInjected)
+      return { allowed: true, location: { kind: "file", file_path: rawUrl } };
+    active += 1;
+    maximumActive = Math.max(maximumActive, active);
+    return new Promise<{
+      readonly allowed: true;
+      readonly location: { readonly kind: "file"; readonly file_path: string };
+    }>((resolve, reject) => {
+      pending.set(rawUrl, {
+        resolve: () =>
+          resolve({
+            allowed: true,
+            location: { kind: "file", file_path: rawUrl },
+          }),
+        reject,
       });
-    },
+    }).finally(() => {
+      active -= 1;
+    });
   });
   const initialStarted = new Set(startedUrls);
   expect(initialStarted.size).toBeGreaterThan(1);
@@ -261,11 +205,11 @@ it("waits for active authorization workers to settle before returning a failure"
   if (failingUrl === undefined)
     throw new Error("Expected at least one active authorization");
   failureInjected = true;
-  pendingAuthorizations.get(failingUrl)?.reject(failure);
+  pending.get(failingUrl)?.reject(failure);
   await Promise.resolve();
   expect(new Set(startedUrls)).toEqual(initialStarted);
-  for (const [rawUrl, pending] of pendingAuthorizations)
-    if (rawUrl !== failingUrl) pending.resolve();
+  for (const [rawUrl, request] of pending)
+    if (rawUrl !== failingUrl) request.resolve();
   await expect(finalization).rejects.toBe(failure);
   expect(new Set(startedUrls)).toEqual(initialStarted);
   expect(active).toBe(0);

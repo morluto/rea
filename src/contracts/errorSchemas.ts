@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { jsonValueSchema } from "../domain/jsonValue.js";
+
 const categorySchema = z.enum([
   "invalid_input",
   "unsupported_provider",
@@ -21,7 +23,7 @@ const common = {
   retryable: z.boolean(),
   remediation: remediationSchema,
 };
-const genericDetails = z.record(z.string(), z.json()).optional();
+const genericDetails = z.record(z.string(), jsonValueSchema).optional();
 const generic = <Code extends string>(code: Code) =>
   z
     .object({ code: z.literal(code), ...common, details: genericDetails })
@@ -30,6 +32,8 @@ const generic = <Code extends string>(code: Code) =>
 /** Stable discriminated schema shared by every CLI and MCP error surface. */
 export const analysisErrorProjectionSchema = z.discriminatedUnion("code", [
   generic("invalid_request"),
+  generic("access_denied"),
+  generic("artifact_changed"),
   generic("unreadable_output"),
   generic("capability_unavailable"),
   generic("provider_unavailable"),

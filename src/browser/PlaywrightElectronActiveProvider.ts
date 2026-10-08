@@ -27,7 +27,11 @@ import {
   type ProcessCleanupResult,
   type ProcessLineageObservation,
 } from "../process/ProcessOwnership.js";
-import { observeOwnedProcessLineage } from "../process/ProcessOwnershipObservation.js";
+import {
+  observeOwnedProcessLineage,
+  prepareProcessOwnershipInspection,
+  systemProcessOwnershipHost,
+} from "../process/ProcessOwnershipObservation.js";
 import { selectCapturedProcessGroupIds } from "../process/ProcessOwnershipProcessTree.js";
 import {
   runElectronActions,
@@ -157,8 +161,13 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
     try {
       if (options.signal?.aborted === true)
         throw new BrowserObservationError(OPERATION, "cancelled");
+      await prepareProcessOwnershipInspection(options.signal);
       const startupDeadline = Date.now() + STARTUP_TIMEOUT_MS;
       const paths = await canonicalPaths(input);
+      const captureBaseline =
+        await systemProcessOwnershipHost.captureBaseline?.(options.signal);
+      if (options.signal?.aborted)
+        throw new BrowserObservationError(OPERATION, "cancelled");
       application = await electron.launch({
         executablePath: paths.executable,
         cwd: paths.root,
@@ -183,6 +192,7 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         expectedParentPid: process.pid,
         expectedCommand: paths.executable,
         sweepTokenOwnedProcesses: true,
+        ...(captureBaseline === undefined ? {} : { captureBaseline }),
       };
       const actions = await runElectronActions(application, input, options);
       const state = await runWithExecutionLimits(
@@ -191,7 +201,13 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
       );
       outcome = ok(createResult(paths, input, actions, state));
     } catch (cause: unknown) {
-      outcome = err(providerError(cause));
+      outcome = err(
+        options.signal?.aborted === true &&
+          (cause === options.signal.reason ||
+            (cause instanceof Error && cause.name === "AbortError"))
+          ? new BrowserObservationError(OPERATION, "cancelled", { cause })
+          : providerError(cause),
+      );
     }
     if (application !== undefined) {
       if (ownership !== undefined)
@@ -277,7 +293,11 @@ const cleanupElectronProcesses = async (
     if (!result.cleaned) return result;
     signaled ||= result.signaled;
   }
-  const remaining = await verifyNoTokenOwnedProcesses(ownership.runId);
+  const remaining = await verifyNoTokenOwnedProcesses(
+    ownership.runId,
+    undefined,
+    ownership.captureBaseline,
+  );
   if (!remaining.cleaned) return remaining;
   return { cleaned: true, signaled };
 };

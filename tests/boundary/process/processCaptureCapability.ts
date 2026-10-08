@@ -1,6 +1,6 @@
 import { it } from "vitest";
 
-import { probeProcessCaptureCapability } from "../../../src/application/ProcessCaptureCapability.js";
+import { probeProcessCaptureCapability } from "../../../src/process/capture/ProcessCaptureCapability.js";
 
 /**
  * Process-capture tests need real native PTY authority. Probing once at module

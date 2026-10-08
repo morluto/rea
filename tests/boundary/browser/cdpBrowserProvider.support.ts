@@ -1,4 +1,4 @@
-import { afterEach, describe } from "vitest";
+import { afterEach } from "vitest";
 
 import type { FakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 
@@ -11,5 +11,3 @@ afterEach(async () => {
 export const trackBrowser = (browser: FakeCdpBrowser): void => {
   browsers.push(browser);
 };
-
-export const describeBrowser = describe;

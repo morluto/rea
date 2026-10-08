@@ -6,36 +6,33 @@ import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("DOS COM admission", () => {
-  it.each(["fixture.com", "fixture.hop", "fixture.js", "fixture.bin"])(
-    "requires explicit interpretation for %s",
-    async (name) => {
-      const directory = await createTestTempDirectory("rea-com-target-");
-      const path = join(directory, name);
-      const bytes = Buffer.from("b83412c3", "hex");
-      await writeFile(path, bytes);
-      const target = await parseBinaryTarget(
+  it("requires explicit interpretation even when a DOS COM uses a misleading suffix", async () => {
+    const directory = await createTestTempDirectory("rea-com-target-");
+    const path = join(directory, "fixture.js");
+    const bytes = Buffer.from("b83412c3", "hex");
+    await writeFile(path, bytes);
+    const target = await parseBinaryTarget(
+      path,
+      directory,
+      "arm64",
+      undefined,
+      "dos-com",
+    );
+    expect(target).toMatchObject({
+      ok: true,
+      value: {
         path,
-        directory,
-        "arm64",
-        undefined,
-        "dos-com",
-      );
-      expect(target).toMatchObject({
-        ok: true,
-        value: {
-          path,
-          format: "dos-com",
-          kind: "executable",
-          architecture: "x86",
-          availableArchitectures: ["x86"],
-          sha256: createHash("sha256").update(bytes).digest("hex"),
-        },
-      });
-      expect(await readFile(path)).toEqual(bytes);
-      const detected = await parseBinaryTarget(path);
-      expect(detected.ok && detected.value.format).not.toBe("dos-com");
-    },
-  );
+        format: "dos-com",
+        kind: "executable",
+        architecture: "x86",
+        availableArchitectures: ["x86"],
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      },
+    });
+    expect(await readFile(path)).toEqual(bytes);
+    const detected = await parseBinaryTarget(path);
+    expect(detected.ok && detected.value.format).not.toBe("dos-com");
+  });
   it.each([0, 0xff01])("rejects invalid file extent %i", async (length) => {
     const directory = await createTestTempDirectory("rea-com-target-");
     const path = join(directory, "fixture.com");

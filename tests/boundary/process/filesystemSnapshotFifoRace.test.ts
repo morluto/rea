@@ -23,7 +23,7 @@ it.skipIf(process.platform === "win32")(
     );
     const snapshotModule = fileURLToPath(
       new URL(
-        "../../../dist/application/FilesystemSnapshot.js",
+        "../../../dist/process/capture/FilesystemSnapshot.js",
         import.meta.url,
       ),
     );

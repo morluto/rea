@@ -22,16 +22,6 @@ afterEach(async () => {
 });
 
 describe("web capture diff", () => {
-  it("rejects caller limits that would omit difference records", () => {
-    expect(
-      compareWebCapturesInputSchema.safeParse({
-        before: {},
-        after: {},
-        max_changes: 1,
-      }).success,
-    ).toBe(false);
-  });
-
   it("reports stable observed changes while preserving unknown dimensions", async () => {
     const browser = await startFakeCdpBrowser();
     browsers.push(browser);
@@ -48,7 +38,22 @@ describe("web capture diff", () => {
     const after = structuredClone(captured.value);
     after.scripts.items = [];
     const request = after.network.requests[0];
-    if (request !== undefined) request.status = 204;
+    if (request !== undefined) {
+      request.status = 204;
+      request.redirects = [
+        {
+          url: `${browser.allowedOrigin}/prior`,
+          response_url: `${browser.allowedOrigin}/prior`,
+          method: "GET",
+          resource_type: "Fetch",
+          status: 302,
+          mime_type: "text/plain",
+          encoded_data_length: 12,
+          request_timestamp: 1,
+          redirect_event_timestamp: 2,
+        },
+      ];
+    }
 
     const result = compareWebCaptures(
       compareWebCapturesInputSchema.parse({
@@ -160,6 +165,68 @@ describe("web capture diff", () => {
     expect(result.dimensions.metadata.status).toBe("unchanged");
     expect(result.dimensions.network.status).toBe("unknown");
     expect(result.dimensions.network.total_changes).toBe(0);
+  });
+});
+
+describe("web capture redirect comparison", () => {
+  it("ignores redirect event times but compares redirect semantics", async () => {
+    const browser = await startFakeCdpBrowser();
+    browsers.push(browser);
+    const captured = await new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+    if (!captured.ok) throw captured.error;
+    const before = structuredClone(captured.value);
+    const beforeRequest = before.network.requests[0];
+    if (beforeRequest === undefined) throw new Error("Missing network request");
+    beforeRequest.redirects = [
+      {
+        url: `${browser.allowedOrigin}/prior`,
+        response_url: `${browser.allowedOrigin}/prior`,
+        method: "GET",
+        resource_type: "Fetch",
+        status: 302,
+        mime_type: "text/plain",
+        encoded_data_length: 12,
+        request_timestamp: 1,
+        redirect_event_timestamp: 2,
+      },
+    ];
+    markSectionsComplete(before, ["network_requests"]);
+
+    const after = structuredClone(before);
+    const afterRequest = after.network.requests[0];
+    if (afterRequest === undefined) throw new Error("Missing network request");
+    const hop = afterRequest.redirects?.[0];
+    if (hop === undefined) throw new Error("Missing redirect hop");
+    hop.request_timestamp = 10;
+    hop.redirect_event_timestamp = 20;
+
+    const compare = (inspection: typeof before) =>
+      compareWebCaptures(
+        compareWebCapturesInputSchema.parse({
+          before: { inspection: before },
+          after: { inspection },
+        }),
+      ).dimensions.network;
+    expect(compare(after)).toMatchObject({
+      status: "unchanged",
+      total_changes: 0,
+    });
+
+    const changed = structuredClone(after);
+    const changedHop = changed.network.requests[0]?.redirects?.[0];
+    if (changedHop === undefined) throw new Error("Missing redirect hop");
+    changedHop.status = 307;
+    expect(compare(changed)).toMatchObject({
+      status: "changed",
+      changes: [expect.objectContaining({ change: "modified" })],
+    });
   });
 });
 

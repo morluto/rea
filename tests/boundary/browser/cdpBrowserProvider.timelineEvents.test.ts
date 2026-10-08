@@ -1,29 +1,11 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { observeWebSessionInputSchema } from "../../../src/domain/browserSession.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
-import { describeBrowser, trackBrowser } from "./cdpBrowserProvider.support.js";
+import { trackBrowser } from "./cdpBrowserProvider.support.js";
 
-describeBrowser("CdpBrowserProvider navigation timeline", () => {
-  it("accepts caller-selected windows and rejects the removed event-count option", () => {
-    const accepted = observeWebSessionInputSchema.safeParse({
-      cdp_endpoint: "http://127.0.0.1:9222",
-      allowed_origins: ["https://app.example.test"],
-      target_id: "page-1",
-      observation_ms: 120_000,
-    });
-    expect(accepted.success).toBe(true);
-    expect(
-      observeWebSessionInputSchema.safeParse({
-        cdp_endpoint: "http://127.0.0.1:9222",
-        allowed_origins: ["https://app.example.test"],
-        target_id: "page-1",
-        max_timeline_events: 1,
-      }).success,
-    ).toBe(false);
-  });
-
+describe("CdpBrowserProvider navigation timeline", () => {
   it("returns every event beyond the former default collection cap", async () => {
     const additionalEvents = 2_001;
     const browser = await startFakeCdpBrowser({

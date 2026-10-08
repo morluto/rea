@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import {
@@ -11,9 +11,9 @@ import {
   startFakeCdpBrowser,
   type FakeCdpBrowser,
 } from "../../fixtures/fakeCdpBrowser.js";
-import { describeBrowser, trackBrowser } from "./cdpBrowserProvider.support.js";
+import { trackBrowser } from "./cdpBrowserProvider.support.js";
 
-describeBrowser("CdpBrowserProvider: lifecycle failures 1", () => {
+describe("CdpBrowserProvider: cancellation and session events", () => {
   it("projects direct-session cancellation onto the requested operation", async () => {
     const browser = await startFakeCdpBrowser({
       pageScopedVersionWebSocket: true,
@@ -132,7 +132,7 @@ describeBrowser("CdpBrowserProvider: lifecycle failures 1", () => {
   });
 });
 
-describeBrowser("CdpBrowserProvider: lifecycle failures 2", () => {
+describe("CdpBrowserProvider: session termination and scope changes", () => {
   it("ends a browser session when its flat target session detaches", async () => {
     const browser = await startFakeCdpBrowser({
       sessionTimeline: "target_detached",
@@ -243,7 +243,7 @@ describeBrowser("CdpBrowserProvider: lifecycle failures 2", () => {
   });
 });
 
-describeBrowser("CdpBrowserProvider: lifecycle failures 3", () => {
+describe("CdpBrowserProvider: protocol failures and cancellation cleanup", () => {
   it("degrades optional domains but propagates protocol and payload failures", async () => {
     const optional = await startFakeCdpBrowser({
       unsupportedMethods: ["Accessibility.getFullAXTree"],
@@ -373,7 +373,7 @@ describeBrowser("CdpBrowserProvider: lifecycle failures 3", () => {
   });
 });
 
-describeBrowser("CdpBrowserProvider: lifecycle failures 4", () => {
+describe("CdpBrowserProvider: navigation commit and target identity", () => {
   it("waits for navigation commit and rechecks the attached main-frame origin", async () => {
     const transitioning = await startFakeCdpBrowser({
       transitionalFrameReads: 2,

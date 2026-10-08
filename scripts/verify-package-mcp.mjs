@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { readFile, rm } from "node:fs/promises";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
@@ -167,6 +168,7 @@ const verifyMcpInlineArtifactEvidence = async (
     mcpOptions,
   );
   assert.notEqual(opened.isError, true, JSON.stringify(opened));
+  let outputRoot;
   try {
     const inspected = await client.callTool(
       { name: "inspect_artifact", arguments: {} },
@@ -212,12 +214,35 @@ const verifyMcpInlineArtifactEvidence = async (
         evidence,
       );
     }
-  } finally {
-    const closed = await client.callTool(
-      { name: "close_binary", arguments: {} },
+    const extracted = await client.callTool(
+      { name: "extract_artifact", arguments: {} },
       mcpOptions,
     );
-    assert.notEqual(closed.isError, true, JSON.stringify(closed));
+    assert.notEqual(extracted.isError, true, JSON.stringify(extracted));
+    const extraction = parseEvidence(extracted.structuredContent?.evidence);
+    assert.deepEqual(
+      extraction.normalized_result,
+      extracted.structuredContent?.result,
+    );
+    const materialized = extracted.structuredContent?.result;
+    assert.equal(typeof materialized?.output_root, "string");
+    outputRoot = materialized.output_root;
+    assert.equal(materialized.containment_verified, true);
+    assert.equal(
+      await readFile(join(outputRoot, "app/main.js"), "utf8"),
+      "main();",
+    );
+  } finally {
+    try {
+      const closed = await client.callTool(
+        { name: "close_binary", arguments: {} },
+        mcpOptions,
+      );
+      assert.notEqual(closed.isError, true, JSON.stringify(closed));
+    } finally {
+      if (outputRoot !== undefined)
+        await rm(outputRoot, { recursive: true, force: true });
+    }
   }
 };
 

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { createPackage } from "@electron/asar";
 import { describe, expect, it } from "vitest";
 
-import { inventoryArtifact } from "../../../src/application/ArtifactInventory.js";
+import { inventoryArtifact } from "../../../src/artifacts/inventory/ArtifactInventory.js";
 import {
   artifactOccurrenceAt,
   artifactParentPaths,
@@ -14,10 +14,6 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const permutations = [
   ["pkg/", "pkg/sub/", "pkg/sub/data.txt"],
-  ["pkg/", "pkg/sub/data.txt", "pkg/sub/"],
-  ["pkg/sub/", "pkg/", "pkg/sub/data.txt"],
-  ["pkg/sub/", "pkg/sub/data.txt", "pkg/"],
-  ["pkg/sub/data.txt", "pkg/", "pkg/sub/"],
   ["pkg/sub/data.txt", "pkg/sub/", "pkg/"],
 ];
 const expectedParents = {

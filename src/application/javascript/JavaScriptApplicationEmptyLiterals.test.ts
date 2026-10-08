@@ -55,6 +55,24 @@ it.each([
   await expect(analyzeSource(source)).resolves.toBeDefined();
 });
 
+it("analyzes a plain long-line loader without package metadata", async () => {
+  const output = await analyzeSource(
+    `var Module = {}; fetch(""); new Worker(""); var payload = "${"x".repeat(65_536)}";`,
+    { "game-data.js": "Module.data = { ready: true };" },
+  );
+  const nodes = output.graph.nodes.filter(
+    ({ kind }) => kind === "endpoint" || kind === "worker",
+  );
+  expect(nodes.map(({ kind }) => kind).sort()).toEqual(["endpoint", "worker"]);
+  for (const node of nodes) {
+    expect(node.identity).toMatchObject({
+      strategy: "artifact-local-key",
+      key: "",
+    });
+    expect(node.observations.map(({ label }) => label)).toEqual([null]);
+  }
+});
+
 it("keeps exact values for empty literals without synthetic application labels", async () => {
   const output = await analyzeSource(
     "fetch(''); fetch('\"\"'); fetch('/api'); process.on('', () => 1);",
