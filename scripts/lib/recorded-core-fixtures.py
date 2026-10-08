@@ -37,6 +37,25 @@ for name, osabi, version in [("linux-osabi", 3, 0), ("solaris-osabi", 6, 0), ("f
     content[7:9] = bytes([osabi, version])
     save(name, content)
 content = bytearray(original)
+section = Container(sh_name=0, sh_type="SHT_NULL", sh_flags=0, sh_addr=0, sh_offset=0, sh_size=0, sh_link=0, sh_info=len(segments), sh_addralign=0, sh_entsize=0)
+content.extend(image.structs.Elf_Shdr.build(section))
+header = Container(**dict(image.header, e_phnum=0xffff, e_shoff=len(original), e_shentsize=image.structs.Elf_Shdr.sizeof(), e_shnum=1, e_shstrndx=0))
+content[:image.structs.Elf_Ehdr.sizeof()] = image.structs.Elf_Ehdr.build(header)
+save("extended-program-count", content)
+for index, segment in enumerate(segments):
+    if segment.header.p_type != "PT_NOTE":
+        continue
+    content = bytearray(original)
+    raw_notes = original[segment.header.p_offset:segment.header.p_offset + segment.header.p_filesz]
+    content.extend(raw_notes + b"\0\0\0")
+    header = Container(**dict(segment.header, p_offset=len(original), p_filesz=len(raw_notes) + 3))
+    start = image.header.e_phoff + index * image.header.e_phentsize
+    content[start:start + image.structs.Elf_Phdr.sizeof()] = image.structs.Elf_Phdr.build(header)
+    save("zero-note-tail", content)
+    content[-1] = 1
+    save("nonzero-note-tail", content)
+    break
+content = bytearray(original)
 note_header(content, status, n_descsz=1)
 save("truncated-status", content)
 content = bytearray(original)

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { recordedNoteCoverageIssues } from "./recordedCrashNoteCoverage.js";
 
 const hex = z.string().regex(/^0x(?:0|[1-9a-f][0-9a-f]{0,15})$/);
 const index = z.number().int().nonnegative();
@@ -201,6 +202,12 @@ export const recordedCrashSchema = recordedCrashObjectSchema.superRefine(
       const bytes = BigInt(item.bytes);
       return offset >= start && offset <= end && bytes <= end - offset;
     };
+    for (const issue of recordedNoteCoverageIssues(
+      value.segments,
+      value.notes,
+      value.note_padding,
+    ))
+      fail(issue);
     for (const [position, segment] of value.segments.entries()) {
       if (position !== segment.index || !within(segment.header_location))
         fail("Invalid original segment identity or header range.");

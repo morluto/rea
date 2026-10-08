@@ -138,7 +138,37 @@ export const recordedCrashSignalFixture = (path?: string): RecordedCrash => {
 /** Construct only the original byte ranges consumed by the provider protocol tests. */
 export const recordedCrashFixtureBytes = (value: RecordedCrash): Buffer => {
   const bytes = Buffer.alloc(value.artifact.bytes);
+  bytes.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]);
+  bytes.writeUInt16LE(4, 16);
+  bytes.writeUInt16LE(62, 18);
+  bytes.writeBigUInt64LE(64n, 32);
+  bytes.writeUInt16LE(56, 54);
+  bytes.writeUInt16LE(value.segments.length, 56);
+  for (const segment of value.segments) {
+    const start = Number(BigInt(segment.header_location.offset));
+    bytes.writeUInt32LE(segment.type === "PT_NOTE" ? 4 : 0, start);
+    bytes.writeUInt32LE(Number(BigInt(segment.flags)), start + 4);
+    for (const [field, offset] of [
+      [segment.offset, 8],
+      [segment.virtual_address, 16],
+      [segment.physical_address, 24],
+      [segment.file_size, 32],
+      [segment.memory_size, 40],
+      [segment.alignment, 48],
+    ] as const)
+      bytes.writeBigUInt64LE(BigInt(field), start + offset);
+  }
   for (const note of value.notes) {
+    const start = Number(BigInt(note.location.offset));
+    bytes.writeUInt32LE(Number(BigInt(note.owner_location.bytes)), start);
+    bytes.writeUInt32LE(
+      Number(BigInt(note.descriptor_location.bytes)),
+      start + 4,
+    );
+    bytes.writeUInt32LE(
+      note.type === "NT_PRSTATUS" ? 1 : 0x53494749,
+      start + 8,
+    );
     Buffer.from(note.owner_bytes_base64, "base64").copy(
       bytes,
       Number(BigInt(note.owner_location.offset)),

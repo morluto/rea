@@ -10,6 +10,7 @@ import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import { PwntoolsDecoder, type PwntoolsLauncher } from "./PwntoolsDecoder.js";
 import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsRelease.js";
 import { validateRecordedCrashSources } from "./RecordedCrashSourceBindings.js";
+import { validateRecordedCrashStructure } from "./RecordedCrashStructureBindings.js";
 import {
   inspectPwndbgCore,
   recordedCrashStageOutput,
@@ -75,6 +76,7 @@ export class PwntoolsRecordedCrashProvider
               { capturedOutput: diagnostics },
             );
           const value = checked.data;
+          validateRecordedCrashStructure(value, snapshot.bytes, diagnostics);
           const checkBytes = (
             raw: string,
             range: { readonly offset: string; readonly bytes: string },

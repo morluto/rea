@@ -161,6 +161,7 @@ try {
       "truncated-header",
       "truncated-status",
       "truncated-owner",
+      "nonzero-note-tail",
     ]) {
       await basic.inspect(mode, fixtures[name], { category: "invalid_input" });
       cases++;
@@ -188,6 +189,19 @@ try {
     const linux = await basic.inspect(mode, fixtures["linux-osabi"]);
     assert.deepEqual(linux.threads, report.threads);
     assert.deepEqual(linux.signals, report.signals);
+    cases++;
+    const extended = await basic.inspect(
+      mode,
+      fixtures["extended-program-count"],
+    );
+    assert.deepEqual(extended.threads, report.threads);
+    assert.deepEqual(extended.signals, report.signals);
+    cases++;
+    const padded = await basic.inspect(mode, fixtures["zero-note-tail"]);
+    assert.equal(padded.threads.length, 2);
+    assert.ok(
+      padded.note_padding.some((padding) => padding.bytes_base64 === "AAAA"),
+    );
     cases++;
     for (const name of [
       "solaris-osabi",

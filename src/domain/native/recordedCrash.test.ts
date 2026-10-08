@@ -20,6 +20,20 @@ it("preserves high uint64 registers and historical thread identity", () => {
   ).toBe(false);
 });
 
+it("preserves a short zero-filled note-segment tail", () => {
+  const value = recordedCrashSignalFixture();
+  value.segments = value.segments.map((segment) => ({
+    ...segment,
+    file_size: "0x19b",
+  }));
+  value.note_padding.push({
+    segment_index: 0,
+    location: { offset: "0x218", bytes: "0x3" },
+    bytes_base64: "AAAA",
+  });
+  expect(recordedCrashSchema.safeParse(value).success).toBe(true);
+});
+
 it.each([
   "missing-thread",
   "duplicate-thread",
@@ -27,8 +41,49 @@ it.each([
   "duplicate-signal",
   "missing-register",
   "unknown-register",
+  "duplicated-physical-thread",
+  "duplicated-physical-signal",
+  "omitted-physical-note",
+  "expanded-note-span",
+  "forged-padding",
 ])("rejects an incomplete or duplicate interpretation: %s", (scenario) => {
   const value = recordedCrashSignalFixture();
+  if (
+    scenario === "duplicated-physical-thread" ||
+    scenario === "duplicated-physical-signal"
+  ) {
+    const noteIndex = scenario === "duplicated-physical-thread" ? 0 : 1;
+    const note = value.notes[noteIndex];
+    if (note === undefined) throw new Error("missing fixture note");
+    value.notes.push({ ...note, index: 2 });
+    if (noteIndex === 0)
+      value.threads.push(
+        ...value.threads.map((thread) => ({ ...thread, note_index: 2 })),
+      );
+    else
+      value.signals.push(
+        ...value.signals.map((signal) => ({ ...signal, note_index: 2 })),
+      );
+  }
+  if (
+    ["omitted-physical-note", "expanded-note-span", "forged-padding"].includes(
+      scenario,
+    )
+  ) {
+    value.notes = value.notes.filter((note) => note.index === 0);
+    value.signals = [];
+  }
+  if (scenario === "expanded-note-span")
+    value.notes = value.notes.map((note) => ({
+      ...note,
+      location: { ...note.location, bytes: "0x198" },
+    }));
+  if (scenario === "forged-padding")
+    value.note_padding.push({
+      segment_index: 0,
+      location: { offset: "0x1e4", bytes: "0x34" },
+      bytes_base64: Buffer.alloc(52).toString("base64"),
+    });
   if (scenario === "missing-thread") value.threads = [];
   if (scenario === "duplicate-thread")
     value.threads = [...value.threads, ...value.threads];
