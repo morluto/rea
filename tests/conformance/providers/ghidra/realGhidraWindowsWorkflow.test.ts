@@ -26,14 +26,20 @@ describe("real Windows Ghidra workflow trust boundary", () => {
           environment: "real-ghidra-windows",
           "runs-on": expect.arrayContaining(["self-hosted", "Windows", "x64"]),
           steps: expect.arrayContaining([
-            expect.objectContaining({ uses: "actions/setup-node@v4" }),
-            expect.objectContaining({ run: "npm ci" }),
+            expect.objectContaining({
+              uses: expect.stringMatching(
+                /^actions\/setup-node@[a-f0-9]{40}$/u,
+              ),
+            }),
+            expect.objectContaining({ run: "npx --yes npm@11.16.0 ci" }),
             expect.objectContaining({
               env: { REA_ANALYSIS_PROVIDER: "ghidra" },
               run: "npm run verify:ghidra:windows | Tee-Object -FilePath windows-ghidra-proof.log",
             }),
             expect.objectContaining({
-              uses: "actions/upload-artifact@v4",
+              uses: expect.stringMatching(
+                /^actions\/upload-artifact@[a-f0-9]{40}$/u,
+              ),
               with: expect.objectContaining({
                 path: expect.stringContaining("windows-ghidra-proof.log"),
               }),

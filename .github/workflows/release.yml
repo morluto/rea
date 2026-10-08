@@ -28,11 +28,12 @@ jobs:
     name: Update release proposal
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
       pull-requests: write
     steps:
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
         with:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           target-branch: main
@@ -42,6 +43,7 @@ jobs:
     name: Release Please
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
       pull-requests: write
@@ -102,20 +104,20 @@ jobs:
           fi
 
       - name: Check out release controller and Git history
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Node.js for checkpoint validation
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
 
       - name: Install checkpoint validation dependencies
-        run: npm ci
+        run: npx --yes npm@11.16.0 ci
 
       - name: Validate checkpoint version and ancestry before release creation
         env:
@@ -127,7 +129,7 @@ jobs:
           --phase "$RELEASE_PHASE" --release-branch "$RELEASE_BRANCH"
           --source-sha "$SOURCE_SHA"
 
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
         id: release
         with:
           # A dedicated credential starts PR CI automatically; the built-in
@@ -156,7 +158,7 @@ jobs:
 
       - name: Check out release pull request
         if: inputs.phase == 'prepare' && steps.release.outputs.prs_created == 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
           fetch-depth: 0
@@ -164,14 +166,14 @@ jobs:
 
       - name: Set up Node.js for generated documentation
         if: inputs.phase == 'prepare' && steps.release.outputs.prs_created == 'true'
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
 
       - name: Install dependencies
         if: inputs.phase == 'prepare' && steps.release.outputs.prs_created == 'true'
-        run: npm ci
+        run: npx --yes npm@11.16.0 ci
 
       - name: Validate prepared release version and migration notes
         if: inputs.phase == 'prepare' && steps.release.outputs.prs_created == 'true'
@@ -196,22 +198,23 @@ jobs:
     needs: release-please
     if: inputs.phase == 'publish' && needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ needs.release-please.outputs.sha }}
           persist-credentials: false
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
           registry-url: https://registry.npmjs.org
 
-      - run: npm ci
+      - run: npx --yes npm@11.16.0 ci
 
       - name: Prepare Windows native build toolchain
         run: sudo apt-get update && sudo apt-get install --no-install-recommends -y g++-mingw-w64-x86-64
@@ -219,25 +222,38 @@ jobs:
       - name: Build and verify bundled Windows native controls
         run: npm run build:windows-native && npm run verify:windows-native:artifact
 
-      - name: Verify packaged release before publishing
-        run: npm run verify:package
+      - name: Verify exact release tarball before publishing
+        env:
+          REA_RELEASE_TARBALL: ${{ runner.temp }}/rea-release/rea-agents.tgz
+        run: npm run verify:package -- --output "${REA_RELEASE_TARBALL}"
 
-      - name: Publish
+      - name: Publish exact verified tarball
         shell: bash
+        env:
+          REA_RELEASE_TARBALL: ${{ runner.temp }}/rea-release/rea-agents.tgz
         run: |
           version="$(node --input-type=module -e 'import packageJson from "./package.json" with { type: "json" }; process.stdout.write(packageJson.version)')"
-          published_version="$(npm view "rea-agents@${version}" version --json 2>/dev/null || true)"
+          local_integrity="$(node --input-type=module -e 'import { createHash } from "node:crypto"; import { readFileSync } from "node:fs"; process.stdout.write(`sha512-${createHash("sha512").update(readFileSync(process.env.REA_RELEASE_TARBALL)).digest("base64")}`)')"
+          published_version="$(npx --yes npm@11.16.0 view "rea-agents@${version}" version --json 2>/dev/null || true)"
+          published_integrity="$(npx --yes npm@11.16.0 view "rea-agents@${version}" dist.integrity --json 2>/dev/null || true)"
           if [ "${published_version}" = "\"${version}\"" ]; then
-            echo "rea-agents@${version} is already published; verifying the existing package."
+            if [ "${published_integrity}" != "\"${local_integrity}\"" ]; then
+              echo "rea-agents@${version} already exists with different integrity" >&2
+              exit 1
+            fi
+            echo "rea-agents@${version} is already published with matching integrity; verifying the existing package."
           else
             tag="$(node scripts/release-npm-tag.mjs "${version}")"
-            npm publish --access public --tag "${tag}"
+            npx --yes npm@11.16.0 publish "${REA_RELEASE_TARBALL}" --access public --tag "${tag}"
           fi
 
       - name: Verify published CLI from npm
         shell: bash
+        env:
+          REA_RELEASE_TARBALL: ${{ runner.temp }}/rea-release/rea-agents.tgz
         run: |
           version="$(node --input-type=module -e 'import packageJson from "./package.json" with { type: "json" }; process.stdout.write(packageJson.version)')"
+          local_integrity="$(node --input-type=module -e 'import { createHash } from "node:crypto"; import { readFileSync } from "node:fs"; process.stdout.write(`sha512-${createHash("sha512").update(readFileSync(process.env.REA_RELEASE_TARBALL)).digest("base64")}`)')"
           verification_root="$(mktemp -d)"
           trap 'rm -rf -- "${verification_root}"' EXIT
           cd "${verification_root}"
@@ -245,11 +261,16 @@ jobs:
           sleep_seconds=15
           total_window_minutes=$((max_attempts * sleep_seconds / 60))
           for attempt in $(seq 1 "${max_attempts}"); do
-            published_version="$(npm view --prefer-online "rea-agents@${version}" version --json 2>/dev/null || true)"
+            published_version="$(npx --yes npm@11.16.0 view --prefer-online "rea-agents@${version}" version --json 2>/dev/null || true)"
+            published_integrity="$(npx --yes npm@11.16.0 view --prefer-online "rea-agents@${version}" dist.integrity --json 2>/dev/null || true)"
             if [ "${published_version}" = "\"${version}\"" ]; then
+              if [ "${published_integrity}" != "\"${local_integrity}\"" ]; then
+                echo "rea-agents@${version} registry integrity does not match the verified release tarball" >&2
+                exit 1
+              fi
               echo "rea-agents@${version} is visible on npm after attempt ${attempt}/${max_attempts}; verifying the published CLI."
-              npm exec --yes --package="rea-agents@${version}" -- rea --help
-              npm exec --yes --package="rea-agents@${version}" -- rea --llms
+              npx --yes npm@11.16.0 exec --yes --package="rea-agents@${version}" -- rea --help
+              npx --yes npm@11.16.0 exec --yes --package="rea-agents@${version}" -- rea --llms
               node "${GITHUB_WORKSPACE}/scripts/verify-published-package.mjs" "${version}"
               exit 0
             else
@@ -268,11 +289,12 @@ jobs:
     needs: [release-please, publish]
     if: inputs.phase == 'publish' && needs.release-please.outputs.release_created == 'true' && needs.publish.result == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ needs.release-please.outputs.sha }}
           persist-credentials: false

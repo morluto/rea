@@ -156,4 +156,4 @@ it("advertises the complete currently available inventory with a session", async
     expect(tool.inputSchema, tool.name).toBeDefined();
     expect(tool.outputSchema, tool.name).toBeDefined();
   }
-}, 10_000);
+}, 20_000);

@@ -9,7 +9,7 @@ import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjec
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 describe("artifact directory diagnostics", () => {
-  it.skipIf(process.platform === "win32")(
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     "preserves the inaccessible member path and errno through provider projection",
     async () => {
       const root = await createTestTempDirectory("rea-directory-eacces-");

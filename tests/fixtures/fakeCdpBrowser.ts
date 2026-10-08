@@ -42,24 +42,25 @@ export const startFakeCdpBrowser = async (
       return;
     }
     if (request.url === "/json/version") {
+      const version = JSON.stringify({
+        Browser: "FakeChrome/1.0",
+        "Protocol-Version": "1.3",
+        "User-Agent": "FakeChrome",
+        "V8-Version": "13.0",
+        "WebKit-Version": "fake-revision",
+        webSocketDebuggerUrl:
+          options.invalidBrowserWebSocket === true
+            ? `ws://localhost:${String(port)}/devtools/invalid/fake`
+            : options.pageScopedVersionWebSocket === true
+              ? `ws://localhost:${String(port)}/devtools/page/${versionTargetId(options)}`
+              : `ws://localhost:${String(port)}/devtools/browser/fake`,
+      });
       response.end(
         options.oversizedDiscovery === true
-          ? " ".repeat(65 * 1_024)
+          ? `${" ".repeat(1_024 * 1_024 + 1)}${version}`
           : options.malformedDiscovery === true
             ? "{not-json"
-            : JSON.stringify({
-                Browser: "FakeChrome/1.0",
-                "Protocol-Version": "1.3",
-                "User-Agent": "FakeChrome",
-                "V8-Version": "13.0",
-                "WebKit-Version": "fake-revision",
-                webSocketDebuggerUrl:
-                  options.invalidBrowserWebSocket === true
-                    ? `ws://localhost:${String(port)}/devtools/invalid/fake`
-                    : options.pageScopedVersionWebSocket === true
-                      ? `ws://localhost:${String(port)}/devtools/page/${versionTargetId(options)}`
-                      : `ws://localhost:${String(port)}/devtools/browser/fake`,
-              }),
+            : version,
       );
       return;
     }

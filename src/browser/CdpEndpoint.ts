@@ -286,7 +286,14 @@ const targetWebSocket = (
   }
 };
 
-/** Read one loopback CDP discovery document without redirects. */
+/**
+ * Read one loopback CDP discovery document without redirects.
+ *
+ * One MiB retains the complete supported large-target inventory while keeping
+ * an untrusted local endpoint from controlling heap growth without bound.
+ */
+const MAX_CDP_DISCOVERY_BYTES = 1_024 * 1_024;
+
 export const readCdpJson = async (
   url: URL,
   operation: BrowserObservationOperation,
@@ -309,8 +316,25 @@ export const readCdpJson = async (
           return;
         }
         const chunks: Buffer[] = [];
-        response.on("data", (chunk: Buffer) => chunks.push(chunk));
+        let bytes = 0;
+        let oversized = false;
+        response.on("data", (chunk: Buffer) => {
+          bytes += chunk.length;
+          if (bytes > MAX_CDP_DISCOVERY_BYTES) {
+            oversized = true;
+            response.destroy();
+            reject(
+              new BrowserObservationError(
+                operation,
+                "invalid_endpoint_response",
+              ),
+            );
+            return;
+          }
+          chunks.push(chunk);
+        });
         response.on("end", () => {
+          if (oversized) return;
           const parsed = safeParseJson(Buffer.concat(chunks).toString("utf8"));
           if (!parsed.ok) {
             reject(

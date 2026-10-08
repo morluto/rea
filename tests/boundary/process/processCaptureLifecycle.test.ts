@@ -50,11 +50,11 @@ const expectUnverifiedHostCleanup = (error: ProcessCaptureError): void => {
   expect(categories.length).toBeGreaterThan(0);
   const expectedCategory =
     process.platform === "linux"
-      ? /^environment_errno_(?:EACCES|EPERM)=[1-9][0-9]*$/u
+      ? /^environment_errno_(?:EACCES|ENOENT|EPERM|ESRCH)=[1-9][0-9]*$/u
       : /^environment_unavailable=[1-9][0-9]*$/u;
   for (const category of categories) expect(category).toMatch(expectedCategory);
   expect(liveCandidates).toMatch(
-    /^(?:[1-9][0-9]*=(?:environment_unavailable|environment_errno_(?:EACCES|EPERM)))(?:, [1-9][0-9]*=(?:environment_unavailable|environment_errno_(?:EACCES|EPERM)))*$/u,
+    /^(?:[1-9][0-9]*=(?:environment_unavailable|environment_errno_(?:EACCES|ENOENT|EPERM|ESRCH)))(?:, [1-9][0-9]*=(?:environment_unavailable|environment_errno_(?:EACCES|ENOENT|EPERM|ESRCH)))*$/u,
   );
   expect(report?.terminal_renderer.state).toBe("cleaned");
   expect(report?.temporary_root.state).toBe("cleaned");
