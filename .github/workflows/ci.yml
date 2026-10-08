@@ -334,7 +334,7 @@ jobs:
       - name: Process filesystem snapshot descriptor regressions
         run: npm run test:focused -- src/process/capture/FilesystemSnapshot.test.ts
       - name: Native Darwin ownership and process cleanup regressions
-        run: npm run test:focused -- tests/boundary/process/darwinProcessRunTokenReader.test.ts tests/boundary/process/processCaptureLifecycle.test.ts tests/boundary/cli/processCli.test.ts tests/boundary/mcp/sessionMcp.test.ts
+        run: npm run test:focused -- tests/boundary/process/darwinProcessRunTokenReader.test.ts tests/boundary/process/processCaptureLifecycle.test.ts tests/boundary/process/processCli.test.ts tests/boundary/mcp/sessionMcp.test.ts
 
   reconstruction-readiness:
     name: Reconstruction readiness
