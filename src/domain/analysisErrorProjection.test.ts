@@ -28,14 +28,21 @@ const retainedOutput = {
   truncated: true,
 };
 
-it.each([null, { address_space_bytes: 67108864 }])(
-  "projects reported resource constraints with observed or unknown limits: %j",
-  (limits) => {
+it.each([
+  ["memory", null],
+  ["memory", { address_space_bytes: 67108864 }],
+  ["cpu", null],
+  ["cpu", { cpu_seconds: 1 }],
+] as const)(
+  "projects reported %s constraints with observed or unknown limits: %j",
+  (resource, limits) => {
     const projected = projectAnalysisError(
       new AnalysisResourceConstraintError(
         "inspect_binary_layout",
-        "memory",
-        "Memory allocation failed; exact cause unknown.",
+        resource,
+        resource === "memory"
+          ? "Memory allocation failed; exact cause unknown."
+          : "Observed SIGXCPU; exact signal cause unknown.",
         limits,
         { capturedOutput: retainedOutput },
       ),
@@ -45,12 +52,14 @@ it.each([null, { address_space_bytes: 67108864 }])(
       category: "resource_constraint",
       retryable: false,
       details: {
-        resource: "memory",
+        resource,
         reported_limits: limits,
         captured_output: retainedOutput,
       },
     });
-    expect(projected.remediation.action).toContain("memory");
+    expect(projected.remediation.action).toContain(
+      resource === "cpu" ? "CPU" : "memory",
+    );
     expect(projected.remediation.action).not.toContain("doctor");
     expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
       true,

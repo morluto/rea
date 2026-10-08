@@ -20,6 +20,56 @@ const requestSchema = z.strictObject({
   reply_path: z.string(),
 });
 
+it.runIf(!unsupportedHost).each(["reported", "missing", "malformed"])(
+  "preserves observed SIGXCPU and actual or unknown limit evidence: %s",
+  async (scenario) => {
+    const { path } = await fixture();
+    let ownedPath = "";
+    const limits = {
+      address_space_bytes: 3221225472,
+      cpu_seconds: 1,
+      file_size_bytes: 67108864,
+    };
+    const provider = new PwntoolsLayoutProvider(
+      { REA_PWNTOOLS_PYTHON: process.execPath },
+      async (spawn) => {
+        ownedPath = spawn.cwd ?? "";
+        if (scenario !== "missing")
+          await writeFile(
+            join(ownedPath, "limits.json"),
+            scenario === "reported"
+              ? JSON.stringify(limits)
+              : '{"cpu_seconds":999}',
+          );
+        return spawnOwnedProviderProcess({
+          ...spawn,
+          command: process.execPath,
+          arguments: [
+            "-e",
+            'process.stdout.write("cpu diagnostic", () => process.kill(process.pid, "SIGXCPU"))',
+          ],
+        });
+      },
+    );
+    const result = await provider.inspect({ path });
+    if (result.ok) throw new Error("Expected observed CPU signal");
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        resource: "cpu",
+        reported_limits: scenario === "reported" ? limits : null,
+        captured_output: { stdout: "cpu diagnostic", truncated: false },
+      },
+    });
+    expect(result.error.message).toContain("exact signal cause is unknown");
+    if (scenario !== "reported")
+      expect(result.error.message).toContain("limit report unavailable");
+    expect(projected.remediation.action).toContain("CPU");
+    await expect(access(ownedPath)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
 it.runIf(!unsupportedHost)(
   "retains actual diagnostic truncation when output overflow and process cleanup both fail",
   async () => {

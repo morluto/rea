@@ -343,6 +343,51 @@ try {
     cases++;
   }
   const sectionBearingBytes = await readFile(join(root.path, "protected"));
+  const dynamicSegment = protectedReport.segments.find(
+    (segment) => segment.type === "PT_DYNAMIC",
+  );
+  const interpreterSegment = protectedReport.segments.find(
+    (segment) => segment.type === "PT_INTERP",
+  );
+  assert.notEqual(dynamicSegment, undefined);
+  assert.notEqual(interpreterSegment, undefined);
+  const shortDynamic = Buffer.from(sectionBearingBytes);
+  shortDynamic.writeBigUInt64LE(
+    16n,
+    Number(BigInt(dynamicSegment.header_location.offset)) + 32,
+  );
+  assert.notEqual(
+    shortDynamic.readBigUInt64LE(Number(BigInt(dynamicSegment.offset))),
+    0n,
+  );
+  const paddedInterpreter = Buffer.from(sectionBearingBytes);
+  const interpreterStart = Number(BigInt(interpreterSegment.offset));
+  paddedInterpreter[interpreterStart + 2] = 0;
+  const paddedInterpreterPath = join(root.path, "padded-interpreter");
+  await writeFile(paddedInterpreterPath, paddedInterpreter);
+  for (const mode of ["cli", "mcp"]) {
+    const value = await inspect(mode, paddedInterpreterPath);
+    assert.deepEqual(value.linkage.interpreters, [
+      {
+        display: "/l",
+        bytes_base64: Buffer.from("/l").toString("base64"),
+        location: { offset: interpreterSegment.offset, bytes: "0x3" },
+        unknown_reason: null,
+      },
+    ]);
+    assert.equal(
+      value.segments[interpreterSegment.index].file_size,
+      interpreterSegment.file_size,
+    );
+    assert.deepEqual(await readFile(paddedInterpreterPath), paddedInterpreter);
+    cases++;
+  }
+  const unterminatedInterpreter = Buffer.from(sectionBearingBytes);
+  unterminatedInterpreter.fill(
+    0x58,
+    interpreterStart,
+    interpreterStart + Number(BigInt(interpreterSegment.file_size)),
+  );
   const zeroSymbolEntries = ["SHT_SYMTAB", "SHT_DYNSYM"].map((type) => {
     const section = protectedReport.sections.find((item) => item.type === type);
     assert.notEqual(
@@ -666,6 +711,54 @@ try {
       await memoryTransport.close();
     }
   }
+  const cpuSectionCount = 60000;
+  const cpuHeavy = Buffer.alloc(sectionOffset + cpuSectionCount * sectionSize);
+  sectionHeavy.copy(cpuHeavy);
+  for (let index = sectionCount; index < cpuSectionCount; index++) {
+    cpuHeavy.writeUInt32LE(1, sectionOffset + index * sectionSize + 4);
+    cpuHeavy.writeBigUInt64LE(1n, sectionOffset + index * sectionSize + 48);
+  }
+  cpuHeavy.writeUInt16LE(cpuSectionCount, 60);
+  const cpuHeavyPath = join(root.path, "cpu-section-heavy.o");
+  await writeFile(cpuHeavyPath, cpuHeavy);
+  const cpuWrapper = join(root.path, "python-cpu-constraint");
+  await writeFile(
+    cpuWrapper,
+    `#!/bin/sh\nexec /usr/bin/prlimit --cpu=1: --core=0: -- ${quotedPython} "$@"\n`,
+    { mode: 0o700 },
+  );
+  const cpuEnvironment = { ...environment, REA_PWNTOOLS_PYTHON: cpuWrapper };
+  const cpuClient = new Client({ name: "cpu-layout-verifier", version: "1" });
+  const cpuTransport = new StdioClientTransport({
+    command: process.execPath,
+    args: [entrypoint, "mcp"],
+    env: cpuEnvironment,
+    stderr: "pipe",
+  });
+  try {
+    await cpuClient.connect(cpuTransport);
+    for (const mode of ["cli", "mcp"]) {
+      const error = await inspect(
+        mode,
+        cpuHeavyPath,
+        "resource_constraint",
+        cpuEnvironment,
+        cpuClient,
+      );
+      assert.equal(error.details.resource, "cpu");
+      assert.equal(error.details.reported_limits.cpu_seconds, 1);
+      assert.ok(JSON.stringify(error).includes("SIGXCPU"));
+      assert.ok(error.remediation.action.includes("CPU"));
+      cases++;
+    }
+    assert.deepEqual(await readFile(cpuHeavyPath), cpuHeavy);
+  } finally {
+    try {
+      await cpuClient.close();
+    } finally {
+      await cpuTransport.close();
+    }
+  }
   unsupported.writeUInt16LE(183, 18);
   const core = Buffer.from(object);
   core.writeUInt16LE(4, 16);
@@ -681,6 +774,8 @@ try {
     ...undersizedSymbolEntries,
     ...undersizedRelocationEntries,
     ...invalidRelocationReferences,
+    ["unterminated-dynamic-segment", shortDynamic, "invalid_input"],
+    ["unterminated-interpreter", unterminatedInterpreter, "invalid_input"],
     [
       "missing-relocation-target-section",
       missingTargetSection,

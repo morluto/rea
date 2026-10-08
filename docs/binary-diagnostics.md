@@ -102,3 +102,9 @@ is never classified as observed memory exhaustion.
 The small bootstrap also covers catchable MemoryError during adapter imports,
 compilation and initialization. Python interpreter startup failures before the
 bootstrap runs retain their observed process diagnostics without guessed causes.
+SIGXCPU retains a CPU resource diagnostic and CPU-specific recovery advice.
+The bridge records actual limits in owned storage before analysis; missing or
+malformed limit reports remain unknown with their read failure preserved. A
+received signal alone does not establish its exact cause. Dynamic tags require
+a complete DT_NULL inside PT_DYNAMIC; interpreter names and ranges end at the
+first NUL, with any padding still represented by the original segment range.

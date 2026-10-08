@@ -31,6 +31,11 @@ import {
   type InspectBinaryLayoutInput,
 } from "../../domain/native/binaryLayout.js";
 import { runOwnedCommand } from "../../process/OwnedCommand.js";
+import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
+import {
+  pwntoolsResourceLimitsSchema,
+  type PwntoolsLimitReport,
+} from "./PwntoolsResourceLimits.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import {
   PWNTOOLS_PROVIDER_IDENTITY,
@@ -56,26 +61,7 @@ const replySchema = z.discriminatedUnion("ok", [
       "decoder",
     ]),
     message: z.string(),
-    reported_limits: z
-      .strictObject({
-        address_space_bytes: z
-          .number()
-          .int()
-          .nonnegative()
-          .max(PWNTOOLS_LIMITS.addressSpaceBytes),
-        cpu_seconds: z
-          .number()
-          .int()
-          .nonnegative()
-          .max(PWNTOOLS_LIMITS.cpuSeconds),
-        file_size_bytes: z
-          .number()
-          .int()
-          .nonnegative()
-          .max(PWNTOOLS_LIMITS.outputBytes),
-      })
-      .nullable()
-      .optional(),
+    reported_limits: pwntoolsResourceLimitsSchema.nullable().optional(),
   }),
 ]);
 
@@ -271,12 +257,45 @@ export class PwntoolsLayoutProvider implements BinaryLayoutPort {
       }
       result = ok(validated.data);
     } catch (cause: unknown) {
+      let limitReport: PwntoolsLimitReport | undefined;
+      if (
+        cause instanceof OwnedCommandFailure &&
+        cause.snapshot?.signal === "SIGXCPU" &&
+        root !== undefined
+      ) {
+        try {
+          const reported = await readStableArtifact(
+            join(root.path, "limits.json"),
+            4096,
+          );
+          limitReport = {
+            limits: pwntoolsResourceLimitsSchema.parse(
+              JSON.parse(reported.bytes.toString("utf8")),
+            ),
+            failure: null,
+          };
+        } catch (reportFailure: unknown) {
+          limitReport = {
+            limits: null,
+            failure:
+              reportFailure instanceof Error
+                ? reportFailure.message
+                : String(reportFailure),
+          };
+        }
+      }
       result = err(
         options?.signal?.aborted &&
           (cause === options.signal.reason ||
             (cause instanceof Error && cause.name === "AbortError"))
           ? new AnalysisCancelledError(OPERATION)
-          : pwntoolsLayoutFailure(cause, phase, selectedPath, executablePath),
+          : pwntoolsLayoutFailure(
+              cause,
+              phase,
+              selectedPath,
+              executablePath,
+              limitReport,
+            ),
       );
     }
     if (root !== undefined) {

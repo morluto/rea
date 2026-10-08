@@ -219,6 +219,12 @@ def inspect_elf(path, cache):
                     "permissions": None if h.p_type == "PT_NULL" else {"read": bool(h.p_flags & 4), "write": bool(h.p_flags & 2), "execute": bool(h.p_flags & 1)},
                 })
                 if h.p_type == "PT_DYNAMIC":
+                    tag_size = image.structs.Elf_Dyn.sizeof()
+                    for tag_index in range(h.p_filesz // tag_size):
+                        if segment._get_tag(tag_index).d_tag == "DT_NULL":
+                            break
+                    else:
+                        raise LayoutFailure("format", f"ELF dynamic segment {index} has no complete DT_NULL terminator within its reported file range.")
                     string_table = segment._get_stringtable()
                     tags = list(segment.iter_tags())
                     for tag in tags:
@@ -226,9 +232,10 @@ def inspect_elf(path, cache):
                             needed.append(dynamic_name_reference(tag.needed, string_table, tags, tag.entry.d_val, image, content))
                 if h.p_type == "PT_INTERP":
                     raw = content[h.p_offset:h.p_offset + h.p_filesz]
-                    if not raw or raw[-1:] != b"\0":
+                    end = raw.find(b"\0")
+                    if end < 0:
                         raise LayoutFailure("format", "ELF interpreter lacks a reported terminator.")
-                    interpreters.append({"display": segment.get_interp_name(), "bytes_base64": base64.b64encode(raw[:-1]).decode("ascii"), "location": location(h.p_offset, h.p_filesz, length), "unknown_reason": None})
+                    interpreters.append({"display": segment.get_interp_name(), "bytes_base64": base64.b64encode(raw[:end]).decode("ascii"), "location": location(h.p_offset, end + 1, length), "unknown_reason": None})
             return {
                 "format": "elf", "architecture": {"machine": image.header.e_machine, "bits": image.bits, "byte_order": image.endian},
                 "image_type": image.header.e_type,
@@ -287,6 +294,9 @@ def main(request_path):
     memory_reserve = bytearray(1024 * 1024)
     try:
         limits = lower_resource_limits()
+        descriptor = os.open(Path(request_path).parent / "limits.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(limits, handle)
         value = inspect_elf(Path(request["snapshot_path"]), Path(request_path).parent / "cache")
         value["limitations"].append("Effective owned Python resource soft limits: " + json.dumps(limits, sort_keys=True) + ". Inherited tighter limits are retained.")
         reply = {"ok": True, "profile": PROFILE, "value": value}

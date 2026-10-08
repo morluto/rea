@@ -17,6 +17,7 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { ProviderSelectionError } from "../../domain/providerSelectionError.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
+import type { PwntoolsLimitReport } from "./PwntoolsResourceLimits.js";
 import {
   PWNTOOLS_PROVIDER_IDENTITY,
   PWNTOOLS_LIMITS,
@@ -31,6 +32,7 @@ export const pwntoolsLayoutFailure = (
   phase: string,
   path: string,
   executablePath = path,
+  limitReport?: PwntoolsLimitReport,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
   if (cause instanceof OwnedCommandFailure) {
@@ -52,6 +54,8 @@ export const pwntoolsLayoutFailure = (
           previous_error: {
             failure_kind: cause.reason,
             message: cause.message,
+            exit_code: cause.snapshot?.exitCode ?? null,
+            signal: cause.snapshot?.signal ?? null,
             stdout: cause.snapshot?.stdout.text ?? null,
             stderr: cause.snapshot?.stderr.text ?? null,
           },
@@ -68,6 +72,17 @@ export const pwntoolsLayoutFailure = (
       );
     if (cause.reason === "output-limit")
       return new AnalysisOutputError(OPERATION, cause.message, outputOptions);
+    if (cause.reason === "process" && cause.snapshot?.signal === "SIGXCPU")
+      return new AnalysisResourceConstraintError(
+        OPERATION,
+        "cpu",
+        "Owned Python terminated with SIGXCPU; the exact signal cause is unknown." +
+          (limitReport?.failure === null || limitReport === undefined
+            ? ""
+            : ` Effective limit report unavailable: ${limitReport.failure}`),
+        limitReport?.limits ?? null,
+        outputOptions,
+      );
     if (
       cause.reason === "process" &&
       cause.snapshot?.exitCode === PWNTOOLS_MEMORY_FAILURE_EXIT &&
