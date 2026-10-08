@@ -15,6 +15,7 @@ import { dirname } from "node:path";
 import writeFileAtomic from "write-file-atomic";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { npxRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import { MCP_STARTUP_POLICY } from "../mcpStartupPolicy.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
 import type {
@@ -24,12 +25,7 @@ import type {
 } from "./SetupTypes.js";
 import type { SetupClient } from "./SupportedClients.js";
 
-const defaultCommand = (): readonly string[] => [
-  "npx",
-  "-y",
-  PRODUCT_IDENTITY.registrationPackageSpecifier,
-  "mcp",
-];
+const defaultCommand = (): readonly string[] => npxRegistrationCommand();
 
 /** Back up, atomically update, and semantically read back one JSON MCP configuration. */
 export const configureJsonClient = (

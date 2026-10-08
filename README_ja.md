@@ -15,6 +15,10 @@
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 [![Discord](https://img.shields.io/discord/1556595354999332884?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/GkcryMnJDM)
 
+🎉 **GitHub スターが 20,000 を突破しました。ありがとうございます！**
+
+REA を使い、問題を報告し、ビルドをテストし、修正を届けてくださる皆さんに感謝します。
+
 <a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
 
 **[ウェブサイト（英語）](https://morluto.github.io/rea/) · [ガイド](https://morluto.github.io/rea/guides/) · [DX-Ball の事例](https://morluto.github.io/rea/showcase/dx-ball/)**

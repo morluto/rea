@@ -9,7 +9,10 @@ import { z } from "zod";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { MCP_STARTUP_POLICY } from "../mcpStartupPolicy.js";
-import { isOwnedClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
+import {
+  isOwnedClientRegistrationCommand,
+  npxRegistrationCommand,
+} from "./ClientRegistrationIdentity.js";
 import { supportedClients } from "./SupportedClients.js";
 import type { SetupClient } from "./SupportedClients.js";
 
@@ -108,7 +111,12 @@ export const readClientRegistrationStatuses = async (
           client.name,
           client.configPath,
           command,
-          registrationAligned(registration, client, currentCommandPath)
+          registrationAligned(
+            registration,
+            client,
+            currentCommandPath,
+            options.platform ?? process.platform,
+          )
             ? "aligned"
             : "stale",
         ),
@@ -132,6 +140,7 @@ const registrationAligned = (
   registration: z.output<typeof registrationSchema>,
   client: SetupClient,
   currentCommandPath: string,
+  platform: NodeJS.Platform,
 ): boolean => {
   const command = [registration.command, ...registration.args];
   if (registration.disabled === true || registration.enabled === false)
@@ -160,12 +169,10 @@ const registrationAligned = (
     resolve(command[1] ?? "") === currentCommandPath
   )
     return true;
+  const npxCommand = npxRegistrationCommand(platform);
   if (
-    command.length === 4 &&
-    command[0] === "npx" &&
-    command[1] === "-y" &&
-    command[2] === PRODUCT_IDENTITY.registrationPackageSpecifier &&
-    command[3] === "mcp"
+    command.length === npxCommand.length &&
+    command.every((argument, index) => argument === npxCommand[index])
   )
     return true;
   return (

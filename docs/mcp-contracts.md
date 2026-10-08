@@ -1,5 +1,15 @@
 # MCP runtime contracts
 
+## Generated catalog
+
+Run `npm run build:cached` in a source checkout to generate the machine-readable
+catalog at `docs/public/product-catalog.json`. The [catalog](product-catalog.json)
+is also included in documentation builds. PR CI retains it with the packaged
+skill and portable conformance projections in the `generated-docs` artifact.
+These outputs describe the exact source revision being built; they are not
+checked-in snapshots. For a running server, `binary_session` remains the
+authoritative source of catalog identity and tool availability.
+
 ## Identity and discovery
 
 `binary_session` reports the active package, server, SDK, and negotiated

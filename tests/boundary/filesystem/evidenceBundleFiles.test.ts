@@ -17,6 +17,7 @@ import {
   writeEvidenceBundle,
 } from "../../../src/application/EvidenceBundleFiles.js";
 import { compareEvidenceBundlesCommand } from "../../../src/application/EvidenceBundleCommands.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { writeTextParts } from "../../../src/application/JsonFiles.js";
 import {
@@ -157,6 +158,32 @@ describe("evidence bundle filesystem adapter", () => {
     });
   });
 
+  it("reports a missing file or output directory with the selected path", async () => {
+    const directory = await createTestTempDirectory("rea-evidence-");
+    const absent = join(directory, "absent.json");
+    const read = await readEvidenceBundle(absent);
+    expect(read).toMatchObject({
+      ok: false,
+      error: { _tag: "EvidenceFileError", reason: "missing", path: absent },
+    });
+    if (read.ok) throw new Error("Expected a missing-file failure");
+    expect(projectAnalysisError(read.error)).toMatchObject({
+      message: expect.stringContaining("does not exist at the selected path"),
+      details: { operation: "read", reason: "missing", path: absent },
+    });
+
+    const orphan = join(directory, "absent", "bundle.json");
+    const written = await writeEvidenceBundle(bundle(), orphan, false);
+    expect(written).toMatchObject({
+      ok: false,
+      error: { _tag: "EvidenceFileError", reason: "missing", path: orphan },
+    });
+    if (written.ok) throw new Error("Expected a missing-directory failure");
+    expect(projectAnalysisError(written.error).message).toContain(
+      "output directory does not exist",
+    );
+  });
+
   it("rejects malformed and tampered input", async () => {
     const directory = await createTestTempDirectory("rea-evidence-");
     const malformed = join(directory, "malformed.json");
@@ -177,7 +204,55 @@ describe("evidence bundle filesystem adapter", () => {
     );
     expect(await readEvidenceBundle(tamperedPath)).toMatchObject({
       ok: false,
-      error: { _tag: "EvidenceIntegrityError" },
+      error: {
+        _tag: "EvidenceIntegrityError",
+        userMessage: expect.stringContaining(
+          "Evidence semantic identifier does not match its record",
+        ),
+      },
+    });
+  });
+
+  it("names the failed bundle constraint for a single record or schema mismatch", async () => {
+    const directory = await createTestTempDirectory("rea-evidence-");
+    const record = bundle().records[0];
+    const single = join(directory, "record.json");
+    await writeFile(single, JSON.stringify(record));
+    expect(await readEvidenceBundle(single)).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "EvidenceIntegrityError",
+        userMessage: expect.stringContaining(
+          `this JSON is one Evidence record (${String(record?.evidence_id)})`,
+        ),
+      },
+    });
+
+    const partial = join(directory, "partial.json");
+    await writeFile(partial, JSON.stringify({ evidence_id: "typo" }));
+    const rejected = await readEvidenceBundle(partial);
+    expect(rejected).toMatchObject({
+      ok: false,
+      error: {
+        userMessage: expect.stringContaining(
+          "does not match the bundle schema",
+        ),
+      },
+    });
+    expect(rejected).not.toMatchObject({
+      error: { userMessage: expect.stringContaining("one Evidence record") },
+    });
+
+    const mismatched = join(directory, "mismatched.json");
+    await writeFile(mismatched, JSON.stringify({ ...bundle(), records: {} }));
+    expect(await readEvidenceBundle(mismatched)).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "EvidenceIntegrityError",
+        userMessage: expect.stringContaining(
+          "does not match the bundle schema at records:",
+        ),
+      },
     });
   });
 });

@@ -112,6 +112,31 @@ enum RunTokenReadError: Error {
   case ambiguousEnvironmentBoundary
 }
 
+@_silgen_name("csops")
+private func csops(
+  _ pid: Int32,
+  _ ops: UInt32,
+  _ addr: UnsafeMutableRawPointer?,
+  _ size: Int
+) -> Int32
+
+private let csOpsStatus: UInt32 = 0
+private let csPlatformBinary: UInt32 = 0x0400_0000
+
+/**
+ * Whether the target image is an Apple platform binary. Current macOS omits
+ * the environment of platform binaries from KERN_PROCARGS2 for every caller,
+ * so this distinguishes a policy-withheld environment from a process whose
+ * environment is genuinely absent or transiently unreadable.
+ */
+func isPlatformBinary(pid: Int32) -> Bool {
+  var flags: UInt32 = 0
+  let result = withUnsafeMutablePointer(to: &flags) { pointer in
+    csops(pid, csOpsStatus, UnsafeMutableRawPointer(pointer), MemoryLayout<UInt32>.size)
+  }
+  return result == 0 && (flags & csPlatformBinary) != 0
+}
+
 private func readRunToken(pid: Int32, pointerSize: Int) -> RunTokenObservation {
   var mib = [CTL_KERN, KERN_PROCARGS2, Int32(pid)]
   var size = 0
@@ -133,7 +158,12 @@ private func readRunToken(pid: Int32, pointerSize: Int) -> RunTokenObservation {
   } catch RunTokenReadError.invalidTokenEncoding {
     return unavailable(pid: pid, reason: "invalid_run_token_encoding")
   } catch RunTokenReadError.environmentUnavailable {
-    return unavailable(pid: pid, reason: "environment_unavailable")
+    return unavailable(
+      pid: pid,
+      reason: isPlatformBinary(pid: pid)
+        ? "platform_binary_environment_withheld"
+        : "environment_unavailable"
+    )
   } catch RunTokenReadError.appleVectorUnavailable {
     return unavailable(pid: pid, reason: "apple_vector_unavailable")
   } catch RunTokenReadError.ambiguousEnvironmentBoundary {

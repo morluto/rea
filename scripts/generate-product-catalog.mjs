@@ -1,3 +1,4 @@
+import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -14,8 +15,10 @@ for (const argument of arguments_)
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const catalog = await createProductCatalog(root);
+const path = join(root, "docs/public/product-catalog.json");
+if (!arguments_.has("--check")) await mkdir(dirname(path), { recursive: true });
 await ensureGeneratedFile({
-  path: join(root, "docs/product-catalog.json"),
+  path,
   source: await serializeProductCatalog(catalog),
   check: arguments_.has("--check"),
   generateCommand: "npm run docs:generate",

@@ -106,6 +106,42 @@ describe("bundle comparison MCP integration", () => {
       await connected.close();
     }
   });
+
+  it("explains that a single Evidence record is not a bundle", async () => {
+    const root = await createTestTempDirectory("rea-bundle-record-");
+    roots.push(root);
+    const record = sourceEvidence("single");
+    const recordPath = join(root, "record.json");
+    const bundlePath = join(root, "bundle.json");
+    await Promise.all([
+      writeFile(recordPath, JSON.stringify(record)),
+      writeFile(
+        bundlePath,
+        serializeEvidenceBundle(createEvidenceBundle([record])),
+      ),
+    ]);
+    const connected = await connect();
+    try {
+      const result = await connected.client.callTool({
+        name: "compare_bundles",
+        arguments: {
+          left_bundle_path: recordPath,
+          right_bundle_path: bundlePath,
+        },
+      });
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        error: {
+          code: "evidence_integrity_mismatch",
+          message: expect.stringContaining(
+            `this JSON is one Evidence record (${record.evidence_id})`,
+          ),
+        },
+      });
+    } finally {
+      await connected.close();
+    }
+  });
 });
 
 const connect = async () => {

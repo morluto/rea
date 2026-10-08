@@ -144,8 +144,8 @@ before cutting the next checkpoint; otherwise main retains the previous
 release baseline and can propose an already-published version again.
 
 After publication, open a PR from the release branch back to main. Preserve
-main's later implementation changes and resolve generated-file conflicts by
-regenerating from the combined contracts with the released package version.
+main's later implementation changes and regenerate ignored build outputs from
+the combined contracts with the released package version.
 Review and test this synchronization PR, then use a merge commit so the release
 tag remains in main's ancestry. Keep the released tag unchanged.
 
@@ -163,9 +163,12 @@ git merge-base --is-ancestor rea-agents-5.0.0 origin/main
 
 Close any superseded rolling release PR. Future releases repeat the checkpoint
 procedure from main; never resume automatic release-PR refreshes on main pushes.
-The generated-metadata workflow stays limited to pull requests into main so it
-does not push commits onto a frozen candidate. Preparation normalizes
-`docs/product-catalog.json` on the bot pull request.
+Preparation generates and validates the catalog, portable conformance
+projections, and packaged skill from the candidate checkout without committing
+them. The checkpoint validator binds tracked version authority to the source
+SHA; generated-catalog and package checks validate the derived representation.
+No generated-metadata workflow pushes follow-up commits onto feature or release
+branches.
 
 ## Partial publication and retries
 

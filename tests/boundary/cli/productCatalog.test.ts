@@ -95,7 +95,7 @@ describe("canonical product catalog", () => {
       );
   });
 
-  it("matches every source-derived checked-in product fact", async () => {
+  it("matches every source-derived build-generated product fact", async () => {
     const catalog = await createProductCatalog(root);
     expect(catalog.tools.total).toBe(TOOL_CONTRACTS.length);
     expect(
@@ -195,14 +195,19 @@ describe("canonical product catalog", () => {
       "project_managed_application_graph",
       "verify_managed_native_boundaries",
     ]);
+    // Runtime schema commitments must not fan out into checked-in documentation.
+    // Provider commitments cover the facts actually present in this projection.
+    expect(Object.keys(catalog.runtime_catalog.digests)).toEqual([
+      "providers_sha256",
+    ]);
     expect(catalog.runtime_catalog.digests.providers_sha256).toBe(
       providerCatalogDigest(catalog.providers),
     );
     expect(
-      JSON.parse(await readFile("docs/product-catalog.json", "utf8")),
+      JSON.parse(await readFile("docs/public/product-catalog.json", "utf8")),
     ).toEqual(catalog);
     expect(await serializeProductCatalog(catalog)).toBe(
-      await readFile("docs/product-catalog.json", "utf8"),
+      await readFile("docs/public/product-catalog.json", "utf8"),
     );
     await expect(
       assertDocumentationFacts(root, catalog),

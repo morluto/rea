@@ -180,13 +180,8 @@ async function validateCandidate(git, sha, version, commits) {
     ["server.json", server.version],
     ["server.json rea-agents package", npmPackage.version],
   );
-  const catalog = await readJson(
-    git,
-    sha,
-    "docs/product-catalog.json",
-    z.object({ package: versionSchema }),
-  );
-  versions.push(["docs/product-catalog.json", catalog.package.version]);
+  // Catalogs are generated and checked from this candidate by the release job;
+  // they are not version authority stored in the immutable source tree.
   const generated = await git([
     "show",
     `${sha}:src/generatedPackageMetadata.ts`,
