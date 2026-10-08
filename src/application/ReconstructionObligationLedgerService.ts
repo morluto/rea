@@ -1,9 +1,6 @@
 import { z } from "zod";
 
-import {
-  AnalysisInputError,
-  AnalysisProtocolError,
-} from "../domain/analysisErrorCore.js";
+import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
 import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { jsonObjectSchema, jsonValueSchema } from "../domain/jsonValue.js";
@@ -14,6 +11,7 @@ import {
   type ReconstructionObligationLedger,
 } from "../domain/reconstructionObligationLedgerSchemas.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { requestInputError, workflowInputError } from "./workflowInputError.js";
 import { JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER } from "./InvestigationProviders.js";
 import { deriveReconstructionObligationCandidates } from "./ReconstructionObligationCandidates.js";
 import { evaluateReconstructionObligationLedger } from "./ReconstructionObligationLedgerEvaluation.js";
@@ -27,7 +25,7 @@ export const resolveReconstructionObligationLedgerRequest = (
   const parsed = reconstructionObligationLedgerInputSchema.safeParse(input);
   return parsed.success
     ? ok(parsed.data)
-    : err(new AnalysisInputError(OPERATION, { cause: parsed.error }));
+    : err(requestInputError(OPERATION, parsed.error, input));
 };
 
 /** Build the complete deterministic ledger and wrap it in portable Evidence. */
@@ -48,7 +46,7 @@ export const buildReconstructionObligationLedgerEvidenceValidated = (
     return ok(createLedgerEvidence(input, ledger));
   } catch (cause: unknown) {
     if (cause instanceof z.ZodError)
-      return err(new AnalysisInputError(OPERATION, { cause }));
+      return err(workflowInputError(OPERATION, cause));
     return err(
       new AnalysisProtocolError(
         "Reconstruction obligation ledger generation failed",

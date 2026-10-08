@@ -1,10 +1,10 @@
 import { z } from "zod";
 
-import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
-import { projectInputIssues } from "../../domain/inputIssueProjection.js";
+import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import { projectInputIssues } from "../domain/inputIssueProjection.js";
 
 /** Project schema issues of the raw request onto their request paths. */
-export const managedRequestError = (
+export const requestInputError = (
   operation: string,
   cause: z.ZodError,
   input: unknown,
@@ -17,10 +17,11 @@ export const managedRequestError = (
 
 /**
  * Keep the failed constraint when a parsed request is rejected later. Nested
- * Evidence results are parsed on their own, so their issue paths are relative
- * to that nested value and are reported in the message, not as request paths.
+ * values such as Evidence results are parsed on their own, so their issue
+ * paths are relative to that value and are reported in the message, not as
+ * request paths.
  */
-export const managedInputError = (
+export const workflowInputError = (
   operation: string,
   cause: z.ZodError | TypeError,
 ): AnalysisInputError =>
@@ -31,7 +32,7 @@ export const managedInputError = (
       ? cause.issues.map((issue) => ({
           path: [],
           reason: "invalid_value" as const,
-          message: `A nested Evidence value failed validation at ${issue.path.length === 0 ? "its root" : issue.path.map(String).join(".")}: ${issue.message}`,
+          message: `A nested value failed validation at ${issue.path.length === 0 ? "its root" : issue.path.map(String).join(".")}: ${issue.message}`,
         }))
       : [{ path: [], reason: "invalid_value", message: cause.message }],
   );

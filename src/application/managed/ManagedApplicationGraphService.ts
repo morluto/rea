@@ -13,7 +13,10 @@ import {
 } from "../../domain/managed/managedApplicationGraph.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { MANAGED_WORKFLOW_PROVIDER } from "../InvestigationProviders.js";
-import { managedInputError, managedRequestError } from "./managedInputError.js";
+import {
+  requestInputError,
+  workflowInputError,
+} from "../workflowInputError.js";
 
 const OPERATION = "project_managed_application_graph" as const;
 
@@ -23,14 +26,14 @@ export const projectManagedApplicationGraphEvidence = (
 ): Result<Evidence, AnalysisError> => {
   const parsed = projectManagedApplicationGraphInputSchema.safeParse(rawInput);
   if (!parsed.success)
-    return err(managedRequestError(OPERATION, parsed.error, rawInput));
+    return err(requestInputError(OPERATION, parsed.error, rawInput));
   try {
     const result = projectManagedApplicationGraph(parsed.data);
     return ok(createManagedApplicationGraphEvidence(parsed.data, result));
   } catch (cause: unknown) {
     return err(
       cause instanceof TypeError || cause instanceof z.ZodError
-        ? managedInputError(OPERATION, cause)
+        ? workflowInputError(OPERATION, cause)
         : new AnalysisProtocolError(
             "Managed application graph projection produced an invalid result",
             { cause },

@@ -12,7 +12,10 @@ import {
 } from "../../domain/managed/managedReconstruction.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { MANAGED_WORKFLOW_PROVIDER } from "../InvestigationProviders.js";
-import { managedInputError, managedRequestError } from "./managedInputError.js";
+import {
+  requestInputError,
+  workflowInputError,
+} from "../workflowInputError.js";
 
 const OPERATION = "import_managed_reconstruction" as const;
 
@@ -22,7 +25,7 @@ export const importManagedReconstructionEvidence = (
 ): Result<Evidence, AnalysisError> => {
   const parsed = managedReconstructionImportInputSchema.safeParse(rawInput);
   if (!parsed.success)
-    return err(managedRequestError(OPERATION, parsed.error, rawInput));
+    return err(requestInputError(OPERATION, parsed.error, rawInput));
   return importManagedReconstructionEvidenceValidated(parsed.data);
 };
 
@@ -36,7 +39,7 @@ export const importManagedReconstructionEvidenceValidated = (
   } catch (cause: unknown) {
     return err(
       cause instanceof TypeError || cause instanceof z.ZodError
-        ? managedInputError(OPERATION, cause)
+        ? workflowInputError(OPERATION, cause)
         : new AnalysisProtocolError(
             "Managed reconstruction import produced an invalid result",
             { cause },

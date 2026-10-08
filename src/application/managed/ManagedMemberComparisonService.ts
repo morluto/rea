@@ -21,7 +21,7 @@ import {
   MANAGED_STATIC_PROVIDER,
   MANAGED_WORKFLOW_PROVIDER,
 } from "../InvestigationProviders.js";
-import { managedInputError } from "./managedInputError.js";
+import { workflowInputError } from "../workflowInputError.js";
 
 /** Compare managed members from input parsed by a trusted adapter. */
 export const compareManagedMembersEvidenceValidated = (
@@ -169,7 +169,7 @@ const workflowFailure = (
 ): Result<never, AnalysisError> =>
   err(
     cause instanceof z.ZodError || cause instanceof TypeError
-      ? managedInputError(operation, cause)
+      ? workflowInputError(operation, cause)
       : new AnalysisProtocolError(
           "Managed member comparison produced an invalid result",
           { cause },

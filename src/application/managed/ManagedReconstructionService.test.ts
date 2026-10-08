@@ -241,7 +241,7 @@ describe("managed reconstruction input diagnostics", () => {
       expect.objectContaining({
         reason: "invalid_value",
         message: expect.stringContaining(
-          "nested Evidence value failed validation at artifact",
+          "nested value failed validation at artifact",
         ),
       }),
     );
