@@ -578,7 +578,7 @@ const incompleteCaptureObservationSchema = z.strictObject({
   observations: incompleteProcessCaptureObservationsSchema,
 });
 
-/** Validated, non-comparable process observations attached to cleanup errors. */
+/** Validated, non-comparable process observations attached to execution or cleanup errors. */
 export const partialProcessCaptureObservationSchema = z
   .union([
     completedCaptureObservationSchema.extend(
@@ -589,15 +589,15 @@ export const partialProcessCaptureObservationSchema = z
     ),
   ])
   .superRefine((partial, context) => {
-    if (
-      !Object.values(partial.cleanup).some(
-        ({ state }) => state === "failed" || state === "unverified",
-      )
-    )
+    const cleanupIncomplete = Object.values(partial.cleanup).some(
+      ({ state }) => state === "failed" || state === "unverified",
+    );
+    if (!cleanupIncomplete && partial.execution_failure === null)
       context.addIssue({
         code: "custom",
-        path: ["cleanup"],
-        message: "partial observations require incomplete resource cleanup",
+        path: ["execution_failure"],
+        message:
+          "partial observations require incomplete cleanup or an execution failure",
       });
 
     if ("observations" in partial) {

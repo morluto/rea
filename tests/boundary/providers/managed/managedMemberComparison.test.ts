@@ -12,6 +12,7 @@ import {
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import { managedMemberComparisonResultSchema } from "../../../../src/domain/managed/managedMemberComparison.js";
 import { createEvidence } from "../../../../src/domain/evidence.js";
+import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { jsonValueSchema } from "../../../../src/domain/jsonValue.js";
 import { compareManagedMembersInputSchema } from "../../../../src/domain/managed/managedMemberComparison.js";
 import { inspectManagedMembersBytes } from "../../../../src/dotnet/ManagedMemberInspector.js";
@@ -124,6 +125,22 @@ describe("managed member comparison path workflow", () => {
       managedMemberComparisonResultSchema.parse(result.value.normalized_result)
         .matching.exact_il_signature,
     ).toBe(1);
+  });
+
+  it("reports an unopenable path with the path that failed", async () => {
+    const directory = await createTestTempDirectory("rea-managed-missing-");
+    const leftPath = join(directory, "missing.dll");
+    const rightPath = join(directory, "right.dll");
+    await writeFile(rightPath, buildManagedPeFixture());
+
+    const result = await compareManagedMemberPaths({ leftPath, rightPath });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("BinaryTargetError");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      details: { path: expect.stringContaining("missing.dll") },
+    });
   });
 
   it("rejects a file that changes after target identity is resolved", async () => {

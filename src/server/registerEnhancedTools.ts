@@ -9,19 +9,19 @@ import type {
 } from "@modelcontextprotocol/server";
 
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
+import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import {
   EnhancedTools,
   type ValidatedEnhancedCall,
 } from "../application/EnhancedTools.js";
 import {
-  REA_WORKFLOW_PROVIDER,
-  workflowAnalysisProfile,
-} from "../application/InvestigationProviders.js";
+  createWorkflowEvidence,
+  workflowSnapshotRecord,
+} from "../application/WorkflowEvidence.js";
 import { toolContract, type ToolContract } from "../contracts/toolContracts.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import { UnknownRegistryError } from "../domain/unknownRegistryError.js";
-import { createEvidence } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "../logger.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
@@ -39,6 +39,14 @@ export interface EnhancedToolRegistration {
     | undefined;
   readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
   readonly recordUnknown: UnknownRegistryPort["recordUnknown"] | undefined;
+  readonly allowsSnapshotReplay:
+    | ((operation: ValidatedEnhancedCall["name"]) => boolean)
+    | undefined;
+  readonly recordWorkflowSnapshot:
+    | ((
+        input: Parameters<BinarySessionPort["recordWorkflowSnapshot"]>[0],
+      ) => ReturnType<BinarySessionPort["recordWorkflowSnapshot"]>)
+    | undefined;
 }
 
 /** Register composed workflows against the same port as direct bridge tools. */
@@ -235,28 +243,27 @@ const executeEnhancedTool = async (
     terminal: true,
   });
   if (result.ok) {
-    const upstreamProfile = registration.analysisProfile?.();
-    const evidence = createEvidence(
-      registration.activeTarget?.(),
-      REA_WORKFLOW_PROVIDER,
-      {
-        operation: name,
-        parameters,
-        result: result.value,
-        ...(upstreamProfile === undefined
-          ? {}
-          : {
-              analysisProfile: workflowAnalysisProfile(upstreamProfile),
-            }),
-        confidence: "derived",
-        limitations: [
-          "Derived by an REA workflow from one or more provider observations.",
-        ],
-      },
-    );
+    const evidence = createWorkflowEvidence({
+      target: registration.activeTarget?.(),
+      operation: name,
+      parameters,
+      result: result.value,
+      upstreamProfile: registration.analysisProfile?.(),
+    });
     const recorded = registration.recordEvidence?.(evidence);
     if (recorded !== undefined && !recorded.ok)
       return toCallToolResult(recorded, contract);
+    if (
+      name !== "trace_native_ui_action" &&
+      registration.allowsSnapshotReplay?.(name) === true
+    ) {
+      const workflowRecord = workflowSnapshotRecord(evidence, name);
+      if (workflowRecord !== undefined) {
+        const snapshot = registration.recordWorkflowSnapshot?.(workflowRecord);
+        if (snapshot !== undefined && !snapshot.ok)
+          return toCallToolResult(snapshot, contract);
+      }
+    }
     const unknowns = recordWorkflowUnknowns({
       name,
       result: result.value,

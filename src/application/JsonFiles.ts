@@ -1,7 +1,14 @@
-import { link, lstat, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import {
+  link,
+  lstat,
+  mkdtemp,
+  open,
+  readFile,
+  realpath,
+  rename,
+  rm,
+} from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
-
-import writeFileAtomic from "write-file-atomic";
 
 import { EvidenceFileError } from "../domain/evidenceErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -52,8 +59,16 @@ export const writeTextFile = async (
   overwrite: boolean,
 ): Promise<
   Result<{ readonly path: string; readonly bytes: number }, EvidenceFileError>
+> => writeTextParts([encoded], path, overwrite);
+
+/** Publish complete streamed text atomically, keeping only one encoded part in memory. */
+export const writeTextParts = async (
+  parts: Iterable<string>,
+  path: string,
+  overwrite: boolean,
+): Promise<
+  Result<{ readonly path: string; readonly bytes: number }, EvidenceFileError>
 > => {
-  const bytes = Buffer.byteLength(encoded, "utf8");
   const requestedPath = resolve(path);
   try {
     const canonicalParent = await realpath(dirname(requestedPath));
@@ -72,13 +87,7 @@ export const writeTextFile = async (
           new EvidenceFileError("write", "not-file", { path: requestedPath }),
         );
     }
-    if (overwrite)
-      await writeFileAtomic(destination, encoded, {
-        encoding: "utf8",
-        mode: 0o600,
-        fsync: true,
-      });
-    else await publishNewFile(destination, encoded);
+    const bytes = await publishFile(destination, parts, overwrite);
     return ok({ path: requestedPath, bytes });
   } catch (cause: unknown) {
     if (!overwrite && fileErrorCode(cause) === "EEXIST")
@@ -103,22 +112,31 @@ const missingOrIo = (cause: unknown): "missing" | "io" => {
   return code === "ENOENT" || code === "ENOTDIR" ? "missing" : "io";
 };
 
-const publishNewFile = async (
+const publishFile = async (
   destination: string,
-  encoded: string,
-): Promise<void> => {
+  parts: Iterable<string>,
+  overwrite: boolean,
+): Promise<number> => {
   const stagingDirectory = await mkdtemp(
     resolve(dirname(destination), ".rea-write-"),
   );
   try {
     const staged = resolve(stagingDirectory, "content");
-    await writeFileAtomic(staged, encoded, {
-      encoding: "utf8",
-      mode: 0o600,
-      fsync: true,
-    });
+    const file = await open(staged, "wx", 0o600);
+    let bytes = 0;
+    try {
+      for (const part of parts) {
+        await file.writeFile(part, { encoding: "utf8" });
+        bytes += Buffer.byteLength(part, "utf8");
+      }
+      await file.sync();
+    } finally {
+      await file.close();
+    }
+    if (overwrite) await rename(staged, destination);
     // A hard link publishes complete bytes atomically and cannot replace an existing name.
-    await link(staged, destination);
+    else await link(staged, destination);
+    return bytes;
   } finally {
     await rm(stagingDirectory, { recursive: true, force: true });
   }

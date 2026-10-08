@@ -116,6 +116,36 @@ describe("evidence ledger recording", () => {
     ledger.clear();
     expect(ledger.export().records).toEqual([]);
   });
+
+  it("protects borrowed snapshots while preserving detached mutable public reads", () => {
+    const evidence = createEvidence(TARGET, PROVIDER, {
+      operation: "health",
+      parameters: {},
+      result: { nested: { value: "original" } },
+    });
+    const ledger = new EvidenceLedger();
+    expect(ledger.record(evidence).ok).toBe(true);
+    const borrowed = ledger.forAnalysis(evidence.evidence_id);
+    if (borrowed === undefined) throw new Error("Missing recorded Evidence");
+    expect(Object.isFrozen(borrowed)).toBe(true);
+    expect(Object.isFrozen(borrowed.normalized_result)).toBe(true);
+    expect(Reflect.set(borrowed, "operation", "forged")).toBe(false);
+    expect(ledger.forAnalysis(evidence.evidence_id)).toBe(borrowed);
+    expect(ledger.record(borrowed)).toEqual({ ok: true, value: "duplicate" });
+    const detached = ledger.get(evidence.evidence_id);
+    if (detached === undefined) throw new Error("Missing detached Evidence");
+    expect(Reflect.set(detached, "operation", "forged")).toBe(true);
+    expect(ledger.record(detached).ok).toBe(false);
+    expect(ledger.forAnalysis(evidence.evidence_id)).toBe(borrowed);
+    const snapshot = ledger.forSerialization();
+    expect(snapshot).toEqual(ledger.export());
+    expect(snapshot.records[0]).toBe(borrowed);
+    expect(Object.isFrozen(snapshot.records)).toBe(true);
+    ledger.clear();
+    expect(ledger.forAnalysis(evidence.evidence_id)).toBeUndefined();
+    expect(ledger.forSerialization().records).toEqual([]);
+    expect(snapshot.records).toEqual([evidence]);
+  });
 });
 
 describe("evidence ledger metadata imports", () => {

@@ -16,7 +16,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 const recordShape = z.record(z.string(), z.unknown());
 
-const jsonValidationIssue = (root: unknown): string | undefined => {
+/** Validate JSON meaning and nesting without cloning a trusted immutable value. */
+export const jsonValueValidationIssue = (root: unknown): string | undefined => {
   const pending: { value: unknown; depth: number }[] = [
     { value: root, depth: 0 },
   ];
@@ -59,9 +60,10 @@ const preserveJsonValue = (value: JsonValue): JsonValue => {
 };
 
 const validatedJsonValue = z.custom<JsonValue>(
-  (value) => jsonValidationIssue(value) === undefined,
+  (value) => jsonValueValidationIssue(value) === undefined,
   {
-    error: (issue) => jsonValidationIssue(issue.input) ?? "Invalid JSON value",
+    error: (issue) =>
+      jsonValueValidationIssue(issue.input) ?? "Invalid JSON value",
   },
 );
 // Keep both stages nonrecursive in public and Standard Schema projections.

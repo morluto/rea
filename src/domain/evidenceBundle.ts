@@ -4,6 +4,7 @@ import canonicalize from "canonicalize";
 import {
   evidenceEnvelopeSchema,
   evidenceRecordSchema,
+  immutableEvidence,
   parseEvidence,
   providerSchema,
   type Evidence,
@@ -12,6 +13,7 @@ import {
   residualUnknownSchema,
   type ResidualUnknown,
 } from "./residualUnknown.js";
+import { freezeJsonSnapshot } from "./immutableJson.js";
 
 const artifactManifestSchema = evidenceEnvelopeSchema.shape.subject
   .unwrap()
@@ -44,6 +46,29 @@ export const evidenceBundleSchema = z.object({
 });
 
 export type EvidenceBundle = z.infer<typeof evidenceBundleSchema>;
+const immutableBundles = new WeakMap<object, EvidenceBundle>();
+
+/** Build and authenticate a sealed bundle while reusing immutable Evidence records. */
+export const createImmutableEvidenceBundle = (
+  records: readonly Evidence[],
+  unknowns: readonly ResidualUnknown[] = [],
+): EvidenceBundle => {
+  const checkedRecords = records.map(immutableEvidence);
+  if (
+    new Set(checkedRecords.map(({ evidence_id }) => evidence_id)).size !==
+    checkedRecords.length
+  )
+    throw new TypeError("Evidence bundle contains duplicate record IDs");
+  const checkedUnknowns = unknowns.map((unknown) =>
+    residualUnknownSchema.parse(unknown),
+  );
+  validateUnknownGraph(checkedUnknowns, checkedRecords);
+  const bundle = freezeJsonSnapshot(
+    createEvidenceBundle(checkedRecords, checkedUnknowns),
+  );
+  immutableBundles.set(bundle, bundle);
+  return bundle;
+};
 
 /** Project records into a deterministic bundle whose order has no semantics. */
 export const createEvidenceBundle = (
@@ -212,6 +237,10 @@ export const describeValidationFailure = (cause: unknown): string => {
 
 /** Parse records, verify semantic IDs, and reject inconsistent manifests. */
 export const parseEvidenceBundle = (input: unknown): EvidenceBundle => {
+  if (typeof input === "object" && input !== null) {
+    const owned = immutableBundles.get(input);
+    if (owned !== undefined) return owned;
+  }
   const parsed = evidenceBundleSchema.parse(input);
   const recordIds = parsed.records.map(({ evidence_id: id }) => id);
   if (new Set(recordIds).size !== recordIds.length)

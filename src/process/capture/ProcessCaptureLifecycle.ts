@@ -846,6 +846,52 @@ export const resolveProcessResult = (
   },
 ): ProcessCapture => {
   const cleanupFailure = cleanupReportFailure(cleanup);
+  const executionFailureReason =
+    describeProcessCaptureExecutionFailure(executionFailure);
+  let partialObservation: PartialProcessCaptureObservation | undefined;
+  if (
+    (cleanupFailure !== undefined || executionFailure !== undefined) &&
+    (capture !== undefined || observations !== undefined)
+  ) {
+    const normalizedObservations =
+      observations === undefined || partialContext === undefined
+        ? observations
+        : normalizePartialProcessObservations(observations, partialContext);
+    if (capture === undefined) {
+      if (normalizedObservations !== undefined) {
+        const partialResult = partialProcessCaptureObservationSchema.safeParse({
+          observations: normalizedObservations,
+          cleanup,
+          execution_failure: executionFailureReason ?? null,
+        });
+        if (partialResult.success) partialObservation = partialResult.data;
+      }
+    } else {
+      const captureData =
+        "cleanup" in capture
+          ? (() => {
+              const { cleanup: _cleanup, ...data } = capture;
+              void _cleanup;
+              return data;
+            })()
+          : capture;
+      const settlement =
+        cleanupFailure !== undefined
+          ? { ...capture.settlement, cleanup_outcome: "failed" as const }
+          : capture.settlement.state === "quiesced"
+            ? {
+                ...capture.settlement,
+                cleanup_outcome: "not_required" as const,
+              }
+            : { ...capture.settlement, cleanup_outcome: "cleaned" as const };
+      const partialResult = partialProcessCaptureObservationSchema.safeParse({
+        capture: { ...captureData, settlement },
+        cleanup,
+        execution_failure: executionFailureReason ?? null,
+      });
+      if (partialResult.success) partialObservation = partialResult.data;
+    }
+  }
   if (cleanupFailure !== undefined) {
     const cleanupResources = Object.entries(cleanup)
       .filter(
@@ -853,44 +899,6 @@ export const resolveProcessResult = (
           outcome.state === "failed" || outcome.state === "unverified",
       )
       .map(([resource]) => resource);
-    const executionFailureReason =
-      describeProcessCaptureExecutionFailure(executionFailure);
-    let partialObservation: PartialProcessCaptureObservation | undefined;
-    if (capture !== undefined || observations !== undefined) {
-      const normalizedObservations =
-        observations === undefined || partialContext === undefined
-          ? observations
-          : normalizePartialProcessObservations(observations, partialContext);
-      const partialPayload =
-        capture === undefined
-          ? { observations: normalizedObservations }
-          : { capture };
-      const pendingCapture =
-        capture === undefined
-          ? undefined
-          : {
-              ...capture,
-              settlement: {
-                ...capture.settlement,
-                cleanup_outcome: "failed" as const,
-              },
-            };
-      const partialResult = partialProcessCaptureObservationSchema.safeParse({
-        ...partialPayload,
-        ...(pendingCapture === undefined
-          ? {}
-          : {
-              capture: Object.fromEntries(
-                Object.entries(pendingCapture).filter(
-                  ([key]) => key !== "cleanup",
-                ),
-              ),
-            }),
-        cleanup,
-        execution_failure: executionFailureReason ?? null,
-      });
-      if (partialResult.success) partialObservation = partialResult.data;
-    }
     throw new ProcessCaptureError(cleanupFailure, {
       cause: executionFailure,
       reason: "cleanup_incomplete",
@@ -902,15 +910,39 @@ export const resolveProcessResult = (
       cleanupReport: cleanup,
     });
   }
-  if (executionFailure instanceof ProcessCaptureError) throw executionFailure;
+  if (executionFailure instanceof ProcessCaptureError) {
+    const retainedExecutionFailure =
+      executionFailure.executionFailure ?? executionFailureReason;
+    const retainedPartialObservation =
+      executionFailure.partialObservation ?? partialObservation;
+    throw new ProcessCaptureError(executionFailure.message, {
+      cause: executionFailure,
+      ...(executionFailure.userMessage === undefined
+        ? {}
+        : { userMessage: executionFailure.userMessage }),
+      ...(executionFailure.userCategory === undefined
+        ? {}
+        : { userCategory: executionFailure.userCategory }),
+      reason: executionFailure.reason,
+      cleanupResources: executionFailure.cleanupResources,
+      ...(retainedExecutionFailure === undefined
+        ? {}
+        : { executionFailure: retainedExecutionFailure }),
+      ...(retainedPartialObservation === undefined
+        ? {}
+        : { partialObservation: retainedPartialObservation }),
+      cleanupReport: executionFailure.cleanupReport ?? cleanup,
+    });
+  }
   if (executionFailure !== undefined) {
-    const executionFailureReason =
-      describeProcessCaptureExecutionFailure(executionFailure);
     throw new ProcessCaptureError("process capture failed", {
       cause: executionFailure,
+      reason: "capture_failed",
       ...(executionFailureReason === undefined
         ? {}
         : { executionFailure: executionFailureReason }),
+      ...(partialObservation === undefined ? {} : { partialObservation }),
+      cleanupReport: cleanup,
     });
   }
   if (capture === undefined)

@@ -294,7 +294,9 @@ const createSessionRecorders = (
   evidenceById:
     session === undefined
       ? undefined
-      : (evidenceId: string) => session.evidenceById(evidenceId),
+      : (evidenceId: string) =>
+          session.evidenceForAnalysis?.(evidenceId) ??
+          session.evidenceById(evidenceId),
   activeTarget:
     session === undefined ? undefined : () => session.activeTarget(),
   recordEvidence:
@@ -349,6 +351,14 @@ const registerBinaryAnalysisTools = ({
     ...analysisOptions,
     analysisProfile:
       session === undefined ? undefined : () => session.analysisProfile(),
+    allowsSnapshotReplay:
+      session === undefined
+        ? undefined
+        : (operation) => session.allowsSnapshotReplay(operation),
+    recordWorkflowSnapshot:
+      session === undefined
+        ? undefined
+        : (input) => session.recordWorkflowSnapshot(input),
   });
   const evidenceOptions = { logger, activeTarget, recordEvidence };
   registerNativeTools(server, analysis, evidenceOptions);

@@ -10,8 +10,13 @@ import type { BinaryTarget } from "./binaryTarget.js";
 import {
   jsonObjectSchema,
   jsonValueSchema,
+  jsonValueValidationIssue,
   type JsonValue,
 } from "./jsonValue.js";
+import {
+  freezeJsonSnapshot,
+  isImmutableJsonSnapshot,
+} from "./immutableJson.js";
 import { digestSchema } from "./../domain/digests.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 
@@ -144,6 +149,14 @@ export const evidenceRecordSchema = z.union([
 ]);
 
 export type Evidence = z.infer<typeof evidenceRecordSchema>;
+const immutableEvidenceSnapshots = new WeakMap<object, Evidence>();
+const immutableResultSchema = z
+  .custom<JsonValue>(isImmutableJsonSnapshot)
+  .superRefine((value, context) => {
+    const issue = jsonValueValidationIssue(value);
+    if (issue !== undefined)
+      context.addIssue({ code: "custom", message: issue });
+  });
 export type EvidenceLocation = z.infer<typeof evidenceLocationSchema>;
 
 /** Minimal immutable local artifact identity accepted by Evidence. */
@@ -216,12 +229,38 @@ const computeEvidenceId = (evidence: EvidenceWithoutId): string =>
 
 /** Parse evidence and reject a syntactically valid but tampered semantic ID. */
 export const parseEvidence = (input: unknown): Evidence => {
-  const evidence = evidenceRecordSchema.parse(input);
+  const immutable =
+    typeof input === "object" && input !== null
+      ? immutableEvidenceSnapshots.get(input)
+      : undefined;
+  if (immutable !== undefined) return immutable;
+  // Select the producer's envelope before traversing its payload. A legacy
+  // record cannot satisfy the required-profile branch, whose failed parse
+  // would otherwise clone the entire normalized result before trying legacy.
+  const schema =
+    typeof input === "object" && input !== null && "analysis_profile" in input
+      ? profiledEvidenceSchema
+      : evidenceBaseSchema;
+  const evidence = schema.parse(input);
   const { evidence_id: evidenceId, ...withoutId } = evidence;
   if (computeEvidenceId(withoutId) !== evidenceId)
     throw new TypeError(
       "Evidence semantic identifier does not match its record",
     );
+  return evidence;
+};
+
+/** Authenticate and seal a ledger-owned snapshot; external mutable values are copied first. */
+export const immutableEvidence = (input: unknown): Evidence =>
+  rememberImmutableEvidence(parseEvidence(input));
+
+/** Recognize authenticated Evidence whose complete reachable JSON data is immutable. */
+export const isImmutableEvidence = (evidence: Evidence): boolean =>
+  immutableEvidenceSnapshots.has(evidence);
+
+const rememberImmutableEvidence = (evidence: Evidence): Evidence => {
+  freezeJsonSnapshot(evidence);
+  immutableEvidenceSnapshots.set(evidence, evidence);
   return evidence;
 };
 
@@ -285,7 +324,14 @@ export const createEvidence = (
     observation.analysisProfile === undefined
       ? evidenceBaseSchema
       : profiledEvidenceSchema;
-  const normalized = schema.parse({
+  const sharedResult =
+    typeof observation.result === "object" &&
+    observation.result !== null &&
+    isImmutableJsonSnapshot(observation.result);
+  const selectedSchema = sharedResult
+    ? schema.safeExtend({ normalized_result: immutableResultSchema })
+    : schema;
+  const normalized = selectedSchema.parse({
     ...semantic,
     evidence_id: `ev_${"0".repeat(64)}`,
     subject,
@@ -293,8 +339,9 @@ export const createEvidence = (
   // The envelope has already been parsed into an independent snapshot. Only
   // its derived identifier changes here; parsing again clones the full payload
   // and recomputes the same digest while the previous snapshot is still live.
-  return {
+  const evidence = {
     ...normalized,
     evidence_id: computeEvidenceId(normalized),
   };
+  return sharedResult ? rememberImmutableEvidence(evidence) : evidence;
 };

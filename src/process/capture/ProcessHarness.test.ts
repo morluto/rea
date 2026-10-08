@@ -16,6 +16,7 @@ import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../domain/process/processCaptu
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { emptyProcessCapture } from "../../domain/process/processCapture.fixture.js";
 import { analysisErrorProjectionSchema } from "../../contracts/errorSchemas.js";
+import { processCaptureCancelled } from "./ProcessCaptureError.js";
 import {
   releaseProcessResources,
   resolveProcessResult,
@@ -352,8 +353,20 @@ it("retains observations and both causes when process cleanup is unverifiable", 
         terminal_renderer: { state: "cleaned", reason: null },
         temporary_root: { state: "cleaned", reason: null },
       },
+      execution_failure: null,
     }).success,
   ).toBe(false);
+  expect(
+    partialProcessCaptureObservationSchema.safeParse({
+      ...partialObservation,
+      cleanup: {
+        owned_process_group: { state: "cleaned", reason: null },
+        terminal_renderer: { state: "cleaned", reason: null },
+        temporary_root: { state: "cleaned", reason: null },
+      },
+      execution_failure: "capture ended after a fixture error",
+    }).success,
+  ).toBe(true);
   if (!("capture" in partialObservation))
     throw new Error("expected completed partial capture observations");
   const partialCapture = partialObservation.capture;
@@ -388,6 +401,95 @@ it("projects execution and cleanup failures when capture never completed", () =>
     details: {
       cleanup_report: cleanup,
       execution_failure: "terminal startup failed",
+    },
+  });
+});
+
+it("retains completed observations when finalization fails after clean cleanup", () => {
+  const capture = parseProcessCapture({
+    ...emptyProcessCapture(),
+    frames: [{ sequence: 0, at_ms: 0, data: "observed before finalization" }],
+    event_journal: [],
+  });
+  const executionFailure = new Error("final filesystem snapshot failed");
+  const cleanup = {
+    owned_process_group: { state: "cleaned" as const, reason: null },
+    terminal_renderer: { state: "cleaned" as const, reason: null },
+    temporary_root: { state: "cleaned" as const, reason: null },
+  };
+
+  let error: ProcessCaptureError | undefined;
+  try {
+    resolveProcessResult(capture, executionFailure, cleanup);
+  } catch (cause: unknown) {
+    if (!(cause instanceof ProcessCaptureError)) throw cause;
+    error = cause;
+  }
+  expect(error).toBeDefined();
+  if (error === undefined) throw new Error("expected capture failure");
+
+  expect(error).toMatchObject({
+    reason: "capture_failed",
+    cleanupIncomplete: false,
+    executionFailure: "final filesystem snapshot failed",
+    cleanupReport: cleanup,
+  });
+  expect(error.cause).toBe(executionFailure);
+  expect(error.partialObservation).toMatchObject({
+    capture: {
+      frames: [{ data: "observed before finalization" }],
+      settlement: { cleanup_outcome: "not_required" },
+    },
+    cleanup,
+    execution_failure: "final filesystem snapshot failed",
+  });
+  expect(projectAnalysisError(error)).toMatchObject({
+    code: "process_capture_failed",
+    details: {
+      cleanup_report: cleanup,
+      execution_failure: "final filesystem snapshot failed",
+      partial_observation: {
+        capture: { frames: [{ data: "observed before finalization" }] },
+      },
+    },
+  });
+  expect(
+    analysisErrorProjectionSchema.safeParse(projectAnalysisError(error))
+      .success,
+  ).toBe(true);
+});
+
+it("preserves cancellation while projecting observations and successful cleanup", () => {
+  const capture = parseProcessCapture({
+    ...emptyProcessCapture(),
+    frames: [{ sequence: 0, at_ms: 0, data: "observed before cancellation" }],
+    event_journal: [],
+  });
+  const cleanup = {
+    owned_process_group: { state: "cleaned" as const, reason: null },
+    terminal_renderer: { state: "cleaned" as const, reason: null },
+    temporary_root: { state: "cleaned" as const, reason: null },
+  };
+  let error: ProcessCaptureError | undefined;
+  try {
+    resolveProcessResult(capture, processCaptureCancelled(), cleanup);
+  } catch (cause: unknown) {
+    if (!(cause instanceof ProcessCaptureError)) throw cause;
+    error = cause;
+  }
+  expect(error).toBeDefined();
+  if (error === undefined) throw new Error("expected cancellation");
+
+  expect(projectAnalysisError(error)).toMatchObject({
+    code: "cancelled",
+    message: "Process capture was cancelled. Start it again when ready.",
+    details: {
+      operation: "process_capture",
+      cleanup: "complete",
+      cleanup_report: cleanup,
+      partial_observation: {
+        capture: { frames: [{ data: "observed before cancellation" }] },
+      },
     },
   });
 });

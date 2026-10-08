@@ -8,6 +8,18 @@ import type {
   JavaScriptApplicationAnalysisResult,
 } from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import { JAVASCRIPT_APPLICATION_PROVIDER } from "../InvestigationProviders.js";
+import { freezeJsonSnapshot } from "../../domain/immutableJson.js";
+import { rememberOwnedApplicationGraphEvidence } from "./JavaScriptApplicationEvidenceGraph.js";
+
+/** Transfer an already validated, application-owned result into immutable analysis Evidence. */
+export const createOwnedJavaScriptApplicationEvidence = (
+  input: AnalyzeJavaScriptApplicationInput,
+  result: JavaScriptApplicationAnalysisResult,
+): Evidence =>
+  rememberOwnedApplicationGraphEvidence(
+    createJavaScriptApplicationEvidence(input, freezeJsonSnapshot(result)),
+    result,
+  );
 
 /** Create Evidence for one deterministic local JavaScript application graph. */
 export const createJavaScriptApplicationEvidence = (

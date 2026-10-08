@@ -62,6 +62,7 @@ it.each([
   ["cpu", { cpu_seconds: 1 }],
   ["file-size", null],
   ["file-size", { file_size_bytes: 1024 }],
+  ["transport", { result_budget_bytes: 10485760 }],
 ] as const)(
   "projects reported %s constraints with observed or unknown limits: %j",
   (resource, limits) => {
@@ -89,9 +90,11 @@ it.each([
     expect(projected.remediation.action).toContain(
       resource === "cpu"
         ? "CPU"
-        : resource === "file-size"
-          ? "file-size"
-          : "memory",
+        : resource === "transport"
+          ? "Evidence reference"
+          : resource === "file-size"
+            ? "file-size"
+            : "memory",
     );
     expect(projected.remediation.action).not.toContain("doctor");
     expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(

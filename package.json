@@ -185,7 +185,7 @@
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs",
     "docs:generate": "node scripts/run-exclusive.mjs docs npm run docs:generate:unlocked",
-    "docs:generate:unlocked": "npm run metadata:generate && npm run build:cached && node scripts/generate-skill-metadata.mjs && node scripts/generate-product-catalog.mjs && node scripts/generate-completion-ledger.mjs && node scripts/generate-error-schema.mjs",
+    "docs:generate:unlocked": "npm run metadata:generate && npm run build:cached && node scripts/generate-error-schema.mjs",
     "docs:check": "node scripts/run-exclusive.mjs docs turbo run docs:check:built",
     "docs:check:built": "node scripts/generate-package-metadata.mjs --check && node scripts/generate-mcp-tool-catalog.mjs --check && node scripts/generate-skill-metadata.mjs --check && node scripts/generate-product-catalog.mjs --check && node scripts/generate-completion-ledger.mjs --check && node scripts/check-doc-facts.mjs && node scripts/generate-error-schema.mjs --check",
     "docs:error-schema": "npm run build:cached && node scripts/generate-error-schema.mjs",

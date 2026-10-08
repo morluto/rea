@@ -80,7 +80,18 @@ or model-authored loop when one call can answer the question.
 ## Implement and evaluate
 
 - Put shared user workflows in the application layer; keep MCP translation in
-  the server adapter and CLI behavior aligned with the same workflow.
+  the server adapter and CLI behavior aligned with the same workflow. Share
+  Evidence provenance, unknown projection, and eligible snapshot binding through
+  application/session owners. Matching result payloads alone do not establish
+  equivalent retention or replay behavior.
+- Derive each facet's coverage from examined records, unsupported representations,
+  and exhaustiveness. Keep issues structured until presentation; do not select a
+  facet by matching diagnostic prose or infer completeness from an empty failure
+  list. Preserve available observations independently of cleanup success.
+- Measure the resource consumed before choosing a limit. Value alternatives,
+  retained records, trace-frame products, output bytes, and temporary-file growth
+  need different accounting. Enforce a justified budget before the costly step
+  and report its effect; an input-byte or graph-node cap does not bound every stage.
 - Update the canonical contract inventory, output schemas, examples, generated
   catalog, and relevant docs together.
 - Verify valid, malformed, boundary, unavailable, cancellation, and partial

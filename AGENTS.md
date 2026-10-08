@@ -21,8 +21,8 @@ REA is a layered ESM TypeScript application. Dependencies flow inward from pure 
 
 - `src/domain/` owns pure provider-neutral semantics; `src/contracts/` owns caller-visible schemas and the canonical tool inventory.
 - `src/hopper/`, `src/ghidra/`, `src/ida/`, `src/browser/`, `src/inspector/`, `src/native/`, `src/artifacts/`, and `src/dotnet/` own provider-specific boundaries. Keep provider protocols out of domain and application code.
-- `src/application/` composes shared CLI/MCP workflows; `src/server/` translates MCP requests; `src/cli.ts` and `src/main.ts` are the CLI and MCP entry points.
-- `src/process/` owns shared process lifecycle primitives, not provider wire protocols. `bridge/` contains provider-side adapters.
+- `src/application/` composes shared CLI/MCP workflows, including Evidence provenance, unknowns, and eligible snapshot bindings; `src/server/` translates MCP requests; `src/cli.ts` and `src/main.ts` are the CLI and MCP entry points.
+- `src/process/` owns shared process lifecycle primitives, not provider wire protocols. Reuse its supervision and identity primitives before adding provider-local lifecycle code; a PID and executable pathname alone do not establish ownership after exit or reuse. `bridge/` contains provider-side adapters.
 - `tests/` contains unit, composition, boundary, acceptance, and conformance tests. `scripts/verify-*` and capability directories under `scripts/verify/` contain real-toolchain checks.
 - `docs/public/product-catalog.json`, `docs/verification/managed-conformance-*.json`, and `skills/` are ignored build outputs. Update source contracts and authored instructions in `skill-src/`, then run `npm run build:cached`; never commit derived catalog digests or portable conformance projections.
 - `src/generatedMcpToolCatalog.ts` is build-generated and gitignored. Never commit it; resolve any trace of it in merges by deleting it and running `npm run build:cached`.
@@ -56,9 +56,9 @@ Treat a boundary as a contract between the producer's actual representation and 
 
 When changing boundary behavior, inspect adjacent input representations, failure paths, and affected callers, and correct the underlying assumption across those cases.
 
-Keep portable evidence and scenario validation distinct from host-native execution checks. Absolute filesystem paths, file URLs, and HTTP paths have different semantics; do not substitute one platform's syntax for the domain concept. Interpret provider metadata according to its documented or observed producer behavior. When a transformation loses information, preserve the reported value and an explicit unknown rather than guessing a canonical identity.
+Keep portable evidence and scenario validation distinct from host-native execution checks. Absolute filesystem paths, file URLs, and HTTP paths have different semantics; do not substitute one platform's syntax for the domain concept. Interpret provider metadata according to its documented or observed producer behavior. Keep values used for identity, provenance, matching, and path resolution separate from display formatting. When normalization loses information, preserve the source value and an explicit unknown; display placeholders must not feed back into lookup or selection.
 
-Preserve meaningful failure reasons through application and adapter layers. Malformed input is distinct from an unsupported target, unavailable provider, or host operating-system permission denial. Diagnostics should identify the failed constraint and the target or lifecycle request it applies to. Recovery advice must address that reason and point to an available workflow; generic catches must not erase actionable validation details.
+Preserve meaningful failure reasons through application and adapter layers. Malformed input is distinct from an unsupported target, unavailable provider, or host operating-system permission denial. Diagnostics should identify the failed constraint and the target or lifecycle request it applies to. Recovery advice must address that reason and point to an available workflow; generic catches must not erase actionable validation details. Preserve collected observations on execution failure independently of whether cleanup succeeds.
 
 Leave meaningful target, action, capture, and output choices to the agent. A selected operation already expresses intent; do not require approval booleans or repeated permission declarations. Trace each setting to its consumer: remove ignored options and single-value confirmations, derive built-in lifecycle behavior, and supply defaults for omitted optional metadata. Report actual effects and limitations where they help interpret results rather than asking callers to restate them.
 
@@ -82,7 +82,7 @@ Let agents compose experiments with ordinary commands, scripts, and local fixtur
 - Use **observe/capture** only when runtime activity is required, and declare authority and lifecycle effects in the contract.
 - Extend an existing tool when intent and result contract are unchanged. Add a tool for a distinct analyst outcome or materially different authority.
 - Keep caller-facing names and results provider-neutral. Put engine-specific behavior in provider adapters and report each provider's exact coverage.
-- Keep results complete by default. Add a limit only when it follows from a real format, protocol, authority, or resource-safety constraint; explain truncation and unsupported facets. Keep observed, derived, inferred, and unknown results distinct.
+- Keep results complete by default. Add a limit only when it follows from a real format, protocol, authority, or resource-safety constraint; explain truncation and unsupported facets. Account for representation expansion and products of independently bounded dimensions before allocating or retaining output. Derive facet completeness from what was examined and exhausted, not an empty failure list. Keep observed, derived, inferred, and unknown results distinct.
 - Include artifact identity, source locations, Evidence references, actionable errors, and relevant limitations when they affect conclusions. Return the evidence needed for the next analysis inline rather than requiring a resource or identifier lookup.
 - Implement shared application workflows behind CLI and MCP adapters. Update canonical contracts and generated catalog together.
 

@@ -21,7 +21,13 @@ export const recordResult = (
         );
   if (recorded !== undefined && !recorded.ok)
     return toCallToolResult(recorded, contract);
-  return toCallToolResult({ ok: true, value: evidence }, contract);
+  return toCallToolResult(
+    { ok: true, value: evidence },
+    contract,
+    recorded === undefined
+      ? undefined
+      : { retainedEvidenceId: evidence.evidence_id },
+  );
 };
 
 const unknownRegistration = (

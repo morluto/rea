@@ -47,6 +47,54 @@ const contract: ToolContract = {
 };
 
 describe("completed partial process capture MCP projection", () => {
+  it("preserves observations when execution fails after cleanup succeeds", () => {
+    const cleanup = {
+      owned_process_group: { state: "cleaned" as const, reason: null },
+      terminal_renderer: { state: "cleaned" as const, reason: null },
+      temporary_root: { state: "cleaned" as const, reason: null },
+    };
+    const capture = {
+      ...emptyProcessCapture(),
+      frames: [{ sequence: 0, at_ms: 0, data: "observed output" }],
+      event_journal: [],
+    };
+    let failure: ProcessCaptureError | undefined;
+    try {
+      resolveProcessResult(
+        capture,
+        new Error("final filesystem snapshot failed"),
+        cleanup,
+      );
+    } catch (cause: unknown) {
+      if (!(cause instanceof ProcessCaptureError)) throw cause;
+      failure = cause;
+    }
+    if (failure === undefined)
+      throw new Error("expected process capture failure");
+
+    const result = toCallToolResult(
+      err(failure),
+      toolContract("capture_process_scenario"),
+    );
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        code: "process_capture_failed",
+        details: {
+          cleanup_report: cleanup,
+          execution_failure: "final filesystem snapshot failed",
+          partial_observation: {
+            capture: {
+              frames: [{ data: "observed output" }],
+              settlement: { cleanup_outcome: "not_required" },
+            },
+            execution_failure: "final filesystem snapshot failed",
+          },
+        },
+      },
+    });
+  });
+
   it("preserves partial capture details over the MCP SDK transport", async () => {
     const executionFailure = new Error("capture ended after a fixture error");
     const cleanup = {

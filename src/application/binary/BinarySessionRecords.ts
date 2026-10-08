@@ -3,6 +3,7 @@ import type { AnalysisSnapshot } from "../../domain/analysisSnapshot.js";
 import type { BinaryTarget } from "../../domain/binaryTarget.js";
 import type { Evidence } from "../../domain/evidence.js";
 import type { EvidenceBundle } from "../../domain/evidenceBundle.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 import { evidenceBundleForTarget } from "../../domain/evidenceBundle.js";
 import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import { type AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -24,6 +25,15 @@ import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 export interface ActiveAnalysisBinding {
   readonly target: BinaryTarget;
   readonly profile: AnalysisProfileCommitment | null;
+}
+
+/** Validated composed-workflow payload bound to the active target and profile. */
+export interface WorkflowSnapshotRecordInput {
+  readonly operation: AnalysisOperation;
+  readonly parameters: Readonly<Record<string, JsonValue>>;
+  readonly execution: Parameters<
+    AnalysisSnapshotCache["recordWorkflow"]
+  >[0]["execution"];
 }
 
 /** Binary snapshot owner and compatibility facade for composed investigation records. */
@@ -59,8 +69,18 @@ export abstract class BinarySessionRecords {
     return this.#records.evidenceById(evidenceId);
   }
 
+  /** Borrow immutable investigation Evidence without copying a complete graph. */
+  evidenceForAnalysis(evidenceId: string): Evidence | undefined {
+    return this.#records.evidenceForAnalysis(evidenceId);
+  }
+
   exportEvidenceBundle(): EvidenceBundle {
     return this.#records.exportEvidenceBundle();
+  }
+
+  /** Borrow a sealed bundle for complete serialization without cloning retained graphs. */
+  evidenceBundleForSerialization(): EvidenceBundle {
+    return this.#records.evidenceBundleForSerialization();
   }
 
   importEvidenceBundle(
@@ -161,15 +181,9 @@ export abstract class BinarySessionRecords {
   }
 
   /** Retain one derived workflow result alongside its provider cache entries. */
-  recordWorkflowSnapshot(input: {
-    readonly operation: string;
-    readonly parameters: Readonly<
-      Record<string, import("../../domain/jsonValue.js").JsonValue>
-    >;
-    readonly execution: Parameters<
-      AnalysisSnapshotCache["recordWorkflow"]
-    >[0]["execution"];
-  }): Result<null, EvidenceIntegrityError> {
+  recordWorkflowSnapshot(
+    input: WorkflowSnapshotRecordInput,
+  ): Result<null, EvidenceIntegrityError> {
     const active = this.activeAnalysisBinding();
     if (active === undefined || active.profile === null)
       return err(

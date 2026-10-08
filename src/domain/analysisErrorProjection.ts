@@ -393,16 +393,27 @@ const lifecycleErrorDetails = (
             ),
           }),
     };
-  if (
-    error._tag === "ProcessCaptureError" &&
-    error.userCategory === "cancelled"
-  )
-    return { operation: "process_capture", cleanup: "complete" };
-  if (
-    error._tag === "ProcessCaptureError" &&
-    error.executionFailure !== undefined
-  )
-    return { execution_failure: error.executionFailure };
+  if (error._tag === "ProcessCaptureError") {
+    const details = {
+      ...(error.userCategory === "cancelled"
+        ? { operation: "process_capture", cleanup: "complete" }
+        : {}),
+      ...(error.cleanupReport === undefined
+        ? {}
+        : { cleanup_report: jsonValueSchema.parse(error.cleanupReport) }),
+      ...(error.executionFailure === undefined
+        ? {}
+        : { execution_failure: error.executionFailure }),
+      ...(error.partialObservation === undefined
+        ? {}
+        : {
+            partial_observation: jsonValueSchema.parse(
+              error.partialObservation,
+            ),
+          }),
+    };
+    return Object.keys(details).length === 0 ? undefined : details;
+  }
   if (error instanceof BinaryTargetError)
     return {
       path: error.path,

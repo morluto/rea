@@ -7,6 +7,8 @@ import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js"
 import type { AnalysisProviderSelector } from "../../contracts/providerSelection.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Result } from "../../domain/result.js";
+import type { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
+import type { WorkflowSnapshotRecordInput } from "./BinarySessionRecords.js";
 
 import type {
   AnalysisOperation,
@@ -43,6 +45,10 @@ export interface BinarySessionPort
   analysisProfile(
     operation?: AnalysisOperation,
   ): AnalysisProfileCommitment | undefined;
+  allowsSnapshotReplay(operation: AnalysisOperation): boolean;
+  recordWorkflowSnapshot(
+    input: WorkflowSnapshotRecordInput,
+  ): Result<null, EvidenceIntegrityError>;
   openCompatibility(): Readonly<Record<string, JsonValue>>;
   onAvailabilityChanged?(listener: () => void | Promise<void>): () => void;
   onAnalysisSnapshotChanged?(listener: () => void | Promise<void>): () => void;

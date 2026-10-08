@@ -30,11 +30,7 @@ import {
   snapshotEvidenceForQuery,
   snapshotMatchesTarget,
 } from "../domain/analysisSnapshot.js";
-import {
-  analysisProfileSchema,
-  committedProviderSchema,
-  type AnalysisProfileCommitment,
-} from "../domain/analysisProfile.js";
+import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
 import type {
@@ -45,6 +41,10 @@ import {
   REA_WORKFLOW_PROVIDER,
   workflowAnalysisProfile,
 } from "./InvestigationProviders.js";
+import {
+  createWorkflowEvidence,
+  workflowSnapshotRecord,
+} from "./WorkflowEvidence.js";
 import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
 import { artifactInspectionResultSchema } from "../domain/artifactInspection.js";
 
@@ -268,35 +268,13 @@ const runAnalysis = async (
       tool !== "trace_native_ui_action" &&
       snapshotPath !== undefined &&
       evidence !== undefined &&
-      "analysis_profile" in evidence &&
       session.allowsSnapshotReplay(tool)
     ) {
-      const recorded = session.recordWorkflowSnapshot({
-        operation: tool,
-        parameters: arguments_,
-        execution: {
-          result: evidence.normalized_result,
-          rawResult: evidence.raw_result,
-          provider: committedProviderSchema.parse(evidence.provider),
-          analysisProfile: analysisProfileSchema.parse(
-            evidence.analysis_profile,
-          ),
-          limitations: evidence.limitations,
-          locations: evidence.locations,
-          subject:
-            evidence.subject === null
-              ? null
-              : {
-                  path: evidence.subject.local_path,
-                  sha256: evidence.subject.digest.sha256,
-                  format: evidence.subject.format,
-                  ...(evidence.subject.architecture === null
-                    ? {}
-                    : { architecture: evidence.subject.architecture }),
-                },
-        },
-      });
-      if (!recorded.ok) return cliError(recorded.error);
+      const workflowRecord = workflowSnapshotRecord(evidence, tool);
+      if (workflowRecord !== undefined) {
+        const recorded = session.recordWorkflowSnapshot(workflowRecord);
+        if (!recorded.ok) return cliError(recorded.error);
+      }
     }
     if (
       tool !== "trace_native_ui_action" &&
@@ -356,15 +334,12 @@ const executeAnalysisTool = async (input: {
       signal,
     );
     if (!result.ok) return { output: cliError(result.error) };
-    const evidence = createEvidence(input.openedTarget, REA_WORKFLOW_PROVIDER, {
+    const evidence = createWorkflowEvidence({
+      target: input.openedTarget,
       operation: tool,
       parameters: input.arguments,
       result: result.value,
-      ...(evidenceProfile === undefined
-        ? {}
-        : { analysisProfile: evidenceProfile }),
-      confidence: "derived",
-      limitations: ["Derived by an REA composed workflow."],
+      upstreamProfile: evidenceProfile,
     });
     return { output: evidence, evidence };
   }
@@ -493,8 +468,7 @@ const analysisProfileForEvidence = (
     | DirectAnalysisTool,
 ): AnalysisProfileCommitment | undefined => {
   if (!isWorkflowEvidenceTool(tool)) return session.analysisProfile(tool);
-  const upstream = session.analysisProfile();
-  return upstream === undefined ? undefined : workflowAnalysisProfile(upstream);
+  return session.analysisProfile();
 };
 
 const isWorkflowEvidenceTool = (
