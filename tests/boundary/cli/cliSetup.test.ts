@@ -76,7 +76,12 @@ const agentActions = actions.filter(({ kind }) => kind !== "install_hopper");
 describe("interactive setup journey", () => {
   it("shows detected and absent clients without preselecting detected clients", async () => {
     const result = await runJourney(
-      [step("Which agents should use REA?", "\u001b[B\r")],
+      [
+        step("Which agents should use REA?", "\u001b[B"),
+        // Wait for the focused-option hint to render before submitting;
+        // @clack prints hints only for the focused row.
+        step("Not detected", "\r"),
+      ],
       false,
       [actions[0]],
     );
@@ -246,7 +251,18 @@ describe("interactive setup completion", () => {
         ],
         {
           cwd: process.cwd(),
-          env: { ...process.env, npm_command: npmCommand, NO_COLOR: "1" },
+          env: {
+            // Windows environment keys are case-insensitive; without dropping
+            // the inherited key the child would resolve npm_command to the
+            // ambient value (for example NPM_COMMAND under `npm run`).
+            ...Object.fromEntries(
+              Object.entries(process.env).filter(
+                ([key]) => key.toLowerCase() !== "npm_command",
+              ),
+            ),
+            npm_command: npmCommand,
+            NO_COLOR: "1",
+          },
         },
       );
 
@@ -278,6 +294,35 @@ const step = (prompt: string, input: string): JourneyStep => ({
   prompt,
   input,
 });
+
+/**
+ * Return the complete JSON object at the start of `text`, tolerating the
+ * terminal control sequences and echoed input that ConPTY appends to the same
+ * line on Windows.
+ */
+const extractJsonLine = (text: string): string | undefined => {
+  const start = text.indexOf("{");
+  if (start === -1) return undefined;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === "{") depth += 1;
+    else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, index + 1);
+    }
+  }
+  return undefined;
+};
 
 const runJourney = async (
   steps: readonly JourneyStep[],
@@ -347,9 +392,9 @@ const runJourney = async (
         finish(new Error(`Setup journey returned no decision:\n${output}`));
         return;
       }
-      const serialized = output
-        .slice(markerIndex + decisionMarker.length)
-        .split(/\r?\n/u, 1)[0];
+      const serialized = extractJsonLine(
+        output.slice(markerIndex + decisionMarker.length),
+      );
       if (serialized === undefined) {
         finish(
           new Error(`Setup journey returned an empty decision:\n${output}`),

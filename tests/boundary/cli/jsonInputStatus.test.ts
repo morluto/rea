@@ -108,7 +108,9 @@ describe("compiled CLI JSON input diagnostic preservation", () => {
         for (const diagnostic of [
           "invalid_request",
           "invalid_input",
-          input,
+          // JSON, JSONL, and TOON (default) escape backslashes; YAML emits the
+          // raw spelling. Assert the serialized form (identical on POSIX).
+          format === "YAML" ? input : input.replaceAll("\\", "\\\\"),
           "read-failed",
         ])
           expect(result.stdout).toContain(diagnostic);

@@ -65,7 +65,11 @@ describe("analysis snapshots: persistence", () => {
     const written = await writeAnalysisSnapshot(snapshot, path, false);
     expect(written.ok).toBe(true);
     expect((await readFile(path, "utf8")).endsWith("\n")).toBe(true);
-    expect((await stat(path)).mode & 0o777).toBe(0o600);
+    // Windows reports all files 0o666; the 0o600 permission bit has no NTFS
+    // representation.
+    expect((await stat(path)).mode & 0o777).toBe(
+      process.platform === "win32" ? 0o666 : 0o600,
+    );
     expect((await readAnalysisSnapshot(path)).ok).toBe(true);
 
     const altered: unknown = JSON.parse(await readFile(path, "utf8"));

@@ -223,9 +223,11 @@ const createNodeModulesLinks = async (root: string): Promise<void> => {
 };
 
 const runNpm = (cwd: string, arguments_: readonly string[]) =>
-  run("npm", arguments_, cwd);
+  run("npm", arguments_, cwd, process.platform === "win32");
 
 const runTurbo = (cwd: string) =>
+  // process.execPath is a real executable that needs no shell; enabling one
+  // would concat it unquoted into cmd.exe and break on its containing space.
   run(
     process.execPath,
     [
@@ -235,12 +237,14 @@ const runTurbo = (cwd: string) =>
       "--output-logs=full",
     ],
     cwd,
+    false,
   );
 
 const run = (
   command: string,
   arguments_: readonly string[],
   cwd: string,
+  shell: boolean,
 ): Promise<{
   readonly status: number;
   readonly stdout: string;
@@ -250,7 +254,7 @@ const run = (
     const child = spawn(command, [...arguments_], {
       cwd,
       env: process.env,
-      shell: process.platform === "win32",
+      shell,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";

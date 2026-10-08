@@ -1,5 +1,5 @@
 import { rm, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -126,12 +126,12 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
   expect(inspected.isError).not.toBe(true);
   expect(inspected.structuredContent).toMatchObject({
     result: {
-      target: { file_path: expect.stringMatching(/\/index\.html$/u) },
+      target: { file_path: expect.stringMatching(/[/\\]index\.html$/u) },
       scripts: {
         items: [
           expect.objectContaining({
             frame_id: "frame-main",
-            file_path: expect.stringMatching(/\/app\.js$/u),
+            file_path: expect.stringMatching(/[/\\]app\.js$/u),
           }),
         ],
       },
@@ -139,7 +139,7 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
         expect.objectContaining({
           target_id: "electron-worker",
           opener_target_id: "electron-page",
-          file_path: expect.stringMatching(/\/worker\.js$/u),
+          file_path: expect.stringMatching(/[/\\]worker\.js$/u),
         }),
       ],
     },
@@ -151,7 +151,7 @@ it("runs active Electron scenarios with selected paths and inferred working dire
   temporary.push(root);
   const applicationPath = join(root, "main.js");
   await writeFile(applicationPath, "module.exports = {};\n");
-  const aliasedRoot = join(root, "..", `${root.split("/").at(-1)}-alias`);
+  const aliasedRoot = join(root, "..", `${basename(root)}-alias`);
   await symlink(root, aliasedRoot, "dir");
   temporary.push(aliasedRoot);
   const workingDirectory = await createTestTempDirectory(
