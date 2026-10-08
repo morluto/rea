@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { constants as bufferConstants } from "node:buffer";
+
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { McpServer } from "@modelcontextprotocol/server";
@@ -376,4 +378,72 @@ describe("tool result projection", () => {
       ).toBe(false);
     },
   );
+});
+
+describe("tool result transport limits", () => {
+  it("returns a typed transport constraint when the serialized envelope cannot fit one message", () => {
+    // The Evidence envelope repeats the payload as result and
+    // evidence.normalized_result, so the candidate serializes near half the
+    // ceiling; its escaped text plus structuredContent pair cannot fit.
+    const payload = "x".repeat(
+      Math.ceil(bufferConstants.MAX_STRING_LENGTH / 4) + 8192,
+    );
+    const evidence = createEvidence(
+      undefined,
+      { id: "fixture", name: "Fixture", version: "1" },
+      { operation: "fixture", parameters: {}, result: { payload } },
+    );
+    const evidenceContract: ToolContract = {
+      ...contract,
+      outputSchema: evidenceResultOf(z.object({ payload: z.string() })),
+    };
+    const result = toCallToolResult(ok(evidence), evidenceContract);
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        code: "resource_constraint",
+        category: "resource_constraint",
+        details: {
+          operation: evidenceContract.name,
+          resource: "transport",
+          evidence_id: evidence.evidence_id,
+          reported_limits: {
+            transport: "json-rpc-message",
+            single_string_code_unit_limit: bufferConstants.MAX_STRING_LENGTH,
+          },
+        },
+      },
+    });
+    const textContent = result.content.find((block) => block.type === "text");
+    expect(textContent?.type === "text" ? textContent.text : undefined).toBe(
+      JSON.stringify(result.structuredContent),
+    );
+  });
+
+  it("reports the runtime's string ceiling instead of leaking a serialization exception", () => {
+    const evidence = createEvidence(
+      undefined,
+      { id: "fixture", name: "Fixture", version: "1" },
+      { operation: "fixture", parameters: {}, result: { value: "big" } },
+    );
+    const stringify = vi.spyOn(JSON, "stringify").mockImplementationOnce(() => {
+      throw new RangeError("Invalid string length");
+    });
+    try {
+      const result = toCallToolResult(ok(evidence), contract);
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        error: {
+          code: "resource_constraint",
+          details: {
+            resource: "transport",
+            evidence_id: evidence.evidence_id,
+            reported_limits: { serialized_code_units: null },
+          },
+        },
+      });
+    } finally {
+      stringify.mockRestore();
+    }
+  });
 });

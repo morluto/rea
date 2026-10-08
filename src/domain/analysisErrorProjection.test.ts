@@ -62,6 +62,8 @@ it.each([
   ["cpu", { cpu_seconds: 1 }],
   ["file-size", null],
   ["file-size", { file_size_bytes: 1024 }],
+  ["transport", null],
+  ["transport", { transport: "json-rpc-message" }],
 ] as const)(
   "projects reported %s constraints with observed or unknown limits: %j",
   (resource, limits) => {
@@ -91,7 +93,9 @@ it.each([
         ? "CPU"
         : resource === "file-size"
           ? "file-size"
-          : "memory",
+          : resource === "transport"
+            ? "session Evidence"
+            : "memory",
     );
     expect(projected.remediation.action).not.toContain("doctor");
     expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(

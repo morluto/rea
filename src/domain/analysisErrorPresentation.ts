@@ -37,11 +37,13 @@ export const analysisErrorRemediationAction = (
   if (error instanceof AnalysisUnsupportedTargetError)
     return "Select a target supported by this operation or choose an operation supporting the reported target format.";
   if (error instanceof AnalysisResourceConstraintError)
-    return error.resource === "cpu"
-      ? "Review the reported worker CPU limits and observed signal. Retry with sufficient CPU time or a smaller artifact; REA retains tighter inherited limits."
-      : error.resource === "file-size"
-        ? "Review the reported worker file-size limits and write failure. Retry with a sufficient file-size allowance for the evidence reply; REA retains tighter inherited limits."
-        : "Review the reported worker memory limits and available host memory. Retry with sufficient memory or a smaller artifact; REA retains tighter inherited limits.";
+    return error.resource === "transport"
+      ? "The complete result remains retained as session Evidence; query it through evidence-scoped tools with its retained-evidence reference, or repeat the operation through the REA CLI, which streams the complete JSON result."
+      : error.resource === "cpu"
+        ? "Review the reported worker CPU limits and observed signal. Retry with sufficient CPU time or a smaller artifact; REA retains tighter inherited limits."
+        : error.resource === "file-size"
+          ? "Review the reported worker file-size limits and write failure. Retry with a sufficient file-size allowance for the evidence reply; REA retains tighter inherited limits."
+          : "Review the reported worker memory limits and available host memory. Retry with sufficient memory or a smaller artifact; REA retains tighter inherited limits.";
   if (error instanceof HopperTimeoutError)
     return error.providerState === "busy"
       ? "Check binary_session.analysis_activity, wait for the active Hopper request to finish, then retry."
