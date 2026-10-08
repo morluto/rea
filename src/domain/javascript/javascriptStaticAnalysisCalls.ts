@@ -4,7 +4,6 @@ import { sanitizeEndpointCandidate } from "../browserObservation.js";
 import {
   addFindingOnce,
   addLocatedFinding,
-  moduleAtOffset,
 } from "./javascriptStaticAnalysisFindings.js";
 import {
   STATIC_ROUTE_CALL_NAMES,
@@ -42,7 +41,7 @@ export const inspectCall = (
   const { accumulator } = context;
   const name = calleeName(node.callee);
   const first = stringValue(node.arguments[0]);
-  const module = moduleAtOffset(node.start, context.accumulator.modules);
+  const module = context.accumulator.moduleRangeIndex.find(node.start);
   const moduleRequireName = module?.requireName ?? null;
   const requireCall = requireCallSpecifier(node, name, moduleRequireName);
   if (requireCall !== null)

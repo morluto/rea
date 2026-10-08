@@ -28,8 +28,7 @@ it("does not attribute the first universal slice's UUID and segments to the sele
     "darwin",
   ).createClient(nativeMachoTarget("/owned/universal"));
   const result = await client.execute("inspect_macho", {});
-  expect(result.ok).toBe(true);
-  if (!result.ok) return;
+  if (!result.ok) throw result.error;
   expect(result.value.result).toMatchObject({
     uuid: "01234567-89AB-CDEF-0123-456789ABCDEF",
     architectures: { total: 2 },
@@ -96,8 +95,7 @@ it.each([
 
     const result = await client.execute("inspect_macho", {});
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     expect(result.value.result).toMatchObject({
       uuid: "01234567-89AB-CDEF-0123-456789ABCDEF",
       architectures: {

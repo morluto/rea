@@ -151,8 +151,7 @@ describe("managed decompiler reconstruction import", () => {
   it("wraps imported reconstruction in Evidence", () => {
     const evidence = importManagedReconstructionEvidence(exampleInput());
 
-    expect(evidence.ok).toBe(true);
-    if (!evidence.ok) return;
+    if (!evidence.ok) throw evidence.error;
     expect(evidence.value).toMatchObject({
       operation: "import_managed_reconstruction",
       provider: { id: "rea-dotnet-workflows" },

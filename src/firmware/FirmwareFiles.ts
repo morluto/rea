@@ -153,7 +153,11 @@ export const readFirmwareReport = async (
         `Report exceeded ${FIRMWARE_LIMITS.reportBytes} bytes`,
       );
     try {
-      const value: unknown = JSON.parse(bytes.toString("utf8"));
+      const value: unknown = JSON.parse(
+        new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+          bytes,
+        ),
+      );
       return value;
     } catch (cause: unknown) {
       throw new AnalysisOutputError(

@@ -1,28 +1,15 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
-const README_PATHS = [
-  "README.md",
-  "README_zh.md",
-  "README_ja.md",
-  "README_ko.md",
-  "README_ar.md",
-];
-const tableCounts = (content, path, expectedCounts) => {
-  const lines = content.split(/\r?\n/u);
-  for (const [index, line] of lines.entries()) {
-    if (!/^\|\s*-/u.test(line)) continue;
-    const counts = [];
-    for (const row of lines.slice(index + 1)) {
-      if (!row.trim().startsWith("|")) break;
-      const count = Number(row.split("|")[2]?.trim());
-      if (!Number.isInteger(count)) break;
-      counts.push(count);
-    }
-    if (counts.length === expectedCounts.length) return counts;
-  }
-  throw new Error(`Missing tool-family inventory table in ${path}`);
-};
+const readmeLinkTargets = (content) =>
+  [...content.matchAll(/\]\(([^)\s]+)\)/gu)]
+    .map((match) => match[1] ?? "")
+    .filter(
+      (target) =>
+        !target.startsWith("#") &&
+        !/^README(?:_[A-Za-z0-9-]+)?\.md$/u.test(target),
+    )
+    .sort();
 
 const requireText = (issues, path, content, expected) => {
   if (!content.includes(expected)) issues.push(`${path}: missing ${expected}`);
@@ -71,32 +58,37 @@ export const documentationFactIssues = async (root, catalog) => {
   const issues = await skillReferenceIssues(
     join(root, "skills/reverse-engineer-anything"),
   );
-  const expectedCounts = catalog.tools.families.map(({ count }) => count);
-  for (const path of README_PATHS) {
+  const readmePaths = (await readdir(root))
+    .filter((path) => /^README(?:_[A-Za-z0-9-]+)?\.md$/u.test(path))
+    .sort();
+  const readmes = new Map();
+  for (const path of readmePaths) {
     const content = await readFile(join(root, path), "utf8");
+    readmes.set(path, content);
     requireText(issues, path, content, "MCP-tool_catalog");
     if (path === "README.md") {
-      requireText(issues, path, content, "(docs/installation.md");
+      requireText(
+        issues,
+        path,
+        content,
+        "(docs/installation.md#supported-agents)",
+      );
+      requireText(issues, path, content, "(docs/installation.md#mcp-registry)");
       requireText(
         issues,
         path,
         content,
         "(docs/mcp-contracts.md#generated-catalog)",
       );
-      continue;
-    }
-    for (const client of catalog.setup_clients)
-      requireText(issues, path, content, client.display_name);
-    try {
-      const actualCounts = tableCounts(content, path, expectedCounts);
-      if (JSON.stringify(actualCounts) !== JSON.stringify(expectedCounts))
-        issues.push(
-          `${path}: tool family counts ${JSON.stringify(actualCounts)} do not match ${JSON.stringify(expectedCounts)}`,
-        );
-    } catch (cause) {
-      issues.push(cause instanceof Error ? cause.message : String(cause));
     }
   }
+  const canonicalLinks = readmeLinkTargets(readmes.get("README.md") ?? "");
+  for (const path of readmePaths.filter((path) => path !== "README.md"))
+    if (
+      JSON.stringify(readmeLinkTargets(readmes.get(path) ?? "")) !==
+      JSON.stringify(canonicalLinks)
+    )
+      issues.push(`${path}: documentation links differ from README.md`);
 
   const installationPath = "docs/installation.md";
   const installation = await readFile(join(root, installationPath), "utf8");

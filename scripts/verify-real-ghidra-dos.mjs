@@ -24,6 +24,7 @@ import {
 import { inspectGhidraInstallation } from "../dist/ghidra/GhidraInstallation.js";
 import { buildDosMzFixture } from "../tests/conformance/ghidra/dos-mz-fixture.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { verifyGhidraAddressBoundaries } from "./lib/real-ghidra-address-boundaries.mjs";
 
 // This lane intentionally has no game paths, binary seeds or compiler dependency.
 if (process.argv.length !== 2)
@@ -367,6 +368,11 @@ try {
     arguments: { procedure: "0xffffffffffffffff" },
   });
   assert.equal(invalid.isError, true, "Unmapped address did not fail");
+  await verifyGhidraAddressBoundaries(
+    client,
+    identities.entry.address,
+    cliEvidence,
+  );
   const cliWindow = await cliEvidence("instructions", identities.entry.address);
   assert.deepEqual(
     cliWindow.normalized_result,
@@ -428,6 +434,7 @@ try {
       far_target: expected.far,
     },
     invalid_address_rejected: true,
+    address_truncation_rejected: true,
     original_unchanged: true,
     limitations: [
       "Read-only import/decompilation evidence, not DOS runtime execution or whole-program semantic equivalence.",

@@ -254,4 +254,36 @@ describe("setup workflow lifecycle and provider planning", () => {
     expect(host.configurations).toBe(0);
     expect(host.checkedHopperPaths).toEqual(["/manual/Hopper"]);
   });
+
+  it("does not write a file when Grok Bot is selected", async () => {
+    const host = new FakeSetupHost();
+    host.doctorHealthy = true;
+    host.skill = "unchanged";
+    host.clients = [
+      {
+        name: "grok_bot",
+        displayName: "Grok Bot",
+        configPath: "/home/user/.grokbot",
+        format: "unsupported",
+      },
+    ];
+
+    const planned = await runSetup(
+      { ...options(true), clientIds: ["grok_bot"], dryRun: true },
+      host,
+    );
+    expect(planned.status).toBe("planned");
+    expect(planned.plannedActions).toEqual([]);
+    expect(planned.remediation).toContain("hosted computer");
+    expect(host.configurations).toBe(0);
+
+    const applied = await runSetup(
+      { ...options(true), clientIds: ["grok_bot"] },
+      host,
+    );
+    expect(applied.status).toBe("needs_human");
+    expect(applied.appliedActions).toEqual([]);
+    expect(applied.remediation).toContain("hosted computer");
+    expect(host.configurations).toBe(0);
+  });
 });

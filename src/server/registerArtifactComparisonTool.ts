@@ -10,7 +10,7 @@ import { recordDerivedEvidence } from "./recordDerivedEvidence.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
 import { ARTIFACT_COMPARISON_PROVIDER } from "./sessionToolPolicies.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { toCallToolResult } from "./toolResult.js";
+import { toCallToolResult, toEvidenceToolResult } from "./toolResult.js";
 
 /** Register Evidence-backed deterministic artifact comparison. */
 export const registerArtifactComparisonTool = (
@@ -50,13 +50,14 @@ export const registerArtifactComparisonTool = (
         limitations: comparison.limitations,
         evidenceLinks: [...leftEvidenceIds, ...rightEvidenceIds],
       });
-      return toCallToolResult(
+      return toEvidenceToolResult(
+        evidence,
+        contract,
         recordDerivedEvidence(
           session,
           evidence,
           artifactUnknownInput(left, right, comparison.status),
         ),
-        contract,
       );
     },
   );

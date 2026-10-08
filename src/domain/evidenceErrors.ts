@@ -17,6 +17,9 @@ export class EvidenceIntegrityError extends AnalysisError {
   }
 }
 
+/** A valid snapshot belongs to a different target, provider, or analysis profile. */
+export class AnalysisSnapshotMismatchError extends EvidenceIntegrityError {}
+
 /** A session Evidence reference is missing or has the wrong semantic identity. */
 export class EvidenceReferenceError extends EvidenceIntegrityError {
   constructor(

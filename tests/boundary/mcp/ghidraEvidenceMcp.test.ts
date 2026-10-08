@@ -112,8 +112,7 @@ describe("Ghidra MCP evidence parity", () => {
         "binary_overview",
         {},
       );
-      expect(directOverview.ok).toBe(true);
-      if (!directOverview.ok) return;
+      if (!directOverview.ok) throw directOverview.error;
       expect(mcpOverview.normalized_result).toEqual(directOverview.value);
       expect(mcpOverview).toMatchObject({
         provider: { id: "rea-workflow" },
@@ -191,8 +190,7 @@ describe("Ghidra MCP evidence parity", () => {
         "analyze_function",
         { procedure: "fixture_main" },
       );
-      expect(directAnalyzed.ok).toBe(true);
-      if (!directAnalyzed.ok) return;
+      if (!directAnalyzed.ok) throw directAnalyzed.error;
       expect(analyzed.normalized_result).toEqual(directAnalyzed.value);
     } finally {
       await harness.close();

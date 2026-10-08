@@ -81,8 +81,7 @@ describe("artifact extraction", () => {
           output_root: output,
         }),
       );
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     const firstExtraction = artifactExtractionResultSchema.parse(
       result.value.result,
     );
@@ -110,8 +109,7 @@ describe("artifact extraction", () => {
           output_root: relocatedOutput,
         }),
       );
-    expect(relocated.ok).toBe(true);
-    if (!relocated.ok) return;
+    if (!relocated.ok) throw relocated.error;
     expect(
       artifactExtractionResultSchema.parse(relocated.value.result)
         .extraction_manifest,

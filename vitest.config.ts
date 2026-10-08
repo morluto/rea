@@ -134,6 +134,7 @@ export default defineConfig({
     projects,
     retry: 0,
     reporters: ["default"],
+    runner: "./tests/processOwnershipRunner.ts",
     // Boundary projects may compete with TypeScript, docs, and package checks
     // under Turbo. Keep the deadline bounded while avoiding false failures from
     // host-level CPU and filesystem contention.

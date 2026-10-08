@@ -223,6 +223,12 @@ export class ProviderProcessSupervisor {
   readonly #onStderr = (chunk: Buffer | string): void => {
     this.#capture("stderr", this.#stderr, chunk);
   };
+  readonly #onStdoutError = (cause: Error): void => {
+    this.#recordStreamError("stdout", cause);
+  };
+  readonly #onStderrError = (cause: Error): void => {
+    this.#recordStreamError("stderr", cause);
+  };
   readonly #onExit = (
     code: number | null,
     signal: NodeJS.Signals | null,
@@ -315,7 +321,9 @@ export class ProviderProcessSupervisor {
     if (this.#disposed) return;
     this.#disposed = true;
     this.launch.process.stdout?.off("data", this.#onStdout);
+    this.launch.process.stdout?.off("error", this.#onStdoutError);
     this.launch.process.stderr?.off("data", this.#onStderr);
+    this.launch.process.stderr?.off("error", this.#onStderrError);
     this.launch.process.off("exit", this.#onExit);
     this.launch.process.off("close", this.#onClose);
     this.launch.process.off("error", this.#onError);
@@ -404,8 +412,20 @@ export class ProviderProcessSupervisor {
   }
 
   #attach(stream: Readable | null, name: "stdout" | "stderr"): void {
-    if (name === "stdout") stream?.on("data", this.#onStdout);
-    else stream?.on("data", this.#onStderr);
+    if (name === "stdout") {
+      stream?.on("data", this.#onStdout);
+      stream?.on("error", this.#onStdoutError);
+    } else {
+      stream?.on("data", this.#onStderr);
+      stream?.on("error", this.#onStderrError);
+    }
+  }
+
+  #recordStreamError(stream: "stdout" | "stderr", cause: Error): void {
+    this.#options.onDiagnostic?.({
+      type: "error",
+      message: `${stream} stream failed: ${cause.message}`,
+    });
   }
 
   #capture(

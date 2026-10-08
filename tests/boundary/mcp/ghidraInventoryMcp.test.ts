@@ -1,9 +1,10 @@
 import { expect, it } from "vitest";
 import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { ok } from "../../../src/domain/result.js";
+import { ghidraFunctionIdentity } from "../../../src/domain/ghidraValues.fixture.js";
 import { connectGhidraMcp } from "./ghidraMcpHarness.js";
 
-it("rejects contradictory provider memory and inventory data before emitting MCP Evidence", async () => {
+it("rejects contradictory provider output before emitting MCP Evidence", async () => {
   const bytes = {
     address: "0x401000",
     requested_bytes: 4,
@@ -56,6 +57,38 @@ it("rejects contradictory provider memory and inventory data before emitting MCP
         name: "search_strings",
         arguments: { pattern: "needle" },
         output: [{ address: "0x401000" }],
+      },
+      {
+        name: "read_function_instructions",
+        arguments: { procedure: "fixture_main" },
+        output: {
+          procedure: { ...ghidraFunctionIdentity(), address: "0X401000" },
+          instructions: ["0x401000: push rbp"],
+          limitations: ["Ghidra-specific instruction text."],
+        },
+      },
+      {
+        name: "resolve_containing_procedure",
+        arguments: { address: "EXTERNAL:0x2" },
+        output: {
+          query_address: "EXTERNAL:0x2",
+          found: true,
+          procedure: {
+            ...ghidraFunctionIdentity(),
+            address: "EXTERNAL:0x1",
+            classification: {
+              ...ghidraFunctionIdentity().classification,
+              external: true,
+            },
+            body: {
+              ...ghidraFunctionIdentity().body,
+              ranges: [],
+              total_bytes: 0,
+              span_bytes: 0,
+              contains_entry: false,
+            },
+          },
+        },
       },
     ];
     for (const probe of cases) {

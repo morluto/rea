@@ -17,6 +17,13 @@ import type {
   ProviderIdentity,
 } from "../AnalysisProvider.js";
 
+/** Receipt for an atomically saved snapshot followed by provider cleanup. */
+export interface SavedAnalysisSnapshot {
+  readonly path: string;
+  readonly bytes: number;
+  readonly entries: number;
+}
+
 /** Target lifecycle used by CLI and MCP without exposing a concrete provider. */
 export interface BinarySessionPort
   extends AnalysisOperationPort, InvestigationRecordPort {
@@ -35,6 +42,12 @@ export interface BinarySessionPort
       readonly retainProviderDocuments?: boolean;
     },
   ): Promise<Result<null, AnalysisError>>;
+  /** Save a snapshot and close while excluding later provider requests. */
+  closeWithSnapshot(
+    path: string,
+    overwrite: boolean,
+    options?: Pick<ExecutionOptions, "progress">,
+  ): Promise<Result<SavedAnalysisSnapshot, AnalysisError>>;
   status(): JsonValue;
   activeTarget(): BinaryTarget | undefined;
   exportAnalysisSnapshot(): Result<AnalysisSnapshot, AnalysisError>;

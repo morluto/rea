@@ -262,13 +262,41 @@ export const electronActiveObservationResultSchema = z.strictObject({
   ipc: z.strictObject({
     events: z.array(ipcEventSchema),
     observed: z.number().int().min(0),
+    dropped: z.number().int().min(0).nullable().default(null),
   }),
   timeline: z
     .strictObject({
       events: z.array(timelineEventSchema),
       observed: z.number().int().min(0),
+      dropped: z.number().int().min(0).nullable().default(null),
     })
-    .default({ events: [], observed: 0 }),
+    .default({ events: [], observed: 0, dropped: null }),
+  retention: z
+    .strictObject({
+      budget_bytes: z.number().int().min(0),
+      estimated_retained_bytes: z.number().int().min(0),
+      event_serialized_byte_upper_bound: z.number().int().min(0),
+      retained: z.number().int().min(0),
+      dropped: z.number().int().min(0),
+      dropped_event_families: z.array(
+        z.strictObject({
+          family: z.string().min(1),
+          count: z.number().int().min(1),
+        }),
+      ),
+      dropped_event_roles: z.array(
+        z.strictObject({
+          role: z.string().min(1),
+          count: z.number().int().min(1),
+        }),
+      ),
+      observed_ipc: z.number().int().min(0),
+      dropped_ipc: z.number().int().min(0),
+      observed_runtime: z.number().int().min(0),
+      dropped_runtime: z.number().int().min(0),
+    })
+    .nullable()
+    .default(null),
   coverage: coverageSchema.default({
     status: "partial_attach",
     observed_event_families: [],

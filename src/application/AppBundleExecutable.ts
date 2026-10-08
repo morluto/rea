@@ -8,6 +8,7 @@ import { z } from "zod";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { isPathWithinRoot } from "../domain/localPath.js";
 import { parseXmlPropertyList } from "../domain/propertyListKeys.js";
+import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 const execFileAsync = promisify(execFile);
@@ -194,7 +195,7 @@ const resolveLayoutExecutable = async (
         ? await (fileSystem.decodeBinaryPlist ?? readBinaryPlistExecutable)(
             plistPath,
           )
-        : parseXmlPlistExecutable(plist.toString("utf8"));
+        : parseXmlPlistExecutable(decodeXmlPlistText(plist));
   } catch (cause: unknown) {
     return err(
       new BinaryTargetError(
@@ -203,7 +204,7 @@ const resolveLayoutExecutable = async (
           ? `permission denied decoding app Info.plist ${plistPath}${codeDescription(cause)}`
           : isSystemErrorCode(cause)
             ? `could not decode app Info.plist ${plistPath}${codeDescription(cause)}`
-            : `app Info.plist is malformed or lacks CFBundleExecutable: ${plistPath}`,
+            : `app Info.plist is malformed, unsupported, or lacks CFBundleExecutable: ${plistPath}${cause instanceof Error ? ` (${cause.message})` : ""}`,
         { cause },
       ),
     );

@@ -34,6 +34,8 @@ import {
 
 const verifierRun = createVerifierRun();
 const workspace = await mkdtemp(join(tmpdir(), "rea-managed-conformance-"));
+let completionReportInput;
+let finalReport;
 const {
   fixture,
   fixtureBytes,
@@ -378,65 +380,61 @@ try {
   const manifestSelfTest = await runManagedAppManifestSelfTest();
   const operatorManifest = await runOptionalManagedAppManifest();
   const ilspyOracle = await runOptionalIlspyOracle();
-  const completionReport = createManagedCompletionReport(
-    {
-      modern,
-      framework,
-      nativeFunctionTarget,
-      readyToRun,
-      obfuscated,
-      left,
-      right,
-      nativeOnly,
-      malformed,
-      manifestSelfTest,
-      operatorManifest,
-      ilspyOracle,
+  completionReportInput = {
+    modern,
+    framework,
+    nativeFunctionTarget,
+    readyToRun,
+    obfuscated,
+    left,
+    right,
+    nativeOnly,
+    malformed,
+    manifestSelfTest,
+    operatorManifest,
+    ilspyOracle,
+  };
+  finalReport = {
+    verified:
+      11 + (operatorManifest === null ? 0 : 1) + (ilspyOracle === null ? 0 : 1),
+    managedSurfaces: [
+      "inspect_managed_artifact",
+      "inspect_managed_members",
+      "inspect_managed_native_boundaries",
+      "compare_managed_members",
+      "verify_managed_native_boundaries",
+      "import_managed_reconstruction",
+      "project_managed_application_graph",
+    ],
+    coverage: [
+      "modern-dotnet-anycpu",
+      "dotnet-framework-x86-pinvoke",
+      "x64-ready-to-run-native-body",
+      "managed-native-verification",
+      "managed-application-graph-projection",
+      "unicode-obfuscated-identifiers",
+      "decompiler-reconstruction-import",
+      "mvid-and-token-drift",
+      "not-managed",
+      "malformed-metadata",
+      "operator-local-managed-manifest",
+      ...(ilspyOracle === null ? [] : ["ilspy-reconstruction-oracle"]),
+    ],
+    managedAppManifest: {
+      env: "REA_MANAGED_APP_MANIFEST_PATH",
+      selfTest: manifestSelfTest,
+      operator: operatorManifest ?? { configured: false },
     },
-    await completeVerifierRun(verifierRun),
-  );
-
-  process.stdout.write(
-    `${JSON.stringify({
-      verified:
-        11 +
-        (operatorManifest === null ? 0 : 1) +
-        (ilspyOracle === null ? 0 : 1),
-      managedSurfaces: [
-        "inspect_managed_artifact",
-        "inspect_managed_members",
-        "inspect_managed_native_boundaries",
-        "compare_managed_members",
-        "verify_managed_native_boundaries",
-        "import_managed_reconstruction",
-        "project_managed_application_graph",
-      ],
-      coverage: [
-        "modern-dotnet-anycpu",
-        "dotnet-framework-x86-pinvoke",
-        "x64-ready-to-run-native-body",
-        "managed-native-verification",
-        "managed-application-graph-projection",
-        "unicode-obfuscated-identifiers",
-        "decompiler-reconstruction-import",
-        "mvid-and-token-drift",
-        "not-managed",
-        "malformed-metadata",
-        "operator-local-managed-manifest",
-        ...(ilspyOracle === null ? [] : ["ilspy-reconstruction-oracle"]),
-      ],
-      managedAppManifest: {
-        env: "REA_MANAGED_APP_MANIFEST_PATH",
-        selfTest: manifestSelfTest,
-        operator: operatorManifest ?? { configured: false },
-      },
-      ilspyOracle: ilspyOracle ?? {
-        env: "REA_ILSPY_CMD_PATH",
-        configured: false,
-      },
-      completionReport,
-    })}\n`,
-  );
+    ilspyOracle: ilspyOracle ?? {
+      env: "REA_ILSPY_CMD_PATH",
+      configured: false,
+    },
+  };
 } finally {
   await rm(workspace, { recursive: true, force: true });
 }
+finalReport.completionReport = createManagedCompletionReport(
+  completionReportInput,
+  await completeVerifierRun(verifierRun),
+);
+process.stdout.write(`${JSON.stringify(finalReport)}\n`);

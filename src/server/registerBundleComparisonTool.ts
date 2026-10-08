@@ -6,11 +6,10 @@ import { toolContract } from "../contracts/toolContracts.js";
 import { compareBundles } from "../domain/bundleComparison.js";
 import { createEvidence } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import { ok } from "../domain/result.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
 import { BUNDLE_COMPARISON_PROVIDER } from "./sessionToolPolicies.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { toCallToolResult } from "./toolResult.js";
+import { toCallToolResult, toEvidenceToolResult } from "./toolResult.js";
 
 /** Register canonical Evidence bundle comparison. */
 export const registerBundleComparisonTool = (
@@ -47,7 +46,7 @@ export const registerBundleComparisonTool = (
         limitations: comparison.limitations,
       });
       const recorded = session.recordEvidence(evidence);
-      return toCallToolResult(recorded.ok ? ok(evidence) : recorded, contract);
+      return toEvidenceToolResult(evidence, contract, recorded);
     },
   );
 };

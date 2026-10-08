@@ -17,12 +17,19 @@ export const buildWebBundleAnalysis = (
   const unavailable = inspection.scripts.items
     .filter((script) => !script.source.included)
     .map(({ script_key }) => script_key);
+  const omittedScripts = captureBudgetOmission(inspection, "scripts");
+  const omittedSourceMaps =
+    sourceMaps.status === "not_requested"
+      ? undefined
+      : captureBudgetOmission(inspection, "source_maps");
   const sourceMapIncomplete =
     sourceMaps.status === "partial" || sourceMaps.status === "unavailable";
   const partial =
     accumulator.parseFailures > 0 ||
     unavailable.length > 0 ||
-    sourceMapIncomplete;
+    sourceMapIncomplete ||
+    omittedScripts !== undefined ||
+    omittedSourceMaps !== undefined;
   return webBundleAnalysisSchema.parse({
     capture: buildCaptureObservation(inspection, sourceScripts),
     observations: {
@@ -41,6 +48,8 @@ export const buildWebBundleAnalysis = (
       unavailable,
       parseFailures: accumulator.parseFailures,
       sourceMaps,
+      omittedScripts,
+      omittedSourceMaps,
     }),
     completeness: buildCompleteness({
       partial,
@@ -83,9 +92,20 @@ interface UnknownsInput {
   readonly unavailable: string[];
   readonly parseFailures: number;
   readonly sourceMaps: WebBundleAnalysis["observations"]["source_maps"];
+  readonly omittedScripts: number | null | undefined;
+  readonly omittedSourceMaps: number | null | undefined;
 }
 
 const buildUnknowns = (input: UnknownsInput): WebBundleAnalysis["unknowns"] => [
+  ...(input.omittedScripts === undefined
+    ? []
+    : [
+        {
+          dimension: "script_inventory",
+          reason: captureBudgetReason("script records", input.omittedScripts),
+          affected_script_keys: [],
+        },
+      ]),
   ...(input.unavailable.length === 0
     ? []
     : [
@@ -106,6 +126,18 @@ const buildUnknowns = (input: UnknownsInput): WebBundleAnalysis["unknowns"] => [
           ),
         },
       ]),
+  ...(input.omittedSourceMaps === undefined
+    ? []
+    : [
+        {
+          dimension: "source_maps" as const,
+          reason: captureBudgetReason(
+            "source-map declarations",
+            input.omittedSourceMaps,
+          ),
+          affected_script_keys: [],
+        },
+      ]),
   ...(input.sourceMaps.status === "not_requested" ||
   input.sourceMaps.status === "included"
     ? []
@@ -113,6 +145,7 @@ const buildUnknowns = (input: UnknownsInput): WebBundleAnalysis["unknowns"] => [
         {
           dimension: "source_maps" as const,
           reason:
+            input.sourceMaps.limitation ??
             "One or more requested source maps were unavailable or incomplete",
           affected_script_keys: input.sourceMaps.items
             .filter(({ status }) => status !== "included")
@@ -121,6 +154,25 @@ const buildUnknowns = (input: UnknownsInput): WebBundleAnalysis["unknowns"] => [
         },
       ]),
 ];
+
+const captureBudgetOmission = (
+  inspection: WebPageInspection,
+  section: "scripts" | "source_maps",
+): number | null | undefined => {
+  const exclusions = inspection.completeness.excluded.filter(
+    (exclusion) =>
+      exclusion.section === section &&
+      exclusion.reason === "resource_budget_exhausted",
+  );
+  if (exclusions.length === 0) return undefined;
+  if (exclusions.some(({ count }) => count === null)) return null;
+  return exclusions.reduce((sum, { count }) => sum + (count ?? 0), 0);
+};
+
+const captureBudgetReason = (label: string, count: number | null): string =>
+  count === null
+    ? `Capture omitted an unknown number of ${label} because its resource budget was exhausted.`
+    : `Capture omitted ${String(count)} ${label} because its resource budget was exhausted.`;
 
 interface CompletenessInput {
   readonly partial: boolean;

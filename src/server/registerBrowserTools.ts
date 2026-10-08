@@ -28,7 +28,7 @@ import type { Logger } from "../logger.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { toCallToolResult } from "./toolResult.js";
+import { toCallToolResult, toEvidenceToolResult } from "./toolResult.js";
 
 interface BrowserToolRegistration {
   readonly logger: Logger;
@@ -206,13 +206,5 @@ const evidenceResult = (
   evidence: Evidence,
 ) => {
   const recorded = options.recordEvidence?.(evidence);
-  return recorded !== undefined && !recorded.ok
-    ? toCallToolResult(recorded, contract)
-    : toCallToolResult(
-        { ok: true, value: evidence },
-        contract,
-        recorded === undefined
-          ? undefined
-          : { retainedEvidenceId: evidence.evidence_id },
-      );
+  return toEvidenceToolResult(evidence, contract, recorded);
 };

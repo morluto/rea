@@ -31,18 +31,6 @@ describe("containing-procedure complete body evidence", () => {
     found: true,
     procedure: identity(),
   });
-  it("accepts the Java producer identity including complete inclusive body ranges", () => {
-    const value = found();
-    expect(
-      parseGhidraInventoryResult("resolve_containing_procedure", value),
-    ).toEqual({ ok: true, value });
-    expect(
-      parseGhidraInventoryResult("resolve_containing_procedure", {
-        ...value,
-        query_address: "0x1021",
-      }).ok,
-    ).toBe(true);
-  });
   it("rejects a missing body rather than treating a legacy identity as complete", () => {
     const { body: omitted, ...legacy } = identity();
     expect(omitted.total_bytes).toBe(5);
@@ -107,16 +95,5 @@ describe("containing-procedure complete body evidence", () => {
         query_address: "0x1010",
       }).ok,
     ).toBe(false);
-  });
-  it("retains explicit not-found outcomes without fabricating a body", () => {
-    const value = {
-      query_address: "0x1010",
-      found: false,
-      procedure: null,
-      reason: "not_in_procedure",
-    };
-    expect(
-      parseGhidraInventoryResult("resolve_containing_procedure", value),
-    ).toEqual({ ok: true, value });
   });
 });

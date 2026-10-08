@@ -3,6 +3,7 @@ import type {
   ClientRegistrationStatus,
   UnhealthyClientRegistrationStatus,
 } from "./ClientRegistrationStatus.js";
+import { manualRegistrationRemediation } from "./SupportedClients.js";
 import type {
   DoctorCheck,
   DoctorProviderInspection,
@@ -135,8 +136,17 @@ const selectedProviderChecksFor = (
 const selectedRegistrationCheck = (
   client: string,
   status: ClientRegistrationStatus | undefined,
-): DoctorCheck =>
-  status === undefined
+): DoctorCheck => {
+  const manual = manualRegistrationRemediation(client);
+  if (status === undefined && manual !== undefined)
+    return {
+      name: `registration:${client}`,
+      ok: false,
+      classification: "config_drift",
+      detail: `${client} is not registered through a local configuration file.`,
+      remediation: manual,
+    };
+  return status === undefined
     ? {
         name: `registration:${client}`,
         ok: false,
@@ -152,6 +162,7 @@ const selectedRegistrationCheck = (
           detail: status.config_path,
         }
       : registrationCheck(status);
+};
 
 const registrationCheck = (
   status: UnhealthyClientRegistrationStatus,

@@ -25,7 +25,7 @@ import { recordSessionEvidenceSources } from "./sessionEvidence.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
 import { PROCESS_PROVIDER } from "./sessionToolPolicies.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { toCallToolResult } from "./toolResult.js";
+import { toCallToolResult, toEvidenceToolResult } from "./toolResult.js";
 
 const PROCESS_CAPTURE_EVIDENCE = {
   operation: "capture_process_scenario",
@@ -143,7 +143,9 @@ export const registerProcessComparisonTool = (
       );
       if (!recordedSources.ok)
         return toCallToolResult(recordedSources, contract);
-      return toCallToolResult(
+      return toEvidenceToolResult(
+        evidence,
+        contract,
         recordDerivedEvidence(
           session,
           evidence,
@@ -156,7 +158,6 @@ export const registerProcessComparisonTool = (
             comparison,
           ),
         ),
-        contract,
       );
     },
   );

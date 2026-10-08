@@ -10,6 +10,8 @@ export type NibHierarchyNode = {
 export const projectNibViewHierarchy = (
   objects: NibArchiveDocument["objects"],
   retainedIds: ReadonlySet<number>,
+  reserveNode: () => boolean = () => true,
+  maxNodes = 20_000,
 ) => {
   const { parents, involved, invalid } = collectNibParents(
     objects,
@@ -32,7 +34,12 @@ export const projectNibViewHierarchy = (
   while (pending.length > 0) {
     const item = pending.pop();
     if (item === undefined) break;
-    if (visited.has(item.id) || item.depth > 128 || visited.size >= 20_000)
+    if (
+      visited.has(item.id) ||
+      item.depth > 128 ||
+      visited.size >= maxNodes ||
+      !reserveNode()
+    )
       continue;
     visited.add(item.id);
     const node: NibHierarchyNode = { objectID: String(item.id), children: [] };
@@ -50,6 +57,8 @@ export const projectNibViewHierarchy = (
 export const mergeNibHierarchies = (
   legacy: NibHierarchyNode[],
   recovered: NibHierarchyNode[],
+  reserveNode: () => boolean = () => true,
+  maxNodes = 20_000,
 ) => {
   const existing = new Map<string, NibHierarchyNode>();
   const owners = new Map<string, NibHierarchyNode[]>();
@@ -84,6 +93,10 @@ export const mergeNibHierarchies = (
     if (entry === undefined) break;
     let target = existing.get(entry.node.objectID);
     if (target === undefined) {
+      if (existing.size >= maxNodes || !reserveNode()) {
+        omitted += 1;
+        continue;
+      }
       target = { objectID: entry.node.objectID, children: [] };
       existing.set(target.objectID, target);
       entry.output.push(target);

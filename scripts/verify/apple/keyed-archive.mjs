@@ -17,6 +17,7 @@ if (process.platform !== "darwin")
     "Real Foundation keyed archive verification requires macOS and Xcode Swift tools",
   );
 const root = await mkdtemp(join(tmpdir(), "rea-keyed-fixture-"));
+let report;
 try {
   const archive = join(root, "model.plist");
   await promisify(execFile)("/usr/bin/xcrun", [
@@ -150,9 +151,21 @@ try {
       [{ source: null, path: ["UID"], target: 1, status: "resolved" }],
     );
   }
-  process.stdout.write(
-    `${JSON.stringify({ ok: true, mocked: false, cli: true, stdio_mcp: true, xml_golden: true, uid_named_root: true, format: graph.archive_format, objects: graph.total_objects, references: graph.total_references, shared_identity: true, cyclic_identity: true, target_classes_instantiated_by_reader: false })}\n`,
-  );
+  report = {
+    ok: true,
+    mocked: false,
+    cli: true,
+    stdio_mcp: true,
+    xml_golden: true,
+    uid_named_root: true,
+    format: graph.archive_format,
+    objects: graph.total_objects,
+    references: graph.total_references,
+    shared_identity: true,
+    cyclic_identity: true,
+    target_classes_instantiated_by_reader: false,
+  };
 } finally {
   await rm(root, { recursive: true, force: true });
 }
+process.stdout.write(`${JSON.stringify(report)}\n`);

@@ -149,3 +149,33 @@ it("restores original BOM-prefixed JSONC bytes after update and removal", async 
   });
   expect(await readFile(client.configPath, "utf8")).toBe(original);
 });
+
+it.each(["", "\n  \n", "\uFEFF"])(
+  "configures an empty client file %j as a new document",
+  async (original) => {
+    const home = await createTestTempDirectory("rea-client-config-empty-");
+    const client = supportedClients(home, "linux", {}).find(
+      (candidate) => candidate.name === "antigravity",
+    );
+    if (client?.format !== "json")
+      throw new Error("missing Antigravity JSON config");
+    await mkdir(dirname(client.configPath), { recursive: true });
+    await writeFile(client.configPath, original);
+    const command = [join(home, "rea"), "mcp"];
+
+    expect(await inspectClientConfiguration(client, {}, command)).toEqual({
+      status: "update",
+      backupPath: `${client.configPath}.rea.backup`,
+    });
+    expect(await configureClientConfiguration(client, {}, command)).toEqual({
+      status: "configured",
+      backupPath: `${client.configPath}.rea.backup`,
+    });
+    expect(JSON.parse(await readFile(client.configPath, "utf8"))).toEqual({
+      mcpServers: { rea: clientRegistrationEntry(client.format, command, {}) },
+    });
+    expect(await inspectClientConfiguration(client, {}, command)).toEqual({
+      status: "already_current",
+    });
+  },
+);

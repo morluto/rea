@@ -137,6 +137,12 @@ function implements a specific managed method.
 
 ## Evidence record shape
 
+Member comparison, application graph projection, and managed/native verification
+authenticate supplied inspection Evidence and check that any subject SHA-256
+matches the normalized artifact SHA-256. A valid Evidence ID alone does not
+establish that those two identities agree. Evidence without a subject remains
+usable, with no subject digest available to cross-check.
+
 Every planned operation returns a provider result and Evidence with four
 commitment groups:
 

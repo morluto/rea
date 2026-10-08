@@ -148,8 +148,7 @@ it("retains native inventory facts from captured Apple tool output", async () =>
     "darwin",
   ).createClient(machoTarget("/private/fixture"));
   const execution = await client.execute("inspect_macho", {});
-  expect(execution.ok).toBe(true);
-  if (!execution.ok) return;
+  if (!execution.ok) throw execution.error;
   expect(execution.value.result).toMatchObject({
     imports: {
       items: [

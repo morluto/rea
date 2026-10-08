@@ -5,7 +5,7 @@ import { verifyManagedNativeBoundariesEvidence } from "../../application/managed
 import { managedNativeVerificationResultSchema } from "../../domain/managed/managedNativeVerification.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
-import { toCallToolResult } from "../toolResult.js";
+import { toCallToolResult, toEvidenceToolResult } from "../toolResult.js";
 import { managedWorkflowContract } from "./contract.js";
 import {
   resolveManagedBoundaryEvidence,
@@ -90,9 +90,11 @@ export const registerVerifyManagedNativeBoundaries = (
             relationships: [],
           })
         : options.recordEvidence?.(result.value);
-      if (output !== undefined && !output.ok)
-        return toCallToolResult(output, nativeVerificationContract);
-      return toCallToolResult(result, nativeVerificationContract);
+      return toEvidenceToolResult(
+        result.value,
+        nativeVerificationContract,
+        output,
+      );
     },
   );
 };

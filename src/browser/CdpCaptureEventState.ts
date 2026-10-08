@@ -9,6 +9,11 @@ export interface CdpCaptureEventsState {
   readonly input: InspectWebPageInput;
   readonly allowedOrigins: ReadonlySet<string>;
   readonly scripts: Map<string, CapturedScript>;
+  readonly scriptMetadataBudgetOmissionsById: Map<string, true>;
+  rejectedScriptMetadataBudgetCount: number;
+  rejectedSourceMapMetadataBudgetCount: number;
+  readonly scriptMetadataBytesById: Map<string, number>;
+  retainedScriptMetadataBytes: number;
   readonly executionContextFrames: Map<string, string>;
   readonly network: Map<string, NetworkState>;
   readonly networkRequestTimestamps: Map<string, number>;

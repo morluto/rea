@@ -20,8 +20,7 @@ it("collects the actual Mach header alongside the native load commands", async (
     nativeMachoTarget("/owned/fixture"),
   );
   const result = await client.execute("inspect_macho", {});
-  expect(result.ok).toBe(true);
-  if (!result.ok) return;
+  if (!result.ok) throw result.error;
   expect(result.value.result).toMatchObject({
     file_type: "2",
     flags: ["0x00200085"],

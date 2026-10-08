@@ -142,7 +142,9 @@ describe("Android application projection", () => {
       "Runtime families are inferred from inventory formats and paths; filename suffixes do not establish valid DEX or JVM class bytes.",
     );
   });
+});
 
+describe("Android bridge candidate coverage", () => {
   it("returns every component and bridge candidate from the inventory", async () => {
     const root = await createTestTempDirectory("rea-android-complete-");
     const path = join(root, "Fixture.apk");
@@ -163,13 +165,66 @@ describe("Android application projection", () => {
       inventory_evidence: [inventory],
     });
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     const projection = androidApplicationProjectionResultSchema.parse(
       result.value.normalized_result,
     );
     expect(projection.components.dex).toHaveLength(1_001);
     expect(projection.bridge_candidates).toHaveLength(1_001);
     expect(projection.coverage.status).toBe("complete-within-inventory");
+  });
+
+  it("marks a multidex by native projection partial when escaped UTF-8 candidate paths exceed its byte budget", async () => {
+    const root = await createTestTempDirectory("rea-android-bridge-budget-");
+    const path = join(root, "Large.apk");
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    const dex = Uint8Array.from([0x64, 0x65, 0x78, 0x0a, 0x30, 0x33, 0x35, 0]);
+    const escapedDirectory = `${"é".repeat(100)}${'"'.repeat(120)}`;
+    for (let index = 0; index < 129; index += 1)
+      await writer.add(
+        `${escapedDirectory}/classes${String(index + 1).padStart(3, "0")}.dex`,
+        new Uint8ArrayReader(dex),
+      );
+    for (let index = 0; index < 128; index += 1)
+      await writer.add(
+        `lib/arm64-v8a/libnative${String(index).padStart(3, "0")}.so`,
+        new TextReader("native"),
+      );
+    await writeFile(path, await writer.close());
+
+    const inventory = parseEvidence(
+      await runProviderAnalysis(path, "inventory_artifact", {}),
+    );
+    const result = projectAndroidApplicationEvidence({
+      inventory_evidence: [inventory],
+    });
+    if (!result.ok) throw result.error;
+    const projection = androidApplicationProjectionResultSchema.parse(
+      result.value.normalized_result,
+    );
+
+    expect(projection.components.dex).toHaveLength(129);
+    expect(projection.components.native_libraries).toHaveLength(128);
+    expect(projection.bridge_candidate_coverage).toMatchObject({
+      status: "partial",
+      total_candidates: 129 * 128,
+      emitted_candidates: projection.bridge_candidates.length,
+      omitted_candidates: 129 * 128 - projection.bridge_candidates.length,
+    });
+    expect(projection.bridge_candidates.length).toBeGreaterThan(0);
+    expect(projection.bridge_candidates.length).toBeLessThan(129 * 128);
+    expect(
+      Buffer.byteLength(JSON.stringify(projection.bridge_candidates)),
+    ).toBeLessThanOrEqual(2 * 1024 * 1024);
+    expect(projection.coverage).toMatchObject({
+      status: "partial",
+      inventory_complete: true,
+    });
+    expect(projection.limitations).toContain(
+      "Bridge candidates are path-based hypotheses, not decoded JNI declarations or observed runtime calls.",
+    );
+    expect(projection.limitations).toContain(
+      `Bridge candidate pairs exceeded the projection safety budget; ${projection.bridge_candidate_coverage.omitted_candidates} hypotheses are omitted. Component arrays still include every component from the supplied inventory pages.`,
+    );
   });
 });

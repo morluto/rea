@@ -9,6 +9,19 @@ import {
 import { createElectronActiveObservationFixtureResult } from "../domain/javascript/electronActiveObservation.fixture.js";
 import { runElectronActions } from "./PlaywrightElectronActiveActions.js";
 
+it("keeps legacy Electron results explicit about unavailable retention data", () => {
+  const { retention: _retention, ...legacyResult } =
+    createElectronActiveObservationFixtureResult("/opt/app");
+  const parsed = electronActiveObservationResultSchema.parse({
+    ...legacyResult,
+    ipc: { ...legacyResult.ipc, dropped: undefined },
+    timeline: { ...legacyResult.timeline, dropped: undefined },
+  });
+  expect(parsed.retention).toBeNull();
+  expect(parsed.ipc.dropped).toBeNull();
+  expect(parsed.timeline.dropped).toBeNull();
+});
+
 it("parses window, renderer, and deep-link actions for agents", () => {
   const input = electronActiveObservationInputSchema.parse({
     executable_path: "/opt/electron",

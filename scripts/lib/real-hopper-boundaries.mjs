@@ -7,8 +7,13 @@ import { promisify } from "node:util";
 import Ajv from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { mcpTextValue, requireMcpResult } from "./mcp-verifier-results.mjs";
+import { verifyHopperCliSelectors } from "./real-hopper-cli-selectors.mjs";
 import { verifyHopperNavigationAndText } from "./real-hopper-navigation.mjs";
 import { verifyHopperWorkflows } from "./real-hopper-workflows.mjs";
+import {
+  verifyHopperSearch,
+  verifyHopperRegexIsolation,
+} from "./real-hopper-search.mjs";
 
 /** Exercise real Hopper annotation and malformed-input boundaries over MCP. */
 export async function verifyHopperBoundaryContracts(
@@ -74,6 +79,10 @@ export async function verifyHopperBoundaryContracts(
     address,
   );
   const workflows = await verifyHopperWorkflows(call, invalid, procedure);
+  const search = {
+    ...(await verifyHopperSearch(call, invalid, procedure)),
+    ...(await verifyHopperRegexIsolation(client, options, call, address)),
+  };
   try {
     if (foreignDocument !== undefined) {
       await invalid(
@@ -278,6 +287,7 @@ export async function verifyHopperBoundaryContracts(
     foreignDocumentVerified: foreignDocument !== undefined,
     navigationAndText,
     workflows,
+    search,
   };
 }
 
@@ -385,6 +395,41 @@ export async function verifyHopperLifecycleAndCli(client, options, targets) {
       JSON.parse(analyzed.stdout).normalized_result,
       expectedFunction,
     );
+    let cliTerminalFunctionParity = null;
+    let cliNamedSelectorParity = null;
+    if (targets.unicode !== undefined) {
+      const objc = join(directory, `objc-${suffix}`);
+      await copyFile(targets.unicode, objc);
+      await call("open_binary", { path: objc });
+      const procedures = await call("list_procedures");
+      const delegate = procedures.find(
+        (item) => item.value === "-[REAWidget delegate]",
+      );
+      assert.ok(delegate, "Objective-C fixture omitted its tail-call method");
+      const expected = await call("analyze_function", {
+        procedure: delegate.address,
+      });
+      await call("close_binary");
+      const analyzed = await runCli([
+        dispatcher,
+        "function",
+        objc,
+        delegate.address,
+        "--provider",
+        "hopper",
+        "--format",
+        "json",
+      ]);
+      assert.deepEqual(JSON.parse(analyzed.stdout).normalized_result, expected);
+      cliTerminalFunctionParity = true;
+      await call("open_binary", { path: objc });
+      cliNamedSelectorParity = await verifyHopperCliSelectors(
+        call,
+        runCli,
+        dispatcher,
+        objc,
+      );
+    }
     let failure;
     try {
       await runCli([
@@ -415,6 +460,8 @@ export async function verifyHopperLifecycleAndCli(client, options, targets) {
       cliInvalidAddress: true,
       cliLiteralTraceParity: true,
       cliFunctionDossierParity: true,
+      cliTerminalFunctionParity,
+      cliNamedSelectorParity,
       callerCancellationRecovered: true,
       closedDocumentAbsent: true,
     };

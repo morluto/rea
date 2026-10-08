@@ -119,12 +119,18 @@ targets belong to the same Electron application.
 
 ## Capture and determinism
 
-Every observation records its time window and returns all valid script and
-execution-context events received during it. Per-location protocol validation
-remains in force. Scripts are validated after capture, deduplicated by stable
-metadata, and canonically sorted. Wall-clock timestamps and protocol script IDs
-are excluded from the durable result, so identical inputs and captured metadata
-produce the same Evidence ID.
+Capture retains valid script and execution-context metadata within an 8 MiB
+aggregate budget, including conservative estimates for UTF-16 strings, record
+and collection overhead, and projected URL fields. Each CDP message also has a
+16 MiB transport limit. A message over that limit fails with `payload_limit`;
+when the aggregate budget is reached, later metadata events are dropped and
+the partial result reports `events_dropped`, `truncated: true`, and
+`retained_metadata_budget_exceeded`. Repeated context transitions update the
+current context record instead of accumulating duplicate objects. Scripts are
+validated after capture, deduplicated by stable metadata, and canonically
+sorted. Wall-clock timestamps and protocol script IDs are excluded from the
+durable result, so identical inputs and captured metadata produce the same
+Evidence ID.
 
 Inspector attach is inherently incomplete. Enabling `Debugger` reports known
 and uncollected scripts, but scripts collected before attachment may be

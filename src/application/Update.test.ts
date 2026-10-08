@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   runUpdate,
+  type ReleaseLookupFailure,
   type UpdateHost,
   type UpdateOutput,
   type NpmInstallation,
@@ -14,7 +15,7 @@ import {
 import type { IntegrationMaintenance } from "./UpdateMaintenance.js";
 
 class FakeUpdateHost implements UpdateHost {
-  release: Result<string, string> = ok("3.3.0");
+  release: Result<string, ReleaseLookupFailure> = ok("3.3.0");
   installationResult: NpmInstallation | undefined = {
     prefix: "/fixture",
     packageRoot: "/fixture/lib/node_modules/rea-agents",
@@ -35,7 +36,7 @@ class FakeUpdateHost implements UpdateHost {
     this.installationInspected = true;
     return Promise.resolve(this.installationResult);
   };
-  latestVersion = (): Promise<Result<string, string>> =>
+  latestVersion = (): Promise<Result<string, ReleaseLookupFailure>> =>
     Promise.resolve(this.release);
   installVersion = (
     _installation: NpmInstallation,
@@ -180,7 +181,10 @@ describe("update failures and version boundaries", () => {
 
   it("preserves registry errors without installation", async () => {
     const host = new FakeUpdateHost();
-    host.release = err("npm registry returned HTTP 503");
+    host.release = err({
+      kind: "unavailable",
+      detail: "npm registry returned HTTP 503",
+    });
     const result = await runUpdate("3.2.1", host);
     expect(result).toMatchObject({
       status: "failed",
@@ -190,6 +194,10 @@ describe("update failures and version boundaries", () => {
     expect(result).toHaveProperty(
       "remediation",
       expect.stringContaining("HTTP 503"),
+    );
+    expect(result).toHaveProperty(
+      "remediation",
+      expect.stringContaining("registry access"),
     );
     expect(host.installedVersions).toEqual([]);
   });
@@ -206,6 +214,29 @@ describe("update failures and version boundaries", () => {
       expect(host.installedVersions).toEqual([]);
     },
   );
+
+  it("describes invalid release metadata without blaming registry access", async () => {
+    const host = new FakeUpdateHost();
+    host.release = err({
+      kind: "invalid-metadata",
+      detail: "expected one version string",
+    });
+    const result = await runUpdate("3.2.1", host);
+    expect(result).toMatchObject({
+      status: "failed",
+      reason: "version-check",
+      latestVersion: null,
+    });
+    expect(result).toHaveProperty(
+      "remediation",
+      expect.stringContaining("expected one version string"),
+    );
+    expect(result).toHaveProperty(
+      "remediation",
+      expect.not.stringContaining("registry access"),
+    );
+    expect(host.installedVersions).toEqual([]);
+  });
 
   it.each([
     ["3.4.0", "3.3.0"],

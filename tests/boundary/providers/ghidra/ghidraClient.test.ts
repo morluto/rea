@@ -202,8 +202,7 @@ describe("GhidraClient", () => {
     const client = clientFor(new FixtureLauncher("oversized_result"));
     const result = await client.callTool("list_strings", { document: null });
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     if (!Array.isArray(result.value))
       throw new TypeError("Ghidra fixture result was not an inventory array");
     const first = result.value[0];

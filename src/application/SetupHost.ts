@@ -140,9 +140,11 @@ export const systemSetupHost = (
         ? Promise.resolve({ status: "skipped" })
         : configureClientConfiguration(client, providerEnvironment, command),
     clientNeedsConfigure: (client, providerEnvironment, command) =>
-      clientConfigurationAligned(client, providerEnvironment, command).then(
-        (aligned) => !aligned,
-      ),
+      client.format === "unsupported"
+        ? Promise.resolve(false)
+        : clientConfigurationAligned(client, providerEnvironment, command).then(
+            (aligned) => !aligned,
+          ),
     inspectClientConfiguration: inspectClientConfiguration,
     skillNeedsInstall: () => canonicalSkillNeedsInstall(homedir()),
     installSkill: () => installCanonicalSkill(homedir()),

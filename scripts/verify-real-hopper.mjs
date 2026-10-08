@@ -15,6 +15,7 @@ import { HOPPER_PROVIDER_IDENTITY } from "../dist/hopper/HopperProvider.js";
 import { HOPPER_TARGET_LEASE_DIRECTORY } from "../dist/hopper/HopperTargetLease.js";
 import { REA_WORKFLOW_PROVIDER } from "../dist/application/InvestigationProviders.js";
 import { loadRealHopperFixtureTargets } from "./lib/real-hopper-fixture.mjs";
+import { verifyHopperStringObjects } from "./lib/real-hopper-search.mjs";
 import {
   requireBridgeDiagnostic,
   requireBridgeProgress,
@@ -29,7 +30,10 @@ import {
   requireMcpResult,
   requireWorkflowEvidenceProvider,
 } from "./lib/mcp-verifier-results.mjs";
-import { verifyHopperFunctionBasics } from "./lib/real-hopper-function-basics.mjs";
+import {
+  verifyHopperTerminalInstructions,
+  verifyHopperFunctionBasics,
+} from "./lib/real-hopper-function-basics.mjs";
 import { openAndVerifyLargeFixture } from "./lib/real-hopper-exhaustive-search.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 import { requireHopperSelection } from "./lib/real-hopper-selection.mjs";
@@ -463,9 +467,29 @@ try {
     options,
   );
   if (closed.isError === true) throw new Error(textValue(closed));
+  let unicodeStrings = null;
+  let terminalInstructions = null;
+  if (fixtureTargets.unicode !== undefined) {
+    const call = async (name, args = {}) =>
+      requireSuccessfulTool(
+        await client.callTool({ name, arguments: args }, options),
+        name,
+      );
+    await call("open_binary", { path: fixtureTargets.unicode.path });
+    terminalInstructions = await verifyHopperTerminalInstructions(call);
+    unicodeStrings = await verifyHopperStringObjects(call, [
+      { value: "REA_UTF16_é_😀", encoding: "utf-16-le" },
+      { value: 'REA_UTF16_ESCAPED_é_"\\line\nend\t\r', encoding: "utf-16-le" },
+      { value: "\nREA_UTF16_LEADING_é", encoding: "utf-16-le" },
+    ]);
+    await call("close_binary");
+  }
   const lifecycleAndCli = await verifyHopperLifecycleAndCli(client, options, {
     primary: targetA,
     secondary: targetB,
+    ...(fixtureTargets.unicode === undefined
+      ? {}
+      : { unicode: fixtureTargets.unicode.path }),
     ownedProcessIds,
   });
   const closedSession = requireMcpResult(
@@ -492,6 +516,8 @@ try {
     segmentCount: firstOverview.segment_count,
     analyses: [firstAnalysis, secondAnalysis],
     fixtureAnalysis,
+    unicodeStrings,
+    terminalInstructions,
     boundaryContracts,
     lifecycleAndCli,
     inventoryCounts,

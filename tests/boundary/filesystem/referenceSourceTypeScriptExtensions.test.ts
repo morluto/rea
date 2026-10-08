@@ -36,8 +36,7 @@ it.each([
       caller: "native-typescript-source",
       policy: { secretPatterns: [] },
     });
-    expect(imported.ok).toBe(true);
-    if (!imported.ok) return;
+    if (!imported.ok) throw imported.error;
     expect(imported.value.relationships).toContainEqual({
       from_path: from,
       to: target,
@@ -62,8 +61,7 @@ it.each(["main.ts", "main.js"])(
       caller: "native-typescript-source",
       policy: { secretPatterns: [] },
     });
-    expect(imported.ok).toBe(true);
-    if (!imported.ok) return;
+    if (!imported.ok) throw imported.error;
     expect(imported.value.relationships).toContainEqual(
       expect.objectContaining({
         from_path: from,
@@ -85,8 +83,7 @@ it("does not substitute TypeScript sources for a JavaScript runtime import", asy
     caller: "native-typescript-source",
     policy: { secretPatterns: [] },
   });
-  expect(imported.ok).toBe(true);
-  if (!imported.ok) return;
+  if (!imported.ok) throw imported.error;
   expect(imported.value.relationships).toContainEqual(
     expect.objectContaining({
       from_path: "main.js",

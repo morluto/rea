@@ -2,11 +2,11 @@ import { createHash } from "node:crypto";
 
 import canonicalize from "canonicalize";
 
-import { parseEvidence } from "../evidence.js";
 import {
   managedMemberInspectionSchema,
   type ManagedMemberInspection,
 } from "./managedArtifact.js";
+import { parseManagedInspectionEvidence } from "./managedInspectionEvidence.js";
 import type {
   ManagedMemberComparisonResult,
   ManagedMemberComparisonSide,
@@ -275,11 +275,13 @@ export const parseManagedMemberEvidence = (
   readonly evidenceId: string;
   readonly result: ManagedMemberInspection;
 } => {
-  const parsed = parseEvidence(evidence);
-  if (parsed.operation !== "inspect_managed_members")
-    throw new TypeError("Evidence operation is not inspect_managed_members");
+  const parsed = parseManagedInspectionEvidence(
+    evidence,
+    "inspect_managed_members",
+    managedMemberInspectionSchema,
+  );
   return {
-    evidenceId: parsed.evidence_id,
-    result: managedMemberInspectionSchema.parse(parsed.normalized_result),
+    evidenceId: parsed.evidence.evidence_id,
+    result: parsed.result,
   };
 };

@@ -56,8 +56,7 @@ it("distinguishes computed require member values from literal members in source 
     caller: "reference-require-members-test",
     policy: { secretPatterns: [] },
   });
-  expect(result.ok).toBe(true);
-  if (!result.ok) return;
+  if (!result.ok) throw result.error;
   const graph = result.value;
   expect(graph.parse_failures).toEqual([]);
   expect(graph.relationships).toEqual([

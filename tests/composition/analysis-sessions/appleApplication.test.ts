@@ -293,8 +293,7 @@ describe("Apple application projection completeness", () => {
     const result = projectAppleApplicationEvidence({
       inventory_evidence: [inventory],
     });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     expect(
       appleApplicationProjectionResultSchema.parse(
         result.value.normalized_result,

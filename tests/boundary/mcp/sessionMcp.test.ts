@@ -7,7 +7,10 @@ import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import {
+  createDeferred,
+  createTestBinarySession,
+} from "../../fixtures/binarySession.js";
 import type {
   AnalysisClient,
   AnalysisProvider,
@@ -18,6 +21,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { MAX_JSON_DEPTH } from "../../../src/domain/jsonValue.js";
+import { parseAnalysisSnapshot } from "../../../src/domain/analysisSnapshot.js";
 import { INVESTIGATION_EXAMPLES } from "../../../src/contracts/investigationExamples.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import {
@@ -37,6 +41,111 @@ afterEach(async () => {
   if (directory !== undefined)
     await rm(directory, { recursive: true, force: true });
   directory = undefined;
+});
+
+describe("MCP snapshot lifecycle ordering", () => {
+  it("saves earlier in-flight observations, blocks later calls, and preserves the session on write failure", async () => {
+    directory = await createTestTempDirectory("rea-mcp-snapshot-order-");
+    const started = createDeferred<void>();
+    const release = createDeferred<ReturnType<typeof ok>>();
+    const { mcp, first, closed } = await createSessionMcpHarness(
+      directory,
+      (closed) => {
+        const base = provider(closed);
+        return {
+          ...base,
+          capabilities: () =>
+            base.capabilities().map((capability) => ({
+              ...capability,
+              operation: "address_name",
+            })),
+          createClient: (target) => ({
+            ...client(target.path, closed),
+            execute: (name) => {
+              if (name === "health") return Promise.resolve(ok(null));
+              started.resolve();
+              return release.promise;
+            },
+          }),
+        };
+      },
+      resources,
+    );
+    expect(
+      (await mcp.callTool({ name: "open_binary", arguments: { path: first } }))
+        .isError,
+    ).not.toBe(true);
+    const observation = mcp.callTool({
+      name: "address_name",
+      arguments: { address: "0x1000", document: "fixture" },
+    });
+    await started.promise;
+    const snapshotPath = join(directory, "analysis.json");
+    const closing = mcp.callTool({
+      name: "close_binary",
+      arguments: { snapshot_path: snapshotPath },
+    });
+    const later = mcp.callTool({
+      name: "address_name",
+      arguments: { address: "0x1001", document: "fixture" },
+    });
+    expect(
+      structured(await mcp.callTool({ name: "binary_session", arguments: {} }))
+        .result,
+    ).toMatchObject({ open: true });
+    expect(closed).toEqual([]);
+    release.resolve(ok(first));
+    expect((await observation).isError).not.toBe(true);
+    expect((await closing).isError).not.toBe(true);
+    expect((await later).isError).toBe(true);
+    const snapshot = parseAnalysisSnapshot(
+      JSON.parse(await readFile(snapshotPath, "utf8")),
+    );
+    expect(snapshot.entries).toHaveLength(1);
+    expect(snapshot.entries[0]?.execution.result).toBe(first);
+    expect(
+      snapshot.evidence_bundle.records.some(
+        (record) =>
+          record.operation === "address_name" &&
+          record.normalized_result === first,
+      ),
+    ).toBe(true);
+
+    expect(
+      (await mcp.callTool({ name: "open_binary", arguments: { path: first } }))
+        .isError,
+    ).not.toBe(true);
+    const bytes = await readFile(snapshotPath);
+    expect(
+      (
+        await mcp.callTool({
+          name: "close_binary",
+          arguments: { snapshot_path: snapshotPath },
+        })
+      ).isError,
+    ).toBe(true);
+    expect(await readFile(snapshotPath)).toEqual(bytes);
+    expect(
+      (
+        await mcp.callTool({
+          name: "address_name",
+          arguments: { address: "0x1000", document: "fixture" },
+        })
+      ).isError,
+    ).not.toBe(true);
+    expect(
+      structured(await mcp.callTool({ name: "binary_session", arguments: {} }))
+        .result,
+    ).toMatchObject({ open: true });
+    expect(
+      (
+        await mcp.callTool({
+          name: "close_binary",
+          arguments: { snapshot_path: snapshotPath, overwrite: true },
+        })
+      ).isError,
+    ).not.toBe(true);
+  }, 10_000);
 });
 
 describe("target-free MCP lifecycle", () => {

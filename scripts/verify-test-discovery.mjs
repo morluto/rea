@@ -10,6 +10,7 @@ const execute = promisify(execFile);
 const root = resolve(import.meta.dirname, "..");
 
 const temporary = await mkdtemp(join(tmpdir(), "rea-test-discovery-"));
+let discovered;
 try {
   const output = join(temporary, "discovery.json");
   await execute(
@@ -58,8 +59,9 @@ try {
   ) {
     console.error(JSON.stringify(report, null, 2));
     process.exitCode = 1;
-  } else
-    console.log(`Discovered all ${report.discovered} test files exactly once.`);
+  } else discovered = report.discovered;
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }
+if (discovered !== undefined)
+  console.log(`Discovered all ${discovered} test files exactly once.`);

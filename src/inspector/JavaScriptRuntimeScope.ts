@@ -9,6 +9,7 @@ import type {
   JavaScriptRuntimeLocation,
   JavaScriptRuntimeTargetLocation,
 } from "../domain/javascript/javascriptRuntimeObservation.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { authorizedElectronFile } from "../browser/ElectronFileScope.js";
 
 export type RuntimeLocationDecision =
@@ -17,6 +18,14 @@ export type RuntimeLocationDecision =
       readonly allowed: false;
       readonly reason: BrowserExclusionReason;
     };
+
+/** Throw the operation's typed cancellation error whenever its signal is aborted. */
+export const throwIfRuntimeObservationCancelled = (
+  signal?: AbortSignal,
+): void => {
+  if (signal?.aborted === true)
+    throw new AnalysisCancelledError("observe_javascript_runtime");
+};
 
 /**
  * Wire bucket for inspector script exclusions. The V8 observation schemas
@@ -35,7 +44,9 @@ export const inspectorExclusionKey = (
 /** Resolve a protocol location exposed by the explicitly selected Inspector endpoint. */
 export const authorizeRuntimeLocation = async (
   value: string,
+  signal?: AbortSignal,
 ): Promise<RuntimeLocationDecision> => {
+  throwIfRuntimeObservationCancelled(signal);
   if (value.startsWith("node:") && value.length > 0)
     return {
       allowed: true,
@@ -43,6 +54,7 @@ export const authorizeRuntimeLocation = async (
     };
   if (value.startsWith("file:")) {
     const filePath = await authorizedElectronFile(value);
+    throwIfRuntimeObservationCancelled(signal);
     return filePath === undefined
       ? { allowed: false, reason: "not_approved" }
       : { allowed: true, location: { kind: "file", file_path: filePath } };

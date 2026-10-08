@@ -39,10 +39,14 @@ use `npm run docs:generate`; `docs:build` generates them before building the web
 
 Pull requests run `npm run docs:check`. `.github/workflows/pages.yml` is a
 manual VitePress build and does not publish. The public site at
-<https://morluto.github.io/rea/> is published only by the manual website
-workflow on `main`. The repository's **Settings → Pages → Build and
-deployment → Source** must be set to **GitHub Actions** before the first
-deployment.
+<https://rea.tools/> serves `website/public/` through Cloudflare Workers. See
+the [website README](website/README.md#cloudflare-workers) for previews and
+manual deployments.
+
+The separate GitHub Pages host uses only the manual
+`.github/workflows/website-pages.yml` workflow on `main`. The repository's
+**Settings → Pages → Build and deployment → Source** must be set to
+**GitHub Actions** before deploying there.
 
 ## Development feedback and PR verification
 

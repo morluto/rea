@@ -13,12 +13,17 @@ export interface NpmInstallation {
 /** Output policy for the package manager subprocess. */
 export type UpdateOutput = "human" | "structured";
 
+/** Why release lookup failed before a version could be compared. */
+export type ReleaseLookupFailure =
+  | { readonly kind: "unavailable"; readonly detail: string }
+  | { readonly kind: "invalid-metadata"; readonly detail: string };
+
 /** Effects used to update and verify one identified REA installation. */
 export interface UpdateHost {
   installation(): Promise<NpmInstallation | undefined>;
   latestVersion(
     installation: NpmInstallation | undefined,
-  ): Promise<Result<string, string>>;
+  ): Promise<Result<string, ReleaseLookupFailure>>;
   installVersion(
     installation: NpmInstallation,
     version: string,
@@ -95,6 +100,28 @@ export const updateInstallCommand = (
   `${PRODUCT_IDENTITY.packageName}@${version}`,
 ];
 
+const versionCheckRemediation = (
+  release: Result<string, ReleaseLookupFailure>,
+): string => {
+  if (release.ok) {
+    return "REA received invalid version metadata. Check the installed version and npm registry, then rerun rea update.";
+  }
+  const failure = release.error;
+  const kind = failure.kind;
+  switch (kind) {
+    case "unavailable":
+      return `REA could not resolve the latest release: ${failure.detail}. Retry rea update when registry access is available.`;
+    case "invalid-metadata":
+      return `REA could not resolve the latest release: ${failure.detail}. Check the npm release metadata, then rerun rea update.`;
+    default: {
+      const exhaustive: never = kind;
+      throw new TypeError(
+        `Unhandled release lookup failure: ${String(exhaustive)}`,
+      );
+    }
+  }
+};
+
 /** Identify, resolve, install, and verify REA without applying setup changes. */
 export const runUpdate = async (
   currentVersion: string,
@@ -111,9 +138,7 @@ export const runUpdate = async (
       currentVersion,
       latestVersion,
       reason: "version-check",
-      remediation: release.ok
-        ? "REA received invalid version metadata. Check the installed version and npm registry, then rerun rea update."
-        : `REA could not resolve the latest release: ${release.error}. Retry rea update when registry access is available.`,
+      remediation: versionCheckRemediation(release),
     };
   if (!gt(targetVersion, currentVersion))
     return {

@@ -1,5 +1,6 @@
 import {
   effectiveClientServer,
+  grokServerListedDisabled,
   parseClientConfiguration,
 } from "./ClientConfigurationDocument.js";
 import { access, readFile } from "node:fs/promises";
@@ -13,7 +14,10 @@ import {
   isOwnedClientRegistrationCommand,
   npxRegistrationCommand,
 } from "./ClientRegistrationIdentity.js";
-import { supportedClients } from "./SupportedClients.js";
+import {
+  manualRegistrationRemediation,
+  supportedClients,
+} from "./SupportedClients.js";
 import type { SetupClient } from "./SupportedClients.js";
 
 interface ClientRegistrationStatusBase {
@@ -37,7 +41,7 @@ export type ClientRegistrationStatus = ClientRegistrationStatusBase &
       }
     | {
         readonly command: readonly [];
-        readonly state: "missing" | "invalid";
+        readonly state: "missing" | "invalid" | "manual";
         readonly remediation: string;
       }
   );
@@ -80,21 +84,33 @@ export const readClientRegistrationStatuses = async (
           CLAUDE_CONFIG_DIR: options.environment.CLAUDE_CONFIG_DIR,
           CODEX_HOME: options.environment.CODEX_HOME,
           COPILOT_HOME: options.environment.COPILOT_HOME,
+          GROK_HOME: options.environment.GROK_HOME,
           OPENCODE_CONFIG: options.environment.OPENCODE_CONFIG,
+          SAND_DATA_ROOT: options.environment.SAND_DATA_ROOT,
           XDG_CONFIG_HOME: options.environment.XDG_CONFIG_HOME,
         },
   )) {
     if (
-      client.format === "unsupported" ||
-      (!(await exists(client.markerPath)) && !(await exists(client.configPath)))
+      !(await exists(client.markerPath)) &&
+      !(await exists(client.configPath))
     )
       continue;
+    const manualRemediation = manualRegistrationRemediation(client.name);
+    if (client.format === "unsupported") {
+      if (manualRemediation !== undefined)
+        statuses.push({
+          client: client.name,
+          config_path: client.markerPath ?? client.configPath,
+          command: [],
+          state: "manual",
+          remediation: manualRemediation,
+        });
+      continue;
+    }
     try {
       const content = await readFile(client.configPath, "utf8");
-      const raw = effectiveClientServer(
-        parseClientConfiguration(content, client.format),
-        PRODUCT_IDENTITY.mcpServerKey,
-      );
+      const parsed = parseClientConfiguration(content, client.format);
+      const raw = effectiveClientServer(parsed, PRODUCT_IDENTITY.mcpServerKey);
       if (raw === undefined) {
         statuses.push(
           unavailableStatus(client.name, client.configPath, "missing"),
@@ -116,7 +132,14 @@ export const readClientRegistrationStatuses = async (
             client,
             currentCommandPath,
             options.platform ?? process.platform,
-          )
+          ) &&
+            !(
+              client.format === "grok" &&
+              grokServerListedDisabled(
+                parsed.document,
+                PRODUCT_IDENTITY.mcpServerKey,
+              )
+            )
             ? "aligned"
             : "stale",
         ),
@@ -148,7 +171,7 @@ const registrationAligned = (
   if (!isOwnedClientRegistrationCommand(command, currentCommandPath))
     return false;
   if (
-    client.name === "codex" &&
+    (client.name === "codex" || client.name === "grok_build") &&
     registration.startup_timeout_sec !==
       MCP_STARTUP_POLICY.codexStartupTimeoutSeconds
   )

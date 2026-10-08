@@ -8,11 +8,12 @@ API access on this thread: moving dispatch to a worker can deadlock Hopper.
 import json
 import hmac
 import os
-import re
 import socket
 from typing import Any, Optional, Protocol, Sequence
 
 BAD_ADDRESSES = (-1, 0xFFFFFFFFFFFFFFFF, None)
+# The native label setter truncates NSString names at this UTF-16 extent.
+HOPPER_SYMBOL_NAME_UTF16_UNITS = 1024
 _rea_session_document = None
 _search_inventory_cache = {}
 _pseudocode_cache = {}
@@ -211,6 +212,7 @@ def _validate_name_targets(document, names):
         raise InvalidRequestError("Batch rename selects the same address more than once; use one canonical address per target")
     labels = set()
     for _, address, name in names:
+        _segment(document, address)
         if not name:
             continue
         if name in labels:
@@ -219,6 +221,19 @@ def _validate_name_targets(document, names):
         owner = document.getAddressForName(name)
         if owner not in BAD_ADDRESSES and owner != address and owner not in targets:
             raise InvalidRequestError("Name %s is already assigned to %s; include that address in the batch with a replacement name" % (name, _hex(owner)))
+
+
+def _symbol_name(value, field):
+    """Reject native label truncation without altering the caller's name."""
+    value = _api_text(value, field)
+    if len(value.encode("utf-16-le")) // 2 > HOPPER_SYMBOL_NAME_UTF16_UNITS:
+        raise InvalidRequestError("%s exceeds Hopper's %s UTF-16 code-unit symbol-name limit" % (field, HOPPER_SYMBOL_NAME_UTF16_UNITS))
+    return value
+
+
+def _name_matches(document, address, name):
+    observed = _segment(document, address).getNameAtAddress(address)
+    return observed == name or (not name and observed is None)
 
 
 def _address(document, value=None):
@@ -301,13 +316,26 @@ def _containing_procedure(document, address):
     return (procedure, None) if procedure is not None else (None, "not_in_procedure")
 
 
+def _basic_block_end(procedure, block):
+    """Normalize native block endpoints to an exclusive byte address."""
+    end = block.getEndingAddress()
+    # Hopper 6.1 returns the final instruction address, despite the Python
+    # documentation describing an exclusive end. Membership distinguishes
+    # that representation from an actual exclusive endpoint in other builds.
+    if procedure.getBasicBlockAtAddress(end) == block:
+        instruction = procedure.getSegment().getInstructionAtAddress(end)
+        if instruction is not None and instruction.getInstructionLength() > 0:
+            return end + instruction.getInstructionLength()
+    return end
+
+
 def _instruction_addresses(procedure):
     result = []
     seen = set()
     segment = procedure.getSegment()
     for block in procedure.basicBlockIterator():
         address = block.getStartingAddress()
-        end = block.getEndingAddress()
+        end = _basic_block_end(procedure, block)
         while address < end and address not in seen:
             seen.add(address)
             instruction = segment.getInstructionAtAddress(address)
@@ -319,6 +347,22 @@ def _instruction_addresses(procedure):
                 break
             address += length
     return result
+
+
+def _native_calls(procedure, direction):
+    references = procedure.getAllCallees() if direction == "outgoing" else procedure.getAllCallers()
+    kinds = {0: "none", 1: "unknown", 2: "direct", 3: "objective_c"}
+    calls = {}
+    unresolved = []
+    for reference in references:
+        source, target, kind = reference.fromAddress(), reference.toAddress(), reference.type()
+        if source in BAD_ADDRESSES:
+            continue
+        if target in BAD_ADDRESSES:
+            unresolved.append({"address": _hex(source), "reason": "Native CallReference has no resolved target (type %s)" % kind})
+            continue
+        calls[(source, target)] = {"classification": kinds.get(kind, "unknown"), "provider_type": kind, "provenance": "hopper-public-python-api:CallReference"}
+    return calls, sorted(unresolved, key=lambda item: int(item["address"], 16))
 
 
 def _procedure_references(document, params):
@@ -333,6 +377,8 @@ def _procedure_references(document, params):
         references = segment.getReferencesFromAddress(address) if direction == "outgoing" else segment.getReferencesOfAddress(address)
         for reference in references:
             edges.add((address, reference) if direction == "outgoing" else (reference, address))
+    calls, unresolved = _native_calls(procedure, direction)
+    edges.update(calls)
     ordered = sorted(edges)
     items = []
     for source, target in ordered:
@@ -343,16 +389,15 @@ def _procedure_references(document, params):
             "target_address": _hex(target),
             "source_procedure": _procedure_identity(source_procedure) if source_procedure is not None else None,
             "target_procedure": _procedure_identity(target_procedure) if target_procedure is not None else None,
-            "kind": _unavailable("Hopper's public Python API does not classify reference kinds"),
+            "kind": _unavailable("Hopper exposes partial CallReference classification, but not detailed reference flags"),
+            **({"call": calls[(source, target)]} if (source, target) in calls else {}),
         })
     return {
         "procedure": _procedure_identity(procedure), "direction": direction,
         "reference_kinds_available": False,
-        # The public Hopper API returns observed references but does not expose
-        # enough flow metadata to enumerate calls with no resolved target.
-        # Keep the required list field explicit; the provider records this as
-        # unknown coverage rather than claiming the list is exhaustive.
-        "unresolved_calls": [],
+        # These are native CallReference objects, not proof that every unresolved
+        # dispatch site has been enumerated by Hopper.
+        "unresolved_calls": unresolved,
         "references": items,
     }
 
@@ -367,11 +412,61 @@ def _procedure_map(document):
 
 
 def _strings(document):
-    result = {}
-    for segment in document.getSegmentsList():
-        for value, address in segment.getStringsList():
-            result[_hex(address)] = value
-    return result
+    return {address: record["value"] for address, record in _string_inventory(document).items()}
+
+
+def _string_record(segment, address, display):
+    """Read one native typed object, retaining its shortened display separately."""
+    length = segment.getObjectLength(address)
+    end = segment.getStartingAddress() + segment.getLength()
+    if isinstance(length, bool) or not isinstance(length, int) or length <= 0 or length > end - address:
+        raise CapabilityUnavailableError("Hopper reported an invalid string object extent at %s" % _hex(address))
+    raw = segment.readBytes(address, length)
+    if not isinstance(raw, (bytes, bytearray)) or len(raw) != length:
+        raise CapabilityUnavailableError("Hopper could not read the complete string object at %s" % _hex(address))
+    kind = segment.getTypeAtAddress(address)
+    encodings = ("utf-8", "latin-1") if kind == segment.TYPE_ASCII else ("utf-16-le", "utf-16-be") if kind == segment.TYPE_UNICODE else ()
+    # Native display escaping is not invertible (a literal backslash-n and a
+    # newline can render alike). Decode byte strings directly; for UTF-16,
+    # compare rendered candidates to establish an unambiguous byte order.
+    candidates = []
+    for encoding in encodings:
+        terminator = b"\x00\x00" if encoding.startswith("utf-16") else b"\x00"
+        terminated = raw.endswith(terminator)
+        payload = raw[:-len(terminator)] if terminated else raw
+        try:
+            value = payload.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+        record = {"value": value, "provider_value": display, "string": {"encoding": encoding, "encoding_status": "inferred", "termination": "present_or_not_required" if terminated else "missing", "byte_length": length}}
+        if kind == segment.TYPE_ASCII:
+            return record
+        rendered = value.replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+        if rendered == display or (display.endswith("\u2026") and display[:-1] and rendered.startswith(display[:-1])):
+            candidates.append(record)
+    if candidates and len({candidate["value"] for candidate in candidates}) == 1:
+        return candidates[0]
+    raise CapabilityUnavailableError("Hopper's string display cannot be reconciled with its typed bytes at %s; inspect the bytes and encoding explicitly" % _hex(address))
+
+
+def _string_inventory(document, addresses=None):
+    key = (id(document), "string_objects")
+    objects = _search_inventory_cache.get(key)
+    if objects is None:
+        objects = {address: (segment, display) for segment in document.getSegmentsList() for display, address in segment.getStringsList()}
+        _search_inventory_cache[key] = objects
+    key = (id(document), "string_records")
+    records = _search_inventory_cache.setdefault(key, {})
+    selected = sorted(objects if addresses is None else objects.keys() & addresses)
+    for address in selected:
+        name = _hex(address)
+        if name not in records:
+            segment, display = objects[address]
+            try:
+                records[name] = _string_record(segment, address, display)
+            except CapabilityUnavailableError as error:
+                records[name] = {"value": display, "provider_value": display, "decoding": _unavailable(str(error))}
+    return {_hex(address): records[_hex(address)] for address in selected}
 
 
 def _invalidate_search_inventory(document):
@@ -431,18 +526,14 @@ def _search_results(document, kind, params):
         needle = pattern if case_sensitive else pattern.casefold()
         matches = lambda value: needle in (value if case_sensitive else value.casefold())
     else:
-        try:
-            expression = re.compile(pattern, 0 if case_sensitive else re.IGNORECASE)
-        except (re.error, OverflowError) as error:
-            raise InvalidRequestError("Invalid regex pattern") from error
-        matches = lambda value: expression.search(value) is not None
+        raise CapabilityUnavailableError("Regex matching requires REA's supervised worker; the native bridge only executes literal searches")
 
     selected = []
     for item in _search_inventory(document, kind):
         if not matches(item[1]):
             continue
         selected.append(item)
-    return [
+    return [{"address": address, **_string_inventory(document)[address]} for address, _ in selected] if kind == "string" else [
             {
                 "address": address,
                 "value": value,
@@ -484,25 +575,11 @@ def _render_instruction(segment, address):
 
 def _assembly(procedure):
     """Render assembly while guarding against malformed instruction cycles."""
-    lines = []
     segment = procedure.getSegment()
-    seen = set()
-    for block in procedure.basicBlockIterator():
-        address = block.getStartingAddress()
-        end = block.getEndingAddress()
-        while address < end and address not in seen:
-            seen.add(address)
-            instruction = segment.getInstructionAtAddress(address)
-            if instruction is None:
-                break
-            line = _render_instruction(segment, address)
-            if line is not None:
-                lines.append(line)
-            length = instruction.getInstructionLength()
-            if length <= 0:
-                break
-            address += length
-    return "\n".join(lines)
+    return "\n".join(
+        line for address in _instruction_addresses(procedure)
+        if (line := _render_instruction(segment, address)) is not None
+    )
 
 
 def _read_function_instructions(document, params):
@@ -539,7 +616,7 @@ def _analyze_function(document, params):
                 successors.append(_hex(successor))
         blocks.append({
             "start": _hex(block.getStartingAddress()),
-            "end": _hex(block.getEndingAddress()),
+            "end": _hex(_basic_block_end(procedure, block)),
             "successors": sorted(set(successors), key=lambda value: int(value, 16)),
         })
     pseudo = _pseudocode(document, procedure) or ""
@@ -563,6 +640,10 @@ def _analyze_function(document, params):
     incoming = []
     outgoing = []
     procedure_addresses = set(addresses)
+    outgoing_calls, unresolved_calls = _native_calls(procedure, "outgoing")
+    incoming_calls, _ = _native_calls(procedure, "incoming")
+    calls = {**incoming_calls, **outgoing_calls}
+    edges.update(calls)
     for source, target in sorted(edges):
         source_procedure, _ = _containing_procedure(document, source)
         target_procedure, _ = _containing_procedure(document, target)
@@ -571,16 +652,14 @@ def _analyze_function(document, params):
             "target_address": _hex(target),
             "source_procedure": _procedure_identity(source_procedure) if source_procedure is not None else None,
             "target_procedure": _procedure_identity(target_procedure) if target_procedure is not None else None,
-            "kind": _unavailable("Hopper's public Python API does not classify reference kinds"),
+            "kind": _unavailable("Hopper exposes partial CallReference classification, but not detailed reference flags"),
+            **({"call": calls[(source, target)]} if (source, target) in calls else {}),
         }
         if target in procedure_addresses and source not in procedure_addresses:
             incoming.append(item)
         if source in procedure_addresses:
             outgoing.append(item)
-    string_map = {
-        int(address, 16): value
-        for address, value in _search_inventory(document, "string")
-    }
+    string_map = {int(address, 16): record for address, record in _string_inventory(document, {int(edge["target_address"], 16) for edge in outgoing}).items()}
     name_map = {
         int(address, 16): value
         for address, value in _search_inventory(document, "name")
@@ -590,7 +669,7 @@ def _analyze_function(document, params):
     for edge in outgoing:
         target = int(edge["target_address"], 16)
         if target in string_map:
-            referenced_strings.append({"address": edge["target_address"], "value": string_map[target], "source_address": edge["source_address"]})
+            referenced_strings.append({"address": edge["target_address"], **string_map[target], "source_address": edge["source_address"]})
         if target in name_map:
             referenced_names.append({"address": edge["target_address"], "value": name_map[target], "source_address": edge["source_address"]})
     comments.sort(key=lambda item: (int(item["address"], 16), item["kind"]))
@@ -608,13 +687,14 @@ def _analyze_function(document, params):
         "callers": callers, "callees": callees,
         "incoming_references": incoming,
         "outgoing_references": outgoing,
+        "unresolved_calls": unresolved_calls,
         "referenced_strings": referenced_strings,
         "referenced_names": referenced_names,
         "basic_blocks": blocks,
         "limitations": [
-            "Hopper's public Python API does not classify reference kinds.",
+            "Native CallReference classifications are observed where available; detailed reference flags remain unknown.",
             "Hopper's public Python API does not expose equivalent external or thunk classification in this dossier.",
-            "Unresolved indirect calls without reported target addresses are not represented as call edges.",
+            "Native calls without resolved target addresses are not represented as edges; enumeration beyond reported CallReference objects is unknown.",
             "Pseudocode and assembly are provider-specific representations, not original source.",
         ],
     }
@@ -722,7 +802,17 @@ def _dispatch(method, params):
         # file header. An integer alone does not prove source-file provenance.
         if inverse(offset) != address:
             raise InvalidRequestError("Address has no authoritative file-offset mapping: reverse lookup disagrees at %s" % _hex(address))
-        return {"address": _hex(address), "file_offset": offset}
+        if offset > 9007199254740991:
+            raise CapabilityUnavailableError("Provider file offset exceeds the exact JSON integer range")
+        header_address = inverse(0)
+        reader = getattr(document, "readBytes", None)
+        header = reader(header_address, 12) if header_address not in BAD_ADDRESSES and document.getSegmentAtAddress(header_address) is not None and callable(reader) else None
+        return {
+            "address": _hex(address),
+            "provider_file_offset": offset,
+            "provider_source_path": document.getExecutableFilePath(),
+            "provider_image_header_hex": bytes(header).hex() if isinstance(header, (bytes, bytearray)) and len(header) == 12 else None,
+        }
     if method == "resolve_containing_procedure":
         address = _address(document, params.get("address"))
         procedure, reason = _containing_procedure(document, address)
@@ -806,12 +896,9 @@ def _dispatch(method, params):
     if method == "list_procedures":
         return [{"address": address, "value": value} for address, value in _search_inventory(document, "procedure")]
     if method == "list_strings":
-        values = dict(_search_inventory(document, "string"))
         requested = params.get("address")
-        if requested is not None:
-            key = _hex(_address(document, requested))
-            values = {key: values[key]} if key in values else {}
-        return [{"address": address, "value": value} for address, value in values.items()]
+        values = _string_inventory(document, None if requested is None else {_address(document, requested)})
+        return [{"address": address, **record} for address, record in values.items()]
     if method == "list_names":
         result = dict(_search_inventory(document, "name"))
         requested = params.get("address")
@@ -836,7 +923,7 @@ def _dispatch(method, params):
             return sorted((_hex(item.getEntryPoint()) for item in procedure.getAllCalleeProcedures()), key=lambda value: int(value, 16))
         if method == "procedure_info":
             blocks = list(procedure.basicBlockIterator())
-            length = sum(max(0, block.getEndingAddress() - block.getStartingAddress()) for block in blocks)
+            length = sum(max(0, _basic_block_end(procedure, block) - block.getStartingAddress()) for block in blocks)
             return {
                 "name": _procedure_name(procedure),
                 "entrypoint": _hex(procedure.getEntryPoint()),
@@ -849,25 +936,25 @@ def _dispatch(method, params):
             }
     if method == "set_address_name":
         address = _address(document, params.get("address"))
-        name = _api_text(params["name"], "Name")
+        name = _symbol_name(params["name"], "Name")
         _validate_name_targets(document, [(params.get("address"), address, name)])
         try:
             result = document.setNameAtAddress(address, name)
         finally:
             _invalidate_search_inventory(document)
             _invalidate_pseudocode(document)
-        return result
+        return bool(result) and _name_matches(document, address, name)
     if method == "set_addresses_names":
         # Validate all destinations before applying any annotation. A malformed
         # later address must not discard the result of an earlier mutation.
-        names = [(key, _address(document, key), _api_text(value, "Name for %s" % key)) for key, value in params["names"].items()]
+        names = [(key, _address(document, key), _symbol_name(value, "Name for %s" % key)) for key, value in params["names"].items()]
         _validate_name_targets(document, names)
         try:
             result = {key: document.setNameAtAddress(address, value) for key, address, value in names}
         finally:
             _invalidate_search_inventory(document)
             _invalidate_pseudocode(document)
-        return result
+        return {key: bool(result[key]) and _name_matches(document, address, value) for key, address, value in names}
     if method in ("set_comment", "set_inline_comment"):
         address = _address(document, params.get("address"))
         comment = _api_text(params["comment"], "Comment")
@@ -882,6 +969,7 @@ def _dispatch(method, params):
         return [{"address": _hex(item), "name": document.getBookmarkName(item)} for item in document.getBookmarks()]
     if method == "set_bookmark":
         address = _address(document, params.get("address"))
+        _segment(document, address)
         name = params.get("name")
         if name is not None:
             _api_text(name, "Bookmark name")
@@ -889,6 +977,10 @@ def _dispatch(method, params):
         return document.hasBookmarkAtAddress(address)
     if method == "unset_bookmark":
         address = _address(document, params.get("address"))
+        # Permit removing a legacy orphan bookmark, but do not report success
+        # for an unmapped address with no bookmark to remove.
+        if not document.hasBookmarkAtAddress(address):
+            _segment(document, address)
         document.removeBookmarkAtAddress(address)
         return not document.hasBookmarkAtAddress(address)
     raise InvalidRequestError("Unknown bridge method")

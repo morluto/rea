@@ -6,6 +6,7 @@ import {
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import type { BinaryTarget } from "../../domain/binaryTarget.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   ProviderSelectionError,
   type ProviderSelectionFailureReason,
@@ -147,12 +148,7 @@ export class AnalysisProviderRegistry {
     target: BinaryTarget,
     requestedSelector?: AnalysisProviderSelector,
     options: { readonly signal?: AbortSignal } = {},
-  ): Promise<
-    Result<
-      AnalysisProviderSelection,
-      ProviderSelectionError | AnalysisCancelledError
-    >
-  > {
+  ): Promise<Result<AnalysisProviderSelection, AnalysisError>> {
     if (signalIsAborted(options.signal))
       return err(new AnalysisCancelledError("open_binary"));
     const parsedRequest =
@@ -224,12 +220,7 @@ export class AnalysisProviderRegistry {
     context: TargetSelectionContext,
     providerId: string,
     source: AnalysisProviderBinding["selectionSource"],
-  ): Promise<
-    Result<
-      AnalysisProviderSelection,
-      ProviderSelectionError | AnalysisCancelledError
-    >
-  > {
+  ): Promise<Result<AnalysisProviderSelection, AnalysisError>> {
     const { baseline, signal, target } = context;
     const provider = this.#byId.get(providerId);
     if (provider === undefined)
@@ -253,6 +244,8 @@ export class AnalysisProviderRegistry {
     );
     if (!evaluation.ok) return evaluation;
     const evaluated = evaluation.value;
+    if (evaluated.profileError !== undefined)
+      return err(evaluated.profileError);
     const statuses = replaceCandidate(baseline, evaluated.status);
     if (
       evaluated.profile === undefined ||
@@ -275,12 +268,7 @@ export class AnalysisProviderRegistry {
 
   async #selectAutomatically(
     context: TargetSelectionContext,
-  ): Promise<
-    Result<
-      AnalysisProviderSelection,
-      ProviderSelectionError | AnalysisCancelledError
-    >
-  > {
+  ): Promise<Result<AnalysisProviderSelection, AnalysisError>> {
     const { baseline, signal, target } = context;
     const results = await Promise.all(
       this.#providers.map(

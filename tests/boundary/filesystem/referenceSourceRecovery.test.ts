@@ -44,8 +44,7 @@ it("preserves recovered diagnostics and file evidence through filesystem import"
     caller: "reference-recovery-test",
     policy: { secretPatterns: [] },
   });
-  expect(result.ok).toBe(true);
-  if (!result.ok) return;
+  if (!result.ok) throw result.error;
   const graph = result.value;
   expect(historicalSourceGraphSchema.safeParse(graph).success).toBe(true);
   expect(graph.entries.map(({ path }) => path)).toEqual([

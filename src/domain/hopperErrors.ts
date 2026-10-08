@@ -35,6 +35,7 @@ export class HopperTimeoutError extends HopperError {
     readonly stage: ProviderFailureStage = operation === undefined
       ? "launch"
       : "analysis",
+    readonly launcherOutcome?: HopperLauncherOutcome,
   ) {
     super(
       `Hopper ${operation === undefined ? "startup" : operation} timed out after ${String(timeoutMs)}ms`,

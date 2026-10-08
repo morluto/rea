@@ -212,15 +212,10 @@ describe("analysis provider registry: binding failures and cancellation", () => 
       failed.provider,
     ]).select(DATABASE_TARGET, "failed");
     if (explicit.ok) throw new Error("expected provider selection rejection");
-    expect(explicit.error).toBeInstanceOf(ProviderSelectionError);
-    if (explicit.error instanceof ProviderSelectionError)
-      expect(explicit.error.rejections).toMatchObject([
-        {
-          providerId: "failed",
-          code: "version_unresolved",
-          diagnostics: { error_tag: "ProviderAdapterError" },
-        },
-      ]);
+    expect(explicit.error).toMatchObject({
+      _tag: "ProviderAdapterError",
+      providerId: "failed",
+    });
   });
 
   it("cancels a pending profile probe even when the adapter ignores its signal", async () => {

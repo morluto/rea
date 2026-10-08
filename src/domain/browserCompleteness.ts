@@ -36,6 +36,7 @@ const browserExclusionReasonSchema = z.enum([
   "out_of_target_scope",
   "provider_unavailable",
   "invalid_protocol_value",
+  "resource_budget_exhausted",
 ]);
 export type BrowserExclusionReason = z.infer<
   typeof browserExclusionReasonSchema

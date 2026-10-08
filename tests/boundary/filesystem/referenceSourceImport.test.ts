@@ -123,8 +123,7 @@ describe("reference source symlink import", () => {
 
     const imported = await importTree(root);
 
-    expect(imported.ok).toBe(true);
-    if (!imported.ok) return;
+    if (!imported.ok) throw imported.error;
     expect(imported.value.entries).toContainEqual(
       expect.objectContaining({
         kind: "symlink",
@@ -154,8 +153,7 @@ describe("reference source manifest inventory", () => {
     ]);
 
     const result = await importTree(root);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     expect(result.value.manifests).toEqual([
       "CMakeLists.txt",
       "src/CMakeLists.txt",
@@ -210,8 +208,7 @@ describe("reference source import behavior", () => {
       policy: { secretPatterns: [] },
     });
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     // The importer always reports one standing advisory about pathname races,
     // so completeness is asserted per entry rather than globally.
     const limited = result.value.entries.filter(
@@ -262,8 +259,7 @@ describe("reference source import behavior", () => {
         ),
       );
       const result = await importTree(root);
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
+      if (!result.ok) throw result.error;
       expect(result.value.entries.map(({ path }) => path)).toEqual(paths);
       const repeated = await importTree(root);
       expect(repeated).toEqual(result);
@@ -351,8 +347,7 @@ describe("reference source path selection", () => {
     try {
       const root = await fixture(parent, "tree");
       const result = await importTree(root, undefined, []);
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
+      if (!result.ok) throw result.error;
       expect(result.value.entries).toContainEqual(
         expect.objectContaining({
           path: ".env",
@@ -382,8 +377,7 @@ describe("reference source rooted module specifiers", () => {
       "export const value = 1;\n",
     );
     const result = await importTree(root);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     expect(result.value.relationships).toContainEqual({
       from_path: "src/main.js",
       to: "/outside/dep.js",

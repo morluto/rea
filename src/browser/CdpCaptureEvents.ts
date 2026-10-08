@@ -15,7 +15,13 @@ export { type CapturedScript } from "./CdpCaptureEventTypes.js";
 
 /** Event accumulator that validates and normalizes payloads at ingestion. */
 export class CdpCaptureEvents implements CdpCaptureEventsState {
+  #scriptMetadataBudgetExclusionsRecorded = false;
   readonly scripts = new Map<string, CapturedScript>();
+  readonly scriptMetadataBudgetOmissionsById = new Map<string, true>();
+  rejectedScriptMetadataBudgetCount = 0;
+  rejectedSourceMapMetadataBudgetCount = 0;
+  readonly scriptMetadataBytesById = new Map<string, number>();
+  retainedScriptMetadataBytes = 0;
   readonly executionContextFrames = new Map<string, string>();
   readonly network = new Map<string, NetworkState>();
   readonly networkRequestTimestamps = new Map<string, number>();
@@ -51,6 +57,12 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
     this.navigationDuringCapture = false;
     this.committedDocument = undefined;
     this.scripts.clear();
+    this.scriptMetadataBudgetOmissionsById.clear();
+    this.rejectedScriptMetadataBudgetCount = 0;
+    this.rejectedSourceMapMetadataBudgetCount = 0;
+    this.scriptMetadataBytesById.clear();
+    this.retainedScriptMetadataBytes = 0;
+    this.#scriptMetadataBudgetExclusionsRecorded = false;
     this.executionContextFrames.clear();
     this.network.clear();
     this.networkRequestTimestamps.clear();
@@ -79,6 +91,28 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
     // `committedDocument` is dropped so the new document's frame events are
     // compared against itself rather than the document we just left.
     this.committedDocument = undefined;
+  }
+
+  /** Record final script metadata omissions after all scriptParsed replacements. */
+  recordScriptMetadataBudgetExclusions(): void {
+    if (this.#scriptMetadataBudgetExclusionsRecorded) return;
+    this.#scriptMetadataBudgetExclusionsRecorded = true;
+    const omittedScripts = this.rejectedScriptMetadataBudgetCount;
+    const omittedSourceMaps =
+      this.rejectedSourceMapMetadataBudgetCount +
+      this.scriptMetadataBudgetOmissionsById.size;
+    if (omittedScripts > 0)
+      this.completeness.exclude(
+        "scripts",
+        "resource_budget_exhausted",
+        omittedScripts,
+      );
+    if (omittedSourceMaps > 0)
+      this.completeness.exclude(
+        "source_maps",
+        "resource_budget_exhausted",
+        omittedSourceMaps,
+      );
   }
 
   ingest(event: CdpEvent): void {

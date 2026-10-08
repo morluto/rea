@@ -31,6 +31,8 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
+  AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -49,6 +51,8 @@ import {
 } from "../domain/native/nativeInspection.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
+  NATIVE_COMMAND_TIMEOUT_MS,
+  NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
   NativeCommandFailure,
   XcrunCommandRunner,
   type NativeCommandCapture,
@@ -641,15 +645,64 @@ const translateCommandFailure = (
   operation: NativeToolName,
   failure: NativeCommandFailure,
 ): AnalysisError => {
+  const capturedOutput =
+    failure.capture === null
+      ? undefined
+      : {
+          stdout: failure.capture.stdout,
+          stderr: failure.capture.stderr,
+          truncated: failure.capture.truncated,
+          stdout_bytes: failure.capture.stdoutBytes,
+          stderr_bytes: failure.capture.stderrBytes,
+          exit_code: failure.capture.exitCode,
+          signal: failure.capture.signal,
+        };
+  const cleanup =
+    failure.cleanupFailure === null
+      ? undefined
+      : {
+          reason: failure.cleanupFailure,
+          resources: [...failure.cleanupResources],
+        };
+  const errorOptions = {
+    ...(capturedOutput === undefined ? {} : { capturedOutput }),
+    ...(cleanup === undefined ? {} : { cleanup }),
+  };
   if (failure.reason === "unavailable")
     return new AnalysisCapabilityUnavailableError(
       IDENTITY.id,
       operation,
       `${failure.tool} is unavailable through xcrun.`,
+      errorOptions,
     );
   if (failure.reason === "cancelled")
-    return new AnalysisCancelledError(operation);
-  return new ProviderAdapterError(IDENTITY.id, operation, { cause: failure });
+    return new AnalysisCancelledError(operation, errorOptions);
+  if (failure.reason === "timeout")
+    return new AnalysisTimeoutError(
+      operation,
+      NATIVE_COMMAND_TIMEOUT_MS,
+      errorOptions,
+    );
+  if (failure.reason === "output-limit")
+    return new AnalysisResourceConstraintError(
+      operation,
+      "memory",
+      `Native command output exceeded ${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)} bytes; complete output is required for analysis.`,
+      { max_output_bytes: NATIVE_COMMAND_OUTPUT_BUDGET_BYTES },
+      errorOptions,
+    );
+  return new ProviderAdapterError(IDENTITY.id, operation, {
+    cause: failure,
+    ...errorOptions,
+    diagnostics: {
+      tool: failure.tool,
+      reason: failure.reason,
+      exit_code: failure.capture?.exitCode ?? failure.exitCode,
+      signal: failure.capture?.signal ?? null,
+      stdout_bytes: failure.capture?.stdoutBytes ?? 0,
+      stderr_bytes: failure.capture?.stderrBytes ?? 0,
+    },
+  });
 };
 
 const translateCodeSignExitFailure = (
@@ -657,7 +710,21 @@ const translateCodeSignExitFailure = (
 ): AnalysisError =>
   translateCommandFailure(
     "inspect_signature",
-    new NativeCommandFailure("codesign", "nonzero-exit", capture.exitCode),
+    new NativeCommandFailure(
+      "codesign",
+      "nonzero-exit",
+      capture.exitCode,
+      undefined,
+      {
+        stdout: capture.stdout,
+        stderr: capture.stderr,
+        stdoutBytes: capture.stdoutBytes,
+        stderrBytes: capture.stderrBytes,
+        exitCode: capture.exitCode,
+        signal: capture.signal,
+        truncated: false,
+      },
+    ),
   );
 
 const commandOutput = (capture: NativeCommandCapture): string =>

@@ -6,7 +6,7 @@ import { toolContract } from "../contracts/toolContracts.js";
 import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { toCallToolResult } from "./toolResult.js";
+import { toCallToolResult, toEvidenceToolResult } from "./toolResult.js";
 
 /** Register local script export without requiring a live browser provider. */
 export const registerWebScriptTool = (
@@ -26,9 +26,7 @@ export const registerWebScriptTool = (
       );
       if (!result.ok) return toCallToolResult(result, contract);
       const recorded = options.recordEvidence?.(result.value);
-      return recorded !== undefined && !recorded.ok
-        ? toCallToolResult(recorded, contract)
-        : toCallToolResult(result, contract);
+      return toEvidenceToolResult(result.value, contract, recorded);
     },
   );
 };
