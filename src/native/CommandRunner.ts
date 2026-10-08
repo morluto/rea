@@ -23,7 +23,12 @@ export interface NativeCommandCapture {
 export class NativeCommandFailure extends Error {
   constructor(
     readonly tool: string,
-    readonly reason: "unavailable" | "cancelled" | "nonzero-exit" | "io",
+    readonly reason:
+      | "unavailable"
+      | "cancelled"
+      | "nonzero-exit"
+      | "output-limit"
+      | "io",
     readonly exitCode: number | null = null,
     options?: ErrorOptions,
   ) {
@@ -58,6 +63,9 @@ export class XcrunCommandRunner implements NativeCommandRunner {
   constructor(
     private readonly resolveTool: NativeToolResolver = (tool, signal) =>
       resolveXcrunTool(tool, signal),
+    private readonly limits: { readonly maxOutputBytes: number } = {
+      maxOutputBytes: 64 * 1_024 * 1_024,
+    },
   ) {}
 
   run(
@@ -75,7 +83,7 @@ export class XcrunCommandRunner implements NativeCommandRunner {
         resolved.value.path,
         arguments_,
         tool,
-        options,
+        { ...options, maxOutputBytes: this.limits.maxOutputBytes },
       );
       return captured.ok
         ? ok({
@@ -170,6 +178,7 @@ const captureProcess = (
   options: {
     readonly signal?: AbortSignal;
     readonly acceptNonZero?: boolean;
+    readonly maxOutputBytes?: number;
   },
 ): Promise<Result<ProcessCapture, NativeCommandFailure>> =>
   new Promise((resolve) => {
@@ -210,10 +219,24 @@ const captureProcess = (
     options.signal?.addEventListener("abort", onAbort, { once: true });
     child.stdout.on("data", (chunk: Buffer) => {
       stdoutBytes += chunk.length;
+      if (
+        stdoutBytes + stderrBytes >
+        (options.maxOutputBytes ?? 64 * 1_024 * 1_024)
+      ) {
+        stop("output-limit");
+        return;
+      }
       stdout.push(chunk);
     });
     child.stderr.on("data", (chunk: Buffer) => {
       stderrBytes += chunk.length;
+      if (
+        stdoutBytes + stderrBytes >
+        (options.maxOutputBytes ?? 64 * 1_024 * 1_024)
+      ) {
+        stop("output-limit");
+        return;
+      }
       stderr.push(chunk);
     });
     child.once("error", (cause: unknown) =>

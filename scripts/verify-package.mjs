@@ -1,6 +1,8 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { constants } from "node:fs";
+import { copyFile, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 import { PRODUCT_IDENTITY } from "../dist/identity.js";
@@ -26,6 +28,22 @@ import {
 } from "./lib/mcp-startup-probe.mjs";
 
 const root = process.cwd();
+const outputArguments = process.argv.slice(2);
+let retainedTarballPath;
+if (outputArguments.length > 0) {
+  if (
+    outputArguments.length !== 2 ||
+    outputArguments[0] !== "--output" ||
+    outputArguments[1]?.trim() === ""
+  ) {
+    throw new Error(
+      "usage: node scripts/verify-package.mjs [--output <tarball-path>]",
+    );
+  }
+  retainedTarballPath = isAbsolute(outputArguments[1])
+    ? outputArguments[1]
+    : resolve(root, outputArguments[1]);
+}
 const verifierRun = createVerifierRun();
 const workspace = await mkdtemp(join(tmpdir(), "rea-package-"));
 const evidenceRoot = join(workspace, "evidence");
@@ -133,8 +151,24 @@ try {
     evidenceRoot,
     artifactArchive,
   });
+  let verifiedTarball;
+  if (retainedTarballPath !== undefined) {
+    await mkdir(dirname(retainedTarballPath), { recursive: true });
+    await copyFile(
+      join(root, tarball),
+      retainedTarballPath,
+      constants.COPYFILE_EXCL,
+    );
+    const bytes = await readFile(retainedTarballPath);
+    verifiedTarball = {
+      path: retainedTarballPath,
+      bytes: bytes.byteLength,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}`,
+    };
+  }
   process.stdout.write(
-    `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), cli: true, analysisCli: true, artifactCli: true, managedCli: true, managedReconstructionCli: true, managedNativeVerificationCli: true, managedApplicationGraphCli: true, evidenceCli: true, incurMcpCommand: PRODUCT_IDENTITY.mcpCommand, lifecycleScriptsRequired: false, doctor: "platform-appropriate", setup: supportedSetupHost ? "planned-then-idempotent" : "unsupported-host-rejected", setupPlanReadOnly: supportedSetupHost, existingHopperPreserved: supportedSetupHost, clients: supportedSetupHost ? 4 : 0, backupReadback: supportedSetupHost, failureRecovery: supportedSetupHost, configSymlinkLifecycle: supportedSetupHost, skill: supportedSetupHost, skillReferences: supportedSetupHost, mcpTools: TOOL_CONTRACTS.length, mcpPrompts: prompts.names.length, promptCompletion: true, promptCompletionLifecycle: true, evidenceMcp: true, targetFree: true, targetLifecycle: true, boundedRegexBridge: true, update, mcpStartup, mcpModuleLoading })}\n`,
+    `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), cli: true, analysisCli: true, artifactCli: true, managedCli: true, managedReconstructionCli: true, managedNativeVerificationCli: true, managedApplicationGraphCli: true, evidenceCli: true, incurMcpCommand: PRODUCT_IDENTITY.mcpCommand, lifecycleScriptsRequired: false, doctor: "platform-appropriate", setup: supportedSetupHost ? "planned-then-idempotent" : "unsupported-host-rejected", setupPlanReadOnly: supportedSetupHost, existingHopperPreserved: supportedSetupHost, clients: supportedSetupHost ? 4 : 0, backupReadback: supportedSetupHost, failureRecovery: supportedSetupHost, configSymlinkLifecycle: supportedSetupHost, skill: supportedSetupHost, skillReferences: supportedSetupHost, mcpTools: TOOL_CONTRACTS.length, mcpPrompts: prompts.names.length, promptCompletion: true, promptCompletionLifecycle: true, evidenceMcp: true, targetFree: true, targetLifecycle: true, boundedRegexBridge: true, verifiedTarball, update, mcpStartup, mcpModuleLoading })}\n`,
   );
 } finally {
   if (tarball) await rm(join(root, tarball), { force: true });

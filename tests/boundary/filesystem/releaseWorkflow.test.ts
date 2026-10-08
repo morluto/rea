@@ -19,6 +19,7 @@ const stepSchema = z.object({
 });
 const jobSchema = z.object({
   if: z.string().optional(),
+  "timeout-minutes": z.number().int().positive().optional(),
   outputs: z.record(z.string(), z.string()).optional(),
   steps: z.array(stepSchema),
 });
@@ -105,6 +106,12 @@ it("refreshes a release proposal on main pushes without creating or publishing a
   expect(workflow.concurrency.group).toBe(
     "release-${{ inputs.release_branch || github.ref_name }}",
   );
+});
+
+it("bounds every release job with an explicit timeout", async () => {
+  const workflow = await readReleaseWorkflow();
+  for (const job of Object.values(workflow.jobs))
+    expect(job["timeout-minutes"]).toBeGreaterThan(0);
 });
 
 it("keeps frozen candidate preparation and publication explicit", async () => {
@@ -240,11 +247,11 @@ it("binds npm and MCP publication to the same immutable release SHA", async () =
     );
   }
   const publishCommand = workflow.jobs.publish.steps.find(
-    (step) => step.name === "Publish",
+    (step) => step.name === "Publish exact verified tarball",
   )?.run;
   expect(publishCommand).toContain("scripts/release-npm-tag.mjs");
   expect(publishCommand).toContain(
-    'npm publish --access public --tag "${tag}"',
+    'npx --yes npm@11.16.0 publish "${REA_RELEASE_TARBALL}" --access public --tag "${tag}"',
   );
   for (const [version, tag] of [
     ["6.1.0", "latest"],
@@ -508,7 +515,7 @@ it("checks website changes on release-branch pull requests", async () => {
 
 // Publishing is irreversible. Keep the release authority invariant as a static
 // boundary check; it is not proof that package installation or publishing works.
-it("requires package verification before publishing and retains the registry canary", async () => {
+it("publishes the exact verified tarball and retains integrity-bound registry canaries", async () => {
   const workflow = z
     .object({
       jobs: z.object({
@@ -526,17 +533,26 @@ it("requires package verification before publishing and retains the registry can
       ),
     );
   const commands = workflow.jobs.publish.steps.map(({ run }) => run ?? "");
-  const verify = commands.findIndex((command) =>
-    command.includes("npm run verify:package"),
+  const verify = commands.findIndex(
+    (command) =>
+      command.includes("npm run verify:package") &&
+      command.includes("--output") &&
+      command.includes("REA_RELEASE_TARBALL"),
   );
   const publish = commands.findIndex((command) =>
-    command.includes("npm publish"),
+    command.includes('npx --yes npm@11.16.0 publish "${REA_RELEASE_TARBALL}"'),
   );
   expect(verify).toBeGreaterThanOrEqual(0);
   expect(publish).toBeGreaterThan(verify);
+  expect(commands[publish]).toContain("dist.integrity");
   expect(
     commands
       .slice(publish + 1)
-      .some((command) => command.includes("verify-published-package.mjs")),
+      .some(
+        (command) =>
+          command.includes("verify-published-package.mjs") &&
+          command.includes("dist.integrity") &&
+          command.includes("REA_RELEASE_TARBALL"),
+      ),
   ).toBe(true);
 });

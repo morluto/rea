@@ -94,6 +94,12 @@ function expectKnownAuthorityHints(tools: readonly ToolSchemas[]): void {
       idempotentHint: false,
       openWorldHint: false,
     },
+    capture_process_scenario: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
   } as const;
 
   for (const [name, annotations] of Object.entries(expected))

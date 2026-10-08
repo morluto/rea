@@ -101,6 +101,25 @@ describe("native macOS provider discovery and inspection", () => {
     expect(captured.ok && captured.value.stdout).toBe(output);
   });
 
+  it("fails closed when a native command exceeds its retained output budget", async () => {
+    const runner = new XcrunCommandRunner(
+      () =>
+        Promise.resolve(ok({ path: process.execPath, sha256: "a".repeat(64) })),
+      { maxOutputBytes: 1024 },
+    );
+
+    const captured = await runner.run(
+      "file",
+      ["-e", 'process.stdout.write("x".repeat(2048))'],
+      {},
+    );
+
+    expect(captured).toMatchObject({
+      ok: false,
+      error: { reason: "output-limit" },
+    });
+  });
+
   it("cancels and reaps a running native command without an operation timeout", async () => {
     const runner = new XcrunCommandRunner(() =>
       Promise.resolve(ok({ path: process.execPath, sha256: "a".repeat(64) })),
