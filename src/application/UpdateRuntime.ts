@@ -141,7 +141,12 @@ export const systemUpdateHost = (
     ]);
     if (!response.ok) return response;
     try {
-      const parsed = z.string().min(1).safeParse(JSON.parse(response.value));
+      const parsed = z
+        .union([
+          z.string().min(1),
+          z.tuple([z.string().min(1)]).transform(([version]) => version),
+        ])
+        .safeParse(JSON.parse(response.value));
       return parsed.success
         ? ok(parsed.data)
         : err(`Invalid npm release metadata: ${parsed.error.message}`);
