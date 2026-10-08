@@ -3,7 +3,7 @@ import { z } from "zod";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   analyzeJavaScriptApplicationInputSchema,
-  javascriptApplicationAnalysisResultSchema,
+  parseOwnedJavaScriptApplicationAnalysisSteps,
 } from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
@@ -17,6 +17,7 @@ import { createOwnedJavaScriptApplicationEvidenceCooperatively } from "./JavaScr
 import {
   assertJavaScriptAnalysisActive,
   checkpointJavaScriptAnalysis,
+  completeJavaScriptAnalysisSteps,
 } from "./JavaScriptAnalysisControl.js";
 import { reconstructJavaScriptArtifact } from "./JavaScriptArtifactReconstruction.js";
 import { JAVASCRIPT_APPLICATION_PROVIDER } from "../InvestigationProviders.js";
@@ -63,14 +64,17 @@ export const analyzeJavaScriptApplicationValidated = async (
       phase: "validate_javascript_application_result",
       completed: 0,
       total: 1,
-      message: "Validating the application analysis result",
+      message: "Validating result metadata and cross-graph bindings",
     });
     await checkpointJavaScriptAnalysis(options.signal);
-    const result = javascriptApplicationAnalysisResultSchema.parse({
-      ...application,
-      summary,
-      limitations: reconstructed.graph.limitations,
-    });
+    const result = await completeJavaScriptAnalysisSteps(
+      parseOwnedJavaScriptApplicationAnalysisSteps({
+        ...application,
+        summary,
+        limitations: reconstructed.graph.limitations,
+      }),
+      options.signal,
+    );
     await options.progress?.report({
       phase: "create_javascript_application_evidence",
       completed: 0,

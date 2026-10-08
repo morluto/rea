@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { canonicalDigest, canonicalJson } from "../comparisonSemantics.js";
 import { compareCodePoints, uniqueSorted } from "../canonicalOrdering.js";
+import { freezeOwnedJsonSnapshotSteps } from "../immutableJson.js";
 
 import type {
   ApplicationGraphEvidence,
@@ -449,6 +450,30 @@ export const createJavaScriptApplicationGraph = (
     graph_id: `jag_${canonicalDigest(semantic, "JavaScript Application Graph")}`,
   });
 };
+
+const validatedImmutableApplicationGraphs = new WeakSet<object>();
+
+/** Clone and validate synchronously, then return steps to seal the owned graph. */
+export const createImmutableJavaScriptApplicationGraphSteps = (
+  input: unknown,
+): Generator<void, JavaScriptApplicationGraph> =>
+  sealValidatedApplicationGraphSteps(createJavaScriptApplicationGraph(input));
+
+function* sealValidatedApplicationGraphSteps(
+  graph: JavaScriptApplicationGraph,
+): Generator<void, JavaScriptApplicationGraph> {
+  yield* freezeOwnedJsonSnapshotSteps(graph);
+  validatedImmutableApplicationGraphs.add(graph);
+  return graph;
+}
+
+/** Recognize the exact completely sealed graph produced by the owned factory. */
+export const isValidatedImmutableJavaScriptApplicationGraph = (
+  value: unknown,
+): value is JavaScriptApplicationGraph =>
+  typeof value === "object" &&
+  value !== null &&
+  validatedImmutableApplicationGraphs.has(value);
 
 /** Parse a stored graph and reject stale IDs. */
 export const parseJavaScriptApplicationGraph = (
