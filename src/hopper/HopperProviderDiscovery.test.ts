@@ -7,25 +7,25 @@ import { HopperProvider } from "./HopperProvider.js";
 
 describe("Hopper provider discovery", () => {
   it("reports bounded launcher availability without starting Hopper", () => {
-    const available = provider(process.execPath).inspectAvailability();
+    const available = provider(process.execPath, "linux").inspectAvailability();
     expect(available).toEqual({
       status: "available",
       code: null,
       reason: null,
       diagnostics: {
         launcher_path: process.execPath,
-        platform: process.platform,
+        platform: "linux",
       },
     });
 
     const missingPath = "/missing/rea-hopper-launcher";
-    expect(provider(missingPath).inspectAvailability()).toEqual({
+    expect(provider(missingPath, "linux").inspectAvailability()).toEqual({
       status: "unavailable",
       code: "executable_missing",
       reason: `Hopper launcher is missing or not executable: ${missingPath}`,
       diagnostics: {
         launcher_path: missingPath,
-        platform: process.platform,
+        platform: "linux",
       },
     });
   });
@@ -46,10 +46,13 @@ describe("Hopper provider discovery", () => {
   });
 });
 
-const provider = (launcherPath: string): HopperProvider => {
+const provider = (
+  launcherPath: string,
+  platform: NodeJS.Platform = process.platform,
+): HopperProvider => {
   const config = parseConfig({ HOPPER_LAUNCHER_PATH: launcherPath });
   if (!config.ok) throw config.error;
-  return new HopperProvider(config.value, silentLogger);
+  return new HopperProvider(config.value, silentLogger, platform);
 };
 
 const databaseTarget = (): BinaryTarget => ({

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { runDoctor, type DoctorHost } from "../application/Doctor.js";
 import { createDoctorHostFixture } from "../application/Doctor.fixture.js";
 import { providerRegistrationEnvironment } from "../application/SetupRegistrationEnvironment.js";
-import { WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON } from "../process/WindowsAuthority.js";
+import { windowsNativeAuthorityUnavailableReason } from "../process/WindowsAuthority.js";
 import {
   inspectGhidraInstallation,
   type GhidraInstallationHost,
@@ -203,7 +203,7 @@ describe("Windows Ghidra doctor authority", () => {
     ).toMatchObject({
       ok: false,
       classification: "unsupported_host",
-      detail: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+      detail: windowsNativeAuthorityUnavailableReason("win32"),
       remediation: expect.stringContaining("cannot enable"),
     });
   });
@@ -227,7 +227,7 @@ describe("Windows Ghidra doctor authority", () => {
       expect.objectContaining({
         name: "ghidra-native_authority",
         classification: "unsupported_host",
-        detail: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+        detail: windowsNativeAuthorityUnavailableReason("win32"),
       }),
     );
   });

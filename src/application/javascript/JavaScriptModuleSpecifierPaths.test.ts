@@ -92,14 +92,24 @@ describe("module specifier punctuation", () => {
   );
 });
 
+// NTFS rejects "?" in filenames; URL-decoded targets containing it cannot be
+// created on Windows, so those cases run only where the filesystem allows them.
+const ntfsLegalName = (name: string): boolean => !/[?]/.test(name);
+
 describe("ESM module URL decoding", () => {
-  it.each([
-    ["./plain.mjs", "plain.mjs"],
-    ["./space%20name.mjs", "space name.mjs"],
-    ["./pr%C3%A9load.mjs", "préload.mjs"],
-    ["./name%3F%23.mjs", "name?#.mjs"],
-    ["./percent%2520.mjs?cache=1#v2", "percent%20.mjs"],
-  ])(
+  it.each(
+    (
+      [
+        ["./plain.mjs", "plain.mjs"],
+        ["./space%20name.mjs", "space name.mjs"],
+        ["./pr%C3%A9load.mjs", "préload.mjs"],
+        ["./name%3F%23.mjs", "name?#.mjs"],
+        ["./percent%2520.mjs?cache=1#v2", "percent%20.mjs"],
+      ] as const
+    ).filter(
+      ([, target]) => process.platform !== "win32" || ntfsLegalName(target),
+    ),
+  )(
     "points %s imports to the file loaded by Node",
     async (specifier, target) => {
       const root = await createTestTempDirectory("rea-module-url-");
@@ -171,18 +181,22 @@ describe("ESM module URL decoding", () => {
   );
 });
 
-const packageEntryUrlCases = [
-  ["exports", "./actual%20file.cjs", "actual file.cjs"],
-  ["exports", "./actual.cjs?variant", "actual.cjs"],
-  ["exports", "./actual.cjs#variant", "actual.cjs"],
-  ["exports", "./actual%23file.cjs", "actual#file.cjs"],
-  ["exports", "./actual%3Ffile.cjs", "actual?file.cjs"],
-  ["exports", "./actual%252Ffile.cjs", "actual%2Ffile.cjs"],
-  ["exports", "./actual.cjs", "actual.cjs"],
-  ["main", "./actual%20file.cjs", "actual%20file.cjs"],
-  ["main", "./actual?file.cjs", "actual?file.cjs"],
-  ["main", "./actual#file.cjs", "actual#file.cjs"],
-] as const;
+const packageEntryUrlCases = (
+  [
+    ["exports", "./actual%20file.cjs", "actual file.cjs"],
+    ["exports", "./actual.cjs?variant", "actual.cjs"],
+    ["exports", "./actual.cjs#variant", "actual.cjs"],
+    ["exports", "./actual%23file.cjs", "actual#file.cjs"],
+    ["exports", "./actual%3Ffile.cjs", "actual?file.cjs"],
+    ["exports", "./actual%252Ffile.cjs", "actual%2Ffile.cjs"],
+    ["exports", "./actual.cjs", "actual.cjs"],
+    ["main", "./actual%20file.cjs", "actual%20file.cjs"],
+    ["main", "./actual?file.cjs", "actual?file.cjs"],
+    ["main", "./actual#file.cjs", "actual#file.cjs"],
+  ] as const
+).filter(
+  ([, , target]) => process.platform !== "win32" || ntfsLegalName(target),
+);
 
 describe("package exports URL paths", () => {
   it.each(

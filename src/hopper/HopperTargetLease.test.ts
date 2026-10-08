@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -15,7 +16,9 @@ afterEach(async () => {
   );
 });
 
-describe("Hopper target leases", () => {
+// Hopper is unsupported on win32: leases bind a Unix socket path, which Node
+// maps to a named pipe that cannot be created at a filesystem path.
+describe.skipIf(process.platform === "win32")("Hopper target leases", () => {
   it("reports the owning REA session for a duplicate target and profile", async () => {
     const directory = await temporaryDirectory();
     const first = await acquireHopperTargetLease({
@@ -73,7 +76,7 @@ const leaseInput = {
 };
 
 const temporaryDirectory = async (): Promise<string> => {
-  const directory = await mkdtemp(join("/tmp", "rea-hl-"));
+  const directory = await mkdtemp(join(tmpdir(), "rea-hl-"));
   directories.push(directory);
   return directory;
 };

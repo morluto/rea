@@ -2,7 +2,14 @@ import { execFile } from "node:child_process";
 import { constants } from "node:fs";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
-import { mkdtemp, open, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  open,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -86,7 +93,9 @@ describe("optional Ghidra extension boundary", () => {
     const { extension, bytes, path } = await artifact();
     expect(extension).toMatchObject({
       configured_path: path,
-      path,
+      // The resolved path is canonicalized; 8.3 short-name temp directories
+      // (e.g. C:\Users\ADMINI~1) differ from their realpath spelling.
+      path: await realpath(path),
       sha256: createHash("sha256").update(bytes).digest("hex"),
       integration_api: 1,
     });
