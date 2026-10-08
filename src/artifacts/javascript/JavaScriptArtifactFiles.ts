@@ -222,7 +222,11 @@ const readText = async (
   try {
     return {
       included: true,
-      value: new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+      value: new TextDecoder("utf-8", {
+        fatal: true,
+        ignoreBOM:
+          input.expected.kind === "javascript" || input.expected.kind === "html",
+      }).decode(bytes),
     };
   } catch (cause: unknown) {
     // Non-UTF8 bytes are counted; the fixed reason preserves the schema.
