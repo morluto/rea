@@ -404,6 +404,85 @@ try {
       }
     }
   }
+  const sectionNameTable =
+    protectedReport.sections[sectionBearingBytes.readUInt16LE(62)];
+  assert.equal(sectionNameTable.type, "SHT_STRTAB");
+  for (const problem of [
+    "out-of-range",
+    "wrong-type",
+    "undeclared-header",
+    "extended-undeclared-header",
+    "extended-without-sections",
+  ]) {
+    let bytes = Buffer.from(sectionBearingBytes);
+    let selected = protectedReport.sections.length + 100;
+    if (problem === "wrong-type") {
+      selected = protectedReport.sections.find(
+        (section) => section.type === "SHT_PROGBITS",
+      ).index;
+    } else if (problem.includes("undeclared-header")) {
+      const end =
+        Number(bytes.readBigUInt64LE(40)) +
+        protectedReport.sections.length * bytes.readUInt16LE(58);
+      const extended = Buffer.alloc(Math.max(bytes.length, end + 64));
+      bytes.copy(extended);
+      const start = Number(BigInt(sectionNameTable.header_location.offset));
+      bytes.copy(extended, end, start, start + 64);
+      bytes = extended;
+      selected = protectedReport.sections.length;
+    }
+    if (problem === "extended-without-sections") {
+      bytes.writeBigUInt64LE(0n, 40);
+      bytes.writeUInt16LE(0, 60);
+      bytes.writeUInt16LE(0xffff, 62);
+    } else if (problem === "extended-undeclared-header") {
+      bytes.writeUInt16LE(0xffff, 62);
+      bytes.writeUInt32LE(selected, Number(bytes.readBigUInt64LE(40)) + 40);
+    } else bytes.writeUInt16LE(selected, 62);
+    const path = join(root.path, `invalid-section-names-${problem}`);
+    await writeFile(path, bytes);
+    for (const mode of ["cli", "mcp"]) {
+      await inspect(mode, path, "invalid_input");
+      cases++;
+    }
+    assert.deepEqual(await readFile(path), bytes);
+  }
+  for (const profile of ["absent", "extended-absent", "extended-present"]) {
+    const bytes = Buffer.from(sectionBearingBytes);
+    const selected =
+      profile === "extended-present" ? sectionNameTable.index : 0;
+    bytes.writeUInt16LE(profile === "absent" ? 0 : 0xffff, 62);
+    if (profile !== "absent")
+      bytes.writeUInt32LE(selected, Number(bytes.readBigUInt64LE(40)) + 40);
+    const path = join(root.path, `section-names-${profile}`);
+    await writeFile(path, bytes);
+    for (const mode of ["cli", "mcp"]) {
+      const value = await inspect(mode, path);
+      assert.deepEqual(value.symbols, protectedReport.symbols);
+      if (selected === 0) {
+        assert.deepEqual(
+          value.sections.map((section) => section.name),
+          protectedReport.sections.map(() => ({
+            display: "",
+            bytes_base64: null,
+            location: null,
+            unknown_reason:
+              "ELF declares no section-name table (SHN_UNDEF index 0).",
+          })),
+        );
+        assert.deepEqual(
+          value.sections.map((section) => section.name_offset),
+          protectedReport.sections.map((section) => section.name_offset),
+        );
+      } else
+        assert.deepEqual(
+          value.sections.map((section) => section.name),
+          protectedReport.sections.map((section) => section.name),
+        );
+      cases++;
+    }
+    assert.deepEqual(await readFile(path), bytes);
+  }
   // Malformed references must fail before the decoder reads unrelated bytes.
   const neededTagOffsets = [];
   let stringSizeTagOffset;

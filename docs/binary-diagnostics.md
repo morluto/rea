@@ -52,6 +52,10 @@ uses isolated mode and an owned cache. Exact upstream profiles are recorded in
   Positive indices resolve through a validated symbol table; symbol index zero
   means a zero symbol value without a table lookup, including when no table is
   linked. Malformed references fail with the affected section and symbol index.
+- Section-name and symbol tables require declared SHT_STRTAB links.
+  SHN_UNDEF explicitly means no section names: display is empty, raw name and
+  location unknown, with the original name offsets retained. Extended section-name
+  indices resolve through section zero and undergo the same validation.
 - Symbol tables require a declared SHT_STRTAB link. Name offsets and terminators
   must stay inside the declared string table; malformed references fail before
   unrelated bytes can become names. Dynamic dependencies use DT_STRTAB/DT_STRSZ

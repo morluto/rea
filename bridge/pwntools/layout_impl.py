@@ -5,6 +5,7 @@ user configuration initialization, debugger startup, or dependency installation.
 """
 import base64
 import importlib.metadata
+import io
 import json
 import os
 from pathlib import Path
@@ -126,8 +127,29 @@ def inspect_elf(path, cache):
     from pwnlib.context import context
     with context.local(cache_dir=str(cache), log_level="warning"):
         from elftools.common.exceptions import ELFError
+        from elftools.elf.elffile import ELFFile
         from pwnlib.elf import ELF
+        try:
+            headers = ELFFile(io.BytesIO(content))
+            section_count = headers.num_sections()
+            if headers.header.e_shstrndx == 0xffff and section_count == 0:
+                raise LayoutFailure("format", "ELF extended section-name index requires a declared section-zero header.")
+            section_name_index = headers.get_shstrndx()
+            if section_name_index != 0:
+                if section_name_index >= section_count:
+                    raise LayoutFailure("format", f"ELF section-name table index {section_name_index} lies outside the declared section count {section_count}.")
+                names_header = headers._get_section_header(section_name_index)
+                if names_header.sh_type != "SHT_STRTAB":
+                    raise LayoutFailure("format", f"ELF section-name table {section_name_index} is not SHT_STRTAB.")
+                location(names_header.sh_offset, names_header.sh_size, len(content))
+        except ELFError as error:
+            raise LayoutFailure("format", str(error)) from error
         class LayoutELF(ELF):
+            def _get_section_name(self, header):
+                # SHN_UNDEF declares no names; upstream would otherwise read
+                # strings at the inactive section-zero offset.
+                return "" if section_name_index == 0 else super()._get_section_name(header)
+
             # pyelftools 0.33 calls these documented filters internally;
             # pwntools 4.15.0's cached overrides do not accept the argument.
             # Forward the filter on this adapter instance, without modifying
@@ -147,7 +169,7 @@ def inspect_elf(path, cache):
                 raise LayoutFailure("unsupported", "Selected ELF type is outside the EXEC/DYN/REL layout profile; recorded core analysis is separate.")
             length = len(content)
             all_sections = list(image.iter_sections())
-            shstrings = image.get_section(image.get_shstrndx()) if all_sections else None
+            shstrings = image.get_section(section_name_index) if all_sections and section_name_index != 0 else None
             sections, segments, symbols, relocations, packed_relatives = [], [], [], [], []
             needed, interpreters = [], []
             for index, section in enumerate(all_sections):
@@ -155,7 +177,7 @@ def inspect_elf(path, cache):
                 backing = h.sh_type not in ("SHT_NOBITS", "SHT_NULL")
                 if backing: location(h.sh_offset, h.sh_size, length)
                 sections.append({
-                    "index": index, "name": name_reference(section.name, shstrings, h.sh_name, content), "name_offset": address(h.sh_name), "type": h.sh_type,
+                    "index": index, "name": name_reference(section.name, shstrings, h.sh_name, content) if shstrings is not None else {"display": "", "bytes_base64": None, "location": None, "unknown_reason": "ELF declares no section-name table (SHN_UNDEF index 0)."}, "name_offset": address(h.sh_name), "type": h.sh_type,
                     "header_location": location(image.header.e_shoff + index * image.header.e_shentsize, image.header.e_shentsize, length),
                     "address": address(h.sh_addr), "offset": address(h.sh_offset),
                     "size": address(h.sh_size), "alignment": address(h.sh_addralign),
@@ -264,6 +286,7 @@ def inspect_elf(path, cache):
                     "Mitigations are upstream static heuristics, not runtime protection. ET_DYN does not prove an executable; absent canary symbols do not prove every function unprotected.",
                     "This profile inspects ELF EXEC/DYN/REL layout only. It does not analyze recorded cores, resolve loaded libraries, launch the target as a host process or start a debugger.",
                     "Symbol/relocation inventories reflect original section tables. A sectionless image can still report dynamic dependency names; missing tables do not prove absence of dynamic symbols or relocations.",
+                    *(["Absent section-name table: section-dependent RELRO/canary heuristics may be incomplete; protection coverage is unknown."] if all_sections and section_name_index == 0 else []),
                     *(["Sectionless images lack the .dynamic section and symbol tables used by upstream heuristics. RELRO/canary indicators may be incomplete; their values remain reported static candidates, with protection coverage unknown."] if not all_sections else []),
                 ],
             }
