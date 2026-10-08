@@ -7,7 +7,7 @@ import type { JavaScriptSemanticGraph } from "../../domain/javascript/javascript
 import type { ElectronBoundarySummary } from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import { analyzeAndProjectJavaScriptArtifactFiles } from "./JavaScriptArtifactAnalysis.js";
 import { readJavaScriptArtifactFiles } from "../../artifacts/javascript/JavaScriptArtifactFiles.js";
-import { buildJavaScriptArtifactGraph } from "./JavaScriptArtifactGraphBuilder.js";
+import { buildImmutableJavaScriptArtifactGraphSteps } from "./JavaScriptArtifactGraphBuilder.js";
 import {
   javascriptArtifactReconstructionInputSchema,
   type JavaScriptArtifactReconstructionInput,
@@ -16,7 +16,10 @@ import { scanCanonicalArtifactInventory } from "../../artifacts/inventory/Artifa
 import { summarizeElectronBoundaries } from "./ElectronBoundaryAnalysis.js";
 import { createJavaScriptSemanticGraphProjection } from "./JavaScriptSemanticGraphBuilder.js";
 import type { ProgressReporter } from "../ProgressReporter.js";
-import { checkpointJavaScriptAnalysis } from "./JavaScriptAnalysisControl.js";
+import {
+  checkpointJavaScriptAnalysis,
+  completeJavaScriptAnalysisSteps,
+} from "./JavaScriptAnalysisControl.js";
 
 /** Application-layer result retaining local diagnostics outside the canonical graph. */
 export interface JavaScriptArtifactReconstructionResult {
@@ -95,15 +98,35 @@ export const reconstructJavaScriptArtifact = async (
       "build_javascript_application_graph",
       "Constructing application and Electron boundary relationships",
     );
-    const graph = buildJavaScriptArtifactGraph(snapshot, files, analysis);
+    const applicationGraphSteps = buildImmutableJavaScriptArtifactGraphSteps(
+      snapshot,
+      files,
+      analysis,
+    );
+    await reportPhase(
+      "seal_javascript_application_graph",
+      "Sealing the validated application graph",
+    );
+    const graph = await completeJavaScriptAnalysisSteps(
+      applicationGraphSteps,
+      signal,
+    );
     await reportPhase(
       "build_javascript_semantic_graph",
       "Binding and validating static semantic relationships",
     );
-    const semanticGraph = semanticProjection.finish(
+    const semanticGraphSteps = semanticProjection.finishImmutableSteps(
       snapshot.manifest.root_sha256,
       graph,
       analysis,
+    );
+    await reportPhase(
+      "seal_javascript_semantic_graph",
+      "Sealing the validated semantic graph",
+    );
+    const semanticGraph = await completeJavaScriptAnalysisSteps(
+      semanticGraphSteps,
+      signal,
     );
     await checkpointJavaScriptAnalysis(signal);
     return {

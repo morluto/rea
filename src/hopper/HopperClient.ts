@@ -502,7 +502,8 @@ export class HopperClient {
     deadline: ProviderStartupDeadline,
   ): Promise<Result<undefined, HopperError>> {
     while (deadline.remainingMs() > 0) {
-      if (deadline.signal.aborted) return err(startupInterruption(deadline));
+      if (deadline.signal.aborted)
+        return err(await this.#startupInterruption(deadline));
       if (this.#closing) return err(new HopperProcessError(null));
       if (
         this.#launcherExitCode !== undefined &&
@@ -516,7 +517,7 @@ export class HopperClient {
           deadline,
         );
         return deadline.interruption === "cancelled"
-          ? err(startupInterruption(deadline))
+          ? err(await this.#startupInterruption(deadline))
           : err(failure);
       }
       try {
@@ -525,7 +526,7 @@ export class HopperClient {
         // best-effort cleanup: socket polling; absence means keep waiting.
         void cause;
         if ((await deadline.wait(50)) === "aborted")
-          return err(startupInterruption(deadline));
+          return err(await this.#startupInterruption(deadline));
         continue;
       }
       const attempt = await connectHopperSocketOnce(
@@ -538,9 +539,44 @@ export class HopperClient {
         return ok(undefined);
       }
       if ((await deadline.wait(50)) === "aborted")
-        return err(startupInterruption(deadline));
+        return err(await this.#startupInterruption(deadline));
     }
-    return err(new HopperTimeoutError(this.#options.startupTimeoutMs));
+    return err(await this.#startupInterruption(deadline));
+  }
+
+  async #startupInterruption(
+    deadline: ProviderStartupDeadline,
+  ): Promise<HopperCancelledError | HopperTimeoutError> {
+    if (deadline.interruption === "cancelled")
+      return new HopperCancelledError();
+    return new HopperTimeoutError(
+      deadline.timeoutMs,
+      undefined,
+      undefined,
+      "not_started",
+      "launch",
+      this.#launcherOutcome(
+        (await this.#process?.waitForOutputClose(0)) ?? false,
+      ),
+    );
+  }
+
+  #launcherOutcome(outputClosed: boolean): HopperLauncherOutcome | undefined {
+    const snapshot = this.#process?.snapshot();
+    const token = this.#token;
+    if (snapshot === undefined) return undefined;
+    const redact = (text: string): string =>
+      token === undefined
+        ? text
+        : text.replaceAll(token, "[redacted transport credential]");
+    return {
+      exit_code: snapshot.exitCode ?? null,
+      signal: snapshot.signal ?? null,
+      stdout: { ...snapshot.stdout, text: redact(snapshot.stdout.text) },
+      stderr: { ...snapshot.stderr, text: redact(snapshot.stderr.text) },
+      output_closed: outputClosed,
+      diagnostic_truncated: snapshot.diagnosticTruncated === true,
+    };
   }
 
   async #launcherStartupFailure(
@@ -549,29 +585,13 @@ export class HopperClient {
     deadline: ProviderStartupDeadline,
   ): Promise<HopperError> {
     const process = this.#process;
-    const token = this.#token;
     // Descendants may inherit the helper's pipes. Bound drainage independently
     // from readiness, and report whether producer output actually closed.
     const outputClosed =
       (await process?.waitForOutputClose(
         Math.min(1_000, deadline.remainingMs()),
       )) ?? false;
-    const snapshot = process?.snapshot();
-    const redact = (text: string): string =>
-      token === undefined
-        ? text
-        : text.replaceAll(token, "[redacted transport credential]");
-    const launcherFailure: HopperLauncherOutcome | undefined =
-      snapshot === undefined
-        ? undefined
-        : {
-            exit_code: exitCode,
-            signal: snapshot.signal ?? null,
-            stdout: { ...snapshot.stdout, text: redact(snapshot.stdout.text) },
-            stderr: { ...snapshot.stderr, text: redact(snapshot.stderr.text) },
-            output_closed: outputClosed,
-            diagnostic_truncated: snapshot.diagnosticTruncated === true,
-          };
+    const launcherFailure = this.#launcherOutcome(outputClosed);
     if (ownsProviderLifetime)
       return new HopperProcessError(
         exitCode,

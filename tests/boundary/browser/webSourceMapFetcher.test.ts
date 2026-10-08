@@ -374,6 +374,52 @@ describe("web source-map fetching and validation: enforcing fetch limits and val
   });
 });
 
+describe("source-map response encoding", () => {
+  it("rejects malformed UTF-8 source-map response bytes", async () => {
+    const result = await fetchWebSourceMaps([request], input(), undefined, {
+      fetch: () =>
+        Promise.resolve(
+          new Response(Uint8Array.of(0x7b, 0x22, 0xc3, 0x28, 0x22, 0x7d), {
+            status: 200,
+          }),
+        ),
+    });
+
+    expect(result.status).toBe("unavailable");
+    expect(result.items[0]).toMatchObject({
+      status: "invalid",
+      artifact: null,
+      limitation: "Source-map response is not valid UTF-8.",
+    });
+  });
+});
+
+describe("source-map operation deadline observations", () => {
+  it("keeps completed maps when a later request times out", async () => {
+    let calls = 0;
+    const requests = [
+      request,
+      { ...request, scriptKey: `scr_${"2".repeat(64)}` },
+    ];
+    const result = await fetchWebSourceMaps(requests, input(), undefined, {
+      timeoutMs: 100,
+      fetch: () => {
+        calls += 1;
+        return calls === 1
+          ? Promise.resolve(validMapResponse())
+          : new Promise<Response>(() => undefined);
+      },
+    });
+
+    expect(result.status).toBe("partial");
+    expect(result.items.map(({ status }) => status)).toEqual([
+      "included",
+      "fetch_failed",
+    ]);
+    expect(result.items[0]?.original_sources).toHaveLength(1);
+  });
+});
+
 describe("indexed source-map offsets", () => {
   it.each([
     { line: 0, column: -1 },
@@ -621,6 +667,76 @@ describe("source-map dependency coverage of hard-to-parse sources", () => {
 });
 
 describe("web source-map collection", () => {
+  it("rejects mapping expansion before the trace-mapping decoder allocates it", async () => {
+    const response = new Response(
+      JSON.stringify({
+        version: 3,
+        names: [],
+        sources: [],
+        mappings: Array.from({ length: 262_145 }, () => "A").join(","),
+      }),
+      { status: 200 },
+    );
+    const result = await fetchWebSourceMaps([request], input(), undefined, {
+      fetch: () => Promise.resolve(response),
+    });
+
+    expect(result.status).toBe("unavailable");
+    expect(result.items[0]).toMatchObject({
+      status: "fetch_failed",
+      artifact: null,
+    });
+    expect(result.items[0]?.limitation).toContain("262144");
+  });
+
+  it("accounts for decoded records across the complete fetch operation", async () => {
+    const mapText = JSON.stringify({
+      version: 3,
+      names: [],
+      sources: [],
+      mappings: Array.from({ length: 150_000 }, () => "A").join(","),
+    });
+    const requests = [
+      request,
+      { ...request, scriptKey: `scr_${"2".repeat(64)}` },
+    ];
+    const result = await fetchWebSourceMaps(requests, input(), undefined, {
+      fetch: () => Promise.resolve(new Response(mapText, { status: 200 })),
+    });
+
+    expect(result.status).toBe("partial");
+    expect(result.items.map(({ status }) => status)).toEqual([
+      "included",
+      "fetch_failed",
+    ]);
+    expect(result.items[1]?.limitation).toContain("262144-record");
+  });
+
+  it("rejects deeply nested indexed maps before recursive flattening", async () => {
+    let map: unknown = {
+      version: 3,
+      names: [],
+      sources: [],
+      mappings: "",
+    };
+    for (let index = 0; index < 65; index += 1)
+      map = {
+        version: 3,
+        sections: [{ offset: { line: 0, column: 0 }, map }],
+      };
+    const result = await fetchWebSourceMaps([request], input(), undefined, {
+      fetch: () =>
+        Promise.resolve(new Response(JSON.stringify(map), { status: 200 })),
+    });
+
+    expect(result.status).toBe("unavailable");
+    expect(result.items[0]).toMatchObject({
+      status: "fetch_failed",
+      artifact: null,
+    });
+    expect(result.items[0]?.limitation).toContain("64-level");
+  });
+
   it("retains every mapping from a sectioned source map", async () => {
     const segmentCount = 10_001;
     const regular = {
@@ -690,6 +806,31 @@ describe("web source-map collection", () => {
     expect(result.items[0].original_sources[0]?.artifact?.bytes).toBe(
       Buffer.byteLength(content),
     );
+  });
+});
+
+describe("raw source-map structure preflight", () => {
+  it("budgets source inventory before schema parsing its entries", async () => {
+    const response = new Response(
+      JSON.stringify({
+        version: 3,
+        names: [],
+        sources: Array.from({ length: 262_145 }, (_, index) =>
+          index === 0 ? 42 : "source.js",
+        ),
+        mappings: "",
+      }),
+      { status: 200 },
+    );
+    const result = await fetchWebSourceMaps([request], input(), undefined, {
+      fetch: () => Promise.resolve(response),
+    });
+
+    expect(result.items[0]).toMatchObject({
+      status: "fetch_failed",
+      artifact: null,
+    });
+    expect(result.items[0]?.limitation).toContain("262144-record");
   });
 });
 

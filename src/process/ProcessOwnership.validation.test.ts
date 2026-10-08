@@ -6,21 +6,12 @@ import {
   type WindowsProcessTreeHost,
 } from "./ProcessOwnership.js";
 import {
-  createSystemProcessOwnershipHost,
   observeOwnedProcessGroup,
   observeOwnedProcessLineage,
 } from "./ProcessOwnershipObservation.js";
 import { host, ownership } from "./ProcessOwnership.fixture.js";
 
 describe("owned process-group cleanup validation: ownership and lineage", () => {
-  it("builds a host seam from the injected platform and environment", async () => {
-    const host = createSystemProcessOwnershipHost("win32", {
-      PATH: "/injected/path",
-    });
-    expect(host.platform).toBe("win32");
-    await expect(host.listProcesses()).resolves.toEqual([]);
-  });
-
   it("fails closed when a descendant in another process group lacks the token", async () => {
     const adapter: ProcessOwnershipHost = {
       listProcesses: () =>

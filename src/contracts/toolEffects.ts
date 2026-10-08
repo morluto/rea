@@ -161,7 +161,6 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   set_addresses_names: effects({ mutatesTarget: true, mutatesSession: true }),
   set_bookmark: effects({ mutatesTarget: true, mutatesSession: true }),
   set_comment: effects({ mutatesTarget: true, mutatesSession: true }),
-  set_current_document: effects({ mutatesSession: true, changesUiState: true }),
   set_inline_comment: effects({ mutatesTarget: true, mutatesSession: true }),
   unset_bookmark: effects({
     mutatesTarget: true,

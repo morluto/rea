@@ -8,7 +8,7 @@ import { analyzeJavaScriptApplication } from "../../../src/application/javascrip
 import { compareJavaScriptExportShapesEvidence } from "../../../src/application/javascript/JavaScriptApplicationWorkflowService.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { javaScriptExportShapeComparisonResultSchema } from "../../../src/domain/javascript/javascriptExportShapeComparisonSchemas.js";
-import { createApplicationMcpHarness } from "./mcpHarness.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 
 describe("application workflow MCP parity", () => {
   it("compares exact parser export shapes with inline Evidence", async () => {

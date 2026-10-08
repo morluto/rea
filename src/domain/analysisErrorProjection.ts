@@ -20,7 +20,11 @@ import {
 import { ArtifactOperationError } from "./artifactOperationError.js";
 import { BinaryTargetError } from "./configurationErrors.js";
 import { BrowserObservationError } from "./browserObservationError.js";
-import { EvidenceFileError, EvidenceReferenceError } from "./evidenceErrors.js";
+import {
+  EvidenceFileError,
+  EvidenceIntegrityError,
+  EvidenceReferenceError,
+} from "./evidenceErrors.js";
 import {
   HopperCancelledError,
   HopperProcessError,
@@ -82,6 +86,11 @@ export const projectAnalysisError = (
 const underlyingErrorCode = (
   error: AnalysisError,
 ): AnalysisErrorProjection["code"] => {
+  if (
+    error instanceof HopperRemoteError &&
+    error.diagnosticType === "invalid_request"
+  )
+    return "invalid_request";
   if (error instanceof ProviderSelectionError)
     return error.reason === "provider_unavailable"
       ? "provider_unavailable"
@@ -259,6 +268,7 @@ const requestErrorDetails = (
       expected: error.expected,
       actual: error.actual,
     };
+  if (error instanceof EvidenceIntegrityError) return { reason: error.message };
   return undefined;
 };
 
@@ -435,6 +445,9 @@ const lifecycleErrorDetails = (
     return {
       stage: error.operation === undefined ? "startup" : error.stage,
       timeout_ms: error.timeoutMs,
+      ...(error.launcherOutcome === undefined
+        ? {}
+        : { launcher: error.launcherOutcome }),
       provider_state: error.providerState,
       retry_action: error.providerState === "busy" ? "wait" : "retry",
       ...(error.operation === undefined ? {} : { operation: error.operation }),

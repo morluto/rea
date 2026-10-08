@@ -34,17 +34,9 @@ type PartialCapture = Extract<
   NonNullable<ProcessCaptureError["partialObservation"]>,
   { readonly capture: unknown }
 >["capture"];
-const captureObservations = (
-  result: CaptureRun,
-): {
-  readonly capture: ProcessCapture | PartialCapture;
-  readonly cleanupIncomplete: boolean;
-} => {
-  if (result.ok) return { capture: result.value, cleanupIncomplete: false };
-  if (!(result.error instanceof ProcessCaptureError)) throw result.error;
-  const report = result.error.cleanupReport;
-  const partial = result.error.partialObservation;
-  expect(result.error.reason).toBe("cleanup_incomplete");
+const expectUnverifiedHostCleanup = (error: ProcessCaptureError): void => {
+  const report = error.cleanupReport;
+  expect(error.reason, error.message).toBe("cleanup_incomplete");
   expect(report?.owned_process_group.state).toBe("unverified");
   const [summary, diagnostics] = (
     report?.owned_process_group.reason ?? ""
@@ -66,6 +58,18 @@ const captureObservations = (
   );
   expect(report?.terminal_renderer.state).toBe("cleaned");
   expect(report?.temporary_root.state).toBe("cleaned");
+};
+
+const captureObservations = (
+  result: CaptureRun,
+): {
+  readonly capture: ProcessCapture | PartialCapture;
+  readonly cleanupIncomplete: boolean;
+} => {
+  if (result.ok) return { capture: result.value, cleanupIncomplete: false };
+  if (!(result.error instanceof ProcessCaptureError)) throw result.error;
+  expectUnverifiedHostCleanup(result.error);
+  const partial = result.error.partialObservation;
   if (partial === undefined || !("capture" in partial))
     throw new Error(
       "cleanup-incomplete capture omitted completed observations",
@@ -253,7 +257,6 @@ itWithCaptureCapability(
       cleanupHost,
     );
 
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected cleanup-incomplete failure");
     if (!(result.error instanceof ProcessCaptureError)) throw result.error;
     const partial = result.error.partialObservation;
@@ -455,7 +458,6 @@ itWithCaptureCapability(
       }),
       controller.signal,
     );
-    expect(cancelled.ok).toBe(false);
     if (cancelled.ok) throw new Error("expected cancellation");
     expect(cancelled.error.message).toContain("cancelled");
   },
@@ -486,7 +488,6 @@ itWithCaptureCapability(
       signal,
     );
 
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected initial snapshot cancellation");
     expect(result.error).toMatchObject({
       reason: "cancelled",
@@ -522,10 +523,19 @@ itWithCaptureCapability(
     );
 
     const result = await resultPromise;
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected final snapshot cancellation");
     expect(initialSnapshotCompleted).toBe(true);
-    expect(result.error).toMatchObject({
+    if (!(result.error instanceof ProcessCaptureError)) throw result.error;
+    if (result.error.cleanupIncomplete) {
+      expectUnverifiedHostCleanup(result.error);
+      expect(result.error.executionFailure).toBe(
+        "process capture was cancelled",
+      );
+    }
+    const cancellation = result.error.cleanupIncomplete
+      ? result.error.cause
+      : result.error;
+    expect(cancellation, result.error.message).toMatchObject({
       reason: "cancelled",
       userCategory: "cancelled",
     });
@@ -560,7 +570,6 @@ itWithCaptureCapability(
       captureSnapshot,
     );
 
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected filesystem observation failure");
     expect(result.error).toMatchObject({
       reason: "capture_failed",

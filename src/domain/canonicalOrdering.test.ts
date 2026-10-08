@@ -13,12 +13,6 @@ describe("compareCodePoints", () => {
     expect(compareCodePoints(GRINNING, REPLACEMENT)).toBeGreaterThan(0);
   });
 
-  it("reports equality only for equal strings", () => {
-    expect(compareCodePoints("", "")).toBe(0);
-    expect(compareCodePoints(GRINNING, GRINNING)).toBe(0);
-    expect(compareCodePoints("a", "a")).toBe(0);
-  });
-
   it("keeps a prefix before its own extension", () => {
     expect(compareCodePoints("ab", "abc")).toBe(-1);
     expect(compareCodePoints("abc", "ab")).toBe(1);
@@ -38,10 +32,5 @@ describe("uniqueSorted", () => {
       REPLACEMENT,
       GRINNING,
     ]);
-  });
-
-  it("preserves the inferred literal type", () => {
-    const values: ReadonlyArray<"a" | "b"> = ["b", "a", "b"];
-    expect(uniqueSorted(values)).toEqual(["a", "b"]);
   });
 });

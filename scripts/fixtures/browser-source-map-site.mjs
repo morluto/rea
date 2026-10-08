@@ -4,7 +4,7 @@ import { access } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
 /** Generate a real compiler map and serve only source-owned fixture code. */
-export async function startBrowserSourceMapSite() {
+export async function startBrowserSourceMapSite(options = {}) {
   const command = process.env.REA_WEB_SOURCE_MAP_COMPILER;
   if (!command || !isAbsolute(command))
     throw new Error(
@@ -19,19 +19,40 @@ export async function startBrowserSourceMapSite() {
   const compiled = await compiler
     .transform(original, {
       loader: "ts",
-      sourcefile: "../src/fixture.ts?v=7#original",
+      sourcefile: options.sourcefile ?? "../src/fixture.ts?v=7#original",
       sourcemap: "external",
       minify: true,
       format: "iife",
       target: "es2022",
     })
     .finally(() => compiler.stop());
+  const prefixes = options.prefixes ?? [];
+  const generated =
+    prefixes.join("") +
+    compiled.code +
+    (options.sourceMapAnnotation
+      ? "\n//# sourceMappingURL=/maps/app.js.map"
+      : "");
+  let indexed = JSON.parse(compiled.map);
+  for (const prefix of prefixes.toReversed()) {
+    const offset = textPosition(prefix, prefix.length);
+    indexed = {
+      version: 3,
+      sections: [
+        {
+          offset: { line: offset.line - 1, column: offset.column },
+          map: indexed,
+        },
+      ],
+    };
+  }
+  const map = prefixes.length === 0 ? compiled.map : JSON.stringify(indexed);
   const token = '"source-map proof"';
-  const generatedOffset = compiled.code.indexOf(token);
+  const generatedOffset = generated.indexOf(token);
   const originalOffset = original.indexOf(token);
   if (generatedOffset < 0 || originalOffset < 0)
     throw new Error("Compiler fixture marker missing");
-  const position = textPosition(compiled.code, generatedOffset);
+  const position = textPosition(generated, generatedOffset);
   const originalPosition = textPosition(original, originalOffset);
   let mapRequests = 0;
   const server = createServer((request, response) => {
@@ -42,12 +63,12 @@ export async function startBrowserSourceMapSite() {
     if (request.url === "/app.js?build=7")
       return response
         .writeHead(200, { "Content-Type": "text/javascript" })
-        .end(compiled.code);
+        .end(generated);
     if (request.url?.startsWith("/maps/app.js.map")) {
       mapRequests += 1;
       return response
         .writeHead(200, { "Content-Type": "application/json" })
-        .end(compiled.map);
+        .end(map);
     }
     response.writeHead(404).end("Unselected");
   });
@@ -58,8 +79,10 @@ export async function startBrowserSourceMapSite() {
   return {
     origin: `http://127.0.0.1:${address.port}`,
     original,
-    generated: compiled.code,
-    map: compiled.map,
+    generated,
+    map,
+    leafCode: compiled.code,
+    leafMap: compiled.map,
     position,
     originalPosition,
     originalOffset,

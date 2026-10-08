@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { requireFunctionDossierOracle } from "../../dist/application/RealHopperAssertions.js";
 
 /** Require truthful tri-state permissions from real Hopper memory regions. */
@@ -57,7 +58,9 @@ export function requireBridgeDiagnostic(chunks) {
       (diagnostic) =>
         diagnostic.type === "bridge-diagnostic" &&
         diagnostic.category === "invalid_request" &&
-        diagnostic.message === "Invalid Hopper bridge request",
+        diagnostic.message.includes(
+          "Unknown Hopper address or name: __rea_missing_procedure__",
+        ),
     )
   )
     throw new Error("The MCP runtime omitted the correlated Hopper diagnostic");
@@ -120,6 +123,44 @@ export async function verifyRealHopperFixture({
       require_assembly: true,
     },
   );
+  const calls = entryDossier.outgoing_references.filter(
+    (edge) => edge.call?.classification === "direct",
+  );
+  assert.ok(
+    calls.some((edge) => edge.target_address === branch.address),
+    "Hopper native direct-call classification was discarded",
+  );
+  const observed = normalizedResult(
+    await client.callTool(
+      {
+        name: "procedure_references",
+        arguments: { procedure: entry.address, direction: "outgoing" },
+      },
+      options,
+    ),
+    "procedure_references native calls",
+  );
+  assert.deepEqual(entryDossier.unresolved_calls, observed.unresolved_calls);
+  for (const call of calls) {
+    assert.equal(call.call.provider_type, 2);
+    assert.equal(
+      call.call.provenance,
+      "hopper-public-python-api:CallReference",
+    );
+    assert.equal(
+      call.kind.available,
+      false,
+      "partial call metadata invented detailed reference flags",
+    );
+    assert.deepEqual(
+      observed.references.find(
+        (edge) =>
+          edge.source_address === call.source_address &&
+          edge.target_address === call.target_address,
+      )?.call,
+      call.call,
+    );
+  }
   const branchDossier = requireFunctionDossierOracle(
     await analyzeFixtureProcedure(client, options, branch, normalizedResult),
     {
@@ -153,7 +194,13 @@ export async function verifyRealHopperFixture({
 }
 
 /** Reject malformed, unsafe, or unexpected failure diagnostics from MCP. */
-export function requireSafeDiagnostics(chunks) {
+export function requireSafeDiagnostics(
+  chunks,
+  expectedErrorTools = ["procedure_info"],
+  expectedErrorTags = ["HopperRemoteError"],
+) {
+  const expected = new Set(expectedErrorTools);
+  const tags = new Set(expectedErrorTags);
   const lines = chunks
     .join("")
     .split("\n")
@@ -173,10 +220,8 @@ export function requireSafeDiagnostics(chunks) {
       typeof diagnostic.level !== "number" ||
       diagnostic.level >= 50 ||
       (diagnostic.level >= 40 &&
-        diagnostic.errorTag !== "HopperRemoteError" &&
-        !(
-          diagnostic.tool === "procedure_info" && diagnostic.status === "error"
-        ))
+        !tags.has(diagnostic.errorTag) &&
+        !(expected.has(diagnostic.tool) && diagnostic.status === "error"))
     )
       throw new Error(`The MCP runtime emitted unsafe stderr: ${line}`);
   }

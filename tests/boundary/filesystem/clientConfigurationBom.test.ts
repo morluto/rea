@@ -14,6 +14,7 @@ import {
   configureClientConfiguration,
   inspectClientConfiguration,
 } from "../../../src/application/SetupClientConfiguration.js";
+import { systemUninstallHost } from "../../../src/application/Uninstall.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -113,4 +114,38 @@ it("rejects malformed BOM-prefixed JSON without writing or backing it up", async
   ).toEqual({ status: "failed", reason: "readback" });
   expect(await readFile(configPath)).toEqual(Buffer.from(original));
   expect(await readdir(home)).toEqual(["mcp.json"]);
+});
+
+it("restores original BOM-prefixed JSONC bytes after update and removal", async () => {
+  const home = await createTestTempDirectory("rea-client-config-bom-cycle-");
+  const client = supportedClients(home, "linux", {}).find(
+    (candidate) => candidate.name === "cursor",
+  );
+  if (client?.format !== "json") throw new Error("missing Cursor JSON config");
+  const serversKey = clientConfigurationServersKey(client.format);
+  const prefix = `\uFEFF{\r\n  // Keep prefix \uFEFF comment.\r\n  "label": "left\uFEFFright",\r\n  "${serversKey}": {\r\n    // Keep this unrelated registration.\r\n    "other": {\r\n      "command": "other\uFEFFtool"\r\n    },\r\n`;
+  const suffix = `  },\r\n  // Keep suffix comment.\r\n  "theme": "dark"\r\n}\r\n`;
+  const original = `${prefix}${suffix}`;
+  await mkdir(dirname(client.configPath), { recursive: true });
+  await writeFile(client.configPath, original);
+
+  const firstCommand = [join(home, "bin", "rea"), "mcp"];
+  const updatedCommand = [join(home, "updated", "bin", "rea"), "mcp"];
+  expect(
+    await configureClientConfiguration(client, {}, firstCommand),
+  ).toMatchObject({ status: "configured" });
+  expect(
+    await configureClientConfiguration(client, {}, updatedCommand),
+  ).toMatchObject({ status: "configured" });
+  const updated = await readFile(client.configPath, "utf8");
+  expect(parseClientConfiguration(updated, client.format).servers).toEqual({
+    other: { command: "other\uFEFFtool" },
+    rea: clientRegistrationEntry(client.format, updatedCommand, {}),
+  });
+
+  expect(await systemUninstallHost(home).removeClient(client)).toMatchObject({
+    name: "cursor",
+    status: "removed",
+  });
+  expect(await readFile(client.configPath, "utf8")).toBe(original);
 });

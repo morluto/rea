@@ -36,7 +36,6 @@ export const TOOL_EXAMPLE_OVERRIDES: Readonly<
   set_addresses_names: { names: { "0x1000": "entry" } },
   set_bookmark: { address: "0x1000" },
   set_comment: { address: "0x1000", comment: "validated entry point" },
-  set_current_document: { document: "fixture" },
   set_inline_comment: { address: "0x1000", comment: "calls parser" },
   unset_bookmark: { address: "0x1000" },
   get_call_graph: { address: "0x1000" },

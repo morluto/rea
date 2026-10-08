@@ -22,7 +22,7 @@ installation changes and requires approval before writing or installing.
 
 ## Planned work
 
-The [website guides](https://morluto.github.io/rea/guides/) and
+The [website guides](https://rea.tools/guides/) and
 [generated catalog](product-catalog.json) describe available workflows.
 Current development priorities are:
 

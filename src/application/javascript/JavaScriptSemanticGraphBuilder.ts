@@ -1,5 +1,6 @@
 import {
   createJavaScriptSemanticGraph,
+  createImmutableJavaScriptSemanticGraphSteps,
   type JavaScriptSemanticGraph,
   type JavaScriptSemanticGraphNode,
 } from "../../domain/javascript/javascriptSemanticGraph.js";
@@ -131,6 +132,11 @@ export interface JavaScriptSemanticGraphProjection {
     applicationGraph: BuilderInput["applicationGraph"],
     analysis: Pick<JavaScriptArtifactAnalysis, "truncated_scopes">,
   ) => JavaScriptSemanticGraph;
+  readonly finishImmutableSteps: (
+    rootArtifactSha256: string,
+    applicationGraph: BuilderInput["applicationGraph"],
+    analysis: Pick<JavaScriptArtifactAnalysis, "truncated_scopes">,
+  ) => Generator<void, JavaScriptSemanticGraph>;
 }
 
 /** Accumulate semantic nodes while each source IR is still file-local. */
@@ -161,71 +167,90 @@ export const createJavaScriptSemanticGraphProjection =
       if (state.fileNodesDropped) truncatedFiles += 1;
       state.fileNodeBudget = null;
     };
+    const finishWith = <Value>(
+      factory: (input: unknown) => Value,
+      rootArtifactSha256: string,
+      applicationGraph: BuilderInput["applicationGraph"],
+      analysis: Pick<JavaScriptArtifactAnalysis, "truncated_scopes">,
+    ): Value => {
+      bindSemanticGraphApplicationNodes(state, applicationGraph);
+      if (state.roots.size === 0) addFallbackRoot(rootArtifactSha256, state);
+      const unknowns = [...state.unknowns.values()];
+      const graph = factory({
+        schema: "JavaScriptSemanticRelationGraph",
+        root_artifact_sha256: rootArtifactSha256,
+        application_graph_id: applicationGraph.graph_id,
+        root_node_ids: [...state.roots],
+        nodes: [...state.nodes.values()],
+        relations: [...state.relations.values()],
+        fingerprints,
+        unknowns,
+        coverage: {
+          status: truncatedFiles > 0 ? "partial" : "unknown",
+          truncated: truncatedFiles > 0,
+          omitted_nodes: truncatedFiles > 0 ? null : 0,
+          omitted_relations: truncatedFiles > 0 ? null : 0,
+          limits:
+            truncatedFiles > 0
+              ? [
+                  {
+                    name: "semantic_graph_node_ceiling",
+                    value: SEMANTIC_GRAPH_NODE_CEILING,
+                    unit: "items" as const,
+                  },
+                ]
+              : [],
+          families: JAVASCRIPT_SEMANTIC_RELATION_FAMILIES.map((family) => ({
+            family,
+            status: semanticFamilyStatus(family, analysis),
+            retained_relations: [...state.relations.values()].filter(
+              (relation) =>
+                JAVASCRIPT_SEMANTIC_RELATION_FAMILY[relation.relation] ===
+                family,
+            ).length,
+            omitted_relations: truncatedFiles > 0 ? null : 0,
+            unknown_ids: unknowns
+              .filter((unknown) => unknown.family === family)
+              .map(({ unknown_id: identifier }) => identifier),
+          })),
+        },
+        limitations: [
+          "The semantic graph contains static syntax observations and conservative relationship candidates; it does not claim runtime execution.",
+          "Local data flow does not claim control-flow-sensitive reaching definitions or arbitrary dynamic property resolution.",
+          "Promise ownership covers explicit unshadowed Promise construction, static factories, aggregation, chaining, and await syntax only.",
+          "Function fingerprints are static candidates; equal digests can remain ambiguous and do not prove behavioral equivalence.",
+          "Event extraction covers EventEmitter-style literal registrations, removals, and dispatch candidates; dynamic names remain unknown.",
+          "Timer extraction covers global or node:timers scheduling and exact local-handle cancellation.",
+          "Child-process extraction covers asynchronous node:child_process creation, literal argv/env/stdio options, exit/error listeners, and kill signals.",
+          "Configuration extraction covers process.env, process.argv, node:fs reads, and direct logical defaults.",
+          "Request extraction covers fetch, WebSocket, node:http/node:https construction, direct option fields, and exact local response consumers.",
+          "Boundary extraction covers unshadowed JSON/global coercions plus parse and validation method candidates.",
+          "Resource extraction covers built-in filesystem/network acquisition and exact local close/destroy/end handles.",
+        ],
+      });
+      state.nodes.clear();
+      state.relations.clear();
+      state.unknowns.clear();
+      state.roots.clear();
+      fingerprints.length = 0;
+      return graph;
+    };
     return {
       projectFile: projectSource,
-      finish: (rootArtifactSha256, applicationGraph, analysis) => {
-        bindSemanticGraphApplicationNodes(state, applicationGraph);
-        if (state.roots.size === 0) addFallbackRoot(rootArtifactSha256, state);
-        const unknowns = [...state.unknowns.values()];
-        const graph = createJavaScriptSemanticGraph({
-          schema: "JavaScriptSemanticRelationGraph",
-          root_artifact_sha256: rootArtifactSha256,
-          application_graph_id: applicationGraph.graph_id,
-          root_node_ids: [...state.roots],
-          nodes: [...state.nodes.values()],
-          relations: [...state.relations.values()],
-          fingerprints,
-          unknowns,
-          coverage: {
-            status: truncatedFiles > 0 ? "partial" : "unknown",
-            truncated: truncatedFiles > 0,
-            omitted_nodes: truncatedFiles > 0 ? null : 0,
-            omitted_relations: truncatedFiles > 0 ? null : 0,
-            limits:
-              truncatedFiles > 0
-                ? [
-                    {
-                      name: "semantic_graph_node_ceiling",
-                      value: SEMANTIC_GRAPH_NODE_CEILING,
-                      unit: "items" as const,
-                    },
-                  ]
-                : [],
-            families: JAVASCRIPT_SEMANTIC_RELATION_FAMILIES.map((family) => ({
-              family,
-              status: semanticFamilyStatus(family, analysis),
-              retained_relations: [...state.relations.values()].filter(
-                (relation) =>
-                  JAVASCRIPT_SEMANTIC_RELATION_FAMILY[relation.relation] ===
-                  family,
-              ).length,
-              omitted_relations: truncatedFiles > 0 ? null : 0,
-              unknown_ids: unknowns
-                .filter((unknown) => unknown.family === family)
-                .map(({ unknown_id: identifier }) => identifier),
-            })),
-          },
-          limitations: [
-            "The semantic graph contains static syntax observations and conservative relationship candidates; it does not claim runtime execution.",
-            "Local data flow does not claim control-flow-sensitive reaching definitions or arbitrary dynamic property resolution.",
-            "Promise ownership covers explicit unshadowed Promise construction, static factories, aggregation, chaining, and await syntax only.",
-            "Function fingerprints are static candidates; equal digests can remain ambiguous and do not prove behavioral equivalence.",
-            "Event extraction covers EventEmitter-style literal registrations, removals, and dispatch candidates; dynamic names remain unknown.",
-            "Timer extraction covers global or node:timers scheduling and exact local-handle cancellation.",
-            "Child-process extraction covers asynchronous node:child_process creation, literal argv/env/stdio options, exit/error listeners, and kill signals.",
-            "Configuration extraction covers process.env, process.argv, node:fs reads, and direct logical defaults.",
-            "Request extraction covers fetch, WebSocket, node:http/node:https construction, direct option fields, and exact local response consumers.",
-            "Boundary extraction covers unshadowed JSON/global coercions plus parse and validation method candidates.",
-            "Resource extraction covers built-in filesystem/network acquisition and exact local close/destroy/end handles.",
-          ],
-        });
-        state.nodes.clear();
-        state.relations.clear();
-        state.unknowns.clear();
-        state.roots.clear();
-        fingerprints.length = 0;
-        return graph;
-      },
+      finish: (rootArtifactSha256, applicationGraph, analysis) =>
+        finishWith(
+          createJavaScriptSemanticGraph,
+          rootArtifactSha256,
+          applicationGraph,
+          analysis,
+        ),
+      finishImmutableSteps: (rootArtifactSha256, applicationGraph, analysis) =>
+        finishWith(
+          createImmutableJavaScriptSemanticGraphSteps,
+          rootArtifactSha256,
+          applicationGraph,
+          analysis,
+        ),
     };
   };
 

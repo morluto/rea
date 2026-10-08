@@ -5,6 +5,7 @@ const shaSchema = z.string().regex(/^[a-f0-9]{40}$/u);
 const versionSchema = z.object({ version: z.string() });
 const manifestSchema = z.object({ ".": z.string() });
 const sectionsSchema = z.object({
+  versioning: z.string().optional(),
   "changelog-sections": z.array(
     z.object({ type: z.string(), hidden: z.boolean().optional() }),
   ),
@@ -297,6 +298,7 @@ export async function inspectReleaseCheckpoint(git, options) {
   ).filter((commit) => commit.breaking || visibleTypes.has(commit.type));
   const breaking = commits.filter((commit) => commit.breaking);
   if (
+    configuration.versioning !== "always-bump-minor" &&
     breaking.length > 0 &&
     major(baselineVersion) > 0 &&
     major(expectedVersion) <= major(baselineVersion)

@@ -65,6 +65,7 @@ const EXPECTED_BUNDLES = [
   ["Contents/XPCServices/Svc.xpc", "xpc-service", "macos-deep", "."],
 ];
 
+let report;
 try {
   const { app } = await buildMacosBundleFixture(root);
   const zip = join(root, "MacFixture.zip");
@@ -155,19 +156,18 @@ try {
   const dylibs = await verifyDylibResolution(app);
   const dyldEnvironment = await verifyDyldEnvironment(root);
 
-  process.stdout.write(
-    `${JSON.stringify({
-      ok: true,
-      mocked: false,
-      cli: true,
-      stdio_mcp: true,
-      containers: containers.map(({ format }) => format),
-      bundles: EXPECTED_BUNDLES.length,
-      dmg_detached: true,
-      dylib_resolution: dylibs,
-      dyld_environment: dyldEnvironment,
-    })}\n`,
-  );
+  report = {
+    ok: true,
+    mocked: false,
+    cli: true,
+    stdio_mcp: true,
+    containers: containers.map(({ format }) => format),
+    bundles: EXPECTED_BUNDLES.length,
+    dmg_detached: true,
+    dylib_resolution: dylibs,
+    dyld_environment: dyldEnvironment,
+  };
 } finally {
   await rm(root, { recursive: true, force: true });
 }
+process.stdout.write(`${JSON.stringify(report)}\n`);

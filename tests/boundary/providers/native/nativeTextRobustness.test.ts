@@ -70,7 +70,6 @@ it("accepts a byte-order mark before plist JSON", () => {
   const parsed = parsePlistJson(
     '\uFEFF{"CFBundleIdentifier":"com.owned.fixture"}',
   );
-  expect(parsed.ok).toBe(true);
   if (!parsed.ok) throw new Error("expected plist JSON to parse");
   expect(parsed.value.bundle.identifier).toBe("com.owned.fixture");
 });

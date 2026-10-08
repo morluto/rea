@@ -84,6 +84,22 @@ are made.
 
 ## Verification
 
+Browser bundle collection uses absolute section offsets for nested inline maps.
+An enclosing column offset contributes only when the nested section starts on
+that enclosing section's first generated line. Parent boundaries still clip
+preceding browser mappings when a nested section starts with a gap or has no
+child leaves. Raw map text, original source identities and the dedicated decoder
+profile are preserved.
+
+Browser collection accepts up to 64 MiB of map responses per inspection and
+preflights indexed sections, sources, names, generated rows and mapping segments
+against a 262144-record decode budget before upstream flattening. Indexed maps
+are limited to 64 nested levels. These structural limits bound decoded object
+growth while preserving large embedded `sourcesContent` strings within the
+response-byte budget; exceeding a decoder limit returns a `fetch_failed` item.
+Malformed UTF-8 map responses are reported as invalid rather than repaired with
+replacement characters.
+
 Focused tests cover duplicate mappings, indexed offsets/overlap/local indexes,
 32-bit VLQ overflow, nullable content, UTF-16/CRLF positions, immutable artifact
 identity, cancellation, late output closure, cleanup failures, SDK schemas and

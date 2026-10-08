@@ -52,6 +52,7 @@ const profile = await mkdtemp(join(tmpdir(), "rea-real-browser-"));
 const site = await startBrowserVerifierSite();
 let browser;
 let pageProxy;
+let report;
 try {
   browser = spawn(
     executable,
@@ -338,35 +339,32 @@ try {
     target_id: target,
   });
   const moduleTrace = await verifyBrowserModules(executable);
-  process.stdout.write(
-    `${JSON.stringify({
-      verifier_run: await completeVerifierRun(verifierRun),
-      browser: observed.value.browser.product,
-      endpoint,
-      target,
-      domNodes: observed.value.dom.nodes.length,
-      accessibilityNodes: observed.value.accessibility.nodes.length,
-      scripts: observed.value.scripts.items.length,
-      networkRequests: observed.value.network.requests.length,
-      consoleEvents: observed.value.console.events.length,
-      websocketEvents: observed.value.network.websocket_events.length,
-      bundleScripts: bundle.value.capture.scripts_analyzed,
-      sourceMaps: bundle.value.observations.source_maps.processed,
-      sessionEvents: session.value.timeline.length,
-      pageScopedTransport: true,
-      screenshotBytes: screenshot.value.artifact.bytes,
-      largeScreenshot,
-      popupEvents,
-      networkEvidence,
-      scriptExport,
-      moduleTrace,
-      domDestinations,
-      browserScenarioCli: true,
-      browserScenarioAttachCleanup: "disconnected-external",
-      browserScenarioLaunchCleanup: "terminated-owned-process",
-      verified: true,
-    })}\n`,
-  );
+  report = {
+    browser: observed.value.browser.product,
+    endpoint,
+    target,
+    domNodes: observed.value.dom.nodes.length,
+    accessibilityNodes: observed.value.accessibility.nodes.length,
+    scripts: observed.value.scripts.items.length,
+    networkRequests: observed.value.network.requests.length,
+    consoleEvents: observed.value.console.events.length,
+    websocketEvents: observed.value.network.websocket_events.length,
+    bundleScripts: bundle.value.capture.scripts_analyzed,
+    sourceMaps: bundle.value.observations.source_maps.processed,
+    sessionEvents: session.value.timeline.length,
+    pageScopedTransport: true,
+    screenshotBytes: screenshot.value.artifact.bytes,
+    largeScreenshot,
+    popupEvents,
+    networkEvidence,
+    scriptExport,
+    moduleTrace,
+    domDestinations,
+    browserScenarioCli: true,
+    browserScenarioAttachCleanup: "disconnected-external",
+    browserScenarioLaunchCleanup: "terminated-owned-process",
+    verified: true,
+  };
 } finally {
   if (pageProxy !== undefined) await pageProxy.close();
   if (browser !== undefined) await stopProcess(browser);
@@ -378,6 +376,12 @@ try {
     retryDelay: 100,
   });
 }
+process.stdout.write(
+  `${JSON.stringify({
+    verifier_run: await completeVerifierRun(verifierRun),
+    ...report,
+  })}\n`,
+);
 
 async function verifyPageScopedTransport(provider, proxy, origin) {
   const target = await pageTarget(provider, proxy.endpoint);

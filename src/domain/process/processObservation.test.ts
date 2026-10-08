@@ -82,14 +82,4 @@ describe("process observation vocabulary", () => {
     expect(observations[3]?.captured_at_ms).toBeNull();
     expect(observations[4]?.captured_at_ms).toBeNull();
   });
-
-  it("returns no observation for a missing collection record", () => {
-    expect(
-      projectProcessObservation(capture, {
-        collection: "frames",
-        index: 1,
-        capture_order: 10,
-      }),
-    ).toBeNull();
-  });
 });

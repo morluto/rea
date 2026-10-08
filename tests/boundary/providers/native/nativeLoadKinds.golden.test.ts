@@ -99,8 +99,7 @@ it("limits thread-state entrypoints instead of reporting none silently", async (
     nativeMachoTarget("/owned/legacy-fixture"),
   );
   const result = await client.execute("inspect_macho", {});
-  expect(result.ok).toBe(true);
-  if (!result.ok) return;
+  if (!result.ok) throw result.error;
   expect(result.value.result).toMatchObject({
     entrypoints: {
       items: [],

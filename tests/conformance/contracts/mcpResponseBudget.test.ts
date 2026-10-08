@@ -42,7 +42,6 @@ describe("MCP response budget configuration", () => {
     "9007199254740992",
   ])("rejects malformed or unusable budgets: %j", (value) => {
     const parsed = parseMcpResponseBudget(value);
-    expect(parsed.ok).toBe(false);
     if (parsed.ok) throw new Error("Expected invalid budget");
     expect(parsed.error.message).toContain("REA_MCP_MAX_RESPONSE_BYTES");
   });

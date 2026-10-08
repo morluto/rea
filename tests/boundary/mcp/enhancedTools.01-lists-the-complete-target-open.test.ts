@@ -40,7 +40,6 @@ const fixturePort = (): AnalysisOperationPort => ({
   execute: (name, arguments_) => {
     switch (name) {
       case "inspect_native_dispatch_metadata":
-      case "procedure_address":
         return Promise.resolve(
           err(
             new AnalysisCapabilityUnavailableError(
@@ -50,6 +49,24 @@ const fixturePort = (): AnalysisOperationPort => ({
             ),
           ),
         );
+      case "procedure_address": {
+        const procedure = inventory(PROCEDURES).find(
+          (item) =>
+            item.address === arguments_.procedure ||
+            item.value === arguments_.procedure,
+        );
+        return Promise.resolve(
+          procedure === undefined
+            ? err(
+                new AnalysisCapabilityUnavailableError(
+                  "fixture",
+                  name,
+                  "No matching procedure in this symbol-only fixture",
+                ),
+              )
+            : ok(procedure.address),
+        );
+      }
       case "list_procedures":
         return Promise.resolve(ok(inventory(PROCEDURES)));
       case "list_names":

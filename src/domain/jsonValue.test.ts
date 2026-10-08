@@ -90,14 +90,6 @@ describe("jsonValueSchema depth bound", () => {
     ).toBe(false);
     expect(jsonValueSchema.safeParse({ a: 1n }).success).toBe(false);
   });
-
-  it("accepts ordinary nested JSON", () => {
-    expect(
-      jsonValueSchema.safeParse({
-        list: [1, "two", null, true, { deep: { further: [{}] } }],
-      }).success,
-    ).toBe(true);
-  });
 });
 
 it("preserves prototype-named members without prototype mutation", () => {

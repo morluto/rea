@@ -216,7 +216,6 @@ it("retains APK identity, original input, raw producer data and normalized obser
   const outcome = await service.execute("inspect_android_package", {
     path: apk,
   });
-  expect(outcome.ok).toBe(true);
   if (!outcome.ok) throw outcome.error;
   const result = androidResultSchemas.inspect_android_package.parse(
     outcome.value.normalized_result,

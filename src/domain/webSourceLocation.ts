@@ -104,6 +104,7 @@ export const WEB_SOURCE_MAP_LIMITS = {
   outputBytes: 32 * 1024 * 1024,
   decodedRows: 262144,
   decodedSegments: 262144,
+  decodedRecords: 262144,
   sectionDepth: 64,
   decodeTimeoutMs: 20000,
 } as const;

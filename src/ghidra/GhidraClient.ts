@@ -1,7 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import type { Socket } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -40,7 +39,10 @@ import {
 import { createGhidraTargetSnapshot } from "./GhidraTargetSnapshot.js";
 import { readFile } from "node:fs/promises";
 import { connectGhidraSocket } from "./GhidraSocketConnection.js";
-import type { GhidraEndpoint } from "./GhidraTransport.js";
+import {
+  createGhidraEndpoint,
+  type GhidraEndpoint,
+} from "./GhidraTransport.js";
 import { GhidraWire } from "./GhidraClientWire.js";
 import { completeGhidraStartupHandshake } from "./GhidraClientStartup.js";
 
@@ -75,6 +77,8 @@ export class GhidraClient {
   #launch: GhidraLaunch | undefined;
   #process: ProviderProcessSupervisor | undefined;
   #runtimeRoot: PrivateRuntimeRoot | undefined;
+  #socketRoot: PrivateRuntimeRoot | undefined;
+  #endpointPath: string | undefined;
   #snapshotPath: string | undefined;
   #targetAdmission: JsonValue | undefined;
   #token: string | undefined;
@@ -145,7 +149,13 @@ export class GhidraClient {
   start(signal?: AbortSignal): Promise<GhidraStartResult> {
     if (this.#closePromise !== undefined)
       return this.#closePromise.then(() => this.start(signal));
-    if (this.#startPromise !== undefined) return this.#startPromise;
+    if (this.#startPromise !== undefined) {
+      if (this.#startupController?.signal.aborted && !signal?.aborted)
+        return this.#startPromise.then((result) =>
+          result.ok ? result : this.start(signal),
+        );
+      return this.#startPromise;
+    }
     const controller = new AbortController();
     const onAbort = (): void => controller.abort(signal?.reason);
     if (signal?.aborted === true) onAbort();
@@ -265,12 +275,16 @@ export class GhidraClient {
       return err(this.#failure("cancelled", "Ghidra startup was cancelled"));
     if (this.#socket !== undefined || this.#runtimeRoot !== undefined)
       return err(this.#failure("protocol", "Ghidra client is already started"));
+    this.#processSnapshot = undefined;
     const deadline = new ProviderStartupDeadline(
       this.#options.startupTimeoutMs,
       signal,
     );
     try {
       return await this.#startWithin(deadline);
+    } catch (cause: unknown) {
+      if (cause instanceof GhidraSessionError) return err(cause);
+      throw cause;
     } finally {
       deadline.dispose();
     }
@@ -291,15 +305,25 @@ export class GhidraClient {
       );
     }
     if (deadline.signal.aborted) return this.#startupInterrupted(deadline);
-    const endpoint: GhidraEndpoint = {
-      transport: this.#options.transport,
-      path: join(
+    let endpoint: GhidraEndpoint;
+    try {
+      const allocated = await createGhidraEndpoint(
         this.#runtimeRoot.path,
-        this.#options.transport === "unix-socket"
-          ? "bridge.sock"
-          : "bridge-endpoint.json",
-      ),
-    };
+        this.#options.transport,
+        this.#options.platform,
+      );
+      endpoint = allocated.endpoint;
+      this.#socketRoot = allocated.socketRoot;
+      this.#endpointPath = endpoint.path;
+    } catch (cause: unknown) {
+      const failure = this.#failure(
+        "start",
+        "Ghidra private endpoint allocation failed",
+        cause,
+      );
+      await this.#cleanup();
+      return err(failure);
+    }
     try {
       const snapshot = await createGhidraTargetSnapshot(
         this.#options.targetPath,
@@ -386,7 +410,7 @@ export class GhidraClient {
       deadline,
       failure: this.#failure,
       isClosed: () => this.#closing,
-      processExited: () => this.#processSnapshot?.exitCode !== undefined,
+      processExited: () => this.#process?.snapshot().exitCode !== undefined,
       startupTimeoutMs: this.#options.startupTimeoutMs,
       handlers: {
         data: this.#onSocketData,
@@ -498,20 +522,28 @@ export class GhidraClient {
             { reason: stopped.reason },
             "Ghidra process cleanup failed closed",
           );
-          if (forceStop)
-            forcedStopFailure = this.#failure(
-              "process",
-              `Ghidra process cleanup after cancellation was incomplete: ${stopped.reason}`,
-            );
+          // Keep the supervisor and private files available for a later close.
+          // A still-live JVM can recreate files if its runtime is removed here.
+          throw this.#failure(
+            "process",
+            `Ghidra process cleanup was incomplete: ${stopped.reason}`,
+          );
         }
       }
       this.#lastDiagnostics = this.#diagnostics();
       this.#process = undefined;
       this.#launch = undefined;
       const runtimeRoot = this.#runtimeRoot;
+      const socketRoot = this.#socketRoot;
       this.#runtimeRoot = undefined;
+      this.#socketRoot = undefined;
       try {
-        await runtimeRoot?.close();
+        const removed = await Promise.allSettled([
+          runtimeRoot?.close(),
+          socketRoot?.close(),
+        ]);
+        const failed = removed.find((result) => result.status === "rejected");
+        if (failed?.status === "rejected") throw failed.reason;
       } catch (cause: unknown) {
         if (forceStop)
           forcedStopFailure ??= this.#failure(
@@ -522,6 +554,7 @@ export class GhidraClient {
         else throw cause;
       }
       this.#snapshotPath = undefined;
+      this.#endpointPath = undefined;
       this.#token = undefined;
       this.#runId = undefined;
       this.#responseBuffer.reset();
@@ -604,6 +637,12 @@ export class GhidraClient {
       ...(this.#runtimeRoot === undefined
         ? {}
         : { runtimeRoot: this.#runtimeRoot.path }),
+      ...(this.#socketRoot === undefined
+        ? {}
+        : { socketRoot: this.#socketRoot.path }),
+      ...(this.#endpointPath === undefined
+        ? {}
+        : { endpointPath: this.#endpointPath }),
       ...(this.#launch === undefined ? {} : { launch: this.#launch }),
       ...(snapshot === undefined ? {} : { snapshot }),
       ...(this.#token === undefined ? {} : { token: this.#token }),

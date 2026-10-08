@@ -12,7 +12,7 @@ import { createEvidence } from "../../../src/domain/evidence.js";
 import {
   createApplicationMcpHarness,
   type ApplicationMcpHarness,
-} from "./mcpHarness.js";
+} from "../../fixtures/applicationMcpHarness.js";
 
 async function runInlineEvidenceScenarios(
   client: Client,

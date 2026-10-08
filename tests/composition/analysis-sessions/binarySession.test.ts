@@ -414,17 +414,10 @@ describe("evidence metadata imports and snapshot cache", () => {
       ).ok,
     ).toBe(true);
     const before = session.exportAnalysisSnapshot();
-    expect(before.ok).toBe(true);
-    if (!before.ok) {
-      await session.close();
-      return;
-    }
+    if (!before.ok) throw before.error;
     const existing = session.exportEvidenceBundle().records[0];
-    expect(existing?.subject).not.toBeNull();
-    if (existing?.subject === null || existing === undefined) {
-      await session.close();
-      return;
-    }
+    if (existing === undefined || existing.subject === null)
+      throw new Error("Expected artifact-bound Evidence");
     const addition = createEvidence(
       {
         path: existing.subject.local_path,
@@ -445,6 +438,9 @@ describe("evidence metadata imports and snapshot cache", () => {
     expect(
       session.importEvidenceBundle(createEvidenceBundle([addition])),
     ).toEqual({ ok: true, value: 1 });
+    expect(
+      session.importEvidenceBundle(createEvidenceBundle([addition])),
+    ).toEqual({ ok: true, value: 0 });
     expect(session.exportAnalysisSnapshot()).toMatchObject({
       ok: true,
       value: {
@@ -466,7 +462,7 @@ describe("evidence metadata imports and snapshot cache", () => {
     await session.close();
   });
 
-  it("invalidates cached analysis when an import changes evidence path metadata", async () => {
+  it("keeps changed evidence metadata out of snapshots until the session is recreated", async () => {
     const [target] = await createBinarySessionTargets();
     const calls: string[] = [];
     const session = createTestBinarySession(createCacheProvider(calls));
@@ -479,30 +475,15 @@ describe("evidence metadata imports and snapshot cache", () => {
         })
       ).ok,
     ).toBe(true);
-    expect(session.exportAnalysisSnapshot().ok).toBe(true);
+    const baseline = session.exportAnalysisSnapshot();
+    if (!baseline.ok) throw baseline.error;
 
     const evidence = session
       .exportEvidenceBundle()
       .records.find(({ operation }) => operation === "address_name");
-    expect(evidence?.subject).not.toBeNull();
-    if (evidence?.subject === null || evidence === undefined) {
-      await session.close();
-      return;
-    }
-    expect(
-      session.importEvidenceBundle(createEvidenceBundle([evidence])),
-    ).toEqual({ ok: true, value: 0 });
-    expect(session.exportAnalysisSnapshot().ok).toBe(true);
+    if (evidence === undefined || evidence.subject === null)
+      throw new Error("Expected artifact-bound Evidence");
     const callsAfterInitialRead = [...calls];
-    expect(
-      (
-        await session.execute("address_name", {
-          address: "0x1000",
-          document: "first",
-        })
-      ).ok,
-    ).toBe(true);
-    expect(calls).toEqual(callsAfterInitialRead);
 
     const relocated = {
       ...evidence,
@@ -533,6 +514,32 @@ describe("evidence metadata imports and snapshot cache", () => {
         ),
       },
     });
+    expect((await session.open(target)).ok).toBe(true);
+    expect(session.exportAnalysisSnapshot().ok).toBe(false);
+    expect(session.importAnalysisSnapshot(baseline.value)).toMatchObject({
+      ok: false,
+      error: {
+        userMessage: expect.stringContaining(
+          "Close the active target without saving a snapshot",
+        ),
+      },
+    });
+    expect(session.exportEvidenceBundle().records).toContainEqual(relocated);
+    const callsAfterInvalidation = calls.length;
+    expect(
+      (
+        await session.execute("address_name", {
+          address: "0x1000",
+          document: "first",
+        })
+      ).ok,
+    ).toBe(true);
+    expect(calls).toHaveLength(callsAfterInvalidation + 1);
+    await session.close();
+    expect((await session.open(target, { snapshot: baseline.value })).ok).toBe(
+      true,
+    );
+    expect(session.exportAnalysisSnapshot().ok).toBe(true);
     await session.close();
   });
 });
@@ -552,8 +559,7 @@ describe("replay of exact immutable calls", () => {
       ).ok,
     ).toBe(true);
     const snapshot = initial.exportAnalysisSnapshot();
-    expect(snapshot.ok).toBe(true);
-    if (!snapshot.ok) return;
+    if (!snapshot.ok) throw snapshot.error;
     expect(snapshot.value.entries).toHaveLength(1);
     await initial.close();
 
@@ -592,11 +598,6 @@ describe("replay of exact immutable calls", () => {
     ).toBe(true);
     expect(replayCalls).toEqual(["health", "set_address_name", "address_name"]);
     expect(replay.exportAnalysisSnapshot().ok).toBe(false);
-    expect((await replay.open(first)).ok).toBe(true);
-    expect(replay.exportAnalysisSnapshot()).toMatchObject({
-      ok: true,
-      value: { entries: [{ operation: "address_name" }] },
-    });
     await replay.close();
 
     const mismatch = createTestBinarySession(createCacheProvider([]));
@@ -864,9 +865,16 @@ describe("typed unavailability without dispatching", () => {
     await session.close();
   });
 
-  it("requires an open binary and closes idempotently", async () => {
+  it("drains an admitted call before closing and closes idempotently", async () => {
+    const [first] = await createBinarySessionTargets();
     const session = createTestBinarySession(() => client());
     expect((await session.execute("binary_overview", {})).ok).toBe(false);
+    expect((await session.open(first)).ok).toBe(true);
+    // The call has been admitted but has not resumed after the transition wait.
+    const admitted = session.execute("binary_overview", {});
+    const closing = session.close();
+    expect((await admitted).ok).toBe(true);
+    expect(await closing).toEqual({ ok: true, value: null });
     expect(await session.close()).toEqual({ ok: true, value: null });
     expect(await session.close()).toEqual({ ok: true, value: null });
   });
@@ -887,7 +895,7 @@ describe("typed unavailability without dispatching", () => {
     expect(created).toBe(3);
   });
 
-  it("serializes concurrent opens and leaves the last target active", async () => {
+  it("orders calls between queued transitions without deadlocking", async () => {
     const [first, second] = await createBinarySessionTargets();
     const clients: ControllableAnalysisClient[] = [];
     const session = createTestBinarySession(() => {
@@ -896,12 +904,31 @@ describe("typed unavailability without dispatching", () => {
       return value;
     });
     const one = session.open(first);
+    const firstCall = session.execute("binary_overview", {});
+    const controller = new AbortController();
+    const cancelled = session.execute(
+      "binary_overview",
+      {},
+      { signal: controller.signal },
+    );
+    controller.abort();
     const two = session.open(second);
+    const secondCall = session.execute("binary_overview", {});
+    const closing = session.close();
+    const afterClose = session.execute("binary_overview", {});
     expect((await one).ok).toBe(true);
+    expect((await firstCall).ok).toBe(true);
+    expect(await cancelled).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError" },
+    });
     expect((await two).ok).toBe(true);
-    expect(session.status()).toMatchObject({ open: true });
-    expect(JSON.stringify(session.status())).toContain("second.hop");
+    expect((await secondCall).ok).toBe(true);
+    expect((await closing).ok).toBe(true);
+    expect((await afterClose).ok).toBe(false);
+    expect(session.status()).toMatchObject({ open: false });
     expect(clients[0]?.closed).toBe(1);
+    expect(clients[1]?.closed).toBe(1);
   });
 });
 
@@ -978,12 +1005,27 @@ describe("active client replacement", () => {
       return value;
     });
     expect((await session.open(first)).ok).toBe(true);
+    const current = session.activeTarget();
+    if (current === undefined) throw new Error("Missing active target");
+    const preview = await session.previewTarget(current);
+    if (!preview.ok) throw preview.error;
     const call = session.execute("procedure_pseudo_code", {});
+    const controller = new AbortController();
+    const reopening = session.openResolvedTarget(preview.value, {
+      signal: controller.signal,
+    });
+    // The resolved route needs no I/O; one event-loop turn lets it reach the drain.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    controller.abort();
     const switching = session.open(second);
     await Promise.resolve();
     expect(clients[0]?.closed).toBe(0);
     active.resolve(ok(null));
     expect((await call).ok).toBe(true);
+    expect(await reopening).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", operation: "open_binary" },
+    });
     expect((await switching).ok).toBe(true);
     expect(clients[0]?.closed).toBe(1);
   });

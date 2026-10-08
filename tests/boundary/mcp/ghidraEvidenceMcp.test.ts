@@ -1,6 +1,65 @@
 import { describe, expect, it } from "vitest";
 import { EnhancedTools } from "../../../src/application/EnhancedTools.js";
 import { connectGhidraMcp, sessionEvidence } from "./ghidraMcpHarness.js";
+import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
+import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
+import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
+import { ok } from "../../../src/domain/result.js";
+
+it("rejects contradictory annotation readback across the provider and MCP boundaries", async () => {
+  const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+  const annotations = {
+    address: dossier.procedure.address,
+    name: dossier.procedure.name,
+    comment: null,
+    inline_comment: "Finding",
+  };
+  const effects = {
+    scope: "session-analysis-database",
+    source_bytes_modified: false,
+    persists_after_close: false,
+  };
+  const original = { annotations, dossier, effects };
+  let output = jsonValueSchema.parse(original);
+  const harness = await connectGhidraMcp("ghidra-malformed-annotation", () =>
+    Promise.resolve(ok(output)),
+  );
+  try {
+    const accepted = await harness.mcp.callTool({
+      name: "annotate_native_function",
+      arguments: {
+        procedure: annotations.address,
+        inline_comment: "Finding",
+      },
+    });
+    expect(accepted.isError).not.toBe(true);
+    expect(accepted.structuredContent).toMatchObject({
+      result: { annotations },
+    });
+    for (const value of [
+      { ...original, annotations: { ...annotations, name: "different" } },
+      { ...original, annotations: { ...annotations, address: "0x9999" } },
+      { ...original, effects: { ...effects, source_bytes_modified: true } },
+      { ...original, effects: { ...effects, persists_after_close: true } },
+      { ...original, dossier: { ...dossier, native_value_flow: null } },
+    ]) {
+      output = jsonValueSchema.parse(value);
+      const reply = await harness.mcp.callTool({
+        name: "annotate_native_function",
+        arguments: {
+          procedure: annotations.address,
+          inline_comment: "Finding",
+        },
+      });
+      expect(reply.isError).toBe(true);
+      expect(reply.structuredContent).toMatchObject({
+        error: { code: "unreadable_output" },
+      });
+    }
+  } finally {
+    await harness.close();
+  }
+});
 
 describe("Ghidra MCP evidence parity", () => {
   it("preserves provider evidence, composed parity, and capability routing", async () => {
@@ -53,8 +112,7 @@ describe("Ghidra MCP evidence parity", () => {
         "binary_overview",
         {},
       );
-      expect(directOverview.ok).toBe(true);
-      if (!directOverview.ok) return;
+      if (!directOverview.ok) throw directOverview.error;
       expect(mcpOverview.normalized_result).toEqual(directOverview.value);
       expect(mcpOverview).toMatchObject({
         provider: { id: "rea-workflow" },
@@ -132,8 +190,7 @@ describe("Ghidra MCP evidence parity", () => {
         "analyze_function",
         { procedure: "fixture_main" },
       );
-      expect(directAnalyzed.ok).toBe(true);
-      if (!directAnalyzed.ok) return;
+      if (!directAnalyzed.ok) throw directAnalyzed.error;
       expect(analyzed.normalized_result).toEqual(directAnalyzed.value);
     } finally {
       await harness.close();

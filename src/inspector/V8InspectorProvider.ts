@@ -42,6 +42,12 @@ import {
 export { V8_INSPECTOR_PROVIDER_IDENTITY } from "./providerIdentity.js";
 import { V8_INSPECTOR_PROVIDER_IDENTITY } from "./providerIdentity.js";
 
+/** Maximum decoded CDP message accepted while observing one Inspector target. */
+export const INSPECTOR_MAX_PAYLOAD_BYTES = 16 * 1024 * 1024;
+/** Aggregate retained metadata budget, including an estimate of JS object overhead. */
+export const INSPECTOR_MAX_RETAINED_METADATA_BYTES = 8 * 1024 * 1024;
+const RETAINED_OBJECT_OVERHEAD_BYTES = 512;
+
 export interface ScriptDraft {
   readonly rawUrl: string;
   readonly executionContextKey: string | null;
@@ -147,6 +153,7 @@ export class V8InspectorProvider implements JavaScriptRuntimeObservationPort {
         target.webSocketUrl,
         "observe_javascript_runtime",
         options.signal,
+        { maxPayloadBytes: INSPECTOR_MAX_PAYLOAD_BYTES },
       );
       const state = emptyCaptureState();
       const removeListener = connection.onEvent((event) =>
@@ -164,6 +171,7 @@ export class V8InspectorProvider implements JavaScriptRuntimeObservationPort {
         runtime: discovery.runtime,
         target,
         state,
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
       outcome = ok(javascriptRuntimeObservationSchema.parse(result));
     } catch (cause: unknown) {
@@ -344,8 +352,8 @@ const ingestScript = (
     length: nonnegativeInteger(value?.length),
     isModule: value?.isModule === true,
   };
-  const bytes = metadataBytes(draft);
-  retainEvent(state, bytes);
+  const bytes = retainedMetadataBytes(draft);
+  if (!retainEvent(state, bytes)) return;
   state.scripts.push(draft);
 };
 
@@ -355,8 +363,16 @@ const ingestContext = (
   state: CaptureState,
 ): void => {
   if (event.method === "Runtime.executionContextsCleared") {
-    for (const context of state.contexts.values()) context.state = "cleared";
-    retainEvent(state, 0);
+    let byteDelta = 0;
+    for (const context of state.contexts.values()) {
+      byteDelta +=
+        retainedMetadataBytes({ ...context, state: "cleared" }) -
+        retainedMetadataBytes(context);
+    }
+    if (replaceRetainedMetadata(state, byteDelta)) {
+      for (const context of state.contexts.values()) context.state = "cleared";
+      retainEvent(state, 0);
+    }
     return;
   }
   const parameters = recordValue(event.params);
@@ -385,14 +401,32 @@ const ingestContext = (
         : "destroyed",
     origin: origin === "" ? null : origin,
   };
-  const bytes = metadataBytes(draft);
-  retainEvent(state, bytes);
+  const previous = state.contexts.get(key);
+  const bytes =
+    retainedMetadataBytes(draft) -
+    (previous === undefined ? 0 : retainedMetadataBytes(previous));
+  if (!retainEvent(state, bytes)) return;
   state.contexts.set(key, draft);
 };
 
-const retainEvent = (state: CaptureState, bytes: number): void => {
-  state.metadataBytes += bytes;
+const retainEvent = (state: CaptureState, bytes: number): boolean => {
+  if (!replaceRetainedMetadata(state, bytes)) return false;
   state.eventsRetained += 1;
+  return true;
+};
+
+const replaceRetainedMetadata = (
+  state: CaptureState,
+  byteDelta: number,
+): boolean => {
+  if (state.metadataBytes + byteDelta > INSPECTOR_MAX_RETAINED_METADATA_BYTES) {
+    state.eventsDropped += 1;
+    state.truncated = true;
+    state.truncationReasons.add("retained_metadata_budget_exceeded");
+    return false;
+  }
+  state.metadataBytes += byteDelta;
+  return true;
 };
 
 const waitForCapture = async (
@@ -402,14 +436,7 @@ const waitForCapture = async (
 ): Promise<void> => {
   let removeDisconnect = (): void => undefined;
   const disconnected = new Promise<never>((_resolve, reject) => {
-    removeDisconnect = connection.onDisconnect(() =>
-      reject(
-        new BrowserObservationError(
-          "observe_javascript_runtime",
-          "disconnected",
-        ),
-      ),
-    );
+    removeDisconnect = connection.onDisconnect((error) => reject(error));
   });
   try {
     await Promise.race([
@@ -425,8 +452,16 @@ const waitForCapture = async (
   }
 };
 
-const metadataBytes = (value: object): number =>
-  Buffer.byteLength(JSON.stringify(value));
+const retainedMetadataBytes = (value: ScriptDraft | ContextDraft): number => {
+  const strings =
+    "rawUrl" in value
+      ? [value.rawUrl, value.rawUrl, value.executionContextKey, value.cdpHash]
+      : [value.contextKey, value.origin];
+  return (
+    RETAINED_OBJECT_OVERHEAD_BYTES +
+    strings.reduce((total, text) => total + (text?.length ?? 0) * 2, 0)
+  );
+};
 
 const nonnegativeInteger = (value: unknown): number => {
   const parsed = numberValue(value);

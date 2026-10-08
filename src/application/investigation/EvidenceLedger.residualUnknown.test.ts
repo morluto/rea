@@ -154,8 +154,7 @@ describe("residual unknown dependency histories", () => {
       input("Does detached state remain intact?"),
       mutation("detached-unknown"),
     );
-    expect(created.ok).toBe(true);
-    if (!created.ok) return;
+    if (!created.ok) throw created.error;
 
     Reflect.set(created.value, "status", "resolved");
     const listed = store.listUnknowns();
@@ -185,8 +184,7 @@ describe("residual unknown dependency histories", () => {
       input("  Is branch live?  "),
       mutation("one"),
     );
-    expect(first.ok).toBe(true);
-    if (!first.ok) return;
+    if (!first.ok) throw first.error;
     expect(first.value.unknown_id).toMatch(/^unk_[a-f0-9]{64}$/u);
     expect(first.value.revision).toBe(1);
     expect(store.listUnknowns({ severity: "high" })).toHaveLength(1);

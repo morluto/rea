@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { expect, onTestFinished } from "vitest";
 import { AndroidAnalysisService } from "../../../src/application/android/AndroidAnalysisService.js";
 import { createAndroidAnalysisProvider } from "../../../src/composition/android.js";
+import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
@@ -74,7 +75,18 @@ export const createJadxProtocolFixture = async (mode = "normal") => {
       return spawned;
     },
   );
-  onTestFinished(() => provider.close().catch(() => undefined));
+  onTestFinished(async () => {
+    try {
+      await provider.close();
+    } catch (cause) {
+      if (
+        mode !== "cleanup-failure" ||
+        !(cause instanceof ProviderCleanupError) ||
+        cause.providerId !== "jadx"
+      )
+        throw cause;
+    }
+  });
   return {
     service: new AndroidAnalysisService(provider),
     provider,

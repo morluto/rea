@@ -167,6 +167,48 @@ describe("managed application graph request", () => {
 });
 
 describe("managed application graph coverage", () => {
+  it("rejects managed Evidence digest mismatch and discloses missing artifact observations", () => {
+    const bytes = buildManagedPeFixture();
+    const binary = managedPeFixtureTarget(bytes, "/fixture/Mismatch.dll");
+    const members = inspectManagedMembersBytes(bytes, binary);
+    const mismatched = createEvidence(binary, MANAGED_STATIC_PROVIDER, {
+      operation: "inspect_managed_members",
+      parameters: {},
+      result: {
+        ...members,
+        artifact: { ...members.artifact, sha256: "b".repeat(64) },
+        identity_scope: {
+          ...members.identity_scope,
+          requires_artifact_sha256: "b".repeat(64),
+        },
+      },
+    });
+    const rejected = projectManagedApplicationGraphEvidence({
+      managed_members: mismatched,
+    });
+    expect(rejected.ok).toBe(false);
+    if (rejected.ok) throw new Error("mismatched managed Evidence accepted");
+    expect(JSON.stringify(rejected.error)).toContain(
+      `Managed Evidence inspect_managed_members (${mismatched.evidence_id}) subject SHA-256 ${binary.sha256} does not match normalized artifact SHA-256 ${"b".repeat(64)}`,
+    );
+
+    const aligned = createEvidence(binary, MANAGED_STATIC_PROVIDER, {
+      operation: "inspect_managed_members",
+      parameters: {},
+      result: members,
+    });
+    const projected = projectManagedApplicationGraphEvidence({
+      managed_members: aligned,
+    });
+    if (!projected.ok) throw projected.error;
+    const result = managedApplicationGraphResultSchema.parse(
+      parseEvidence(projected.value).normalized_result,
+    );
+    expect(result.limitations).toContain(
+      "Managed artifact Evidence was not supplied; assembly identity observations are absent.",
+    );
+  });
+
   it("preserves partial parser coverage in graph and per-fact coverage", () => {
     const bytes = buildManagedPeFixture();
     const binary = managedPeFixtureTarget(bytes, "/fixture/ManagedInterop.exe");
@@ -200,7 +242,6 @@ describe("managed application graph coverage", () => {
       managed_members: parserPartialEvidence,
     });
 
-    expect(parserPartialProjection.ok).toBe(true);
     if (!parserPartialProjection.ok)
       throw new Error("partial projection failed");
     const parserPartialResult = managedApplicationGraphResultSchema.parse(

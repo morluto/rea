@@ -82,7 +82,6 @@ describe("runtime configuration", () => {
 describe("runtime target configuration", () => {
   it("rejects invalid target kinds with actionable environment diagnostics", () => {
     const result = parseConfig({ HOPPER_TARGET_KIND: "archive" });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected invalid target kind");
     expect(result.error.message).toContain("Invalid REA environment");
   });
@@ -121,7 +120,6 @@ describe("runtime collection configuration", () => {
         HOPPER_TARGET_PATH: "/tmp/a",
         HOPPER_LOADER_ARGS_JSON: encoded,
       });
-      expect(result.ok).toBe(false);
       if (result.ok)
         throw new Error("expected malformed loader arguments to fail");
       expect(result.error.message).toContain(

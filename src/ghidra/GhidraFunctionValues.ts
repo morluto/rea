@@ -10,7 +10,7 @@ import {
 } from "../domain/native/nativeInstruction.js";
 
 import {
-  AnalysisInputError,
+  type AnalysisInputError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import {
@@ -27,8 +27,10 @@ import {
 import { nativeApiBoundarySchema } from "../domain/native/nativeApiBoundary.js";
 import { nativeValueFlowSchema } from "../domain/native/nativeValueFlow.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import {
   ghidraIdentifierSchema,
+  ghidraInputAddressSchema,
   ghidraCanonicalAddressSchema,
   ghidraFunctionClassificationSchema as classification,
   ghidraFunctionBodySchema as ghidraFunctionBody,
@@ -73,7 +75,7 @@ const inputSchemas = {
     .object({
       document,
       type: z.string().min(1).nullable().default(null),
-      address: ghidraCanonicalAddressSchema.nullable().default(null),
+      address: ghidraInputAddressSchema.nullable().default(null),
     })
     .strict()
     .refine(
@@ -81,10 +83,10 @@ const inputSchemas = {
       "Supply exactly one of type or address",
     ),
   inspect_native_instruction: z
-    .object({ document, address: ghidraCanonicalAddressSchema })
+    .object({ document, address: ghidraInputAddressSchema })
     .strict(),
   resolve_native_call_targets: z
-    .object({ document, address: ghidraCanonicalAddressSchema })
+    .object({ document, address: ghidraInputAddressSchema })
     .strict(),
   analyze_function: z.object({ procedure }).strict(),
   procedure_assembly: z.object(directProcedure).strict(),
@@ -99,7 +101,7 @@ const inputSchemas = {
       direction: z.enum(["incoming", "outgoing"]).default("outgoing"),
     })
     .strict(),
-  xrefs: z.object({ document, address: ghidraCanonicalAddressSchema }).strict(),
+  xrefs: z.object({ document, address: ghidraInputAddressSchema }).strict(),
 } satisfies Readonly<Record<GhidraFunctionOperation, z.ZodType>>;
 
 /** Validate and default one function request before it crosses the socket. */
@@ -118,7 +120,11 @@ export const parseGhidraFunctionInput = (
           ),
         ),
       )
-    : err(new AnalysisInputError(operation, { cause: parsed.error }));
+    : err(
+        analysisInputErrorFromIssues(operation, parsed.error.issues, value, {
+          cause: parsed.error,
+        }),
+      );
 };
 
 const localVariable = z

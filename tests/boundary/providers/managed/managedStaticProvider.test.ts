@@ -22,13 +22,11 @@ describe("managed static provider path boundary", () => {
     const path = join(directory, "fixture.exe");
     await writeFile(path, bytes);
     const parsed = await parseBinaryTarget(path);
-    expect(parsed.ok).toBe(true);
-    if (!parsed.ok) return;
+    if (!parsed.ok) throw parsed.error;
 
     const client = new ManagedStaticProvider().createClient(parsed.value);
     const observed = await client.execute("inspect_managed_artifact", {});
-    expect(observed.ok).toBe(true);
-    if (!observed.ok) return;
+    if (!observed.ok) throw observed.error;
     expect(asManagedResult(observed.value)).toMatchObject({
       classification: { status: "managed", runtime_family: "modern-dotnet" },
       artifact: { path, sha256: parsed.value.sha256, format: "pe" },
@@ -37,8 +35,7 @@ describe("managed static provider path boundary", () => {
     expect(observed.value.subject).toMatchObject({ path, format: "pe" });
 
     const members = await client.execute("inspect_managed_members", {});
-    expect(members.ok).toBe(true);
-    if (!members.ok) return;
+    if (!members.ok) throw members.error;
     expect(asManagedMemberResult(members.value)).toMatchObject({
       artifact: { path, sha256: parsed.value.sha256, format: "pe" },
       methods: [expect.objectContaining({ token: "0x06000001" })],
@@ -60,8 +57,7 @@ describe("managed static provider path boundary", () => {
       "inspect_managed_native_boundaries",
       {},
     );
-    expect(boundaries.ok).toBe(true);
-    if (!boundaries.ok) return;
+    if (!boundaries.ok) throw boundaries.error;
     const boundaryResult = asManagedNativeBoundaryResult(boundaries.value);
     expect(boundaryResult).toMatchObject({
       artifact: { path, sha256: parsed.value.sha256, format: "pe" },
@@ -116,16 +112,14 @@ describe("managed static provider path boundary", () => {
     const path = join(directory, "fixture.exe");
     await writeFile(path, bytes);
     const parsed = await parseBinaryTarget(path);
-    expect(parsed.ok).toBe(true);
-    if (!parsed.ok) return;
+    if (!parsed.ok) throw parsed.error;
 
     const client = new ManagedStaticProvider().createClient(parsed.value);
     const execution = await client.execute(
       "inspect_managed_native_boundaries",
       {},
     );
-    expect(execution.ok).toBe(true);
-    if (!execution.ok) return;
+    if (!execution.ok) throw execution.error;
     const result = asManagedNativeBoundaryResult(execution.value);
     expect(result.pinvoke_imports.length).toBeGreaterThan(0);
     expect(execution.value.locations).toEqual(
@@ -162,19 +156,16 @@ it("retains U+FEFF metadata through the filesystem target and provider", async (
     }),
   );
   const parsed = await parseBinaryTarget(path);
-  expect(parsed.ok).toBe(true);
-  if (!parsed.ok) return;
+  if (!parsed.ok) throw parsed.error;
   const client = new ManagedStaticProvider().createClient(parsed.value);
   const artifact = await client.execute("inspect_managed_artifact", {});
-  expect(artifact.ok).toBe(true);
-  if (!artifact.ok) return;
+  if (!artifact.ok) throw artifact.error;
   expect(asManagedResult(artifact.value)).toMatchObject({
     references: [expect.objectContaining({ name: "\uFEFFSystem.Runtime" })],
     target_frameworks: ["\uFEFF.NETCoreApp,Version=v8.0"],
   });
   const members = await client.execute("inspect_managed_members", {});
-  expect(members.ok).toBe(true);
-  if (!members.ok) return;
+  if (!members.ok) throw members.error;
   expect(asManagedMemberResult(members.value)).toMatchObject({
     types: [expect.objectContaining({ name: "\uFEFFProgram" })],
     methods: [expect.objectContaining({ name: "\uFEFFMain" })],
@@ -188,26 +179,22 @@ it("keeps non-CIL implementation bytes unknown through the real file provider", 
   const bytes = buildManagedPeFixture();
   await writeFile(path, bytes);
   const originalTarget = await parseBinaryTarget(path);
-  expect(originalTarget.ok).toBe(true);
-  if (!originalTarget.ok) return;
+  if (!originalTarget.ok) throw originalTarget.error;
   const original = await new ManagedStaticProvider()
     .createClient(originalTarget.value)
     .execute("inspect_managed_members", {});
-  expect(original.ok).toBe(true);
-  if (!original.ok) return;
+  if (!original.ok) throw original.error;
   const row = asManagedMemberResult(original.value).methods[0]?.row_offset;
   expect(row).toBeDefined();
   if (row === undefined) return;
   bytes.writeUInt16LE(1, row + 4);
   await writeFile(path, bytes);
   const nativeTarget = await parseBinaryTarget(path);
-  expect(nativeTarget.ok).toBe(true);
-  if (!nativeTarget.ok) return;
+  if (!nativeTarget.ok) throw nativeTarget.error;
   const native = await new ManagedStaticProvider()
     .createClient(nativeTarget.value)
     .execute("inspect_managed_members", {});
-  expect(native.ok).toBe(true);
-  if (!native.ok) return;
+  if (!native.ok) throw native.error;
   const result = asManagedMemberResult(native.value);
   expect(result.methods[0]?.body).toMatchObject({
     status: "partial",
@@ -220,13 +207,11 @@ it("keeps non-CIL implementation bytes unknown through the real file provider", 
   bytes.writeUInt32LE(0, row);
   await writeFile(path, bytes);
   const absentTarget = await parseBinaryTarget(path);
-  expect(absentTarget.ok).toBe(true);
-  if (!absentTarget.ok) return;
+  if (!absentTarget.ok) throw absentTarget.error;
   const absent = await new ManagedStaticProvider()
     .createClient(absentTarget.value)
     .execute("inspect_managed_members", {});
-  expect(absent.ok).toBe(true);
-  if (!absent.ok) return;
+  if (!absent.ok) throw absent.error;
   expect(asManagedMemberResult(absent.value).methods[0]?.body.status).toBe(
     "absent",
   );

@@ -38,37 +38,6 @@ export const configureClientConfiguration = (
   return configureClientDocument(client, environment, command, client.format);
 };
 
-/** @deprecated Use configureClientConfiguration with the client's declared format. */
-export const configureJsonClient = (
-  client: SetupClient,
-  environment: SetupProviderEnvironment = {},
-  command: readonly string[] = defaultCommand(),
-): Promise<ClientConfigurationResult> =>
-  configureClientWithFormat(client, "json", environment, command);
-
-/** @deprecated Use configureClientConfiguration with the client's declared format. */
-export const configureTomlClient = (
-  client: SetupClient,
-  environment: SetupProviderEnvironment = {},
-  command: readonly string[] = defaultCommand(),
-): Promise<ClientConfigurationResult> =>
-  configureClientWithFormat(client, "toml", environment, command);
-
-const configureClientWithFormat = (
-  client: SetupClient,
-  format: "json" | "toml",
-  environment: SetupProviderEnvironment,
-  command: readonly string[],
-): Promise<ClientConfigurationResult> => {
-  if (client.format !== undefined && client.format !== format)
-    return Promise.resolve({ status: "failed", reason: "readback" });
-  return configureClientConfiguration(
-    { ...client, format: client.format ?? format },
-    environment,
-    command,
-  );
-};
-
 const configureClientDocument = async (
   client: SetupClient,
   environment: SetupProviderEnvironment,

@@ -124,7 +124,6 @@ describe("ESM module URL decoding", () => {
         input_path: root,
         format: "directory",
       });
-      expect(result.ok).toBe(true);
       if (!result.ok) throw result.error;
       const { graph } = javascriptApplicationAnalysisResultSchema.parse(
         result.value.normalized_result,
@@ -235,7 +234,6 @@ describe("package exports URL paths", () => {
         input_path: root,
         format: "directory",
       });
-      expect(result.ok).toBe(true);
       if (!result.ok) throw result.error;
       const { graph } = javascriptApplicationAnalysisResultSchema.parse(
         result.value.normalized_result,

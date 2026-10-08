@@ -71,40 +71,37 @@ const literalMatches = async (
   signal?: AbortSignal,
 ): Promise<Result<{ matches: TraceMatch[] }, AnalysisError>> => {
   const matches: TraceMatch[] = [];
-  const needles = [...new Set(input.query.trim().split(/\s+/u))];
   const matched = new Set<string>();
-  for (const needle of needles) {
-    for (const [tool, type] of sources) {
-      const result = await call(
-        tool,
-        {
-          pattern: needle,
-          mode: "literal",
-          case_sensitive: input.case_sensitive,
-        },
-        signal,
+  for (const [tool, type] of sources) {
+    const result = await call(
+      tool,
+      {
+        pattern: input.query,
+        mode: "literal",
+        case_sensitive: input.case_sensitive,
+      },
+      signal,
+    );
+    if (!result.ok) return result;
+    const items = z
+      .array(z.object({ address: z.string(), value: z.string() }))
+      .safeParse(result.value);
+    if (!items.success)
+      return err(
+        new AnalysisOutputError(
+          tool,
+          "provider returned an invalid search result",
+        ),
       );
-      if (!result.ok) return result;
-      const items = z
-        .array(z.object({ address: z.string(), value: z.string() }))
-        .safeParse(result.value);
-      if (!items.success)
-        return err(
-          new AnalysisOutputError(
-            tool,
-            "provider returned an invalid search result",
-          ),
-        );
-      addPageMatches({
-        items: items.data.map(({ address, value: name }) => ({
-          address,
-          name,
-        })),
-        type,
-        matches,
-        matched,
-      });
-    }
+    addPageMatches({
+      items: items.data.map(({ address, value: name }) => ({
+        address,
+        name,
+      })),
+      type,
+      matches,
+      matched,
+    });
   }
   return ok({ matches });
 };

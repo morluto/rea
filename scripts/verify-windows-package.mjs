@@ -27,6 +27,7 @@ const verifierRun = createVerifierRun();
 const root = process.cwd();
 const workspace = await mkdtemp(join(tmpdir(), "rea-windows-package-"));
 const prefix = join(workspace, "prefix");
+let report;
 
 try {
   const packed = JSON.parse(
@@ -216,23 +217,23 @@ try {
     environment,
   });
 
-  process.stdout.write(
-    `${JSON.stringify({
-      verifier_run: await completeVerifierRun(verifierRun),
-      ok: true,
-      platform: process.platform,
-      package: packageResult.filename,
-      tools: toolCount,
-      ghidra_bridge: "present",
-      agent_setup: ["opencode", "vscode", "copilot_cli"],
-      setup_idempotent: true,
-      uninstall: true,
-      update,
-    })}\n`,
-  );
+  report = {
+    ok: true,
+    platform: process.platform,
+    package: packageResult.filename,
+    tools: toolCount,
+    ghidra_bridge: "present",
+    agent_setup: ["opencode", "vscode", "copilot_cli"],
+    setup_idempotent: true,
+    uninstall: true,
+    update,
+  };
 } finally {
   await rm(workspace, { recursive: true, force: true });
 }
+process.stdout.write(
+  `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), ...report })}\n`,
+);
 
 function npm(arguments_, cwd) {
   const npmExecPath = process.env.npm_execpath;

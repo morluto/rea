@@ -138,6 +138,8 @@
     "typecheck": "tsc --noEmit",
     "verify:test-temp-hygiene": "npm run build:cached && node scripts/verify-test-temp-hygiene.mjs",
     "verify:hopper": "npm run verify:fixtures && npm run build:cached && node scripts/verify-real-hopper.mjs",
+    "verify:hopper:fat": "npm run build:cached && node scripts/verify-real-hopper-fat.mjs",
+    "verify:hopper:fat64": "npm run build:cached && node scripts/verify-real-hopper-fat.mjs --fat64",
     "verify:apple-dispatch": "npm run build:cached && node scripts/verify/apple/dispatch.mjs",
     "verify:native-ui": "npm run build:cached && node scripts/verify-native-ui.mjs",
     "verify:keyed-archive": "npm run build:cached && node scripts/verify/apple/keyed-archive.mjs",

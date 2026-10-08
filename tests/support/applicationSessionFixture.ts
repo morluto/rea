@@ -2,7 +2,6 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
-import { expect } from "vitest";
 
 import { runProviderAnalysis } from "../../src/composition/directAnalysis.js";
 import type { AnalysisError } from "../../src/domain/analysisErrorBase.js";
@@ -14,7 +13,6 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 export const requireSuccessfulProjection = (
   result: Result<Evidence, AnalysisError>,
 ): Evidence => {
-  expect(result.ok).toBe(true);
   if (!result.ok)
     throw new TypeError("Expected application projection to succeed");
   return result.value;

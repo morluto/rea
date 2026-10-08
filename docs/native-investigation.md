@@ -12,6 +12,12 @@ input file and include the observed lipo slice offset for universal binaries.
 If that offset is unavailable, segment evidence locations are omitted with an
 explicit limitation; architecture inventory locations remain available.
 
+Native Xcode command execution uses shared process supervision with a 60-second
+deadline and a 64 MiB aggregate stdout/stderr budget. Timeout, cancellation,
+stream failure, and output exhaustion retain the captured output, exit details,
+and cleanup outcome in the error result. Truncated output is never parsed as a
+complete observation.
+
 - `trace_dylib_resolution` / `rea trace-dylib-resolution <app-or-mach-o>`
   parses Mach-O load commands in TypeScript and follows dyld's path expansion
   for every executable in an app bundle, or for one Mach-O within its directory.
@@ -42,7 +48,16 @@ explicit limitation; architecture inventory locations remain available.
   BOM and rejects malformed byte sequences, unsupported encoding declarations,
   and declarations that disagree with the detected encoding. It never substitutes
   UTF-8 for a declared encoding it cannot process. Archive and evidence digests
-  still identify the original serialized bytes.
+  still identify the original serialized bytes. Interface Builder decoding
+  limits aggregate input archives to 32 MiB.
+  Before decoding, it also bounds the serialized structure: expanded binary
+  plist references, NIB table records, XML elements and text, plus their
+  projected representations must fit the 256 MiB aggregate decode budget.
+  This is a format-derived representation estimate, not a process-wide heap
+  ceiling.
+  Archives beyond either aggregate budget are omitted with their paths and an
+  explicitly partial `archive_decode` facet; previously decoded documents and
+  their identities remain available.
 - `inspect_native_dispatch_metadata` /
   `rea inspect-native-dispatch-metadata <app-or-binary>` prefers a validated macOS Mach-O byte reader. It decodes
   64-bit little-endian Objective-C class/metaclass records, superclass pointers,
@@ -71,6 +86,54 @@ explicit limitation; architecture inventory locations remain available.
 ## Native instruction, call and type primitives
 
 Ghidra supplies three exact-object operations:
+
+Ghidra accepts hexadecimal addresses with or without a `0x` prefix, in either
+letter case, and explicit address-space coordinates such as `EXTERNAL:0x1`.
+Results use canonical lowercase hexadecimal offsets. For a procedure identifier,
+an explicit `0x` or address-space prefix selects an address; otherwise an exact
+database symbol name takes precedence over a bare hexadecimal address. Thus a
+function renamed to `dead` remains selectable by name. Use the names returned
+by the inventory, including their namespaces and any platform symbol prefix.
+Overloads can share a fully qualified name; ambiguity errors return every
+matching entry address so the caller can select the intended function directly.
+
+`resolve_containing_procedure` also resolves an exact external entry. Its empty
+body remains explicit; nearby external addresses do not inherit that identity.
+
+Ghidra function references cover the complete function-body AddressSet and its
+exact entry, including references into instruction interiors and references
+from embedded data. Addresses inside an enclosing span but outside the owned
+body are excluded. `procedure_references` returns internal and external edges;
+`analyze_function` omits incoming edges whose sources belong to the same function.
+The reference collector's semantics participate in the analysis profile, so
+older snapshots cannot replay the former incomplete results under this profile.
+
+Ghidra regex searches use Java Pattern semantics. If compiling or matching a
+pattern exhausts the engine's stack, REA returns a resource constraint and
+preserves the active database and annotations. Retry in literal mode or simplify
+the regex; successful literal searches retain complete matching strings.
+Cancelling an active request terminates the ephemeral database and discards its
+annotations. REA retains the selected target and imports the original artifact
+again on the next Ghidra query.
+
+Opening the same target and profile again retains the live database, including
+annotations. It does not make those edits eligible for an immutable snapshot.
+Snapshot closes drain earlier provider requests before saving and keep later
+requests waiting until the save and close finish. A concurrent successful edit
+therefore rejects the snapshot save and leaves the edited session open.
+After metadata edits, snapshot saves and imports remain unavailable in that
+session. Use `export_evidence_bundle` to retain the observations, close without
+`snapshot_path`, and reopen the target before importing or saving a snapshot.
+
+Ghidra checks its private import copy against the artifact digest selected by
+`open_binary`. If the source changes before that copy is acquired, the query
+reports `artifact_changed` with the selected path and both digests. Reopen the
+stable target to acquire its current identity. An already imported database
+continues to describe its captured bytes even if the original path is changed
+or removed; this identity failure does not mark the Ghidra installation unavailable.
+On Linux and macOS, an unreadable source reports `access_denied`; a removed or
+nonregular replacement reports `artifact_changed`. Source copying is cancellable
+and never replaces an existing private snapshot.
 
 ```bash
 rea inspect-native-instruction <binary> <address> --provider ghidra
@@ -249,7 +312,10 @@ protected runtime DACLs, and handle-based path admission. See [Windows Ghidra P0
 [issue #527](https://github.com/morluto/rea/issues/527).
 On Linux and macOS, `annotate_native_function` atomically edits a function name
 and entry comments in the ephemeral database, returning refreshed analysis
-without changing executable bytes. Windows P0 remains read-only. Ghidra has no
+without changing executable bytes. Annotation text must contain no NUL or
+unpaired Unicode surrogate; a rejection identifies the field and UTF-16 index
+and leaves every annotation unchanged. CRLF, supplementary Unicode characters,
+and combining characters are preserved. Windows P0 remains read-only. Ghidra has no
 GUI authority, and REA never falls back automatically to Hopper.
 
 - `npm run verify:ghidra`: host-native debug/stripped targets, native type layout,

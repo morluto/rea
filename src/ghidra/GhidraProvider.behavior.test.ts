@@ -428,7 +428,6 @@ describe("Ghidra client projection", () => {
       executableTarget("elf", "x86_64"),
     );
 
-    expect(resolved.ok).toBe(true);
     if (!resolved.ok) throw resolved.error;
     if (resolved.value.profile === null)
       throw new Error("Expected a bound Ghidra profile");

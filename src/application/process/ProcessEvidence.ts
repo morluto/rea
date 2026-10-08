@@ -1,3 +1,5 @@
+import { posix, win32 } from "node:path";
+
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { createEvidence } from "../../domain/evidence.js";
 import { PROCESS_PROVIDER } from "../../domain/process/processEvidenceProvider.js";
@@ -12,8 +14,11 @@ export { PROCESS_PROVIDER } from "../../domain/process/processEvidenceProvider.j
 /** Project one process scenario into secret-free Evidence parameters. */
 const processEvidenceParameters = (
   scenario: ProcessScenario,
+  platform: ProcessCapture["manifest"]["platform"],
 ): Readonly<Record<string, JsonValue>> => ({
-  executable_name: scenario.executable.split("/").at(-1) ?? scenario.executable,
+  executable_name: (platform === "win32" ? win32 : posix).basename(
+    scenario.executable,
+  ),
   argument_count: scenario.arguments.length,
   event_count: scenario.events.length,
   filesystem_observation_path_count:
@@ -29,7 +34,7 @@ export const createProcessCaptureEvidence = (
   return createEvidence(undefined, PROCESS_PROVIDER, {
     predicateType: "rea.process-capture",
     operation: "capture_process_scenario",
-    parameters: processEvidenceParameters(scenario),
+    parameters: processEvidenceParameters(scenario, capture.manifest.platform),
     result: jsonValueSchema.parse(capture),
     confidence: "observed",
     authority: "controlled-replay",

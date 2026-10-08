@@ -10,7 +10,9 @@ describe("JavaScript analysis cancellation before publication", () => {
   it.each([
     "parse_javascript_source",
     "build_javascript_application_graph",
+    "seal_javascript_application_graph",
     "build_javascript_semantic_graph",
+    "seal_javascript_semantic_graph",
     "validate_javascript_application_result",
     "create_javascript_application_evidence",
     "seal_javascript_application_result",
@@ -41,7 +43,6 @@ describe("JavaScript analysis cancellation before publication", () => {
       },
     );
     expect(requested).toBe(true);
-    expect(result.ok).toBe(false);
     if (result.ok)
       throw new Error("Cancelled analysis must not publish Evidence");
     expect(projectAnalysisError(result.error)).toMatchObject({
@@ -66,7 +67,6 @@ describe("JavaScript analysis cancellation before publication", () => {
         },
       },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected cancellation before admission");
     expect(projectAnalysisError(result.error)).toMatchObject({
       details: { reason: "cancelled" },

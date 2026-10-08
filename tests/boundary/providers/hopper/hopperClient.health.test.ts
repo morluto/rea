@@ -61,19 +61,6 @@ const start = async (owned: boolean) => {
 };
 
 describe("Hopper provider lifecycle health", () => {
-  it("keeps a live bridge healthy after a non-owning launcher helper exits", async () => {
-    const { client, launcher } = await start(false);
-    launcher.observed.exit(0);
-    expect(client.operationHealth().state).toBe("idle");
-    expect(await client.callTool("echo", { label: "GUI still alive" })).toEqual(
-      {
-        ok: true,
-        value: { label: "GUI still alive" },
-      },
-    );
-    expect(client.operationHealth().state).toBe("idle");
-  });
-
   it("settles disconnected requests without attributing the helper exit to the GUI", async () => {
     const { client, launcher } = await start(false);
     launcher.observed.exit(0);

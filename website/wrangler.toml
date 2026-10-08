@@ -1,0 +1,22 @@
+# Serve only the public website. The default deployment is a workers.dev preview.
+name = "rea-website-preview"
+compatibility_date = "2026-10-08"
+workers_dev = true
+preview_urls = false
+
+[assets]
+directory = "./public"
+html_handling = "auto-trailing-slash"
+not_found_handling = "none"
+
+[build]
+cwd = ".."
+command = "python3 scripts/prepare-website.py && python3 scripts/verify-website.py"
+watch_dir = "./public/examples/notes-electron"
+
+# Public HTTPS depends on zone activation and certificate readiness.
+[env.production]
+name = "rea-website"
+workers_dev = true
+preview_urls = false
+routes = [{ pattern = "rea.tools", custom_domain = true }]

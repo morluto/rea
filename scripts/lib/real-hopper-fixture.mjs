@@ -21,12 +21,26 @@ export async function loadRealHopperFixtureTargets(manifestPath) {
       bindFixtureArtifact(root, large),
     ],
   );
-  requireDistinctArtifacts([primaryArtifact, secondaryArtifact, largeArtifact]);
+  const objc = manifest.fixtures.find((fixture) => fixture?.name === "objc");
+  const unicodeArtifact =
+    objc === undefined
+      ? undefined
+      : await bindFixtureArtifact(
+          root,
+          fixtureEntry(manifest.fixtures, "objc"),
+        );
+  requireDistinctArtifacts([
+    primaryArtifact,
+    secondaryArtifact,
+    largeArtifact,
+    ...(unicodeArtifact === undefined ? [] : [unicodeArtifact]),
+  ]);
   return {
     manifestPath: canonicalManifest,
     primary: primaryArtifact,
     secondary: secondaryArtifact,
     large: largeArtifact,
+    ...(unicodeArtifact === undefined ? {} : { unicode: unicodeArtifact }),
     oracle,
     largeOracle,
   };

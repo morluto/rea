@@ -60,7 +60,6 @@ describe("additional client configuration dialects", () => {
     const client = getClients(home).find(
       (candidate) => candidate.name === name,
     );
-    expect(client).toBeDefined();
     if (client === undefined) throw new Error(`missing ${name} client`);
 
     await mkdir(client.markerPath ?? home, { recursive: true });
@@ -128,7 +127,6 @@ describe("additional client configuration dialects", () => {
   it("preserves OpenCode JSONC comments and sibling registrations during update and removal", async () => {
     const home = await createTestTempDirectory("rea-opencode-jsonc-");
     const client = getClients(home).find(({ name }) => name === "opencode");
-    expect(client).toBeDefined();
     if (client === undefined) throw new Error("missing OpenCode client");
     await mkdir(client.markerPath ?? home, { recursive: true });
     const original = `{
@@ -179,7 +177,6 @@ describe("additional client configuration dialects", () => {
   it("rejects malformed OpenCode JSONC without creating a backup or changing bytes", async () => {
     const home = await createTestTempDirectory("rea-opencode-invalid-");
     const client = getClients(home).find(({ name }) => name === "opencode");
-    expect(client).toBeDefined();
     if (client === undefined) throw new Error("missing OpenCode client");
     await mkdir(client.markerPath ?? home, { recursive: true });
     const invalid = '{ "mcp": { /* broken */ "rea": [ }';

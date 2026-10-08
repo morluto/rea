@@ -4,7 +4,12 @@ import { jsonValueSchema } from "../domain/jsonValue.js";
 import { TOOL_EXAMPLE_OVERRIDES } from "./toolContractExamples.js";
 import type { ToolExample } from "./toolContractTypes.js";
 
-export const document = z.string().optional().describe("The document name");
+export const document = z
+  .string()
+  .optional()
+  .describe(
+    "The active target's provider document name; use open_binary to switch targets",
+  );
 export const address = z
   .string()
   .describe(

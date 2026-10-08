@@ -1,9 +1,9 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 
-import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
-import { observed } from "../../fixtures/analysisExecution.js";
-import { createServer } from "../../../src/server/createServer.js";
+import { createTestBinarySession } from "./binarySession.js";
+import type { BinarySession } from "../../src/application/binary/BinarySession.js";
+import { observed } from "./analysisExecution.js";
+import { createServer } from "../../src/server/createServer.js";
 
 /** Owned MCP SDK session shared by application workflow scenarios. */
 export interface ApplicationMcpHarness {

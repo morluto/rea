@@ -71,7 +71,6 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
           path: fixture.path,
           output_directory: fixture.output,
         });
-        expect(result.ok).toBe(false);
         if (result.ok) throw new Error("expected boundary failure");
         const error = projectAnalysisError(result.error);
         expect(["execution_failure", "unreadable_output"]).toContain(
@@ -91,7 +90,6 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
         path: fixture.path,
         output_directory: fixture.output,
       });
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("expected invalid UTF-8 boundary");
       expect(JSON.stringify(projectAnalysisError(result.error))).toContain(
         "UTF-8 byte range",
@@ -131,7 +129,6 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
         path: fixture.path,
         output_directory: fixture.output,
       });
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("expected existing-output rejection");
       expect(projectAnalysisError(result.error)).toMatchObject({
         code: "invalid_request",

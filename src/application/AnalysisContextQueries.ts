@@ -6,6 +6,7 @@ import type {
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { analysisBookmarkSchema } from "../domain/hopperValues.js";
 import { resolveAnalysisDocument } from "./AnalysisDocument.js";
 import { err, ok, type Result } from "../domain/result.js";
 
@@ -188,25 +189,17 @@ const matchingBookmarks = (value: JsonValue, address: string): Facet => {
       remediation:
         "Retry list_bookmarks directly and report the provider output shape if it remains malformed.",
     };
-  if (!value.every(isBookmark))
+  const parsed = analysisBookmarkSchema.array().safeParse(value);
+  if (!parsed.success)
     return {
       state: "unavailable",
       reason:
-        "list_bookmarks returned malformed entries; expected address and name strings.",
+        "list_bookmarks returned malformed entries; expected an address string and a string or null name.",
       remediation:
         "Retry list_bookmarks directly and report the provider output shape if it remains malformed.",
     };
   return {
     state: "available",
-    value: value.filter((bookmark) => bookmark.address === address),
+    value: parsed.data.filter((bookmark) => bookmark.address === address),
   };
 };
-
-const isBookmark = (
-  value: JsonValue,
-): value is { readonly address: string; readonly name: string } =>
-  typeof value === "object" &&
-  value !== null &&
-  !Array.isArray(value) &&
-  typeof value.address === "string" &&
-  typeof value.name === "string";

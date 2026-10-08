@@ -506,8 +506,7 @@ describe("JavaScript runtime reconciliation local paths", () => {
       ],
     });
 
-    expect(reconciled.ok).toBe(true);
-    if (!reconciled.ok) return;
+    if (!reconciled.ok) throw reconciled.error;
     const result = javascriptRuntimeReconciliationResultSchema.parse(
       reconciled.value.normalized_result,
     );

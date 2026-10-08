@@ -30,7 +30,12 @@ export class OwnedCommandFailure extends Error {
 /** Execute a single owned process with independent cleanup and bounded diagnostic retention. */
 export const runOwnedCommand = async (
   spawn: OwnedProviderProcessSpawnOptions,
-  limits: { readonly timeoutMs: number; readonly diagnosticBytes: number },
+  limits: {
+    readonly timeoutMs: number;
+    readonly diagnosticBytes: number;
+    /** Accept an ordinary nonzero exit after output closes without other process errors. */
+    readonly acceptNonZeroExit?: boolean;
+  },
   options: {
     readonly signal?: AbortSignal;
     readonly launcher?: (
@@ -60,7 +65,11 @@ export const runOwnedCommand = async (
 
 const collectOwnedCommand = async (
   spawn: OwnedProviderProcessSpawnOptions,
-  limits: { readonly diagnosticBytes: number },
+  limits: {
+    readonly diagnosticBytes: number;
+    /** Accept an ordinary nonzero exit after output closes without other process errors. */
+    readonly acceptNonZeroExit?: boolean;
+  },
   launcher: (
     input: OwnedProviderProcessSpawnOptions,
   ) => Promise<SpawnedOwnedProviderProcess>,
@@ -143,10 +152,16 @@ const collectOwnedCommand = async (
         "Command diagnostic output exceeded its complete-output budget.",
         snapshot,
       );
+    const acceptedNonzeroExit =
+      limits.acceptNonZeroExit === true &&
+      snapshot.exitCode !== null &&
+      snapshot.exitCode !== undefined &&
+      snapshot.exitCode !== 0 &&
+      snapshot.signal === null;
     if (
       processFailure !== undefined ||
-      snapshot.exitCode !== 0 ||
-      snapshot.signal !== null
+      ((snapshot.exitCode !== 0 || snapshot.signal !== null) &&
+        !acceptedNonzeroExit)
     )
       throw new OwnedCommandFailure(
         "process",

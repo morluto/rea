@@ -9,7 +9,10 @@ import {
 import type { AnalysisSnapshot } from "../../domain/analysisSnapshot.js";
 import { parseBinaryTarget } from "../BinaryTargetResolver.js";
 import { type BinaryTarget } from "../../domain/binaryTarget.js";
-import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
+import {
+  EvidenceIntegrityError,
+  AnalysisSnapshotMismatchError,
+} from "../../domain/evidenceErrors.js";
 import { type AnalysisError } from "../../domain/analysisErrorBase.js";
 import { err, type Result } from "../../domain/result.js";
 import type { SessionProviderRoute } from "./SessionProviderRouter.js";
@@ -135,11 +138,11 @@ const validateSnapshot = ({
     snapshot !== undefined &&
     (profile === null || !snapshotMatchesBinding(snapshot, target, profile))
   )
-    return new EvidenceIntegrityError(
+    return new AnalysisSnapshotMismatchError(
       "Analysis snapshot profile_mismatch: target, provider, or analysis profile does not match the requested binary",
     );
   if (current === undefined && !stagedSnapshotMatches(target, profile))
-    return new EvidenceIntegrityError(
+    return new AnalysisSnapshotMismatchError(
       "Analysis snapshot profile_mismatch: staged target, provider, or analysis profile does not match",
     );
   return undefined;

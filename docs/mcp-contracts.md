@@ -86,11 +86,14 @@ Derived comparisons and reconstruction verification yield before computation
 and before publication, so cancellation cannot race with successful Evidence.
 
 `analyze_javascript_application` also yields between reconstruction phases and
-during complete-result sealing, Evidence JSON validation, and canonical hashing.
+during graph/result sealing, cross-graph binding checks, Evidence JSON validation,
+and canonical hashing. Its final result validation reuses exact graphs whose
+owned constructors validated and completely sealed them; imported graphs still
+receive full schema and commitment checks.
 Cancellation observed before completion returns `cancelled` and prevents the
 provisional result from entering the session ledger; prior Evidence stays usable.
-Single-file parsing, graph completion, and full application-result schema
-validation still run synchronously, so control messages can wait for those
+Single-file parsing, graph construction, and validation of imported graphs
+still run synchronously, so control messages can wait for those
 phases to release the event loop. A rejected client promise alone does not
 establish that the server has stopped its work.
 

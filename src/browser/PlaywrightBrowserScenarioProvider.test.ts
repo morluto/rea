@@ -198,7 +198,6 @@ describe("PlaywrightBrowserScenarioProvider", () => {
     const result = await provider.captureScenario(
       scenario({ events: ["frames"] }),
     );
-    expect(result.ok).toBe(true);
     if (!result.ok) throw result.error;
     expect(result.value.completeness).toMatchObject({
       status: "incomplete",
@@ -213,8 +212,7 @@ describe("PlaywrightBrowserScenarioProvider", () => {
       open: () => Promise.resolve(session),
     });
     const result = await provider.captureScenario(scenario({ actions: 129 }));
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     expect(result.value.scenario.action_count).toBe(129);
     expect(result.value.steps).toHaveLength(130);
     expect(result.value.steps.at(-1)?.step_id).toBe("wait_128");
@@ -228,8 +226,7 @@ describe("PlaywrightBrowserScenarioProvider", () => {
     const result = await provider.captureScenario(
       scenario({ captures: ["screenshot", "dom"] }),
     );
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     expect(result.value.completeness).toMatchObject({
       status: "truncated",
       equality_eligible: false,
@@ -244,8 +241,7 @@ describe("PlaywrightBrowserScenarioProvider", () => {
       open: () => Promise.resolve(session),
     });
     const result = await provider.captureScenario(scenario({ actions: 2 }));
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     expect(result.value.steps.map(({ status }) => status)).toEqual([
       "completed",
       "failed",
@@ -267,8 +263,7 @@ describe("PlaywrightBrowserScenarioProvider", () => {
     const result = await provider.captureScenario(
       scenario({ mode: "connect" }),
     );
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     expect(result.value.browser).toMatchObject({
       process_ownership: "external",
       cleanup: "disconnected-external",
@@ -318,8 +313,7 @@ describe("PlaywrightBrowserScenarioProvider", () => {
     const result = await provider.captureScenario(scenario(), {
       signal: controller.signal,
     });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     expect(result.value.steps[1]?.status).toBe("cancelled");
     expect(session.closeCalls).toBe(1);
   });

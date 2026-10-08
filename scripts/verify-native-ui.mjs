@@ -15,6 +15,7 @@ if (process.platform !== "darwin")
 const root = await mkdtemp(join(tmpdir(), "rea-ui-fixture-"));
 let child;
 let fixturePid;
+let report;
 try {
   const childRetrievalTest = join(root, "child-retrieval-test");
   await promisify(execFile)("/usr/bin/xcrun", [
@@ -187,9 +188,18 @@ try {
   );
   if (mismatch.ok || !mismatch.error.message.includes("target-mismatch"))
     throw new Error("Real helper did not reject changed target bytes");
-  process.stdout.write(
-    `${JSON.stringify({ ok: true, verification_status: observation.ok ? "passed" : "permission-boundary-only", positive_e2e: observation.ok, observation: observation.ok ? "captured-selected-fixture-window" : "os-permission-denial-verified", scenario: scenarioStatus, permission_failure: observation.ok ? null : observation.error.message, mismatch_rejected: true, target_owned: true })}\n`,
-  );
+  report = {
+    ok: true,
+    verification_status: observation.ok ? "passed" : "permission-boundary-only",
+    positive_e2e: observation.ok,
+    observation: observation.ok
+      ? "captured-selected-fixture-window"
+      : "os-permission-denial-verified",
+    scenario: scenarioStatus,
+    permission_failure: observation.ok ? null : observation.error.message,
+    mismatch_rejected: true,
+    target_owned: true,
+  };
 } finally {
   if (fixturePid !== undefined) {
     try {
@@ -205,3 +215,4 @@ try {
   }
   await rm(root, { recursive: true, force: true });
 }
+process.stdout.write(`${JSON.stringify(report)}\n`);

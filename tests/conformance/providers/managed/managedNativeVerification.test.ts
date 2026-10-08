@@ -60,6 +60,54 @@ const nativeEvidenceWithExports = (names: readonly string[]) => {
   );
 };
 
+describe("managed/native boundary Evidence identity", () => {
+  it("rejects managed boundary Evidence whose subject digest differs from its artifact", () => {
+    const input = exampleInput();
+    const managed = input.managed_boundaries;
+    const result = managedNativeBoundaryInspectionSchema.parse(
+      managed.normalized_result,
+    );
+    const otherDigest = "b".repeat(64);
+    const mismatched = createEvidence(
+      {
+        path: result.artifact.path,
+        sha256: result.artifact.sha256,
+        format: "pe",
+      },
+      managed.provider,
+      {
+        operation: managed.operation,
+        parameters: managed.parameters,
+        result: {
+          ...result,
+          artifact: { ...result.artifact, sha256: otherDigest },
+          identity_scope: {
+            ...result.identity_scope,
+            requires_artifact_sha256: otherDigest,
+          },
+        },
+        rawResult: managed.raw_result,
+        confidence: managed.confidence,
+        authority: managed.authority,
+        environment: managed.environment,
+        limitations: managed.limitations,
+        locations: managed.locations,
+        evidenceLinks: managed.evidence_links,
+      },
+    );
+
+    expect(() =>
+      verifyManagedNativeBoundaries({
+        ...input,
+        managed_boundaries: mismatched,
+      }),
+    ).toThrow(
+      `Managed Evidence inspect_managed_native_boundaries (${mismatched.evidence_id}) subject SHA-256 ${result.artifact.sha256} does not match normalized artifact SHA-256 ${otherDigest}`,
+    );
+    expect(verifyManagedNativeBoundaries(input).summary.verified).toBe(1);
+  });
+});
+
 describe("managed/native boundary verification", () => {
   it("verifies a P/Invoke declaration against native export Evidence", () => {
     const result = verifyManagedNativeBoundaries(exampleInput());
@@ -205,8 +253,7 @@ describe("managed/native boundary verification", () => {
   it("wraps verification in derived workflow Evidence", () => {
     const evidence = verifyManagedNativeBoundariesEvidence(exampleInput());
 
-    expect(evidence.ok).toBe(true);
-    if (!evidence.ok) return;
+    if (!evidence.ok) throw evidence.error;
     expect(evidence.value).toMatchObject({
       operation: "verify_managed_native_boundaries",
       provider: { id: "rea-dotnet-workflows" },

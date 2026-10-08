@@ -21,6 +21,7 @@ const sourceRoot = fileURLToPath(
   new URL("../../../tests/conformance/interface-builder/", import.meta.url),
 );
 
+let report;
 try {
   await mkdir(join(appPath, "Contents", "MacOS"), { recursive: true });
   await mkdir(resourcesPath, { recursive: true });
@@ -83,21 +84,20 @@ try {
   );
   assert.equal(decoded.graph.truncated, false);
 
-  process.stdout.write(
-    `${JSON.stringify({
-      ok: true,
-      fixture: "compiled-appkit-nib",
-      provider: execution.value.provider,
-      target_sha256: decoded.target_sha256,
-      archive_sha256: decoded.documents[0].archive_sha256,
-      objects: decoded.documents[0].object_count,
-      connections: decoded.documents[0].connection_count,
-      recovered_control: button.name,
-      recovered_action: action.name,
-      hierarchy_complete: decoded.documents[0].hierarchy_complete,
-      truncated: decoded.graph.truncated,
-    })}\n`,
-  );
+  report = {
+    ok: true,
+    fixture: "compiled-appkit-nib",
+    provider: execution.value.provider,
+    target_sha256: decoded.target_sha256,
+    archive_sha256: decoded.documents[0].archive_sha256,
+    objects: decoded.documents[0].object_count,
+    connections: decoded.documents[0].connection_count,
+    recovered_control: button.name,
+    recovered_action: action.name,
+    hierarchy_complete: decoded.documents[0].hierarchy_complete,
+    truncated: decoded.graph.truncated,
+  };
 } finally {
   await rm(fixtureRoot, { recursive: true, force: true });
 }
+process.stdout.write(`${JSON.stringify(report)}\n`);

@@ -76,7 +76,6 @@ it("keeps dynamic calls explicit and returns complete deterministic results", ()
   const seedNodeId = graph.relations.find(
     ({ relation }) => relation === "defines",
   )?.source_node_id;
-  expect(seedNodeId).toBeDefined();
   if (seedNodeId === undefined) throw new Error("Expected a definition seed");
 
   const first = queryJavaScriptSemanticGraph(graph, {

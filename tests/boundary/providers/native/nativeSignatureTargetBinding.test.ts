@@ -86,7 +86,6 @@ describe("native signature target identity", () => {
       const result = await new NativeMacOSProvider(runner, "darwin")
         .createClient(target)
         .execute("inspect_signature", {});
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected target-change failure");
       expect(projectAnalysisError(result.error)).toMatchObject({
         code: "artifact_changed",
@@ -113,7 +112,6 @@ describe("native signature target identity", () => {
       const result = await new NativeMacOSProvider(runner, "darwin")
         .createClient(target)
         .execute("inspect_signature", {});
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected target-change failure");
       expect(projectAnalysisError(result.error)).toMatchObject({
         code: "artifact_changed",
@@ -132,7 +130,6 @@ describe("native signature target identity", () => {
         const result = await new NativeMacOSProvider(runner, "darwin")
           .createClient(target)
           .execute("inspect_signature", {});
-        expect(result.ok).toBe(false);
         if (result.ok) throw new Error("Expected access denial");
         expect(projectAnalysisError(result.error)).toMatchObject({
           code: "access_denied",
@@ -156,7 +153,6 @@ describe("native signature target identity", () => {
         const result = await new NativeMacOSProvider(runner, "darwin")
           .createClient(target)
           .execute("inspect_signature", {});
-        expect(result.ok).toBe(false);
         if (result.ok) throw new Error("Expected access denial");
         expect(projectAnalysisError(result.error)).toMatchObject({
           code: "access_denied",

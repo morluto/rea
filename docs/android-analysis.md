@@ -111,7 +111,14 @@ rea project-android-application-graph '{"inventory_evidence":[<inventory_artifac
 
 The projection reports exact component paths and hashes, runtime-family hints,
 and path-based bridge hypotheses. It does not decode DEX or claim observed
-runtime calls.
+runtime calls. Bridge hypotheses form a DEX/JVM-class by native-library
+Cartesian product. The projection computes the product and exact serialized
+candidate-array size before creating candidate objects, then retains a
+deterministic prefix within a 2 MiB UTF-8 JSON budget. If candidates are omitted,
+`bridge_candidate_coverage` reports total, emitted, and omitted counts; overall
+coverage is `partial` while component arrays still include every component
+from the supplied inventory pages. A path pair does not establish that a
+managed declaration names, loads, or calls the native library.
 
 ## Resource and lifecycle limits
 

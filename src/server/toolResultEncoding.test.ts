@@ -15,7 +15,6 @@ describe("MCP result encoding budget", () => {
     { result: "x".repeat(8191) + "😀" + '中文\n"'.repeat(20000) },
   ])("counts actual UTF-8 structured and escaped text bytes", (candidate) => {
     const encoded = encodeToolResult(candidate);
-    expect(encoded.ok).toBe(true);
     if (!encoded.ok) throw new Error("Expected complete encoding");
     expect(encoded.text).toBe(JSON.stringify(candidate));
     expect(encoded.bytes).toBe(

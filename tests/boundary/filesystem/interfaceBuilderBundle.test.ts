@@ -75,6 +75,27 @@ const keyedArchiveHierarchy = (
   });
 };
 
+const binaryPlistWithRepeatedReferences = (depth: number): Buffer => {
+  const encodedObjects = [Buffer.from([0x51, 0x78])];
+  for (let index = 1; index <= depth; index += 1)
+    encodedObjects.push(Buffer.from([0xa2, index - 1, index - 1]));
+  const header = Buffer.from("bplist00", "ascii");
+  const offsets: number[] = [];
+  let offset = header.length;
+  for (const object of encodedObjects) {
+    offsets.push(offset);
+    offset += object.length;
+  }
+  const offsetTable = Buffer.from(offsets);
+  const trailer = Buffer.alloc(32);
+  trailer[6] = 1;
+  trailer[7] = 1;
+  trailer.writeBigUInt64BE(BigInt(encodedObjects.length), 8);
+  trailer.writeBigUInt64BE(BigInt(depth), 16);
+  trailer.writeBigUInt64BE(BigInt(offset), 24);
+  return Buffer.concat([header, ...encodedObjects, offsetTable, trailer]);
+};
+
 describe("compiled Interface Builder bundle reader", () => {
   it("reads nib plist archives and reports provenance", async () => {
     const root = await createTestTempDirectory("rea-ib-test-");
@@ -378,6 +399,173 @@ describe("flat Interface Builder plist values", () => {
       expect.objectContaining({ facet: "archive_decode", status: "complete" }),
     );
     expect(analysis.graph.nodes.map(({ name }) => name)).toContain("Build");
+  });
+});
+
+describe("bounded Interface Builder archive decoding", () => {
+  it("marks repeated NIB hierarchy references partial at the caller object limit", async () => {
+    const root = await createTestTempDirectory("rea-ib-repeated-hierarchy-");
+    const bundle = join(root, "Example.app");
+    await mkdir(bundle, { recursive: true });
+    const depth = 8;
+    const objects = [
+      { classIndex: 0, values: { NSRoot: { ref: 1 } } },
+      ...Array.from({ length: depth + 1 }, (_, index) => {
+        const viewId = 1 + index * 2;
+        return [
+          {
+            classIndex: 1,
+            values: index === depth ? {} : { subviews: { ref: viewId + 1 } },
+          },
+          ...(index === depth
+            ? []
+            : [
+                {
+                  classIndex: 2,
+                  values: {
+                    first: { ref: viewId + 2 },
+                    second: { ref: viewId + 2 },
+                  },
+                },
+              ]),
+        ];
+      }).flat(),
+    ];
+    await writeFile(
+      join(bundle, "RepeatedHierarchy.nib"),
+      encodeNibArchiveFixture({
+        classes: ["NSIBObjectData", "UIView", "NSArray"],
+        objects,
+      }),
+    );
+
+    const result = await analyzeInterfaceBuilderBundle({
+      bundlePath: bundle,
+      targetSha256: "f".repeat(64),
+      limits: { max_objects: 16 },
+    });
+
+    expect(result.documents[0]?.hierarchy_complete).toBe(false);
+    expect(result.graph.coverage).toContainEqual(
+      expect.objectContaining({
+        facet: "hierarchy:RepeatedHierarchy.nib",
+        status: "partial",
+        reason: "serialized_view_hierarchy_incomplete",
+      }),
+    );
+  });
+
+  it("rejects a binary plist expansion before recursively materializing repeated references", async () => {
+    const root = await createTestTempDirectory("rea-ib-expansion-test-");
+    const bundle = join(root, "Example.app");
+    await mkdir(bundle, { recursive: true });
+    await writeFile(
+      join(bundle, "RepeatedReferences.nib"),
+      binaryPlistWithRepeatedReferences(32),
+    );
+
+    const result = await analyzeInterfaceBuilderBundle({
+      bundlePath: bundle,
+      targetSha256: "f".repeat(64),
+    });
+
+    expect(result.documents).toEqual([]);
+    expect(result.graph.coverage).toContainEqual(
+      expect.objectContaining({
+        facet: "archive_decode",
+        status: "partial",
+        reason: "aggregate_decode_budget_exhausted",
+        examined: 1,
+        omitted: 1,
+      }),
+    );
+    expect(result.limitations).toContain(
+      "RepeatedReferences.nib: omitted because aggregate decode budget exhausted.",
+    );
+  });
+
+  it("budgets repeated large NSString projections before retaining each field", async () => {
+    const root = await createTestTempDirectory("rea-ib-repeated-string-test-");
+    const bundle = join(root, "Example.app");
+    await mkdir(bundle, { recursive: true });
+    const largeString = "x".repeat(1024 * 1024);
+    const references = Object.fromEntries(
+      Array.from({ length: 50 }, (_, index) => [`title${index}`, { ref: 1 }]),
+    );
+    await writeFile(
+      join(bundle, "RepeatedString.nib"),
+      encodeNibArchiveFixture({
+        classes: ["UIView", "NSString"],
+        objects: [
+          { classIndex: 0, values: references },
+          { classIndex: 1, values: { "NS.bytes": largeString } },
+        ],
+      }),
+    );
+
+    const result = await analyzeInterfaceBuilderBundle({
+      bundlePath: bundle,
+      targetSha256: "f".repeat(64),
+    });
+
+    expect(result.documents).toEqual([]);
+    expect(result.graph.coverage).toContainEqual(
+      expect.objectContaining({
+        facet: "archive_decode",
+        status: "partial",
+        reason: "aggregate_decode_budget_exhausted",
+        examined: 1,
+        omitted: 1,
+      }),
+    );
+    expect(result.limitations).toContain(
+      "RepeatedString.nib: omitted because aggregate decode budget exhausted.",
+    );
+  });
+});
+
+describe("aggregate Interface Builder archive retention budget", () => {
+  it("keeps earlier documents when the aggregate decode reservation is exhausted", async () => {
+    const root = await createTestTempDirectory("rea-ib-budget-test-");
+    const bundle = join(root, "Example.app");
+    const resources = join(bundle, "Contents", "Resources");
+    await mkdir(resources, { recursive: true });
+    const padding = `<!--${"x".repeat(1024)}-->`.repeat(11 * 1024);
+    const valid = (name: string, body = "") =>
+      `<?xml version="1.0"?><plist version="1.0"><dict><key>document</key><string>${name}</string>${body}</dict></plist>`;
+    // XML data expands to a Uint8Array and then to a base64 JSON projection;
+    // this first valid document exercises expansion beyond the source bytes.
+    const expandedData = Buffer.alloc(1024 * 1024, 7).toString("base64");
+    await writeFile(
+      join(resources, "A.nib"),
+      valid("A", `<key>payload</key><data>${expandedData}</data>`),
+    );
+    await writeFile(join(resources, "B.nib"), valid("B", padding));
+    await writeFile(join(resources, "C.nib"), valid("C", padding));
+    await writeFile(join(resources, "D.nib"), valid("D", padding));
+
+    const result = await analyzeInterfaceBuilderBundle({
+      bundlePath: bundle,
+      targetSha256: "e".repeat(64),
+    });
+
+    expect(result.documents.map(({ relative_path }) => relative_path)).toEqual([
+      "Contents/Resources/A.nib",
+      "Contents/Resources/B.nib",
+      "Contents/Resources/C.nib",
+    ]);
+    expect(result.graph.coverage).toContainEqual(
+      expect.objectContaining({
+        facet: "archive_decode",
+        status: "partial",
+        reason: "aggregate_decode_budget_exhausted",
+        examined: 3,
+        omitted: 1,
+      }),
+    );
+    expect(result.limitations).toContain(
+      "Contents/Resources/D.nib: omitted because aggregate decode budget exhausted.",
+    );
   });
 });
 

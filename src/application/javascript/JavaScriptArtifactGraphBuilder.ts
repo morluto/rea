@@ -1,6 +1,7 @@
 import type { ArtifactInventorySnapshot } from "../../artifacts/inventory/ArtifactInventory.js";
 import {
   createJavaScriptApplicationGraph,
+  createImmutableJavaScriptApplicationGraphSteps,
   type JavaScriptApplicationGraph,
 } from "../../domain/javascript/javascriptApplicationGraph.js";
 import type { JavaScriptModuleArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
@@ -46,7 +47,26 @@ export const buildJavaScriptArtifactGraph = (
   snapshot: ArtifactInventorySnapshot,
   fileSet: JavaScriptArtifactFileSet,
   analysis: JavaScriptModuleArtifactAnalysis,
-): JavaScriptApplicationGraph => {
+): JavaScriptApplicationGraph =>
+  createJavaScriptApplicationGraph(
+    buildJavaScriptArtifactGraphInput(snapshot, fileSet, analysis),
+  );
+
+/** Build a validated application graph with cooperative immutable ownership. */
+export const buildImmutableJavaScriptArtifactGraphSteps = (
+  snapshot: ArtifactInventorySnapshot,
+  fileSet: JavaScriptArtifactFileSet,
+  analysis: JavaScriptModuleArtifactAnalysis,
+): Generator<void, JavaScriptApplicationGraph> =>
+  createImmutableJavaScriptApplicationGraphSteps(
+    buildJavaScriptArtifactGraphInput(snapshot, fileSet, analysis),
+  );
+
+const buildJavaScriptArtifactGraphInput = (
+  snapshot: ArtifactInventorySnapshot,
+  fileSet: JavaScriptArtifactFileSet,
+  analysis: JavaScriptModuleArtifactAnalysis,
+): unknown => {
   const accumulator = new JavaScriptArtifactGraphAccumulator();
   const root = createJavaScriptArtifactRootNode(accumulator, snapshot);
   const context: JavaScriptArtifactGraphContext = {
@@ -74,7 +94,7 @@ export const buildJavaScriptArtifactGraph = (
   addJavaScriptHtmlRoles(context);
   addJavaScriptSourceMapOriginals(context);
   const coverage = graphCoverage(context);
-  return createJavaScriptApplicationGraph({
+  return {
     schema: "JavaScriptApplicationGraph",
     root_node_ids:
       packageRoots.length === 0
@@ -84,7 +104,7 @@ export const buildJavaScriptArtifactGraph = (
     edges: accumulator.edges(),
     coverage,
     limitations: graphLimitations(context, coverage.status),
-  });
+  };
 };
 
 const graphCoverage = (context: JavaScriptArtifactGraphContext) => {

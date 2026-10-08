@@ -494,4 +494,64 @@ describe("Apple application bridge candidates", () => {
       ],
     ]);
   });
+
+  it("reports candidate omission when one root expands beyond the bridge safety budget", () => {
+    const escapedDirectory = `${"é".repeat(100)}${'"'.repeat(120)}`;
+    const scripts = Array.from({ length: 129 }, (_, index) => ({
+      path: `Payload/Fixture.app/${escapedDirectory}/script-${String(index).padStart(3, "0")}.js`,
+      format: "javascript-bundle",
+    }));
+    const native = Array.from({ length: 128 }, (_, index) =>
+      macho(
+        `Payload/Fixture.app/${escapedDirectory}/lib${String(index).padStart(3, "0")}.dylib`,
+      ),
+    );
+    const result = project(
+      inventoryEvidence("zip", "Fixture.zip", [...scripts, ...native]),
+    );
+
+    expect(result.components.javascript).toHaveLength(129);
+    expect(result.components.native_libraries).toHaveLength(128);
+    expect(result.bridge_candidate_coverage).toMatchObject({
+      status: "partial",
+      total_candidates: 129 * 128,
+      emitted_candidates: result.bridge_candidates.length,
+      omitted_candidates: 129 * 128 - result.bridge_candidates.length,
+    });
+    expect(result.bridge_candidates.length).toBeGreaterThan(0);
+    expect(result.bridge_candidates.length).toBeLessThan(129 * 128);
+    expect(
+      Buffer.byteLength(JSON.stringify(result.bridge_candidates)),
+    ).toBeLessThanOrEqual(2 * 1024 * 1024);
+    expect(result.coverage).toMatchObject({
+      status: "partial",
+      inventory_complete: true,
+    });
+    expect(result.limitations).toContain(
+      `Bridge candidate pairs exceeded the projection safety budget; ${result.bridge_candidate_coverage.omitted_candidates} hypotheses are omitted. Component arrays still include every component from the supplied inventory pages.`,
+    );
+  });
+
+  it("preserves candidate pairing for components without an application root", () => {
+    const result = project(
+      inventoryEvidence("ipa", "Fixture.ipa", [
+        { path: "Payload/Fixture.app/Info.plist" },
+        {
+          path: "Payload/Fixture.app/Resources/app.js",
+          format: "javascript-bundle",
+        },
+        { path: "SwiftSupport/outside.js", format: "javascript-bundle" },
+        { path: "SwiftSupport/liboutside.dylib", format: "mach-o" },
+      ]),
+    );
+
+    expect(result.bridge_candidates).toContainEqual({
+      source_path: "SwiftSupport/outside.js",
+      native_path: "SwiftSupport/liboutside.dylib",
+      basis: "javascript-and-native-content",
+    });
+    expect(result.bridge_candidate_coverage).toMatchObject({
+      status: "complete",
+    });
+  });
 });

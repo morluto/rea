@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { canonicalDigest, canonicalJson } from "../comparisonSemantics.js";
 import { compareCodePoints, uniqueSorted } from "../canonicalOrdering.js";
+import { freezeOwnedJsonSnapshotSteps } from "../immutableJson.js";
 import type { ApplicationGraphEvidence } from "./javascriptApplicationEvidenceSchemas.js";
 import {
   JAVASCRIPT_SEMANTIC_RELATION_FAMILIES,
@@ -560,5 +561,29 @@ export const createJavaScriptSemanticGraph = (
   if (issues.length > 0) throw new z.ZodError(issues);
   return record;
 };
+
+const validatedImmutableSemanticGraphs = new WeakSet<object>();
+
+/** Clone and validate synchronously, then return steps to seal the owned graph. */
+export const createImmutableJavaScriptSemanticGraphSteps = (
+  input: unknown,
+): Generator<void, JavaScriptSemanticGraph> =>
+  sealValidatedSemanticGraphSteps(createJavaScriptSemanticGraph(input));
+
+function* sealValidatedSemanticGraphSteps(
+  graph: JavaScriptSemanticGraph,
+): Generator<void, JavaScriptSemanticGraph> {
+  yield* freezeOwnedJsonSnapshotSteps(graph);
+  validatedImmutableSemanticGraphs.add(graph);
+  return graph;
+}
+
+/** Recognize the exact completely sealed graph produced by the owned factory. */
+export const isValidatedImmutableJavaScriptSemanticGraph = (
+  value: unknown,
+): value is JavaScriptSemanticGraph =>
+  typeof value === "object" &&
+  value !== null &&
+  validatedImmutableSemanticGraphs.has(value);
 
 export type { JavaScriptSemanticGraphNode, JavaScriptSemanticGraphRelation };

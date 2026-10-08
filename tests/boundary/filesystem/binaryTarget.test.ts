@@ -523,7 +523,6 @@ describe("iOS-style app bundle targets", () => {
       await chmod(wrapper, 0o000);
       try {
         const result = await parseBinaryTarget(app, directory, "arm64");
-        expect(result.ok).toBe(false);
         if (result.ok) throw new Error("Expected a permission denial");
         expect(result.error.message).toContain("permission denied");
       } finally {
@@ -564,7 +563,6 @@ describe("iOS-style app bundle targets", () => {
       await writeFile(join(app, "Info.plist"), plist("Escaping"));
       await symlink(outside, join(app, "Escaping"));
       const result = await parseBinaryTarget(app, directory, "arm64");
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected an escaping program file");
       expect(result.error.message).toContain("leaves the bundle root");
     },

@@ -37,6 +37,10 @@ export interface AnalysisCapturedOutput {
   readonly stdout: string;
   readonly stderr: string;
   readonly truncated: boolean;
+  readonly stdout_bytes?: number;
+  readonly stderr_bytes?: number;
+  readonly exit_code?: number | null;
+  readonly signal?: string | null;
 }
 
 /** Cleanup uncertainty attached to the original typed analysis failure. */

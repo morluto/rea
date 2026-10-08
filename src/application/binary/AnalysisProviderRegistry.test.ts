@@ -139,7 +139,6 @@ describe("analysis provider registry: binding failures and cancellation", () => 
     const unsupported = await new AnalysisProviderRegistry([
       candidate("alpha", { available: false }).provider,
     ]).select(ARTIFACT_TARGET, "alpha");
-    expect(unsupported.ok).toBe(false);
     if (unsupported.ok)
       throw new Error("expected unsupported target rejection");
     expect(unsupported.error).toBeInstanceOf(ProviderSelectionError);
@@ -181,7 +180,6 @@ describe("analysis provider registry: binding failures and cancellation", () => 
       });
     }
     const explicit = await automatic.select(ARTIFACT_TARGET, "alpha");
-    expect(explicit.ok).toBe(false);
     if (explicit.ok) throw new Error("expected provider selection rejection");
     expect(explicit.error).toBeInstanceOf(ProviderSelectionError);
     if (explicit.error instanceof ProviderSelectionError)
@@ -213,17 +211,11 @@ describe("analysis provider registry: binding failures and cancellation", () => 
     const explicit = await new AnalysisProviderRegistry([
       failed.provider,
     ]).select(DATABASE_TARGET, "failed");
-    expect(explicit.ok).toBe(false);
     if (explicit.ok) throw new Error("expected provider selection rejection");
-    expect(explicit.error).toBeInstanceOf(ProviderSelectionError);
-    if (explicit.error instanceof ProviderSelectionError)
-      expect(explicit.error.rejections).toMatchObject([
-        {
-          providerId: "failed",
-          code: "version_unresolved",
-          diagnostics: { error_tag: "ProviderAdapterError" },
-        },
-      ]);
+    expect(explicit.error).toMatchObject({
+      _tag: "ProviderAdapterError",
+      providerId: "failed",
+    });
   });
 
   it("cancels a pending profile probe even when the adapter ignores its signal", async () => {

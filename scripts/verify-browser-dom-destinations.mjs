@@ -13,6 +13,7 @@ if (!executable)
 const profile = await mkdtemp(join(tmpdir(), "rea-browser-dom-"));
 const site = await startBrowserVerifierSite();
 let context;
+let report;
 try {
   context = await chromium.launchPersistentContext(profile, {
     executablePath: executable,
@@ -43,11 +44,15 @@ try {
     process.argv[2],
     page.url(),
   );
-  process.stdout.write(
-    `${JSON.stringify({ ...result, browser: context.browser().version(), native_oracle: true, verified: true })}\n`,
-  );
+  report = {
+    ...result,
+    browser: context.browser().version(),
+    native_oracle: true,
+    verified: true,
+  };
 } finally {
   await context?.close();
   await site.close();
   await rm(profile, { recursive: true, force: true });
 }
+process.stdout.write(`${JSON.stringify(report)}\n`);

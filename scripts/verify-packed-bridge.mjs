@@ -18,7 +18,7 @@ export async function verifyPackedBridge({
     throw new Error("package omitted the Hopper bridge");
   if (!packedFiles.includes(packedGhidraBridge))
     throw new Error("package omitted the Ghidra bridge");
-  await exec("tar", ["-xf", join(root, tarball), "-C", workspace]);
+  await exec("tar", ["-xf", tarball, "-C", workspace]);
   const ghidraSource = await readFile(
     join(workspace, packedGhidraBridge),
     "utf8",

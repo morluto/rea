@@ -21,6 +21,13 @@ const runtimeResult = (
   origin: string,
 ): Readonly<Record<string, unknown>> | undefined => {
   switch (command.method) {
+    case "Profiler.enable":
+    case "Profiler.disable":
+      return {};
+    case "Profiler.startPreciseCoverage":
+      return { timestamp: 12 };
+    case "Profiler.stopPreciseCoverage":
+      return {};
     case "Page.getFrameTree":
       return {
         frameTree: {
@@ -31,8 +38,6 @@ const runtimeResult = (
           },
         },
       };
-    case "Profiler.startPreciseCoverage":
-      return { timestamp: 12 };
     case "Profiler.takePreciseCoverage":
       return {
         timestamp: 13,

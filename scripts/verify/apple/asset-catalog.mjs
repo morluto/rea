@@ -21,6 +21,7 @@ await exec("/usr/bin/xcrun", ["--find", "actool"]);
 await exec("/usr/bin/xcrun", ["--find", "clang"]);
 await exec("/usr/bin/assetutil", ["--version"]);
 const root = await mkdtemp(join(tmpdir(), "rea-asset-e2e-"));
+let report;
 try {
   const app = join(root, "Fixture.app");
   const resources = join(app, "Contents", "Resources");
@@ -98,9 +99,16 @@ try {
     });
     assert.equal(invalid.isError, true);
   });
-  process.stdout.write(
-    `${JSON.stringify({ ok: true, mocked: false, cli: true, stdio_mcp: true, records: raw.length, pagination: true, malformed_input_rejected: true })}\n`,
-  );
+  report = {
+    ok: true,
+    mocked: false,
+    cli: true,
+    stdio_mcp: true,
+    records: raw.length,
+    pagination: true,
+    malformed_input_rejected: true,
+  };
 } finally {
   await rm(root, { recursive: true, force: true });
 }
+process.stdout.write(`${JSON.stringify(report)}\n`);

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import canonicalize from "canonicalize";
 import { z } from "zod";
 
-import { evidenceSchema, parseEvidence, type Evidence } from "../evidence.js";
+import { evidenceSchema, type Evidence } from "../evidence.js";
 import {
   createJavaScriptApplicationGraph,
   javascriptApplicationGraphSchema,
@@ -32,6 +32,7 @@ import {
 } from "./managedApplicationGraphNodes.js";
 import { digestSchema } from "../digests.js";
 import { prefixedDigestSchema } from "../digests.js";
+import { parseManagedInspectionEvidence } from "./managedInspectionEvidence.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const textSchema = z.string().min(1);
@@ -194,7 +195,7 @@ const parseManagedInputs = (
   artifact:
     input.managed_artifact === undefined
       ? null
-      : parseManagedEvidence(
+      : parseManagedInspectionEvidence(
           input.managed_artifact,
           "inspect_managed_artifact",
           managedArtifactInspectionSchema,
@@ -202,7 +203,7 @@ const parseManagedInputs = (
   members:
     input.managed_members === undefined
       ? null
-      : parseManagedEvidence(
+      : parseManagedInspectionEvidence(
           input.managed_members,
           "inspect_managed_members",
           managedMemberInspectionSchema,
@@ -210,23 +211,12 @@ const parseManagedInputs = (
   boundaries:
     input.managed_native_boundaries === undefined
       ? null
-      : parseManagedEvidence(
+      : parseManagedInspectionEvidence(
           input.managed_native_boundaries,
           "inspect_managed_native_boundaries",
           managedNativeBoundaryInspectionSchema,
         ),
 });
-
-const parseManagedEvidence = <Result>(
-  rawEvidence: unknown,
-  operation: string,
-  schema: z.ZodType<Result>,
-): { readonly evidence: Evidence; readonly result: Result } => {
-  const evidence = parseEvidence(rawEvidence);
-  if (evidence.operation !== operation)
-    throw new TypeError(`Evidence operation is not ${operation}`);
-  return { evidence, result: schema.parse(evidence.normalized_result) };
-};
 
 const chooseArtifact = (
   parsed: ParsedManagedGraphInput,
@@ -270,6 +260,11 @@ const projectionLimitations = (
   ...(parsed.members === null
     ? [
         "Managed member Evidence was not supplied; type, method, and field nodes are absent.",
+      ]
+    : []),
+  ...(parsed.artifact === null
+    ? [
+        "Managed artifact Evidence was not supplied; assembly identity observations are absent.",
       ]
     : []),
   ...(parsed.boundaries === null

@@ -328,8 +328,57 @@ Hopper serializes analysis requests. Cancelling a wait can leave provider work
 running, which the session reports. Successful decompilation is cached until
 a relevant rename or comment changes it.
 
-Closing a session shuts down REA's bridge and removes its temporary socket
-directory while preserving the Hopper application. A `cleanup_incomplete`
+Analysis and annotation calls stay bound to the active target's native Hopper
+document, even when GUI focus changes or other documents have the same display
+name. Use `open_binary` to change targets. Byte reads stop at a segment boundary
+and return the readable prefix with `complete: false`. File-offset mapping checks
+the reverse lookup and original executable bounds; synthetic external-symbol
+memory has no original file offset. For FAT Mach-O, offsets refer to the original
+container file. Results retain Hopper's image-relative offset, the observed slice
+base, and the source executable path.
+Loader selection reads the Mach-O container header, including FAT files with a
+single architecture. For FAT64, REA validates the architecture table and selected
+Mach-O header, prepares a private thin image, and loads it with Hopper's native
+Mach-O loader. It checks the entire source's SHA-256 while copying the slice;
+source identity and reported offsets still refer to the original container.
+An ambiguous architecture subtype requires an explicitly extracted thin image;
+REA does not guess. Configured loader arguments remain explicit overrides.
+FAT64 is distinct from the CPU architecture: FAT32 containers can contain 64-bit
+executable images. This preparation avoids the Raw Binary loader dialog observed
+with native FAT64 loading on Hopper 6.1.0-demo.
+The prepared image and its owned document close together, including on MCP exit;
+if document closure is unconfirmed, REA retains the backing image and reports
+`cleanup_incomplete` with its path. Ordinary documents retain their existing
+MCP-exit behavior.
+Startup deadlines report missing bridge readiness and preserve the launcher
+outcome; a successful helper exit does not prove that a loader dialog completed.
+Cursor navigation returns the observed object start when Hopper snaps an interior
+address; adjacent-object navigation rejects unmapped inputs and document ends.
+Native API text rejects NUL characters and unpaired Unicode surrogates before
+annotation changes. Renames preserve unselected label owners; use a batch with
+all affected addresses to move or swap existing labels explicitly. Every rename
+destination must be mapped, and native symbol names must fit Hopper's 1024 UTF-16
+code-unit limit. Oversized names fail before any batch edits; bookmarks and
+literal string results are not subject to that symbol-name limit. Rename success
+requires exact final readback. New bookmarks must point into mapped memory;
+existing legacy bookmarks outside it can still be removed.
+String results read each native typed object's complete bytes, retain the original
+provider display in `provider_value`, and report its encoding, byte length, and
+termination. `encoding_status: inferred` distinguishes REA's decoding from an
+observed source encoding. Hopper can split long literals into adjacent
+unterminated objects; search matches each object's decoded bytes independently.
+Undecodable objects retain native display text with `decoding.available: false`
+and a reason, so one uncertain object does not block unrelated inspections.
+Function dossiers retain this same string evidence. Native call edges retain
+Hopper's partial `CallReference` classification and exact endpoints; detailed
+reference flags remain unavailable rather than being invented.
+Regex searches use ECMAScript Unicode syntax in a cancellable worker with a
+five-second matching deadline. Deadline or cancellation stops matching while
+leaving the Hopper API available. Literal mode retains Unicode casefold matching.
+
+Closing or switching a target closes its bound Hopper document, shuts down REA's
+bridge and removes its temporary socket directory while preserving the Hopper
+application and unrelated documents. A `cleanup_incomplete`
 result identifies resources whose cleanup could not be verified.
 
 ### Hopper in CI
@@ -418,7 +467,17 @@ home/cache/config/temp paths. REA passes `-readOnly`, `-deleteProject`, uses
 Ghidra's default analysis and resource settings, and loads its packaged Java
 bridge via `-scriptPath`; it never opens an existing user project. Linux and
 macOS use a current-user-only local bridge socket and descriptor. The
-experimental Windows transport uses authenticated IPv4 loopback with a
+project remains under the selected temporary directory. If its Unix socket
+pathname would exceed the host's byte limit, REA allocates a separate mode-0700
+socket directory under `/tmp` and removes it on close, cancellation, or failure.
+Diagnostics retain the actual endpoint and both owned directories.
+On macOS, REA starts the inspected JVM directly using Ghidra's own LaunchSupport
+configuration. Apple platform shell wrappers hide their environments from
+ownership inspection, so retaining those wrappers would prevent verified
+process-group cancellation during startup.
+If ownership remains unverifiable, it reports the reason and retains the process
+supervisor and private runtime instead of removing files beneath a live provider.
+The experimental Windows transport uses authenticated IPv4 loopback with a
 private native-owned bearer descriptor and Job Object process ownership.
 
 Operations begin only after default auto-analysis completes. `open_binary`

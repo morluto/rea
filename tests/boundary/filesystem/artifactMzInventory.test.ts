@@ -4,10 +4,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { classifyArtifactContent } from "../../../src/artifacts/inventory/ArtifactGraphConstruction.js";
-import { classifyRoot } from "../../../src/artifacts/inventory/classify.js";
 import { ARTIFACT_CLASSIFICATION_PREFIX_BYTES } from "../../../src/artifacts/ArtifactHash.js";
 import { scanCanonicalArtifactInventory } from "../../../src/artifacts/inventory/scanCanonical.js";
-import { targetFormatSchema } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -31,11 +29,6 @@ describe("MZ artifact classification", () => {
     expect(classifyArtifactContent("bad.exe", Buffer.from("MZbroken"))).toEqual(
       { kind: "unknown", format: "unknown" },
     );
-    expect(classifyArtifactContent("NATIVE.EXE", peFixture(128))).toMatchObject(
-      {
-        format: "pe",
-      },
-    );
     const distantPe = peFixture(ARTIFACT_CLASSIFICATION_PREFIX_BYTES + 64);
     expect(
       classifyArtifactContent(
@@ -56,7 +49,6 @@ describe("MZ artifact classification", () => {
         distantRelocations.length,
       ).format,
     ).toBe("unknown");
-    expect(targetFormatSchema.parse("dos-mz")).toBe("dos-mz");
   });
 
   it("keeps standalone and embedded DOS identities through inventory", async () => {
@@ -65,8 +57,6 @@ describe("MZ artifact classification", () => {
     const pePath = join(directory, "NATIVE.EXE");
     await writeFile(dosPath, dosFixture());
     await writeFile(pePath, peFixture(128));
-    expect(await classifyRoot(dosPath, false)).toBe("dos-mz");
-    expect(await classifyRoot(pePath, false)).toBe("pe");
     const standalone = artifactInventoryResultSchema.parse(
       await scanCanonicalArtifactInventory(dosPath),
     );

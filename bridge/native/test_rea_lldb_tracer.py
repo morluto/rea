@@ -22,21 +22,6 @@ spec.loader.exec_module(tracer)
 
 
 class NativeTraceBudgetTests(unittest.TestCase):
-    def test_journal_keeps_flushed_observations_when_later_execution_fails(self):
-        stream = BytesIO()
-        journal = tracer._ObservationJournal(stream)
-        event = {"sequence": 0, "symbol": "first"}
-        journal.append({"kind": "event", "event": event})
-        with self.assertRaisesRegex(RuntimeError, "later failure"):
-            raise RuntimeError("later failure")
-        stream.write(b'{"kind":"event"')  # Simulate termination during a later row.
-        rows = stream.getvalue().splitlines()
-        self.assertEqual(
-            rows[0],
-            b'{"kind": "event", "event": {"sequence": 0, "symbol": "first"}}',
-        )
-        self.assertEqual(rows[1], b'{"kind":"event"')
-
     def test_journal_checks_exact_byte_budget_before_writing(self):
         record = {"kind": "other-stop", "reason": "signal"}
         encoded_size = len((tracer.json.dumps(record) + "\n").encode("utf-8"))

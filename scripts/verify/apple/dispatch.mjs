@@ -142,6 +142,7 @@ const checkSwift = (metadata, mode) => {
 };
 
 const root = await mkdtemp(join(tmpdir(), "rea-dispatch-"));
+let report;
 try {
   const results = [];
   for (const mode of LINK_MODES) {
@@ -197,9 +198,8 @@ try {
       });
     }
   }
-  process.stdout.write(
-    `${JSON.stringify({ ok: true, target_executed: false, fixtures: results })}\n`,
-  );
+  report = { ok: true, target_executed: false, fixtures: results };
 } finally {
   await rm(root, { recursive: true, force: true });
 }
+process.stdout.write(`${JSON.stringify(report)}\n`);

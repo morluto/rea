@@ -52,6 +52,8 @@ import ghidra.app.decompiler.ClangCaseToken;
 import ghidra.app.decompiler.ClangNode;
 import ghidra.framework.Application;
 import ghidra.program.model.address.Address;
+import ghidra.program.model.address.AddressIterator;
+import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.address.AddressSpace;
 import ghidra.program.model.address.AddressRange;
 import ghidra.program.model.address.AddressRangeIterator;
@@ -723,8 +725,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (!direction.equals("incoming") && !direction.equals("outgoing")) {
             throw new RequestFailure("invalid_request", "direction must be incoming or outgoing");
         }
-        InstructionScan scan = scanInstructions(function, Integer.MAX_VALUE);
-        List<Reference> references = collectReferences(scan.instructions, direction);
+        List<Reference> references = collectReferences(function, direction);
         JsonArray edges = new JsonArray();
         for (Reference reference : references) {
             edges.add(referenceEdge(reference));
@@ -735,7 +736,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.add("references", edges);
         result.addProperty("reference_kinds_available", true);
         JsonArray unresolvedCalls = new JsonArray();
-        if (direction.equals("outgoing")) for (Instruction instruction : scan.instructions) {
+        if (direction.equals("outgoing")) for (Instruction instruction : scanInstructions(function, Integer.MAX_VALUE).instructions) {
             if (!instruction.getFlowType().isCall()) continue;
             boolean resolved = false;
             for (Reference reference : instruction.getReferencesFrom()) if (reference.getReferenceType().isCall()) resolved = true;
@@ -1007,6 +1008,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
         Address entry = function.getEntryPoint();
         if (function.isExternal() || !currentProgram.getMemory().contains(entry))
             throw new RequestFailure("invalid_request", "Annotations require a local function entry: " + canonicalAddress(entry));
+        for (String field : List.of("name", "comment", "inline_comment")) {
+            if (params.has(field)) validateAnnotationText(requireText(params, field), field);
+        }
         int transaction = currentProgram.startTransaction("REA function annotations");
         boolean commit = false;
         try {
@@ -1065,6 +1069,21 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return value.getAsString();
     }
 
+    private static void validateAnnotationText(String text, String field) {
+        for (int index = 0; index < text.length(); index++) {
+            char character = text.charAt(index);
+            if (character == 0)
+                throw new RequestFailure("invalid_request", "Annotation " + field + " contains NUL at UTF-16 index " + index + "; Ghidra's decompiler cannot marshal NUL text");
+            if (Character.isHighSurrogate(character) && index + 1 < text.length() &&
+                Character.isLowSurrogate(text.charAt(index + 1))) {
+                index++;
+                continue;
+            }
+            if (Character.isSurrogate(character))
+                throw new RequestFailure("invalid_request", "Annotation " + field + " contains an unpaired Unicode surrogate at UTF-16 index " + index + "; Ghidra cannot preserve it as annotation text");
+        }
+    }
+
     private JsonObject analyzeFunction(JsonObject params) throws Exception {
         requireKeys(params, Set.of("procedure"));
         Function function = resolveProcedure(requireString(params, "procedure"));
@@ -1074,11 +1093,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (pseudocode == null) {
             pseudocode = "";
         }
-        List<Reference> incomingReferences = collectReferences(scan.instructions, "incoming")
+        List<Reference> incomingReferences = collectReferences(function, "incoming")
             .stream()
             .filter(reference -> !function.getBody().contains(reference.getFromAddress()))
             .toList();
-        List<Reference> outgoingReferences = collectReferences(scan.instructions, "outgoing");
+        List<Reference> outgoingReferences = collectReferences(function, "outgoing");
         JsonArray incoming = referenceEdges(incomingReferences);
         JsonArray outgoing = referenceEdges(outgoingReferences);
         JsonArray comments = comments(scan.instructions);
@@ -1471,6 +1490,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             : regexMatcher(expression, caseSensitive);
         JsonArray items = new JsonArray();
         for (InventoryItem item : inventory) {
+            monitor.checkCancelled();
             if (!matcher.matches(item.value)) {
                 continue;
             }
@@ -1581,33 +1601,37 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private Function resolveProcedure(String value) throws Exception {
-        Address address = tryParseAddress(value);
-        if (address != null) {
-            Function function = currentProgram.getFunctionManager().getFunctionAt(address);
-            if (function == null && address.isMemoryAddress()) {
-                function = currentProgram.getFunctionManager().getFunctionContaining(address);
+        // Explicit address syntax wins; an unprefixed identifier is first an
+        // exact symbol name, even when every character is a hexadecimal digit.
+        boolean explicitAddress = value.matches("(?i)^0x[0-9a-f]+$") ||
+            value.matches("(?i)^(?:[a-z0-9._~-]|%[0-9a-f]{2})+:0x[0-9a-f]+$");
+        if (!explicitAddress) {
+            List<Function> matches = new ArrayList<>();
+            for (FunctionEntry entry : procedures()) {
+                monitor.checkCancelled();
+                Function function = entry.function;
+                Symbol symbol = function.getSymbol();
+                String qualified = symbol == null ? function.getName() : symbol.getName(true);
+                if (function.getName().equals(value) || qualified.equals(value)) {
+                    matches.add(function);
+                }
             }
-            if (function == null) {
-                throw new RequestFailure("not_found", "No procedure exists at the requested address");
-            }
-            return function;
+            if (matches.size() > 1)
+                throw new RequestFailure("ambiguous", "Ghidra procedure name is ambiguous: " + value +
+                    "; select an exact entry address from " + matches.stream()
+                        .map(function -> canonicalAddress(function.getEntryPoint())).toList());
+            if (matches.size() == 1) return matches.get(0);
         }
-        List<Function> matches = new ArrayList<>();
-        for (FunctionEntry entry : procedures()) {
-            Function function = entry.function;
-            Symbol symbol = function.getSymbol();
-            String qualified = symbol == null ? function.getName() : symbol.getName(true);
-            if (function.getName().equals(value) || qualified.equals(value)) {
-                matches.add(function);
-            }
-        }
-        if (matches.isEmpty()) {
-            throw new RequestFailure("not_found", "Unknown Ghidra procedure name");
-        }
-        if (matches.size() != 1) {
-            throw new RequestFailure("ambiguous", "Ghidra procedure name is ambiguous");
-        }
-        return matches.get(0);
+        // Retain legacy bare-hex address input only when no symbol matches.
+        Address address = explicitAddress ? parseReaAddress(value) : tryParseAddress(value);
+        if (address == null)
+            throw new RequestFailure("not_found", "Unknown Ghidra procedure name or address: " + value);
+        Function function = currentProgram.getFunctionManager().getFunctionAt(address);
+        if (function == null && address.isMemoryAddress())
+            function = currentProgram.getFunctionManager().getFunctionContaining(address);
+        if (function == null)
+            throw new RequestFailure("not_found", "No procedure exists at the requested address: " + value);
+        return function;
     }
 
     private JsonObject nativeApiBoundary(
@@ -2530,21 +2554,32 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private List<Reference> collectReferences(
-            List<Instruction> instructions,
+            Function function,
             String direction) throws Exception {
+        // References can target instruction interiors or originate in embedded
+        // data. Use actual body ownership, including an external's exact entry.
+        AddressSet scope = new AddressSet(function.getBody());
+        scope.add(function.getEntryPoint());
+        boolean outgoing = direction.equals("outgoing");
+        AddressIterator addresses = outgoing
+            ? currentProgram.getReferenceManager().getReferenceSourceIterator(scope, true)
+            : currentProgram.getReferenceManager().getReferenceDestinationIterator(scope, true);
         TreeMap<String, Reference> observed = new TreeMap<>();
-        for (Instruction instruction : instructions) {
+        while (addresses.hasNext()) {
             monitor.checkCancelled();
-            if (direction.equals("outgoing")) {
+            Address address = addresses.next();
+            if (outgoing) {
                 for (Reference reference : currentProgram.getReferenceManager()
-                        .getReferencesFrom(instruction.getAddress())) {
+                        .getReferencesFrom(address)) {
+                    monitor.checkCancelled();
                     addReference(observed, reference);
                 }
             }
             else {
                 ReferenceIterator iterator = currentProgram.getReferenceManager()
-                    .getReferencesTo(instruction.getAddress());
+                    .getReferencesTo(address);
                 while (iterator.hasNext()) {
+                    monitor.checkCancelled();
                     addReference(observed, iterator.next());
                 }
             }
@@ -2947,7 +2982,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private Address parseReaAddress(String value) {
         Address address = tryParseAddress(value);
         if (address == null) {
-            throw new RequestFailure("invalid_request", "Unknown or invalid Ghidra address");
+            throw new RequestFailure("invalid_request", "Unknown or invalid Ghidra address: " + value);
         }
         return address;
     }
@@ -2956,12 +2991,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
         try {
             String spaceName = null;
             String offset = value;
-            int separator = value.lastIndexOf(":0x");
+            int separator = value.toLowerCase(Locale.ROOT).lastIndexOf(":0x");
             if (separator >= 0) {
                 spaceName = decodeAddressSpace(value.substring(0, separator));
                 offset = value.substring(separator + 3);
             }
-            else if (value.startsWith("0x")) {
+            else if (value.startsWith("0x") || value.startsWith("0X")) {
                 offset = value.substring(2);
             }
             if (!offset.matches("[0-9A-Fa-f]+")) {
@@ -2970,8 +3005,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
             AddressSpace space = spaceName == null
                 ? currentProgram.getAddressFactory().getDefaultAddressSpace()
                 : currentProgram.getAddressFactory().getAddressSpace(spaceName);
-            return space == null ? null : space.getAddress(offset);
+            if (space == null) return null;
+            Address address = space.getAddress(offset);
+            BigInteger requestedOffset = new BigInteger(offset, 16);
+            BigInteger parsedOffset = new BigInteger(Long.toUnsignedString(address.getOffset()));
+            if (!requestedOffset.equals(parsedOffset))
+                throw new RequestFailure("invalid_request",
+                    "Ghidra address offset cannot be represented without truncation in space " +
+                    space.getName() + ": requested " + value + ", parsed " + canonicalAddress(address));
+            return address;
         }
+        catch (RequestFailure failure) { throw failure; }
         catch (Exception exception) {
             return null;
         }
@@ -3055,9 +3099,29 @@ public final class ReaGhidraBridge extends HeadlessScript {
             );
         }
         catch (PatternSyntaxException exception) {
-            throw new RequestFailure("invalid_request", "Invalid regex pattern");
+            // Java wraps compiler stack exhaustion in PatternSyntaxException
+            // without retaining its cause. This producer reason is not bad syntax.
+            if (exception.getDescription().equals("Stack overflow during pattern compilation"))
+                throw regexStackExhausted(expression, "compiling");
+            throw new RequestFailure("invalid_request", "Invalid regex pattern " + expression + ": " + exception.getDescription() + " at index " + exception.getIndex());
         }
-        return value -> pattern.matcher(value).find();
+        catch (StackOverflowError exhausted) {
+            throw regexStackExhausted(expression, "compiling");
+        }
+        return value -> {
+            try {
+                return pattern.matcher(value).find();
+            }
+            catch (StackOverflowError exhausted) {
+                throw regexStackExhausted(expression, "matching");
+            }
+        };
+    }
+
+    private static RequestFailure regexStackExhausted(String expression, String stage) {
+        return new RequestFailure("regex_stack_exhausted",
+            "Ghidra's Java regex engine exhausted its stack while " + stage +
+            " pattern " + expression + ". Use literal mode or simplify the regex; the session remains usable.");
     }
 
     private static SessionDescriptor readDescriptor(Path path) throws IOException {
@@ -3114,7 +3178,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private void requireDocument(JsonObject params) {
         String document = optionalString(params, "document");
         if (document != null && !document.equals(currentProgram.getName())) {
-            throw new RequestFailure("not_found", "Unknown Ghidra Program identity");
+            throw new RequestFailure("not_found", "Unknown Ghidra Program identity: " + document + "; active program: " + currentProgram.getName());
         }
     }
 
@@ -3226,7 +3290,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     private static void writeResponse(BufferedWriter writer, JsonObject response) throws IOException {
         String encoded = GSON.toJson(response);
-        writer.write(encoded);
+        // Gson leaves UTF-16 surrogates literal. Escape them in JSON so even
+        // diagnostics quoting ill-formed caller text remain lossless UTF-8.
+        int start = 0;
+        for (int index = 0; index < encoded.length(); index++) {
+            if (!Character.isSurrogate(encoded.charAt(index))) continue;
+            writer.write(encoded, start, index - start);
+            writer.write("\\u" + Integer.toHexString(encoded.charAt(index)));
+            start = index + 1;
+        }
+        writer.write(encoded, start, encoded.length() - start);
         writer.newLine();
         writer.flush();
     }

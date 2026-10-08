@@ -19,7 +19,11 @@ export const enhancedInputSchemas = {
       .default([]),
   }),
   get_call_graph: z.strictObject({
-    address: z.string().describe("A provider-normalized procedure address"),
+    address: z
+      .string()
+      .describe(
+        "A procedure symbol or address to resolve to its canonical entry",
+      ),
     direction: z.enum(["forward", "backward"]).default("forward"),
   }),
   analyze_swift_types: z.strictObject({
@@ -44,10 +48,10 @@ export const enhancedInputSchemas = {
   }),
   trace_feature: traceLiteralInputSchema,
   trace_call_path: z.strictObject({
-    start: z.string().describe("A provider-normalized procedure address"),
+    start: z.string().describe("A starting procedure symbol or address"),
     goal: z
       .string()
-      .describe("An optional provider-normalized destination address")
+      .describe("An optional destination procedure symbol or address")
       .optional(),
     direction: z.enum(["forward", "backward"]).default("forward"),
   }),

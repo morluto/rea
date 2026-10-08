@@ -38,6 +38,7 @@ import {
 } from "./EnhancedToolTypes.js";
 import { resolveAnalysisDocument } from "./AnalysisDocument.js";
 import { traceCallPath } from "./CallPathTracing.js";
+import { resolveProcedureAddress } from "./ProcedureAddressResolution.js";
 import { traceLiteralFeature } from "./EnhancedLiteralTracing.js";
 import { projectNativeApiInspection } from "./native/NativeApiInspection.js";
 export type { ValidatedEnhancedCall } from "./EnhancedToolTypes.js";
@@ -296,9 +297,15 @@ export class EnhancedTools {
     const relation = input.direction === "forward" ? "callees" : "callers";
     const tool =
       input.direction === "forward" ? "procedure_callees" : "procedure_callers";
-    const discovered = new Set([input.address]);
+    const resolved = await resolveProcedureAddress(
+      this.#call.bind(this),
+      input.address,
+      signal,
+    );
+    if (!resolved.ok) return resolved;
+    const discovered = new Set([resolved.value]);
     const queue: Array<{ address: string; depth: number }> = [
-      { address: input.address, depth: 0 },
+      { address: resolved.value, depth: 0 },
     ];
     let queueIndex = 0;
     const graph: Record<string, JsonValue[]> = {};

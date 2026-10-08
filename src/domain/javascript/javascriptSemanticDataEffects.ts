@@ -163,15 +163,24 @@ const collectDefaults = (
   configurations: readonly ConfigurationCandidate[],
 ): JavaScriptSemanticConfigurationOperation[] => {
   const output: JavaScriptSemanticConfigurationOperation[] = [];
+  const configurationsByStart = configurations
+    .filter(
+      ({ node }) =>
+        node.start !== null &&
+        node.start !== undefined &&
+        node.end !== null &&
+        node.end !== undefined,
+    )
+    .toSorted(
+      (left, right) => (left.node.start ?? 0) - (right.node.start ?? 0),
+    );
   traverseWithContext(program, context, (node) => {
     if (
       !t.isLogicalExpression(node) ||
       (node.operator !== "??" && node.operator !== "||")
     )
       return;
-    const sources = configurations.filter(({ node: source }) =>
-      containsNode(node.left, source),
-    );
+    const sources = configurationsIn(node.left, configurationsByStart);
     if (sources.length !== 1 || sources[0] === undefined) return;
     output.push({
       configId: `config:default:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
@@ -186,6 +195,39 @@ const collectDefaults = (
     });
   });
   return output;
+};
+
+/** Find only configuration candidates whose source offsets can fit this left operand. */
+const configurationsIn = (
+  expression: t.Node,
+  candidates: readonly ConfigurationCandidate[],
+): readonly ConfigurationCandidate[] => {
+  if (
+    expression.start === null ||
+    expression.start === undefined ||
+    expression.end === null ||
+    expression.end === undefined
+  )
+    return [];
+  let low = 0;
+  let high = candidates.length;
+  while (low < high) {
+    const middle = low + Math.floor((high - low) / 2);
+    const start = candidates[middle]?.node.start;
+    if (start !== null && start !== undefined && start < expression.start)
+      low = middle + 1;
+    else high = middle;
+  }
+  const sources: ConfigurationCandidate[] = [];
+  for (let index = low; index < candidates.length; index += 1) {
+    const candidate = candidates[index];
+    if (candidate === undefined) continue;
+    const start = candidate.node.start;
+    if (start === null || start === undefined || start > expression.end) break;
+    if (containsNode(expression, candidate.node)) sources.push(candidate);
+    if (sources.length > 1) break;
+  }
+  return sources;
 };
 
 const collectRequests = (

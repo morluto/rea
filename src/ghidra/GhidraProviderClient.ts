@@ -11,8 +11,11 @@ import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import {
   AnalysisCancelledError,
+  AnalysisArtifactChangedError,
+  AnalysisAccessDeniedError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import { type AnalysisError } from "../domain/analysisErrorBase.js";
@@ -132,9 +135,7 @@ export const createGhidraProviderClient = (input: {
     platform: installation.platform,
     launcher: new GhidraHeadlessLauncher({
       analyzeHeadlessPath: prerequisites.value.analyzeHeadlessPath,
-      ...(config.ghidraJavaHome === undefined
-        ? {}
-        : { javaHome: config.ghidraJavaHome }),
+      javaHome: prerequisites.value.javaHome,
       bridgeScriptPath: fileURLToPath(
         new URL("../../bridge/ghidra/ReaGhidraBridge.java", import.meta.url),
       ),
@@ -266,6 +267,7 @@ export const createGhidraProviderClient = (input: {
 
 interface GhidraClientCoordinates {
   readonly analyzeHeadlessPath: string;
+  readonly javaHome: string;
   readonly providerVersion: string;
   readonly profile: AnalysisProfileCommitment;
 }
@@ -304,6 +306,7 @@ const ghidraClientPrerequisites = (
     return err(new ProviderAdapterError("ghidra", "health"));
   return ok({
     analyzeHeadlessPath: installation.analyzeHeadlessPath,
+    javaHome: installation.javaHome,
     providerVersion: installation.providerVersion,
     profile,
   });
@@ -318,6 +321,20 @@ const projectSessionError = (
   operation: AnalysisOperation,
   failure: GhidraSessionError,
 ): AnalysisError => {
+  if (failure.cause instanceof AnalysisAccessDeniedError)
+    return new AnalysisAccessDeniedError(
+      operation,
+      failure.cause.path,
+      failure.cause.systemCode,
+      { cause: failure },
+    );
+  if (failure.cause instanceof AnalysisArtifactChangedError)
+    return new AnalysisArtifactChangedError(
+      operation,
+      failure.cause.path,
+      failure.cause.reason,
+      { cause: failure },
+    );
   if (
     operation === "annotate_native_function" &&
     failure.kind === "remote" &&
@@ -337,11 +354,28 @@ const projectSessionError = (
     return new AnalysisCancelledError(operation);
   if (
     failure.kind === "remote" &&
+    failure.remoteCode === "regex_stack_exhausted"
+  )
+    return new AnalysisResourceConstraintError(
+      operation,
+      "memory",
+      failure.message,
+      null,
+      {
+        cause: failure,
+        remediationAction:
+          "Retry this search in literal mode or simplify the regex. The active analysis session and annotations remain available.",
+      },
+    );
+  if (
+    failure.kind === "remote" &&
     ["invalid_request", "not_found", "ambiguous"].includes(
       failure.remoteCode ?? "",
     )
   )
-    return new AnalysisInputError(operation, { cause: failure });
+    return new AnalysisInputError(operation, { cause: failure }, [
+      { path: [], reason: "invalid_value", message: failure.message },
+    ]);
   if (failure.kind === "remote" && failure.remoteCode === "method_unavailable")
     return new AnalysisCapabilityUnavailableError(
       "ghidra",

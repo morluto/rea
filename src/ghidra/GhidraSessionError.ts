@@ -49,13 +49,17 @@ const createGhidraSessionError = (failure: {
   new GhidraSessionError(
     failure.kind,
     failure.message,
-    failure.remoteCode === undefined
-      ? failure.diagnostics
-      : {
-          ...failure.diagnostics,
-          remote_code: failure.redact(failure.remoteCode),
-          remote_message: failure.message,
-        },
+    {
+      ...failure.diagnostics,
+      failure_kind: failure.kind,
+      failure_message: failure.message,
+      ...(failure.remoteCode === undefined
+        ? {}
+        : {
+            remote_code: failure.redact(failure.remoteCode),
+            remote_message: failure.message,
+          }),
+    },
     {
       ...(failure.cause === undefined ? {} : { cause: failure.cause }),
       ...(failure.timeoutMs === undefined

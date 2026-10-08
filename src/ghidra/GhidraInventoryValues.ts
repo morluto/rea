@@ -2,7 +2,7 @@ import { z } from "zod";
 import { nativeLoadImageObservationSchema } from "../domain/native/nativeLoadImage.js";
 
 import {
-  AnalysisInputError,
+  type AnalysisInputError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import {
@@ -11,6 +11,7 @@ import {
 } from "../domain/hopperValues.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 
 /** Read-only direct inventory operations admitted by the Ghidra adapter. */
 export const GHIDRA_INVENTORY_OPERATIONS = [
@@ -43,7 +44,14 @@ export const isGhidraInventoryOperation = (
 export const ghidraIdentifierSchema = z.string().min(1);
 const identifier = ghidraIdentifierSchema;
 const document = identifier.nullable().default(null);
-const explicitAddress = identifier;
+/** Caller address spelling; the bridge resolves its space and emits canonical output. */
+export const ghidraInputAddressSchema = z
+  .string()
+  .regex(
+    /^(?:(?:0[xX])?[0-9a-fA-F]+|(?:[A-Za-z0-9._~-]|%[0-9a-fA-F]{2})+:0[xX][0-9a-fA-F]+)$/u,
+    "Use hexadecimal digits, optionally prefixed with 0x, or an encoded address-space name followed by :0x and hexadecimal digits",
+  );
+const explicitAddress = ghidraInputAddressSchema;
 const filteredAddress = explicitAddress.nullable().default(null);
 const searchInput = {
   pattern: z.string().min(1),
@@ -84,7 +92,11 @@ export const parseGhidraInventoryInput = (
 ): Result<Readonly<Record<string, JsonValue>>, AnalysisInputError> => {
   const parsed = inputSchemas[operation].safeParse(value);
   if (!parsed.success)
-    return err(new AnalysisInputError(operation, { cause: parsed.error }));
+    return err(
+      analysisInputErrorFromIssues(operation, parsed.error.issues, value, {
+        cause: parsed.error,
+      }),
+    );
   return ok(parsed.data);
 };
 
@@ -207,7 +219,11 @@ const containingProcedure = z.discriminatedUnion("found", [
     .strict()
     .superRefine((value, context) => {
       const body = value.procedure.body;
+      const exactExternalEntry =
+        value.procedure.classification.external &&
+        value.query_address === value.procedure.address;
       if (
+        !exactExternalEntry &&
         body.available &&
         !functionBodyEntryAgrees(
           { ...body, contains_entry: true },

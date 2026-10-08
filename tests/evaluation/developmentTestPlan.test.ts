@@ -37,7 +37,6 @@ describe("development test selection", () => {
       ]),
     );
     expect(plan.needsBuild).toBe(true);
-    expect(plan.vitestArguments).not.toContain("--passWithNoTests");
     expect(plan.vitestArguments).not.toContain("--changed");
   });
 

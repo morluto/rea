@@ -18,6 +18,10 @@ import { parseArtifactInventoryEvidence } from "../artifactInventoryEvidence.js"
 import { evidenceSchema } from "../evidence.js";
 import { digestSchema } from "../digests.js";
 import { prefixedDigestSchema } from "../digests.js";
+import {
+  bridgeCandidateCoverageSchema,
+  projectCartesianCandidates,
+} from "../bridgeCandidateProjection.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const pathSchema = z.string().min(1);
@@ -74,6 +78,7 @@ export const appleApplicationProjectionResultSchema = z.strictObject({
       ]),
     }),
   ),
+  bridge_candidate_coverage: bridgeCandidateCoverageSchema,
   coverage: z.strictObject({
     status: z.enum(["complete-within-inventory", "partial"]),
     inventory_complete: z.boolean(),
@@ -162,6 +167,7 @@ export const projectAppleApplication = (
     sidecars: entries.some(({ path }) => isSidecar(path)),
     symlinks: entries.some(({ kind }) => kind === "symlink"),
     unattributed,
+    bridgeCandidateCoverage: bridgeProjection.coverage,
   });
   const withoutId = {
     root_sha256: inventory.manifest.root_sha256,
@@ -179,10 +185,12 @@ export const projectAppleApplication = (
       .sort(compare),
     runtime_families: runtimeFamilies,
     bridge_candidates: bridgeProjection.candidates,
+    bridge_candidate_coverage: bridgeProjection.coverage,
     coverage: {
-      status: complete
-        ? ("complete-within-inventory" as const)
-        : ("partial" as const),
+      status:
+        complete && bridgeProjection.coverage.status === "complete"
+          ? ("complete-within-inventory" as const)
+          : ("partial" as const),
       inventory_complete: inventory.complete,
     },
     limitations,
@@ -310,7 +318,7 @@ const identifyRuntimeFamilies = (all: readonly Component[]) => {
   return [...families].sort(compare);
 };
 
-/** Pair scripts and native code only within the same application root. */
+/** Pair scripts and native code within matching application-root groups. */
 const identifyBridgeCandidates = (
   scripts: readonly Component[],
   native: readonly Component[],
@@ -318,18 +326,32 @@ const identifyBridgeCandidates = (
 ) => {
   const owner = (path: string): string | null =>
     roots.find((root) => isWithin(path, root)) ?? null;
-  return {
-    candidates: scripts.flatMap((script) => {
-      const root = owner(script.path);
-      return native
-        .filter(({ path }) => owner(path) === root)
-        .map((item) => ({
-          source_path: script.path,
-          native_path: item.path,
-          basis: bridgeBasis(item.path),
-        }));
+  const scriptGroups: { root: string | null; left: Component[] }[] = [];
+  for (const script of scripts) {
+    const root = owner(script.path);
+    const last = scriptGroups.at(-1);
+    if (last?.root === root) last.left.push(script);
+    else scriptGroups.push({ root, left: [script] });
+  }
+  const nativeByRoot = new Map<string | null, Component[]>();
+  for (const item of native) {
+    const root = owner(item.path);
+    const scoped = nativeByRoot.get(root) ?? [];
+    scoped.push(item);
+    nativeByRoot.set(root, scoped);
+  }
+  const groups = scriptGroups.map(({ root, left }) => ({
+    left,
+    right: nativeByRoot.get(root) ?? [],
+  }));
+  return projectCartesianCandidates({
+    groups,
+    createCandidate: (source_path, item) => ({
+      source_path,
+      native_path: item.path,
+      basis: bridgeBasis(item.path),
     }),
-  };
+  });
 };
 
 const bridgeBasis = (
@@ -355,6 +377,7 @@ const projectionLimitations = (facts: {
   readonly sidecars: boolean;
   readonly symlinks: boolean;
   readonly unattributed: number;
+  readonly bridgeCandidateCoverage: AppleApplicationProjectionResult["bridge_candidate_coverage"];
 }): string[] => [
   ...(!facts.complete
     ? ["Source inventory pages are incomplete; absence is unknown."]
@@ -390,6 +413,11 @@ const projectionLimitations = (facts: {
   ...(facts.sidecars
     ? [
         "AppleDouble sidecar entries (._* files and __MACOSX/) describe neighbouring files and are excluded from bundle roles.",
+      ]
+    : []),
+  ...(facts.bridgeCandidateCoverage.status === "partial"
+    ? [
+        `Bridge candidate pairs exceeded the projection safety budget; ${facts.bridgeCandidateCoverage.omitted_candidates} hypotheses are omitted. Component arrays still include every component from the supplied inventory pages.`,
       ]
     : []),
   "Bundle roles follow path conventions. Read each info_plist_path with inspect_plist for CFBundleExecutable, identifiers, and declared services.",

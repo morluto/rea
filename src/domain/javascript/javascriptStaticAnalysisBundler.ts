@@ -164,13 +164,15 @@ const recoverBundlerModule = (
   const exportsValue = collectJavaScriptExports(factory);
   const requireName = factoryRequireName(factory);
   const asyncChunks = collectBundlerAsyncChunkKeys(factory, requireName);
-  if (typeof factory.start === "number" && typeof factory.end === "number")
-    accumulator.modules.push({
+  if (typeof factory.start === "number" && typeof factory.end === "number") {
+    const moduleRange = {
       start: factory.start,
       end: factory.end,
       key,
       requireName,
-    });
+    };
+    accumulator.moduleRangeIndex.add(moduleRange);
+  }
   return {
     module: {
       module_key: key,

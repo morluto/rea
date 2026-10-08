@@ -5,6 +5,7 @@ import { parseRelatedAddresses } from "../domain/hopperValues.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ok, type Result } from "../domain/result.js";
 import type { EnhancedResult } from "./EnhancedToolTypes.js";
+import { resolveProcedureAddress } from "./ProcedureAddressResolution.js";
 
 type AnalysisCall = (
   name: AnalysisOperation,
@@ -61,7 +62,20 @@ export const traceCallPath = async (
   input: CallPathTraceInput,
   signal?: AbortSignal,
 ): EnhancedResult => {
-  const state = createTraceState(input);
+  const start = await resolveProcedureAddress(call, input.start, signal);
+  if (!start.ok) return start;
+  let goal: string | undefined;
+  if (input.goal !== undefined) {
+    const resolved = await resolveProcedureAddress(call, input.goal, signal);
+    if (!resolved.ok) return resolved;
+    goal = resolved.value;
+  }
+  const resolvedInput = {
+    start: start.value,
+    ...(goal === undefined ? {} : { goal }),
+    direction: input.direction,
+  };
+  const state = createTraceState(resolvedInput);
   while (
     state.queueIndex < state.queue.length &&
     state.traversalPath.length === 0
@@ -71,7 +85,7 @@ export const traceCallPath = async (
     const current = state.visited.get(address);
     if (current === undefined) continue;
     const found = await expandAddress(call, {
-      input,
+      input: resolvedInput,
       state,
       address,
       current,
@@ -79,7 +93,7 @@ export const traceCallPath = async (
     });
     if (found) break;
   }
-  return ok(projectTrace(input, state));
+  return ok(projectTrace(resolvedInput, state));
 };
 
 const createTraceState = (input: CallPathTraceInput): TraceState => ({

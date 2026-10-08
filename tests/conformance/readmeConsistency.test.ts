@@ -5,8 +5,7 @@ import { describe, expect, it } from "vitest";
 import { SUPPORTED_CLIENT_DEFINITIONS } from "../../src/application/SupportedClients.js";
 import { PRODUCT_IDENTITY } from "../../src/identity.js";
 
-const setupDocumentation = [
-  "docs/installation.md",
+const translatedReadmes = [
   "README_zh.md",
   "README_ja.md",
   "README_ko.md",
@@ -21,35 +20,66 @@ const jsonExamples = (content: string): unknown[] =>
     JSON.parse(match[1] ?? ""),
   );
 
+const shellExamples = (content: string): string[] =>
+  [...content.matchAll(/```bash\s*([\s\S]*?)```/gu)].map((match) =>
+    (match[1] ?? "").trim(),
+  );
+
+const linkedTargets = (content: string): string[] =>
+  [...content.matchAll(/\]\(([^)\s]+)\)/gu)]
+    .map((match) => match[1] ?? "")
+    .filter(
+      (target) =>
+        !target.startsWith("#") && !/^README(?:_[a-z]+)?\.md$/u.test(target),
+    )
+    .sort();
+
 describe("onboarding documentation product facts", () => {
-  it.each(setupDocumentation)(
-    "keeps requirements and versioned MCP configuration aligned in %s",
-    async (path) => {
-      const content = await readFile(resolve(path), "utf8");
-      expect(jsonExamples(content)).toContainEqual(
-        expect.objectContaining({
-          mcpServers: expect.objectContaining({
-            rea: expect.objectContaining({
-              command: "npx",
-              args: [
-                "-y",
-                PRODUCT_IDENTITY.registrationPackageSpecifier,
-                "mcp",
-              ],
-            }),
+  it("keeps detailed requirements and versioned MCP configuration aligned in the installation guide", async () => {
+    const content = await readFile(resolve("docs/installation.md"), "utf8");
+    expect(jsonExamples(content)).toContainEqual(
+      expect.objectContaining({
+        mcpServers: expect.objectContaining({
+          rea: expect.objectContaining({
+            command: "npx",
+            args: ["-y", PRODUCT_IDENTITY.registrationPackageSpecifier, "mcp"],
           }),
         }),
+      }),
+    );
+    expect(content).toContain("Node.js 22");
+    expect(content).toContain("macOS 12");
+    expect(content).toContain("Ubuntu 24.04");
+    expect(content).toContain("Fedora 41");
+    expect(content).toContain("Arch Linux");
+    expect(content).toContain("CachyOS");
+    for (const client of SUPPORTED_CLIENT_DEFINITIONS)
+      expect(content).toContain(client.displayName);
+  });
+
+  it.each(translatedReadmes)(
+    "keeps onboarding commands, linked guidance and structure aligned with English in %s",
+    async (path) => {
+      const [english, translated] = await Promise.all([
+        readFile(resolve("README.md"), "utf8"),
+        readFile(resolve(path), "utf8"),
+      ]);
+      expect(shellExamples(translated)).toEqual(shellExamples(english));
+      expect(linkedTargets(translated)).toEqual(linkedTargets(english));
+      const headingLevels = (content: string): number[] =>
+        [...content.matchAll(/^(#{1,6})\s/gmu)].map(
+          (match) => match[1]?.length ?? 0,
+        );
+      expect(headingLevels(translated)).toEqual(headingLevels(english));
+      expect(translated.match(/<summary>/gu)?.length).toBe(
+        english.match(/<summary>/gu)?.length,
       );
-      expect(content).toContain("Node.js 22");
-      expect(content).toContain("macOS 12");
-      expect(content).toContain("Ubuntu 24.04");
-      expect(content).toContain("Fedora 41");
-      expect(content).toContain("Arch Linux");
-      expect(content).toContain("CachyOS");
-      for (const client of SUPPORTED_CLIENT_DEFINITIONS)
-        expect(content).toContain(client.displayName);
-      if (path.startsWith("README_"))
-        expect(content).toContain("MCP-tool_catalog");
+      expect(translated).toContain("Node.js 22.x");
+      expect(translated).toContain(">=22.19");
+      expect(translated).toContain("24.x");
+      expect(translated).toContain(">=24.11");
+      expect(translated).toContain("26+");
+      expect(translated).toContain("MCP-tool_catalog");
     },
   );
 

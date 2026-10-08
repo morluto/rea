@@ -26,6 +26,7 @@ export const GHIDRA_OPERATIONS = Object.freeze([
 export const healthLimitations = Object.freeze([
   "The session serves operations only after Ghidra reports default auto-analysis complete; incomplete analysis does not expose partial results.",
   "The imported Program and temporary project are ephemeral and deleted on close. Annotation operations edit session database metadata; original executable bytes are never written.",
+  "Cancelling an active Ghidra request terminates its ephemeral database and discards session annotations. The selected target remains open; the next provider query imports the original artifact again.",
 ]);
 
 /** Additional limitations applied to the experimental Windows x64 P0 boundary. */
@@ -46,6 +47,7 @@ export const limitationsFor = (operation: string): readonly string[] => {
       return [
         ...common,
         "Names use Ghidra USER_DEFINED source. Name writes preserve the existing namespace; readback uses the fully qualified name. Regular comments map to PRE and inline comments to EOL at the exact function entry. Changes commit together after readback and refreshed analysis; failure rolls them all back.",
+        "Annotation text rejects NUL and unpaired Unicode surrogates before mutation, with the field and UTF-16 index in the error. Supported Unicode and line endings are preserved.",
         "Metadata edits invalidate immutable analysis snapshots and are discarded on close. CLI returns the updated dossier before session cleanup; this is not a saved Ghidra project.",
       ];
     case "inspect_native_load_image":
@@ -84,6 +86,11 @@ export const limitationsFor = (operation: string): readonly string[] => {
         ...common,
         "Only Ghidra-defined string Data is observed; charset is reported, while a non-missing terminator cannot distinguish a present terminator from a fixed or Pascal layout.",
       ];
+    case "resolve_containing_procedure":
+      return [
+        ...common,
+        "An exact external entry resolves to its observed function identity even when its body is empty. This does not establish mapped executable bytes or containment of nearby external addresses.",
+      ];
     case "list_segments":
       return [
         ...common,
@@ -91,7 +98,10 @@ export const limitationsFor = (operation: string): readonly string[] => {
       ];
     case "search_procedures":
     case "search_strings":
-      return common;
+      return [
+        ...common,
+        "Regex mode uses Java Pattern semantics. Matcher or compiler stack exhaustion returns a resource constraint without closing the session; literal mode avoids regex recursion and returns complete matching values.",
+      ];
     case "procedure_pseudo_code":
       return [
         ...common,
@@ -124,12 +134,14 @@ export const limitationsFor = (operation: string): readonly string[] => {
     case "procedure_references":
       return [
         ...common,
+        "References cover the complete Ghidra function-body AddressSet and exact entry, including instruction-interior destinations and embedded-data sources; an enclosing address span does not establish function ownership.",
         "Reference kinds are direct Ghidra ReferenceManager observations; unresolved computed flows without a target are absent and remain unknown.",
         "Synthetic Ghidra entry-point references without actionable memory sources are omitted.",
       ];
     case "analyze_function":
       return [
         ...common,
+        "References cover the complete Ghidra function-body AddressSet and exact entry. Dossier incoming edges omit sources owned by that function; procedure_references also retains those internal edges.",
         "The dossier combines Ghidra FunctionManager, Listing, ReferenceManager, BasicBlockModel, and decompiler observations; provider-specific pseudocode and assembly are not cross-provider text invariants.",
         "Resolved reference metadata identifies computed, indirect, external, call, jump, and data edges; unresolved targetless flows remain unknown, and function classifications distinguish thunks and externals.",
         "Synthetic Ghidra entry-point references without actionable memory sources are omitted.",
