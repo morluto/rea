@@ -225,6 +225,7 @@ const sharedCacheView = (cache: DyldSharedCache): DylibSharedCacheView => ({
     .filter(({ status }) => status !== "present")
     .map(({ suffix, status }) => `${suffix} (${status})`),
   lookup: (path) => cache.locate(path),
+  image: async (path) => (await cache.imageFacts(path))?.facts,
 });
 
 /**

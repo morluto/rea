@@ -127,14 +127,24 @@ const evaluateCandidate = async (
     rpath_owner: template.rpathOwner,
   };
   if (template.expansion.scope === "outside") {
-    const cached =
-      context.sharedCache?.lookup(template.expansion.path) ?? "absent";
-    if (cached === "mapped")
-      return {
-        ...base,
-        outcome: "shared-cache",
-        resolved_path: template.expansion.path,
-      };
+    const sharedCache = context.sharedCache;
+    const cached = sharedCache?.lookup(template.expansion.path) ?? "absent";
+    if (cached === "mapped" && sharedCache !== undefined) {
+      // Address coverage is not a load. Confirm a compatible Mach-O without
+      // retaining its commands, so cache images stay leaves.
+      const facts = await sharedCache.image(template.expansion.path);
+      if (
+        facts?.status === "parsed" &&
+        compatibleSlice(facts.slices, context.architecture) !== undefined
+      )
+        return {
+          ...base,
+          outcome: "shared-cache",
+          resolved_path: template.expansion.path,
+        };
+      context.unverifiedCacheImages.add(template.expansion.path);
+      return { ...base, outcome: "undetermined", resolved_path: null };
+    }
     // Listed in the cache, but its subcache is unavailable: dyld might load it.
     if (cached === "unverified") {
       context.unverifiedCacheImages.add(template.expansion.path);

@@ -80,10 +80,18 @@ export interface DylibSharedCacheView {
   /** Subcaches whose bytes are missing or do not match, such as `.03 (missing)`. */
   readonly unavailableSubcaches: readonly string[];
   /**
-   * `mapped`: listed and inside a verified mapping; `unverified`: listed, but
-   * the subcache holding it is unavailable; `absent`: not listed.
+   * `mapped`: listed and inside an admitted mapping. That is address coverage,
+   * not a load: a shared-cache hit also requires `image` to parse a slice this
+   * process can load. `unverified`: listed, but the subcache holding it is
+   * unavailable. `absent`: not listed.
    */
   lookup(path: string): "mapped" | "unverified" | "absent";
+  /**
+   * Load commands at a mapped install path. Undefined when `lookup` is not
+   * `mapped`. Tracing uses this only to confirm the hit; cached load commands
+   * are not traversed.
+   */
+  image(path: string): Promise<MachoImageFacts | undefined>;
 }
 
 const candidateSchema = z.strictObject({

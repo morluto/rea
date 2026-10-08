@@ -279,6 +279,20 @@ const readHeader = async (file: CacheFile): Promise<ParsedHeader> => {
   };
 };
 
+const cacheArchitecture = (magic: string): string =>
+  magic.slice(MAGIC_PREFIX.length).trim();
+
+/** Lowest mapping address: the subcache base `cacheVMOffset` is measured from. */
+const mappingBase = (parsed: ParsedHeader): bigint => {
+  const first = parsed.mappings[0];
+  if (first === undefined)
+    throw new ArtifactReaderFailure("format", "dyld cache has no mappings");
+  return parsed.mappings.reduce(
+    (lowest, mapping) => (mapping.address < lowest ? mapping.address : lowest),
+    first.address,
+  );
+};
+
 const version = (value: number): string | null =>
   value === 0
     ? null
@@ -385,13 +399,16 @@ export class DyldSharedCache {
         }
         files.push(file);
         const subParsed = await readHeader(file);
-        const matches = subParsed.uuid === entry.uuid;
+        // UUID, architecture, and VM offset are one admission decision.
+        // A later overlap or image-address check cannot repair a companion
+        // that already contradicts the main header.
+        const status = DyldSharedCache.#admitSubcache(parsed, entry, subParsed);
         statuses.push({
           ...entry,
-          status: matches ? "present" : "uuid-mismatch",
+          status,
           observed_uuid: subParsed.uuid,
         });
-        if (matches) parsedFiles.push({ file, parsed: subParsed });
+        if (status === "present") parsedFiles.push({ file, parsed: subParsed });
       }
       const header = DyldSharedCache.#summary(parsed, parsedFiles, statuses);
       const images = await DyldSharedCache.#images(main, parsed, signal);
@@ -501,6 +518,38 @@ export class DyldSharedCache {
     return { named, entries };
   }
 
+  /**
+   * Whether a companion file is the subcache the main header named.
+   * UUID, magic, and `cacheVMOffset` are checked together; failure to match
+   * the UUID leaves the cache partial, while a matching UUID that contradicts
+   * the main header is a format error and contributes no mappings.
+   */
+  static #admitSubcache(
+    main: ParsedHeader,
+    entry: {
+      readonly suffix: string;
+      readonly uuid: string;
+      readonly vm_offset: string;
+    },
+    sub: ParsedHeader,
+  ): "present" | "uuid-mismatch" {
+    if (sub.uuid !== entry.uuid) return "uuid-mismatch";
+    if (sub.magic !== main.magic)
+      throw new ArtifactReaderFailure(
+        "format",
+        `dyld subcache ${entry.suffix} architecture ${cacheArchitecture(sub.magic)} does not match the main cache architecture ${cacheArchitecture(main.magic)}`,
+      );
+    const mainBase = mappingBase(main);
+    const actual = mappingBase(sub);
+    const expected = mainBase + BigInt(entry.vm_offset);
+    if (actual !== expected)
+      throw new ArtifactReaderFailure(
+        "format",
+        `dyld subcache ${entry.suffix} mapping base ${hex(actual)} disagrees with cache VM offset ${entry.vm_offset} from main base ${hex(mainBase)}`,
+      );
+    return "present";
+  }
+
   static #summary(
     parsed: ParsedHeader,
     files: readonly {
@@ -538,7 +587,7 @@ export class DyldSharedCache {
     );
     return {
       magic: parsed.magic,
-      architecture: parsed.magic.slice(MAGIC_PREFIX.length).trim(),
+      architecture: cacheArchitecture(parsed.magic),
       uuid: parsed.uuid,
       platform: cachePlatform(platform, simulator),
       header_platform: platform === null ? null : applePlatform(platform),
@@ -611,8 +660,9 @@ export class DyldSharedCache {
   }
 
   /**
-   * Whether an install path is listed and its bytes lie in a mapping of the
-   * main file or a subcache whose UUID matched.
+   * Whether an install path is listed and its address lies in a mapping of an
+   * admitted file. This is address coverage: `imageFacts` has to parse a
+   * compatible Mach-O before the path is a shared-cache load.
    */
   locate(path: string): "mapped" | "unverified" | "absent" {
     const image = this.find(path);

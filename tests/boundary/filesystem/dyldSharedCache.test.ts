@@ -37,8 +37,11 @@ it("rejects a directory and overlapping combined VM mappings with specific reaso
   const mainTable = main.readUInt32LE(0x10);
   const subTable = subcache.readUInt32LE(0x10);
   subcache.writeBigUInt64LE(main.readBigUInt64LE(mainTable), subTable);
+  // Keep the declared VM offset consistent so the failure is the overlap.
+  main.writeBigUInt64LE(0n, main.readUInt32LE(0x188) + 16);
   const path = await writeCache({
     ...fixture,
+    main,
     subcaches: [{ ...original, bytes: subcache }],
   });
   const result = await inspectDyldSharedCache({ cache_path: path });
@@ -53,6 +56,71 @@ const dylib = (installName: string, dependencies: readonly Uint8Array[] = []) =>
     fileType: FILE_TYPE.dylib,
     commands: [dylibCommand(LC.ID_DYLIB, installName), ...dependencies],
   });
+
+it("rejects a same-UUID subcache whose architecture or VM offset disagrees", async () => {
+  const fixture = dyldCacheFixture(IMAGES);
+  const original = fixture.subcaches[0];
+  if (original === undefined) throw new Error("missing subcache fixture");
+  const wrongArchitecture = Buffer.from(original.bytes);
+  wrongArchitecture.write("dyld_v1  x86_64".padEnd(15, " "), 0, "latin1");
+  const architecturePath = await writeCache({
+    ...fixture,
+    subcaches: [{ ...original, bytes: wrongArchitecture }],
+  });
+  expect(
+    await inspectDyldSharedCache({ cache_path: architecturePath }),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      reason: "format",
+      detail: expect.stringContaining("does not match"),
+    },
+  });
+  const main = Buffer.from(fixture.main);
+  main.writeBigUInt64LE(0n, main.readUInt32LE(0x188) + 16);
+  const offsetPath = await writeCache({ ...fixture, main });
+  expect(
+    await inspectDyldSharedCache({ cache_path: offsetPath }),
+  ).toMatchObject({
+    ok: false,
+    error: { reason: "format", detail: expect.stringContaining("disagrees") },
+  });
+});
+
+it("does not resolve a cached path whose bytes are not a Mach-O image", async () => {
+  const path = await writeCache(
+    dyldCacheFixture([
+      { path: "/usr/lib/libSystem.B.dylib", bytes: Buffer.alloc(64, 0) },
+    ]),
+  );
+  const targetPath = join(dirname(path), "tool");
+  const bytes = machoImage({
+    fileType: FILE_TYPE.execute,
+    commands: [
+      buildVersionCommand(1),
+      dylibCommand(LC.LOAD_DYLIB, "/usr/lib/libSystem.B.dylib"),
+    ],
+  });
+  await writeFile(targetPath, bytes);
+  const trace = await traceDylibResolution({
+    rootPath: dirname(path),
+    targetPath,
+    targetSha256: createHash("sha256").update(bytes).digest("hex"),
+    enumerateRoots: false,
+    parameters: { shared_cache: path },
+  });
+  expect(trace.edges[0]?.candidates[0]?.outcome).toBe("undetermined");
+  expect(trace.edges[0]?.resolution).toEqual({
+    status: "undetermined",
+    image: null,
+  });
+  expect(trace.coverage.unverified_shared_cache_images).toEqual([
+    "/usr/lib/libSystem.B.dylib",
+  ]);
+  expect(trace.images.map(({ path: image }) => image)).not.toContain(
+    "/usr/lib/libSystem.B.dylib",
+  );
+});
 
 it("rejects unmapped images when no unavailable subcache can explain the address", async () => {
   const fixture = dyldCacheFixture(IMAGES);

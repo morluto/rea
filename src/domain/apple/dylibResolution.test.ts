@@ -540,6 +540,7 @@ const cache = (
     ].includes(path)
       ? "mapped"
       : "absent",
+  image: () => Promise.resolve(parsed(slice())),
   ...overrides,
 });
 
@@ -594,6 +595,38 @@ describe("shared cache resolution", () => {
     );
     expect(trace.limitations).not.toContainEqual(
       expect.stringContaining("are not evaluated, including /System"),
+    );
+  });
+
+  it("does not treat mapped bytes as a load until they parse as a compatible Mach-O", async () => {
+    const root = memoryView({
+      [MAIN]: executable({
+        dependencies: [dependency("/usr/lib/libSystem.B.dylib")],
+      }),
+    });
+    const notMachO = await traceDylibLoading(root, {
+      roots: [MAIN],
+      sharedCache: cache({
+        image: () => Promise.resolve({ status: "not-mach-o" }),
+      }),
+    });
+    expect(notMachO.edges[0]?.resolution).toEqual({
+      status: "undetermined",
+      image: null,
+    });
+    expect(notMachO.coverage).toMatchObject({
+      status: "partial",
+      unverified_shared_cache_images: ["/usr/lib/libSystem.B.dylib"],
+    });
+    expect(notMachO.images.map(({ path }) => path)).toEqual([MAIN]);
+    const wrongArchitecture = await traceDylibLoading(root, {
+      roots: [MAIN],
+      sharedCache: cache({
+        image: () => Promise.resolve(parsed(slice({ architecture: "x86_64" }))),
+      }),
+    });
+    expect(wrongArchitecture.edges[0]?.candidates[0]?.outcome).toBe(
+      "undetermined",
     );
   });
 
