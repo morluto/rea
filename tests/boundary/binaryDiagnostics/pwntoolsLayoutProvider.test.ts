@@ -41,6 +41,8 @@ it.runIf(!unsupportedHost).each([
       { REA_PWNTOOLS_PYTHON: process.execPath },
       async (spawn) => {
         ownedPath = spawn.cwd ?? "";
+        if (failure === "EFBIG")
+          await writeFile(join(ownedPath, "resource.failure"), "F");
         if (scenario !== "missing")
           await writeFile(
             join(ownedPath, "limits.json"),
@@ -126,8 +128,15 @@ it.runIf(!unsupportedHost)(
 
 it
   .runIf(!unsupportedHost)
-  .each(["reserved-memory-status", "ordinary-exit", "signal"])(
-  "classifies only the explicit bridge memory status, without guessing from stderr: %s",
+  .each([
+    "reserved-memory-status",
+    "unmarked-memory-status",
+    "unmarked-file-status",
+    "wrong-marker",
+    "ordinary-exit",
+    "signal",
+  ])(
+  "requires matching private bridge failure evidence, without guessing from stderr: %s",
   async (scenario) => {
     const { path } = await fixture();
     let ownedPath = "";
@@ -135,6 +144,14 @@ it
       { REA_PWNTOOLS_PYTHON: process.execPath },
       async (spawn) => {
         ownedPath = spawn.cwd ?? "";
+        if (
+          scenario === "reserved-memory-status" ||
+          scenario === "wrong-marker"
+        )
+          await writeFile(
+            join(ownedPath, "resource.failure"),
+            scenario === "wrong-marker" ? Buffer.from([0xcd]) : "M",
+          );
         return spawnOwnedProviderProcess({
           ...spawn,
           command: process.execPath,
@@ -143,7 +160,7 @@ it
             'process.stderr.write("MemoryError-like diagnostic\\n");' +
               (scenario === "signal"
                 ? 'process.kill(process.pid,"SIGKILL")'
-                : `process.exit(${scenario === "reserved-memory-status" ? "75" : "7"})`),
+                : `process.exit(${scenario === "unmarked-file-status" ? "76" : ["reserved-memory-status", "unmarked-memory-status", "wrong-marker"].includes(scenario) ? "75" : "7"})`),
           ],
         });
       },

@@ -17,7 +17,7 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { ProviderSelectionError } from "../../domain/providerSelectionError.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
-import type { PwntoolsLimitReport } from "./PwntoolsResourceLimits.js";
+import type { PwntoolsFailureEvidence } from "./PwntoolsResourceLimits.js";
 import {
   PWNTOOLS_PROVIDER_IDENTITY,
   PWNTOOLS_LIMITS,
@@ -33,8 +33,9 @@ export const pwntoolsLayoutFailure = (
   phase: string,
   path: string,
   executablePath = path,
-  limitReport?: PwntoolsLimitReport,
+  failureEvidence: PwntoolsFailureEvidence = {},
 ): AnalysisError => {
+  const limitReport = failureEvidence.limits;
   if (cause instanceof AnalysisError) return cause;
   if (cause instanceof OwnedCommandFailure) {
     const outputOptions =
@@ -76,7 +77,8 @@ export const pwntoolsLayoutFailure = (
     if (
       cause.reason === "process" &&
       (cause.snapshot?.signal === "SIGXFSZ" ||
-        (cause.snapshot?.exitCode === PWNTOOLS_FILE_SIZE_FAILURE_EXIT &&
+        (failureEvidence.marker?.resource === "file-size" &&
+          cause.snapshot?.exitCode === PWNTOOLS_FILE_SIZE_FAILURE_EXIT &&
           cause.snapshot.signal === null))
     )
       return new AnalysisResourceConstraintError(
@@ -104,14 +106,18 @@ export const pwntoolsLayoutFailure = (
       );
     if (
       cause.reason === "process" &&
+      failureEvidence.marker?.resource === "memory" &&
       cause.snapshot?.exitCode === PWNTOOLS_MEMORY_FAILURE_EXIT &&
       cause.snapshot.signal === null
     )
       return new AnalysisResourceConstraintError(
         OPERATION,
         "memory",
-        "The owned Python bridge reported a memory allocation failure without a structured reply; the exact allocation cause and effective resource limits are unknown.",
-        null,
+        "The owned Python bridge reported a memory allocation failure without a structured reply; the exact allocation cause is unknown." +
+          (limitReport?.failure === null || limitReport === undefined
+            ? ""
+            : ` Effective limit report unavailable: ${limitReport.failure}`),
+        limitReport?.limits ?? null,
         outputOptions,
       );
   }
@@ -179,6 +185,9 @@ export const pwntoolsLayoutFailure = (
       phase,
       path,
       reason: cause instanceof Error ? cause.message : String(cause),
+      ...(failureEvidence.marker === undefined
+        ? {}
+        : { resource_failure_marker: { ...failureEvidence.marker } }),
       ...(cause instanceof OwnedCommandFailure
         ? {
             failure_kind: cause.reason,

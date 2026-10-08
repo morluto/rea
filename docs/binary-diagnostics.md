@@ -98,8 +98,11 @@ particular budget was exhausted. Invalid undersized symbol entries are rejected
 before REA reports source ranges for them.
 The bridge reserves 1 MiB to report allocation failures. If even error reporting
 or serialization fails with MemoryError, its reserved exit status preserves the
-resource classification with unknown effective limits. Signal termination alone
-is never classified as observed memory exhaustion.
+resource classification with unknown effective limits.
+Reserved exits require a matching private marker written by the bridge's actual
+failure branch. Bare launcher exits or missing/unwritable markers retain process
+diagnostics with the resource cause unverified.
+Signal termination alone is never classified as observed memory exhaustion.
 The small bootstrap also covers catchable MemoryError during adapter imports,
 compilation and initialization. Python interpreter startup failures before the
 bootstrap runs retain their observed process diagnostics without guessed causes.

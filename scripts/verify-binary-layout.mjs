@@ -87,17 +87,28 @@ try {
     ],
   ]) {
     await writeFile(join(bootstrapRoot, "layout_impl.py"), source);
+    const markerPath = join(bootstrapRoot, `failure-${bootstrapCases}`);
     let exitCode = 0;
     try {
-      await execute(python, ["-I", bootstrapPath, "unused-request"], {
-        timeout: 10000,
-        maxBuffer: 1024 * 1024,
-      });
+      await execute(
+        python,
+        ["-I", bootstrapPath, markerPath, "unused-request"],
+        {
+          timeout: 10000,
+          maxBuffer: 1024 * 1024,
+        },
+      );
     } catch (cause) {
       assert.equal(typeof cause.code, "number");
       exitCode = cause.code;
     }
     assert.equal(exitCode, status);
+    if (status === 75 || status === 76)
+      assert.equal(
+        await readFile(markerPath, "ascii"),
+        status === 75 ? "M" : "F",
+      );
+    else await assert.rejects(readFile(markerPath), { code: "ENOENT" });
     bootstrapCases++;
   }
   for (const [name, flags] of [
@@ -903,7 +914,21 @@ try {
     "#!/rea-missing-configured-python-interpreter\n",
     { mode: 0o700 },
   );
-  for (const configuredPython of [root.path, brokenPython]) {
+  const unmarkedLaunchers = [];
+  for (const status of [75, 76]) {
+    const path = join(root.path, `unmarked-launcher-${status}`);
+    await writeFile(
+      path,
+      `#!/bin/sh\nprintf 'launcher exited ${status}\\n' >&2\nexit ${status}\n`,
+      { mode: 0o700 },
+    );
+    unmarkedLaunchers.push(path);
+  }
+  for (const [configuredPython, category] of [
+    [root.path, "unavailable"],
+    [brokenPython, "unavailable"],
+    ...unmarkedLaunchers.map((path) => [path, "execution_failure"]),
+  ]) {
     const selectedEnvironment = {
       ...environment,
       REA_PWNTOOLS_PYTHON: configuredPython,
@@ -924,15 +949,21 @@ try {
         const error = await inspect(
           mode,
           join(root.path, "protected"),
-          "unavailable",
+          category,
           selectedEnvironment,
           selectedClient,
         );
-        assert.equal(error.code, "provider_unavailable");
-        assert.equal(
-          error.details.rejections[0].diagnostics.executable_path,
-          configuredPython,
-        );
+        if (category === "unavailable") {
+          assert.equal(error.code, "provider_unavailable");
+          assert.equal(
+            error.details.rejections[0].diagnostics.executable_path,
+            configuredPython,
+          );
+        } else {
+          assert.equal(error.code, "execution_failure");
+          assert.ok(JSON.stringify(error).includes("launcher exited"));
+          assert.ok(JSON.stringify(error).includes("resource_failure_marker"));
+        }
         cases++;
       }
     } finally {

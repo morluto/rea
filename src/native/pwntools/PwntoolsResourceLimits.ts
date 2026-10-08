@@ -21,3 +21,12 @@ export interface PwntoolsLimitReport {
   readonly limits: z.output<typeof pwntoolsResourceLimitsSchema> | null;
   readonly failure: string | null;
 }
+
+/** Private failure-branch evidence; a bare launcher exit code is insufficient. */
+export interface PwntoolsFailureEvidence {
+  readonly limits?: PwntoolsLimitReport;
+  readonly marker?: {
+    readonly resource: "memory" | "file-size" | null;
+    readonly failure: string | null;
+  };
+}

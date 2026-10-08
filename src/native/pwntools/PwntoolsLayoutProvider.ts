@@ -35,12 +35,14 @@ import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 import {
   pwntoolsResourceLimitsSchema,
   type PwntoolsLimitReport,
+  type PwntoolsFailureEvidence,
 } from "./PwntoolsResourceLimits.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import {
   PWNTOOLS_PROVIDER_IDENTITY,
   PWNTOOLS_LIMITS,
   PWNTOOLS_FILE_SIZE_FAILURE_EXIT,
+  PWNTOOLS_MEMORY_FAILURE_EXIT,
 } from "./PwntoolsRelease.js";
 
 const OPERATION = "inspect_binary_layout";
@@ -139,6 +141,7 @@ export class PwntoolsLayoutProvider implements BinaryLayoutPort {
             fileURLToPath(
               new URL("../../../bridge/pwntools/layout.py", import.meta.url),
             ),
+            join(root.path, "resource.failure"),
             requestPath,
           ],
           cwd: root.path,
@@ -259,11 +262,47 @@ export class PwntoolsLayoutProvider implements BinaryLayoutPort {
       result = ok(validated.data);
     } catch (cause: unknown) {
       let limitReport: PwntoolsLimitReport | undefined;
+      let marker: PwntoolsFailureEvidence["marker"];
+      if (
+        cause instanceof OwnedCommandFailure &&
+        cause.snapshot?.signal === null &&
+        (cause.snapshot.exitCode === PWNTOOLS_MEMORY_FAILURE_EXIT ||
+          cause.snapshot.exitCode === PWNTOOLS_FILE_SIZE_FAILURE_EXIT) &&
+        root !== undefined
+      ) {
+        try {
+          const reported = await readStableArtifact(
+            join(root.path, "resource.failure"),
+            1,
+          );
+          const expected =
+            cause.snapshot.exitCode === PWNTOOLS_MEMORY_FAILURE_EXIT
+              ? "M"
+              : "F";
+          if (!reported.bytes.equals(Buffer.from(expected, "ascii")))
+            throw new Error(
+              "Private bridge failure marker does not match the observed exit status.",
+            );
+          marker = {
+            resource: expected === "M" ? "memory" : "file-size",
+            failure: null,
+          };
+        } catch (markerFailure: unknown) {
+          marker = {
+            resource: null,
+            failure:
+              markerFailure instanceof Error
+                ? markerFailure.message
+                : String(markerFailure),
+          };
+        }
+      }
       if (
         cause instanceof OwnedCommandFailure &&
         (cause.snapshot?.signal === "SIGXCPU" ||
           cause.snapshot?.signal === "SIGXFSZ" ||
-          (cause.snapshot?.exitCode === PWNTOOLS_FILE_SIZE_FAILURE_EXIT &&
+          ((cause.snapshot?.exitCode === PWNTOOLS_FILE_SIZE_FAILURE_EXIT ||
+            cause.snapshot?.exitCode === PWNTOOLS_MEMORY_FAILURE_EXIT) &&
             cause.snapshot.signal === null)) &&
         root !== undefined
       ) {
@@ -293,13 +332,10 @@ export class PwntoolsLayoutProvider implements BinaryLayoutPort {
           (cause === options.signal.reason ||
             (cause instanceof Error && cause.name === "AbortError"))
           ? new AnalysisCancelledError(OPERATION)
-          : pwntoolsLayoutFailure(
-              cause,
-              phase,
-              selectedPath,
-              executablePath,
-              limitReport,
-            ),
+          : pwntoolsLayoutFailure(cause, phase, selectedPath, executablePath, {
+              ...(limitReport === undefined ? {} : { limits: limitReport }),
+              ...(marker === undefined ? {} : { marker }),
+            }),
       );
     }
     if (root !== undefined) {
