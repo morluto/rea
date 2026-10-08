@@ -225,7 +225,8 @@ const readText = async (
       value: new TextDecoder("utf-8", {
         fatal: true,
         ignoreBOM:
-          input.expected.kind === "javascript" || input.expected.kind === "html",
+          input.expected.kind === "javascript" ||
+          input.expected.kind === "html",
       }).decode(bytes),
     };
   } catch (cause: unknown) {
