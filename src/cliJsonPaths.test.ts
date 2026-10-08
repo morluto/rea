@@ -36,7 +36,7 @@ describe("CLI JSON path normalization", () => {
       expect(parsed.error.issues).toEqual(
         expect.arrayContaining([expect.objectContaining({ path: [field] })]),
       );
-      expect(input[field as keyof typeof input]).toBe(value);
+      expect(input).toHaveProperty(field, value);
     },
   );
 
