@@ -4,6 +4,7 @@ import { Cli } from "incur";
 
 import { createLogger, parseLogLevel } from "./logger.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
+import { npxRegistrationCommand } from "./application/ClientRegistrationIdentity.js";
 import { registerSetupCommands } from "./cli/setupCommands.js";
 import { registerCoreAnalysisCommands } from "./cli/coreAnalysisCommands.js";
 import { registerUtilityCommands } from "./cli/utilityCommands.js";
@@ -47,7 +48,7 @@ export const createCli = (
     version: PRODUCT_IDENTITY.packageVersion,
     description: "Reverse engineer anything from your terminal or agent.",
     mcp: {
-      command: PRODUCT_IDENTITY.mcpCommand,
+      command: npxRegistrationCommand().join(" "),
       instructions:
         "Ask what software, artifact, protocol, or behavior the user wants to understand, then choose the available investigation capabilities that can produce evidence.",
     },

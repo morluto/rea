@@ -3,6 +3,28 @@ import { valid } from "semver";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 
+/** Resolve a pinned npx launcher that stdio clients can spawn on the host. */
+export const npxRegistrationCommand = (
+  platform: NodeJS.Platform = process.platform,
+): readonly string[] => {
+  const command = [
+    "npx",
+    "-y",
+    PRODUCT_IDENTITY.registrationPackageSpecifier,
+    "mcp",
+  ];
+  return platform === "win32" ? ["cmd.exe", "/d", "/c", ...command] : command;
+};
+
+const unwrapNpxCommand = (command: readonly string[]): readonly string[] => {
+  const executable = command[0]?.toLowerCase();
+  if (executable !== "cmd" && executable !== "cmd.exe") return command;
+  if (command[1]?.toLowerCase() === "/c") return command.slice(2);
+  if (command[1]?.toLowerCase() === "/d" && command[2]?.toLowerCase() === "/c")
+    return command.slice(3);
+  return [];
+};
+
 /** Check that one parsed command points to REA's MCP entry point. */
 export const isOwnedClientRegistrationCommand = (
   command: readonly string[],
@@ -27,15 +49,16 @@ export const isOwnedClientRegistrationCommand = (
       return true;
   }
 
+  const npxCommand = unwrapNpxCommand(command);
   if (
-    command.length !== 4 ||
-    command[0] !== "npx" ||
-    command[1] !== "-y" ||
-    command[3] !== "mcp"
+    npxCommand.length !== 4 ||
+    npxCommand[0] !== "npx" ||
+    npxCommand[1] !== "-y" ||
+    npxCommand[3] !== "mcp"
   )
     return false;
 
-  const packageReference = command[2] ?? "";
+  const packageReference = npxCommand[2] ?? "";
   if (
     packageReference === PRODUCT_IDENTITY.packageName ||
     packageReference === PRODUCT_IDENTITY.packageSpecifier ||
