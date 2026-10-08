@@ -83,6 +83,18 @@ complete observation.
   partial coverage. Other providers retain the
   existing symbol-based inventory with its narrower coverage.
 
+## Exact CLI selectors
+
+`function`, `instructions` and `decompile` accept `--procedure=<name-or-address>`;
+`xrefs` accepts `--address=<name-or-address>`. `search` accepts `--pattern=<text>`
+and `trace` accepts `--query=<text>`. These alternatives preserve names and text
+that begin with a dash, including Objective-C names such as
+`rea function ./app '--procedure=-[REAWidget delegate]' --provider hopper --format json`.
+Use the equals form when the value resembles a CLI flag, for example
+`rea trace ./app --query=--help --provider hopper --format json`.
+The existing positional forms remain available. Missing selectors and conflicting
+positional/named values fail before analysis starts; identical selections agree.
+
 ## Native instruction, call and type primitives
 
 Ghidra supplies three exact-object operations:

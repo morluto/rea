@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import Ajv from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { mcpTextValue, requireMcpResult } from "./mcp-verifier-results.mjs";
+import { verifyHopperCliSelectors } from "./real-hopper-cli-selectors.mjs";
 import { verifyHopperNavigationAndText } from "./real-hopper-navigation.mjs";
 import { verifyHopperWorkflows } from "./real-hopper-workflows.mjs";
 import {
@@ -395,6 +396,7 @@ export async function verifyHopperLifecycleAndCli(client, options, targets) {
       expectedFunction,
     );
     let cliTerminalFunctionParity = null;
+    let cliNamedSelectorParity = null;
     if (targets.unicode !== undefined) {
       const objc = join(directory, `objc-${suffix}`);
       await copyFile(targets.unicode, objc);
@@ -420,6 +422,13 @@ export async function verifyHopperLifecycleAndCli(client, options, targets) {
       ]);
       assert.deepEqual(JSON.parse(analyzed.stdout).normalized_result, expected);
       cliTerminalFunctionParity = true;
+      await call("open_binary", { path: objc });
+      cliNamedSelectorParity = await verifyHopperCliSelectors(
+        call,
+        runCli,
+        dispatcher,
+        objc,
+      );
     }
     let failure;
     try {
@@ -452,6 +461,7 @@ export async function verifyHopperLifecycleAndCli(client, options, targets) {
       cliLiteralTraceParity: true,
       cliFunctionDossierParity: true,
       cliTerminalFunctionParity,
+      cliNamedSelectorParity,
       callerCancellationRecovered: true,
       closedDocumentAbsent: true,
     };

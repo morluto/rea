@@ -44,7 +44,7 @@ export const analysisErrorRemediationAction = (
     return (
       error.remediationAction ??
       (error.resource === "transport"
-        ? "Use the reported Evidence reference with a focused analysis tool when retained in this session, or export the session through export_evidence_bundle to a caller-selected path. Complete CLI JSON output is also available. The connection remains usable."
+        ? "Export retained session evidence through export_evidence_bundle to a caller-selected path, or use complete CLI JSON output. Tools that accept retained-evidence references can inspect compatible records. The connection remains usable."
         : error.resource === "cpu"
           ? "Review the reported worker CPU limits and observed signal. Retry with sufficient CPU time or a smaller artifact; REA retains tighter inherited limits."
           : error.resource === "file-size"
