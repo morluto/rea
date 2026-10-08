@@ -645,8 +645,20 @@ const rebuildInlineTable = (
   pairs: readonly InlinePair[],
   trailing: string,
   insertion: string | undefined,
+): string => rebuildDelimitedEntries(pairs, trailing, insertion, "{", "}");
+
+/**
+ * Rebuild `{ ... }` or `[ ... ]` after dropping entries. An empty container
+ * keeps comment trivia; a table with no comments stays `{}`.
+ */
+const rebuildDelimitedEntries = (
+  pairs: readonly InlinePair[],
+  trailing: string,
+  insertion: string | undefined,
+  open: "{" | "[",
+  close: "}" | "]",
 ): string => {
-  const parts: string[] = ["{"];
+  const parts: string[] = [open];
   let emitted = false;
   // A comma already emitted in a dropped pair's comment trivia.
   let separatorPending = false;
@@ -675,12 +687,136 @@ const rebuildInlineTable = (
     parts.push(insertion);
     emitted = true;
   }
-  if (!emitted) return "{}";
+  if (!emitted) {
+    const retained = `${parts.slice(1).join("")}${commasOutsideComments(trailing)}`;
+    return retained.includes("#")
+      ? `${open}${retained}${close}`
+      : `${open}${close}`;
+  }
   const tail = commasOutsideComments(trailing);
   parts.push(tail);
-  if (tail === "") parts.push(" ");
-  parts.push("}");
+  if (tail === "" && open === "{") parts.push(" ");
+  parts.push(close);
   return parts.join("");
+};
+
+/** Decoded single-line TOML string, or undefined for any other value. */
+const tomlStringValue = (text: string): string | undefined => {
+  const quote = text[0];
+  if (
+    (quote !== '"' && quote !== "'") ||
+    text.startsWith(quote === '"' ? '"""' : "'''")
+  )
+    return undefined;
+  const parsed = parseQuotedKey(text, 0);
+  if (parsed === undefined || parsed.next !== text.length) return undefined;
+  return parsed.value;
+};
+
+/**
+ * Array text with `serverKey` removed. `""` means the assignment itself can
+ * be deleted. Undefined when the array cannot be edited safely.
+ */
+const tomlArrayWithoutString = (
+  array: string,
+  serverKey: string,
+): string | undefined => {
+  if (!array.startsWith("[")) return undefined;
+  const end = endOfContainer(array, 0);
+  if (end !== array.length || array[end - 1] !== "]") return undefined;
+  const pairs: InlinePair[] = [];
+  let index = 1;
+  let trailing = "";
+  while (index < end - 1) {
+    const trivia = readTrivia(array, index, end - 1);
+    if (trivia.next >= end - 1) {
+      trailing = trivia.text;
+      break;
+    }
+    const valueEnd = endOfTomlValue(array, trivia.next);
+    if (valueEnd > end - 1) return undefined;
+    const text = array.slice(trivia.next, valueEnd);
+    pairs.push({
+      leading: trivia.text,
+      text,
+      drop: tomlStringValue(text) === serverKey,
+    });
+    index = valueEnd;
+  }
+  if (pairs.every((pair) => !pair.drop)) return array;
+  const rebuilt = rebuildDelimitedEntries(pairs, trailing, undefined, "[", "]");
+  return rebuilt === "[]" ? "" : rebuilt;
+};
+
+type DisabledServerListEdit =
+  | { readonly kind: "ignore" }
+  | { readonly kind: "keep" }
+  | { readonly kind: "delete"; readonly comment: string | undefined }
+  | { readonly kind: "replace"; readonly text: string };
+
+interface DisabledServerListInput {
+  readonly text: string;
+  readonly lineStart: number;
+  readonly valueOffset: number;
+  readonly valueEnd: number;
+  readonly statementEnd: number;
+  readonly tablePath: readonly string[];
+  readonly segments: readonly string[];
+  readonly serverKey: string;
+  readonly entry: unknown;
+}
+
+/** Drop `serverKey` from a root `disabled_mcp_servers` array while installing. */
+const disabledServerListEdit = (
+  input: DisabledServerListInput,
+): DisabledServerListEdit => {
+  if (
+    input.entry === undefined ||
+    input.tablePath.length !== 0 ||
+    input.segments.length !== 1 ||
+    input.segments[0] !== "disabled_mcp_servers"
+  )
+    return { kind: "ignore" };
+  const open = skipWsAndComments(input.text, input.valueOffset);
+  if (input.text[open] !== "[") return { kind: "ignore" };
+  const arrayText = input.text.slice(open, input.valueEnd);
+  const edited = tomlArrayWithoutString(arrayText, input.serverKey);
+  if (edited === undefined || edited === arrayText) return { kind: "keep" };
+  if (edited === "") {
+    const suffix = input.text.slice(input.valueEnd, input.statementEnd);
+    const hash = suffix.indexOf("#");
+    return {
+      kind: "delete",
+      comment: hash < 0 ? undefined : suffix.slice(hash),
+    };
+  }
+  return {
+    kind: "replace",
+    text: `${input.text.slice(input.lineStart, open)}${edited}${input.text.slice(input.valueEnd, input.statementEnd)}`,
+  };
+};
+
+/** Lines that replace a disabled-server assignment, or undefined to leave it. */
+const disabledServerListLines = (
+  edit: DisabledServerListEdit,
+  lines: readonly string[],
+  lineIndex: number,
+  endLine: number,
+): readonly string[] | undefined => {
+  switch (edit.kind) {
+    case "ignore":
+      return undefined;
+    case "keep":
+      return lines.slice(lineIndex, endLine + 1);
+    case "replace":
+      return edit.text.split("\n");
+    case "delete":
+      return edit.comment === undefined ? [] : [edit.comment];
+    default: {
+      const unreachable: never = edit;
+      return unreachable;
+    }
+  }
 };
 
 /**
@@ -767,6 +903,29 @@ const upsertGrokServerSection = (
         mode = "none";
         continue;
       }
+      const disabledLines = disabledServerListLines(
+        disabledServerListEdit({
+          text,
+          lineStart,
+          valueOffset,
+          valueEnd,
+          statementEnd,
+          tablePath,
+          segments: assignment.segments,
+          serverKey,
+          entry,
+        }),
+        lines,
+        lineIndex,
+        endLine,
+      );
+      if (disabledLines !== undefined) {
+        flushPending();
+        kept.push(...disabledLines);
+        lineIndex = endLine + 1;
+        mode = "none";
+        continue;
+      }
       const absolute = [...tablePath, ...assignment.segments];
       const open = skipWsAndComments(text, valueOffset);
       const closesServerTable =
@@ -849,6 +1008,14 @@ const grokServerEntry = (
     return undefined;
   return servers.data[serverKey];
 };
+
+/** Whether Grok Build's root disable list names `serverKey`. */
+export const grokServerListedDisabled = (
+  document: Record<string, unknown>,
+  serverKey: string,
+): boolean =>
+  Array.isArray(document.disabled_mcp_servers) &&
+  document.disabled_mcp_servers.includes(serverKey);
 
 /** Keep an existing Grok document intact aside from the REA server tables. */
 const serializeGrokConfiguration = (

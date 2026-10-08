@@ -168,6 +168,28 @@ describe("client configuration filesystem lifecycle", () => {
     expect(await readFile(targetPath, "utf8")).toContain("[mcp_servers.rea]");
   });
 
+  it("fails before mutation when a TOML config symlink is dangling", async () => {
+    const home = await createTestTempDirectory("rea-toml-symlink-");
+    roots.push(home);
+    const configPath = join(home, ".codex/config.toml");
+    await mkdir(dirname(configPath), { recursive: true });
+    await symlink(join(home, "missing-config.toml"), configPath);
+
+    expect(
+      await configureClientConfiguration({
+        name: "codex",
+        configPath,
+        format: "toml",
+      }),
+    ).toEqual({ status: "failed", reason: "path" });
+    expect((await lstat(configPath)).isSymbolicLink()).toBe(true);
+    await expect(
+      readFile(`${configPath}.rea.backup`, "utf8"),
+    ).rejects.toThrow();
+  });
+});
+
+describe("Grok Build server table edits", () => {
   it("edits only the Grok Build REA tables and removes them on uninstall", async () => {
     const home = await createTestTempDirectory("rea-grok-");
     roots.push(home);
@@ -267,7 +289,71 @@ describe("client configuration filesystem lifecycle", () => {
     expect(removed).not.toContain("startup_timeout_sec");
     expect(removed).not.toContain("JAVA_HOME");
   });
+});
 
+describe("Grok Build disabled server list", () => {
+  it("removes rea from disabled_mcp_servers and leaves other names", async () => {
+    const home = await createTestTempDirectory("rea-grok-disabled-");
+    roots.push(home);
+    const configPath = join(home, ".grok/config.toml");
+    await mkdir(dirname(configPath), { recursive: true });
+    await writeFile(
+      configPath,
+      [
+        "disabled_mcp_servers = [",
+        '  "other",',
+        '  "r\\u0065a",',
+        '  "rea", # was off',
+        '  "github",',
+        "]",
+        "[mcp_servers.rea]",
+        "enabled = false",
+        'command = "rea"',
+        'args = ["mcp"]',
+        "startup_timeout_sec = 30",
+      ].join("\n"),
+    );
+    expect(
+      await configureClientConfiguration(
+        { name: "grok_build", configPath, format: "grok" },
+        undefined,
+        ["rea", "mcp"],
+      ),
+    ).toMatchObject({ status: "configured" });
+    const configured = await readFile(configPath, "utf8");
+    expect(configured).toContain("# was off");
+    expect(configured).not.toContain("enabled");
+    expect(parseToml(configured)).toMatchObject({
+      disabled_mcp_servers: ["other", "github"],
+      mcp_servers: {
+        rea: { command: "rea", args: ["mcp"], startup_timeout_sec: 30 },
+      },
+    });
+    expect(
+      await configureClientConfiguration(
+        { name: "grok_build", configPath, format: "grok" },
+        undefined,
+        ["rea", "mcp"],
+      ),
+    ).toEqual({ status: "unchanged" });
+    await writeFile(configPath, 'disabled_mcp_servers = ["rea"] # note\n');
+    expect(
+      await configureClientConfiguration(
+        { name: "grok_build", configPath, format: "grok" },
+        undefined,
+        ["rea", "mcp"],
+      ),
+    ).toMatchObject({ status: "configured" });
+    const created = await readFile(configPath, "utf8");
+    expect(created).toContain("# note");
+    expect(created).not.toContain("disabled_mcp_servers");
+    expect(parseToml(created)).toMatchObject({
+      mcp_servers: { rea: { command: "rea", args: ["mcp"] } },
+    });
+  });
+});
+
+describe("Grok Build text that resembles a server table", () => {
   it("preserves Grok text that only looks like an REA table", async () => {
     const home = await createTestTempDirectory("rea-grok-preserve-");
     roots.push(home);
@@ -389,7 +475,9 @@ describe("client configuration filesystem lifecycle", () => {
       },
     });
   });
+});
 
+describe("Grok Build multiline and escaped headers", () => {
   it("preserves a multiline string opened on the line that closed the previous one", async () => {
     const home = await createTestTempDirectory("rea-grok-multiline-");
     roots.push(home);
@@ -496,7 +584,9 @@ describe("client configuration filesystem lifecycle", () => {
       },
     });
   });
+});
 
+describe("Grok Build inline and dotted assignments", () => {
   it("updates and removes inline and dotted Grok REA assignments", async () => {
     const home = await createTestTempDirectory("rea-grok-assign-");
     roots.push(home);
@@ -600,7 +690,9 @@ describe("client configuration filesystem lifecycle", () => {
       },
     });
   });
+});
 
+describe("Grok Build closed inline tables", () => {
   it("splices REA into a closed mcp_servers inline table", async () => {
     const home = await createTestTempDirectory("rea-grok-inline-table-");
     roots.push(home);
@@ -718,7 +810,9 @@ describe("client configuration filesystem lifecycle", () => {
         .filter((line) => line.trim() === "[mcp_servers.rea]"),
     ).toHaveLength(1);
   });
+});
 
+describe("Grok Build scalar and nested values", () => {
   it("preserves a basic string that uses the escape smol-toml accepts", async () => {
     const home = await createTestTempDirectory("rea-grok-escape-e-");
     roots.push(home);
@@ -821,7 +915,9 @@ describe("client configuration filesystem lifecycle", () => {
       },
     });
   });
+});
 
+describe("Grok Build newlines and leading marks", () => {
   it("edits a BOM-prefixed Grok document without losing the first table", async () => {
     const home = await createTestTempDirectory("rea-grok-bom-");
     roots.push(home);
@@ -914,7 +1010,9 @@ describe("client configuration filesystem lifecycle", () => {
       },
     });
   });
+});
 
+describe("Grok Build inline comments", () => {
   it("keeps comments on dotted Grok fields without repeating a comma", async () => {
     const home = await createTestTempDirectory("rea-grok-dotted-comment-");
     roots.push(home);
@@ -1024,6 +1122,26 @@ describe("client configuration filesystem lifecycle", () => {
     });
   });
 
+  it("keeps comments when uninstall removes the only inline Grok server", async () => {
+    const home = await createTestTempDirectory("rea-grok-inline-empty-");
+    roots.push(home);
+    const configPath = join(home, ".grok/config.toml");
+    await mkdir(dirname(configPath), { recursive: true });
+    await writeFile(
+      configPath,
+      'mcp_servers = { # policy\n  rea = { command = "rea", args = ["mcp"] } # owned\n}\n',
+    );
+    expect((await runUninstall(false, systemUninstallHost(home))).status).toBe(
+      "complete",
+    );
+    const removed = await readFile(configPath, "utf8");
+    expect(removed).toContain("# policy");
+    expect(removed).toContain("# owned");
+    expect(parseToml(removed)).not.toHaveProperty("mcp_servers.rea");
+  });
+});
+
+describe("Grok Bot configuration comments", () => {
   it("keeps a same-line JSONC comment when uninstall removes Grok Bot", async () => {
     const home = await createTestTempDirectory("rea-grokbot-jsonc-comment-");
     roots.push(home);
@@ -1138,26 +1256,6 @@ describe("client configuration filesystem lifecycle", () => {
         ["rea", "mcp"],
       ),
     ).toEqual({ status: "unchanged" });
-  });
-
-  it("fails before mutation when a TOML config symlink is dangling", async () => {
-    const home = await createTestTempDirectory("rea-toml-symlink-");
-    roots.push(home);
-    const configPath = join(home, ".codex/config.toml");
-    await mkdir(dirname(configPath), { recursive: true });
-    await symlink(join(home, "missing-config.toml"), configPath);
-
-    expect(
-      await configureClientConfiguration({
-        name: "codex",
-        configPath,
-        format: "toml",
-      }),
-    ).toEqual({ status: "failed", reason: "path" });
-    expect((await lstat(configPath)).isSymbolicLink()).toBe(true);
-    await expect(
-      readFile(`${configPath}.rea.backup`, "utf8"),
-    ).rejects.toThrow();
   });
 });
 

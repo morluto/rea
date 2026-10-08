@@ -144,10 +144,11 @@ both load. If the configuration already uses OpenCode V2's native
 `mcp.rea` entry from REA.
 
 Grok Build loads `[mcp_servers.rea]` from `$GROK_HOME/config.toml`, or from
-`~/.grok/config.toml` when `GROK_HOME` is unset. Setup edits only that server
-table and `[mcp_servers.rea.env]`, and sets `startup_timeout_sec = 30`. The
-shared skill installed under `~/.agents/skills` is already on Grok Build's
-skill path.
+`~/.grok/config.toml` when `GROK_HOME` is unset. Setup edits that server
+table, `[mcp_servers.rea.env]`, and a root `disabled_mcp_servers` entry that
+names `rea`. It sets `startup_timeout_sec = 30` and leaves every other name
+in that list. The shared skill installed under `~/.agents/skills` is already
+on Grok Build's skill path.
 
 Grok Bot is detected from `~/.grokbot`, or from `SAND_DATA_ROOT` when that
 value is an absolute path. Setup writes `mcpServers.rea` to `mcp.json` in that

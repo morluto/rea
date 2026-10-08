@@ -1,5 +1,6 @@
 import {
   effectiveClientServer,
+  grokServerListedDisabled,
   parseClientConfiguration,
 } from "./ClientConfigurationDocument.js";
 import { access, readFile } from "node:fs/promises";
@@ -93,10 +94,8 @@ export const readClientRegistrationStatuses = async (
       continue;
     try {
       const content = await readFile(client.configPath, "utf8");
-      const raw = effectiveClientServer(
-        parseClientConfiguration(content, client.format),
-        PRODUCT_IDENTITY.mcpServerKey,
-      );
+      const parsed = parseClientConfiguration(content, client.format);
+      const raw = effectiveClientServer(parsed, PRODUCT_IDENTITY.mcpServerKey);
       if (raw === undefined) {
         statuses.push(
           unavailableStatus(client.name, client.configPath, "missing"),
@@ -118,7 +117,14 @@ export const readClientRegistrationStatuses = async (
             client,
             currentCommandPath,
             options.platform ?? process.platform,
-          )
+          ) &&
+            !(
+              client.format === "grok" &&
+              grokServerListedDisabled(
+                parsed.document,
+                PRODUCT_IDENTITY.mcpServerKey,
+              )
+            )
             ? "aligned"
             : "stale",
         ),

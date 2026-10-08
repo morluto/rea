@@ -245,6 +245,21 @@ describe("Node-wrapped registration policy", () => {
     },
   );
 
+  it("reports Grok Build stale when rea is listed in disabled_mcp_servers", async () => {
+    const home = await createTestTempDirectory("rea-grok-disabled-status-");
+    await mkdir(join(home, ".grok"));
+    const entry = resolve("scripts/rea.mjs");
+    await writeFile(
+      join(home, ".grok/config.toml"),
+      `disabled_mcp_servers = ["rea"]\n[mcp_servers.rea]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(entry)}, "mcp"]\nstartup_timeout_sec = 30\n`,
+    );
+    expect(
+      await readClientRegistrationStatuses(home, entry, { environment: {} }),
+    ).toEqual([
+      expect.objectContaining({ client: "grok_build", state: "stale" }),
+    ]);
+  });
+
   it("checks a direct-launcher Codex startup timeout without Node wrapping", async () => {
     const home = await createTestTempDirectory("rea-direct-registration-");
     await mkdir(join(home, ".codex"));
