@@ -1,7 +1,11 @@
 # Changelog
 
-## [5.1.0](https://github.com/morluto/rea/compare/rea-agents-5.0.0...rea-agents-5.1.0) (2026-10-08)
+## [6.0.0](https://github.com/morluto/rea/compare/rea-agents-5.0.0...rea-agents-6.0.0) (2026-10-08)
 
+
+### ⚠ BREAKING CHANGES
+
+* **contracts:** MCP filesystem inputs now require absolute host paths, including target/snapshot paths, evidence bundle paths, managed and firmware inputs, browser/Electron launch paths and expected server paths. Calls such as `open_binary({"path":"./app"})` must send an absolute path such as `/home/analyst/app` or `C:\analysis\app`. Optional paths remain optional. CLI operator-relative paths continue to work. See [#948](https://github.com/morluto/rea/pull/948) and [#1004](https://github.com/morluto/rea/pull/1004).
 
 ### Features
 
@@ -15,6 +19,30 @@
 
 
 ### Bug Fixes
+
+* **dotnet:** validate managed metadata and CIL boundaries ([#938](https://github.com/morluto/rea/pull/938)) ([bda4ada](https://github.com/morluto/rea/commit/bda4ada7fb6bd7dd70a444bb3c57e34f7f5cc00b))
+
+* **build:** clarify generated-file check hint and drop redundant catalog step ([#998](https://github.com/morluto/rea/pull/998)) ([6f0ef16](https://github.com/morluto/rea/commit/6f0ef160501ea3b24dfa2939dfcd3eea0dc13ee7))
+
+* **release:** extend npm propagation window and improve diagnostics ([#943](https://github.com/morluto/rea/pull/943)) ([06b047a](https://github.com/morluto/rea/commit/06b047a0929369d5b8635b3651da115c8fcd53a7))
+
+* **contracts:** require absolute local paths for session filesystem inputs ([#948](https://github.com/morluto/rea/pull/948)) ([5b172b1](https://github.com/morluto/rea/commit/5b172b1042fc09a4e12d956018f15d86cf397ffe))
+
+* **ci:** generate source catalog before shard tests ([#1002](https://github.com/morluto/rea/pull/1002)) ([eb8f649](https://github.com/morluto/rea/commit/eb8f6491a88bfa79d13f7923e4ef94d791f6ba4d))
+
+* **contracts:** require absolute local paths for remaining caller-supplied file inputs ([#1004](https://github.com/morluto/rea/pull/1004)) ([cbc0dd1](https://github.com/morluto/rea/commit/cbc0dd1e7ca36fa3504a9ea8eae303a0876b176b))
+
+* **cli:** classify ENOTDIR JSON input failures ([#1000](https://github.com/morluto/rea/pull/1000)) ([a6132be](https://github.com/morluto/rea/commit/a6132be0546d6a9e3fa83426c8b59b1280b3e5bd))
+
+* **browser:** preserve authorized redirect hops ([#986](https://github.com/morluto/rea/pull/986)) ([ae0f725](https://github.com/morluto/rea/commit/ae0f725fad368730c6198d49716ccc410bca0536))
+
+* **mcp:** reject unknown MCP tool inputs ([#975](https://github.com/morluto/rea/pull/975)) ([fe64fd6](https://github.com/morluto/rea/commit/fe64fd65d93eff202ad90145544dc9ff84651974))
+
+* **release:** publish from explicit source checkpoints ([#1003](https://github.com/morluto/rea/pull/1003)) ([64c7188](https://github.com/morluto/rea/commit/64c71880ae4f7bc658ffce46eb729c4141dbdf19))
+
+* **release:** publish from explicit source checkpoints ([#1006](https://github.com/morluto/rea/pull/1006)) ([b4fc0ec](https://github.com/morluto/rea/commit/b4fc0ecaa1f6b912dc27880e6b6127ace47abc2e))
+
+* **javascript:** bound semantic node projection for resource safety ([#966](https://github.com/morluto/rea/pull/966)) ([96a46ad](https://github.com/morluto/rea/commit/96a46ada0a36f0349f2b0fc20b4c932401b4ad84))
 
 * **ci:** avoid slow Azure archive for the native cross compiler ([#1016](https://github.com/morluto/rea/issues/1016)) ([51956c1](https://github.com/morluto/rea/commit/51956c1a49a7dc9ed70a6fba480a670a7e7b2b9b))
 * **ci:** decouple stdio smoke tests from Linux display probes ([#1014](https://github.com/morluto/rea/issues/1014)) ([93731e1](https://github.com/morluto/rea/commit/93731e17ddea76db86dfa84bb54536dcf8ebfa0b))
@@ -43,6 +71,10 @@
 
 ### Code Refactoring
 
+* **build:** generate MCP tool catalog at build time instead of committing it ([#997](https://github.com/morluto/rea/pull/997)) ([35a4e18](https://github.com/morluto/rea/commit/35a4e18d3028014e24d2e209ec99a590fde63152))
+
+* **process:** separate capture implementation from analyst workflows ([#988](https://github.com/morluto/rea/pull/988)) ([6aa9afb](https://github.com/morluto/rea/commit/6aa9afb5493a97801eb1126a0dcf11f9705165db))
+
 * **artifacts:** move inventory and extraction into provider owners ([#1032](https://github.com/morluto/rea/issues/1032)) ([6e4535c](https://github.com/morluto/rea/commit/6e4535c1011f1982e9ab07b7ebcd600c19cd494d))
 * remove abandoned test-only analysis scaffolding ([c93422a](https://github.com/morluto/rea/commit/c93422a898fdbedb7d28709144b4337a2669440b))
 
@@ -54,6 +86,8 @@
 
 
 ### Tests
+
+* **process:** wait for observable snapshot ctime changes ([#999](https://github.com/morluto/rea/pull/999)) ([161ed91](https://github.com/morluto/rea/commit/161ed9157134d5c3b0fbae19ceb756ac58a26c04))
 
 * **browser:** consolidate CDP workflows and colocate parser coverage ([2682904](https://github.com/morluto/rea/commit/26829045d0f0e744bb60d6babc2dc3312f4bfa53))
 * **ci:** stabilize browser source identity fixture delivery ([#1023](https://github.com/morluto/rea/issues/1023)) ([ed725da](https://github.com/morluto/rea/commit/ed725dace4a689e4e5c804dc6bf06c7fc663c7c9))

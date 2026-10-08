@@ -272,7 +272,7 @@ TypeScript と SQLite を使って私のプロジェクト向けに実装して�
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@5.1.0", "mcp"]
+      "args": ["-y", "rea-agents@6.0.0", "mcp"]
     }
   }
 }

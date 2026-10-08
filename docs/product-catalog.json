@@ -1,7 +1,7 @@
 {
   "package": {
     "name": "rea-agents",
-    "version": "5.1.0",
+    "version": "6.0.0",
     "sdk": {
       "server": "2.3.1",
       "client": "2.3.1",
