@@ -128,59 +128,65 @@ describe("Hopper process cleanup", () => {
 });
 
 describe("Linux private display selection", () => {
-  it("prefers a successful direct Xvfb probe", async () => {
-    const calls: LinuxPrivateDisplayRunnableStrategy[] = [];
-    const runProbe: LinuxPrivateDisplayProbeRunner = (strategy) => {
-      calls.push(strategy);
-      return Promise.resolve(processResult(diagnostic({ strategy })));
-    };
+  it.skipIf(process.platform === "win32")(
+    "prefers a successful direct Xvfb probe",
+    async () => {
+      const calls: LinuxPrivateDisplayRunnableStrategy[] = [];
+      const runProbe: LinuxPrivateDisplayProbeRunner = (strategy) => {
+        calls.push(strategy);
+        return Promise.resolve(processResult(diagnostic({ strategy })));
+      };
 
-    await expect(
-      selectLinuxPrivateDisplayStrategy({ helperPath, runProbe }),
-    ).resolves.toMatchObject({ ok: true, strategy: "direct" });
-    expect(calls).toEqual(["direct"]);
-  });
+      await expect(
+        selectLinuxPrivateDisplayStrategy({ helperPath, runProbe }),
+      ).resolves.toMatchObject({ ok: true, strategy: "direct" });
+      expect(calls).toEqual(["direct"]);
+    },
+  );
 
-  it("uses a private mount namespace only for the exact socket conflict", async () => {
-    const calls: LinuxPrivateDisplayRunnableStrategy[] = [];
-    const runProbe: LinuxPrivateDisplayProbeRunner = (strategy) => {
-      calls.push(strategy);
-      return Promise.resolve(
-        strategy === "direct"
-          ? processResult(
-              diagnostic({
-                strategy,
-                status: "error",
-                failure_code: "x11_socket_directory_unusable",
-                reason: "socket_directory_read_only",
-                socket_directory_mode: "0777",
-                mount_read_only: true,
-                effective_socket_directory_mode: "0777",
-                effective_mount_read_only: true,
-                wsl: true,
-              }),
-            )
-          : processResult(diagnostic({ strategy, wsl: true })),
-      );
-    };
+  it.skipIf(process.platform === "win32")(
+    "uses a private mount namespace only for the exact socket conflict",
+    async () => {
+      const calls: LinuxPrivateDisplayRunnableStrategy[] = [];
+      const runProbe: LinuxPrivateDisplayProbeRunner = (strategy) => {
+        calls.push(strategy);
+        return Promise.resolve(
+          strategy === "direct"
+            ? processResult(
+                diagnostic({
+                  strategy,
+                  status: "error",
+                  failure_code: "x11_socket_directory_unusable",
+                  reason: "socket_directory_read_only",
+                  socket_directory_mode: "0777",
+                  mount_read_only: true,
+                  effective_socket_directory_mode: "0777",
+                  effective_mount_read_only: true,
+                  wsl: true,
+                }),
+              )
+            : processResult(diagnostic({ strategy, wsl: true })),
+        );
+      };
 
-    const selected = await selectLinuxPrivateDisplayStrategy({
-      helperPath,
-      runProbe,
-    });
-    expect(selected).toMatchObject({
-      ok: true,
-      strategy: "user-mount-namespace",
-      diagnostic: {
-        socket_directory_mode: "0777",
-        mount_read_only: true,
-        effective_socket_directory_mode: "1777",
-        effective_mount_read_only: false,
-        wsl: true,
-      },
-    });
-    expect(calls).toEqual(["direct", "user-mount-namespace"]);
-  });
+      const selected = await selectLinuxPrivateDisplayStrategy({
+        helperPath,
+        runProbe,
+      });
+      expect(selected).toMatchObject({
+        ok: true,
+        strategy: "user-mount-namespace",
+        diagnostic: {
+          socket_directory_mode: "0777",
+          mount_read_only: true,
+          effective_socket_directory_mode: "1777",
+          effective_mount_read_only: false,
+          wsl: true,
+        },
+      });
+      expect(calls).toEqual(["direct", "user-mount-namespace"]);
+    },
+  );
 
   it.each([
     ["missing_xvfb", "runtime_dependency_unavailable", 79],
@@ -225,46 +231,52 @@ describe("Linux private display selection", () => {
     });
   });
 
-  it("reports missing helper dependencies without exposing raw stderr", () => {
-    for (const [option] of [
-      ["--xauth", "missing_xauth"],
-      ["--xvfb", "missing_xvfb"],
-    ] as const) {
-      const result = spawnSync(
-        "/usr/bin/python3",
-        [helperPath, "--probe", option, "/rea/missing-executable"],
-        { encoding: "utf8" },
-      );
-      expect(result.status).toBe(79);
-      const parsed = parseLinuxPrivateDisplayDiagnostic(result.stderr);
-      expect(parsed).toMatchObject({
-        ok: true,
-        value: {
-          status: "error",
-          failure_code: "runtime_dependency_unavailable",
-        },
-      });
-      if (parsed.ok)
-        expect(parsed.value.reason).toMatch(/^missing_(xauth|xvfb)$/u);
-      expect(result.stderr).not.toContain("Traceback");
-    }
-  });
+  it.skipIf(process.platform === "win32")(
+    "reports missing helper dependencies without exposing raw stderr",
+    () => {
+      for (const [option] of [
+        ["--xauth", "missing_xauth"],
+        ["--xvfb", "missing_xvfb"],
+      ] as const) {
+        const result = spawnSync(
+          "/usr/bin/python3",
+          [helperPath, "--probe", option, "/rea/missing-executable"],
+          { encoding: "utf8" },
+        );
+        expect(result.status).toBe(79);
+        const parsed = parseLinuxPrivateDisplayDiagnostic(result.stderr);
+        expect(parsed).toMatchObject({
+          ok: true,
+          value: {
+            status: "error",
+            failure_code: "runtime_dependency_unavailable",
+          },
+        });
+        if (parsed.ok)
+          expect(parsed.value.reason).toMatch(/^missing_(xauth|xvfb)$/u);
+        expect(result.stderr).not.toContain("Traceback");
+      }
+    },
+  );
 
-  it("kills the owned probe group when its absolute deadline expires", async () => {
-    const result = await selectLinuxPrivateDisplayStrategy({
-      helperPath: hangingHelperPath,
-      timeoutMs: 75,
-      runProbe: runLinuxPrivateDisplayProbe,
-    });
-    expect(result).toMatchObject({
-      ok: false,
-      diagnostic: { reason: "probe_timeout" },
-    });
-    const processes = spawnSync("/bin/ps", ["-eo", "args="], {
-      encoding: "utf8",
-    }).stdout;
-    expect(processes).not.toContain(hangingHelperPath);
-  });
+  it.skipIf(process.platform === "win32")(
+    "kills the owned probe group when its absolute deadline expires",
+    async () => {
+      const result = await selectLinuxPrivateDisplayStrategy({
+        helperPath: hangingHelperPath,
+        timeoutMs: 75,
+        runProbe: runLinuxPrivateDisplayProbe,
+      });
+      expect(result).toMatchObject({
+        ok: false,
+        diagnostic: { reason: "probe_timeout" },
+      });
+      const processes = spawnSync("/bin/ps", ["-eo", "args="], {
+        encoding: "utf8",
+      }).stdout;
+      expect(processes).not.toContain(hangingHelperPath);
+    },
+  );
 });
 
 describe("private display probe output settlement", () => {

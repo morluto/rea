@@ -8,72 +8,82 @@ import { importReferenceSource } from "../../../src/application/ReferenceSourceI
 import { compareSourceToBundle } from "../../../src/domain/javascript/sourceToBundleComparison.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-it("keeps literal hash characters in historical/current filesystem paths", async () => {
-  const root = await createTestTempDirectory("rea-source-path-");
-  const previous = join(root, "previous");
-  const current = join(root, "current");
-  await Promise.all([mkdir(previous), mkdir(current)]);
-  await Promise.all([
-    writeFile(join(previous, "worker#main.js"), "export const value = 1;"),
-    writeFile(join(current, "worker#main.js"), "export const value = 2;"),
-  ]);
-  const reference = await importReferenceSource({
-    root: previous,
-    caller: "source-to-bundle-path-test",
-    policy: { secretPatterns: [] },
-  });
-  if (!reference.ok) throw new Error(reference.error.message);
-  const analyzed = await analyzeJavaScriptApplication({ input_path: current });
-  if (!analyzed.ok) throw analyzed.error;
-  const application = parseApplicationGraphEvidence(analyzed.value);
-  const comparison = compareSourceToBundle({
-    reference: reference.value,
-    application: {
-      evidenceId: application.evidence.evidence_id,
-      rootArtifactSha256: application.rootArtifactSha256,
-      graph: application.graph,
-    },
-  });
+import { noFollowOpenSupported } from "../../../src/reference/ReferenceSourceReaderValidate.js";
 
-  expect(reference.value.entries).toContainEqual(
-    expect.objectContaining({
-      kind: "file",
-      path: "worker#main.js",
-      content_state: "hashed",
-    }),
-  );
-  expect(comparison.items).toContainEqual(
-    expect.objectContaining({
-      source_path: "worker#main.js",
-      candidates: expect.arrayContaining([
-        expect.objectContaining({
-          signals: expect.arrayContaining([
-            expect.objectContaining({
-              kind: "current-path-exact",
-              source_value: "worker#main.js",
-            }),
-          ]),
-        }),
-      ]),
-    }),
-  );
-});
+it.skipIf(!noFollowOpenSupported())(
+  "keeps literal hash characters in historical/current filesystem paths",
+  async () => {
+    const root = await createTestTempDirectory("rea-source-path-");
+    const previous = join(root, "previous");
+    const current = join(root, "current");
+    await Promise.all([mkdir(previous), mkdir(current)]);
+    await Promise.all([
+      writeFile(join(previous, "worker#main.js"), "export const value = 1;"),
+      writeFile(join(current, "worker#main.js"), "export const value = 2;"),
+    ]);
+    const reference = await importReferenceSource({
+      root: previous,
+      caller: "source-to-bundle-path-test",
+      policy: { secretPatterns: [] },
+    });
+    if (!reference.ok) throw new Error(reference.error.message);
+    const analyzed = await analyzeJavaScriptApplication({
+      input_path: current,
+    });
+    if (!analyzed.ok) throw analyzed.error;
+    const application = parseApplicationGraphEvidence(analyzed.value);
+    const comparison = compareSourceToBundle({
+      reference: reference.value,
+      application: {
+        evidenceId: application.evidence.evidence_id,
+        rootArtifactSha256: application.rootArtifactSha256,
+        graph: application.graph,
+      },
+    });
 
-it("rejects static application Evidence whose subject path disagrees with its result", async () => {
-  const root = await createTestTempDirectory("rea-application-subject-path-");
-  const analyzed = await analyzeJavaScriptApplication({ input_path: root });
-  if (!analyzed.ok) throw analyzed.error;
-  const subject = analyzed.value.subject;
-  if (subject === null) throw new Error("Analysis Evidence subject missing");
-  const inconsistent = {
-    ...analyzed.value,
-    subject: {
-      ...subject,
-      local_path: join(root, "relocated"),
-    },
-  };
+    expect(reference.value.entries).toContainEqual(
+      expect.objectContaining({
+        kind: "file",
+        path: "worker#main.js",
+        content_state: "hashed",
+      }),
+    );
+    expect(comparison.items).toContainEqual(
+      expect.objectContaining({
+        source_path: "worker#main.js",
+        candidates: expect.arrayContaining([
+          expect.objectContaining({
+            signals: expect.arrayContaining([
+              expect.objectContaining({
+                kind: "current-path-exact",
+                source_value: "worker#main.js",
+              }),
+            ]),
+          }),
+        ]),
+      }),
+    );
+  },
+);
 
-  expect(() => parseApplicationGraphEvidence(inconsistent)).toThrow(
-    "JavaScript application Evidence subject does not match its result",
-  );
-});
+it.skipIf(!noFollowOpenSupported())(
+  "rejects static application Evidence whose subject path disagrees with its result",
+  async () => {
+    const root = await createTestTempDirectory("rea-application-subject-path-");
+    const analyzed = await analyzeJavaScriptApplication({ input_path: root });
+    if (!analyzed.ok) throw analyzed.error;
+    const subject = analyzed.value.subject;
+    if (subject === null) throw new Error("Analysis Evidence subject missing");
+    const inconsistent = {
+      ...analyzed.value,
+      subject: {
+        ...subject,
+        local_path: join(root, "relocated"),
+      },
+    };
+
+    expect(() => parseApplicationGraphEvidence(inconsistent)).toThrow(
+      "JavaScript application Evidence subject does not match its result",
+    );
+  },
+);

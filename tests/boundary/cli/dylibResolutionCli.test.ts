@@ -201,7 +201,7 @@ describe("trace-dylib-resolution CLI", () => {
   );
 });
 
-describe.skipIf(process.getuid?.() === 0)(
+describe.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
   "trace-dylib-resolution permissions",
   () => {
     cliTest(

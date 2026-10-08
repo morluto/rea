@@ -102,7 +102,7 @@ afterEach(async () => {
   await Promise.all(clients.splice(0).map((client) => client.close()));
 });
 
-describe("HopperClient cleanup", () => {
+describe.skipIf(process.platform === "win32")("HopperClient cleanup", () => {
   it("waits for an operation reply without a fixed request deadline", async () => {
     const launcher = new FixtureLauncher();
     const client = await startClient(launcher);

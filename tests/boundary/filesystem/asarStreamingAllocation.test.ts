@@ -153,51 +153,60 @@ describe("ASAR entry streaming", () => {
 });
 
 describe("ASAR entry producer identity", () => {
-  it.each([false, true] as const)(
-    "rejects a copied entry with a changed unpacked flag for unpacked=%s",
-    async (unpacked) => {
-      const root = await createTestTempDirectory("rea-asar-entry-identity-");
-      const source = join(root, "source");
-      const archive = join(root, "fixture.asar");
-      await mkdir(source);
-      await writeFile(join(source, "small.js"), "module.exports = 1;\n");
-      await createPackageWithOptions(
-        source,
-        archive,
-        unpacked ? { unpack: "small.js" } : {},
+  // Descriptor counting reads /dev/fd or /proc/self/fd; unavailable on win32.
+  describe.skipIf(process.platform === "win32")(
+    "entry descriptor hygiene",
+    () => {
+      it.each([false, true] as const)(
+        "rejects a copied entry with a changed unpacked flag for unpacked=%s",
+        async (unpacked) => {
+          const root = await createTestTempDirectory(
+            "rea-asar-entry-identity-",
+          );
+          const source = join(root, "source");
+          const archive = join(root, "fixture.asar");
+          await mkdir(source);
+          await writeFile(join(source, "small.js"), "module.exports = 1;\n");
+          await createPackageWithOptions(
+            source,
+            archive,
+            unpacked ? { unpack: "small.js" } : {},
+          );
+          const selectedPath = unpacked
+            ? join(`${archive}.unpacked`, "small.js")
+            : archive;
+          const identity = await lstat(selectedPath);
+          const reader = new AsarArtifactReader(archive);
+
+          try {
+            const entries = [];
+            for await (const entry of reader.entries()) entries.push(entry);
+            const entry = entries.find(({ path }) => path === "small.js");
+            if (entry === undefined)
+              throw new Error("Expected ASAR file entry");
+            expect(entry.unpacked).toBe(unpacked);
+            expect(await matchingDescriptorCount(identity)).toBe(0);
+            if (entry.declaredSize === null)
+              throw new Error("Expected ASAR file size metadata");
+
+            for (const changedEntry of [
+              { ...entry, unpacked: !entry.unpacked },
+              { ...entry, path: `stale/${entry.path}` },
+              { ...entry, declaredSize: entry.declaredSize + 1 },
+            ])
+              await expect(reader.open(changedEntry)).rejects.toMatchObject({
+                name: "ArtifactReaderFailure",
+                reason: "integrity",
+                message: expect.stringContaining(
+                  `ASAR entry metadata changed since inventory: ${entry.path}`,
+                ),
+              });
+            await waitForNoMatchingDescriptor(identity);
+          } finally {
+            await reader.close();
+          }
+        },
       );
-      const selectedPath = unpacked
-        ? join(`${archive}.unpacked`, "small.js")
-        : archive;
-      const identity = await lstat(selectedPath);
-      const reader = new AsarArtifactReader(archive);
-
-      try {
-        const entries = [];
-        for await (const entry of reader.entries()) entries.push(entry);
-        const entry = entries.find(({ path }) => path === "small.js");
-        if (entry === undefined) throw new Error("Expected ASAR file entry");
-        expect(entry.unpacked).toBe(unpacked);
-        expect(await matchingDescriptorCount(identity)).toBe(0);
-        if (entry.declaredSize === null)
-          throw new Error("Expected ASAR file size metadata");
-
-        for (const changedEntry of [
-          { ...entry, unpacked: !entry.unpacked },
-          { ...entry, path: `stale/${entry.path}` },
-          { ...entry, declaredSize: entry.declaredSize + 1 },
-        ])
-          await expect(reader.open(changedEntry)).rejects.toMatchObject({
-            name: "ArtifactReaderFailure",
-            reason: "integrity",
-            message: expect.stringContaining(
-              `ASAR entry metadata changed since inventory: ${entry.path}`,
-            ),
-          });
-        await waitForNoMatchingDescriptor(identity);
-      } finally {
-        await reader.close();
-      }
     },
   );
 

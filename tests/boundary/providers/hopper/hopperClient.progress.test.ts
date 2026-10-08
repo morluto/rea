@@ -5,7 +5,7 @@ import {
   startHopperFixtureClient as startClient,
 } from "./hopperClient.fixture.js";
 
-describe("HopperClient progress", () => {
+describe.skipIf(process.platform === "win32")("HopperClient progress", () => {
   it("forwards correlated Python progress before the terminal response", async () => {
     const launcher = new HopperFixtureLauncher();
     const client = await startClient(launcher);

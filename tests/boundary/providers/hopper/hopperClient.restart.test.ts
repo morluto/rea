@@ -6,7 +6,7 @@ import {
   startHopperFixtureClient as startClient,
 } from "./hopperClient.fixture.js";
 
-describe("HopperClient restart", () => {
+describe.skipIf(process.platform === "win32")("HopperClient restart", () => {
   it("does not finish startup after an immediate close", async () => {
     const client = new HopperClient({
       launcher: new FixtureLauncher(),

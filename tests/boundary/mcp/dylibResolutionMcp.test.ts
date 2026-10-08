@@ -160,7 +160,7 @@ it("traces a standalone Mach-O file whose name ends in .app", async () => {
   });
 });
 
-it.skipIf(process.getuid?.() === 0)(
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
   "keeps a permission denied while canonicalizing the opened bundle",
   async () => {
     const parent = await createTestTempDirectory("rea-dylib-mcp-revoked-");

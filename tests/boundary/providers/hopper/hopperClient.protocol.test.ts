@@ -22,173 +22,194 @@ describe("HopperClient protocol", () => {
     });
   });
 
-  it("uses the caller-assigned provider run identity", async () => {
-    const launcher = new FixtureLauncher();
-    const client = new HopperClient({
-      launcher,
-      runId: "11111111-1111-4111-8111-111111111111",
-      startupTimeoutMs: 1_000,
-    });
-    onTestFinished(() => client.close());
+  it.skipIf(process.platform === "win32")(
+    "uses the caller-assigned provider run identity",
+    async () => {
+      const launcher = new FixtureLauncher();
+      const client = new HopperClient({
+        launcher,
+        runId: "11111111-1111-4111-8111-111111111111",
+        startupTimeoutMs: 1_000,
+      });
+      onTestFinished(() => client.close());
 
-    expect((await client.start()).ok).toBe(true);
-    expect(launcher.runIds).toEqual(["11111111-1111-4111-8111-111111111111"]);
-  });
+      expect((await client.start()).ok).toBe(true);
+      expect(launcher.runIds).toEqual(["11111111-1111-4111-8111-111111111111"]);
+    },
+  );
 
-  it("keeps the native socket path below macOS sockaddr_un limits", async () => {
-    const launcher = new FixtureLauncher();
-    const client = new HopperClient({ launcher, startupTimeoutMs: 1_000 });
-    onTestFinished(() => client.close());
-    const started = await client.start();
-    expect(started.ok).toBe(true);
-    expect(Buffer.byteLength(launcher.socketPaths[0] ?? "")).toBeLessThan(104);
-  });
+  it.skipIf(process.platform === "win32")(
+    "keeps the native socket path below macOS sockaddr_un limits",
+    async () => {
+      const launcher = new FixtureLauncher();
+      const client = new HopperClient({ launcher, startupTimeoutMs: 1_000 });
+      onTestFinished(() => client.close());
+      const started = await client.start();
+      expect(started.ok).toBe(true);
+      expect(Buffer.byteLength(launcher.socketPaths[0] ?? "")).toBeLessThan(
+        104,
+      );
+    },
+  );
 
-  it("serializes concurrent calls until the active Hopper reply arrives", async () => {
-    const launcher = new FixtureLauncher();
-    const client = await startClient(launcher);
-    const slow = client.callTool("echo", { label: "slow", gate: "serial" });
-    const request = await launcher.waitForRequest("echo", "serial");
-    const fast = client.callTool("echo", { label: "fast" });
-    let fastSettled = false;
-    void fast.then(() => {
-      fastSettled = true;
-    });
-    await vi.waitFor(() =>
-      expect(client.requestActivity()).toMatchObject({
-        operation: "echo",
-        queuedRequests: 1,
-      }),
-    );
-    expect(fastSettled).toBe(false);
-    expect(launcher.requests.filter(({ method }) => method === "echo")).toEqual(
-      [request],
-    );
-    await launcher.release(request);
-    await expect(Promise.all([slow, fast])).resolves.toEqual([
-      { ok: true, value: { label: "slow", gate: "serial" } },
-      { ok: true, value: { label: "fast" } },
-    ]);
-  });
+  it.skipIf(process.platform === "win32")(
+    "serializes concurrent calls until the active Hopper reply arrives",
+    async () => {
+      const launcher = new FixtureLauncher();
+      const client = await startClient(launcher);
+      const slow = client.callTool("echo", { label: "slow", gate: "serial" });
+      const request = await launcher.waitForRequest("echo", "serial");
+      const fast = client.callTool("echo", { label: "fast" });
+      let fastSettled = false;
+      void fast.then(() => {
+        fastSettled = true;
+      });
+      await vi.waitFor(() =>
+        expect(client.requestActivity()).toMatchObject({
+          operation: "echo",
+          queuedRequests: 1,
+        }),
+      );
+      expect(fastSettled).toBe(false);
+      expect(
+        launcher.requests.filter(({ method }) => method === "echo"),
+      ).toEqual([request]);
+      await launcher.release(request);
+      await expect(Promise.all([slow, fast])).resolves.toEqual([
+        { ok: true, value: { label: "slow", gate: "serial" } },
+        { ok: true, value: { label: "fast" } },
+      ]);
+    },
+  );
 
-  it("routes every established operation through the authenticated bridge", async () => {
-    const client = await startClient();
-    const results = await Promise.all(
-      HOPPER_OPERATIONS.map((name) => client.callTool(name, {})),
-    );
-    expect(results).toHaveLength(HOPPER_OPERATIONS.length);
-    expect(results.every((result) => result.ok)).toBe(true);
-  });
+  it.skipIf(process.platform === "win32")(
+    "routes every established operation through the authenticated bridge",
+    async () => {
+      const client = await startClient();
+      const results = await Promise.all(
+        HOPPER_OPERATIONS.map((name) => client.callTool(name, {})),
+      );
+      expect(results).toHaveLength(HOPPER_OPERATIONS.length);
+      expect(results.every((result) => result.ok)).toBe(true);
+    },
+  );
 });
 
-describe("HopperClient response lifecycle", () => {
-  it("reassembles a fragmented Unicode reply from the owned socket", async () => {
-    const client = await startClient();
+describe.skipIf(process.platform === "win32")(
+  "HopperClient response lifecycle",
+  () => {
+    it("reassembles a fragmented Unicode reply from the owned socket", async () => {
+      const client = await startClient();
 
-    await expect(
-      client.callTool("echo", { label: "雪🦊", fragmented: true }),
-    ).resolves.toEqual({
-      ok: true,
-      value: { label: "雪🦊", fragmented: true },
+      await expect(
+        client.callTool("echo", { label: "雪🦊", fragmented: true }),
+      ).resolves.toEqual({
+        ok: true,
+        value: { label: "雪🦊", fragmented: true },
+      });
     });
-  });
 
-  it("accepts an owned-socket response above the former 10 MiB ceiling", async () => {
-    const client = await startClient();
-    const label = "x".repeat(10 * 1024 * 1024 + 1);
+    it("accepts an owned-socket response above the former 10 MiB ceiling", async () => {
+      const client = await startClient();
+      const label = "x".repeat(10 * 1024 * 1024 + 1);
 
-    const result = await client.callTool("echo", { label });
+      const result = await client.callTool("echo", { label });
 
-    expect(result).toEqual({ ok: true, value: { label } });
-  });
-
-  it("clears a partial reply when closing and restarting the owned session", async () => {
-    const launcher = new FixtureLauncher();
-    const client = await startClient(launcher);
-    const partialReply = client.callTool("partial_then_wait", {});
-    const request = await launcher.waitForRequest("partial_then_wait");
-    const partialWrite = await launcher.waitForRequest("fixture_partial_write");
-    expect(partialWrite.id).toBe(request.id);
-
-    await client.close();
-    await expect(partialReply).resolves.toMatchObject({
-      ok: false,
-      error: { _tag: "HopperProcessError" },
+      expect(result).toEqual({ ok: true, value: { label } });
     });
-    await expect(client.start()).resolves.toMatchObject({ ok: true });
-    await expect(client.callTool("echo", { label: "fresh" })).resolves.toEqual({
-      ok: true,
-      value: { label: "fresh" },
-    });
-  });
 
-  it("rejects a bridge session with the wrong capability token", async () => {
-    const client = new HopperClient({
-      launcher: new FixtureLauncher("wrong-token"),
-      startupTimeoutMs: 1_000,
-    });
-    onTestFinished(() => client.close());
-    const result = await client.start();
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error._tag).toBe("HopperRemoteError");
-  });
+    it("clears a partial reply when closing and restarting the owned session", async () => {
+      const launcher = new FixtureLauncher();
+      const client = await startClient(launcher);
+      const partialReply = client.callTool("partial_then_wait", {});
+      const request = await launcher.waitForRequest("partial_then_wait");
+      const partialWrite = await launcher.waitForRequest(
+        "fixture_partial_write",
+      );
+      expect(partialWrite.id).toBe(request.id);
 
-  it.each([
-    ["malformed", "HopperProtocolError"],
-    ["wrong_id", "HopperProtocolError"],
-    ["wrong_event_id", "HopperProtocolError"],
-    ["malformed_event", "HopperProtocolError"],
-    ["remote_error", "HopperRemoteError"],
-    ["exit", "HopperProcessError"],
-  ])("projects %s as %s", async (method, expectedTag) => {
-    const launcher = new FixtureLauncher();
-    const client = await startClient(launcher);
-    const result = await client.callTool(method);
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error._tag).toBe(expectedTag);
-      if (result.error._tag === "HopperRemoteError")
-        expect(result.error).toMatchObject({
-          operation: method,
-          requestId: (await launcher.waitForRequest(method)).id,
-        });
-    }
-    if (expectedTag === "HopperProtocolError") {
       await client.close();
-      const child = launcher.processes.at(-1);
-      expect({
-        exitCode: child?.exitCode,
-        signalCode: child?.signalCode,
-      }).toEqual({
-        exitCode: 0,
-        signalCode: null,
+      await expect(partialReply).resolves.toMatchObject({
+        ok: false,
+        error: { _tag: "HopperProcessError" },
       });
-    }
-  });
+      await expect(client.start()).resolves.toMatchObject({ ok: true });
+      await expect(
+        client.callTool("echo", { label: "fresh" }),
+      ).resolves.toEqual({
+        ok: true,
+        value: { label: "fresh" },
+      });
+    });
 
-  it("preserves a sanitized bridge exception diagnostic", async () => {
-    const launcher = new FixtureLauncher();
-    const diagnostics: HopperDiagnostic[] = [];
-    const client = new HopperClient({
-      launcher,
-      startupTimeoutMs: 1_000,
-      onDiagnostic: (event) => diagnostics.push(event),
-    });
-    onTestFinished(() => client.close());
-    await expect(client.start()).resolves.toMatchObject({ ok: true });
-    const result = await client.callTool("remote_error");
-    expect(result.ok).toBe(false);
-    if (!result.ok)
-      expect(result.error).toMatchObject({
-        _tag: "HopperRemoteError",
-        diagnosticType: "bridge_exception",
+    it("rejects a bridge session with the wrong capability token", async () => {
+      const client = new HopperClient({
+        launcher: new FixtureLauncher("wrong-token"),
+        startupTimeoutMs: 1_000,
       });
-    expect(diagnostics).toContainEqual({
-      type: "bridge-diagnostic",
-      request_id: (await launcher.waitForRequest("remote_error")).id,
-      code: -32001,
-      category: "bridge_exception",
-      message: "safe fake failure",
+      onTestFinished(() => client.close());
+      const result = await client.start();
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error._tag).toBe("HopperRemoteError");
     });
-  });
-});
+
+    it.each([
+      ["malformed", "HopperProtocolError"],
+      ["wrong_id", "HopperProtocolError"],
+      ["wrong_event_id", "HopperProtocolError"],
+      ["malformed_event", "HopperProtocolError"],
+      ["remote_error", "HopperRemoteError"],
+      ["exit", "HopperProcessError"],
+    ])("projects %s as %s", async (method, expectedTag) => {
+      const launcher = new FixtureLauncher();
+      const client = await startClient(launcher);
+      const result = await client.callTool(method);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error._tag).toBe(expectedTag);
+        if (result.error._tag === "HopperRemoteError")
+          expect(result.error).toMatchObject({
+            operation: method,
+            requestId: (await launcher.waitForRequest(method)).id,
+          });
+      }
+      if (expectedTag === "HopperProtocolError") {
+        await client.close();
+        const child = launcher.processes.at(-1);
+        expect({
+          exitCode: child?.exitCode,
+          signalCode: child?.signalCode,
+        }).toEqual({
+          exitCode: 0,
+          signalCode: null,
+        });
+      }
+    });
+
+    it("preserves a sanitized bridge exception diagnostic", async () => {
+      const launcher = new FixtureLauncher();
+      const diagnostics: HopperDiagnostic[] = [];
+      const client = new HopperClient({
+        launcher,
+        startupTimeoutMs: 1_000,
+        onDiagnostic: (event) => diagnostics.push(event),
+      });
+      onTestFinished(() => client.close());
+      await expect(client.start()).resolves.toMatchObject({ ok: true });
+      const result = await client.callTool("remote_error");
+      expect(result.ok).toBe(false);
+      if (!result.ok)
+        expect(result.error).toMatchObject({
+          _tag: "HopperRemoteError",
+          diagnosticType: "bridge_exception",
+        });
+      expect(diagnostics).toContainEqual({
+        type: "bridge-diagnostic",
+        request_id: (await launcher.waitForRequest("remote_error")).id,
+        code: -32001,
+        category: "bridge_exception",
+        message: "safe fake failure",
+      });
+    });
+  },
+);

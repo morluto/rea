@@ -123,36 +123,42 @@ describe("Hopper bridge launcher selection", () => {
     });
   });
 
-  it("rejects an unpinned wrapper before executing it", async () => {
-    const directory = await createTestTempDirectory("rea-hopper-wrapper-");
-    const wrapper = join(directory, "hopper-wrapper");
-    const marker = join(directory, "executed");
-    try {
-      await writeFile(wrapper, `#!/bin/sh\ntouch ${JSON.stringify(marker)}\n`);
-      await chmod(wrapper, 0o700);
-      await expect(
-        execFileAsync(
-          "python3",
-          [
-            demoHelperPath,
-            "--hopper",
-            wrapper,
-            "--socket",
-            join(directory, "bridge.sock"),
-            "--",
-            wrapper,
-          ],
-          { timeout: 3_000 },
-        ),
-      ).rejects.toMatchObject({
-        code: 72,
-        stderr: expect.stringContaining(
-          '"failure_code":"unsupported_hopper_build"',
-        ),
-      });
-      await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
-  });
+  it.skipIf(process.platform === "win32")(
+    "rejects an unpinned wrapper before executing it",
+    async () => {
+      const directory = await createTestTempDirectory("rea-hopper-wrapper-");
+      const wrapper = join(directory, "hopper-wrapper");
+      const marker = join(directory, "executed");
+      try {
+        await writeFile(
+          wrapper,
+          `#!/bin/sh\ntouch ${JSON.stringify(marker)}\n`,
+        );
+        await chmod(wrapper, 0o700);
+        await expect(
+          execFileAsync(
+            "python3",
+            [
+              demoHelperPath,
+              "--hopper",
+              wrapper,
+              "--socket",
+              join(directory, "bridge.sock"),
+              "--",
+              wrapper,
+            ],
+            { timeout: 3_000 },
+          ),
+        ).rejects.toMatchObject({
+          code: 72,
+          stderr: expect.stringContaining(
+            '"failure_code":"unsupported_hopper_build"',
+          ),
+        });
+        await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
 });

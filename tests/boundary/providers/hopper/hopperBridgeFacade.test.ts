@@ -136,7 +136,7 @@ const probeResultSchema = z.strictObject({
   }),
 });
 
-describe("Hopper API facade", () => {
+describe.skipIf(process.platform === "win32")("Hopper API facade", () => {
   it("imports without Hopper globals and gates exhaustive work during analysis", async () => {
     const { stdout } = await execute(
       "python3",

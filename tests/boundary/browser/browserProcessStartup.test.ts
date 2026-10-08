@@ -38,32 +38,33 @@ describe("browser process startup", () => {
     }
   });
 
-  it("classifies signal termination instead of timing out", async ({
-    processes,
-  }) => {
-    const root = await temporaryRoot();
-    const child = processes.spawn(process.execPath, [
-      "-e",
-      "process.kill(process.pid, 'SIGTERM')",
-    ]);
+  it.skipIf(process.platform === "win32")(
+    "classifies signal termination instead of timing out",
+    async ({ processes }) => {
+      const root = await temporaryRoot();
+      const child = processes.spawn(process.execPath, [
+        "-e",
+        "process.kill(process.pid, 'SIGTERM')",
+      ]);
 
-    const failure = await waitForBrowserDevtoolsPort({
-      child,
-      executable: process.execPath,
-      activePortPath: join(root, "DevToolsActivePort"),
-      stderr: () => "signal fixture",
-      timeoutMs: 1_000,
-      pollIntervalMs: 5,
-    }).catch((cause: unknown) => cause);
+      const failure = await waitForBrowserDevtoolsPort({
+        child,
+        executable: process.execPath,
+        activePortPath: join(root, "DevToolsActivePort"),
+        stderr: () => "signal fixture",
+        timeoutMs: 1_000,
+        pollIntervalMs: 5,
+      }).catch((cause: unknown) => cause);
 
-    expect(failure).toBeInstanceOf(BrowserStartupError);
-    expect(failure).toMatchObject({
-      failure: "signalled",
-      exitCode: null,
-      signalCode: "SIGTERM",
-      stderr: "signal fixture",
-    });
-  });
+      expect(failure).toBeInstanceOf(BrowserStartupError);
+      expect(failure).toMatchObject({
+        failure: "signalled",
+        exitCode: null,
+        signalCode: "SIGTERM",
+        stderr: "signal fixture",
+      });
+    },
+  );
 
   it("reports bounded timeout diagnostics", async ({ processes }) => {
     const root = await temporaryRoot();

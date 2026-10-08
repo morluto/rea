@@ -7,7 +7,9 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { readReferenceSource } from "../../../src/reference/ReferenceSourceReader.js";
 
-describe("readReferenceSource entries", () => {
+import { noFollowOpenSupported } from "../../../src/reference/ReferenceSourceReaderValidate.js";
+
+describe.skipIf(!noFollowOpenSupported())("readReferenceSource entries", () => {
   it("returns explicit entries in canonical code-point path order", async () => {
     const root = await createTestTempDirectory("rea-reference-");
     await mkdir(join(root, "nested"));
@@ -130,73 +132,76 @@ describe("readReferenceSource entries", () => {
   });
 });
 
-describe("readReferenceSource failures and exclusions", () => {
-  it("applies exclusions to normalized paths before reading entries", async () => {
-    const root = await createTestTempDirectory("rea-reference-");
-    await mkdir(join(root, "ignored"));
-    await writeFile(join(root, "ignored", "secret"), "secret");
-    await writeFile(join(root, "kept"), "kept");
-    const checked: string[] = [];
+describe.skipIf(!noFollowOpenSupported())(
+  "readReferenceSource failures and exclusions",
+  () => {
+    it("applies exclusions to normalized paths before reading entries", async () => {
+      const root = await createTestTempDirectory("rea-reference-");
+      await mkdir(join(root, "ignored"));
+      await writeFile(join(root, "ignored", "secret"), "secret");
+      await writeFile(join(root, "kept"), "kept");
+      const checked: string[] = [];
 
-    const result = await readReferenceSource(root, {
-      shouldExclude: (path) => {
-        checked.push(path);
-        return path === "ignored";
-      },
+      const result = await readReferenceSource(root, {
+        shouldExclude: (path) => {
+          checked.push(path);
+          return path === "ignored";
+        },
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(checked).toEqual(["ignored", "kept"]);
+      expect(result.value.entries.map(({ path }) => path)).toEqual(["kept"]);
     });
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(checked).toEqual(["ignored", "kept"]);
-    expect(result.value.entries.map(({ path }) => path)).toEqual(["kept"]);
-  });
+    it("sanitizes exclusion callback failures", async () => {
+      const root = await createTestTempDirectory("rea-reference-");
+      await writeFile(join(root, "file"), "value");
+      const result = await readReferenceSource(root, {
+        shouldExclude: () => {
+          throw new Error("private callback detail");
+        },
+      });
 
-  it("sanitizes exclusion callback failures", async () => {
-    const root = await createTestTempDirectory("rea-reference-");
-    await writeFile(join(root, "file"), "value");
-    const result = await readReferenceSource(root, {
-      shouldExclude: () => {
-        throw new Error("private callback detail");
-      },
+      expect(result).toEqual({
+        ok: false,
+        error: {
+          tag: "reference-source-reader",
+          code: "io",
+          message: "Reference source exclusion check failed",
+        },
+      });
     });
 
-    expect(result).toEqual({
-      ok: false,
-      error: {
-        tag: "reference-source-reader",
-        code: "io",
-        message: "Reference source exclusion check failed",
-      },
-    });
-  });
+    it("keeps selected-root paths in actionable filesystem errors", async () => {
+      const missing = join(tmpdir(), "rea-secret-root-that-does-not-exist");
+      const result = await readReferenceSource(missing);
 
-  it("keeps selected-root paths in actionable filesystem errors", async () => {
-    const missing = join(tmpdir(), "rea-secret-root-that-does-not-exist");
-    const result = await readReferenceSource(missing);
-
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error.message).toContain(missing);
-  });
-
-  it("returns typed failures for cancellation and invalid roots", async () => {
-    const controller = new AbortController();
-    controller.abort();
-    const cancelled = await readReferenceSource("/unused", {
-      signal: controller.signal,
-    });
-    expect(cancelled).toEqual({
-      ok: false,
-      error: {
-        tag: "reference-source-reader",
-        code: "cancelled",
-        message: "Reference source traversal cancelled",
-      },
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toContain(missing);
     });
 
-    const invalid = await readReferenceSource("/path/that/does/not/exist");
-    expect(invalid.ok).toBe(false);
-    if (invalid.ok) return;
-    expect(invalid.error.code).toBe("invalid-root");
-  });
-});
+    it("returns typed failures for cancellation and invalid roots", async () => {
+      const controller = new AbortController();
+      controller.abort();
+      const cancelled = await readReferenceSource("/unused", {
+        signal: controller.signal,
+      });
+      expect(cancelled).toEqual({
+        ok: false,
+        error: {
+          tag: "reference-source-reader",
+          code: "cancelled",
+          message: "Reference source traversal cancelled",
+        },
+      });
+
+      const invalid = await readReferenceSource("/path/that/does/not/exist");
+      expect(invalid.ok).toBe(false);
+      if (invalid.ok) return;
+      expect(invalid.error.code).toBe("invalid-root");
+    });
+  },
+);

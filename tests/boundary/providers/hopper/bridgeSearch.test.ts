@@ -213,7 +213,7 @@ beforeEach(async () => {
 });
 afterAll(stopProbeProcess);
 
-describe("Hopper bridge search", () => {
+describe.skipIf(process.platform === "win32")("Hopper bridge search", () => {
   it("returns matching literal values in deterministic order", async () => {
     await expect(
       probe({

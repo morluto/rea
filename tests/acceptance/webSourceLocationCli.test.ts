@@ -4,8 +4,12 @@ import { join } from "node:path";
 import { webSourceLocationFixture } from "../fixtures/webSourceLocation.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { hasWindowsNativeAuthority } from "../../src/process/WindowsAuthority.js";
 
-cliTest(
+const ownedProcessAuthorityAvailable =
+  process.platform !== "win32" || hasWindowsNativeAuthority("win32");
+
+cliTest.skipIf(!ownedProcessAuthorityAvailable)(
   "accepts numeric UTF-16 coordinates and runs the actual owned source-map codec without a browser",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-source-map-cli-");

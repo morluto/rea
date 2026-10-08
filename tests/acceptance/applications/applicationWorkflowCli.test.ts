@@ -150,93 +150,103 @@ describe("application workflow CLI parity", () => {
     });
   }, 20_000);
 
-  it("traces the same authenticated semantic graph through the CLI", async () => {
-    const root = await createTestTempDirectory("rea-semantic-cli-");
-    temporary.push(root);
-    await writeFile(
-      join(root, "app.js"),
-      "function add(value) { return value + 1; } add(2);",
-    );
-    const analyzed = await analyzeJavaScriptApplication({
-      input_path: root,
-    });
-    if (!analyzed.ok) throw analyzed.error;
-    const result = javascriptApplicationAnalysisResultSchema.parse(
-      analyzed.value.normalized_result,
-    );
-    const seed = result.semantic_graph.relations[0]?.source_node_id;
-    if (seed === undefined)
-      throw new TypeError("Expected at least one semantic relation");
-
-    const traced = await runCli([
-      "trace-javascript-semantics",
-      JSON.stringify({
-        application: analyzed.value,
-        query: {
-          seed: { kind: "semantic-node", node_id: seed },
-          direction: "forward-influence",
-          include_ambiguous_dynamic_edges: true,
-        },
-      }),
-      "--json",
-    ]);
-    expect(traced).toMatchObject({
-      operation: "trace_javascript_semantics",
-      predicate_type: "rea.javascript-semantic-trace",
-      normalized_result: {
-        source_evidence_id: analyzed.value.evidence_id,
-        source_graph_id: result.semantic_graph.graph_id,
-      },
-    });
-  }, 20_000);
-});
-
-describe("rest parameter semantic trace CLI", () => {
-  it("traces each ordinary rest argument to its parameter through public application Evidence", async () => {
-    const root = await createTestTempDirectory("rea-rest-arguments-cli-");
-    await writeFile(
-      join(root, "app.js"),
-      "function collect(first, ...rest) { return rest; } collect('first', 'second', 'third');",
-    );
-    const application = await runCli([
-      "analyze-javascript-application",
-      root,
-      "--json",
-    ]);
-    const analyzed = await analyzeJavaScriptApplication({ input_path: root });
-    if (!analyzed.ok) throw analyzed.error;
-    const graph = javascriptApplicationAnalysisResultSchema.parse(
-      analyzed.value.normalized_result,
-    ).semantic_graph;
-    for (const index of [1, 2]) {
-      const argument = graph.nodes.find(
-        ({ kind, label }) =>
-          kind === "expression" && label === `argument ${String(index)}`,
+  // The inline Evidence argument exceeds the Windows command-line limit.
+  it.skipIf(process.platform === "win32")(
+    "traces the same authenticated semantic graph through the CLI",
+    async () => {
+      const root = await createTestTempDirectory("rea-semantic-cli-");
+      temporary.push(root);
+      await writeFile(
+        join(root, "app.js"),
+        "function add(value) { return value + 1; } add(2);",
       );
-      if (argument === undefined) throw new Error("Missing argument node");
+      const analyzed = await analyzeJavaScriptApplication({
+        input_path: root,
+      });
+      if (!analyzed.ok) throw analyzed.error;
+      const result = javascriptApplicationAnalysisResultSchema.parse(
+        analyzed.value.normalized_result,
+      );
+      const seed = result.semantic_graph.relations[0]?.source_node_id;
+      if (seed === undefined)
+        throw new TypeError("Expected at least one semantic relation");
+
       const traced = await runCli([
         "trace-javascript-semantics",
         JSON.stringify({
-          application,
+          application: analyzed.value,
           query: {
-            seed: { kind: "semantic-node", node_id: argument.node_id },
+            seed: { kind: "semantic-node", node_id: seed },
             direction: "forward-influence",
-            allowed_relations: ["argument-to-parameter"],
-            expected: { role: "sink", classes: ["parameter"] },
+            include_ambiguous_dynamic_edges: true,
           },
         }),
         "--json",
       ]);
       expect(traced).toMatchObject({
+        operation: "trace_javascript_semantics",
+        predicate_type: "rea.javascript-semantic-trace",
         normalized_result: {
-          status: "found",
-          nodes: expect.arrayContaining([
-            expect.objectContaining({ kind: "parameter", label: "rest" }),
-          ]),
+          source_evidence_id: analyzed.value.evidence_id,
+          source_graph_id: result.semantic_graph.graph_id,
         },
       });
-    }
-  }, 20_000);
+    },
+    20_000,
+  );
+});
+
+describe("rest parameter semantic trace CLI", () => {
+  // The inline Evidence argument exceeds the Windows command-line limit.
+  it.skipIf(process.platform === "win32")(
+    "traces each ordinary rest argument to its parameter through public application Evidence",
+    async () => {
+      const root = await createTestTempDirectory("rea-rest-arguments-cli-");
+      await writeFile(
+        join(root, "app.js"),
+        "function collect(first, ...rest) { return rest; } collect('first', 'second', 'third');",
+      );
+      const application = await runCli([
+        "analyze-javascript-application",
+        root,
+        "--json",
+      ]);
+      const analyzed = await analyzeJavaScriptApplication({ input_path: root });
+      if (!analyzed.ok) throw analyzed.error;
+      const graph = javascriptApplicationAnalysisResultSchema.parse(
+        analyzed.value.normalized_result,
+      ).semantic_graph;
+      for (const index of [1, 2]) {
+        const argument = graph.nodes.find(
+          ({ kind, label }) =>
+            kind === "expression" && label === `argument ${String(index)}`,
+        );
+        if (argument === undefined) throw new Error("Missing argument node");
+        const traced = await runCli([
+          "trace-javascript-semantics",
+          JSON.stringify({
+            application,
+            query: {
+              seed: { kind: "semantic-node", node_id: argument.node_id },
+              direction: "forward-influence",
+              allowed_relations: ["argument-to-parameter"],
+              expected: { role: "sink", classes: ["parameter"] },
+            },
+          }),
+          "--json",
+        ]);
+        expect(traced).toMatchObject({
+          normalized_result: {
+            status: "found",
+            nodes: expect.arrayContaining([
+              expect.objectContaining({ kind: "parameter", label: "rest" }),
+            ]),
+          },
+        });
+      }
+    },
+    20_000,
+  );
 });
 
 describe("empty property key application CLI", () => {

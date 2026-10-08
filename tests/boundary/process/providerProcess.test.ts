@@ -17,7 +17,10 @@ import {
   spawnOwnedProviderProcess,
   type ProviderProcessDiagnostic,
 } from "../../../src/process/ProviderProcess.js";
-import { WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON } from "../../../src/process/WindowsAuthority.js";
+import {
+  hasWindowsNativeAuthority,
+  windowsNativeAuthorityUnavailableReason,
+} from "../../../src/process/WindowsAuthority.js";
 import {
   spawnProviderProcessFixture,
   stopProviderProcessFixture,
@@ -28,6 +31,11 @@ import {
 const processFixturePath = fileURLToPath(
   new URL("../../fixtures/providerProcess.mjs", import.meta.url),
 );
+
+// Owned-process primitives need the packaged native authority on Windows;
+// on POSIX hosts the ownership boundary is always available.
+const ownedProcessAuthorityAvailable =
+  process.platform !== "win32" || hasWindowsNativeAuthority("win32");
 
 const waitForPidExit = async (
   pid: number,
@@ -52,28 +60,31 @@ afterEach(() => {
 });
 
 describe("provider process runtime and wait primitives", () => {
-  it("allocates a private runtime root and removes it idempotently", async () => {
-    const runtime = await PrivateRuntimeRoot.create({
-      parent: tmpdir(),
-      prefix: "rea-provider-test-",
-    });
-    expect((await stat(runtime.path)).mode & 0o777).toBe(0o700);
+  it.skipIf(process.platform === "win32")(
+    "allocates a private runtime root and removes it idempotently",
+    async () => {
+      const runtime = await PrivateRuntimeRoot.create({
+        parent: tmpdir(),
+        prefix: "rea-provider-test-",
+      });
+      expect((await stat(runtime.path)).mode & 0o777).toBe(0o700);
 
-    const first = runtime.close();
-    const second = runtime.close();
-    expect(second).toBe(first);
-    await Promise.all([first, second]);
-    await expect(access(runtime.path)).rejects.toMatchObject({
-      code: "ENOENT",
-    });
-  });
+      const first = runtime.close();
+      const second = runtime.close();
+      expect(second).toBe(first);
+      await Promise.all([first, second]);
+      await expect(access(runtime.path)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
 
   it("fails closed for a Windows runtime root without native DACL authority", async () => {
     await expect(
       PrivateRuntimeRoot.create({ platform: "win32" }),
     ).rejects.toMatchObject({
       code: "private-runtime-root-authority-unavailable",
-      message: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+      message: windowsNativeAuthorityUnavailableReason("win32"),
     });
   });
 
@@ -349,29 +360,35 @@ describe("provider process output and cleanup primitives", () => {
 });
 
 describe("provider process host injection", () => {
-  it("uses injected host platform and environment when spawning", async () => {
-    const spawned = await spawnOwnedProviderProcess({
-      command: process.execPath,
-      arguments: ["-e", "process.stdout.write(process.env.REA_HOST_TEST)"],
-      runId: "injected-host-run",
-      platform: "win32",
-      hostEnvironment: { PATH: process.env.PATH, REA_HOST_TEST: "host-value" },
-      env: { REA_HOST_TEST: "spawn-override" },
-    });
-    try {
-      const supervisor = new ProviderProcessSupervisor({
-        process: spawned.process,
-        ownsProcessLifetime: true,
+  it.skipIf(!ownedProcessAuthorityAvailable)(
+    "uses injected host platform and environment when spawning",
+    async () => {
+      const spawned = await spawnOwnedProviderProcess({
+        command: process.execPath,
+        arguments: ["-e", "process.stdout.write(process.env.REA_HOST_TEST)"],
+        runId: "injected-host-run",
+        platform: "win32",
+        hostEnvironment: {
+          PATH: process.env.PATH,
+          REA_HOST_TEST: "host-value",
+        },
+        env: { REA_HOST_TEST: "spawn-override" },
       });
-      expect(await supervisor.waitForExit(2_000)).toBe(true);
-      expect(supervisor.snapshot().stdout.text).toBe("spawn-override");
-    } finally {
-      if (spawned.process.exitCode === null)
-        await new Promise<void>((resolve) =>
-          spawned.process.once("close", () => resolve()),
-        );
-    }
-  });
+      try {
+        const supervisor = new ProviderProcessSupervisor({
+          process: spawned.process,
+          ownsProcessLifetime: true,
+        });
+        expect(await supervisor.waitForExit(2_000)).toBe(true);
+        expect(supervisor.snapshot().stdout.text).toBe("spawn-override");
+      } finally {
+        if (spawned.process.exitCode === null)
+          await new Promise<void>((resolve) =>
+            spawned.process.once("close", () => resolve()),
+          );
+      }
+    },
+  );
 });
 
 describe("provider startup cancellation", () => {
@@ -421,27 +438,30 @@ describe("provider startup cancellation", () => {
 });
 
 describe("provider process spawning primitives", () => {
-  it("spawns an owned process group with exact identity coordinates", async () => {
-    const runId = "provider-process-run";
-    const spawned = await spawnOwnedProviderProcess({
-      command: process.execPath,
-      arguments: [processFixturePath, "graceful"],
-      runId,
-    });
-    try {
-      expect(spawned.ownership).toMatchObject({
+  it.skipIf(!ownedProcessAuthorityAvailable)(
+    "spawns an owned process group with exact identity coordinates",
+    async () => {
+      const runId = "provider-process-run";
+      const spawned = await spawnOwnedProviderProcess({
+        command: process.execPath,
+        arguments: [processFixturePath, "graceful"],
         runId,
-        leaderPid: spawned.process.pid,
-        processGroupId: spawned.process.pid,
-        expectedCommand: process.execPath,
-        expectedParentPid: process.pid,
       });
-      expect(spawned.process.stdout).not.toBeNull();
-      expect(spawned.process.stderr).not.toBeNull();
-    } finally {
-      await stopProviderProcessFixture(spawned.process);
-    }
-  });
+      try {
+        expect(spawned.ownership).toMatchObject({
+          runId,
+          leaderPid: spawned.process.pid,
+          processGroupId: spawned.process.pid,
+          expectedCommand: process.execPath,
+          expectedParentPid: process.pid,
+        });
+        expect(spawned.process.stdout).not.toBeNull();
+        expect(spawned.process.stderr).not.toBeNull();
+      } finally {
+        await stopProviderProcessFixture(spawned.process);
+      }
+    },
+  );
 
   it.skipIf(process.platform === "win32")(
     "cleans a real descendant that starts a distinct process group",
@@ -535,33 +555,39 @@ describe("provider process spawning primitives", () => {
     },
   );
 
-  it("allows interpreter launchers to rely on parent and run-token identity", async () => {
-    const spawned = await spawnOwnedProviderProcess({
-      command: process.execPath,
-      arguments: [processFixturePath, "graceful"],
-      runId: "provider-process-interpreter-run",
-      expectedCommand: null,
-    });
-    try {
-      expect(spawned.ownership).toMatchObject({
-        expectedParentPid: process.pid,
+  it.skipIf(!ownedProcessAuthorityAvailable)(
+    "allows interpreter launchers to rely on parent and run-token identity",
+    async () => {
+      const spawned = await spawnOwnedProviderProcess({
+        command: process.execPath,
+        arguments: [processFixturePath, "graceful"],
         runId: "provider-process-interpreter-run",
+        expectedCommand: null,
       });
-      expect(spawned.ownership).not.toHaveProperty("expectedCommand");
-    } finally {
-      await stopProviderProcessFixture(spawned.process);
-    }
-  });
+      try {
+        expect(spawned.ownership).toMatchObject({
+          expectedParentPid: process.pid,
+          runId: "provider-process-interpreter-run",
+        });
+        expect(spawned.ownership).not.toHaveProperty("expectedCommand");
+      } finally {
+        await stopProviderProcessFixture(spawned.process);
+      }
+    },
+  );
 
-  it("rejects deterministic spawn failures without producing a process", async () => {
-    await expect(
-      spawnOwnedProviderProcess({
-        command: `${tmpdir()}/rea-provider-command-that-does-not-exist`,
-        arguments: [],
-        runId: "missing-provider",
-      }),
-    ).rejects.toMatchObject({ code: "ENOENT" });
-  });
+  it.skipIf(!ownedProcessAuthorityAvailable)(
+    "rejects deterministic spawn failures without producing a process",
+    async () => {
+      await expect(
+        spawnOwnedProviderProcess({
+          command: `${tmpdir()}/rea-provider-command-that-does-not-exist`,
+          arguments: [],
+          runId: "missing-provider",
+        }),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
 });
 
 describe("provider process configured-platform spawning", () => {

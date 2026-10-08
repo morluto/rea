@@ -16,8 +16,13 @@ import {
 } from "../../../src/application/process/ProcessCli.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { PROCESS_PROVIDER } from "../../../src/application/process/ProcessEvidence.js";
+import { hasWindowsNativeAuthority } from "../../../src/process/WindowsAuthority.js";
 
 const roots: string[] = [];
+
+// capture-process requires the packaged Windows native authority.
+const ownedProcessAuthorityAvailable =
+  process.platform !== "win32" || hasWindowsNativeAuthority("win32");
 const execFileAsync = promisify(execFile);
 const CLI_INTEGRATION_TIMEOUT_MS = 60_000;
 
@@ -34,7 +39,7 @@ const fixture = async (): Promise<string> => {
 };
 
 describe("documented process CLI workflow", () => {
-  it(
+  it.skipIf(!ownedProcessAuthorityAvailable)(
     "feeds the documented JSON capture into the comparison CLI",
     async () => {
       const root = await fixture();
@@ -228,23 +233,26 @@ describe("process CLI environment key diagnostics", () => {
 });
 
 describe("process CLI evidence validation", () => {
-  it("captures the minimal executable-and-arguments scenario", async () => {
-    const root = await fixture();
-    const scenario = join(root, "scenario.json");
-    await writeFile(
-      scenario,
-      JSON.stringify({
-        executable: process.execPath,
-        arguments: ["-e", "process.stdout.write('minimal-capture')"],
-      }),
-    );
-    const evidence = await captureProcessScenarioFile(scenario);
-    expect(evidence).toMatchObject({
-      predicate_type: "rea.process-capture",
-      operation: "capture_process_scenario",
-    });
-    expect(JSON.stringify(evidence)).toContain("minimal-capture");
-  });
+  it.skipIf(!ownedProcessAuthorityAvailable)(
+    "captures the minimal executable-and-arguments scenario",
+    async () => {
+      const root = await fixture();
+      const scenario = join(root, "scenario.json");
+      await writeFile(
+        scenario,
+        JSON.stringify({
+          executable: process.execPath,
+          arguments: ["-e", "process.stdout.write('minimal-capture')"],
+        }),
+      );
+      const evidence = await captureProcessScenarioFile(scenario);
+      expect(evidence).toMatchObject({
+        predicate_type: "rea.process-capture",
+        operation: "capture_process_scenario",
+      });
+      expect(JSON.stringify(evidence)).toContain("minimal-capture");
+    },
+  );
 
   it("rejects unrelated capture evidence", async () => {
     const root = await fixture();
