@@ -21,6 +21,8 @@ import { createServer } from "../../../src/server/createServer.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
+import { MAX_JSON_DEPTH } from "../../../src/domain/jsonValue.js";
+import { INVESTIGATION_EXAMPLES } from "../../../src/contracts/investigationExamples.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import {
   createSessionMcpHarness,
@@ -257,6 +259,40 @@ describe("session filesystem path boundaries over MCP", () => {
     expect(closed.isError, JSON.stringify(closed.content)).toBe(true);
     expect(JSON.stringify(closed.content)).toContain("absolute");
     await mcp.callTool({ name: "close_binary", arguments: {} });
+  }, 10_000);
+});
+
+describe("json depth bounds over MCP", () => {
+  it("classifies deeply nested evidence parameters as an input validation error", async () => {
+    directory = await createTestTempDirectory("rea-mcp-depth-bound-");
+    const { mcp } = await createSessionMcpHarness(
+      directory,
+      provider,
+      resources,
+    );
+    const input = INVESTIGATION_EXAMPLES.compare_process_captures.input;
+    const baseline = await mcp.callTool({
+      name: "compare_process_captures",
+      arguments: input,
+    });
+    expect(baseline.isError, JSON.stringify(baseline)).not.toBe(true);
+    let value: unknown = 1;
+    for (let index = 0; index <= MAX_JSON_DEPTH; index += 1)
+      value = { nested: value };
+    const result = await mcp.callTool({
+      name: "compare_process_captures",
+      arguments: {
+        left: {
+          ...input.left,
+          parameters: { attack: value },
+        },
+        right: input.right,
+      },
+    });
+    const text = JSON.stringify(result.content);
+    expect(result.isError, text).toBe(true);
+    expect(text).toContain("Input validation");
+    expect(text).toContain("maximum nesting depth");
   }, 10_000);
 });
 

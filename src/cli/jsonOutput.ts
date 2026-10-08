@@ -61,6 +61,10 @@ function* bufferedParts(parts: Iterable<string>): Generator<string> {
 }
 
 function* encodeString(value: string): Generator<string> {
+  if (value.length <= 8192) {
+    yield JSON.stringify(value);
+    return;
+  }
   yield '"';
   for (let start = 0; start < value.length;) {
     let end = Math.min(start + 8192, value.length);

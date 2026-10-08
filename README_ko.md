@@ -109,7 +109,7 @@ AI 코딩 어시스턴트에 스킬을 추가하면 더 풍부한 컨텍스트�
 npx skills add morluto/rea --skill reverse-engineer-anything
 ```
 
-이 스킬은 REA의 조사 워크플로를 제공합니다. 위 setup을 실행해 REA를 에이전트에 연결하고 분석 도구를 설정하세요. Setup은 기본적으로 버전에 맞는 스킬을 설치합니다. 이 명령은 저장소 버전의 스킬을 설치합니다.
+이 스킬은 REA의 조사 워크플로를 제공합니다. 위 Setup을 실행해 REA를 에이전트에 연결하고 분석 도구를 설정하세요. Setup은 기본적으로 버전에 맞는 스킬을 설치합니다. 이 명령은 저장소 버전의 스킬을 설치합니다.
 
 압축을 해제한 JavaScript/Electron 앱 트리나 ASAR라면 MCP 설정이나 네이티브 엔진 없이 바로 분석할 수 있습니다.
 
@@ -117,7 +117,7 @@ npx skills add morluto/rea --skill reverse-engineer-anything
 npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
 ```
 
-경로를 조사 대상으로 바꾸세요(Windows에서는 `"D:/apps/example"` 같은 경로). 이 정적 워크플로에서는 이런 경로도 지원됩니다. 네이티브 분석에는 전용 엔진 설정이 필요합니다.
+경로를 조사 대상의 경로로 바꾸세요(Windows에서는 `"D:/apps/example"` 같은 경로). 이 정적 워크플로에서는 이런 경로도 지원됩니다. 네이티브 분석에는 전용 엔진 설정이 필요합니다.
 
 ### rea 명령 설치하기
 
@@ -144,7 +144,7 @@ rea setup
 
 네이티브 바이너리 분석에는 Hopper 또는 Ghidra가 필요합니다. Hopper는 별도 소프트웨어입니다. 데모에는 공급업체의 제한이 있지만 유료 라이선스가 필수는 아닙니다.
 
-Ghidra는 Linux x64와 macOS x64/arm64를 지원합니다. Ghidra 12.1.x와 그 설치본이 선언한 완전한 64비트 JDK(`application.java.min`부터 `application.java.max`까지)를 별도로 설치한 뒤 REA가 사용하도록 설정하세요. 현재 12.1 릴리스는 JDK 21 이상을 요구하고 상한은 없습니다. 브리지는 Ghidra 12.1.4와 JDK 21에서 검증됩니다. macOS에서는 호스트 아키텍처에 맞는 네이티브 디컴파일러도 필요합니다.
+Ghidra는 Linux x64와 macOS x64/arm64를 지원합니다. Ghidra 12.1.x와 그 설치본이 선언한 완전한 64비트 JDK(`application.java.min`부터 `application.java.max`까지)를 별도로 설치한 뒤 REA에서 사용하도록 설정하세요. 현재 12.1 릴리스는 JDK 21 이상을 요구하고 상한은 없습니다. 브리지는 Ghidra 12.1.4와 JDK 21에서 검증됩니다. macOS에서는 호스트 아키텍처에 맞는 네이티브 디컴파일러도 필요합니다.
 
 Setup은 설치를 확인하고 경로를 저장할 수 있습니다. Ghidra, Java, Node.js, npm, Homebrew를 설치하거나 업데이트하지 않습니다.
 
@@ -164,7 +164,7 @@ Linux에서는 실행 가능한 `/opt/hopper/bin/Hopper`를 우선 사용하고,
 
 ## 현재 지원 범위
 
-저장소의 현재 기능과 플랫폼 요구 사항은 [영문 지원 가이드](README.md#current-status)에 설명되어 있습니다. main은 [npm 릴리스](docs/installation.md#released-package-and-main)보다 앞설 수 있습니다.
+저장소의 현재 기능과 플랫폼 요구 사항은 [영문 지원 가이드](README.md#current-status)에 설명되어 있습니다. main은 [npm 릴리스](docs/installation.md#released-package-and-main)보다 앞선 내용이 포함될 수 있습니다.
 
 - Ghidra는 Linux x64, macOS x64/arm64, 실험적인 Windows x64 P0 경계에서 25개의 읽기 전용 작업을 제공합니다. Linux/macOS에서는 원자적 세션 함수 주석도 추가로 지원합니다. Windows P0는 읽기 전용이며 Ghidra에는 GUI 제어가 없습니다.
 - 정적 Android 검사는 별도로 준비한 JADX/Java가 필요합니다. 실제 제공자 검증은 Linux를 대상으로 합니다. [Android 분석](docs/android-analysis.md)을 참고하세요.
@@ -187,7 +187,7 @@ TypeScript와 SQLite를 사용해 제 프로젝트에 맞는 버전을 구현해
 |    5 | 관련 루틴 디컴파일      | `procedure_pseudo_code`, `procedure_assembly`, `batch_decompile` |
 |    6 | 프로젝트에 기능 구현    | 기술 스택, 제품, 요구 사항에 맞는 코드                           |
 
-REA는 1–5단계의 바이너리 분석을 처리합니다. 6단계는 에이전트가 일반 파일 편집 및 테스트 도구로 수행합니다.
+REA는 1~5단계의 바이너리 분석을 처리합니다. 6단계는 에이전트가 일반 파일 편집 및 테스트 도구로 수행합니다.
 
 ## 에이전트가 할 수 있는 일
 
@@ -203,20 +203,20 @@ REA는 1–5단계의 바이너리 분석을 처리합니다. 6단계는 에이�
 
 ## 조사 도구 카탈로그
 
-| 도구 분류         |  수 | 용도                                                                                                                      |
-| ----------------- | --: | ------------------------------------------------------------------------------------------------------------------------- |
-| 네이티브 검사     |  41 | 함수, 의사 코드, 어셈블리, 문자열, 심볼, 호출, 참조, 주석, 바이트 읽기, 파일 오프셋                                       |
-| 조사 워크플로     |  14 | 앱 개요, 함수 기록서, 네이티브 API와 디스패치, 일괄 디컴파일, 기능 추적, 호출 경로, 호출 그래프, Swift와 Objective-C 탐색 |
-| macOS 네이티브    |   7 | Hopper 실행 없이 처리하는 Mach-O 메타데이터, 서명, plist, 아키텍처, Swift 이름 복원                                       |
-| 아티팩트 그래프   |   5 | 디렉터리와 패키지 목록, 컴파일된 Interface Builder 파일, Apple 애셋 카탈로그, 추출                                        |
-| 관리 PE/CLI       |   7 | .NET 식별, 메타데이터, CIL 명령어, 네이티브 종속성, 재구성 가져오기, 빌드 비교                                            |
-| 펌웨어            |   2 | Linux 펌웨어 영역 검사 및 명시적 추출                                                                                     |
-| Android APK       |   5 | 패키지와 manifest 선언, 클래스 검색, 멤버 목록, 메서드 디컴파일, 정적 참조                                                |
-| 브라우저 관찰     |  12 | 페이지 구조, 네트워크 메타데이터, 스크립트, 소스 맵, WebMCP 탐색, 스크린샷, 캡처 비교                                     |
-| Electron 분석     |   5 | 렌더러 관찰, 정적 앱 매핑, 정적·런타임 결과 연결                                                                          |
-| JavaScript 런타임 |   2 | Node/Electron Inspector 대상 탐색, 스크립트 위치, 실행 컨텍스트 이벤트                                                    |
-| 앱 워크플로       |  13 | 캡처한 웹 스크립트 내보내기, 계층 간 기능 추적, 빌드 비교, 히스토리 소스 매핑, 정적 반환 구조 비교, 재구현 검증           |
-| 작업 공간과 관찰  |  21 | 세션, 근거 번들, 탐색 컨텍스트, 프로세스·아티팩트·함수 비교, 미해결 항목 기록                                             |
+| 도구 분류         |  수 | 용도                                                                                                                                     |
+| ----------------- | --: | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| 네이티브 검사     |  41 | 함수, 의사 코드, 어셈블리, 문자열, 심볼, 호출, 참조, 주석, 바이트 읽기, 파일 오프셋                                                      |
+| 조사 워크플로     |  14 | 앱 개요, 함수 기록서, 네이티브 API와 디스패치, 일괄 디컴파일, 기능 추적, 호출 경로, 호출 그래프, Swift와 Objective-C 탐색                |
+| 네이티브 바이너리 |  10 | macOS의 Mach-O 메타데이터, 서명, plist, 아키텍처, Swift 심볼과 LLDB 호출 관찰; Linux의 ELF 레이아웃, 정적 보호 증거와 기록된 크래시      |
+| 아티팩트 그래프   |   7 | 디렉터리와 패키지 목록, 컴파일된 Interface Builder 파일, Apple 애셋 카탈로그, Mach-O dylib 로드 해석, 추출, 오프라인 EVM 인터페이스 추론 |
+| 관리 PE/CLI       |   7 | .NET 식별, 메타데이터, CIL 명령어, 네이티브 종속성, 재구성 가져오기, 빌드 비교                                                           |
+| 펌웨어            |   2 | Linux 펌웨어 영역 검사 및 명시적 추출                                                                                                    |
+| Android APK       |   5 | 패키지와 manifest 선언, 클래스 검색, 멤버 목록, 메서드 디컴파일, 정적 참조                                                               |
+| 브라우저 관찰     |  12 | 페이지 구조, 네트워크 메타데이터, 스크립트, 소스 맵, WebMCP 탐색, 스크린샷, 캡처 비교                                                    |
+| Electron 분석     |   5 | 렌더러 관찰, 정적 앱 매핑, 정적·런타임 결과 연결                                                                                         |
+| JavaScript 런타임 |   2 | Node/Electron Inspector 대상 탐색, 스크립트 위치, 실행 컨텍스트 이벤트                                                                   |
+| 앱 워크플로       |  13 | 캡처한 웹 스크립트 내보내기, 계층 간 기능 추적, 빌드 비교, 히스토리 소스 매핑, 정적 반환 구조 비교, 재구현 검증                          |
+| 작업 공간과 관찰  |  21 | 세션, 근거 번들, 탐색 컨텍스트, 프로세스·아티팩트·함수 비교, 미해결 항목 기록                                                            |
 
 ## 로드맵
 
@@ -233,7 +233,7 @@ Setup은 Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, Devin
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@5.0.0", "mcp"]
+      "args": ["-y", "rea-agents@6.0.0", "mcp"]
     }
   }
 }
@@ -273,7 +273,7 @@ rea --help
 rea mcp
 ```
 
-REA는 Mac의 `.app` 폴더를 직접 열 수 있습니다. 에이전트가 앱을 찾지 못하면 설치 위치를 알려 주세요.
+REA는 macOS의 `.app` 폴더를 직접 열 수 있습니다. 에이전트가 앱을 찾지 못하면 설치 위치를 알려 주세요.
 
 ## Hopper 앱 동작
 

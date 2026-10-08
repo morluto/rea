@@ -2,10 +2,9 @@ import { createJavaScriptSemanticGraphUnknown } from "../../domain/javascript/ja
 import type { JavaScriptSemanticGraphNode } from "../../domain/javascript/javascriptSemanticGraph.js";
 import type { JavaScriptSemanticObjectOperation } from "../../domain/javascript/javascriptSemanticIr.js";
 import {
-  addSemanticGraphNode,
+  retainSemanticGraphNode,
   addSemanticGraphRelation,
   addSemanticGraphUnknown,
-  constructSemanticGraphNode,
 } from "./JavaScriptSemanticGraphConstruction.js";
 import { unknownSemanticEvidence } from "./JavaScriptSemanticGraphEvidence.js";
 import type { SemanticFlowProjectionContext } from "./JavaScriptSemanticGraphFlowProjection.js";
@@ -72,31 +71,24 @@ const addObjectOccurrence = (
   context: SemanticFlowProjectionContext,
   operation: JavaScriptSemanticObjectOperation,
 ): JavaScriptSemanticGraphNode | null =>
-  addSemanticGraphNode(
-    context.state,
-    constructSemanticGraphNode(
-      context.file,
-      {
-        kind: "expression",
-        roleKey: operation.objectOperationId,
-        location: operation.location,
-        label:
-          operation.propertyName === null
-            ? operation.kind
-            : `${operation.kind}:${operation.propertyName}`,
-        functionNodeId:
-          operation.ownerCallableId === null
-            ? null
-            : (context.callableNodes.get(operation.ownerCallableId)?.node_id ??
-              null),
-        properties: {
-          operation_kind: operation.kind,
-          property_name: operation.propertyName,
-        },
-      },
-      context.state,
-    ),
-  );
+  retainSemanticGraphNode(context.state, context.file, {
+    kind: "expression",
+    roleKey: operation.objectOperationId,
+    location: operation.location,
+    label:
+      operation.propertyName === null
+        ? operation.kind
+        : `${operation.kind}:${operation.propertyName}`,
+    functionNodeId:
+      operation.ownerCallableId === null
+        ? null
+        : (context.callableNodes.get(operation.ownerCallableId)?.node_id ??
+          null),
+    properties: {
+      operation_kind: operation.kind,
+      property_name: operation.propertyName,
+    },
+  });
 
 const addObjectUnknown = (
   context: SemanticFlowProjectionContext,

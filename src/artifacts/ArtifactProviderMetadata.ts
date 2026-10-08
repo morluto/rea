@@ -24,7 +24,8 @@ export const artifactCapabilities = (
           mutatesArtifact: false,
           launchesProcess:
             operation !== "decode_interface_builder" &&
-            operation !== "inspect_keyed_archive",
+            operation !== "inspect_keyed_archive" &&
+            operation !== "trace_dylib_resolution",
           mayShowUi: false,
           mayAccessNetwork: false,
           mayWriteFilesystem:

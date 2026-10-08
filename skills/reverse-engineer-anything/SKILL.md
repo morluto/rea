@@ -2,9 +2,9 @@
 name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "28"
-  tool_count: 134
-  catalog_digest: "0414daa9a1db2894a7394aeafba9bd810aa68bbe40e51b8ec13dc037d7fe3622"
+  version: "33"
+  tool_count: 139
+  catalog_digest: "b40971d45fb56386599e5f8e904c21ee491b20ef23b089ceb28750641eb58ae7"
 ---
 
 # REA
@@ -99,6 +99,21 @@ explicit path or endpoint and do not need it.
   [historical captures](https://github.com/morluto/rea/blob/main/docs/web-network-captures.md) for the exact upstream
   profile and credential exclusions.
 - User-owned Electron runtime already open: `list_electron_targets`.
+- Explicit local EVM bytecode carrier: `inspect_evm_interface` with caller-selected
+  `raw` or `hex` encoding. Preserve carrier/decoded digests and treat selectors,
+  argument strings and mutability as inferred candidates; this performs no chain
+  lookup or target execution. See the
+  [EVM bytecode guide](https://github.com/morluto/rea/blob/main/docs/evm-bytecode.md).
+- Explicit Linux ELF file for offline layout, symbols, relocations or static
+  mitigation evidence: `inspect_binary_layout`. This target-free operation uses
+  caller-supplied pwntools without opening a disassembler database. Preserve its
+  raw locations and inference/coverage limits; see the
+  [offline binary guide](https://github.com/morluto/rea/blob/main/docs/binary-diagnostics.md).
+- Supplied Linux x86-64 ELF core: `inspect_recorded_crash`. Read every recorded
+  thread, raw note and source-bound register without opening a live target.
+  Historical PIDs do not select live processes. Request `include_debugger_context`
+  only when core-only mapping candidates help; see the
+  [recorded crash guide](https://github.com/morluto/rea/blob/main/docs/recorded-crashes.md).
 - Native executable, library, or analysis database: `open_binary`, then
   use focused analysis tools directly; call `binary_overview` when metadata or
   inventory context is useful and available from the selected provider.

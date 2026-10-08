@@ -59,6 +59,10 @@ relevant real-provider or platform workflow, or explain why it was unavailable. 
 limits, security/privacy/containment implications, and meaningful proof gaps. -->
 
 - Breaking changes or migration steps:
+  <!-- For ! / BREAKING CHANGE: show a previously valid call/configuration,
+  its new behavior and migration, and why compatibility/deprecation cannot
+  preserve it. Compatible fixes/additions should use patch/minor semantics.
+  See docs/releasing.md. -->
 - Real Hopper/Ghidra, browser, or OS coverage:
 - Package or release metadata impact:
 - Security, privacy, process, or containment review:

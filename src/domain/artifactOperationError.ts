@@ -12,6 +12,7 @@ export class ArtifactOperationError extends AnalysisError {
       | "decode_interface_builder"
       | "inspect_asset_catalog"
       | "inspect_keyed_archive"
+      | "trace_dylib_resolution"
       | "export_web_scripts"
       | "trace_web_module_imports"
       | "trace_web_source_location"

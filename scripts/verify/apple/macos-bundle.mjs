@@ -14,6 +14,7 @@ import {
   buildMacosBundleFixture,
   preflightMacosBundleFixture,
 } from "../../fixtures/apple/macos-bundle.mjs";
+import { verifyDylibResolution } from "./macos-dylib-e2e.mjs";
 
 const exec = promisify(execFile);
 
@@ -150,6 +151,7 @@ try {
   assert.deepEqual(anatomies[2], anatomies[0], "DMG anatomy differs");
   const { stdout: attached } = await exec("/usr/bin/hdiutil", ["info"]);
   assert.ok(!attached.includes(dmg), "DMG remained attached after inventory");
+  const dylibs = await verifyDylibResolution(app);
 
   process.stdout.write(
     `${JSON.stringify({
@@ -160,6 +162,7 @@ try {
       containers: containers.map(({ format }) => format),
       bundles: EXPECTED_BUNDLES.length,
       dmg_detached: true,
+      dylib_resolution: dylibs,
     })}\n`,
   );
 } finally {

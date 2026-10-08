@@ -87,18 +87,33 @@ export type JavaScriptJsonModuleObservation = JavaScriptStructuredObservation &
       }
   );
 
+/** Module facts needed after file-local semantic projection has finished. */
+export type JavaScriptModuleSemanticIr = Pick<
+  JavaScriptSemanticIr,
+  | "scopes"
+  | "bindings"
+  | "callables"
+  | "moduleLinks"
+  | "coverage"
+  | "limitations"
+>;
+
 /** One relevant file plus optional AST-only JavaScript facts. */
-export interface AnalyzedJavaScriptArtifactFile {
+export interface AnalyzedJavaScriptArtifactFile<
+  SemanticIr extends JavaScriptModuleSemanticIr = JavaScriptSemanticIr,
+> {
   readonly file: JavaScriptArtifactFile;
   readonly javascript: JavaScriptStaticAnalysis | null;
   readonly semantic: {
-    readonly ir: JavaScriptSemanticIr;
+    readonly ir: SemanticIr;
   } | null;
 }
 
 /** Complete static-analysis projection before graph construction. */
-export interface JavaScriptArtifactAnalysis {
-  readonly files: readonly AnalyzedJavaScriptArtifactFile[];
+export interface JavaScriptArtifactAnalysis<
+  SemanticIr extends JavaScriptModuleSemanticIr = JavaScriptSemanticIr,
+> {
+  readonly files: readonly AnalyzedJavaScriptArtifactFile<SemanticIr>[];
   readonly packages: readonly JavaScriptPackageObservation[];
   readonly json_modules: readonly JavaScriptJsonModuleObservation[];
   readonly html_scripts: readonly JavaScriptHtmlScriptObservation[];
@@ -110,3 +125,7 @@ export interface JavaScriptArtifactAnalysis {
   readonly truncated_scopes: number;
   readonly limitations: readonly string[];
 }
+
+/** Artifact facts retaining only semantics used by application relationships. */
+export type JavaScriptModuleArtifactAnalysis =
+  JavaScriptArtifactAnalysis<JavaScriptModuleSemanticIr>;

@@ -1,7 +1,7 @@
 {
   "name": "rea-agents",
   "mcpName": "io.github.morluto/rea",
-  "version": "5.0.0",
+  "version": "6.0.0",
   "description": "Reverse engineer anything from your terminal or agent with one CLI and MCP server.",
   "license": "MIT",
   "repository": {
@@ -44,6 +44,7 @@
     "bridge/hopper_bridge.py",
     "bridge/native/NativeUIChildren.swift",
     "bridge/native/ReaNativeUI.swift",
+    "bridge/native/rea_lldb_tracer.py",
     "bridge/process/ProcessRunTokenReader.swift",
     "bridge/process/ProcessRunTokenReaderMain.swift",
     "bridge/ghidra/ReaGhidraBridge.java",
@@ -62,7 +63,20 @@
     "LICENSE",
     "native/windows/build/manifest.json",
     "native/windows/build/rea-windows-x64.node",
-    "scripts/verify-windows-native-artifact.mjs"
+    "scripts/verify-windows-native-artifact.mjs",
+    "bridge/pwntools/layout.py",
+    "bridge/pwntools/layout_impl.py",
+    "third_party/pwntools/README.md",
+    "third_party/evmole/README.md",
+    "third_party/evmole/LICENSE",
+    "bridge/pwntools/decoder_runtime.py",
+    "bridge/pwntools/recorded_crash.py",
+    "bridge/pwntools/recorded_crash_impl.py",
+    "bridge/pwndbg/launch.py",
+    "bridge/pwndbg/launch_impl.py",
+    "bridge/pwndbg/core_context.py",
+    "third_party/pwndbg/README.md",
+    "third_party/pwndbg/LICENSE.md"
   ],
   "scripts": {
     "deps:check": "node scripts/check-dependency-install.mjs",
@@ -176,6 +190,7 @@
     "prepack": "node scripts/prepack.mjs",
     "prepare": "node scripts/prepare.mjs",
     "verify:asset-catalog": "npm run build:cached && node scripts/verify/apple/asset-catalog.mjs",
+    "verify:native-calls": "npm run build:cached && node scripts/verify-native-calls.mjs",
     "verify:native-ui:permissions": "npm run build:cached && node scripts/verify-native-ui.mjs --allow-permission-denial",
     "test:focused": "node scripts/run-development-tests.mjs focused",
     "build:windows-native": "node scripts/build-windows-native.mjs",
@@ -193,7 +208,10 @@
     "verify:module-boundaries": "node scripts/verify-module-boundaries.mjs",
     "verify:browser:source-maps": "npm run build:cached && node scripts/verify-browser-source-maps.mjs",
     "verify:browser:runtime": "npm run build:cached && node scripts/verify-browser-runtime.mjs",
-    "verify:web:network-captures": "npm run build:cached && node scripts/verify-web-network-captures.mjs"
+    "verify:web:network-captures": "npm run build:cached && node scripts/verify-web-network-captures.mjs",
+    "verify:binary:layout": "npm run build:cached && node scripts/verify-binary-layout.mjs",
+    "verify:evm:interface": "npm run build:cached && node scripts/verify-evm-interface.mjs",
+    "verify:recorded:crash": "npm run build:cached && node scripts/verify-recorded-crash.mjs"
   },
   "lint-staged": {
     "*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}": [
@@ -225,6 +243,7 @@
     "isomorphic-git": "1.38.7",
     "jsonc-parser": "3.3.1",
     "lossless-json": "4.3.1",
+    "parse5": "8.0.1",
     "pino": "10.4.0",
     "playwright-core": "1.58.2",
     "plist": "5.0.0",
@@ -232,7 +251,8 @@
     "smol-toml": "1.9.0",
     "write-file-atomic": "7.0.0",
     "ws": "8.21.0",
-    "zod": "4.4.3"
+    "zod": "4.4.3",
+    "evmole": "0.9.3"
   },
   "overrides": {
     "vitepress": {

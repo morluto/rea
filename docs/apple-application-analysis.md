@@ -110,3 +110,78 @@ The projection does not read plists. Use `inspect_plist` on a bundle's
 `info_plist_path` or a launchd plist to read `CFBundleExecutable`, identifiers,
 `SMPrivilegedExecutables`, `BundleProgram`, URL schemes, and usage descriptions.
 Use `inspect_signature` on an executable candidate for code-signing claims.
+
+## Dylib load resolution
+
+`trace_dylib_resolution` answers which file each Mach-O dylib load reaches. It
+runs on the active Mach-O, or on every executable in the active `.app`. Each
+executable in a bundle (the main app, XPC services, app extensions, login items,
+privileged helpers, and helper tools) is a separate process root with its own
+`@executable_path`.
+
+```sh
+rea trace-dylib-resolution MyApp.app --json
+rea trace-dylib-resolution MyApp.app --root Contents/MacOS/MyApp --architecture arm64 --json
+```
+
+```json
+{
+  "name": "trace_dylib_resolution",
+  "arguments": { "roots": ["Contents/MacOS/MyApp"], "architecture": "arm64" }
+}
+```
+
+Load commands are parsed in TypeScript from Mach-O and FAT headers, including
+the `dylib_use_command` encoding newer linkers emit for flags such as delayed
+initialization. Nothing is executed and no Apple tool is required, so the tool
+also works off macOS.
+
+Resolution follows dyld:
+
+- `@executable_path` is the directory of the process root's executable. It is
+  undetermined when the root is a library.
+- `@loader_path` is the directory of the image that holds the load command, or
+  of the image that owns the `LC_RPATH` entry being expanded.
+- `@rpath` tries each `LC_RPATH` of the loading image first, then those of the
+  image that loaded it, up to the process root.
+- Dependencies load dependents-first in load-command order, and each image
+  loads once per process. A later request whose install name matches an
+  already loaded image reuses it.
+- Symlinks such as `Versions/Current` are followed inside the analyzed root.
+  An escape through `..` or an absolute link is `escapes-target`.
+
+Each edge lists every candidate path tried, with its outcome: `resolved`,
+`absent`, `not-mach-o`, `malformed`, `unsupported` (recognized Mach-O outside
+parser coverage, such as big-endian images), `architecture-missing`,
+`outside-target`, `escapes-target`, or `undetermined`. Slices follow dyld's
+graded architectures, so an `x86_64h` process also loads `x86_64`. The edge's `resolution` is one of:
+
+| Status         | Meaning                                                                                                                                                   |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `resolved`     | An image inside the analyzed root loads, and no earlier candidate was undeterminable.                                                                     |
+| `conditional`  | An image inside the root resolves, but an earlier candidate outside the root (for example `/usr/lib/swift`) would win if it exists on the running system. |
+| `unresolved`   | Every candidate is definitively absent or unusable inside the root.                                                                                       |
+| `undetermined` | No candidate resolves inside the root, and some candidate lies outside it or depends on the environment.                                                  |
+
+A `conditional` image is still traced, because it is the image the analyzed
+root supplies. Every edge below it has `loader_conditional: true`, and a
+request that reuses it by install name is `conditional` too. Findings on those
+edges say that they apply only if the conditional image loads.
+
+Absolute install names such as `/usr/lib/libSystem.B.dylib` are
+`outside-target`. On macOS 11 and later most of them live in the dyld shared
+cache rather than on disk, so REA does not check them against the host.
+
+`findings` are derived, not observed:
+
+- `required-load-unresolved`, `weak-load-unresolved`, and `lazy-load-unresolved`.
+  `LC_LAZY_LOAD_DYLIB` dependencies are resolved but not traversed, because dyld
+  loads them on first use; an unresolved one is not a launch failure.
+- `earlier-rpath-candidate-absent`: a Mach-O placed at an earlier search path
+  would load first. Whether code-signing library validation would reject it is
+  not evaluated; use `inspect_signature`.
+- `dyld-environment-present`: `LC_DYLD_ENVIRONMENT` search paths are not modeled.
+
+`verify:macos-bundle` checks the parser against `otool -l` for every traced
+image. It also compares the predicted load order of two process roots with the
+images dyld actually loads (`DYLD_PRINT_LIBRARIES`).

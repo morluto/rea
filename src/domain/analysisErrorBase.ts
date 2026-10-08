@@ -6,8 +6,10 @@ const ANALYSIS_ERROR_TAGS = [
   "AnalysisArtifactChangedError",
   "AnalysisOutputError",
   "AnalysisCapabilityUnavailableError",
+  "AnalysisUnsupportedTargetError",
   "AnalysisCancelledError",
   "AnalysisTimeoutError",
+  "AnalysisResourceConstraintError",
   "ProviderSelectionError",
   "ProviderAdapterError",
   "BrowserObservationError",
@@ -30,8 +32,28 @@ const ANALYSIS_ERROR_TAGS = [
 /** Stable tag for an expected analysis failure. */
 export type AnalysisErrorTag = (typeof ANALYSIS_ERROR_TAGS)[number];
 
+/** Retained command output associated with a typed failure; truncation stays explicit. */
+export interface AnalysisCapturedOutput {
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly truncated: boolean;
+}
+
+/** Optional provider-neutral context that must survive typed error projection. */
+export interface AnalysisErrorOptions extends ErrorOptions {
+  readonly capturedOutput?: AnalysisCapturedOutput;
+}
+
 /** Base class for expected analysis, provider, and session failures. */
 export abstract class AnalysisError extends Error {
+  readonly capturedOutput: AnalysisCapturedOutput | undefined;
+  constructor(message: string, options?: AnalysisErrorOptions) {
+    super(message, options);
+    this.capturedOutput =
+      options?.capturedOutput === undefined
+        ? undefined
+        : { ...options.capturedOutput };
+  }
   abstract readonly _tag: AnalysisErrorTag;
   readonly userMessage: string | undefined = undefined;
   readonly userCategory: "cancelled" | undefined = undefined;

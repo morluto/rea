@@ -7,7 +7,11 @@ import {
   type AnalysisProfileCommitment,
 } from "./analysisProfile.js";
 import type { BinaryTarget } from "./binaryTarget.js";
-import { jsonValueSchema, type JsonValue } from "./jsonValue.js";
+import {
+  jsonObjectSchema,
+  jsonValueSchema,
+  type JsonValue,
+} from "./jsonValue.js";
 import { digestSchema } from "./../domain/digests.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 
@@ -89,7 +93,7 @@ const evidenceBaseSchema = z
     provider: providerSchema,
     predicate_type: z.string().min(1),
     operation: z.string().min(1),
-    parameters: z.record(z.string(), jsonValueSchema),
+    parameters: jsonObjectSchema,
     raw_result: jsonValueSchema.nullable(),
     normalized_result: jsonValueSchema,
     confidence: z.enum(["observed", "derived", "inferred"]),
@@ -274,13 +278,23 @@ export const createEvidence = (
     locations: [...(observation.locations ?? [])],
     evidence_links: [...(observation.evidenceLinks ?? [])],
   } satisfies JsonValue;
-  const normalized = evidenceRecordSchema.parse({
+  // Select the known envelope before parsing. A union otherwise traverses and
+  // clones a legacy result for the profiled branch before rejecting its absent
+  // profile and trying the legacy branch.
+  const schema =
+    observation.analysisProfile === undefined
+      ? evidenceBaseSchema
+      : profiledEvidenceSchema;
+  const normalized = schema.parse({
     ...semantic,
     evidence_id: `ev_${"0".repeat(64)}`,
     subject,
   });
-  return parseEvidence({
+  // The envelope has already been parsed into an independent snapshot. Only
+  // its derived identifier changes here; parsing again clones the full payload
+  // and recomputes the same digest while the previous snapshot is still live.
+  return {
     ...normalized,
     evidence_id: computeEvidenceId(normalized),
-  });
+  };
 };

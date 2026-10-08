@@ -6,6 +6,7 @@ import { jsonValueSchema } from "../domain/jsonValue.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 import { appleAssetCatalogInputSchema } from "../domain/apple/appleAssetCatalog.js";
+import { dylibResolutionInputSchema } from "../domain/apple/dylibResolution.js";
 import { keyedArchiveInputSchema } from "../domain/apple/keyedArchive.js";
 /** Exact caller boundary for deterministic artifact inventory. */
 export const artifactInventoryInputSchema = z.strictObject({
@@ -27,6 +28,10 @@ const examples: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
   decode_interface_builder: {},
   inspect_asset_catalog: { offset: 0, limit: 1000 },
   inspect_keyed_archive: { path: "Contents/Resources/Model.plist" },
+  trace_dylib_resolution: {
+    roots: ["Contents/MacOS/App"],
+    architecture: "arm64",
+  },
 };
 
 const artifact = <
@@ -84,6 +89,11 @@ export const ARTIFACT_TOOL_CONTRACTS = [
     "inspect_asset_catalog",
     "Inspect compiled Assets.car metadata in an active Apple app bundle. Returns stable paginated catalog and rendition records with raw assetutil metadata and catalog digests; rendition bytes are not extracted.",
     appleAssetCatalogInputSchema,
+  ),
+  artifact(
+    "trace_dylib_resolution",
+    "Trace how dyld would resolve each Mach-O dylib load for the active Mach-O, or for every executable in the active .app bundle (the main app, XPC services, extensions, login items, helpers). Expands @executable_path, @loader_path, and @rpath through each process's LC_RPATH stack in dependents-first load order, and reports every candidate path with its outcome, the resolved image and digest, weak, re-export, and upward flags, and derived findings such as unresolved required loads or absent earlier @rpath candidates. Pure header parsing: nothing is executed, and absolute or system paths outside the analyzed root stay undetermined. Select roots or one architecture to narrow large bundles.",
+    dylibResolutionInputSchema,
   ),
 ] as const satisfies readonly ToolContract[];
 

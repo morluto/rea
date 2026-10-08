@@ -8,7 +8,6 @@ import {
 } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import type {
   JavaScriptModuleOrigin,
-  JavaScriptSemanticIr,
   JavaScriptSemanticModuleLink,
 } from "../../domain/javascript/javascriptSemanticIr.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
@@ -28,8 +27,10 @@ import {
 } from "./JavaScriptArtifactPathResolution.js";
 import { projectJavaScriptExportReturnShapes } from "./JavaScriptReturnShapeProjection.js";
 
+import type { JavaScriptModuleSemanticIr } from "./JavaScriptArtifactAnalysisTypes.js";
+
 interface SemanticAnalysis {
-  readonly ir: JavaScriptSemanticIr;
+  readonly ir: JavaScriptModuleSemanticIr;
 }
 
 interface RelationshipInput {
@@ -310,7 +311,7 @@ const unresolvedModuleNode = (
   });
 
 const moduleOriginForExport = (
-  ir: JavaScriptSemanticIr,
+  ir: JavaScriptModuleSemanticIr,
   link: JavaScriptSemanticModuleLink,
 ): JavaScriptModuleOrigin | null => {
   if (link.specifier !== null)
@@ -374,7 +375,7 @@ const semanticCoverage = (
 
 const moduleFormat = (
   path: string,
-  ir: JavaScriptSemanticIr,
+  ir: JavaScriptModuleSemanticIr,
 ): "commonjs" | "esm" | "mixed" | "unknown" => {
   const extension = posix.extname(path).toLowerCase();
   if (extension === ".mjs") return "esm";

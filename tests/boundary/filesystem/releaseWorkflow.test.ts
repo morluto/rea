@@ -43,6 +43,43 @@ async function readReleaseWorkflow() {
     );
 }
 
+it("validates the source before release creation and the prepared candidate before generation", async () => {
+  const steps = (await readReleaseWorkflow()).jobs["release-please"].steps;
+  const source = steps.findIndex(
+    (step) =>
+      step.name ===
+      "Validate checkpoint version and ancestry before release creation",
+  );
+  const action = steps.findIndex((step) =>
+    step.uses?.startsWith("googleapis/release-please-action@"),
+  );
+  const candidate = steps.findIndex(
+    (step) =>
+      step.name === "Validate prepared release version and migration notes",
+  );
+  const generation = steps.findIndex(
+    (step) => step.name === "Regenerate release documentation",
+  );
+  expect(source).toBeGreaterThanOrEqual(0);
+  expect(source).toBeLessThan(action);
+  expect(steps[source]?.if).toBeUndefined();
+  expect(steps[source]?.run).toContain("--source-sha");
+  expect(candidate).toBeGreaterThan(action);
+  expect(candidate).toBeLessThan(generation);
+  expect(steps[candidate]?.if).toBe(
+    "inputs.phase == 'prepare' && steps.release.outputs.prs_created == 'true'",
+  );
+  expect(steps[candidate]?.run).toContain("--stage candidate");
+  for (const name of [
+    "Check out release controller and Git history",
+    "Check out release pull request",
+  ]) {
+    expect(
+      steps.find((step) => step.name === name)?.with?.["fetch-depth"],
+    ).toBe(0);
+  }
+});
+
 it("requires explicit release preparation or publication instead of main pushes", async () => {
   const workflow = await readReleaseWorkflow();
   expect(Object.keys(workflow.on)).toEqual(["workflow_dispatch"]);
@@ -90,6 +127,13 @@ it.skipIf(process.platform === "win32").each([
     expect(actionIndex).toBeGreaterThanOrEqual(0);
     const commands = steps
       .slice(0, actionIndex)
+      .filter((step) =>
+        [
+          "Validate release selection",
+          "Resolve release branch tip",
+          "Require the publish dispatch to match the branch tip",
+        ].includes(step.name ?? ""),
+      )
       .filter(
         (step) =>
           step.if === undefined ||

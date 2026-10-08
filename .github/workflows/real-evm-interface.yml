@@ -1,0 +1,66 @@
+name: Real offline EVM interface
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/real-evm-interface.yml"
+      - "src/evm/**"
+      - "src/domain/evm/**"
+      - "src/application/evm/**"
+      - "src/contracts/evm/**"
+      - "src/composition/evm.ts"
+      - "src/cli/evmCommands.ts"
+      - "src/server/registerEvmTools.ts"
+      - "src/server/createServer.ts"
+      - "src/cli.ts"
+      - "src/cliCommandNames.ts"
+      - "src/contracts/toolContracts.ts"
+      - "src/contracts/toolEffects.ts"
+      - "src/process/OwnedCommand.ts"
+      - "src/process/ProviderProcess.ts"
+      - "src/process/ProcessOwnership*.ts"
+      - "src/process/ProviderDeadline.ts"
+      - "src/process/PrivateRuntimeRoot.ts"
+      - "src/artifacts/readStableArtifact*.ts"
+      - "src/artifacts/ArtifactReader.ts"
+      - "scripts/verify-evm-interface.mjs"
+      - "scripts/fixtures/evm-interface.sol"
+      - "third_party/evmole/**"
+      - "package.json"
+      - "package-lock.json"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: real-evm-interface-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_OPTIONS: --max-old-space-size=768
+  HUSKY: "0"
+
+jobs:
+  real-evm-interface:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Acquire unchanged fixture compiler in isolated runner storage
+        shell: bash
+        run: |
+          evm_fixture_root="${RUNNER_TEMP}/rea-evm-fixture-compiler"
+          mkdir -p "${evm_fixture_root}"
+          npm install --prefix "${evm_fixture_root}" --ignore-scripts --no-audit --no-fund --save-exact solc@0.8.30
+          command -v prlimit
+          command -v strace
+          echo "REA_VERIFY_STRACE_COMMAND=$(command -v strace)" >> "${GITHUB_ENV}"
+          echo "REA_VERIFY_SOLC_MODULE=${evm_fixture_root}/node_modules/solc/index.js" >> "${GITHUB_ENV}"
+      - name: Verify source-owned compiled bytecode through public CLI and MCP
+        run: npm run verify:evm:interface

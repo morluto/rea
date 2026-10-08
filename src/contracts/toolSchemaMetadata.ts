@@ -47,35 +47,122 @@ const PROPERTY_DESCRIPTIONS: Readonly<Record<string, string>> = {
   unknown_id: "Exact residual-unknown identifier.",
 };
 
+type JsonSchemaProjection = z.ZodType["~standard"]["jsonSchema"]["input"];
+
 /** Attach caller guidance to a canonical schema for the SDK wire projection. */
 export const toolInputSchemaWithMetadata = <Contract extends ToolContract>(
   contract: Contract,
-): Contract["inputSchema"] => {
-  const schema = contract.inputSchema.meta(
-    z.globalRegistry.get(contract.inputSchema) ?? {},
+): Contract["inputSchema"] =>
+  withAdvertisedJsonSchema(
+    contract.inputSchema,
+    "input",
+    (project) => (options) =>
+      flattenRootUnion({
+        ...describeProperties(project(options)),
+        examples: contract.examples.map(({ input }) => input),
+      }),
   );
-  const standard = schema["~standard"];
-  const inputJsonSchema = standard.jsonSchema?.input;
-  if (inputJsonSchema === undefined)
-    throw new TypeError(
-      "Tool input schema does not expose Standard JSON Schema",
-    );
 
+/** Advertise a canonical output schema without reconverting it per listing. */
+export const toolOutputSchemaWithMetadata = <Contract extends ToolContract>(
+  contract: Contract,
+): Contract["outputSchema"] =>
+  withAdvertisedJsonSchema(contract.outputSchema, "output");
+
+const withAdvertisedJsonSchema = <Schema extends z.ZodType>(
+  canonical: Schema,
+  io: "input" | "output",
+  advertise: (project: JsonSchemaProjection) => JsonSchemaProjection = (
+    project,
+  ) => project,
+): Schema => {
   // Zod's input projection drops root metadata when a descendant transforms.
   // Preserve the parser and let the SDK own conversion of everything else.
+  const schema = canonical.meta(z.globalRegistry.get(canonical) ?? {});
+  const standard = schema["~standard"];
+  const project = standard.jsonSchema?.[io];
+  if (project === undefined)
+    throw new TypeError(
+      `Tool ${io} schema does not expose Standard JSON Schema`,
+    );
   Object.defineProperty(schema, "~standard", {
     value: {
       ...standard,
       jsonSchema: {
         ...standard.jsonSchema,
-        input: (options: Parameters<typeof inputJsonSchema>[0]) => ({
-          ...describeProperties(inputJsonSchema(options)),
-          examples: contract.examples.map(({ input }) => input),
-        }),
+        [io]: memoizeByTarget(advertise(project)),
       },
     },
   });
   return schema;
+};
+
+// The SDK reconverts every registered schema on each `tools/list`, although a
+// registered contract cannot change. Like the SDK's own memoized output
+// projection, the advertised value is shared and treated as read-only.
+const memoizeByTarget = (
+  project: JsonSchemaProjection,
+): JsonSchemaProjection => {
+  const byTarget = new Map<string, Record<string, unknown>>();
+  return (options) => {
+    if (options.libraryOptions !== undefined) return project(options);
+    const cached = byTarget.get(options.target);
+    if (cached !== undefined) return cached;
+    const projected = project(options);
+    byTarget.set(options.target, projected);
+    return projected;
+  };
+};
+
+/** Keep MCP tool roots object-shaped for clients that reject root unions. */
+const flattenRootUnion = (
+  value: Record<string, unknown>,
+): Record<string, unknown> => {
+  if (!Array.isArray(value.anyOf)) return value;
+  const branches = value.anyOf.filter(isObject);
+  if (branches.length === 0 || branches.length !== value.anyOf.length)
+    return value;
+
+  const properties: Record<string, unknown> = {};
+  for (const branch of branches) {
+    if (!isObject(branch.properties)) return value;
+    for (const [name, schema] of Object.entries(branch.properties)) {
+      const previous = properties[name];
+      if (previous === undefined) properties[name] = schema;
+      else if (JSON.stringify(previous) !== JSON.stringify(schema))
+        properties[name] = {
+          anyOf: [previous, schema],
+          description: fallbackPropertyDescription(name),
+        };
+    }
+  }
+
+  // The canonical Zod parser still enforces branch validation at invocation.
+  const { anyOf: _anyOf, required: _required, ...root } = value;
+  const requiredByBranch = branches.map((branch) =>
+    Array.isArray(branch.required)
+      ? branch.required.filter(
+          (item): item is string => typeof item === "string",
+        )
+      : [],
+  );
+  const required = requiredByBranch.reduce((common, current) =>
+    common.filter((name) => current.includes(name)),
+  );
+  const minProperties = Math.max(
+    typeof root.minProperties === "number" ? root.minProperties : 0,
+    Math.min(...requiredByBranch.map((names) => names.length)),
+  );
+  return {
+    ...root,
+    type: "object",
+    properties,
+    ...(minProperties > 0 ? { minProperties } : {}),
+    ...(required.length > 0 ? { required } : {}),
+    ...(branches.every((branch) => branch.additionalProperties === false)
+      ? { additionalProperties: false }
+      : {}),
+  };
 };
 
 const describeProperties = (

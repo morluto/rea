@@ -167,13 +167,22 @@ it("preserves prototype-named producer members through the capture boundary", ()
     '"cache":{},"_extension":{"__proto__":{"preserved":7},"constructor":"ordinary"}',
   );
   const result = decodeHarCapture(text, []);
-  const reported = result.records[0]?.reported as Record<string, unknown>;
-  const extension = reported["_extension"] as Record<string, unknown>;
+  const reported = result.records[0]?.reported;
+  expect(reported).toBeDefined();
+  if (
+    reported === undefined ||
+    reported === null ||
+    typeof reported !== "object" ||
+    Array.isArray(reported)
+  )
+    throw new Error("No HAR object record was retained");
+  const extension = reported["_extension"];
+  expect(extension).toEqual({
+    ["__proto__"]: { preserved: 7 },
+    constructor: "ordinary",
+  });
   expect(Object.getPrototypeOf(extension)).toBe(Object.prototype);
-  expect(Object.hasOwn(extension, "__proto__")).toBe(true);
-  expect(extension["__proto__"]).toEqual({ preserved: 7 });
-  expect(extension["constructor"]).toBe("ordinary");
-  expect(({} as Record<string, unknown>)["preserved"]).toBeUndefined();
+  expect(Reflect.get(Object.prototype, "preserved")).toBeUndefined();
 });
 
 it("preserves Unicode, offsets, sizes, duplicate URLs and opaque extensions without inventing bytes", () => {

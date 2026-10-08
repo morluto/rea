@@ -5,6 +5,8 @@ import {
 export { NATIVE_MACOS_PROVIDER_IDENTITY } from "./NativeMacOSProviderMetadata.js";
 import { inspectAppleDispatchMetadata } from "./AppleDispatchMetadata.js";
 import { observeNativeUi } from "./NativeUiObservation.js";
+import { LldbCallTracer, type NativeCallTracer } from "./LldbCallTracer.js";
+import { observeNativeCalls } from "./NativeCallObservation.js";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { open, realpath, stat } from "node:fs/promises";
 
@@ -72,6 +74,7 @@ export class NativeMacOSProvider implements AnalysisProvider {
   constructor(
     private readonly runner: NativeCommandRunner = new XcrunCommandRunner(),
     platform: NodeJS.Platform = process.platform,
+    private readonly tracer: NativeCallTracer = new LldbCallTracer(),
   ) {
     this.#capabilities = nativeMacOSCapabilities(platform);
   }
@@ -85,7 +88,7 @@ export class NativeMacOSProvider implements AnalysisProvider {
   }
 
   createClient(target: BinaryTarget): AnalysisClient {
-    return new NativeMacOSClient(target, this.runner);
+    return new NativeMacOSClient(target, this.runner, this.tracer);
   }
 }
 
@@ -93,6 +96,7 @@ class NativeMacOSClient implements AnalysisClient {
   constructor(
     private readonly target: BinaryTarget,
     private readonly runner: NativeCommandRunner,
+    private readonly tracer: NativeCallTracer,
   ) {}
 
   async execute(
@@ -157,6 +161,22 @@ class NativeMacOSClient implements AnalysisClient {
           "Operation is not implemented by native macOS tools.",
         ),
       );
+    if (operation === "observe_native_calls") {
+      const result = await observeNativeCalls(
+        this.target,
+        parameters,
+        this.tracer,
+        options?.signal,
+      );
+      return result.ok
+        ? ok(
+            createAnalysisExecution(result.value, IDENTITY, {
+              limitations: result.value.limitations,
+              locations: [{ kind: "artifact-path", path: this.target.path }],
+            }),
+          )
+        : result;
+    }
     if (
       operation === "observe_native_ui" ||
       operation === "capture_native_ui_scenario"
@@ -208,6 +228,7 @@ class NativeMacOSClient implements AnalysisClient {
     switch (operation) {
       case "observe_native_ui":
       case "capture_native_ui_scenario":
+      case "observe_native_calls":
         return Promise.resolve(
           err(
             new AnalysisCapabilityUnavailableError(

@@ -1,3 +1,12 @@
+import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
+import { createEvmInterfaceService } from "../composition/evm.js";
+import { registerEvmTools } from "./registerEvmTools.js";
+import { registerRecordedCrashTools } from "./registerRecordedCrashTools.js";
+import { createRecordedCrashService } from "../composition/binaryDiagnostics.js";
+import type { RecordedCrashService } from "../application/binaryDiagnostics/RecordedCrashService.js";
+import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
+import { createBinaryLayoutService } from "../composition/binaryDiagnostics.js";
+import type { BinaryLayoutService } from "../application/binaryDiagnostics/BinaryLayoutService.js";
 import { McpServer } from "@modelcontextprotocol/server";
 import { isAbsolute } from "node:path";
 
@@ -59,7 +68,10 @@ const ACTIVE_TARGET_INSTRUCTIONS =
   "REA analyzes the active reverse-engineering target. Use the analysis tool that answers the question directly. Search or list symbols when discovery is needed; analyze_function provides a function dossier, and focused procedure tools return individual facets.";
 
 export interface CreateServerOptions {
+  readonly evmInterface?: EvmInterfaceService;
   readonly logger?: Logger;
+  readonly binaryLayout?: BinaryLayoutService;
+  readonly recordedCrash?: RecordedCrashService;
   readonly firmwareAnalysis?: FirmwareAnalysisPort;
   readonly javascriptRecovery?: JavaScriptRecoveryPort;
   readonly webModuleTrace?: WebModuleTraceService;
@@ -85,9 +97,22 @@ const installSessionToolAvailability = (
   const policy = sessionAvailabilityPolicy(options.availabilityPolicy, {
     optionalProviderLoadFailures: options.optionalProviderLoadFailures,
     optionalFeatures: {
+      evmInterfaceEnabled:
+        options.evmInterface !== undefined ||
+        (process.platform === "linux" && process.arch === "x64"),
       webModuleResolutionEnabled:
         options.webModuleTrace !== undefined ||
         isAbsolute(process.env.REA_BROWSER_EXECUTABLE ?? ""),
+      recordedCrashEnabled:
+        options.recordedCrash !== undefined ||
+        (process.platform === "linux" &&
+          process.arch === "x64" &&
+          isAbsolute(process.env.REA_PWNTOOLS_PYTHON ?? "")),
+      binaryLayoutEnabled:
+        options.binaryLayout !== undefined ||
+        (process.platform === "linux" &&
+          process.arch === "x64" &&
+          isAbsolute(process.env.REA_PWNTOOLS_PYTHON ?? "")),
       firmwareInspectionEnabled:
         options.firmwareAnalysis !== undefined ||
         (process.platform === "linux" &&
@@ -187,6 +212,24 @@ export const createServer = (
   registerAndroidTools(
     server,
     new AndroidAnalysisService(android),
+    toolLogger,
+    recordEvidence,
+  );
+  registerBinaryDiagnosticsTools(
+    server,
+    options.binaryLayout ?? createBinaryLayoutService(),
+    toolLogger,
+    recordEvidence,
+  );
+  registerEvmTools(
+    server,
+    options.evmInterface ?? createEvmInterfaceService(),
+    toolLogger,
+    recordEvidence,
+  );
+  registerRecordedCrashTools(
+    server,
+    options.recordedCrash ?? createRecordedCrashService(),
     toolLogger,
     recordEvidence,
   );

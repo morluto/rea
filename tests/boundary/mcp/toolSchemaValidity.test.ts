@@ -328,8 +328,10 @@ describe("MCP JSON Schema validity", () => {
       await Promise.allSettled([client.close(), server.close()]);
     }
   });
+});
 
-  it("advertises the structural request requirements enforced at runtime", async () => {
+describe("MCP root input schemas", () => {
+  it("advertises object roots while enforcing union requirements at runtime", async () => {
     const server = new McpServer({ name: "schema-constraints", version: "0" });
     const client = new Client({ name: "schema-constraints", version: "0" });
     const [clientTransport, serverTransport] =
@@ -353,12 +355,18 @@ describe("MCP JSON Schema validity", () => {
       if (graphContract === undefined || graphTool === undefined)
         throw new Error("Managed application graph tool was not advertised");
       expect(graphContract.inputSchema.safeParse({}).success).toBe(false);
+      expect(graphTool.inputSchema).toMatchObject({ type: "object" });
       expect(ajv.compile(graphTool.inputSchema)({})).toBe(false);
+      expect(ajv.compile(graphTool.inputSchema)({ unrelated: true })).toBe(
+        false,
+      );
 
       for (const contract of TOOL_CONTRACTS) {
-        const validate = ajv.compile(
-          advertised.get(contract.name)!.inputSchema,
-        );
+        const inputSchema = advertised.get(contract.name)!.inputSchema;
+        expect(inputSchema.type, contract.name).toBe("object");
+        expect(inputSchema.properties, contract.name).toBeDefined();
+        expect(inputSchema.anyOf, contract.name).toBeUndefined();
+        const validate = ajv.compile(inputSchema);
         for (const example of contract.examples)
           expect(
             validate(example.input),

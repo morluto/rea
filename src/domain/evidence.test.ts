@@ -4,8 +4,8 @@ import { describe, expect } from "vitest";
 import { createAnalysisProfile } from "./analysisProfile.js";
 import type { BinaryTarget } from "./binaryTarget.js";
 import { createEvidence, evidenceSchema, parseEvidence } from "./evidence.js";
+import { MAX_JSON_DEPTH } from "./jsonValue.js";
 import { createEvidenceBundle } from "./evidenceBundle.js";
-import type { JsonValue } from "./jsonValue.js";
 
 const TARGET: BinaryTarget = {
   path: "/tmp/fixture",
@@ -18,14 +18,53 @@ const TARGET: BinaryTarget = {
 const PROVIDER = { id: "fixture", name: "Fixture provider", version: "1" };
 const PROFILE = createAnalysisProfile(PROVIDER, { loader: "default" });
 
+it("snapshots caller-owned payloads before deriving their identity", () => {
+  const result = { nested: { values: ["observed"] } };
+  const rawResult = { entries: [{ value: "raw" }] };
+  const parameters = { selected: ["target"] };
+  const evidence = createEvidence(TARGET, PROVIDER, {
+    operation: "inspect",
+    parameters,
+    result,
+    rawResult,
+  });
+  result.nested.values.push("later");
+  const rawEntry = rawResult.entries[0];
+  if (rawEntry !== undefined) rawEntry.value = "changed";
+  parameters.selected.push("other");
+  expect(evidence.normalized_result).toEqual({
+    nested: { values: ["observed"] },
+  });
+  expect(evidence.raw_result).toEqual({ entries: [{ value: "raw" }] });
+  expect(evidence.parameters).toEqual({ selected: ["target"] });
+  expect(parseEvidence(evidence)).toEqual(evidence);
+  expect(() =>
+    parseEvidence({ ...evidence, normalized_result: result }),
+  ).toThrow(/semantic identifier/u);
+});
+
 describe("analysis evidence identity", () => {
-  it("normalizes prototype-named parameter keys", () => {
+  it("preserves prototype-named parameter keys and their semantic identity", () => {
     const evidence = createEvidence(TARGET, PROVIDER, {
       operation: "health",
       parameters: Object.fromEntries([["__proto__", false]]),
       result: true,
     });
+    expect(evidence.parameters).toEqual({ ["__proto__"]: false });
+    expect(Object.hasOwn(evidence.parameters, "__proto__")).toBe(true);
     expect(parseEvidence(evidence)).toEqual(evidence);
+    const stripped = createEvidence(TARGET, PROVIDER, {
+      operation: "health",
+      parameters: {},
+      result: true,
+    });
+    expect(stripped.evidence_id).not.toBe(evidence.evidence_id);
+    expect(() =>
+      parseEvidence({
+        ...evidence,
+        parameters: { ["__proto__"]: true },
+      }),
+    ).toThrow(/semantic identifier/u);
   });
 
   it.prop([
@@ -232,26 +271,50 @@ describe("DOS analysis evidence identity", () => {
   });
 });
 
-it("preserves prototype-named result members with an aligned semantic id", () => {
-  const result = JSON.parse(
-    '{"__proto__":{"preserved":7},"constructor":"ordinary"}',
-  ) as JsonValue;
+describe("evidence parameter depth bound", () => {
+  it("rejects evidence whose parameters nest past the JSON depth limit", () => {
+    const evidence = createEvidence(TARGET, PROVIDER, {
+      operation: "health",
+      parameters: {},
+      result: true,
+    });
+    let value: unknown = 1;
+    for (let index = 0; index <= MAX_JSON_DEPTH; index += 1)
+      value = { nested: value };
+    const result = evidenceSchema.safeParse({
+      ...evidence,
+      parameters: { attack: value },
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(
+      result.error.issues.some((issue) =>
+        issue.message.includes("maximum nesting depth"),
+      ),
+    ).toBe(true);
+  });
+});
+
+it("preserves prototype-named raw and normalized results with aligned identity", () => {
+  const result = { ["__proto__"]: { preserved: 7 }, constructor: "ordinary" };
   const evidence = createEvidence(TARGET, PROVIDER, {
     operation: "health",
     parameters: {},
     result,
+    rawResult: result,
   });
   const parsed = parseEvidence(evidence);
-  const normalized = parsed.normalized_result as Record<string, unknown>;
-  expect(Object.getPrototypeOf(normalized)).toBe(Object.prototype);
-  expect(Object.hasOwn(normalized, "__proto__")).toBe(true);
-  expect(normalized["__proto__"]).toEqual({ preserved: 7 });
-  expect(normalized["constructor"]).toBe("ordinary");
-  expect(({} as Record<string, unknown>)["preserved"]).toBeUndefined();
+  expect(parsed.normalized_result).toEqual(result);
+  expect(parsed.raw_result).toEqual(result);
+  expect(Object.getPrototypeOf(parsed.normalized_result)).toBe(
+    Object.prototype,
+  );
+  expect(Reflect.get(Object.prototype, "preserved")).toBeUndefined();
   const stripped = createEvidence(TARGET, PROVIDER, {
     operation: "health",
     parameters: {},
     result: { constructor: "ordinary" },
+    rawResult: { constructor: "ordinary" },
   });
   expect(stripped.evidence_id).not.toBe(evidence.evidence_id);
 });

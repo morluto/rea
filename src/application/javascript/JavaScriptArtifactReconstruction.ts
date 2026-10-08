@@ -5,7 +5,7 @@ import { createJavaScriptArtifactReader as createReader } from "../../artifacts/
 import type { JavaScriptApplicationGraph } from "../../domain/javascript/javascriptApplicationGraph.js";
 import type { JavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticGraph.js";
 import type { ElectronBoundarySummary } from "../../domain/javascript/javascriptApplicationAnalysis.js";
-import { analyzeJavaScriptArtifactFiles } from "./JavaScriptArtifactAnalysis.js";
+import { analyzeAndProjectJavaScriptArtifactFiles } from "./JavaScriptArtifactAnalysis.js";
 import { readJavaScriptArtifactFiles } from "../../artifacts/javascript/JavaScriptArtifactFiles.js";
 import { buildJavaScriptArtifactGraph } from "./JavaScriptArtifactGraphBuilder.js";
 import {
@@ -14,7 +14,7 @@ import {
 } from "./JavaScriptArtifactReconstructionInput.js";
 import { scanCanonicalArtifactInventory } from "../../artifacts/inventory/ArtifactInventory.js";
 import { summarizeElectronBoundaries } from "./ElectronBoundaryAnalysis.js";
-import { buildJavaScriptSemanticGraph } from "./JavaScriptSemanticGraphBuilder.js";
+import { createJavaScriptSemanticGraphProjection } from "./JavaScriptSemanticGraphBuilder.js";
 import type { ProgressReporter } from "../ProgressReporter.js";
 
 /** Application-layer result retaining local diagnostics outside the canonical graph. */
@@ -70,9 +70,23 @@ export const reconstructJavaScriptArtifact = async (
     const files = await readJavaScriptArtifactFiles(reader, snapshot, signal);
     await reportPhase(
       "parse_javascript_sources",
-      `Parsing ${String(files.files.length)} application source files`,
+      `Parsing and projecting ${String(files.files.length)} application source files`,
     );
-    const analysis = analyzeJavaScriptArtifactFiles(files);
+    const semanticProjection = createJavaScriptSemanticGraphProjection();
+    const analysis = await analyzeAndProjectJavaScriptArtifactFiles(
+      files,
+      semanticProjection.projectFile,
+      async (file, completed, total) => {
+        abortIfNeeded(signal);
+        await progress?.report({
+          phase: "parse_javascript_source",
+          completed: 0,
+          total: 1,
+          message: `Parsing and projecting ${file.path} (${String(completed + 1)}/${String(total)})`,
+        });
+        abortIfNeeded(signal);
+      },
+    );
     abortIfNeeded(signal);
     await reportPhase(
       "build_javascript_application_graph",
@@ -81,13 +95,13 @@ export const reconstructJavaScriptArtifact = async (
     const graph = buildJavaScriptArtifactGraph(snapshot, files, analysis);
     await reportPhase(
       "build_javascript_semantic_graph",
-      "Constructing static semantic relationships",
+      "Binding and validating static semantic relationships",
     );
-    const semanticGraph = buildJavaScriptSemanticGraph({
-      rootArtifactSha256: snapshot.manifest.root_sha256,
-      applicationGraph: graph,
+    const semanticGraph = semanticProjection.finish(
+      snapshot.manifest.root_sha256,
+      graph,
       analysis,
-    });
+    );
     return {
       input_path: path,
       format,

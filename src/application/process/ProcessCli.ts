@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { z } from "zod";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
@@ -113,6 +114,12 @@ const parseCaptureEvidence = (input: unknown) => {
   try {
     evidence = parseEvidence(input);
   } catch (cause: unknown) {
+    if (cause instanceof z.ZodError)
+      throw new AnalysisInputError(
+        "compare_process_captures",
+        { cause },
+        projectInputIssues(cause.issues, input),
+      );
     throw invalidCaptureEvidence();
   }
   if (

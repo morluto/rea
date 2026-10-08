@@ -1,3 +1,5 @@
+import { registerEvmCommands } from "./cli/evmCommands.js";
+import { registerBinaryDiagnosticsCommands } from "./cli/binaryDiagnosticsCommands.js";
 import { Cli } from "incur";
 
 import { createLogger, parseLogLevel } from "./logger.js";
@@ -55,10 +57,12 @@ export const createCli = (
   registerSetupCommands(cli, logger);
   registerCoreAnalysisCommands(cli, logger, resultOutput);
   registerUtilityCommands(cli, logger, environment);
+  registerEvmCommands(cli, logger, environment);
   registerArtifactCommands(cli, logger);
   registerManagedCommands(cli, logger);
   registerAndroidCommands(cli, logger, environment);
   registerFirmwareCommands(cli, logger, environment);
+  registerBinaryDiagnosticsCommands(cli, logger, environment);
   registerEvidenceCommands(cli, logger);
   registerProcessCommands(cli, logger, environment);
   registerBrowserCommands(cli, logger);

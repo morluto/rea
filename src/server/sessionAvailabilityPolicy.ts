@@ -10,6 +10,7 @@ export interface SessionAvailabilityDefaults {
     | undefined;
   readonly optionalFeatures?: Pick<
     SessionAvailability,
+    | "evmInterfaceEnabled"
     | "browserObservationEnabled"
     | "browserScenarioEnabled"
     | "electronObservationEnabled"
@@ -18,6 +19,8 @@ export interface SessionAvailabilityDefaults {
     | "androidAnalysisEnabled"
     | "javascriptRecoveryEnabled"
     | "webModuleResolutionEnabled"
+    | "binaryLayoutEnabled"
+    | "recordedCrashEnabled"
     | "firmwareInspectionEnabled"
     | "firmwareExtractionEnabled"
   >;
@@ -31,7 +34,13 @@ export const sessionAvailabilityPolicy = (
   const policy =
     configured ??
     (() => ({
+      evmInterfaceEnabled:
+        defaults.optionalFeatures?.evmInterfaceEnabled ?? false,
       processCaptureEnabled: platform !== "win32",
+      recordedCrashEnabled:
+        defaults.optionalFeatures?.recordedCrashEnabled ?? false,
+      binaryLayoutEnabled:
+        defaults.optionalFeatures?.binaryLayoutEnabled ?? false,
       firmwareInspectionEnabled:
         defaults.optionalFeatures?.firmwareInspectionEnabled ?? false,
       firmwareExtractionEnabled:

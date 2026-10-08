@@ -5,10 +5,12 @@ import { jsonValueSchema } from "../domain/jsonValue.js";
 const categorySchema = z.enum([
   "invalid_input",
   "unsupported_provider",
+  "unsupported_target",
   "integrity_mismatch",
   "truncated",
   "cancelled",
   "timeout",
+  "resource_constraint",
   "unavailable",
   "execution_failure",
 ]);
@@ -36,8 +38,10 @@ export const analysisErrorProjectionSchema = z.discriminatedUnion("code", [
   generic("artifact_changed"),
   generic("unreadable_output"),
   generic("capability_unavailable"),
+  generic("unsupported_target"),
   generic("provider_unavailable"),
   generic("provider_timeout"),
+  generic("resource_constraint"),
   generic("cancelled"),
   z
     .object({

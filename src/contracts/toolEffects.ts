@@ -41,6 +41,11 @@ const sessionEvidence = effects({ mutatesSession: true });
 
 /** Explicit effect audit for every public tool. */
 export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
+  inspect_evm_interface: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    launchesProcess: true,
+  }),
   inspect_web_network_capture: effects({
     mutatesSession: true,
     writesFilesystem: true,
@@ -64,6 +69,16 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     writesFilesystem: true,
     launchesProcess: true,
     accessesNetwork: true,
+  }),
+  inspect_recorded_crash: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    launchesProcess: true,
+  }),
+  inspect_binary_layout: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    launchesProcess: true,
   }),
   inspect_firmware_regions: effects({
     mutatesSession: true,
@@ -180,6 +195,15 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     mayDiscardData: true,
     idempotent: false,
   }),
+  // The owned process can change files, show UI and use the network.
+  observe_native_calls: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    changesUiState: true,
+    idempotent: false,
+  }),
   inspect_macho: nativeEvidence,
   inspect_signature: nativeEvidence,
   inspect_plist: nativeEvidence,
@@ -199,6 +223,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   decode_interface_builder: evidence,
   inspect_asset_catalog: nativeEvidence,
   inspect_keyed_archive: evidence,
+  trace_dylib_resolution: evidence,
   inspect_managed_artifact: evidence,
   inspect_managed_members: evidence,
   inspect_managed_native_boundaries: evidence,

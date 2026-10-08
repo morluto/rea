@@ -1,3 +1,5 @@
+import { EVMOLE_PROVIDER_IDENTITY } from "../../../src/evm/EvmoleRelease.js";
+import { PWNTOOLS_PROVIDER_IDENTITY } from "../../../src/native/pwntools/PwntoolsRelease.js";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -115,6 +117,8 @@ describe("canonical product catalog", () => {
         GHIDRA_PROVIDER_IDENTITY,
         IDA_PROVIDER_IDENTITY,
         NATIVE_MACOS_PROVIDER_IDENTITY,
+        PWNTOOLS_PROVIDER_IDENTITY,
+        EVMOLE_PROVIDER_IDENTITY,
         ARTIFACT_GRAPH_PROVIDER,
         ANDROID_APPLICATION_PROVIDER,
         APPLE_APPLICATION_PROVIDER,

@@ -362,6 +362,35 @@ describe("contextual JavaScript package path resolution", () => {
   });
 });
 
+describe("generic package entry heuristics", () => {
+  it.each([
+    ['{"main":"actual.cjs","module":"bundler.mjs"}', "actual.cjs"],
+    ['{"module":"bundler.mjs"}', "bundler.mjs"],
+  ])(
+    "preserves generic entry heuristics without a module kind for %s",
+    (metadata, entry) => {
+      const files = fileMap([
+        file("app/consumer.js", "root"),
+        file("app/node_modules/fixture/package.json", "root", metadata),
+        file("app/node_modules/fixture/actual.cjs", "root"),
+        file("app/node_modules/fixture/bundler.mjs", "root"),
+        file("app/node_modules/fixture/index.js", "root"),
+      ]);
+      expect(
+        resolve({
+          declaredPath: "fixture",
+          sourcePath: "app/consumer.js",
+          context: "module-specifier",
+          files,
+        }),
+      ).toMatchObject({
+        resolution_status: "resolved",
+        resolved_path: `app/node_modules/fixture/${entry}`,
+      });
+    },
+  );
+});
+
 describe("directory package entrypoint precedence", () => {
   it.each([
     ["require", '{"main":"actual.cjs"}', "actual.cjs"],
@@ -675,4 +704,53 @@ const file = (
     text === null
       ? { included: false, reason: "invalid-utf8" }
       : { included: true, value: text },
+});
+
+describe("exact HTML resource resolution", () => {
+  it.each([
+    ["extension", ["app.js"]],
+    ["directory index", ["app/index.js"]],
+    ["directory package", ["app/package.json", "app/entry.js"]],
+  ] as const)("does not infer a file from %s fallback", (_name, paths) => {
+    const files = fileMap([
+      file("index.html", "root"),
+      ...paths.map((path) =>
+        file(
+          path,
+          "root",
+          path.endsWith("package.json") ? '{"main":"entry.js"}' : "",
+        ),
+      ),
+    ]);
+    expect(
+      resolve({
+        declaredPath: "./app",
+        sourcePath: "index.html",
+        context: "html-reference",
+        files,
+      }),
+    ).toMatchObject({ resolution_status: "not-found", resolved_path: null });
+  });
+
+  it("prefers an exact extensionless resource and retains URL suffix handling", () => {
+    const files = fileMap([
+      file("renderer/index.html", "root"),
+      file("assets/app", "root"),
+      file("assets/app.js", "root"),
+      file("assets/app/index.js", "root"),
+    ]);
+    expect(
+      resolve({
+        declaredPath: "./app?cache=1#v2",
+        sourcePath: "renderer/index.html",
+        context: "html-reference",
+        htmlBaseHref: "/assets/",
+        files,
+      }),
+    ).toMatchObject({
+      declared_path: "./app?cache=1#v2",
+      resolution_status: "resolved",
+      resolved_path: "assets/app",
+    });
+  });
 });

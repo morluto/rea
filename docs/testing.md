@@ -104,7 +104,16 @@ extension, a login item, a privileged helper, launchd plists, and a helper tool,
 signed ad hoc. It packs the app as a directory, a `ditto` ZIP, and an APFS DMG,
 then checks that `inspect-artifact` plus `project-apple-application-graph`
 report the same bundle anatomy for all three through the CLI, with stdio MCP
-parity. It also checks that the DMG is detached afterwards. It runs in macOS CI.
+parity. It also checks that the DMG is detached afterwards. The same app
+covers `trace-dylib-resolution`:
+
+- each resolution status and finding, with CLI/MCP parity;
+- for every traced image, dependencies, rpaths, and install names equal to
+  `otool -l`;
+- for the main executable and an XPC service, a predicted load order equal to
+  the images dyld actually loads under `DYLD_PRINT_LIBRARIES`.
+
+It runs in macOS CI.
 
 Apple artifact verifiers live in `scripts/verify/apple/`, with the macOS bundle
 builder under `scripts/fixtures/apple/` and NIB byte fixtures beside the decoder
@@ -520,6 +529,17 @@ conformance/vtable fixture.
   `positive_e2e: false`; it must not be reported as capture/action proof.
   Both commands reject a changed executable digest and clean up the fixture
   process and helper. These lanes require an interactive macOS desktop. See [native investigation](native-investigation.md)
+
+`npm run verify:native-calls` needs only macOS with Command Line Tools (`clang`,
+`lldb`, `codesign`, `nm`). It compiles `tests/conformance/native/calls.m` and
+runs `observe-native-calls` through the CLI and stdio MCP. It checks:
+
+- the receiver class, selector and argument registers of every entry, and that
+  breakpoint addresses equal `nm`'s symbol addresses;
+- captured stdout and an environment override;
+- the event-limit and duration outcomes, with the process confirmed gone;
+- that a hardened-runtime copy is refused with `debugger-attach-denied`, and
+  that the same copy signed with `get-task-allow` is traced.
   for the exact ABI, authority, graph and observation boundaries.
 
 ### Firmware adapters
@@ -605,6 +625,55 @@ same checks through an isolated installed package. The conditional
 compiler. Ordinary unit/static gates acquire no browser. See
 [website runtime attribution](web-runtime.md) for effects, resource bounds and
 coverage limits.
+
+### Offline binary layout
+
+`npm run verify:binary:layout` requires Linux x64, GCC/binutils, absolute
+`REA_PWNTOOLS_PYTHON` with pwntools 4.15.0/pyelftools 0.33/Unicorn 2.1.2 and
+absolute `REA_VERIFY_STRACE_COMMAND`. It compiles ephemeral source-owned ELF
+fixtures and checks public CLI/MCP, lossless addresses/names, file ranges,
+mitigation inferences, malformed/unsupported input, original file hashes and
+released process ownership. Exec syscall tracing must identify only the declared
+Node/Python launchers; no target binary is executed. Core/debugger claims need
+separate verification lanes. Pass an installed package entrypoint as the script's
+first argument to verify packaging independently of the checkout.
+The valid SHN_XINDEX fixture has 65,281 full section rows; CLI is checked in
+the ordinary lane. Its large MCP transfer is opt-in with
+`REA_VERIFY_LARGE_ELF_MCP=1` (or the workflow dispatch `large_mcp` input), an
+explicit 256 MiB SDK receive buffer and five-minute request timeout. Ordinary
+MCP fixtures retain the pinned SDK defaults.
+
+### Offline EVM interface
+
+`npm run verify:evm:interface` requires Linux x64, an absolute
+`REA_VERIFY_STRACE_COMMAND`, caller-supplied util-linux `prlimit` and `REA_VERIFY_SOLC_MODULE` selecting the absolute module path for
+solc 0.8.30. It compiles source-owned plain/optimized/via-IR Cancun fixtures in
+private storage and checks actual CLI/MCP selector evidence, raw/hex identity,
+unknowns, malformed carriers and independent cleanup. An optional positional
+entrypoint verifies a fresh installed package. It acquires no engine, compiler
+or chain dependency and does not execute a contract on a chain.
+
+### Recorded crash evidence
+
+`npm run verify:recorded:crash` is a separate Linux x64 lane. It requires GCC,
+GDB, absolute `REA_PWNTOOLS_PYTHON` with the offline ELF profile above,
+`REA_PWNDBG_GDBINIT` and `REA_PWNDBG_VENV_PATH` with unchanged pwndbg 2026.09.15,
+and `REA_VERIFY_STRACE_COMMAND`. Its disposable CI runner installs GDB, checks out the exact upstream
+commit and installs its frozen lockfile in isolated runner storage. No developer
+host configuration or core-pattern setting changes.
+
+Fixture generation explicitly runs an owned source-built two-thread program
+under GDB to create a recording. Subsequent public CLI/MCP inspection verifies
+lossless high registers, signed signals, note source bytes, malformed/missing
+notes, unfamiliar owners, optional core-only mapping context and actionable
+missing/unsupported plugin errors. A historical-PID collision fixture references
+an owned live sentinel; inspection syscall traces reject process attach/memory
+access, provider lookups of that PID's `/proc` files and attempted Internet sockets. Traces admit
+the observed upstream startup helpers (`iconv -l`, the selected checkout's Git
+version lookup) and REA ownership inspection separately from target execution.
+This is fixture evidence, not a sandbox claim. Inputs remain unchanged and the
+sentinel must stay alive; owned cleanup and empty verifier descendants are required. Pass an
+installed package entrypoint as the script's first argument for package coverage.
 
 ## Agent evaluation and conformance records
 

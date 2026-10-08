@@ -16,6 +16,7 @@ import {
 } from "../../../src/application/process/ProcessCli.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { PROCESS_PROVIDER } from "../../../src/application/process/ProcessEvidence.js";
+import { INVESTIGATION_EXAMPLES } from "../../../src/contracts/investigationExamples.js";
 
 const roots: string[] = [];
 const execFileAsync = promisify(execFile);
@@ -292,11 +293,62 @@ describe("process CLI evidence validation", () => {
     const malformed = join(root, "malformed-evidence.json");
     await writeFile(malformed, "{}");
 
-    expect(await compareProcessEvidenceFiles(malformed, malformed)).toEqual({
+    expect(
+      await compareProcessEvidenceFiles(malformed, malformed),
+    ).toMatchObject({
       error: "Process command failed",
       category: "invalid_input",
-      message:
-        "Capture evidence is malformed. Create new capture evidence, then try again.",
+      code: "invalid_request",
+      details: {
+        operation: "compare_process_captures",
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            path: ["parameters"],
+            reason: "missing_argument",
+          }),
+        ]),
+      },
     });
   });
 });
+
+it(
+  "reports the JSON depth constraint through the compiled comparison CLI",
+  async () => {
+    const root = await fixture();
+    const left = join(root, "left.json");
+    const right = join(root, "right.json");
+    const input = INVESTIGATION_EXAMPLES.compare_process_captures.input;
+    await writeFile(left, JSON.stringify(input.left));
+    await writeFile(right, JSON.stringify(input.right));
+    const cli = fileURLToPath(
+      new URL("../../../scripts/rea.mjs", import.meta.url),
+    );
+    const cliArguments = [
+      cli,
+      "compare-process-captures",
+      left,
+      right,
+      "--json",
+    ];
+    const baseline = await execFileAsync(process.execPath, cliArguments);
+    expect(JSON.parse(baseline.stdout)).toMatchObject({
+      operation: "compare_process_captures",
+    });
+    const nested = '{"nested":'.repeat(10_000) + "1" + "}".repeat(10_000);
+    await writeFile(
+      left,
+      JSON.stringify({
+        ...input.left,
+        parameters: { attack: "depth-placeholder" },
+      }).replace('"depth-placeholder"', nested),
+    );
+    await expect(
+      execFileAsync(process.execPath, cliArguments),
+    ).rejects.toMatchObject({
+      code: 1,
+      stdout: expect.stringContaining("maximum nesting depth"),
+    });
+  },
+  CLI_INTEGRATION_TIMEOUT_MS,
+);

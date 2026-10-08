@@ -1,3 +1,5 @@
+import { EVM_TOOL_CONTRACTS } from "./evm/evmToolContracts.js";
+import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "./native/binaryDiagnosticsToolContracts.js";
 import { describe, expect, it } from "vitest";
 
 import { ENHANCED_TOOL_CONTRACTS } from "./enhancedToolContracts.js";
@@ -23,7 +25,9 @@ const GROUPS = {
   official: OFFICIAL_TOOL_CONTRACTS,
   enhanced: ENHANCED_TOOL_CONTRACTS,
   native: NATIVE_TOOL_CONTRACTS,
+  binary_diagnostics: BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
   artifact: ARTIFACT_TOOL_CONTRACTS,
+  evm: EVM_TOOL_CONTRACTS,
   managed: MANAGED_TOOL_CONTRACTS,
   android: ANDROID_TOOL_CONTRACTS,
   firmware: FIRMWARE_TOOL_CONTRACTS,

@@ -74,6 +74,18 @@ for the tool-result contract.
 
 ## Large results
 
+Application analysis projects semantic relationships one source file at a time.
+After projection, it retains only the lexical module facts and exported return
+shapes needed to build application relationships. Full source IR does not stay
+resident for every file together. Callable ownership and contained-reference
+queries use per-file range indexes, while call sites use exact-range lookups.
+Existing node budgets and coverage reporting remain in effect.
+
+Progress identifies the source file being parsed and projected. Cancellation is
+checked between files, with event-loop yields that allow notifications and
+completed file-local allocations to be released. A single file's synchronous
+parser and semantic extraction still need to finish before that boundary.
+
 Graph and Evidence identifiers hash canonical JSON incrementally, without
 assembling a single string for the whole graph. The canonical bytes and existing
 identifiers remain unchanged. The opt-in regression check is
@@ -93,6 +105,9 @@ assemble whole strings. Field selection remains useful when the caller needs a
 smaller view, for example `--format json --filter-output
 evidence_id,normalized_result.statistics`. Streaming output does not bound the
 memory needed to construct the analysis graph itself.
+The separate large-response transport work is tracked in
+[#1053](https://github.com/morluto/rea/issues/1053) and
+[#1050](https://github.com/morluto/rea/issues/1050).
 Client framing limits also apply: the pinned Node MCP SDK's stdio transport
 defaults to a 10 MiB buffer. Its caller-selected `maxBufferSize` must accommodate
 the complete response, including text and structured Evidence projections.
@@ -230,3 +245,18 @@ such as `./web3:app.js` still names a local artifact.
 Package `exports` fallback arrays are supported both at the top level and under
 the root `"."` entry. The resolver selects targets in declared order using the
 same conditional and invalid-entry handling as nested exports arrays.
+
+ESM relative module paths and selected package exports targets use URL suffix handling
+and one percent-decoding pass. CommonJS relative paths and legacy package main
+fields retain literal filename punctuation. Exports targets must start with
+`./` and exclude `.`, `..`, and `node_modules` path segments, including their
+encoded forms, before URL normalization. Arrays skip invalid exports targets
+in declared order; URL decoding and file lookup failures for a selected target
+do not select a later entry. Rejected references retain the package metadata
+path, original target, failed constraint, and importing source location.
+
+HTML script references resolve to exact inventoried files after applying the
+document base and query/fragment rules. CommonJS module lookups retain extension
+and directory resolution.
+Unresolved HTML references retain their declaration, source range, and resolution
+reason in the renderer observations.

@@ -1,5 +1,6 @@
 /** Canonical names used by every one-shot CLI command registration. */
 export const CLI_COMMANDS = Object.freeze({
+  inspectEvmInterface: "inspect-evm-interface",
   inspectWebNetworkCapture: "inspect-web-network-capture",
   observeWebExecution: "observe-web-execution",
   inspectWebEventListeners: "inspect-web-event-listeners",
@@ -28,6 +29,7 @@ export const CLI_COMMANDS = Object.freeze({
   extractArtifact: "extract-artifact",
   decodeInterfaceBuilder: "decode-interface-builder",
   inspectKeyedArchive: "inspect-keyed-archive",
+  traceDylibResolution: "trace-dylib-resolution",
   inspectNativeDataType: "inspect-native-data-type",
   inspectNativeLoadImage: "inspect-native-load-image",
   readBytes: "read-bytes",
@@ -37,6 +39,8 @@ export const CLI_COMMANDS = Object.freeze({
   resolveNativeCallTargets: "resolve-native-call-targets",
   inspectAssetCatalog: "inspect-asset-catalog",
   inspectManagedArtifact: "inspect-managed-artifact",
+  inspectRecordedCrash: "inspect-recorded-crash",
+  inspectBinaryLayout: "inspect-binary-layout",
   inspectFirmwareRegions: "inspect-firmware-regions",
   extractFirmware: "extract-firmware",
   inspectAndroidPackage: "inspect-android-package",
@@ -51,6 +55,7 @@ export const CLI_COMMANDS = Object.freeze({
   importManagedReconstruction: "import-managed-reconstruction",
   projectManagedApplicationGraph: "project-managed-application-graph",
   observeNativeUi: "observe-native-ui",
+  observeNativeCalls: "observe-native-calls",
   captureNativeUiScenario: "capture-native-ui-scenario",
   inspectMacho: "inspect-macho",
   inspectSignature: "inspect-signature",

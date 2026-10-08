@@ -1,0 +1,78 @@
+name: Real offline binary layout
+
+on:
+  workflow_dispatch:
+    inputs:
+      large_mcp:
+        description: "Also verify the complete 65,281-section result over MCP (slow)"
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - ".github/workflows/real-binary-layout.yml"
+      - "bridge/pwntools/**"
+      - "src/native/pwntools/**"
+      - "src/domain/native/binaryLayout*"
+      - "src/application/binaryDiagnostics/**"
+      - "src/contracts/native/binaryDiagnosticsToolContracts.ts"
+      - "src/composition/binaryDiagnostics.ts"
+      - "src/server/registerBinaryDiagnosticsTools.ts"
+      - "src/server/createServer.ts"
+      - "src/cli/binaryDiagnosticsCommands.ts"
+      - "src/cli.ts"
+      - "src/cliCommandNames.ts"
+      - "src/contracts/toolContracts.ts"
+      - "src/contracts/toolEffects.ts"
+      - "src/process/OwnedCommand.ts"
+      - "src/process/ProviderProcess.ts"
+      - "src/process/ProviderDeadline.ts"
+      - "src/process/ProcessOwnership*.ts"
+      - "src/process/PrivateRuntimeRoot.ts"
+      - "src/artifacts/readStableArtifact*.ts"
+      - "src/artifacts/ArtifactReader.ts"
+      - "src/domain/analysisError*.ts"
+      - "scripts/verify-binary-layout.mjs"
+      - "scripts/lib/elf-section-name-fixtures.mjs"
+      - "scripts/lib/large-result-mcp.mjs"
+      - "scripts/fixtures/binary-layout*"
+      - "package.json"
+      - "package-lock.json"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: real-binary-layout-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_OPTIONS: --max-old-space-size=768
+  HUSKY: "0"
+  REA_VERIFY_LARGE_ELF_MCP: ${{ inputs.large_mcp && '1' || '0' }}
+
+jobs:
+  real-binary-layout:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Acquire exact upstream libraries in an isolated runner environment
+        shell: bash
+        run: |
+          layout_python_root="${RUNNER_TEMP}/rea-pwntools-layout"
+          python3 -m venv "${layout_python_root}"
+          "${layout_python_root}/bin/python" -m pip install --disable-pip-version-check \
+            'pwntools==4.15.0' 'pyelftools==0.33' 'unicorn==2.1.2'
+          command -v gcc
+          command -v ld
+          command -v strip
+          command -v strace
+          echo "REA_PWNTOOLS_PYTHON=${layout_python_root}/bin/python" >> "${GITHUB_ENV}"
+          echo "REA_VERIFY_STRACE_COMMAND=$(command -v strace)" >> "${GITHUB_ENV}"
+      - name: Verify source-owned fixtures through public CLI and MCP
+        run: npm run verify:binary:layout

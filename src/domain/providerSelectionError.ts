@@ -1,5 +1,8 @@
 import type { JsonValue } from "./jsonValue.js";
-import { AnalysisError } from "./analysisErrorBase.js";
+import {
+  AnalysisError,
+  type AnalysisCapturedOutput,
+} from "./analysisErrorBase.js";
 
 /** Stable failure classes for target-bound deep-provider selection. */
 export type ProviderSelectionFailureReason =
@@ -19,6 +22,7 @@ export interface ProviderSelectionRejection {
 
 /** Complete typed context for one failed deep-provider selection. */
 export interface ProviderSelectionErrorOptions {
+  readonly capturedOutput?: AnalysisCapturedOutput;
   readonly operation?: string;
   readonly reason: ProviderSelectionFailureReason;
   readonly requestedProviderId: string;
@@ -38,7 +42,12 @@ export class ProviderSelectionError extends AnalysisError {
 
   constructor(options: ProviderSelectionErrorOptions) {
     const operation = options.operation ?? "open_binary";
-    super(providerSelectionDiagnostic(options));
+    super(
+      providerSelectionDiagnostic(options),
+      options.capturedOutput === undefined
+        ? undefined
+        : { capturedOutput: options.capturedOutput },
+    );
     this.operation = operation;
     this.reason = options.reason;
     this.requestedProviderId = options.requestedProviderId;

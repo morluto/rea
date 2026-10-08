@@ -1,5 +1,21 @@
 # Native, managed, and packaged artifacts
 
+## Recorded Linux crashes
+
+Use `inspect_recorded_crash` with an explicit Linux x86-64 ELF core path to
+inspect historical thread registers, signals, raw notes and original file
+ranges. It is independent of the active disassembler target. Source-bound
+register values and note bytes are observations; missing notes, signal-thread
+association and current executable/library identity remain unknown. PIDs are
+historical metadata and never authorize live attach or control.
+
+The optional `include_debugger_context` facet adds mapping candidates through
+caller-supplied GDB/pwndbg in an owned core-only session. Display names do not
+establish current file identity; zero reported flags leave permissions unknown.
+Requested unavailable context fails with setup guidance. See
+[recorded crashes](https://github.com/morluto/rea/blob/main/docs/recorded-crashes.md)
+for exact upstream profiles, bounds and verification coverage.
+
 ## Native targets
 
 After `open_binary`, use focused search, procedure, or function tools directly.
@@ -8,6 +24,12 @@ question. Prefer literal search, names, decompilation, callers, callees, and
 cross-references. Addresses and recovered pseudocode are analysis observations,
 not original source. Provider unavailability and unsupported metadata remain
 unknown rather than false.
+
+To see which functions or Objective-C methods a Mach-O actually calls in one
+run, use `observe_native_calls` with explicit breakpoints and a bounded
+`duration_ms`/`max_events`. It launches a new process under LLDB, so the target
+runs and may change files or use the network. Hardened-runtime targets need the
+`get-task-allow` entitlement.
 
 Use `binary_session` with no arguments to check the open target, selected
 provider, and alignment. Its default `result.tool_availability` includes the
@@ -76,6 +98,13 @@ items, system and driver extensions, and plug-ins. It also lists privileged
 helpers, launchd plists, symlinks, and each bundle's `info_plist_path` and
 executable candidates. Roles are path conventions, not parsed plists; read the
 listed plists with `inspect_plist`.
+
+After `open_binary` on a `.app` or Mach-O, use `trace_dylib_resolution` to see
+which file each `@rpath`, `@loader_path` and `@executable_path` load reaches for
+every executable in the bundle. It also lists missing or weak loads and earlier
+`@rpath` candidates that are absent. Narrow large bundles with `roots` or
+`architecture`. System paths stay undetermined because the dyld shared cache
+provides them.
 
 Use `extract_artifact` when materialized files are needed. It takes no arguments
 and materializes all regular files into a fresh temporary directory chosen by
