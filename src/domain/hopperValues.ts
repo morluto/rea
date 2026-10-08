@@ -62,6 +62,11 @@ const segmentSchema = z.object({
 const unavailableAnalysisFactSchema = z
   .object({ available: z.literal(false), reason: z.string() })
   .strict();
+/** An analyzed bookmark retains a missing provider label as null. */
+export const analysisBookmarkSchema = z.strictObject({
+  address: z.string(),
+  name: z.string().nullable(),
+});
 /** Complete observed function-body ranges; every range endpoint is inclusive. */
 export const functionBodySchema = z.discriminatedUnion("available", [
   unavailableAnalysisFactSchema,

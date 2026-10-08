@@ -163,7 +163,6 @@ const PUBLISHED_TOOL_NAME_FLOOR = [
   "set_addresses_names",
   "set_bookmark",
   "set_comment",
-  "set_current_document",
   "set_inline_comment",
   "trace_application_feature",
   "trace_call_path",

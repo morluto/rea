@@ -151,6 +151,17 @@ packaging/install behavior and fake-provider integration; use the corresponding
 real-provider lanes for engine claims. Real Apple dispatch and Interface
 Builder verifiers currently prove format integration through production readers.
 
+`verify:hopper` exercises an installed Hopper through the production stdio MCP
+server and CLI. It checks source-owned call chains, CFG edges, references and
+complete large inventories, then probes unnamed bookmarks, annotation clearing,
+batch validation before mutation, malformed addresses and regexes, segment-end
+partial reads, and synthetic file-offset rejection. Advertised schemas are
+validated in their JSON Schema dialect and successful replies are checked against
+their advertised output schemas. Disposable binary copies prove that switching
+and closing actually removes the native document, and that CLI byte results and
+invalid-address diagnostics agree with MCP. No provider is mocked in this lane.
+The Linux demo lane remains a separate `verify:hopper:linux` command.
+
 Golden tests use immutable captured text inputs with producer/source provenance
 under `tests/fixtures/golden/`. Expected results are reviewed for the semantic
 claim; capture commands do not automatically approve new expected outputs.

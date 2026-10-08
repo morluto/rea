@@ -56,7 +56,9 @@ export const analysisErrorRemediationAction = (
       ? "Check the Hopper launcher and target details, then retry opening the target."
       : `Use the active REA session ${error.ownerRunId} or close it before opening this target again.`;
   if (error instanceof HopperRemoteError)
-    return "Review the Hopper diagnostic details; correct the request or retry if the failure was transient.";
+    return error.diagnosticType === "invalid_request"
+      ? "Correct the reported address, document, or arguments and retry."
+      : "Review the Hopper diagnostic details; correct the request or retry if the failure was transient.";
   if (error instanceof EvidenceReferenceError)
     return "Use an exact Evidence reference retained by this session, supply the complete inline Evidence, re-run its producer, or import its Evidence bundle. close_binary clears retained records.";
   if (
@@ -87,6 +89,11 @@ export const analysisErrorCategory = (
     return error.userCategory ?? "execution_failure";
   if (error instanceof BrowserObservationError)
     return browserErrorCategory(error.reason);
+  if (
+    error instanceof HopperRemoteError &&
+    error.diagnosticType === "invalid_request"
+  )
+    return "invalid_input";
   if (
     error instanceof HopperRemoteError &&
     error.diagnosticType === "authorization"

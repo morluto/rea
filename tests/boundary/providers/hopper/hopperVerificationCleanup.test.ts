@@ -56,22 +56,32 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it("preserves unexpected empty directories and session files as cleanup evidence", async () => {
+it("reports retained sessions belonging to observed MCP processes", async () => {
   const parent = await createTestTempDirectory("rea-cleanup-retained-session-");
   const directory = join(parent, "rea-hopper-501");
   const previous = join(parent, "rea-existing-session");
   await mkdir(previous);
   const before = await snapshotHopperRuntime(parent, directory);
   const retained = join(parent, "rea-retained-session");
-  const unexpected = join(parent, "rea-hopper-other-owner");
-  await mkdir(retained);
+  const unrelated = join(parent, "rea-unrelated-session");
+  const unknown = join(parent, "rea-no-ownership-record");
+  for (const path of [retained, unrelated, unknown]) await mkdir(path);
   await writeFile(join(retained, "bootstrap.py"), "source-owned fixture");
-  await mkdir(unexpected);
-  const after = await snapshotHopperRuntime(parent, directory);
-
-  expect([...after].filter((path) => !before.has(path)).sort()).toEqual(
-    [retained, unexpected].sort(),
+  await writeFile(
+    join(retained, "ownership.json"),
+    JSON.stringify({ parent_pid: process.pid }),
   );
+  await writeFile(
+    join(unrelated, "ownership.json"),
+    JSON.stringify({ parent_pid: process.pid + 1 }),
+  );
+  const after = await snapshotHopperRuntime(
+    parent,
+    directory,
+    new Set([process.pid]),
+  );
+
+  expect([...after].filter((path) => !before.has(path))).toEqual([retained]);
 });
 
 it("reports an unexpected file at the shared lease root", async () => {

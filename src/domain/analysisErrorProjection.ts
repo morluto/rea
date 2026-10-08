@@ -82,6 +82,11 @@ export const projectAnalysisError = (
 const underlyingErrorCode = (
   error: AnalysisError,
 ): AnalysisErrorProjection["code"] => {
+  if (
+    error instanceof HopperRemoteError &&
+    error.diagnosticType === "invalid_request"
+  )
+    return "invalid_request";
   if (error instanceof ProviderSelectionError)
     return error.reason === "provider_unavailable"
       ? "provider_unavailable"

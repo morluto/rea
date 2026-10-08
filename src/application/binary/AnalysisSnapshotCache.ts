@@ -35,7 +35,6 @@ const STATEFUL_OPERATIONS: ReadonlySet<AnalysisOperation> = new Set([
   "current_document",
   "goto_address",
   "list_documents",
-  "set_current_document",
 ]);
 
 const CURSOR_DEFAULT_OPERATIONS: ReadonlySet<AnalysisOperation> = new Set([
@@ -49,10 +48,7 @@ const CURSOR_DEFAULT_OPERATIONS: ReadonlySet<AnalysisOperation> = new Set([
 
 const DOCUMENT_SCOPED_OPERATIONS: ReadonlySet<string> = new Set(
   OFFICIAL_TOOL_CONTRACTS.map(({ name }) => name).filter(
-    (name) =>
-      name !== "current_document" &&
-      name !== "list_documents" &&
-      name !== "set_current_document",
+    (name) => name !== "current_document" && name !== "list_documents",
   ),
 );
 

@@ -45,7 +45,6 @@ export const HOPPER_OPERATIONS = Object.freeze([
   "set_addresses_names",
   "set_bookmark",
   "set_comment",
-  "set_current_document",
   "set_inline_comment",
   "unset_bookmark",
   "xrefs",

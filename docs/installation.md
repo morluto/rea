@@ -314,8 +314,15 @@ Hopper serializes analysis requests. Cancelling a wait can leave provider work
 running, which the session reports. Successful decompilation is cached until
 a relevant rename or comment changes it.
 
-Closing a session shuts down REA's bridge and removes its temporary socket
-directory while preserving the Hopper application. A `cleanup_incomplete`
+Analysis and annotation calls stay bound to the active target's native Hopper
+document, even when GUI focus changes or other documents have the same display
+name. Use `open_binary` to change targets. Byte reads stop at a segment boundary
+and return the readable prefix with `complete: false`. File-offset mapping checks
+the reverse lookup; synthetic external-symbol memory has no original file offset.
+
+Closing or switching a target closes its bound Hopper document, shuts down REA's
+bridge and removes its temporary socket directory while preserving the Hopper
+application and unrelated documents. A `cleanup_incomplete`
 result identifies resources whose cleanup could not be verified.
 
 ### Hopper in CI

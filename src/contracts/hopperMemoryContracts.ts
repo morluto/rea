@@ -1,11 +1,5 @@
 import { z } from "zod";
-
-const document = z.string().optional().describe("The document name");
-const address = z
-  .string()
-  .describe(
-    "A provider-normalized address; default memory uses 0x-prefixed hexadecimal",
-  );
+import { address, document } from "./toolContractHelpers.js";
 
 /** Hopper memory and file-mapping contracts. */
 export const HOPPER_MEMORY_TOOL_DEFINITIONS = [

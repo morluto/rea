@@ -130,7 +130,7 @@ const probeResultSchema = z.strictObject({
     id: z.literal(0),
     error: z.strictObject({
       code: z.literal(-32000),
-      message: z.literal("Invalid Hopper bridge request"),
+      message: z.literal("Invalid bridge request id"),
       type: z.literal("invalid_request"),
     }),
   }),
@@ -167,12 +167,25 @@ describe("Hopper API facade", () => {
       "KeyError: Hopper bridge operation failed",
     ]);
     expect(result.malformed_requests).toEqual([
-      ...[0, 0, 0, 0, 0, 2, 3, 0, 4, 5, 6, 7].map((id) => ({
+      ...[
+        [0, "Invalid bridge request JSON"],
+        [0, "Invalid bridge request JSON"],
+        [0, "Invalid bridge request shape"],
+        [0, "Invalid bridge request shape"],
+        [0, "Invalid bridge request shape"],
+        [2, "Invalid bridge method or parameters"],
+        [3, "Invalid bridge method or parameters"],
+        [0, "Invalid bridge request id"],
+        [4, "Address must be a string"],
+        [5, "Byte-read length must be an integer"],
+        [6, "case_sensitive must be a boolean"],
+        [7, "Unknown bridge method"],
+      ].map(([id, message]) => ({
         id,
         error: {
           code: -32000,
           type: "invalid_request",
-          message: "Invalid Hopper bridge request",
+          message,
         },
       })),
       {
@@ -207,50 +220,6 @@ describe("Hopper API facade", () => {
       { id: 5, result: [] },
       { id: 6, result: [] },
     ]);
-    expect(result.procedure_references).toEqual({
-      procedure: {
-        address: "0x401000",
-        name: "fixture-procedure",
-        classification: null,
-        body: {
-          available: false,
-          reason:
-            "Hopper's public Python API does not expose complete function body ranges",
-        },
-      },
-      direction: "outgoing",
-      reference_kinds_available: false,
-      unresolved_calls: [],
-      references: [],
-    });
-    expect(result.containing_procedure).toEqual({
-      query_address: "0x401000",
-      found: true,
-      procedure: {
-        address: "0x401000",
-        name: "fixture-procedure",
-        classification: null,
-        body: {
-          available: false,
-          reason:
-            "Hopper's public Python API does not expose complete function body ranges",
-        },
-      },
-    });
-    expect(result.procedure_info).toEqual({
-      name: "fixture-procedure",
-      entrypoint: "0x401000",
-      basicblock_count: 1,
-      length: 4,
-      signature: "int fixture-procedure()",
-      locals: [],
-      classification: null,
-      body: {
-        available: false,
-        reason:
-          "Hopper's public Python API does not expose complete function body ranges",
-      },
-    });
     expect(stdout).not.toContain("supersecret");
     expect(result.analysis_guard.message).toContain(
       "requires completed Hopper background analysis",

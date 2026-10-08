@@ -2,4 +2,5 @@
 export function snapshotHopperRuntime(
   parent: string,
   targetLeaseDirectory: string,
+  ownedProcessIds?: ReadonlySet<number>,
 ): Promise<Set<string>>;
