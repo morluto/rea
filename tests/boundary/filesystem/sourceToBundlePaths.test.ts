@@ -17,25 +17,9 @@ it("keeps literal hash characters in historical/current filesystem paths", async
     writeFile(join(previous, "worker#main.js"), "export const value = 1;"),
     writeFile(join(current, "worker#main.js"), "export const value = 2;"),
   ]);
-  const reference = await importReferenceSource({
-    root: previous,
-    caller: "source-to-bundle-path-test",
-    policy: { secretPatterns: [] },
-  });
-  if (!reference.ok) throw new Error(reference.error.message);
-  const analyzed = await analyzeJavaScriptApplication({ input_path: current });
-  if (!analyzed.ok) throw analyzed.error;
-  const application = parseApplicationGraphEvidence(analyzed.value);
-  const comparison = compareSourceToBundle({
-    reference: reference.value,
-    application: {
-      evidenceId: application.evidence.evidence_id,
-      rootArtifactSha256: application.rootArtifactSha256,
-      graph: application.graph,
-    },
-  });
+  const { reference, comparison } = await compareTrees(previous, current);
 
-  expect(reference.value.entries).toContainEqual(
+  expect(reference.entries).toContainEqual(
     expect.objectContaining({
       kind: "file",
       path: "worker#main.js",
@@ -51,6 +35,52 @@ it("keeps literal hash characters in historical/current filesystem paths", async
             expect.objectContaining({
               kind: "current-path-exact",
               source_value: "worker#main.js",
+            }),
+          ]),
+        }),
+      ]),
+    }),
+  );
+});
+
+it("matches source-map originals named relative to the map", async () => {
+  const root = await createTestTempDirectory("rea-source-map-parent-");
+  const previous = join(root, "previous");
+  const current = join(root, "current");
+  await Promise.all([
+    mkdir(join(previous, "src"), { recursive: true }),
+    mkdir(join(current, "dist"), { recursive: true }),
+  ]);
+  await Promise.all([
+    writeFile(join(previous, "src", "a.js"), "export const value = 1;\n"),
+    writeFile(
+      join(current, "dist", "main.js"),
+      "var value = 2;\n//# sourceMappingURL=main.js.map\n",
+    ),
+    writeFile(
+      join(current, "dist", "main.js.map"),
+      JSON.stringify({
+        version: 3,
+        file: "main.js",
+        sources: ["../src/a.js"],
+        sourcesContent: ["export const value = 2;\n"],
+        names: [],
+        mappings: "AAAA",
+      }),
+    ),
+  ]);
+  const { comparison } = await compareTrees(previous, current);
+
+  expect(comparison.items).toContainEqual(
+    expect.objectContaining({
+      source_path: "src/a.js",
+      candidates: expect.arrayContaining([
+        expect.objectContaining({
+          current_node_kind: "source-module",
+          signals: expect.arrayContaining([
+            expect.objectContaining({
+              kind: "source-map-original-path",
+              current_values: ["src/a.js"],
             }),
           ]),
         }),
@@ -77,3 +107,24 @@ it("rejects static application Evidence whose subject path disagrees with its re
     "JavaScript application Evidence subject does not match its result",
   );
 });
+
+const compareTrees = async (previous: string, current: string) => {
+  const reference = await importReferenceSource({
+    root: previous,
+    caller: "source-to-bundle-path-test",
+    policy: { secretPatterns: [] },
+  });
+  if (!reference.ok) throw new Error(reference.error.message);
+  const analyzed = await analyzeJavaScriptApplication({ input_path: current });
+  if (!analyzed.ok) throw analyzed.error;
+  const application = parseApplicationGraphEvidence(analyzed.value);
+  const comparison = compareSourceToBundle({
+    reference: reference.value,
+    application: {
+      evidenceId: application.evidence.evidence_id,
+      rootArtifactSha256: application.rootArtifactSha256,
+      graph: application.graph,
+    },
+  });
+  return { reference: reference.value, comparison };
+};

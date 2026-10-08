@@ -280,11 +280,14 @@ const normalizeCurrentPath = (raw: string): string | null => {
     ? (raw.split(/[?#]/u, 1)[0] ?? "")
     : raw;
   const withoutScheme = withoutQuery.replace(SCHEME_URL_PREFIX, "");
-  const parts = withoutScheme
-    .replaceAll("\\", "/")
-    .split("/")
-    .filter((part) => part !== "" && part !== ".");
-  if (parts.length === 0 || parts.includes("..")) return null;
+  const parts: string[] = [];
+  for (const part of withoutScheme.replaceAll("\\", "/").split("/")) {
+    if (part === "" || part === ".") continue;
+    // Source maps name originals relative to the map, e.g. `../src/a.ts`.
+    if (part === "..") parts.pop();
+    else parts.push(part);
+  }
+  if (parts.length === 0) return null;
   return parts.join("/");
 };
 
