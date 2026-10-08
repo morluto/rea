@@ -640,3 +640,52 @@ const file = (
       ? { included: false, reason: "invalid-utf8" }
       : { included: true, value: text },
 });
+
+describe("exact HTML resource resolution", () => {
+  it.each([
+    ["extension", ["app.js"]],
+    ["directory index", ["app/index.js"]],
+    ["directory package", ["app/package.json", "app/entry.js"]],
+  ] as const)("does not infer a file from %s fallback", (_name, paths) => {
+    const files = fileMap([
+      file("index.html", "root"),
+      ...paths.map((path) =>
+        file(
+          path,
+          "root",
+          path.endsWith("package.json") ? '{"main":"entry.js"}' : "",
+        ),
+      ),
+    ]);
+    expect(
+      resolve({
+        declaredPath: "./app",
+        sourcePath: "index.html",
+        context: "html-reference",
+        files,
+      }),
+    ).toMatchObject({ resolution_status: "not-found", resolved_path: null });
+  });
+
+  it("prefers an exact extensionless resource and retains URL suffix handling", () => {
+    const files = fileMap([
+      file("renderer/index.html", "root"),
+      file("assets/app", "root"),
+      file("assets/app.js", "root"),
+      file("assets/app/index.js", "root"),
+    ]);
+    expect(
+      resolve({
+        declaredPath: "./app?cache=1#v2",
+        sourcePath: "renderer/index.html",
+        context: "html-reference",
+        htmlBaseHref: "/assets/",
+        files,
+      }),
+    ).toMatchObject({
+      declared_path: "./app?cache=1#v2",
+      resolution_status: "resolved",
+      resolved_path: "assets/app",
+    });
+  });
+});
