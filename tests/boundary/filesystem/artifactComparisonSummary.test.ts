@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { inventoryArtifact } from "../../../src/application/ArtifactInventory.js";
+import { inventoryArtifact } from "../../../src/artifacts/inventory/ArtifactInventory.js";
 import { compareArtifacts } from "../../../src/domain/artifactComparison.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { jsonValueSchema } from "../../../src/domain/jsonValue.js";

@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { classifyRoot } from "../../../src/application/ArtifactInventory/classify.js";
+import { classifyRoot } from "../../../src/artifacts/inventory/classify.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 

@@ -129,6 +129,55 @@ function expectRecursivePropertyDescriptions(
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+function resolveReference(schema: unknown, reference: string): unknown {
+  if (reference === "#") return schema;
+  if (!reference.startsWith("#/")) return undefined;
+  let value = schema;
+  for (const token of reference.slice(2).split("/")) {
+    const key = token.replaceAll("~1", "/").replaceAll("~0", "~");
+    if (
+      typeof value !== "object" ||
+      value === null ||
+      !Object.hasOwn(value, key)
+    )
+      return undefined;
+    value = Reflect.get(value, key);
+  }
+  return value;
+}
+
+function recursiveReferences(tools: readonly ToolSchemas[]): string[] {
+  return tools.flatMap((tool) =>
+    (["inputSchema", "outputSchema"] as const).flatMap((kind) => {
+      const schema = tool[kind];
+      const found = new Set<string>();
+      const visit = (node: unknown, active: readonly string[]): void => {
+        if (typeof node !== "object" || node === null) return;
+        for (const [key, child] of Object.entries(node)) {
+          if (
+            [
+              "$defs",
+              "definitions",
+              "examples",
+              "default",
+              "const",
+              "enum",
+            ].includes(key)
+          )
+            continue;
+          if (key !== "$ref" || typeof child !== "string") visit(child, active);
+          else if (active.includes(child)) found.add(child);
+          else visit(resolveReference(schema, child), [...active, child]);
+        }
+      };
+      visit(schema, []);
+      return [...found].map(
+        (reference) => `${tool.name}.${kind}: ${reference}`,
+      );
+    }),
+  );
+}
+
 const advertiseAndEnforceProcessEnvironmentKeyConstraint =
   async (): Promise<void> => {
     const contract = TOOL_CONTRACTS.find(
@@ -240,6 +289,7 @@ describe("MCP JSON Schema validity", () => {
         TOOL_CONTRACTS.map(({ name }) => name).sort(),
       );
       expect(schemaErrors(tools)).toEqual([]);
+      expect(recursiveReferences(tools)).toEqual([]);
       expectKnownAuthorityHints(tools);
       const byName = new Map(tools.map((tool) => [tool.name, tool]));
       const catalogProjection = tools.map((tool) => ({
@@ -413,4 +463,33 @@ describe("MCP process input JSON Schema", () => {
       await Promise.allSettled([client.close(), server.close()]);
     }
   });
+});
+
+it("ships nonrecursive input and output schemas in the generated catalog", () => {
+  expect(schemaErrors(GENERATED_MCP_TOOL_CATALOG)).toEqual([]);
+  expect(recursiveReferences(GENERATED_MCP_TOOL_CATALOG)).toEqual([]);
+});
+
+it("distinguishes recursive references from shared definitions", () => {
+  const diamond = {
+    type: "object",
+    properties: {
+      left: { $ref: "#/$defs/shared" },
+      right: { $ref: "#/$defs/shared" },
+    },
+    $defs: { shared: { type: "string" } },
+  };
+  expect(
+    recursiveReferences([{ name: "diamond", inputSchema: diamond }]),
+  ).toEqual([]);
+  expect(
+    recursiveReferences([{ name: "root", inputSchema: { $ref: "#" } }]),
+  ).toEqual(["root.inputSchema: #"]);
+  const escaped = {
+    $ref: "#/$defs/a~1b",
+    $defs: { "a/b": { $ref: "#/$defs/a~1b" } },
+  };
+  expect(
+    recursiveReferences([{ name: "escaped", inputSchema: escaped }]),
+  ).toEqual(["escaped.inputSchema: #/$defs/a~1b"]);
 });

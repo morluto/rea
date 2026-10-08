@@ -132,6 +132,14 @@ export type RecordProcessCaptureEvent = (
 
 /** Observed process-tree settlement and the cleanup required by that state. */
 export type ProcessSettlement =
+  | VerifiedProcessSettlement
+  | {
+      readonly state: "quiesced";
+      readonly elapsed_ms: number;
+      readonly cleanup_outcome: "failed";
+    };
+
+export type VerifiedProcessSettlement =
   | {
       readonly state: "quiesced";
       readonly elapsed_ms: number;
@@ -162,7 +170,19 @@ export interface UnverifiedProcessCapture {
     readonly comparison_contract: Readonly<Record<string, unknown>>;
     readonly full_scenario_sha256: string;
     readonly comparison_contract_sha256: string;
-    readonly executable_sha256: string;
+    /** Digest of the selected file sampled before spawn, when readable. */
+    readonly selected_executable_sha256: string | null;
+    /** Digest associated with the launch only when path metadata stayed stable across spawn. */
+    readonly executable_sha256: string | null;
+    /**
+     * Digest recorded by the original v3 format before selected and launch
+     * executable digests were distinguished. Kept only on migrated captures.
+     */
+    readonly legacy_executable_sha256?: string | undefined;
+    readonly executable_identity: {
+      readonly state: "path_metadata_unchanged" | "unknown";
+      readonly reason: string | null;
+    };
     readonly normalization_sha256: string;
   };
   readonly normalization: z.infer<typeof normalizationSchema>;
@@ -174,7 +194,7 @@ export interface UnverifiedProcessCapture {
     readonly signal: number | null;
     readonly reason: "exited" | "timeout" | "idle_timeout";
   };
-  readonly settlement: ProcessSettlement;
+  readonly settlement: VerifiedProcessSettlement;
   readonly process_samples: readonly ProcessSample[];
   readonly filesystem_checkpoints: readonly FilesystemCheckpoint[];
   /**
@@ -211,6 +231,66 @@ const fileStateShape = {
   mode: z.number().int().nonnegative(),
   size: z.number().int().nonnegative(),
 };
+
+/** A resource cleanup result retained when observations cannot be verified. */
+export interface ProcessCaptureResourceCleanup {
+  readonly state: "cleaned" | "failed" | "unverified" | "not_required";
+  readonly reason: string | null;
+}
+
+export interface ProcessCaptureCleanupReport {
+  readonly owned_process_group: ProcessCaptureResourceCleanup;
+  readonly terminal_renderer: ProcessCaptureResourceCleanup;
+  readonly temporary_root: ProcessCaptureResourceCleanup;
+}
+
+/** One observation field that may be unavailable when capture completion fails. */
+export type PartialProcessObservationField<T> =
+  | { readonly state: "available"; readonly value: T }
+  | { readonly state: "unavailable"; readonly reason: string };
+
+/** Snapshot facts available before filesystem comparison can be completed. */
+/** Snapshot facts available before filesystem comparison can be completed. */
+export interface PartialFilesystemSnapshot {
+  readonly files: readonly FileState[];
+  readonly truncated: boolean;
+}
+
+/** Available and unavailable fields when a run never becomes a full capture. */
+/** Available and unavailable fields when a run never becomes a full capture. */
+export interface IncompleteProcessCaptureObservations {
+  readonly target_pid: PartialProcessObservationField<number>;
+  readonly frames: PartialProcessObservationField<readonly TerminalFrame[]>;
+  readonly rendered_frames: PartialProcessObservationField<
+    readonly RenderedTerminalFrame[]
+  >;
+  readonly interaction_events: PartialProcessObservationField<
+    readonly InteractionEvent[]
+  >;
+  readonly exit: PartialProcessObservationField<{
+    readonly code: number | null;
+    readonly signal: number | null;
+    readonly reason: "exited" | "timeout" | "idle_timeout" | "cancelled";
+  }>;
+  readonly settlement: PartialProcessObservationField<{
+    readonly state: "quiesced" | "alive_at_deadline" | "unverifiable";
+    readonly elapsed_ms: number;
+  }>;
+  readonly process_samples: PartialProcessObservationField<
+    readonly ProcessSample[]
+  >;
+  readonly filesystem_snapshots: {
+    readonly before: PartialProcessObservationField<PartialFilesystemSnapshot>;
+    readonly after: PartialProcessObservationField<PartialFilesystemSnapshot>;
+  };
+  readonly event_journal: PartialProcessObservationField<
+    readonly ProcessCaptureEventJournalEntry[]
+  >;
+  readonly manifest: PartialProcessObservationField<
+    UnverifiedProcessCapture["manifest"]
+  >;
+}
+
 const fileStateSchema = z.discriminatedUnion("type", [
   z.object({
     ...fileStateShape,
@@ -255,128 +335,309 @@ const fileEffectSchema = z.discriminatedUnion("status", [
   }),
 ]);
 /** Exact serialized shape of a process capture. */
-const processCaptureShapeSchema: z.ZodType<UnverifiedProcessCapture> =
-  z.strictObject({
-    manifest: z.strictObject({
-      rea_version: z.string().min(1),
-      provider_version: z.string().min(1),
-      platform: z.string().min(1),
-      architecture: z.string().min(1),
-      pty_backend: z.literal("node-pty"),
-      started_at: z.iso.datetime(),
-      completed_at: z.iso.datetime(),
-      scenario: z.record(z.string(), jsonValueSchema),
-      comparison_contract: z.record(z.string(), jsonValueSchema),
-      full_scenario_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-      comparison_contract_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-      executable_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-      normalization_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+const processSettlementSchema = z.discriminatedUnion("state", [
+  z.object({
+    state: z.literal("quiesced"),
+    elapsed_ms: z.number().int().nonnegative(),
+    cleanup_outcome: z.enum(["not_required", "failed"]),
+  }),
+  z.object({
+    state: z.enum(["alive_at_deadline", "unverifiable"]),
+    elapsed_ms: z.number().int().nonnegative(),
+    cleanup_outcome: z.enum(["cleaned", "failed"]),
+  }),
+]);
+
+const processCaptureShapeSchema = z.strictObject({
+  manifest: z.strictObject({
+    rea_version: z.string().min(1),
+    provider_version: z.string().min(1),
+    platform: z.string().min(1),
+    architecture: z.string().min(1),
+    pty_backend: z.literal("node-pty"),
+    started_at: z.iso.datetime(),
+    completed_at: z.iso.datetime(),
+    scenario: z.record(z.string(), jsonValueSchema),
+    comparison_contract: z.record(z.string(), jsonValueSchema),
+    full_scenario_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+    comparison_contract_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+    selected_executable_sha256: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/u)
+      .nullable(),
+    executable_sha256: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/u)
+      .nullable(),
+    legacy_executable_sha256: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/u)
+      .optional(),
+    executable_identity: z.strictObject({
+      state: z.enum(["path_metadata_unchanged", "unknown"]),
+      reason: z.string().nullable(),
     }),
-    normalization: normalizationSchema,
-    frames: z.array(
+    normalization_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  }),
+  normalization: normalizationSchema,
+  frames: z.array(
+    z.object({
+      sequence: z.number().int().nonnegative(),
+      at_ms: z.number().int().nonnegative(),
+      data: z.string(),
+    }),
+  ),
+  rendered_frames: z.array(
+    z.object({
+      sequence: z.number().int().nonnegative(),
+      at_ms: z.number().int().nonnegative(),
+      columns: z.number().int().positive(),
+      rows: z.number().int().positive(),
+      cursor_x: z.number().int().nonnegative(),
+      cursor_y: z.number().int().nonnegative(),
+      active_buffer: z.enum(["normal", "alternate"]),
+      lines: z.array(z.string()),
+      serialized_state: z.string(),
+    }),
+  ),
+  interaction_events: z.array(
+    z.object({
+      sequence: z.number().int().nonnegative(),
+      scheduled_at_ms: z.number().int().nonnegative(),
+      dispatched_at_ms: z.number().int().nonnegative(),
+      type: z.enum(["input", "resize", "signal"]),
+      data: z.string(),
+      outcome: z.enum(["dispatched", "target_exited", "failed"]),
+    }),
+  ),
+  exit: z.object({
+    code: z.number().int().nullable(),
+    signal: z.number().int().nullable(),
+    reason: z.enum(["exited", "timeout", "idle_timeout"]),
+  }),
+  settlement: z.discriminatedUnion("state", [
+    z.object({
+      state: z.literal("quiesced"),
+      elapsed_ms: z.number().int().nonnegative(),
+      cleanup_outcome: z.literal("not_required"),
+    }),
+    z.object({
+      state: z.enum(["alive_at_deadline", "unverifiable"]),
+      elapsed_ms: z.number().int().nonnegative(),
+      cleanup_outcome: z.enum(["cleaned", "failed"]),
+    }),
+  ]),
+  process_samples: z.array(
+    z.object({
+      at_ms: z.number().int().nonnegative(),
+      pid: z.number().int().positive(),
+      parent_pid: z.number().int().nonnegative(),
+      command: z.string(),
+      process_group_id: z.number().int().positive().nullable(),
+      session_id: z.number().int().nonnegative().nullable(),
+    }),
+  ),
+  filesystem_checkpoints: z.array(
+    z.object({
+      name: z.enum(["before", "after_settlement"]),
+      at_ms: z.number().int().nonnegative(),
+      files: z.array(fileStateSchema),
+      effects: z.array(fileEffectSchema),
+      truncated: z.boolean(),
+    }),
+  ),
+  event_journal: z
+    .array(
       z.object({
-        sequence: z.number().int().nonnegative(),
-        at_ms: z.number().int().nonnegative(),
-        data: z.string(),
+        capture_order: z.number().int().nonnegative(),
+        collection: z.enum(PROCESS_CAPTURE_EVENT_COLLECTIONS),
+        index: z.number().int().nonnegative(),
       }),
-    ),
-    rendered_frames: z.array(
-      z.object({
-        sequence: z.number().int().nonnegative(),
-        at_ms: z.number().int().nonnegative(),
-        columns: z.number().int().positive(),
-        rows: z.number().int().positive(),
-        cursor_x: z.number().int().nonnegative(),
-        cursor_y: z.number().int().nonnegative(),
-        active_buffer: z.enum(["normal", "alternate"]),
-        lines: z.array(z.string()),
-        serialized_state: z.string(),
-      }),
-    ),
-    interaction_events: z.array(
-      z.object({
-        sequence: z.number().int().nonnegative(),
-        scheduled_at_ms: z.number().int().nonnegative(),
-        dispatched_at_ms: z.number().int().nonnegative(),
-        type: z.enum(["input", "resize", "signal"]),
-        data: z.string(),
-        outcome: z.enum(["dispatched", "target_exited", "failed"]),
-      }),
-    ),
-    exit: z.object({
+    )
+    .default([]),
+  files_before: z.array(fileStateSchema),
+  files_after: z.array(fileStateSchema),
+  filesystem_effects: z.array(fileEffectSchema),
+  truncated: z.boolean(),
+  limitations: z.array(z.string()),
+  residual_unknowns: z.array(
+    z.object({
+      scope: z.enum([
+        "terminal",
+        "interaction",
+        "exit",
+        "process",
+        "filesystem",
+        "cleanup",
+        "network",
+        "environment",
+      ]),
+      reason: z.string(),
+    }),
+  ),
+  cleanup: z.object({
+    owned_process_group: z.literal("verified"),
+    temporary_root: z.literal("removed"),
+  }),
+});
+
+const processCleanupResourceSchema = z.strictObject({
+  state: z.enum(["cleaned", "failed", "unverified", "not_required"]),
+  reason: z.string().nullable(),
+});
+
+const partialObservationFieldSchema = <Schema extends z.ZodType>(
+  value: Schema,
+) =>
+  z.discriminatedUnion("state", [
+    z.strictObject({ state: z.literal("available"), value }),
+    z.strictObject({ state: z.literal("unavailable"), reason: z.string() }),
+  ]);
+
+const incompleteProcessCaptureObservationsSchema = z.strictObject({
+  target_pid: partialObservationFieldSchema(z.number().int().positive()),
+  frames: partialObservationFieldSchema(processCaptureShapeSchema.shape.frames),
+  rendered_frames: partialObservationFieldSchema(
+    processCaptureShapeSchema.shape.rendered_frames,
+  ),
+  interaction_events: partialObservationFieldSchema(
+    processCaptureShapeSchema.shape.interaction_events,
+  ),
+  exit: partialObservationFieldSchema(
+    z.strictObject({
       code: z.number().int().nullable(),
       signal: z.number().int().nullable(),
-      reason: z.enum(["exited", "timeout", "idle_timeout"]),
+      reason: z.enum(["exited", "timeout", "idle_timeout", "cancelled"]),
     }),
-    settlement: z.discriminatedUnion("state", [
-      z.object({
-        state: z.literal("quiesced"),
-        elapsed_ms: z.number().int().nonnegative(),
-        cleanup_outcome: z.literal("not_required"),
-      }),
-      z.object({
-        state: z.enum(["alive_at_deadline", "unverifiable"]),
-        elapsed_ms: z.number().int().nonnegative(),
-        cleanup_outcome: z.enum(["cleaned", "failed"]),
-      }),
-    ]),
-    process_samples: z.array(
-      z.object({
-        at_ms: z.number().int().nonnegative(),
-        pid: z.number().int().positive(),
-        parent_pid: z.number().int().nonnegative(),
-        command: z.string(),
-        process_group_id: z.number().int().positive().nullable(),
-        session_id: z.number().int().nonnegative().nullable(),
-      }),
-    ),
-    filesystem_checkpoints: z.array(
-      z.object({
-        name: z.enum(["before", "after_settlement"]),
-        at_ms: z.number().int().nonnegative(),
+  ),
+  settlement: partialObservationFieldSchema(
+    z.strictObject({
+      state: z.enum(["quiesced", "alive_at_deadline", "unverifiable"]),
+      elapsed_ms: z.number().int().nonnegative(),
+    }),
+  ),
+  process_samples: partialObservationFieldSchema(
+    processCaptureShapeSchema.shape.process_samples,
+  ),
+  filesystem_snapshots: z.strictObject({
+    before: partialObservationFieldSchema(
+      z.strictObject({
         files: z.array(fileStateSchema),
-        effects: z.array(fileEffectSchema),
         truncated: z.boolean(),
       }),
     ),
-    event_journal: z
-      .array(
-        z.object({
-          capture_order: z.number().int().nonnegative(),
-          collection: z.enum(PROCESS_CAPTURE_EVENT_COLLECTIONS),
-          index: z.number().int().nonnegative(),
-        }),
-      )
-      .default([]),
-    files_before: z.array(fileStateSchema),
-    files_after: z.array(fileStateSchema),
-    filesystem_effects: z.array(fileEffectSchema),
-    truncated: z.boolean(),
-    limitations: z.array(z.string()),
-    residual_unknowns: z.array(
-      z.object({
-        scope: z.enum([
-          "terminal",
-          "interaction",
-          "exit",
-          "process",
-          "filesystem",
-          "cleanup",
-          "network",
-          "environment",
-        ]),
-        reason: z.string(),
+    after: partialObservationFieldSchema(
+      z.strictObject({
+        files: z.array(fileStateSchema),
+        truncated: z.boolean(),
       }),
     ),
-    cleanup: z.object({
-      owned_process_group: z.literal("verified"),
-      temporary_root: z.literal("removed"),
-    }),
+  }),
+  event_journal: partialObservationFieldSchema(
+    processCaptureShapeSchema.shape.event_journal,
+  ),
+  manifest: partialObservationFieldSchema(
+    processCaptureShapeSchema.shape.manifest,
+  ),
+});
+
+const partialCleanupReportSchema = z.strictObject({
+  owned_process_group: processCleanupResourceSchema,
+  terminal_renderer: processCleanupResourceSchema,
+  temporary_root: processCleanupResourceSchema,
+});
+const partialObservationMetadataSchema = z.strictObject({
+  cleanup: partialCleanupReportSchema,
+  execution_failure: z.string().nullable(),
+});
+const completedCaptureObservationSchema = z.strictObject({
+  capture: processCaptureShapeSchema
+    .omit({ cleanup: true })
+    .extend({ settlement: processSettlementSchema }),
+});
+const incompleteCaptureObservationSchema = z.strictObject({
+  observations: incompleteProcessCaptureObservationsSchema,
+});
+
+/** Validated, non-comparable process observations attached to cleanup errors. */
+export const partialProcessCaptureObservationSchema = z
+  .union([
+    completedCaptureObservationSchema.extend(
+      partialObservationMetadataSchema.shape,
+    ),
+    incompleteCaptureObservationSchema.extend(
+      partialObservationMetadataSchema.shape,
+    ),
+  ])
+  .superRefine((partial, context) => {
+    if (
+      !Object.values(partial.cleanup).some(
+        ({ state }) => state === "failed" || state === "unverified",
+      )
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["cleanup"],
+        message: "partial observations require incomplete resource cleanup",
+      });
+
+    if ("observations" in partial) {
+      const { observations } = partial;
+      if (
+        ![
+          observations.frames,
+          observations.interaction_events,
+          observations.process_samples,
+          observations.filesystem_snapshots.before,
+          observations.event_journal,
+        ].some(({ state }) => state === "available")
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["observations"],
+          message: "incomplete observations contain no collected evidence",
+        });
+      return;
+    }
+
+    const { capture } = partial;
+    const settlement =
+      capture.settlement.state === "quiesced"
+        ? {
+            ...capture.settlement,
+            cleanup_outcome: "not_required" as const,
+          }
+        : { ...capture.settlement, cleanup_outcome: "cleaned" as const };
+    const validationCapture: UnverifiedProcessCapture = {
+      ...capture,
+      settlement,
+      cleanup: {
+        owned_process_group: "verified",
+        temporary_root: "removed",
+      },
+    };
+    for (const issue of collectProcessCaptureIssues(validationCapture))
+      context.addIssue({
+        code: "custom",
+        path: ["capture", ...issue.path.split(".")],
+        message: issue.message,
+      });
   });
+
+/** One collected payload: completed capture data or explicit unavailable fields. */
+export type PartialProcessCaptureObservation = z.infer<
+  typeof partialProcessCaptureObservationSchema
+>;
 
 /** Exact serialized shape plus all process-capture semantic invariants. */
 export const processCaptureSchema = processCaptureShapeSchema
   .superRefine((capture, context) => {
+    if (capture.settlement.cleanup_outcome === "failed")
+      context.addIssue({
+        code: "custom",
+        path: ["settlement", "cleanup_outcome"],
+        message: "verified captures cannot contain failed cleanup",
+      });
     for (const issue of collectProcessCaptureIssues(capture))
       context.addIssue({
         code: "custom",

@@ -1,9 +1,9 @@
-import { AsarArtifactReader } from "../../artifacts/AsarArtifactReader.js";
-import type { ArtifactReader } from "../../artifacts/ArtifactReader.js";
-import { DirectoryArtifactReader } from "../../artifacts/DirectoryArtifactReader.js";
-import { MachOSliceArtifactReader } from "../../artifacts/MachOSliceArtifactReader.js";
-import { NativeDmgArtifactReader } from "../../artifacts/NativeDmgArtifactReader.js";
-import { ZipArtifactReader } from "../../artifacts/ZipArtifactReader.js";
+import { AsarArtifactReader } from "../AsarArtifactReader.js";
+import type { ArtifactReader } from "../ArtifactReader.js";
+import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
+import { MachOSliceArtifactReader } from "../MachOSliceArtifactReader.js";
+import { NativeDmgArtifactReader } from "../NativeDmgArtifactReader.js";
+import { ZipArtifactReader } from "../ZipArtifactReader.js";
 import type { ArtifactNode } from "../../domain/artifactGraph.js";
 
 export const createReader = async (

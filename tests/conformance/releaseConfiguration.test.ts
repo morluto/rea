@@ -8,7 +8,6 @@ const readJson = async (path: string): Promise<unknown> =>
   JSON.parse(await readFile(path, "utf8")) as unknown;
 
 const versionedDocumentation = [
-  "README.md",
   "README_zh.md",
   "README_ja.md",
   "README_ko.md",

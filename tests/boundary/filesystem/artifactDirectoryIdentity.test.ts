@@ -5,7 +5,7 @@ import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { describe, expect, it } from "vitest";
 
 import { canonicalDigest } from "../../../src/domain/comparisonSemantics.js";
-import { inventoryArtifact } from "../../../src/application/ArtifactInventory.js";
+import { inventoryArtifact } from "../../../src/artifacts/inventory/ArtifactInventory.js";
 import { compareArtifacts } from "../../../src/domain/artifactComparison.js";
 import type { ArtifactInventoryResult } from "../../../src/domain/artifactGraph.js";
 import { createEvidence } from "../../../src/domain/evidence.js";

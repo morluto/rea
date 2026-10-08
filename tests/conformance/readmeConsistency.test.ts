@@ -5,8 +5,8 @@ import { describe, expect, it } from "vitest";
 import { SUPPORTED_CLIENT_DEFINITIONS } from "../../src/application/SupportedClients.js";
 import { PRODUCT_IDENTITY } from "../../src/identity.js";
 
-const readmes = [
-  "README.md",
+const setupDocumentation = [
+  "docs/installation.md",
   "README_zh.md",
   "README_ja.md",
   "README_ko.md",
@@ -21,8 +21,8 @@ const jsonExamples = (content: string): unknown[] =>
     JSON.parse(match[1] ?? ""),
   );
 
-describe("localized README product facts", () => {
-  it.each(readmes)(
+describe("onboarding documentation product facts", () => {
+  it.each(setupDocumentation)(
     "keeps requirements and versioned MCP configuration aligned in %s",
     async (path) => {
       const content = await readFile(resolve(path), "utf8");
@@ -48,7 +48,8 @@ describe("localized README product facts", () => {
       expect(content).toContain("CachyOS");
       for (const client of SUPPORTED_CLIENT_DEFINITIONS)
         expect(content).toContain(client.displayName);
-      expect(content).toContain("MCP-tool_catalog");
+      if (path.startsWith("README_"))
+        expect(content).toContain("MCP-tool_catalog");
     },
   );
 

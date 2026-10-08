@@ -2,6 +2,8 @@
 const ANALYSIS_ERROR_TAGS = [
   "AnalysisProtocolError",
   "AnalysisInputError",
+  "AnalysisAccessDeniedError",
+  "AnalysisArtifactChangedError",
   "AnalysisOutputError",
   "AnalysisCapabilityUnavailableError",
   "AnalysisCancelledError",
@@ -35,4 +37,12 @@ export abstract class AnalysisError extends Error {
   readonly userCategory: "cancelled" | undefined = undefined;
   readonly cleanupIncomplete: boolean = false;
   readonly cleanupResources: readonly string[] = [];
+  readonly executionFailure: string | undefined = undefined;
+  readonly partialObservation: PartialProcessCaptureObservation | undefined =
+    undefined;
+  readonly cleanupReport: ProcessCaptureCleanupReport | undefined = undefined;
 }
+import type {
+  PartialProcessCaptureObservation,
+  ProcessCaptureCleanupReport,
+} from "./process/processCapture.js";

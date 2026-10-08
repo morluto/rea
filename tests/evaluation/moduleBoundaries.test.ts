@@ -76,7 +76,7 @@ describe("incremental module import boundaries", () => {
     ["src/contracts/probe.ts", "../composition/android.js", false],
     [
       "src/artifacts/javascript/probe.ts",
-      "../../application/ArtifactInventory.js",
+      "../../application/javascript/JavaScriptArtifactReconstruction.js",
       false,
     ],
     [
@@ -87,7 +87,7 @@ describe("incremental module import boundaries", () => {
     ["src/artifacts/javascript/probe.ts", "../../cli.js", false],
     [
       "src/artifacts/ArtifactHash.ts",
-      "../application/ArtifactInventory/hash.js",
+      "../application/artifacts/ArtifactExtractionDestination.js",
       false,
     ],
     [
@@ -111,11 +111,7 @@ describe("incremental module import boundaries", () => {
       "../../artifacts/javascript/JavaScriptArtifactReader.js",
       true,
     ],
-    [
-      "src/application/ArtifactInventory/probe.ts",
-      "../../artifacts/AsarArtifactReader.js",
-      true,
-    ],
+    ["src/artifacts/inventory/probe.ts", "../AsarArtifactReader.js", true],
     ["src/domain/probe.test.ts", "../composition/firmware.js", false],
     ["src/application/probe.ts", "../android/JadxProvider.js", false],
     ["src/application/probe.ts", "../composition/android.js", false],
@@ -329,21 +325,30 @@ describe("test lane import boundaries", () => {
   });
 });
 
-describe("Apple artifact producer ownership", () => {
-  it.each([
-    ["../../application/Workflow.js", false],
-    ["../../composition/android.js", false],
-    ["../../cli.js", false],
-    ["../../domain/apple/plistValue.js", true],
-    ["../DirectoryArtifactReader.js", true],
-  ])("checks the producer dependency %s", (dependency, allowed) => {
-    const violations = inspectModuleBoundaries(
-      "src/artifacts/apple/probe.ts",
-      `import type { Value } from ${JSON.stringify(dependency)};`,
-      process.cwd(),
-    );
+describe.each(["apple", "inventory", "extraction"])(
+  "%s artifact producer ownership",
+  (owner) => {
+    it.each([
+      ["../../application/Workflow.js", false],
+      ["../../composition/android.js", false],
+      ["../../cli.js", false],
+      ["../../server/registerEvidenceTools.js", false],
+      ["../../main.ts", false],
+      ["../../domain/apple/plistValue.js", true],
+      ["../../domain/artifactInventorySnapshot.js", true],
+      ["../../contracts/artifactGraph.js", true],
+      ["../DirectoryArtifactReader.js", true],
+      ["../ArtifactHash.js", true],
+    ])("checks the producer dependency %s", (dependency, allowed) => {
+      const violations = inspectModuleBoundaries(
+        `src/artifacts/${owner}/probe.ts`,
+        `import type { Value } from ${JSON.stringify(dependency)};`,
+        process.cwd(),
+      );
 
-    expect(violations.length === 0).toBe(allowed);
-    if (!allowed) expect(violations[0]?.boundary).toBe("artifact-acquisition");
-  });
-});
+      expect(violations.length === 0).toBe(allowed);
+      if (!allowed)
+        expect(violations[0]?.boundary).toBe("artifact-acquisition");
+    });
+  },
+);

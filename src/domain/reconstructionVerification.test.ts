@@ -23,6 +23,7 @@ const source = (
   digit: string,
   authority: "controlled-replay" | "shipped-artifact",
   confidence: "observed" | "derived" = "observed",
+  captureResult: JsonValue = EMPTY_PROCESS_CAPTURE_EXAMPLE,
 ): Evidence =>
   createEvidence(
     {
@@ -41,15 +42,25 @@ const source = (
           ? "capture_process_scenario"
           : "inventory_artifact",
       parameters: {},
-      result:
-        authority === "controlled-replay"
-          ? EMPTY_PROCESS_CAPTURE_EXAMPLE
-          : { digit },
+      result: authority === "controlled-replay" ? captureResult : { digit },
       confidence,
       authority,
       environment: authority === "controlled-replay" ? environment : null,
     },
   );
+
+const legacyV3Capture = () => {
+  const {
+    selected_executable_sha256: _selectedDigest,
+    executable_identity: _executableIdentity,
+    executable_sha256,
+    ...legacyManifest
+  } = EMPTY_PROCESS_CAPTURE_EXAMPLE.manifest;
+  return {
+    ...EMPTY_PROCESS_CAPTURE_EXAMPLE,
+    manifest: { ...legacyManifest, executable_sha256 },
+  };
+};
 
 const processResult = (
   terminal: "unchanged" | "changed" | "unknown" = "unchanged",
@@ -275,7 +286,48 @@ describe("reconstruction verification", () => {
       ]),
     );
   });
+});
 
+describe("saved v3 reconstruction capture compatibility", () => {
+  it("verifies saved v3 process captures and rejects a malformed legacy digest", () => {
+    const legacy = legacyV3Capture();
+    const left = source("1", "controlled-replay", "observed", legacy);
+    const right = source("2", "controlled-replay");
+    const comparison = processComparison(left, right, processResult());
+    const bundle = createEvidenceBundle([comparison, left, right]);
+
+    expect(
+      verifyReconstruction(behavioralSpec(comparison), bundle),
+    ).toMatchObject({
+      status: "pass",
+      summary: { total: 1, passed: 1, failed: 0, unknown: 0 },
+    });
+
+    const malformedLegacy = {
+      ...legacy,
+      manifest: { ...legacy.manifest, executable_sha256: null },
+    };
+    const malformedLeft = source(
+      "3",
+      "controlled-replay",
+      "observed",
+      malformedLegacy,
+    );
+    const malformedComparison = processComparison(
+      malformedLeft,
+      right,
+      processResult(),
+    );
+    expect(() =>
+      verifyReconstruction(
+        behavioralSpec(malformedComparison),
+        createEvidenceBundle([malformedComparison, malformedLeft, right]),
+      ),
+    ).toThrow();
+  });
+});
+
+describe("reconstruction verification outcomes", () => {
   it("fails an authoritative observed disagreement", () => {
     const left = source("1", "controlled-replay");
     const right = source("2", "controlled-replay");

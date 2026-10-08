@@ -1,4 +1,4 @@
-import type { ArtifactInventorySnapshot } from "../ArtifactInventory.js";
+import type { ArtifactInventorySnapshot } from "../../artifacts/inventory/ArtifactInventory.js";
 import {
   createJavaScriptApplicationGraph,
   type JavaScriptApplicationGraph,

@@ -11,7 +11,7 @@ import {
 } from "@zip.js/zip.js";
 import { describe, expect, it } from "vitest";
 
-import { inventoryArtifact } from "../../../src/application/ArtifactInventory.js";
+import { inventoryArtifact } from "../../../src/artifacts/inventory/ArtifactInventory.js";
 import {
   artifactOccurrenceAt,
   artifactParentPaths,

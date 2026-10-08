@@ -3,13 +3,13 @@ import { isAbsolute } from "node:path";
 import {
   ArtifactPathRegistry,
   normalizeArtifactPath,
-} from "../../artifacts/ArtifactPaths.js";
+} from "../ArtifactPaths.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
-} from "../../artifacts/ArtifactReader.js";
-import { AsarArtifactReader } from "../../artifacts/AsarArtifactReader.js";
+} from "../ArtifactReader.js";
+import { AsarArtifactReader } from "../AsarArtifactReader.js";
 import type { ArtifactNode } from "../../domain/artifactGraph.js";
 import {
   classifyArtifactContent,
@@ -17,12 +17,12 @@ import {
   createOccurrence,
   nearestParent,
   type MutableOccurrence,
-} from "../ArtifactGraphConstruction.js";
+} from "./ArtifactGraphConstruction.js";
 import {
   STRICT_INTEGRITY_POLICY,
   type ArtifactIntegrityPolicy,
 } from "./types.js";
-import { hashReadable } from "../../artifacts/ArtifactHash.js";
+import { hashReadable } from "../ArtifactHash.js";
 
 export interface PendingIntegrityContradiction {
   readonly logicalPath: string;

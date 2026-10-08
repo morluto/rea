@@ -18,7 +18,7 @@ import {
   deriveProcessComparisonStatus,
   PROCESS_COMPARISON_DIMENSIONS,
   processCaptureComparisonSchema,
-  processCaptureSchema,
+  parseProcessCapture,
 } from "./process/processCapture.js";
 import {
   reconstructionClaimResultSchema,
@@ -199,7 +199,7 @@ const validateSourceKinds = (
     );
   for (const source of sources) {
     if (claim.kind === "behavioral")
-      processCaptureSchema.parse(source.normalized_result);
+      parseProcessCapture(source.normalized_result);
     else if (claim.kind === "structural-function")
       functionDossierSchema.parse(source.normalized_result);
     else artifactInventoryResultSchema.parse(source.normalized_result);

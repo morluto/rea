@@ -3,22 +3,22 @@ import { realpath } from "node:fs/promises";
 import {
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,
-} from "../domain/artifactGraph.js";
-import { abortIfNeeded } from "../artifacts/ArtifactHash.js";
-import { scanCanonicalArtifactInventory } from "./ArtifactInventory/scanCanonical.js";
+} from "../../domain/artifactGraph.js";
+import { abortIfNeeded } from "../ArtifactHash.js";
+import { scanCanonicalArtifactInventory } from "./scanCanonical.js";
 import type {
   ArtifactIntegrityPolicy,
   ArtifactInventoryOptions,
   ArtifactInventorySnapshot,
-} from "./ArtifactInventory/types.js";
+} from "./types.js";
 
-export { scanCanonicalArtifactInventory } from "./ArtifactInventory/scanCanonical.js";
+export { scanCanonicalArtifactInventory } from "./scanCanonical.js";
 
 export type {
   ArtifactIntegrityPolicy,
   ArtifactInventoryOptions,
   ArtifactInventorySnapshot,
-} from "./ArtifactInventory/types.js";
+} from "./types.js";
 
 /** Inventory one local artifact and return every graph collection inline. */
 export const inventoryArtifact = async (

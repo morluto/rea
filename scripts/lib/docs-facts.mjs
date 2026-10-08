@@ -75,6 +75,11 @@ export const documentationFactIssues = async (root, catalog) => {
   for (const path of README_PATHS) {
     const content = await readFile(join(root, path), "utf8");
     requireText(issues, path, content, "MCP-tool_catalog");
+    if (path === "README.md") {
+      requireText(issues, path, content, "(docs/installation.md");
+      requireText(issues, path, content, "(docs/product-catalog.json)");
+      continue;
+    }
     for (const client of catalog.setup_clients)
       requireText(issues, path, content, client.display_name);
     try {
@@ -88,6 +93,11 @@ export const documentationFactIssues = async (root, catalog) => {
     }
   }
 
+  const installationPath = "docs/installation.md";
+  const installation = await readFile(join(root, installationPath), "utf8");
+  for (const client of catalog.setup_clients)
+    requireText(issues, installationPath, installation, client.display_name);
+
   const agents = await readFile(join(root, "AGENTS.md"), "utf8");
   requireText(issues, "AGENTS.md", agents, "docs/product-catalog.json");
 
@@ -95,8 +105,6 @@ export const documentationFactIssues = async (root, catalog) => {
   const template = await readFile(join(root, templatePath), "utf8");
   requireText(issues, templatePath, template, "docs/product-catalog.json");
 
-  const english = await readFile(join(root, "README.md"), "utf8");
-  requireText(issues, "README.md", english, "docs/product-catalog.json");
   return issues;
 };
 

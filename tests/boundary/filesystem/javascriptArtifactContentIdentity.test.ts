@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { createPackage } from "@electron/asar";
 import { describe, expect, it } from "vitest";
 
-import { scanArtifactInventory } from "../../../src/application/ArtifactInventory.js";
+import { scanArtifactInventory } from "../../../src/artifacts/inventory/ArtifactInventory.js";
 import { readJavaScriptArtifactFiles } from "../../../src/artifacts/javascript/JavaScriptArtifactFiles.js";
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
 import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";

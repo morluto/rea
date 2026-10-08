@@ -1,10 +1,17 @@
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import type {
+  PartialProcessCaptureObservation,
+  ProcessCaptureCleanupReport,
+} from "../../domain/process/processCapture.js";
 
 interface ProcessCaptureErrorOptions extends ErrorOptions {
   readonly userMessage?: string;
   readonly userCategory?: "cancelled";
   readonly reason?: "capture_failed" | "cleanup_incomplete" | "cancelled";
   readonly cleanupResources?: readonly string[];
+  readonly executionFailure?: string;
+  readonly partialObservation?: PartialProcessCaptureObservation;
+  readonly cleanupReport?: ProcessCaptureCleanupReport;
 }
 
 /** Typed application failure produced by controlled process capture. */
@@ -16,6 +23,11 @@ export class ProcessCaptureError extends AnalysisError {
   readonly reason: NonNullable<ProcessCaptureErrorOptions["reason"]>;
   override readonly cleanupIncomplete: boolean;
   override readonly cleanupResources: readonly string[];
+  override readonly executionFailure: string | undefined;
+  override readonly partialObservation:
+    | PartialProcessCaptureObservation
+    | undefined;
+  override readonly cleanupReport: ProcessCaptureCleanupReport | undefined;
 
   constructor(message: string, options?: ProcessCaptureErrorOptions) {
     super(message, options);
@@ -26,8 +38,21 @@ export class ProcessCaptureError extends AnalysisError {
       (options?.userCategory === "cancelled" ? "cancelled" : "capture_failed");
     this.cleanupIncomplete = this.reason === "cleanup_incomplete";
     this.cleanupResources = options?.cleanupResources ?? [];
+    this.executionFailure = options?.executionFailure;
+    this.partialObservation = options?.partialObservation;
+    this.cleanupReport = options?.cleanupReport;
   }
 }
+
+/** Return one non-recursive, domain-neutral summary of an execution failure. */
+export const describeProcessCaptureExecutionFailure = (
+  failure: unknown,
+): string | undefined => {
+  if (failure instanceof Error) return failure.message || failure.name;
+  if (typeof failure === "string") return failure;
+  if (failure === undefined) return undefined;
+  return "Process capture failed with a non-error rejection.";
+};
 
 /** Caller-visible cancellation without exposing capture implementation state. */
 export const processCaptureCancelled = (): ProcessCaptureError =>

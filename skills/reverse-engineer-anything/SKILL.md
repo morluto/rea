@@ -2,9 +2,9 @@
 name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "27"
-  tool_count: 133
-  catalog_digest: "ed0b788dd5a6bf9446f840e388822db94b54589a5e294816a3e13bf2bec9f48c"
+  version: "28"
+  tool_count: 134
+  catalog_digest: "d9d74efe01bdc451a4d05a16d6e6ee87a0cc301d13331a19e7f015102f580bf2"
 ---
 
 # REA
@@ -93,6 +93,11 @@ explicit path or endpoint and do not need it.
   consult the NativeAOT workflow in `references/native-and-artifacts.md` for
   optional metadata recovery and its supported host/layout boundary.
 - User-owned browser page already open: `list_browser_targets`.
+- Retained HAR/native mitmproxy capture: `inspect_web_network_capture`. Select
+  original record ordinals when useful; inspect producer fields and byte/number
+  sidecars without fetching recorded URLs or claiming live attribution. See
+  [historical captures](https://github.com/morluto/rea/blob/main/docs/web-network-captures.md) for the exact upstream
+  profile and credential exclusions.
 - User-owned Electron runtime already open: `list_electron_targets`.
 - Native executable, library, or analysis database: `open_binary`, then
   use focused analysis tools directly; call `binary_overview` when metadata or

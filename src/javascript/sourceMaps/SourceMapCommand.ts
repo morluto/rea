@@ -120,6 +120,7 @@ class OwnedCodec {
       runId: this.#runId,
       cwd: this.#runtime.path,
       hostEnvironment: environment,
+      signal: this.deadline.signal,
     });
     this.#supervisor = new ProviderProcessSupervisor(
       {

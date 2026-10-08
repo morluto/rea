@@ -41,6 +41,11 @@ const sessionEvidence = effects({ mutatesSession: true });
 
 /** Explicit effect audit for every public tool. */
 export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
+  inspect_web_network_capture: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    launchesProcess: true,
+  }),
   observe_web_execution: effects({
     mutatesTarget: true,
     mutatesSession: true,

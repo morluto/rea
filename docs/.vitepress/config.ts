@@ -17,6 +17,7 @@ export default defineConfig({
         text: "Getting started",
         items: [
           { text: "Installation and setup", link: "/installation" },
+          { text: "CLI and Evidence", link: "/cli" },
           { text: "Agent prompts", link: "/mcp-prompts" },
           { text: "Roadmap", link: "/roadmap" },
         ],

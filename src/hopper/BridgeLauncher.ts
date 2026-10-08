@@ -336,6 +336,7 @@ const launchHopperProcess = async (input: {
       arguments: arguments_,
       runId: input.session.runId,
       expectedCommand: ownershipCommand,
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
   if (input.linuxDemo !== undefined)
     return spawnOwnedProviderProcess({
@@ -343,6 +344,7 @@ const launchHopperProcess = async (input: {
       arguments: input.linuxDemo.args,
       runId: input.session.runId,
       expectedCommand: ownershipCommand,
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
   return spawn(input.argumentsForTarget);
 };

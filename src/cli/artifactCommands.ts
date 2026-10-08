@@ -1,7 +1,7 @@
 import { z } from "incur";
 
 import { runProviderAnalysis } from "../composition/directAnalysis.js";
-import { createArtifactExtractionDestination } from "../application/ArtifactExtractionDestination.js";
+import { createArtifactExtractionDestination } from "../application/artifacts/ArtifactExtractionDestination.js";
 import { logCliCommand } from "../cliLogging.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import type { Logger } from "../logger.js";

@@ -14,7 +14,7 @@ import { Readable } from "node:stream";
 import { buffer } from "node:stream/consumers";
 import { createPackageWithOptions } from "@electron/asar";
 import { describe, expect, it } from "vitest";
-import { scanArtifactInventory } from "../../../src/application/ArtifactInventory.js";
+import { scanArtifactInventory } from "../../../src/artifacts/inventory/ArtifactInventory.js";
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
 import {
   closeAsarHandle,

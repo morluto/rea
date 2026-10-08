@@ -9,6 +9,42 @@ import { artifactLocalIdentity } from "./JavaScriptArtifactGraphContext.js";
 import { applicationNodeIdentitySchema } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import { analyzeJavaScriptStaticSource } from "../../domain/javascript/javascriptStaticAnalysis.js";
 
+describe("artifact URI scheme classification", () => {
+  it.each(["html-reference", "module-specifier", "url-reference"] as const)(
+    "keeps digit-bearing schemes external in %s even when a local file matches",
+    (context) => {
+      const files = fileMap([
+        file("index.html", "root"),
+        file("web3:app.js", "root"),
+      ]);
+      expect(
+        resolve({
+          declaredPath: "web3:app.js",
+          sourcePath: "index.html",
+          context,
+          files,
+        }),
+      ).toMatchObject({ resolution_status: "external", resolved_path: null });
+    },
+  );
+
+  it("keeps references under a digit-bearing external base href external", () => {
+    const files = fileMap([
+      file("index.html", "root"),
+      file("web3:assets/app.js", "root"),
+    ]);
+    expect(
+      resolve({
+        declaredPath: "app.js",
+        sourcePath: "index.html",
+        context: "html-reference",
+        htmlBaseHref: "web3:assets/",
+        files,
+      }),
+    ).toMatchObject({ resolution_status: "external", resolved_path: null });
+  });
+});
+
 describe("artifact-local graph identity", () => {
   it("preserves complete long namespace and key values", () => {
     const digest = "a".repeat(64);
@@ -639,4 +675,53 @@ const file = (
     text === null
       ? { included: false, reason: "invalid-utf8" }
       : { included: true, value: text },
+});
+
+describe("exact HTML resource resolution", () => {
+  it.each([
+    ["extension", ["app.js"]],
+    ["directory index", ["app/index.js"]],
+    ["directory package", ["app/package.json", "app/entry.js"]],
+  ] as const)("does not infer a file from %s fallback", (_name, paths) => {
+    const files = fileMap([
+      file("index.html", "root"),
+      ...paths.map((path) =>
+        file(
+          path,
+          "root",
+          path.endsWith("package.json") ? '{"main":"entry.js"}' : "",
+        ),
+      ),
+    ]);
+    expect(
+      resolve({
+        declaredPath: "./app",
+        sourcePath: "index.html",
+        context: "html-reference",
+        files,
+      }),
+    ).toMatchObject({ resolution_status: "not-found", resolved_path: null });
+  });
+
+  it("prefers an exact extensionless resource and retains URL suffix handling", () => {
+    const files = fileMap([
+      file("renderer/index.html", "root"),
+      file("assets/app", "root"),
+      file("assets/app.js", "root"),
+      file("assets/app/index.js", "root"),
+    ]);
+    expect(
+      resolve({
+        declaredPath: "./app?cache=1#v2",
+        sourcePath: "renderer/index.html",
+        context: "html-reference",
+        htmlBaseHref: "/assets/",
+        files,
+      }),
+    ).toMatchObject({
+      declared_path: "./app?cache=1#v2",
+      resolution_status: "resolved",
+      resolved_path: "assets/app",
+    });
+  });
 });
