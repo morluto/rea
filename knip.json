@@ -6,7 +6,7 @@
     "entry": ["docs/.vitepress/config.ts"]
   },
   "ignoreBinaries": ["mkfifo"],
-  "ignoreDependencies": ["electron", "esbuild", "webpack"],
+  "ignoreDependencies": ["electron", "esbuild", "webpack", "lint-staged"],
   "ignoreExportsUsedInFile": true,
   "rules": {
     "files": "error",
@@ -19,5 +19,6 @@
     "nsTypes": "error",
     "enumMembers": "error",
     "duplicates": "error"
-  }
+  },
+  "husky": false
 }
