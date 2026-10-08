@@ -349,6 +349,12 @@ const resolveCandidate = (
         `Directory package metadata ${packagePath} is not valid package JSON.`,
       ],
     };
+  if (main.status === "rejected")
+    return {
+      resolvedPath: null,
+      status: "rejected",
+      limitations: [`Package metadata ${packagePath}: ${main.limitation}`],
+    };
   if (main.status === "unmatched")
     return {
       resolvedPath: null,
@@ -442,6 +448,7 @@ const packageEntry = (
     }
   | { readonly status: "missing" }
   | { readonly status: "invalid" }
+  | { readonly status: "rejected"; readonly limitation: string }
   | { readonly status: "unmatched"; readonly declared: readonly string[] } => {
   try {
     const value: unknown = JSON.parse(text);
@@ -473,24 +480,53 @@ const packageExport = (
   value: unknown,
   moduleKind: ResolveArtifactPathInput["moduleKind"],
 ): PackageExportOutcome => {
-  if (typeof value === "string") return packagePathValue(value);
-  if (typeof value !== "object" || value === null) return { status: "invalid" };
-  const root = Reflect.get(value, ".") ?? value;
-  if (typeof root === "string") return packagePathValue(root);
-  if (typeof root !== "object" || root === null) return { status: "invalid" };
+  const root =
+    typeof value === "object" && value !== null && Object.hasOwn(value, ".")
+      ? Reflect.get(value, ".")
+      : value;
   const flattened = exportTargets(root, packageExportConditions(moduleKind));
-  if (flattened.kind === "invalid") return { status: "invalid" };
+  if (flattened.kind === "invalid")
+    return { status: "rejected", limitation: flattened.limitation };
   const first =
     flattened.kind === "unmatched" ? undefined : flattened.values[0];
   return first === undefined
-    ? { status: "unmatched", declared: Object.keys(root) }
+    ? {
+        status: "unmatched",
+        declared:
+          typeof root === "object" && root !== null ? Object.keys(root) : [],
+      }
     : { status: "value", value: first };
 };
 
 type ExportTargets =
   | { readonly kind: "targets"; readonly values: readonly string[] }
   | { readonly kind: "unmatched" }
-  | { readonly kind: "invalid" };
+  | { readonly kind: "invalid"; readonly limitation: string };
+
+const invalidExportTarget = (
+  value: unknown,
+  reason: string,
+): ExportTargets => ({
+  kind: "invalid",
+  limitation: `The package exports target ${JSON.stringify(value) ?? String(value)} ${reason}.`,
+});
+
+// Node checks raw target segments before URL normalization. Compare encoded
+// segment names here; full URL decoding follows array target selection.
+const forbiddenExportSegment = (value: string): string | undefined =>
+  value
+    .slice(2)
+    .split(/[\\/]/u)
+    .find((raw) => {
+      const segment = raw.replace(/%[0-9a-f]{2}/giu, (encoded) =>
+        String.fromCharCode(Number.parseInt(encoded.slice(1), 16)),
+      );
+      return (
+        segment === "." ||
+        segment === ".." ||
+        segment.toLowerCase() === "node_modules"
+      );
+    });
 
 /**
  * Resolve a target in Node's declared order. Explicit null blocks an active
@@ -502,26 +538,39 @@ const exportTargets = (
   value: unknown,
   conditions: ReadonlySet<string>,
 ): ExportTargets => {
-  if (typeof value === "string")
-    return value.startsWith("./")
+  if (typeof value === "string") {
+    if (!value.startsWith("./"))
+      return invalidExportTarget(value, 'must start with "./"');
+    const forbidden = forbiddenExportSegment(value);
+    return forbidden === undefined
       ? { kind: "targets", values: [value] }
-      : { kind: "invalid" };
+      : invalidExportTarget(
+          value,
+          `contains forbidden path segment ${JSON.stringify(forbidden)} before URL normalization`,
+        );
+  }
   if (value === null) return { kind: "targets", values: [] };
   if (Array.isArray(value)) {
-    let invalid = false;
+    let invalid: string | null = null;
     for (const entry of value) {
       const nested = exportTargets(entry, conditions);
       if (nested.kind === "invalid") {
-        invalid = true;
+        invalid = nested.limitation;
         continue;
       }
       if (nested.kind === "unmatched") continue;
-      invalid = false;
+      invalid = null;
       if (nested.values.length > 0) return nested;
     }
-    return invalid ? { kind: "invalid" } : { kind: "targets", values: [] };
+    return invalid === null
+      ? { kind: "targets", values: [] }
+      : { kind: "invalid", limitation: invalid };
   }
-  if (typeof value !== "object") return { kind: "invalid" };
+  if (typeof value !== "object")
+    return invalidExportTarget(
+      value,
+      "must be a relative string, object, array, or null",
+    );
   for (const [condition, target] of Object.entries(value)) {
     if (!conditions.has(condition)) continue;
     const nested = exportTargets(target, conditions);
@@ -548,7 +597,7 @@ const packageExportConditions = (
 
 type PackageExportOutcome =
   | { readonly status: "value"; readonly value: string }
-  | { readonly status: "invalid" }
+  | { readonly status: "rejected"; readonly limitation: string }
   | { readonly status: "unmatched"; readonly declared: readonly string[] };
 
 const packagePathValue = (
