@@ -132,7 +132,11 @@ it("does not send a mutation after its synchronous progress observer consumes th
   );
   expect(result).toMatchObject({
     ok: false,
-    error: { _tag: "HopperTimeoutError", operation: "set_comment" },
+    error: {
+      _tag: "HopperTimeoutError",
+      operation: "set_comment",
+      providerState: "not_started",
+    },
   });
   await expect(
     client.callTool("echo", { value: "recovered" }),

@@ -63,6 +63,7 @@ describe("HopperRequestQueue deadlines", () => {
         error: expect.objectContaining({
           _tag: "HopperTimeoutError",
           requestId: 2,
+          providerState: "not_started",
         }),
       }),
     );
@@ -265,7 +266,11 @@ describe("Hopper deadlines before timer dispatch", () => {
     queue.accept(1, ok(null));
     await expect(expired).resolves.toMatchObject({
       ok: false,
-      error: { _tag: "HopperTimeoutError", operation: "set_comment" },
+      error: {
+        _tag: "HopperTimeoutError",
+        operation: "set_comment",
+        providerState: "not_started",
+      },
     });
     await active;
     expect(sent).toEqual([1]);

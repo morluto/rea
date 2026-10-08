@@ -54,6 +54,7 @@ interface QueuedRequest {
   readonly onAbort: (() => void) | undefined;
   callerState: "waiting" | "cancelled";
   callerSettled: boolean;
+  transmitted: boolean;
   startedAt: number | undefined;
   heartbeat: NodeJS.Timeout | undefined;
   deadline: NodeJS.Timeout | undefined;
@@ -117,6 +118,7 @@ export class HopperRequestQueue {
         onAbort,
         callerState: "waiting",
         callerSettled: false,
+        transmitted: false,
         startedAt: undefined,
         heartbeat: undefined,
         deadline: undefined,
@@ -264,6 +266,7 @@ export class HopperRequestQueue {
       );
     }, 1_000);
     try {
+      entry.transmitted = true;
       this.send(
         { id: entry.id, method: entry.method, params: entry.params },
         () =>
@@ -294,7 +297,7 @@ export class HopperRequestQueue {
       timeoutMs,
       entry.method,
       entry.id,
-      "busy",
+      entry.transmitted ? "busy" : "not_started",
       hopperOperationStage(entry.method),
     );
   }
