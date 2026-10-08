@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmod, lstat, mkdir, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -244,6 +244,16 @@ describe("native signature posture boundaries", () => {
       expect(result.provenance.map(({ command }) => command.at(-2))).toContain(
         "-R=anchor apple",
       );
+      if (anchorExit === 0)
+        expect(
+          result.limitations.some((line) =>
+            line.startsWith("Apple-origin check failed"),
+          ),
+        ).toBe(false);
+      else
+        expect(result.limitations).toContain(
+          "Apple-origin check failed: code failed to satisfy specified code requirement(s)",
+        );
       return Object.fromEntries(
         result.security_facets.map(({ facet, state }) => [facet, state]),
       );
@@ -495,6 +505,28 @@ describe("signature architecture coverage", () => {
 });
 
 describe("signature target version binding", () => {
+  it("reports a regular ticket replaced by a directory as changed", async () => {
+    const { app } = await fixtureApp(notarizationTicketFixture());
+    const ticket = await stapledTicket(
+      { sourcePath: app, bundleInfoPlist: join(app, "Contents/Info.plist") },
+      undefined,
+      async (path, phase) => {
+        const metadata = await lstat(path);
+        if (phase === "before") {
+          await rm(path);
+          await mkdir(path);
+        }
+        return metadata;
+      },
+    );
+    expect(ticket).toMatchObject({
+      status: "unreadable",
+      path: "Contents/CodeResources",
+      reason: "changed",
+      sha256: null,
+    });
+  });
+
   it.each(["EACCES", "EPERM", "EIO"])(
     "preserves final ticket-path failure %s instead of inventing mutation",
     async (code) => {
@@ -612,8 +644,19 @@ class PlatformRunner extends FixtureRunner {
   override async run(tool: string, arguments_: readonly string[]) {
     const result = await super.run(tool, arguments_);
     if (!result.ok || tool !== "codesign") return result;
-    if (arguments_.includes("-R=anchor apple"))
-      return ok({ ...result.value, exitCode: this.anchorExit });
+    if (arguments_.includes("-R=anchor apple")) {
+      const target = arguments_.at(-1) ?? "";
+      const stderr =
+        this.anchorExit === 0
+          ? ""
+          : `${target}: code failed to satisfy specified code requirement(s)\n`;
+      return ok({
+        ...result.value,
+        exitCode: this.anchorExit,
+        stderr,
+        stderrBytes: Buffer.byteLength(stderr),
+      });
+    }
     if (!arguments_.includes("--verbose=4")) return result;
     const stderr = `${result.value.stderr}Platform identifier=26\n`;
     return ok({

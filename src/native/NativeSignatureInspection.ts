@@ -23,6 +23,7 @@ import type { NativeObservation } from "./NativeObservation.js";
 import {
   signatureVerification,
   codesignOperationalFailure,
+  codesignReasons,
 } from "./CodesignVerification.js";
 import { parseCodeSignature } from "./parsers/codesign.js";
 import { parseSignatureEntitlements } from "./NativeSignatureEntitlements.js";
@@ -119,11 +120,18 @@ export const inspectNativeSignature = async (options: {
   if (!verified.ok) return verified;
   const captures = [display, requirements, entitlements, verified.value];
   let appleOrigin = false;
+  let appleOriginFailure: string | undefined;
   if (!unsigned && (parsed.code_directory?.platform_identifier ?? 0) !== 0) {
     const anchor = await capture(["--verify", "-R=anchor apple", code], signal);
     if (!anchor.ok) return anchor;
     captures.push(anchor.value);
     appleOrigin = anchor.value.exitCode === 0;
+    if (!appleOrigin) {
+      const reason = codesignReasons(anchor.value, code).find(
+        (line) => line.trim().length > 0,
+      );
+      appleOriginFailure = reason ?? `codesign exited ${anchor.value.exitCode}`;
+    }
   }
   const slices = await inspectSignatureSlices(
     target,
@@ -152,6 +160,8 @@ export const inspectNativeSignature = async (options: {
     limitations.push(
       `Entitlements: ${omittedPrototypeKeysLimitation(entitlementValue.omittedPrototypeKeys)}`,
     );
+  if (appleOriginFailure !== undefined)
+    limitations.push(`Apple-origin check failed: ${appleOriginFailure}`);
   if (verification.status === "unknown")
     limitations.push(
       "Signature verification is inconclusive (permission, I/O or unrecognized diagnostic); this is not a proven broken signature.",

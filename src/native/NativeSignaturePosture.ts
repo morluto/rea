@@ -89,7 +89,16 @@ export const stapledTicket = async (
     );
     try {
       const opened = await handle.stat();
-      if (!opened.isFile()) return absent;
+      // The path was a regular file at lstat. A directory or FIFO now means
+      // the ticket was replaced; absence would hide that change.
+      if (!opened.isFile())
+        return {
+          status: "unreadable",
+          path: relative,
+          sha256: null,
+          size: null,
+          reason: "changed",
+        };
       // If the path was replaced between lstat and open, or mutated while
       // hashing, the digest would describe the wrong bytes: dev and ino catch
       // replacement, while size and mtime catch same-inode writes. Report any

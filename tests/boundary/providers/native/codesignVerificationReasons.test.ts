@@ -43,6 +43,9 @@ it("keeps operational, unsigned, definite invalid and unrecognized failures dist
   expect(status("permission denied")).toBe("unknown");
   expect(status("I/O error")).toBe("unknown");
   expect(status("invalid signature")).toBe("invalid");
+  expect(status("bundle format unrecognized, invalid, or unsuitable")).toBe(
+    "invalid",
+  );
   expect(
     status(
       "resource fork, Finder information, or similar detritus not allowed",

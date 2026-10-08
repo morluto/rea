@@ -44,6 +44,33 @@ const operationalReason = (reason: string): boolean =>
     reason,
   );
 
+/**
+ * Definitive codesign rejections. A nonzero exit whose text is not in this
+ * list, and is not an operational failure, stays `unknown` so an unrecognized
+ * diagnostic is not reported as a broken signature.
+ */
+const INVALID_SIGNATURE_REASONS = [
+  "a resource envelope is obsolete",
+  "a sealed resource is missing or invalid",
+  "bundle format unrecognized, invalid, or unsuitable",
+  "code or signature modified",
+  "file added:",
+  "file modified:",
+  "invalid or unsupported format",
+  "invalid signature",
+  "resource envelope is obsolete",
+  "resource fork, Finder information, or similar detritus not allowed",
+  "signature is invalid",
+  "unsealed contents present",
+] as const;
+
+const invalidSignatureReason = (reason: string): boolean => {
+  const text = reason.toLowerCase();
+  return INVALID_SIGNATURE_REASONS.some((phrase) =>
+    text.startsWith(phrase.toLowerCase()),
+  );
+};
+
 /** Operational diagnostics can coexist with an independently proven invalid component. */
 export const codesignOperationalFailure = (
   capture: NativeCommandCapture,
@@ -61,14 +88,7 @@ const verificationStatus = (
       reason,
     ),
   );
-  if (
-    reasons.some((reason) =>
-      /^(?:a sealed resource is missing or invalid|code or signature modified|invalid signature|invalid or unsupported format|resource envelope is obsolete|signature is invalid|unsealed contents present|file modified:|file added:|a resource envelope is obsolete|resource fork, Finder information, or similar detritus not allowed)/iu.test(
-        reason,
-      ),
-    )
-  )
-    return "invalid";
+  if (reasons.some(invalidSignatureReason)) return "invalid";
   if (unsignedReason && !unsigned) return "invalid";
   if (reasons.some(operationalReason)) return "unknown";
   if (unsignedReason) return "unsigned";
