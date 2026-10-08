@@ -225,6 +225,7 @@
     "isomorphic-git": "1.38.7",
     "jsonc-parser": "3.3.1",
     "lossless-json": "4.3.1",
+    "parse5": "8.0.1",
     "pino": "10.4.0",
     "playwright-core": "1.58.2",
     "plist": "5.0.0",

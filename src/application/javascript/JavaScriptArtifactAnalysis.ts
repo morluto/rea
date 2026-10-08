@@ -25,6 +25,7 @@ import type {
   JavaScriptSourceMapOriginal,
 } from "./JavaScriptArtifactAnalysisTypes.js";
 import { analyzeJavaScriptJsonModule } from "./JavaScriptJsonModules.js";
+import { htmlArtifactReferences } from "../../domain/javascript/htmlArtifactReferences.js";
 
 interface MutableArtifactAnalysis {
   readonly files: AnalyzedJavaScriptArtifactFile[];
@@ -205,26 +206,13 @@ const parseHtmlScripts = (
   path: string,
   text: string,
 ): JavaScriptHtmlScriptObservation[] => {
-  const scripts: JavaScriptHtmlScriptObservation[] = [];
-  const baseHref = htmlBaseHref(text);
-  const pattern = /<script\b[^>]*\bsrc\s*=\s*(["'])([^"']+)\1[^>]*>/giu;
-  for (const match of text.matchAll(pattern)) {
-    const script = match[2];
-    if (script === undefined) continue;
-    const start = match.index;
-    scripts.push({
-      html_path: path,
-      script_path: script,
-      base_href: baseHref,
-      location: rangeForOffsets(text, start, start + match[0].length),
-    });
-  }
-  return scripts;
-};
-
-const htmlBaseHref = (text: string): string | null => {
-  const match = /<base\b[^>]*\bhref\s*=\s*(["'])([^"']+)\1[^>]*>/iu.exec(text);
-  return match?.[2] ?? null;
+  const { scripts, baseHref } = htmlArtifactReferences(text);
+  return scripts.map(({ scriptPath, startOffset, endOffset }) => ({
+    html_path: path,
+    script_path: scriptPath,
+    base_href: baseHref,
+    location: rangeForOffsets(text, startOffset, endOffset),
+  }));
 };
 
 const parseSourceMap = (
