@@ -79,7 +79,7 @@ export async function verifyCoreInspectionTrace({
           (line) =>
             /^execve\("\/(?:usr\/)?bin\/ps",/u.test(line) &&
             line.includes(
-              '["ps", "-axo", "pid=,ppid=,pgid=,stat=,command="]',
+              '["ps", "-axo", "pid=,ppid=,pgid=,uid=,stat=,command="]',
             ) &&
             line.endsWith(" = 0"),
         );
@@ -128,7 +128,9 @@ export async function verifyCoreInspectionTrace({
         const executable = await realpath(match[1]).catch(() => match[1]);
         const ownership =
           psPaths.has(match[1]) &&
-          line.includes('["ps", "-axo", "pid=,ppid=,pgid=,stat=,command="]');
+          line.includes(
+            '["ps", "-axo", "pid=,ppid=,pgid=,uid=,stat=,command="]',
+          );
         const iconv =
           iconvPaths.has(match[1]) && line.includes('["iconv", "-l"]');
         const version =
