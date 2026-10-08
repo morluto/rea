@@ -86,20 +86,30 @@ describe("inert keyed archive decoding", () => {
       ]);
     },
   );
-  it("reports an XML archive dictionary keyed __proto__ as omitted", () => {
-    const xml = build({ ...archive, $objects: ["$null", "value"] }).replace(
-      "<key>$top</key>",
-      "<key>__proto__</key><string>x</string><key>$top</key>",
-    );
-    const graph = decodeKeyedArchiveBytes(Buffer.from(xml), {
-      offset: 0,
-      limit: 2,
-    });
-    expect(graph.objects.map(({ value }) => value)).toEqual(["$null", "value"]);
-    expect(graph.limitations).toContain(
-      "1 dictionary entry keyed __proto__ was omitted because REA results cannot represent that key.",
-    );
-  });
+  it.each(["binary", "XML"] as const)(
+    "keeps a %s archive dictionary member keyed __proto__",
+    (format) => {
+      // An own __proto__ property cannot be written by an object literal;
+      // Object.fromEntries creates it without reaching the setter.
+      const member = Object.fromEntries([
+        ["__proto__", { polluted: true }],
+        ["kept", 1],
+      ]);
+      const graph = decodeKeyedArchiveBytes(
+        Buffer.from(
+          format === "binary"
+            ? buildBinary({ ...archive, $objects: ["$null", member, "value"] })
+            : build({ ...archive, $objects: ["$null", member, "value"] }),
+        ),
+        { offset: 0, limit: 4 },
+      );
+      const value = graph.objects[1]?.value as Record<string, unknown>;
+      expect(Object.getPrototypeOf(value)).toBe(Object.prototype);
+      expect(Object.hasOwn(value, "__proto__")).toBe(true);
+      expect(value.kept).toBe(1);
+      expect(value["__proto__"]).toEqual({ polluted: true });
+    },
+  );
   it("rejects missing roots, malformed plist, and non-keyed archives", () => {
     expect(() =>
       decodeKeyedArchiveBytes(Buffer.from("bplist00bad"), {

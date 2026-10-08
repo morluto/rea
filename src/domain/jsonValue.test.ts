@@ -35,3 +35,19 @@ it("still parses only JSON values at runtime", () => {
   for (const value of [undefined, Number.NaN, Infinity, () => 0, [undefined]])
     expect(jsonValueSchema.safeParse(value).success).toBe(false);
 });
+
+it("preserves own __proto__ members instead of rebinding the prototype", () => {
+  const input = JSON.parse(
+    '{"__proto__":{"polluted":true},"constructor":"ordinary","nested":{"__proto__":[1]}}',
+  ) as { constructor: string };
+  const output = jsonValueSchema.parse(input);
+  expect(output).not.toBe(input);
+  expect(Object.getPrototypeOf(output)).toBe(Object.prototype);
+  expect(JSON.stringify(output)).toBe(
+    '{"__proto__":{"polluted":true},"constructor":"ordinary","nested":{"__proto__":[1]}}',
+  );
+  const parsed = jsonObjectSchema.parse(JSON.parse('{"__proto__":{"kept":1}}'));
+  expect(Object.hasOwn(parsed, "__proto__")).toBe(true);
+  expect(Object.getPrototypeOf(parsed)).toBe(Object.prototype);
+  expect(JSON.stringify(parsed)).toBe('{"__proto__":{"kept":1}}');
+});

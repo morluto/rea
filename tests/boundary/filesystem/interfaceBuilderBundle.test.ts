@@ -396,7 +396,7 @@ describe("bounded Interface Builder archive decoding", () => {
     expect(result.graph.truncated).toBe(true);
   });
 
-  it("marks archive decoding partial when __proto__ entries are omitted", async () => {
+  it("decodes an archive that holds a __proto__ member completely", async () => {
     const root = await createTestTempDirectory("rea-ib-test-");
     const bundle = join(root, "Example.app");
     const resources = join(bundle, "Contents", "Resources");
@@ -414,13 +414,13 @@ describe("bounded Interface Builder archive decoding", () => {
     expect(result.graph.coverage).toContainEqual(
       expect.objectContaining({
         facet: "archive_decode",
-        status: "partial",
-        reason: "dictionary_entries_omitted",
+        status: "complete",
+        reason: null,
       }),
     );
-    expect(result.graph.truncated).toBe(true);
-    expect(result.limitations).toContain(
-      "Contents/Resources/Prototype.nib: 1 dictionary entry keyed __proto__ was omitted because REA results cannot represent that key.",
+    expect(result.graph.truncated).toBe(false);
+    expect(result.limitations).not.toContainEqual(
+      expect.stringContaining("__proto__"),
     );
   });
 

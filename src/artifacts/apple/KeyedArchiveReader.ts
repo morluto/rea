@@ -5,8 +5,8 @@ import { z } from "zod";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { projectPlistValue } from "../../domain/apple/plistValue.js";
 import {
-  omittedPrototypeKeysLimitation,
   parseXmlPropertyList,
+  restorePrototypeKeys,
 } from "../../domain/propertyListKeys.js";
 import {
   keyedArchiveInputSchema,
@@ -26,19 +26,13 @@ export const decodeKeyedArchiveBytes = (
   if (bytes.length > MAX_BYTES)
     throw new RangeError("Keyed archive exceeds 64 MiB");
   const binary = bytes.subarray(0, 8).toString("ascii") === "bplist00";
-  const parsed = binary
-    ? { value: parseBinary(bytes), omittedPrototypeKeys: 0 }
+  const value = binary
+    ? restorePrototypeKeys(parseBinary(bytes))
     : parseXmlPropertyList(decodeXmlPlistText(bytes));
-  const graph = projectKeyedArchive(normalizePlist(parsed.value), selection);
+  const graph = projectKeyedArchive(normalizePlist(value), selection);
   return {
     archive_format: binary ? ("binary-plist" as const) : ("xml-plist" as const),
     ...graph,
-    limitations: [
-      ...graph.limitations,
-      ...(parsed.omittedPrototypeKeys === 0
-        ? []
-        : [omittedPrototypeKeysLimitation(parsed.omittedPrototypeKeys)]),
-    ],
   };
 };
 

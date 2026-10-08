@@ -317,7 +317,7 @@ class PrototypeEntitlementsRunner extends FixtureRunner {
 }
 
 describe("native signature entitlements", () => {
-  it("reports entitlement entries keyed __proto__ that the result omits", async () => {
+  it("preserves entitlement entries keyed __proto__ as ordinary own properties", async () => {
     const client = new NativeMacOSProvider(
       new PrototypeEntitlementsRunner(),
       "darwin",
@@ -327,12 +327,15 @@ describe("native signature entitlements", () => {
 
     expect(signature.ok).toBe(true);
     if (!signature.ok) return;
-    expect(signature.value.result).toMatchObject({
-      entitlements: { "com.apple.security.app-sandbox": true },
+    const entitlements = (
+      signature.value.result as { entitlements: Record<string, unknown> }
+    ).entitlements;
+    expect(entitlements["com.apple.security.app-sandbox"]).toBe(true);
+    expect(Object.getPrototypeOf(entitlements)).toBe(Object.prototype);
+    expect(Object.hasOwn(entitlements, "__proto__")).toBe(true);
+    expect(entitlements["__proto__"]).toEqual({
+      "com.apple.security.get-task-allow": true,
     });
-    expect(signature.value.limitations).toContain(
-      "Entitlements: 1 dictionary entry keyed __proto__ was omitted because REA results cannot represent that key.",
-    );
   });
 });
 

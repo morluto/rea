@@ -4,8 +4,8 @@ import { parseBinary } from "plist";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { projectPlistValue } from "../../domain/apple/plistValue.js";
 import {
-  omittedPrototypeKeysLimitation,
   parseXmlPropertyList,
+  restorePrototypeKeys,
 } from "../../domain/propertyListKeys.js";
 import { decodeNibArchive, type NibArchiveDocument } from "./NibArchive.js";
 import type { ArtifactEntry } from "../ArtifactReader.js";
@@ -35,7 +35,6 @@ export const analyzeInterfaceBuilderBundle = async (input: {
   const documents: InterfaceBuilderDocumentInput[] = [];
   const invalid: string[] = [];
   const incompleteHierarchies = new Map<string, number>();
-  const prototypeKeyOmissions = new Map<string, number>();
   let omitted = 0;
   let attempted = 0;
   try {
@@ -53,14 +52,9 @@ export const analyzeInterfaceBuilderBundle = async (input: {
           bytes.subarray(0, 10).toString("ascii") === "NIBArchive"
             ? projectNibArchive(decodeNibArchive(bytes))
             : null;
-        const { value: raw, omittedPrototypeKeys } =
-          nib === null
-            ? decodePlist(bytes)
-            : { value: nib.raw, omittedPrototypeKeys: 0 };
+        const raw = nib === null ? decodePlist(bytes) : nib.raw;
         if (nib !== null && nib.omitted > 0)
           incompleteHierarchies.set(entry.path, nib.omitted);
-        if (omittedPrototypeKeys > 0)
-          prototypeKeyOmissions.set(entry.path, omittedPrototypeKeys);
         const documentHash = createHash("sha256").update(bytes).digest("hex");
         documents.push({
           relativePath: entry.path,
@@ -88,7 +82,6 @@ export const analyzeInterfaceBuilderBundle = async (input: {
   });
   return finalizeHierarchyCoverage(result, {
     incompleteHierarchies,
-    prototypeKeyOmissions,
     invalid,
     attempted,
     omitted,
@@ -99,15 +92,13 @@ const finalizeHierarchyCoverage = (
   result: ReturnType<typeof buildInterfaceBuilderAnalysis>,
   counts: {
     incompleteHierarchies: ReadonlyMap<string, number>;
-    prototypeKeyOmissions: ReadonlyMap<string, number>;
     invalid: readonly string[];
     attempted: number;
     omitted: number;
   },
 ) => {
-  const { incompleteHierarchies, prototypeKeyOmissions, invalid } = counts;
-  const archiveDecodePartial =
-    invalid.length > 0 || prototypeKeyOmissions.size > 0;
+  const { incompleteHierarchies, invalid } = counts;
+  const archiveDecodePartial = invalid.length > 0;
   return {
     ...result,
     documents: result.documents.map((document) => ({
@@ -137,12 +128,7 @@ const finalizeHierarchyCoverage = (
           status: archiveDecodePartial
             ? ("partial" as const)
             : ("complete" as const),
-          reason:
-            invalid.length > 0
-              ? "one_or_more_archives_invalid"
-              : prototypeKeyOmissions.size > 0
-                ? "dictionary_entries_omitted"
-                : null,
+          reason: invalid.length > 0 ? "one_or_more_archives_invalid" : null,
           examined: counts.attempted,
           omitted: counts.omitted,
         },
@@ -166,9 +152,6 @@ const finalizeHierarchyCoverage = (
         : [
             `Some Interface Builder archives could not be decoded: ${invalid.slice(0, 16).join("; ")}`,
           ]),
-      ...[...prototypeKeyOmissions].map(
-        ([path, count]) => `${path}: ${omittedPrototypeKeysLimitation(count)}`,
-      ),
     ],
   };
 };
@@ -398,13 +381,10 @@ const readEntry = async (
   return Buffer.concat(chunks, length);
 };
 
-/** Project decoded plist data and dates while retaining omitted-key coverage. */
-const decodePlist = (
-  bytes: Buffer,
-): { readonly value: JsonValue; readonly omittedPrototypeKeys: number } => {
-  const { value, omittedPrototypeKeys } =
+/** Project decoded plist data and dates into typed JSON values. */
+const decodePlist = (bytes: Buffer): JsonValue =>
+  projectPlistValue(
     bytes.subarray(0, 8).toString("ascii") === "bplist00"
-      ? { value: parseBinary(bytes), omittedPrototypeKeys: 0 }
-      : parseXmlPropertyList(bytes.toString("utf8"));
-  return { value: projectPlistValue(value).value, omittedPrototypeKeys };
-};
+      ? restorePrototypeKeys(parseBinary(bytes))
+      : parseXmlPropertyList(bytes.toString("utf8")),
+  ).value;

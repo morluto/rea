@@ -58,11 +58,6 @@ export const parseHarJson = (text: string): unknown => {
         });
       },
       onObjectProperty: (key) => {
-        if (key === "__proto__")
-          throw new CaptureFormatError(
-            "unsupported",
-            "HAR object contains a __proto__ member that the current JSON schema boundary cannot preserve.",
-          );
         const frame = frames.at(-1);
         if (frame?.kind !== "object")
           throw new TypeError(

@@ -1,48 +1,41 @@
 import { parse } from "plist";
 
-/** The dictionary key REA results cannot carry: validation strips it. */
+/** The dictionary key the `plist` XML decoder refuses outright (CVE-2022-22912). */
 const PROTOTYPE_KEY = "__proto__";
 
-/** A decoded plist without `__proto__` entries, and how many were omitted. */
-export interface PropertyListWithoutPrototypeKeys {
-  readonly value: unknown;
-  readonly omittedPrototypeKeys: number;
-}
+/** plist scalar leaves: the decoders attach dates and data as class instances. */
+const isPlistScalar = (item: unknown): boolean =>
+  item === null ||
+  typeof item !== "object" ||
+  item instanceof Date ||
+  item instanceof Uint8Array;
 
-/** Limitation for results whose source plist held `__proto__` entries. */
-export const omittedPrototypeKeysLimitation = (count: number): string =>
-  `${String(count)} dictionary ${count === 1 ? "entry" : "entries"} keyed __proto__ ${count === 1 ? "was" : "were"} omitted because REA results cannot represent that key.`;
-
-const withoutKey = (
-  value: unknown,
-  key: string,
-): PropertyListWithoutPrototypeKeys => {
-  let omitted = 0;
-  const strip = (item: unknown): unknown => {
-    if (Array.isArray(item)) return item.map(strip);
-    if (
-      item === null ||
-      typeof item !== "object" ||
-      item instanceof Date ||
-      item instanceof Uint8Array
-    )
-      return item;
-    return Object.fromEntries(
-      Object.entries(item).flatMap(([name, entry]) => {
-        if (name !== key) return [[name, strip(entry)]];
-        omitted += 1;
-        return [];
-      }),
+/**
+ * Restore `__proto__` dictionary entries that binary-plist decoding loses to
+ * the prototype setter. `plist`'s binary decoder assigns members with
+ * `dict[key] = value`, so an object-valued `__proto__` member replaces the
+ * dictionary's prototype instead of becoming an own property — and a null
+ * member erases it. Decoded trees have no other way to carry a non-standard
+ * prototype, so one always names the lost `__proto__` value. A primitive
+ * `__proto__` member is dropped by the setter before REA sees the tree and
+ * cannot be recovered.
+ */
+export const restorePrototypeKeys = (value: unknown): unknown => {
+  const restore = (item: unknown): unknown => {
+    if (Array.isArray(item)) return item.map(restore);
+    if (isPlistScalar(item)) return item;
+    const entries = Object.entries(item as Record<string, unknown>).map(
+      ([name, entry]) => [name, restore(entry)] as const,
     );
+    const prototype: unknown = Object.getPrototypeOf(item);
+    if (prototype === Object.prototype) return Object.fromEntries(entries);
+    return Object.fromEntries([
+      ...entries,
+      [PROTOTYPE_KEY, prototype === null ? null : restore(prototype)] as const,
+    ]);
   };
-  const stripped = strip(value);
-  return { value: stripped, omittedPrototypeKeys: omitted };
+  return restore(value);
 };
-
-/** Remove own `__proto__` entries, such as JSON.parse creates, and count them. */
-export const omitPrototypeKeys = (
-  value: unknown,
-): PropertyListWithoutPrototypeKeys => withoutKey(value, PROTOTYPE_KEY);
 
 // Comments and CDATA text are consumed whole so only element keys match.
 const KEY_TOKEN =
@@ -78,13 +71,13 @@ const decodeXmlText = (text: string): string =>
   );
 
 /**
- * Decode an XML plist whose dictionaries may use the legal key `__proto__`,
- * which the `plist` decoder rejects outright. Those entries are omitted and
- * counted so callers can report them instead of failing the whole document.
+ * Decode an XML plist, keeping dictionaries that use the legal key
+ * `__proto__`. The `plist` decoder rejects that key outright, so the source
+ * text substitutes a placeholder the document cannot contain; the decoded
+ * tree then restores each placeholder as an ordinary own `__proto__`
+ * property via `Object.fromEntries`, which never reaches the setter.
  */
-export const parseXmlPropertyList = (
-  text: string,
-): PropertyListWithoutPrototypeKeys => {
+export const parseXmlPropertyList = (text: string): unknown => {
   // The decoded text holds every key the decoder can produce, including
   // entity-encoded spellings of the placeholder, so no source key aliases it.
   // Decoding comment or CDATA text too can only lengthen the placeholder.
@@ -98,5 +91,15 @@ export const parseXmlPropertyList = (
         ? `<key>${placeholder}</key>`
         : token,
   );
-  return withoutKey(parse(substituted), placeholder);
+  const restore = (item: unknown): unknown => {
+    if (Array.isArray(item)) return item.map(restore);
+    if (isPlistScalar(item)) return item;
+    return Object.fromEntries(
+      Object.entries(item as Record<string, unknown>).map(([name, entry]) => [
+        name === placeholder ? PROTOTYPE_KEY : name,
+        restore(entry),
+      ]),
+    );
+  };
+  return restore(parse(substituted));
 };

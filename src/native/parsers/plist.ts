@@ -6,11 +6,7 @@ import {
   projectPlistValue,
   type ProjectedPlistValue,
 } from "../../domain/apple/plistValue.js";
-import {
-  omitPrototypeKeys,
-  omittedPrototypeKeysLimitation,
-  parseXmlPropertyList,
-} from "../../domain/propertyListKeys.js";
+import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
 const plistObject = z.record(z.string(), z.unknown());
@@ -103,9 +99,9 @@ export const parsePlistJson = (
     ambiguousNumberCount += 1;
     return item;
   };
-  let decoded: ReturnType<typeof omitPrototypeKeys>;
+  let value: unknown;
   try {
-    decoded = omitPrototypeKeys(decodePlistJson(output, classify));
+    value = decodePlistJson(output, classify);
   } catch (cause: unknown) {
     return err(
       new AnalysisOutputError(
@@ -115,14 +111,10 @@ export const parsePlistJson = (
       ),
     );
   }
-  const { value } = decoded;
   return ok({
     value,
     bundle: projectPlistBundle(value),
-    limitations: [
-      ...numberLimitations(exactIntegerCount, ambiguousNumberCount),
-      ...prototypeKeyLimitations(decoded.omittedPrototypeKeys),
-    ],
+    limitations: numberLimitations(exactIntegerCount, ambiguousNumberCount),
   });
 };
 
@@ -134,11 +126,8 @@ export const parsePlistXml = (
   output: string,
 ): Result<ParsedPlist, AnalysisOutputError> => {
   let projected: ProjectedPlistValue;
-  let omittedPrototypeKeys: number;
   try {
-    const decoded = parseXmlPropertyList(output);
-    omittedPrototypeKeys = decoded.omittedPrototypeKeys;
-    projected = projectPlistValue(decoded.value);
+    projected = projectPlistValue(parseXmlPropertyList(output));
   } catch (cause: unknown) {
     return err(
       new AnalysisOutputError(
@@ -179,7 +168,6 @@ export const parsePlistXml = (
             `${String(projected.unknownRealCount)} non-finite real value(s) are reported as { "$plist_type": "real", "value": null } because the XML decoder does not distinguish NaN from infinity.`,
           ]),
       ...numberLimitations(exactIntegerCount, ambiguousNumberCount),
-      ...prototypeKeyLimitations(omittedPrototypeKeys),
     ],
   });
 };
@@ -212,9 +200,6 @@ const xmlNumberLiterals = (xml: string): XmlNumberLiterals => {
   );
   return { integers, reals };
 };
-
-const prototypeKeyLimitations = (count: number): string[] =>
-  count === 0 ? [] : [omittedPrototypeKeysLimitation(count)];
 
 const numberLimitations = (
   exactIntegerCount: number,

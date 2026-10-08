@@ -156,7 +156,7 @@ const resolveLayoutExecutable = async (
 /** Decode the top-level executable name with an XML parser, not a pattern. */
 const parseXmlPlistExecutable = (plist: string): string => {
   // An unrelated `__proto__` entry must not make the bundle unreadable.
-  const { value } = parseXmlPropertyList(plist);
+  const value = parseXmlPropertyList(plist);
   const executable = executableEntrySchema.safeParse(value);
   if (!executable.success) throw new Error("CFBundleExecutable is missing");
   return executable.data.CFBundleExecutable;

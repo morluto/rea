@@ -7,9 +7,6 @@ import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-const OMITTED =
-  "1 dictionary entry keyed __proto__ was omitted because REA results cannot represent that key.";
-
 describe.skipIf(process.platform !== "darwin")(
   "native plist CLI with a __proto__ key",
   () => {
@@ -17,7 +14,7 @@ describe.skipIf(process.platform !== "darwin")(
       ["JSON-expressible", ""],
       ["data-bearing", "<key>Blob</key><data>AAEC</data>"],
     ] as const)(
-      "inspects a $0 plist and reports the omitted key",
+      "inspects a $0 plist and keeps the prototype-named member",
       async ([, extra], { cli }) => {
         const directory = await createTestTempDirectory("rea-plist-proto-");
         const app = join(directory, "Proto.app");
@@ -43,10 +40,11 @@ describe.skipIf(process.platform !== "darwin")(
           normalized_result: {
             value: { CFBundleExecutable: "App" },
             bundle: { executable: "App" },
-            limitations: expect.arrayContaining([OMITTED]),
           },
         });
-        expect(JSON.stringify(result.json)).not.toContain("polluted");
+        expect(JSON.stringify(result.json)).toContain(
+          '"__proto__":{"polluted":true}',
+        );
       },
     );
   },
