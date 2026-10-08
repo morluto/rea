@@ -16,7 +16,11 @@ import { z } from "zod";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { isOwnedClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
-import { supportedClients, type SetupClient } from "./SupportedClients.js";
+import {
+  manualRegistrationRemediation,
+  supportedClients,
+  type SetupClient,
+} from "./SupportedClients.js";
 
 interface ManagedPathStats {
   readonly uid?: number;
@@ -127,7 +131,8 @@ const removeClient = async (
     return item(
       client.name,
       "skipped",
-      "This client has no documented local MCP configuration boundary.",
+      manualRegistrationRemediation(client.name) ??
+        "This client has no documented local MCP configuration boundary.",
     );
   const resolved = await resolveUninstallConfigPath(client, fileSystem);
   if (typeof resolved !== "string") return resolved;

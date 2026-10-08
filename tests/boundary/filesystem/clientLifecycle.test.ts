@@ -16,8 +16,12 @@ import { parse as parseJsonc, type ParseError } from "jsonc-parser";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
 
+import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
-import { detectClients } from "../../../src/application/SetupHost.js";
+import {
+  detectClients,
+  systemSetupHost,
+} from "../../../src/application/SetupHost.js";
 import {
   runUninstall,
   systemUninstallHost,
@@ -1141,11 +1145,11 @@ describe("Grok Build inline comments", () => {
   });
 });
 
-describe("Grok Bot configuration comments", () => {
-  it("keeps a same-line JSONC comment when uninstall removes Grok Bot", async () => {
-    const home = await createTestTempDirectory("rea-grokbot-jsonc-comment-");
+describe("JSON client configuration comments", () => {
+  it("keeps a same-line JSONC comment when uninstall removes Cursor", async () => {
+    const home = await createTestTempDirectory("rea-cursor-jsonc-comment-");
     roots.push(home);
-    const configPath = join(home, ".grokbot/mcp.json");
+    const configPath = join(home, ".cursor/mcp.json");
     await mkdir(dirname(configPath), { recursive: true });
     await writeFile(
       configPath,
@@ -1165,9 +1169,9 @@ describe("Grok Bot configuration comments", () => {
   });
 
   it("keeps a JSONC comment when a block comment precedes the comma", async () => {
-    const home = await createTestTempDirectory("rea-grokbot-jsonc-block-");
+    const home = await createTestTempDirectory("rea-cursor-jsonc-block-");
     roots.push(home);
-    const configPath = join(home, ".grokbot/mcp.json");
+    const configPath = join(home, ".cursor/mcp.json");
     await mkdir(dirname(configPath), { recursive: true });
     await writeFile(
       configPath,
@@ -1190,9 +1194,9 @@ describe("Grok Bot configuration comments", () => {
   });
 
   it("keeps a JSONC comment without swallowing the next server or closers", async () => {
-    const home = await createTestTempDirectory("rea-grokbot-jsonc-next-");
+    const home = await createTestTempDirectory("rea-cursor-jsonc-next-");
     roots.push(home);
-    const configPath = join(home, ".grokbot/mcp.json");
+    const configPath = join(home, ".cursor/mcp.json");
     await mkdir(dirname(configPath), { recursive: true });
     const files = [
       '{\n  "mcpServers": {\n    "other": {"command":"other"}, // important other-server note\n    "rea": {"command":"rea","args":["mcp"]}, "keep": {"command":"keep"}\n  }\n}\n',
@@ -1219,43 +1223,46 @@ describe("Grok Bot configuration comments", () => {
         });
     }
   });
+});
 
-  it("writes a Grok Bot stdio registration without dropping other servers", async () => {
+describe("Grok Bot registration", () => {
+  it("does not write or align a data-directory mcp.json", async () => {
     const home = await createTestTempDirectory("rea-grokbot-");
     roots.push(home);
-    const configPath = join(home, ".grokbot/mcp.json");
-    await mkdir(dirname(configPath), { recursive: true });
-    await writeFile(
-      configPath,
-      '{\n  // keep\n  "mcpServers": {\n    "other": { "command": "other" }\n  }\n}\n',
+    const directory = join(home, ".grokbot");
+    const configPath = join(directory, "mcp.json");
+    await mkdir(directory, { recursive: true });
+    const original =
+      '{"mcpServers":{"other":{"command":"other"},"rea":{"command":"rea","args":["mcp"]}}}\n';
+    await writeFile(configPath, original);
+    const client = supportedClients(home).find(
+      ({ name }) => name === "grok_bot",
     );
+    if (client === undefined) throw new Error("missing grok_bot");
+    expect(client.format).toBe("unsupported");
+    expect(client.configPath).toBe(directory);
     expect(
-      await configureClientConfiguration(
-        { name: "grok_bot", configPath, format: "json" },
-        undefined,
-        ["rea", "mcp"],
-      ),
-    ).toMatchObject({ status: "configured" });
-    const configured = await readFile(configPath, "utf8");
-    const errors: ParseError[] = [];
-    const document = parseJsonc(configured, errors, {
-      allowTrailingComma: true,
-    });
-    expect(errors).toEqual([]);
-    expect(configured).toContain("// keep");
-    expect(document).toEqual({
-      mcpServers: {
-        other: { command: "other" },
-        rea: { command: "rea", args: ["mcp"] },
-      },
-    });
+      await systemSetupHost().configureClient(client, {}, ["rea", "mcp"]),
+    ).toEqual({ status: "skipped" });
+    expect(await readFile(configPath, "utf8")).toBe(original);
     expect(
-      await configureClientConfiguration(
-        { name: "grok_bot", configPath, format: "json" },
-        undefined,
-        ["rea", "mcp"],
-      ),
-    ).toEqual({ status: "unchanged" });
+      await readClientRegistrationStatuses(home, "/current/rea", {
+        environment: {},
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        client: "grok_bot",
+        config_path: directory,
+        state: "manual",
+        command: [],
+      }),
+    ]);
+    const removed = await runUninstall(false, systemUninstallHost(home));
+    expect(removed.status).toBe("complete");
+    expect(removed.items).toContainEqual(
+      expect.objectContaining({ name: "grok_bot", status: "skipped" }),
+    );
+    expect(await readFile(configPath, "utf8")).toBe(original);
   });
 });
 

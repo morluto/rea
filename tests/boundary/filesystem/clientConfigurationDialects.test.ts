@@ -417,16 +417,16 @@ describe("platform-aware client config paths", () => {
       expect.objectContaining({
         name: "grok_bot",
         displayName: "Grok Bot",
-        configPath: "/custom/grokbot/mcp.json",
+        configPath: "/custom/grokbot",
         markerPath: "/custom/grokbot",
-        format: "json",
+        format: "unsupported",
       }),
     ]);
     expect(
       supportedClients("/home/a", "linux", {
         SAND_DATA_ROOT: "relative/sand",
       }).find(({ name }) => name === "grok_bot")?.configPath,
-    ).toBe("/home/a/.grokbot/mcp.json");
+    ).toBe("/home/a/.grokbot");
     expect(
       supportedClients("/home/a", "darwin", {}).find(
         ({ name }) => name === "grok_build",

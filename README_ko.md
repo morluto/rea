@@ -68,7 +68,7 @@ npx rea-agents setup
 
 에이전트를 선택하고, 예정된 변경 사항을 검토한 뒤 승인하세요. 설정 과정은 기존 설정을 백업하고 REA의 MCP 서버와 버전에 맞는 워크플로 지침을 추가합니다. 완료 후 에이전트를 다시 시작하세요.
 
-설정은 Claude Code, Codex, Cursor, Gemini CLI, Grok Build, Grok Bot 및 [다른 에이전트](docs/installation.md#supported-agents)를 지원합니다. 제공자 설정과 수동 MCP 등록은 [설치 및 설정](docs/installation.md)을 참고하세요.
+설정은 Claude Code, Codex, Cursor, Gemini CLI, Grok Build 및 [다른 에이전트](docs/installation.md#supported-agents)를 지원합니다. 제공자 설정과 수동 MCP 등록은 [설치 및 설정](docs/installation.md)을 참고하세요.
 
 ### 에이전트에게 요청
 

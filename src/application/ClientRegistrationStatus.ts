@@ -14,7 +14,10 @@ import {
   isOwnedClientRegistrationCommand,
   npxRegistrationCommand,
 } from "./ClientRegistrationIdentity.js";
-import { supportedClients } from "./SupportedClients.js";
+import {
+  manualRegistrationRemediation,
+  supportedClients,
+} from "./SupportedClients.js";
 import type { SetupClient } from "./SupportedClients.js";
 
 interface ClientRegistrationStatusBase {
@@ -38,7 +41,7 @@ export type ClientRegistrationStatus = ClientRegistrationStatusBase &
       }
     | {
         readonly command: readonly [];
-        readonly state: "missing" | "invalid";
+        readonly state: "missing" | "invalid" | "manual";
         readonly remediation: string;
       }
   );
@@ -88,10 +91,22 @@ export const readClientRegistrationStatuses = async (
         },
   )) {
     if (
-      client.format === "unsupported" ||
-      (!(await exists(client.markerPath)) && !(await exists(client.configPath)))
+      !(await exists(client.markerPath)) &&
+      !(await exists(client.configPath))
     )
       continue;
+    const manualRemediation = manualRegistrationRemediation(client.name);
+    if (client.format === "unsupported") {
+      if (manualRemediation !== undefined)
+        statuses.push({
+          client: client.name,
+          config_path: client.markerPath ?? client.configPath,
+          command: [],
+          state: "manual",
+          remediation: manualRemediation,
+        });
+      continue;
+    }
     try {
       const content = await readFile(client.configPath, "utf8");
       const parsed = parseClientConfiguration(content, client.format);

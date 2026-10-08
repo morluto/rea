@@ -91,6 +91,21 @@ const grokBotDirectory = ({ home, env }: ClientPathContext): string => {
     : join(home, ".grokbot");
 };
 
+/**
+ * Grok Bot stores connectors in the signed-in account and runs them on its
+ * hosted computer. The data directory is only a detection marker.
+ */
+export const GROK_BOT_MANUAL_REGISTRATION_REMEDIATION =
+  "Grok Bot keeps connectors in the signed-in account and runs them on its hosted computer. Setup does not write that account store, and a data-directory mcp.json is not a registration. In the Grok Bot chat, add a custom MCP server named rea that runs on the Bot's computer with `npx -y rea-agents@<version> mcp`. Do not put credentials in the command or arguments. A stdio server on this machine is not attached.";
+
+/** Remediation for a client whose connector is not a local configuration file. */
+export const manualRegistrationRemediation = (
+  clientName: string,
+): string | undefined =>
+  clientName === "grok_bot"
+    ? GROK_BOT_MANUAL_REGISTRATION_REMEDIATION
+    : undefined;
+
 const copilotDirectory = ({ home, env }: ClientPathContext): string =>
   env.COPILOT_HOME ?? join(home, ".copilot");
 
@@ -237,10 +252,9 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
   {
     name: "grok_bot",
     displayName: "Grok Bot",
-    configPath: (context: ClientPathContext) =>
-      join(grokBotDirectory(context), "mcp.json"),
+    configPath: grokBotDirectory,
     markerPath: grokBotDirectory,
-    format: "json",
+    format: "unsupported",
   },
 ] as const satisfies readonly ClientDefinition[];
 

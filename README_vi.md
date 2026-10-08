@@ -68,7 +68,7 @@ npx rea-agents setup
 
 Chọn các tác nhân, xem lại những thay đổi được đề xuất và chấp thuận. Quá trình thiết lập thêm máy chủ MCP của REA cùng hướng dẫn quy trình tương ứng, đồng thời sao lưu cấu hình hiện có. Sau đó khởi động lại tác nhân.
 
-Quá trình thiết lập hỗ trợ Claude Code, Codex, Cursor, Gemini CLI, Grok Build, Grok Bot và [các tác nhân khác](docs/installation.md#supported-agents). Xem [cài đặt và thiết lập](docs/installation.md) để cấu hình trình phân tích và đăng ký MCP thủ công.
+Quá trình thiết lập hỗ trợ Claude Code, Codex, Cursor, Gemini CLI, Grok Build và [các tác nhân khác](docs/installation.md#supported-agents). Xem [cài đặt và thiết lập](docs/installation.md) để cấu hình trình phân tích và đăng ký MCP thủ công.
 
 ### Hỏi tác nhân
 

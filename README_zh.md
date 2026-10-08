@@ -68,7 +68,7 @@ npx rea-agents setup
 
 选择智能体，检查计划中的变更并批准。设置流程会添加 REA 的 MCP 服务和匹配的工作流指引，并备份已有配置。完成后重启智能体。
 
-设置流程支持 Claude Code、Codex、Cursor、Gemini CLI、Grok Build、Grok Bot 和[其他智能体](docs/installation.md#supported-agents)。提供方配置和手动注册 MCP 的方法见[安装与设置](docs/installation.md)。
+设置流程支持 Claude Code、Codex、Cursor、Gemini CLI、Grok Build 和[其他智能体](docs/installation.md#supported-agents)。提供方配置和手动注册 MCP 的方法见[安装与设置](docs/installation.md)。
 
 ### 询问智能体
 
