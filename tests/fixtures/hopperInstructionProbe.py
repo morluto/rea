@@ -12,6 +12,9 @@ class Block:
     def __eq__(self, other):
         return isinstance(other, Block) and self.key == other.key
 
+    def __hash__(self):
+        return hash(self.key)
+
     def getStartingAddress(self):
         return self.start
 
