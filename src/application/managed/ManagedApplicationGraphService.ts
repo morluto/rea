@@ -1,9 +1,6 @@
 import { z } from "zod";
 
-import {
-  AnalysisInputError,
-  AnalysisProtocolError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisProtocolError } from "../../domain/analysisErrorCore.js";
 import { type AnalysisError } from "../../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
@@ -16,6 +13,7 @@ import {
 } from "../../domain/managed/managedApplicationGraph.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { MANAGED_WORKFLOW_PROVIDER } from "../InvestigationProviders.js";
+import { managedInputError } from "./managedInputError.js";
 
 const OPERATION = "project_managed_application_graph" as const;
 
@@ -25,14 +23,14 @@ export const projectManagedApplicationGraphEvidence = (
 ): Result<Evidence, AnalysisError> => {
   const parsed = projectManagedApplicationGraphInputSchema.safeParse(rawInput);
   if (!parsed.success)
-    return err(new AnalysisInputError(OPERATION, { cause: parsed.error }));
+    return err(managedInputError(OPERATION, parsed.error, rawInput));
   try {
     const result = projectManagedApplicationGraph(parsed.data);
     return ok(createManagedApplicationGraphEvidence(parsed.data, result));
   } catch (cause: unknown) {
     return err(
       cause instanceof TypeError || cause instanceof z.ZodError
-        ? new AnalysisInputError(OPERATION, { cause })
+        ? managedInputError(OPERATION, cause, parsed.data)
         : new AnalysisProtocolError(
             "Managed application graph projection produced an invalid result",
             { cause },

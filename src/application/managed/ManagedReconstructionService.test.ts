@@ -171,3 +171,44 @@ describe("managed decompiler reconstruction import", () => {
     });
   });
 });
+
+describe("managed reconstruction input diagnostics", () => {
+  it("lists schema issues for malformed raw input", () => {
+    const result = importManagedReconstructionEvidence({});
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: expect.arrayContaining([
+        expect.objectContaining({ reason: "missing_argument" }),
+      ]),
+    });
+  });
+
+  it("keeps the failed domain constraint as an issue message", () => {
+    const result = importManagedReconstructionEvidence({
+      ...MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE,
+      methods: [
+        {
+          ...exampleMethod(),
+          reconstruction: {
+            ...exampleMethod().reconstruction,
+            text_sha256: "0".repeat(64),
+          },
+        },
+      ],
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [
+        {
+          path: [],
+          reason: "invalid_value",
+          message: expect.stringMatching(/text hash mismatch/u),
+        },
+      ],
+    });
+  });
+});

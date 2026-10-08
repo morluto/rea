@@ -9,10 +9,7 @@ import {
   parseManagedMemberEvidence,
   type CompareManagedMembersInput,
 } from "../../domain/managed/managedMemberComparison.js";
-import {
-  AnalysisInputError,
-  AnalysisProtocolError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisProtocolError } from "../../domain/analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import { type AnalysisError } from "../../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
@@ -24,6 +21,7 @@ import {
   MANAGED_STATIC_PROVIDER,
   MANAGED_WORKFLOW_PROVIDER,
 } from "../InvestigationProviders.js";
+import { managedInputError } from "./managedInputError.js";
 
 /** Compare managed members from input parsed by a trusted adapter. */
 export const compareManagedMembersEvidenceValidated = (
@@ -39,7 +37,7 @@ export const compareManagedMembersEvidenceValidated = (
     );
     return ok(createManagedMemberComparisonEvidence(input, result));
   } catch (cause: unknown) {
-    return workflowFailure(operation, cause);
+    return workflowFailure(operation, cause, input);
   }
 };
 
@@ -67,14 +65,10 @@ export const compareManagedMemberPaths = async (
       dependencies.resolveTarget(input.leftPath),
       dependencies.resolveTarget(input.rightPath),
     ]);
-    if (!leftTarget.ok)
-      return err(
-        new AnalysisInputError(operation, { cause: leftTarget.error }),
-      );
-    if (!rightTarget.ok)
-      return err(
-        new AnalysisInputError(operation, { cause: rightTarget.error }),
-      );
+    // Report an unopenable path like every other path-based command does,
+    // with the failed path and constraint, rather than a bare input error.
+    if (!leftTarget.ok) return err(leftTarget.error);
+    if (!rightTarget.ok) return err(rightTarget.error);
     const [leftBytes, rightBytes] = await Promise.all([
       dependencies.readBytes(leftTarget.value.path),
       dependencies.readBytes(rightTarget.value.path),
@@ -143,7 +137,7 @@ export const compareManagedMemberPaths = async (
       ),
     );
   } catch (cause: unknown) {
-    return workflowFailure(operation, cause);
+    return workflowFailure(operation, cause, input);
   }
 };
 
@@ -172,10 +166,11 @@ const createManagedMemberComparisonEvidence = (
 const workflowFailure = (
   operation: string,
   cause: unknown,
+  input: unknown,
 ): Result<never, AnalysisError> =>
   err(
     cause instanceof z.ZodError || cause instanceof TypeError
-      ? new AnalysisInputError(operation, { cause })
+      ? managedInputError(operation, cause, input)
       : new AnalysisProtocolError(
           "Managed member comparison produced an invalid result",
           { cause },
