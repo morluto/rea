@@ -125,6 +125,10 @@ SHA-256 digests, inventory IDs, ASAR container identity, and `.asar.unpacked`
 status. Direct ASAR inputs and filesystem-backed ASAR files nested beneath a
 directory are supported.
 
+JavaScript sources (`.js`, `.jsx`, `.mjs`, and `.cjs`) and TypeScript sources
+(`.ts`, `.tsx`, `.mts`, and `.cts`) are parsed as inert text; analysis does not
+execute them.
+
 JavaScript and HTML source ranges retain an initial UTF-8 BOM as one UTF-16
 code unit, matching the original bytes identified by the artifact digest.
 

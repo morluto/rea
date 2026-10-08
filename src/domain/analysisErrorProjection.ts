@@ -25,11 +25,13 @@ import {
   HopperCancelledError,
   HopperProcessError,
   HopperRemoteError,
+  HopperStartError,
   HopperTimeoutError,
 } from "./hopperErrors.js";
 import { ProviderAdapterError } from "./providerAdapterError.js";
 import { ProviderSelectionError } from "./providerSelectionError.js";
 import { UnknownRegistryError } from "./unknownRegistryError.js";
+import { providerRetryAction } from "./providerOperationHealth.js";
 import {
   type AnalysisError,
   type AnalysisErrorTag,
@@ -327,10 +329,16 @@ const providerErrorDetails = (
       ...(error.operation === undefined ? {} : { operation: error.operation }),
       ...(error.requestId === undefined ? {} : { request_id: error.requestId }),
     };
-  if (error instanceof HopperProcessError)
+  if (error instanceof HopperProcessError) {
+    const stage = error.stage;
     return {
       exit_code: error.exitCode,
-      stage: error.operation === undefined ? "connection" : "analysis",
+      stage,
+      provider_state: error.providerState,
+      retry_action: providerRetryAction(
+        error.providerState,
+        error.failureCode !== undefined,
+      ),
       ...(error.failureCode === undefined
         ? {}
         : { failure_code: error.failureCode }),
@@ -339,6 +347,16 @@ const providerErrorDetails = (
       ...(error.diagnostic === undefined
         ? {}
         : { diagnostics: { ...error.diagnostic } }),
+    };
+  }
+  if (error instanceof HopperStartError)
+    return {
+      stage: "launch",
+      provider_state: "unknown",
+      retry_action: error.ownerRunId === undefined ? "retry" : "unknown",
+      ...(error.ownerRunId === undefined
+        ? {}
+        : { owner_run_id: error.ownerRunId }),
     };
   return undefined;
 };
@@ -369,9 +387,10 @@ const lifecycleErrorDetails = (
     return { operation: error.operation, timeout_ms: error.timeoutMs };
   if (error instanceof HopperTimeoutError)
     return {
-      stage: error.operation === undefined ? "startup" : "analysis",
+      stage: error.operation === undefined ? "startup" : error.stage,
       timeout_ms: error.timeoutMs,
       provider_state: error.providerState,
+      retry_action: error.providerState === "busy" ? "wait" : "retry",
       ...(error.operation === undefined ? {} : { operation: error.operation }),
       ...(error.requestId === undefined ? {} : { request_id: error.requestId }),
     };

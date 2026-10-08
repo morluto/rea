@@ -390,3 +390,40 @@ describe("analysis error projection: caller contract", () => {
     });
   });
 });
+
+describe("analysis error projection: operational diagnostics", () => {
+  it("distinguishes an observed Hopper exit from an undetermined provider failure", () => {
+    const exited = projectAnalysisError(
+      new HopperProcessError(7, undefined, "search_strings", 4),
+    );
+    expect(exited).toMatchObject({
+      code: "provider_unavailable",
+      retryable: true,
+      details: {
+        stage: "analysis",
+        provider_state: "exited",
+        retry_action: "restart_provider",
+        operation: "search_strings",
+        request_id: 4,
+        exit_code: 7,
+      },
+    });
+    expect(exited.message).not.toContain("Run `rea doctor`, then try again.");
+    expect(exited.remediation.action).toContain("Restart the owned provider");
+
+    const unknown = projectAnalysisError(
+      new HopperProcessError(null, undefined, "search_strings", 5),
+    );
+    expect(unknown.details).toMatchObject({
+      stage: "analysis",
+      provider_state: "unknown",
+      retry_action: "unknown",
+      operation: "search_strings",
+      request_id: 5,
+      exit_code: null,
+    });
+    expect(unknown.message).toContain("could not determine");
+    expect(unknown.message).not.toContain("stopped");
+    expect(unknown.remediation.action).toContain("provider_operation_health");
+  });
+});

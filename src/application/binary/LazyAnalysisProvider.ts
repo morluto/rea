@@ -3,6 +3,7 @@ import type { BinaryTarget } from "../../domain/binaryTarget.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import type { ProviderOperationHealth } from "../../domain/providerOperationHealth.js";
 import { err } from "../../domain/result.js";
 import { ABORTED, waitForAbortable } from "./AbortablePromise.js";
 import type {
@@ -113,6 +114,10 @@ class LazyAnalysisClient implements AnalysisClient {
 
   requestActivitySnapshots(): readonly ProviderRequestActivitySnapshot[] {
     return this.#client?.requestActivitySnapshots?.() ?? [];
+  }
+
+  operationHealthSnapshot(): ProviderOperationHealth | undefined {
+    return this.#client?.operationHealthSnapshot?.();
   }
 
   async close(): Promise<void> {

@@ -14,6 +14,11 @@ import {
   PROVIDER_REJECTION_CODES,
   type ProviderRejectionCode,
 } from "./providerSelection.js";
+import {
+  PROVIDER_FAILURE_STAGES,
+  PROVIDER_OPERATION_STATES,
+  PROVIDER_RETRY_ACTIONS,
+} from "../domain/providerOperationHealth.js";
 import { analysisErrorProjectionSchema } from "./errorSchemas.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 
@@ -169,6 +174,22 @@ export const analysisActivity = z.object({
   ),
 });
 
+const providerOperationRequest = z.object({
+  request_id: z.number().int().min(1),
+  operation: z.string().min(1),
+  stage: z.enum(PROVIDER_FAILURE_STAGES),
+});
+
+export const providerOperationHealth = z
+  .object({
+    state: z.enum(PROVIDER_OPERATION_STATES),
+    stage: z.enum(PROVIDER_FAILURE_STAGES).nullable(),
+    retry_action: z.enum(PROVIDER_RETRY_ACTIONS).nullable(),
+    exit_code: z.number().int().nullable(),
+    requests: z.array(providerOperationRequest),
+  })
+  .nullable();
+
 const providerRejectionCode: z.ZodType<ProviderRejectionCode> = z.enum(
   PROVIDER_REJECTION_CODES,
 );
@@ -315,6 +336,7 @@ export const sessionProvider = z
     capabilities: z.array(providerCapability),
     analysis_run: analysisRun,
     analysis_activity: analysisActivity,
+    provider_operation_health: providerOperationHealth,
     analysis_provider_binding: z
       .object({
         provider: providerIdentity,

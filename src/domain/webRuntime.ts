@@ -6,6 +6,20 @@ import {
 import { browserVersionSchema } from "./browserObservationSchemas.js";
 import { jsonObjectSchema } from "./jsonValue.js";
 
+// CDP positions are zero-based and relative to the script's enclosing
+// resource: the script file for an external script, or the HTML document for
+// an inline script. trace_web_source_location takes one-based,
+// script-relative lines, so the advertised units keep callers from passing a
+// position off by one or by the inline script's offset.
+const RESOURCE_LINE =
+  "Zero-based line in the script's enclosing resource (the script file for an external script, or the HTML document for an inline script), as reported by CDP.";
+const RESOURCE_COLUMN =
+  "Zero-based UTF-16 column on that line of the enclosing resource, as reported by CDP.";
+const START_LINE =
+  "Zero-based line where the script text starts in its enclosing resource (the HTML document for an inline script).";
+const START_COLUMN =
+  "Zero-based UTF-16 column where the script text starts on that line of its enclosing resource.";
+
 /** Scope for one externally owned page; omitted origins select its current origin. */
 export const webRuntimeScopeSchema = z.strictObject({
   cdp_endpoint: browserEndpointSchema,
@@ -27,8 +41,8 @@ export const webRuntimeSourceSchema = z.object({
   language: z.string().nullable(),
   resource_start: z
     .object({
-      line_number: z.number().int().min(0),
-      column_number: z.number().int().min(0),
+      line_number: z.number().int().min(0).describe(START_LINE),
+      column_number: z.number().int().min(0).describe(START_COLUMN),
     })
     .nullable(),
   source: z.discriminatedUnion("state", [
@@ -51,8 +65,8 @@ export type WebRuntimeSource = z.infer<typeof webRuntimeSourceSchema>;
 export const webRuntimeLocationSchema = z.object({
   script_id: z.string(),
   url: z.string().nullable(),
-  line_number: z.number().int().min(0),
-  column_number: z.number().int().min(0).nullable(),
+  line_number: z.number().int().min(0).describe(RESOURCE_LINE),
+  column_number: z.number().int().min(0).nullable().describe(RESOURCE_COLUMN),
   function_name: z.string().nullable(),
   source_association: z.enum(["script_id", "unknown"]),
 });

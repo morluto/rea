@@ -152,6 +152,18 @@ export class CompositeProvider implements AnalysisProvider {
           .sort((left, right) =>
             left.provider.id.localeCompare(right.provider.id),
           ),
+      operationHealthSnapshot: () => {
+        for (const client of clients.values()) {
+          const snapshot = client.operationHealthSnapshot?.();
+          if (snapshot !== undefined && snapshot.state !== "idle")
+            return snapshot;
+        }
+        for (const client of clients.values()) {
+          const snapshot = client.operationHealthSnapshot?.();
+          if (snapshot !== undefined) return snapshot;
+        }
+        return undefined;
+      },
       closeWithOutcome,
       close: async () => {
         await closeWithOutcome();

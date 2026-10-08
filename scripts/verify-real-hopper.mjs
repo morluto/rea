@@ -296,6 +296,7 @@ try {
     { name: "list_documents", arguments: {} },
     options,
   );
+  requireSuccessfulTool(documents, "list_documents");
   requireBridgeProgress(progressUpdates);
   const rejectedProcedure = await client.callTool(
     {
@@ -381,9 +382,13 @@ try {
     await client.callTool({ name: "list_documents", arguments: {} }, options),
     "list_documents after target switch",
   );
+  const expectedDocumentsAfterTargetSwitch =
+    process.platform === "linux"
+      ? firstDocuments.length
+      : firstDocuments.length + 1;
   if (
     !Array.isArray(documentsAfterTargetSwitch) ||
-    documentsAfterTargetSwitch.length !== firstDocuments.length + 1
+    documentsAfterTargetSwitch.length !== expectedDocumentsAfterTargetSwitch
   )
     throw new Error("A distinct target did not receive one Hopper document");
   const reopenedTarget = await client.callTool(

@@ -72,6 +72,40 @@ cliTest(
   },
 );
 
+for (const extension of ["mts", "cts"]) {
+  for (const command of ["analyze-javascript-application", "analyze"]) {
+    cliTest(
+      `${command} returns facts for a selected ${extension} source`,
+      async ({ cli }) => {
+        const root = await createTestTempDirectory("rea-nodenext-cli-");
+        const path = `selected.${extension}`;
+        await writeFile(
+          join(root, path),
+          "export function selected_feature(value: string) { return { value }; }",
+        );
+        const output = await cli.run({ arguments: [command, root, "--json"] });
+        expect(output.exitCode).toBe(0);
+        const evidence = parseEvidence(output.json);
+        const result = javascriptApplicationAnalysisResultSchema.parse(
+          evidence.normalized_result,
+        );
+        expect(result.statistics).toMatchObject({
+          relevant_files: 1,
+          parsed_javascript_files: 1,
+          parse_failures: 0,
+        });
+        expect(
+          result.graph.nodes.some(
+            ({ kind, observations }) =>
+              kind === "javascript-asset" &&
+              observations.some(({ properties }) => properties.path === path),
+          ),
+        ).toBe(true);
+      },
+    );
+  }
+}
+
 for (const command of ["analyze-javascript-application", "analyze"]) {
   cliTest(
     `${command} retains HTML source ranges after a bare carriage return`,

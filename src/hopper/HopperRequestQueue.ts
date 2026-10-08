@@ -2,6 +2,7 @@ import type {
   ProgressReporter,
   ProgressUpdate,
 } from "../application/ProgressReporter.js";
+import { hopperOperationStage } from "./HopperOperationStage.js";
 import type { HopperBridgeEvent } from "./protocol.js";
 import {
   HopperCancelledError,
@@ -101,23 +102,12 @@ export class HopperRequestQueue {
     const entry = this.#active;
     if (entry === undefined || entry.id !== id) return false;
     this.#releaseWire(entry);
-    if (!entry.callerSettled) {
-      const contextual =
-        !result.ok && result.error instanceof HopperRemoteError
-          ? err(
-              new HopperRemoteError(
-                result.error.code,
-                result.error.safeMessage,
-                {
-                  diagnosticType: result.error.diagnosticType,
-                  operation: entry.method,
-                  requestId: entry.id,
-                },
-              ),
-            )
-          : result;
-      this.#settleCaller(entry, contextual, "waiting");
-    }
+    if (!entry.callerSettled)
+      this.#settleCaller(
+        entry,
+        result.ok ? result : err(withRequestContext(result.error, entry)),
+        "waiting",
+      );
     this.#active = undefined;
     this.#drain();
     return true;
@@ -216,7 +206,20 @@ export class HopperRequestQueue {
     try {
       this.send(
         { id: entry.id, method: entry.method, params: entry.params },
-        () => this.accept(entry.id, err(new HopperProcessError(null))),
+        () =>
+          this.accept(
+            entry.id,
+            err(
+              new HopperProcessError(
+                null,
+                undefined,
+                entry.method,
+                entry.id,
+                "unreachable",
+                hopperOperationStage(entry.method),
+              ),
+            ),
+          ),
       );
     } catch (cause: unknown) {
       this.accept(
@@ -289,12 +292,23 @@ export class HopperRequestQueue {
 const withRequestContext = (
   error: HopperError,
   entry: QueuedRequest,
-): HopperError =>
-  error instanceof HopperProcessError
-    ? new HopperProcessError(
-        error.exitCode,
-        error.diagnostic,
-        entry.method,
-        entry.id,
-      )
-    : error;
+): HopperError => {
+  if (error instanceof HopperProcessError)
+    return new HopperProcessError(
+      error.exitCode,
+      error.diagnostic,
+      error.operation ?? entry.method,
+      error.requestId ?? entry.id,
+      error.providerState,
+      error.operation === undefined && error.stage === "connection"
+        ? hopperOperationStage(entry.method)
+        : error.stage,
+    );
+  if (error instanceof HopperRemoteError)
+    return new HopperRemoteError(error.code, error.safeMessage, {
+      diagnosticType: error.diagnosticType,
+      operation: error.operation ?? entry.method,
+      requestId: error.requestId ?? entry.id,
+    });
+  return error;
+};

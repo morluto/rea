@@ -25,6 +25,7 @@ import {
 } from "./hopperErrors.js";
 import { ProviderSelectionError } from "./providerSelectionError.js";
 import { UnknownRegistryError } from "./unknownRegistryError.js";
+import { providerRetryAction } from "./providerOperationHealth.js";
 import {
   type AnalysisError,
   type AnalysisErrorTag,
@@ -49,7 +50,7 @@ export const analysisErrorRemediationAction = (
       ? "Check binary_session.analysis_activity, wait for the active Hopper request to finish, then retry."
       : "Check binary_session for Hopper health, then retry the operation.";
   if (error instanceof HopperProcessError)
-    return "Check binary_session provider health. Restart the owned Hopper process only when it has stopped.";
+    return hopperProcessRemediation(error);
   if (error instanceof HopperStartError)
     return error.ownerRunId === undefined
       ? "Check the Hopper launcher and target details, then retry opening the target."
@@ -191,8 +192,7 @@ const hopperErrorUserMessage = (error: AnalysisError): string | undefined => {
       ? `Hopper timed out during ${request} while the provider remained busy. Check binary_session.analysis_activity, wait for the active request to finish, then retry.`
       : `Hopper timed out during ${request} before it started. Check binary_session for provider health, then retry.`;
   }
-  if (error instanceof HopperProcessError)
-    return `Hopper stopped during ${error.operation ?? "connection"}${error.exitCode === null ? "; its exit was not observed" : ` with exit code ${String(error.exitCode)}`}.${error.userMessage === undefined ? "" : ` ${error.userMessage}`} Check binary_session provider health before retrying.`;
+  if (error instanceof HopperProcessError) return hopperProcessMessage(error);
   if (error instanceof HopperStartError)
     return (
       error.userMessage ??
@@ -201,6 +201,40 @@ const hopperErrorUserMessage = (error: AnalysisError): string | undefined => {
   if (error instanceof HopperRemoteError)
     return `Hopper ${error.operation ?? "analysis"} failed (${String(error.code)}, ${error.diagnosticType}): ${error.safeMessage}`;
   return undefined;
+};
+
+const RESTART_OWNED_PROVIDER =
+  "Restart the owned provider by calling close_binary, then open the target again and retry.";
+
+const hopperProcessRemediation = (error: HopperProcessError): string => {
+  if (error.failureCode !== undefined && error.userMessage !== undefined)
+    return error.userMessage;
+  if (providerRetryAction(error.providerState) === "restart_provider")
+    return RESTART_OWNED_PROVIDER;
+  return "Read binary_session.provider_operation_health for this request before retrying or restarting the owned provider.";
+};
+
+const hopperProcessMessage = (error: HopperProcessError): string => {
+  const stage = error.stage;
+  const where = error.operation ?? stage;
+  const request =
+    error.requestId === undefined
+      ? ""
+      : ` Request id ${String(error.requestId)}.`;
+  const startup =
+    error.userMessage === undefined ? "" : ` ${error.userMessage}`;
+  if (error.providerState === "exited") {
+    const exit =
+      error.exitCode === null
+        ? "no exit code was observed"
+        : `exit code ${String(error.exitCode)}`;
+    const recovery =
+      error.failureCode === undefined ? ` ${RESTART_OWNED_PROVIDER}` : "";
+    return `Hopper exited during ${where} (${exit}).${startup}${recovery}${request}`;
+  }
+  if (error.providerState === "unreachable")
+    return `Hopper became unreachable during ${where}; its process exit was not observed. ${RESTART_OWNED_PROVIDER}${startup}${request}`;
+  return `Hopper failed during ${where} and REA could not determine whether the provider is busy, exited, or unreachable.${startup} Read binary_session.provider_operation_health for this request before retrying or restarting.${request}`;
 };
 
 const standardErrorMessage = (tag: AnalysisErrorTag): string | undefined => {

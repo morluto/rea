@@ -339,6 +339,8 @@ export class BinarySession
         this.#active?.client.runtimeLineageSnapshots?.() ?? [],
       requestActivitySnapshots:
         this.#active?.client.requestActivitySnapshots?.() ?? [],
+      providerOperationHealth:
+        this.#active?.client.operationHealthSnapshot?.() ?? null,
     });
   }
 

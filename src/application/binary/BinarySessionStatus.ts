@@ -1,5 +1,6 @@
 import type { BinaryTarget } from "../../domain/binaryTarget.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
+import type { ProviderOperationHealth } from "../../domain/providerOperationHealth.js";
 import type {
   CapabilityDescriptor,
   ProviderRequestActivitySnapshot,
@@ -21,6 +22,7 @@ interface BinarySessionStatusInput {
   readonly runId: string | undefined;
   readonly runtimeLineageSnapshots: readonly ProviderRuntimeLineageSnapshot[];
   readonly requestActivitySnapshots: readonly ProviderRequestActivitySnapshot[];
+  readonly providerOperationHealth?: ProviderOperationHealth | null;
 }
 
 /** Project internal provider routing state into the caller-visible session status. */
@@ -32,6 +34,7 @@ export const binarySessionStatus = ({
   runId,
   runtimeLineageSnapshots,
   requestActivitySnapshots,
+  providerOperationHealth,
 }: BinarySessionStatusInput): JsonValue => {
   const configuredProvider = router.configuredIdentity();
   const provider = providerSummary(configuredProvider);
@@ -85,6 +88,9 @@ export const binarySessionStatus = ({
             process_lineage: processLineageStatus(runtimeLineageSnapshots),
           },
     analysis_activity: requestActivityStatus(requestActivitySnapshots),
+    provider_operation_health: providerOperationHealthStatus(
+      providerOperationHealth,
+    ),
   };
   return target === undefined
     ? { open: false, ...common }
@@ -203,3 +209,20 @@ const capabilityStatus = (
   },
   limitations: [...descriptor.limitations],
 });
+
+const providerOperationHealthStatus = (
+  health: ProviderOperationHealth | null | undefined,
+): JsonValue => {
+  if (health === undefined || health === null) return null;
+  return {
+    state: health.state,
+    stage: health.stage,
+    retry_action: health.retryAction,
+    exit_code: health.exitCode,
+    requests: health.requests.map((request) => ({
+      request_id: request.requestId,
+      operation: request.operation,
+      stage: request.stage,
+    })),
+  };
+};

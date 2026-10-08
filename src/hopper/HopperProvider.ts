@@ -235,6 +235,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
           },
         ];
       },
+      operationHealthSnapshot: () => client.operationHealth(),
       closeWithOutcome: (options) => client.closeWithOutcome(options),
       close: () => client.close(),
     };

@@ -158,6 +158,76 @@ describe("detached provider and target metadata", () => {
 
     await session.close();
   });
+
+  it("exposes provider operational health in session status", async () => {
+    const [first] = await createBinarySessionTargets();
+    let healthState: "idle" | "busy" | "exited" = "busy";
+    const provider: AnalysisProvider = {
+      identity: () => ({ id: "fixture", name: "Fixture", version: "1" }),
+      capabilities: () => [],
+      createClient: () => ({
+        execute: () => Promise.resolve(ok("ok")),
+        operationHealthSnapshot: () => ({
+          state: healthState,
+          stage: "analysis",
+          retryAction: healthState === "exited" ? "restart_provider" : "wait",
+          exitCode: healthState === "exited" ? 7 : null,
+          requests: [
+            {
+              requestId: 1,
+              operation: "find_code_for_string",
+              stage: "analysis",
+            },
+          ],
+        }),
+        close: () => Promise.resolve(),
+      }),
+    };
+    const session = createTestBinarySession(provider);
+    expect(session.status()).toMatchObject({
+      open: false,
+      provider_operation_health: null,
+    });
+    expect((await session.open(first)).ok).toBe(true);
+    expect(session.status()).toMatchObject({
+      open: true,
+      provider_operation_health: {
+        state: "busy",
+        stage: "analysis",
+        retry_action: "wait",
+        exit_code: null,
+        requests: [
+          {
+            request_id: 1,
+            operation: "find_code_for_string",
+            stage: "analysis",
+          },
+        ],
+      },
+    });
+    healthState = "exited";
+    expect(session.status()).toMatchObject({
+      open: true,
+      provider_operation_health: {
+        state: "exited",
+        stage: "analysis",
+        retry_action: "restart_provider",
+        exit_code: 7,
+        requests: [
+          {
+            request_id: 1,
+            operation: "find_code_for_string",
+            stage: "analysis",
+          },
+        ],
+      },
+    });
+    await session.close();
+    expect(session.status()).toMatchObject({
+      open: false,
+      provider_operation_health: null,
+    });
+  });
 });
 
 describe("opening previewed targets", () => {

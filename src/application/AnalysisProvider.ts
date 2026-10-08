@@ -14,6 +14,7 @@ import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { ProgressReporter } from "./ProgressReporter.js";
 import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
 import type { ProcessLineageObservation } from "../process/ProcessOwnership.js";
+import type { ProviderOperationHealth } from "../domain/providerOperationHealth.js";
 
 export interface ExecutionOptions {
   readonly signal?: AbortSignal;
@@ -99,6 +100,8 @@ export interface AnalysisClient extends AnalysisOperationPort {
   runtimeLineageSnapshots?(): readonly ProviderRuntimeLineageSnapshot[];
   /** Current provider work that may outlive a timed-out or cancelled caller. */
   requestActivitySnapshots?(): readonly ProviderRequestActivitySnapshot[];
+  /** Current operational health for the active provider bridge. */
+  operationHealthSnapshot?(): ProviderOperationHealth | undefined;
   /** Close with a typed result when the provider can verify cleanup. */
   closeWithOutcome?(
     options?: Pick<ExecutionOptions, "progress"> & {
