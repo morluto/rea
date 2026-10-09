@@ -28,7 +28,10 @@ import {
   type HopperMachOImage,
 } from "./HopperMachOImage.js";
 
-import { acquireHopperTargetLease } from "./HopperTargetLease.js";
+import {
+  acquireHopperTargetLease,
+  acquireLinuxHopperApplicationLease,
+} from "./HopperTargetLease.js";
 import type { HopperTargetLease } from "./HopperTargetLease.js";
 
 const execFileAsync = promisify(execFile);
@@ -96,6 +99,7 @@ export type HopperApplicationLauncherOptions =
 export interface HopperApplicationLauncherDependencies {
   readonly platform?: NodeJS.Platform;
   readonly acquireTargetLease?: typeof acquireHopperTargetLease;
+  readonly acquireApplicationLease?: typeof acquireLinuxHopperApplicationLease;
   readonly selectPrivateDisplay?: (options: {
     readonly helperPath: string;
     readonly signal?: AbortSignal;
@@ -131,7 +135,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
       HopperStartError | HopperCancelledError | HopperProcessError
     >
   > {
-    const leaseResult = await this.#acquireTargetLease(session.runId);
+    const leaseResult = await this.#acquireLaunchLease(session.runId);
     if (!leaseResult.ok) return leaseResult;
     const lease = leaseResult.value;
     let leaseTransferred = false;
@@ -267,32 +271,44 @@ export class HopperApplicationLauncher implements BridgeLauncher {
     }
   }
 
-  async #acquireTargetLease(
+  async #acquireLaunchLease(
     runId: string,
   ): Promise<Result<HopperTargetLease | undefined, HopperStartError>> {
-    if ((this.dependencies.platform ?? process.platform) !== "darwin")
-      return ok(undefined);
+    const platform = this.dependencies.platform ?? process.platform;
+    const applicationLease =
+      platform === "linux" && usesLinuxDemo(this.options);
+    if (!applicationLease && platform !== "darwin") return ok(undefined);
     try {
-      const acquisition = await (
-        this.dependencies.acquireTargetLease ?? acquireHopperTargetLease
-      )({
-        targetPath: this.options.targetPath,
-        targetKind: this.options.targetKind,
-        loaderArgs: this.options.loaderArgs,
-        runId,
-      });
+      const acquisition = applicationLease
+        ? await (
+            this.dependencies.acquireApplicationLease ??
+            acquireLinuxHopperApplicationLease
+          )({ runId })
+        : await (
+            this.dependencies.acquireTargetLease ?? acquireHopperTargetLease
+          )({
+            targetPath: this.options.targetPath,
+            targetKind: this.options.targetKind,
+            loaderArgs: this.options.loaderArgs,
+            runId,
+          });
       if (!acquisition.acquired)
         return err(
           new HopperStartError({
             ownerRunId: acquisition.owner.runId,
-            userMessage:
-              `This Hopper target is already open in REA session ${acquisition.owner.runId}. ` +
-              "Use that REA session or close it before opening this target again.",
+            userMessage: applicationLease
+              ? `Linux Hopper is already active in REA session ${acquisition.owner.runId}; it cannot open ${this.options.targetPath} in another session. This build forwards new launches to the existing application. Use the owning REA session to switch targets, or close it before retrying.`
+              : `This Hopper target is already open in REA session ${acquisition.owner.runId}. ` +
+                "Use that REA session or close it before opening this target again.",
           }),
         );
       return ok(acquisition.lease);
     } catch (cause: unknown) {
-      return err(new HopperStartError({ cause }));
+      return err(
+        cause instanceof HopperStartError
+          ? cause
+          : new HopperStartError({ cause }),
+      );
     }
   }
 

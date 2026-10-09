@@ -310,6 +310,15 @@ host mount and the rest of `/tmp` remain unchanged; this fallback never invokes
 `sudo`. `rea doctor --provider hopper --json` reports the selected
 strategy and both host and effective mount facts.
 
+The supported Linux demo forwards additional launches into its existing
+application, even across private displays. REA therefore reserves one Linux
+Hopper application per user across cooperating REA processes. A competing
+CLI or MCP session receives the owning session ID before Hopper is launched,
+for both the same target and a different target. Switch targets through that
+MCP session, or close it before starting another session. Closing the owner
+releases the reservation. This does not attach to or claim ownership of
+manually opened Hopper applications.
+
 ### Launcher paths and troubleshooting
 
 On macOS, REA uses

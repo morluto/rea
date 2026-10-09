@@ -230,7 +230,12 @@ subsequent wire recovery and clean shutdown. Caller timeout does not interrupt
 Hopper's synchronous native operation. Socket boundary tests deterministically
 cover active and queued expiry, late replies and timer cleanup.
 
-The Linux demo lane remains a separate `verify:hopper:linux` command.
+The Linux demo lane remains a separate `verify:hopper:linux` command. Its
+lifecycle checks attempt competing CLI launches for the active target and a
+different target, requiring rejection before either can change the owning
+MCP session's documents or procedures. Lease boundary tests also preserve
+unresponsive or malformed live endpoints while allowing confirmed stale
+sockets to recover.
 
 `verify:hopper:fat` is a separate macOS lane requiring installed Hopper and the
 existing Xcode clang/lipo toolchain. It compiles arm64/x86-64 thin executables and

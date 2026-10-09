@@ -8,6 +8,7 @@ import Ajv from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { mcpTextValue, requireMcpResult } from "./mcp-verifier-results.mjs";
 import { verifyHopperCliSelectors } from "./real-hopper-cli-selectors.mjs";
+import { verifyLinuxHopperLaunchIsolation } from "./real-hopper-session-isolation.mjs";
 import { verifyHopperNavigationAndText } from "./real-hopper-navigation.mjs";
 import { verifyHopperWorkflows } from "./real-hopper-workflows.mjs";
 import {
@@ -327,6 +328,16 @@ export async function verifyHopperLifecycleAndCli(client, options, targets) {
       procedure: entry.value,
     });
     const firstDocument = await call("current_document");
+    const linuxApplicationIsolation =
+      process.platform === "linux"
+        ? await verifyLinuxHopperLaunchIsolation({
+            call,
+            runCli,
+            dispatcher: new URL("../rea.mjs", import.meta.url).pathname,
+            primary,
+            secondary,
+          })
+        : null;
     await call("open_binary", { path: secondary });
     const secondDocument = await call("current_document");
     assert.notEqual(firstDocument, secondDocument);
@@ -464,6 +475,7 @@ export async function verifyHopperLifecycleAndCli(client, options, targets) {
       cliNamedSelectorParity,
       callerCancellationRecovered: true,
       closedDocumentAbsent: true,
+      linuxApplicationIsolation,
     };
   } finally {
     await call("close_binary");

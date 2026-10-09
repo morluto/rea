@@ -23,7 +23,7 @@ export type HopperTargetLeaseAcquisition =
   | { readonly acquired: true; readonly lease: HopperTargetLease }
   | { readonly acquired: false; readonly owner: HopperTargetLeaseOwner };
 
-/** Shared private parent of per-target lease sockets; it outlives individual sessions. */
+/** Shared private parent of Hopper lease sockets; it outlives individual sessions. */
 export const HOPPER_TARGET_LEASE_DIRECTORY = join(
   "/tmp",
   `rea-hopper-${process.getuid?.() ?? 0}`,
@@ -37,8 +37,6 @@ export const acquireHopperTargetLease = async (input: {
   readonly runId: string;
   readonly directory?: string;
 }): Promise<HopperTargetLeaseAcquisition> => {
-  const directory = input.directory ?? HOPPER_TARGET_LEASE_DIRECTORY;
-  await ensureLeaseDirectory(directory);
   // The canonical path only derives the lease key; it never authorizes access.
   // Common expected `realpath` failures include a missing target or path
   // component (ENOENT, ENOTDIR), an unreadable component (EACCES), or a
@@ -49,14 +47,32 @@ export const acquireHopperTargetLease = async (input: {
   const targetPath = await realpath(input.targetPath).catch(() =>
     resolve(input.targetPath),
   );
+  return acquireLease({
+    ...input,
+    identity: {
+      targetPath,
+      targetKind: input.targetKind,
+      loaderArgs: input.loaderArgs,
+    },
+  });
+};
+
+/** Reserve the Linux demo's singleton application before it can forward a target to another owner. */
+export const acquireLinuxHopperApplicationLease = (input: {
+  readonly runId: string;
+  readonly directory?: string;
+}): Promise<HopperTargetLeaseAcquisition> =>
+  acquireLease({ ...input, identity: { application: "linux-hopper-demo" } });
+
+const acquireLease = async (input: {
+  readonly identity: Readonly<Record<string, unknown>>;
+  readonly runId: string;
+  readonly directory?: string;
+}): Promise<HopperTargetLeaseAcquisition> => {
+  const directory = input.directory ?? HOPPER_TARGET_LEASE_DIRECTORY;
+  await ensureLeaseDirectory(directory);
   const key = createHash("sha256")
-    .update(
-      JSON.stringify({
-        targetPath,
-        targetKind: input.targetKind,
-        loaderArgs: input.loaderArgs,
-      }),
-    )
+    .update(JSON.stringify(input.identity))
     .digest("hex")
     .slice(0, 32);
   const socketPath = join(directory, `${key}.sock`);
@@ -89,7 +105,7 @@ export const acquireHopperTargetLease = async (input: {
 
   throw new HopperStartError({
     userMessage:
-      "REA could not reserve this Hopper target. Close competing REA sessions and retry.",
+      "REA could not reserve Hopper for this request. Close competing REA sessions and retry.",
   });
 };
 
@@ -140,14 +156,26 @@ const sendOwner = (socket: Socket, owner: HopperTargetLeaseOwner): void => {
 const readOwner = (
   socketPath: string,
 ): Promise<HopperTargetLeaseOwner | undefined> =>
-  new Promise((resolveOwner) => {
+  new Promise((resolveOwner, rejectOwner) => {
     const socket = createConnection(socketPath);
     let response = "";
-    const timer = setTimeout(() => {
+    let settled = false;
+    const fail = (reason: string, cause?: unknown): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       socket.destroy();
-      resolveOwner(undefined);
-    }, 250);
+      rejectOwner(
+        new HopperStartError({
+          cause,
+          userMessage: `REA could not verify the existing Hopper lease (${reason}); it was left unchanged. Retry when the owning REA session is responsive.`,
+        }),
+      );
+    };
+    const timer = setTimeout(() => fail("owner response timed out"), 250);
     const finish = (owner: HopperTargetLeaseOwner | undefined): void => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       socket.destroy();
       resolveOwner(owner);
@@ -158,24 +186,34 @@ const readOwner = (
       if (newline < 0) return;
       const parsed = safeParseJson(response.slice(0, newline));
       if (!parsed.ok) {
-        finish(undefined);
+        fail("malformed owner response");
         return;
       }
       const value: unknown = parsed.value;
+      const runId =
+        typeof value === "object" && value !== null
+          ? Reflect.get(value, "runId")
+          : undefined;
+      const processId =
+        typeof value === "object" && value !== null
+          ? Reflect.get(value, "processId")
+          : undefined;
       if (
-        typeof value === "object" &&
-        value !== null &&
-        typeof Reflect.get(value, "runId") === "string" &&
-        typeof Reflect.get(value, "processId") === "number"
+        typeof runId === "string" &&
+        runId.length > 0 &&
+        typeof processId === "number" &&
+        Number.isSafeInteger(processId) &&
+        processId > 0
       )
-        finish({
-          runId: Reflect.get(value, "runId") as string,
-          processId: Reflect.get(value, "processId") as number,
-        });
-      else finish(undefined);
+        finish({ runId, processId });
+      else fail("invalid owner identity");
     });
-    socket.on("error", () => finish(undefined));
-    socket.on("end", () => finish(undefined));
+    socket.on("error", (cause: NodeJS.ErrnoException) => {
+      if (cause.code === "ENOENT" || cause.code === "ECONNREFUSED")
+        finish(undefined);
+      else fail(cause.code ?? "owner connection failed", cause);
+    });
+    socket.on("end", () => fail("owner closed without a complete response"));
   });
 
 const closeServer = (server: Server): Promise<void> =>
