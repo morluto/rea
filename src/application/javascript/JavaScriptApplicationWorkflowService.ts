@@ -1,18 +1,24 @@
 import { z } from "zod";
 
-import {
-  AnalysisInputError,
-  AnalysisProtocolError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisProtocolError } from "../../domain/analysisErrorCore.js";
 import { type AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { compareJavaScriptApplicationVersions } from "../../domain/javascript/javascriptApplicationVersionComparison.js";
-import { compareApplicationVersionsInputSchema } from "../../domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
+import {
+  compareApplicationVersionsInputSchema,
+  applicationVersionIdentitiesSchema,
+} from "../../domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
 import { compareJavaScriptExportShapes } from "../../domain/javascript/javascriptExportShapeComparison.js";
-import { compareJavaScriptExportShapesInputSchema } from "../../domain/javascript/javascriptExportShapeComparisonSchemas.js";
+import {
+  compareJavaScriptExportShapesInputSchema,
+  javaScriptExportShapeIdentitiesSchema,
+} from "../../domain/javascript/javascriptExportShapeComparisonSchemas.js";
 import { traceApplicationFeature } from "../../domain/javascript/javascriptFeatureTrace.js";
-import { traceApplicationFeatureInputSchema } from "../../domain/javascript/javascriptFeatureTraceSchemas.js";
+import {
+  traceApplicationFeatureInputSchema,
+  applicationTraceIdentitiesSchema,
+} from "../../domain/javascript/javascriptFeatureTraceSchemas.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { compareSourceToBundle } from "../../domain/javascript/sourceToBundleComparison.js";
 import { compareSourceToBundleInputSchema } from "../../domain/javascript/sourceToBundleComparisonSchemas.js";
@@ -46,6 +52,11 @@ export const traceApplicationFeatureEvidenceValidated = (
   input: z.output<typeof traceApplicationFeatureInputSchema>,
 ): Result<Evidence, AnalysisError> => {
   const operation = "trace_application_feature";
+  const identities = applicationTraceIdentitiesSchema.safeParse(input);
+  if (!identities.success)
+    return err(
+      analysisInputErrorFromIssues(operation, identities.error.issues, input),
+    );
   const sourceResult = parseApplicationGraphEvidence(input.application, [
     "application",
   ]);
@@ -105,6 +116,11 @@ export const compareApplicationVersionsEvidenceValidated = (
   input: z.output<typeof compareApplicationVersionsInputSchema>,
 ): Result<Evidence, AnalysisError> => {
   const operation = "compare_application_versions";
+  const identities = applicationVersionIdentitiesSchema.safeParse(input);
+  if (!identities.success)
+    return err(
+      analysisInputErrorFromIssues(operation, identities.error.issues, input),
+    );
   const leftResult = parseApplicationGraphEvidence(input.left, ["left"]);
   if (!leftResult.ok)
     return err(applicationGraphEvidenceInputError(operation, leftResult.error));
@@ -223,6 +239,11 @@ export const compareJavaScriptExportShapesEvidenceValidated = (
   input: z.output<typeof compareJavaScriptExportShapesInputSchema>,
 ): Result<Evidence, AnalysisError> => {
   const operation = "compare_javascript_export_shapes";
+  const identities = javaScriptExportShapeIdentitiesSchema.safeParse(input);
+  if (!identities.success)
+    return err(
+      analysisInputErrorFromIssues(operation, identities.error.issues, input),
+    );
   const leftResult = parseApplicationGraphEvidence(input.left, ["left"]);
   if (!leftResult.ok)
     return err(applicationGraphEvidenceInputError(operation, leftResult.error));

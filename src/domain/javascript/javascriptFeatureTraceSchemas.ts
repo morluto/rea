@@ -46,6 +46,29 @@ const applicationFeatureSeedSchema = z.union([
   }),
 ]);
 
+/** Check unique native identities before projecting an application trace. */
+const validateApplicationTraceIdentities = (
+  input: {
+    readonly native_observations: readonly { readonly evidence_id: string }[];
+  },
+  context: z.RefinementCtx,
+): void => {
+  const ids = input.native_observations.map(({ evidence_id: id }) => id);
+  if (new Set(ids).size !== ids.length)
+    context.addIssue({
+      code: "custom",
+      path: ["native_observations"],
+      message: "Native observations must be unique",
+    });
+};
+
+/** Validate native trace identities without capturing their complete Evidence. */
+export const applicationTraceIdentitiesSchema = z
+  .object({
+    native_observations: z.array(z.object({ evidence_id: evidenceIdSchema })),
+  })
+  .superRefine(validateApplicationTraceIdentities);
+
 /** Evidence-backed application graph and feature seed. */
 export const traceApplicationFeatureInputSchema = z
   .strictObject({
@@ -54,15 +77,7 @@ export const traceApplicationFeatureInputSchema = z
     seed: applicationFeatureSeedSchema,
     direction: z.enum(["outgoing", "incoming", "both"]).default("both"),
   })
-  .superRefine((input, context) => {
-    const ids = input.native_observations.map(({ evidence_id: id }) => id);
-    if (new Set(ids).size !== ids.length)
-      context.addIssue({
-        code: "custom",
-        path: ["native_observations"],
-        message: "Native observations must be unique",
-      });
-  });
+  .superRefine(validateApplicationTraceIdentities);
 
 const seedMatchSchema = z.strictObject({
   node_id: nodeIdSchema,

@@ -10,6 +10,52 @@ const evidenceIdSchema = prefixedDigestSchema("ev");
 const nodeIdSchema = prefixedDigestSchema("jag_node");
 const textSchema = z.string().min(1);
 
+/** Check paired version identities and per-side native identity uniqueness. */
+const validateApplicationVersionIdentities = (
+  input: {
+    readonly left: { readonly evidence_id: string };
+    readonly right: { readonly evidence_id: string };
+    readonly left_native_observations: readonly {
+      readonly evidence_id: string;
+    }[];
+    readonly right_native_observations: readonly {
+      readonly evidence_id: string;
+    }[];
+  },
+  context: z.RefinementCtx,
+): void => {
+  if (input.left.evidence_id === input.right.evidence_id)
+    context.addIssue({
+      code: "custom",
+      path: ["right"],
+      message: "Application version Evidence must be distinct",
+    });
+  for (const side of [
+    "left_native_observations",
+    "right_native_observations",
+  ] as const) {
+    const ids = input[side].map(({ evidence_id: id }) => id);
+    if (new Set(ids).size !== ids.length)
+      context.addIssue({
+        code: "custom",
+        path: [side],
+        message: "Native observations must be unique on each side",
+      });
+  }
+};
+
+const evidenceIdentitySchema = z.object({ evidence_id: evidenceIdSchema });
+
+/** Validate paired version identities without capturing whole analysis graphs. */
+export const applicationVersionIdentitiesSchema = z
+  .object({
+    left: evidenceIdentitySchema,
+    right: evidenceIdentitySchema,
+    left_native_observations: z.array(evidenceIdentitySchema),
+    right_native_observations: z.array(evidenceIdentitySchema),
+  })
+  .superRefine(validateApplicationVersionIdentities);
+
 /** Two authenticated application versions and their native observations. */
 export const compareApplicationVersionsInputSchema = z
   .strictObject({
@@ -18,26 +64,7 @@ export const compareApplicationVersionsInputSchema = z
     left_native_observations: z.array(evidenceSchema).default([]),
     right_native_observations: z.array(evidenceSchema).default([]),
   })
-  .superRefine((input, context) => {
-    if (input.left.evidence_id === input.right.evidence_id)
-      context.addIssue({
-        code: "custom",
-        path: ["right"],
-        message: "Application version Evidence must be distinct",
-      });
-    for (const side of [
-      "left_native_observations",
-      "right_native_observations",
-    ] as const) {
-      const ids = input[side].map(({ evidence_id: id }) => id);
-      if (new Set(ids).size !== ids.length)
-        context.addIssue({
-          code: "custom",
-          path: [side],
-          message: "Native observations must be unique on each side",
-        });
-    }
-  });
+  .superRefine(validateApplicationVersionIdentities);
 
 const candidateNodesSchema = z.tuple([nodeIdSchema]).rest(nodeIdSchema);
 const exactMatchSchema = z.strictObject({
