@@ -7,6 +7,83 @@ import { historicalCaptureFailure } from "./CaptureFailures.js";
 import { redactExplicitFailure } from "../../domain/explicitSensitiveFailure.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 
+it.each([
+  { label: "POSIX SIGABRT", exitCode: null, signal: "SIGABRT" },
+  { label: "Windows exit 134", exitCode: 134, signal: null },
+] as const)(
+  "reports HAR heap exhaustion for $label",
+  ({ exitCode, signal }) => {
+    const input = inspectWebNetworkCaptureInputSchema.parse({
+      capture_path: "/selected/input.har",
+      format: "har",
+    });
+    const stderr =
+      "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory\r\n";
+    const cause = new OwnedCommandFailure("process", "Decoder failed", {
+      stdout: { text: "", bytes: 0 },
+      stderr: { text: stderr, bytes: Buffer.byteLength(stderr) },
+      exitCode,
+      signal,
+    });
+    const projected = analysisErrorProjectionSchema.parse(
+      projectAnalysisError(historicalCaptureFailure(input, cause, "decoder")),
+    );
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      message: expect.stringContaining("fixed V8 heap"),
+      remediation: {
+        action: expect.stringContaining(
+          "smaller capture exported by its producer",
+        ),
+      },
+      details: {
+        resource: "memory",
+        reported_limits: {
+          observed_exit_code: exitCode,
+          observed_signal: signal,
+        },
+        captured_output: { stdout: "", stderr },
+      },
+    });
+    expect(JSON.stringify(projected)).not.toContain("rea doctor");
+  },
+);
+
+it.each([
+  { exitCode: 134, signal: null, stderr: "Fatal decoder crash" },
+  {
+    exitCode: 2,
+    signal: null,
+    stderr: "FATAL ERROR: JavaScript heap out of memory",
+  },
+  {
+    exitCode: null,
+    signal: "SIGTERM",
+    stderr: "FATAL ERROR: JavaScript heap out of memory",
+  },
+] as const)(
+  "preserves unrelated decoder failures %#",
+  ({ exitCode, signal, stderr }) => {
+    const input = inspectWebNetworkCaptureInputSchema.parse({
+      capture_path: "/selected/input.har",
+      format: "har",
+    });
+    const cause = new OwnedCommandFailure("process", "Decoder failed", {
+      stdout: { text: "", bytes: 0 },
+      stderr: { text: stderr, bytes: Buffer.byteLength(stderr) },
+      exitCode,
+      signal,
+    });
+    expect(
+      projectAnalysisError(historicalCaptureFailure(input, cause, "decoder")),
+    ).toMatchObject({
+      code: "execution_failure",
+      details: { diagnostics: { exit_code: exitCode, signal, stderr } },
+    });
+  },
+);
+
 it.each(["before open", "during read"])(
   "preserves observed capture changes %s as retryable acquisition integrity failures",
   (stage) => {

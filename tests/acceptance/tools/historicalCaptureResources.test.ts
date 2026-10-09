@@ -70,7 +70,8 @@ it("reports real HAR heap exhaustion through CLI and MCP and preserves server us
         resource: "memory",
         reported_limits: {
           old_generation_heap_mib: 192,
-          observed_signal: "SIGABRT",
+          observed_exit_code: process.platform === "win32" ? 134 : null,
+          observed_signal: process.platform === "win32" ? null : "SIGABRT",
         },
         captured_output: {
           stderr: expect.stringContaining("heap out of memory"),

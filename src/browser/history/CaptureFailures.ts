@@ -61,7 +61,8 @@ export const historicalCaptureFailure = (
       phase === "decoder" &&
       input.format === "har" &&
       cause.reason === "process" &&
-      cause.snapshot?.signal === "SIGABRT" &&
+      (cause.snapshot?.signal === "SIGABRT" ||
+        (cause.snapshot?.signal === null && cause.snapshot.exitCode === 134)) &&
       /FATAL ERROR:[^\r\n]*heap out of memory/u.test(cause.snapshot.stderr.text)
     )
       return captureMemoryFailure(
@@ -182,7 +183,10 @@ export const captureMemoryFailure = (
           }
         : {}),
       ...(cause instanceof OwnedCommandFailure
-        ? { observed_signal: cause.snapshot?.signal ?? null }
+        ? {
+            observed_exit_code: cause.snapshot?.exitCode ?? null,
+            observed_signal: cause.snapshot?.signal ?? null,
+          }
         : {}),
     },
     {
