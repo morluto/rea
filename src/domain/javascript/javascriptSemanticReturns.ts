@@ -188,7 +188,8 @@ const callableIdsForNode = (
   if (
     t.isTSAsExpression(node) ||
     t.isTSTypeAssertion(node) ||
-    t.isTSNonNullExpression(node)
+    t.isTSNonNullExpression(node) ||
+    t.isTSSatisfiesExpression(node)
   )
     return callableIdsForNode(node.expression, state, admitted, seen);
   return [];

@@ -62,7 +62,8 @@ const resolveCallables = (
   if (
     t.isTSAsExpression(node) ||
     t.isTSTypeAssertion(node) ||
-    t.isTSNonNullExpression(node)
+    t.isTSNonNullExpression(node) ||
+    t.isTSSatisfiesExpression(node)
   )
     return resolveCallables(node.expression, context);
   if (t.isConditionalExpression(node) || t.isLogicalExpression(node))

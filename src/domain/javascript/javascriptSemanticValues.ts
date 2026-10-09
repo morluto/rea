@@ -199,7 +199,8 @@ const evaluateExpression = (
   if (
     (t.isTSAsExpression(node) ||
       t.isTSTypeAssertion(node) ||
-      t.isTSNonNullExpression(node)) &&
+      t.isTSNonNullExpression(node) ||
+      t.isTSSatisfiesExpression(node)) &&
     t.isExpression(node.expression)
   )
     return evaluateExpression(node.expression, nestedContext(context));
@@ -527,6 +528,14 @@ const provenanceForExpression = (
       "unknown",
       semanticResourceLimitReason("expression-depth"),
     );
+  if (
+    (t.isTSAsExpression(node) ||
+      t.isTSTypeAssertion(node) ||
+      t.isTSNonNullExpression(node) ||
+      t.isTSSatisfiesExpression(node)) &&
+    t.isExpression(node.expression)
+  )
+    return provenanceForExpression(node.expression, nestedContext(context));
   const required = semanticRequireOrigin(node, context.state);
   if (required !== undefined) return semanticOriginsProvenance([required]);
   if (t.isIdentifier(node)) {
