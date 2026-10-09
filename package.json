@@ -251,6 +251,7 @@
     "canonicalize": "3.0.0",
     "cross-spawn": "7.0.6",
     "diff": "9.0.0",
+    "evmole": "0.9.3",
     "har-schema": "2.0.0",
     "ignore": "7.0.6",
     "incur": "0.6.1",
@@ -263,10 +264,10 @@
     "plist": "5.0.0",
     "semver": "7.8.5",
     "smol-toml": "1.9.0",
+    "stream-json": "3.7.0",
     "write-file-atomic": "7.0.0",
     "ws": "8.21.0",
-    "zod": "4.4.3",
-    "evmole": "0.9.3"
+    "zod": "4.4.3"
   },
   "overrides": {
     "vitepress": {

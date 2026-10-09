@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { describe, expect, it, onTestFinished } from "vitest";
 
 import { parseCliJsonInput } from "../../../src/cliJsonInput.js";
+import { readCliJsonFile } from "../../../src/cliJsonFile.js";
 import { readWithoutFifoWriter } from "../../fixtures/fifoInput.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -84,14 +85,101 @@ describe("CLI JSON file selection", () => {
   );
 });
 
-describe("CLI JSON input", () => {
-  it("distinguishes malformed inline text from files and preserves bracket-prefixed paths", async () => {
-    expect(await parseCliJsonInput("[", "test-input")).toMatchObject({
+describe("CLI JSON streamed input", () => {
+  it("preserves native JSON meanings through chunked file parsing", async () => {
+    const root = await createTestTempDirectory("rea-json-input-chunks-");
+    const path = join(root, "input.json");
+    const documents = [
+      "null",
+      "false",
+      "-0",
+      "1e400",
+      '{"__proto__":{"observed":true},"constructor":2,"duplicate":1,"duplicate":3}',
+      JSON.stringify({
+        text: `${"x".repeat(65_524)}😀漢字`,
+        escaped: "\ud800",
+      }),
+      JSON.stringify(
+        Array.from({ length: 4_000 }, (_, id) => ({ id, text: "å" })),
+      ),
+    ];
+    for (const text of documents) {
+      await writeFile(path, text);
+      const parsed = await parseCliJsonInput(path, "test-input");
+      if (!parsed.ok) throw new Error(JSON.stringify(parsed.error));
+      expect(parsed.value).toEqual(JSON.parse(text));
+      if (text.includes("__proto__")) {
+        if (typeof parsed.value !== "object" || parsed.value === null)
+          throw new Error("Expected the parsed object");
+        expect(Object.getPrototypeOf(parsed.value)).toBe(Object.prototype);
+        expect(Object.hasOwn(parsed.value, "__proto__")).toBe(true);
+      }
+    }
+  });
+
+  it.each([
+    "",
+    "[1,]",
+    "{} {}",
+    '{"value":',
+    '"unterminated',
+    "\uFEFF{}",
+    "\u00a0{}",
+    "{\u000b}",
+    "01",
+    "NaN",
+    '"\u0001"',
+  ])("rejects strict JSON syntax violations in files (%j)", async (text) => {
+    const root = await createTestTempDirectory("rea-json-input-invalid-");
+    const path = join(root, "input.json");
+    await writeFile(path, text);
+    expect(await parseCliJsonInput(path, "test-input")).toMatchObject({
       ok: false,
       error: {
-        details: { issues: [{ reason: "invalid_format", expected: "JSON" }] },
+        code: "invalid_request",
+        input_path: path,
+        input_reason: "invalid-json",
       },
     });
+  });
+
+  it.each([Buffer.from([0xf0, 0x28, 0x8c, 0xbc]), Buffer.from([0xe2, 0x82])])(
+    "rejects malformed and incomplete UTF-8 at a read boundary (%j)",
+    async (invalid) => {
+      const root = await createTestTempDirectory("rea-json-input-utf8-");
+      const path = join(root, "input.json");
+      await writeFile(
+        path,
+        Buffer.concat([Buffer.from(`"${"x".repeat(65_534)}`), invalid]),
+      );
+      expect(await parseCliJsonInput(path, "test-input")).toMatchObject({
+        ok: false,
+        error: {
+          input_reason: "invalid-json",
+          details: { issues: [{ message: "JSON input is not valid UTF-8" }] },
+        },
+      });
+    },
+  );
+
+  it("cancels a file parse and allows a following read", async () => {
+    const root = await createTestTempDirectory("rea-json-input-cancel-");
+    const path = join(root, "input.json");
+    await writeFile(path, `${" ".repeat(8 * 1024 * 1024)}{"after":true}`);
+    const controller = new AbortController();
+    const cancelled = readCliJsonFile(path, "test-input", controller.signal);
+    setImmediate(() => controller.abort(new Error("cancel JSON file parse")));
+    await expect(cancelled).rejects.toThrow("cancel JSON file parse");
+    await writeFile(path, '{"after":true}');
+    expect(await readCliJsonFile(path, "test-input")).toEqual({
+      ok: true,
+      value: { after: true },
+    });
+  });
+});
+
+describe("CLI JSON input", () => {
+  it("distinguishes malformed inline text from files and preserves bracket-prefixed paths", async () => {
     expect(await parseCliJsonInput("[", "test-input")).toMatchObject({
       ok: false,
       error: {
