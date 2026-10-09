@@ -69,16 +69,19 @@ const projectRelease = (
   if (operation.resolution === "complete") return;
   addSemanticGraphUnknown(
     context.state,
-    createJavaScriptSemanticGraphUnknown({
-      node_id: callSite?.node_id ?? null,
-      family: "resource-lifecycle",
-      relation_kinds: ["releases"],
-      reason: "ambiguous-target",
-      detail: `Static ${operation.method} resource ownership is ambiguous.`,
-      candidate_node_ids: resources.map(
-        ({ node_id: identifier }) => identifier,
-      ),
-      evidence: unknownSemanticEvidence(context.file, operation.location),
-    }),
+    createJavaScriptSemanticGraphUnknown(
+      {
+        node_id: callSite?.node_id ?? null,
+        family: "resource-lifecycle",
+        relation_kinds: ["releases"],
+        reason: "ambiguous-target",
+        detail: `Static ${operation.method} resource ownership is ambiguous.`,
+        candidate_node_ids: resources.map(
+          ({ node_id: identifier }) => identifier,
+        ),
+        evidence: unknownSemanticEvidence(context.file, operation.location),
+      },
+      context.state.evidenceContexts,
+    ),
   );
 };

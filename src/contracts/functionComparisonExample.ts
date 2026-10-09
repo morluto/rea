@@ -7,6 +7,11 @@ const dossier = (text: string) =>
     procedure: {
       address: "0x1000",
       name: "main",
+      classification: null,
+      body: {
+        available: false,
+        reason: "The fixture omits function-body extent observations.",
+      },
       signature: "int main(void)",
       locals: [],
     },
@@ -20,6 +25,9 @@ const dossier = (text: string) =>
     referenced_strings: [],
     referenced_names: [],
     basic_blocks: [{ start: "0x1000", end: "0x1001", successors: [] }],
+    native_api: null,
+    native_value_flow: null,
+    limitations: ["The fixture omits native API and value-flow observations."],
   });
 
 const observe = (digit: string, text: string) =>

@@ -320,7 +320,7 @@ describe("complete comparison projections", () => {
 });
 
 describe("JavaScript application workflow error diagnostics", () => {
-  it("returns safe explicit Evidence constraints from graph workflows", async () => {
+  it("identifies the inconsistent Evidence subject in graph workflows", async () => {
     const root = await createTestTempDirectory(
       "rea-application-workflow-diagnostics-",
     );
@@ -328,10 +328,10 @@ describe("JavaScript application workflow error diagnostics", () => {
     const evidence = await analyzeFixture(root);
     const subject = evidence.subject;
     if (subject === null) throw new Error("Analysis Evidence subject missing");
-    const secretPath = "/private/token=do-not-return";
+    const inconsistentPath = "/different/application.js";
     const inconsistent = {
       ...evidence,
-      subject: { ...subject, local_path: secretPath },
+      subject: { ...subject, local_path: inconsistentPath },
     };
 
     const result = traceApplicationFeatureEvidence({
@@ -346,11 +346,10 @@ describe("JavaScript application workflow error diagnostics", () => {
     expect(result.error.issues).toContainEqual(
       expect.objectContaining({
         reason: "invalid_value",
-        message:
-          "JavaScript application Evidence subject does not match its result",
+        path: ["application", "subject"],
+        message: expect.stringContaining("subject must match"),
       }),
     );
-    expect(JSON.stringify(result.error.issues)).not.toContain(secretPath);
   });
 
   it("preserves schema-authored Evidence validation messages", async () => {

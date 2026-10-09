@@ -58,6 +58,12 @@ async function verifyNavigation(
     procedure: address,
   });
   const info = await call("procedure_info", { procedure: address });
+  assert.equal(info.classification, null);
+  assert.equal(info.body.available, false);
+  assert.match(
+    info.body.reason,
+    /public Python API does not expose complete function body ranges/u,
+  );
   assert.ok(info.locals.length > 0, "fixture omitted real stack locals");
   for (const local of info.locals) {
     assert.equal(typeof local.name, "string");
@@ -68,6 +74,18 @@ async function verifyNavigation(
   }
   const dossier = await call("analyze_function", { procedure: address });
   assert.deepEqual(dossier.procedure.locals, info.locals);
+  assert.equal(dossier.procedure.classification, null);
+  assert.equal(dossier.procedure.body.available, false);
+  assert.match(
+    dossier.procedure.body.reason,
+    /public Python API does not expose complete function body ranges/u,
+  );
+  assert.equal(dossier.native_api, null);
+  assert.equal(dossier.native_value_flow, null);
+  assert.ok(
+    Array.isArray(dossier.limitations) && dossier.limitations.length > 0,
+    "function dossier omitted Hopper's unsupported-facet limitations",
+  );
   const coordinates = instructions.instructions.map(
     (line) => /^0x[0-9a-f]+/u.exec(line)?.[0],
   );

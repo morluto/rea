@@ -232,7 +232,9 @@ const analyzeReturn = async (root: string, properties: string) => {
   await writeFixtureFiles(root, { "parser.mjs": `${prefix}${expression});\n` });
   const analyzed = await analyzeJavaScriptApplication({ input_path: root });
   if (!analyzed.ok) throw analyzed.error;
-  const source = parseApplicationGraphEvidence(analyzed.value);
+  const parsed = parseApplicationGraphEvidence(analyzed.value);
+  if (!parsed.ok) throw new Error("Analysis Evidence must parse");
+  const source = parsed.value;
   const observation = source.graph.nodes
     .flatMap(({ observations }) => observations)
     .find(

@@ -8,7 +8,7 @@ import { err, ok } from "../../domain/result.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 
 const referencesSchema = z.object({
-  reference_kinds_available: z.boolean().optional(),
+  reference_kinds_available: z.boolean(),
   references: z.array(
     z.object({
       source_address: z.string(),
@@ -17,9 +17,9 @@ const referencesSchema = z.object({
       kind: referenceKindSchema,
     }),
   ),
-  unresolved_calls: z
-    .array(z.object({ address: z.string(), reason: z.string() }))
-    .default([]),
+  unresolved_calls: z.array(
+    z.object({ address: z.string(), reason: z.string() }),
+  ),
 });
 /** Prefer typed static call references, preserving computed targets and targetless sites. */
 export const readNativeCallRoutes = async (

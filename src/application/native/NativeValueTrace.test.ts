@@ -67,6 +67,11 @@ const analysis: AnalysisOperationPort = {
             address: callee ? "0x2000" : "0x1000",
             name: callee ? "callee" : "caller",
             classification: null,
+            body: {
+              available: false,
+              reason:
+                "The provider did not report complete function body ranges.",
+            },
             signature: null,
             locals: [],
           },

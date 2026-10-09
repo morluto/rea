@@ -44,7 +44,11 @@ it("does not hash a replacement file using the earlier path metadata", async () 
     await rm(path);
     await writeFile(path, "replacement with a different identity and size\n");
 
-    await expect(hashFile(path, expected, 1_000)).resolves.toBeNull();
+    await expect(hashFile(path, expected, 1_000)).resolves.toEqual({
+      state: "omitted",
+      reason: "file_changed_or_short_read",
+      system_code: null,
+    });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -76,7 +80,29 @@ it("rejects a same-size rewrite even when its modification time is restored", as
     });
     expect(rewritten.ctimeMs).not.toBe(expected.ctimeMs);
 
-    await expect(hashFile(path, expected, 1_000)).resolves.toBeNull();
+    await expect(hashFile(path, expected, 1_000)).resolves.toMatchObject({
+      state: "omitted",
+      reason: "file_changed_or_short_read",
+      system_code: null,
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("reports a file removed between metadata observation and open", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "rea-snapshot-open-race-"));
+  const path = join(directory, "observed-file");
+  try {
+    await writeFile(path, "captured file\n");
+    const expected = await lstat(path);
+    await rm(path);
+
+    await expect(hashFile(path, expected, 1_000)).resolves.toEqual({
+      state: "omitted",
+      reason: "file_unavailable",
+      system_code: "ENOENT",
+    });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -116,9 +142,12 @@ it.skipIf(process.platform === "win32")(
       // hashFile reaches `open` synchronously before its first suspension, so
       // this abort is observed after the descriptor is acquired and is handled
       // by the `finally` close path.
-      controller.abort();
+      const reason = Object.assign(new Error("cancelled while opening"), {
+        code: "EACCES",
+      });
+      controller.abort(reason);
 
-      await expect(hashing).rejects.toMatchObject({ name: "AbortError" });
+      await expect(hashing).rejects.toBe(reason);
       expect(await countOpenDescriptorsFor(path)).toBe(0);
     } finally {
       await rm(directory, { recursive: true, force: true });

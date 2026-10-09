@@ -1,9 +1,9 @@
 import { primitiveByteExpansionSource } from "../../../tests/fixtures/javascriptPrimitiveExpansion.js";
+import { graphForJavaScript as graphFor } from "../../../tests/fixtures/javascriptSemanticGraph.js";
 import * as t from "@babel/types";
 import { expect, it } from "vitest";
 
 import {
-  buildJavaScriptSemanticGraph,
   SEMANTIC_GRAPH_FILE_NODE_CEILING,
   SEMANTIC_GRAPH_NODE_CEILING,
 } from "./JavaScriptSemanticGraphBuilder.js";
@@ -12,7 +12,6 @@ import {
   constructSemanticGraphNode,
   createSemanticGraphProjectionState,
 } from "./JavaScriptSemanticGraphConstruction.js";
-import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { queryJavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticQuery.js";
 import {
@@ -23,7 +22,6 @@ import { parseJavaScriptSource } from "../../domain/javascript/javascriptSourceP
 import { semanticCoverageResourceLimits } from "../../domain/javascript/javascriptSemanticCoverage.js";
 
 const SHA256 = "a".repeat(64);
-const GRAPH_ID = `jag_${"b".repeat(64)}`;
 
 it("projects closure and direct interprocedural flow without execution", () => {
   const graph = graphFor(`
@@ -345,42 +343,6 @@ it("keeps duplicate function fingerprints ambiguous", () => {
   expect(query.status).toBe("ambiguous");
   expect(query.summary.total_seed_matches).toBe(2);
 });
-
-const graphFor = (source: string, ir = analyzeJavaScriptSemantics(source)) => {
-  const file: JavaScriptArtifactFile = {
-    path: "app.js",
-    container_sha256: SHA256,
-    sha256: SHA256,
-    bytes: Buffer.byteLength(source),
-    inventory_artifact_id: `art_${SHA256}`,
-    kind: "javascript",
-    unpacked: false,
-    text: { included: true, value: source },
-  };
-  const analysis: JavaScriptArtifactAnalysis = {
-    files: [
-      {
-        file,
-        javascript: null,
-        semantic: { ir },
-      },
-    ],
-    packages: [],
-    json_modules: [],
-    html_scripts: [],
-    source_maps: [],
-    visited_ast_nodes: 0,
-    findings: 0,
-    modules: 0,
-    parse_failures: 0,
-    limitations: [],
-  };
-  return buildJavaScriptSemanticGraph({
-    rootArtifactSha256: SHA256,
-    applicationGraph: { graph_id: GRAPH_ID, nodes: [] },
-    analysis,
-  });
-};
 
 const semanticNodeFor = (roleKey: string) => {
   const file: JavaScriptArtifactFile = {

@@ -426,6 +426,8 @@ export class IdaOperationRunner {
       referenced_strings: [],
       referenced_names: [],
       basic_blocks: [],
+      native_api: null,
+      native_value_flow: null,
       limitations: [
         ...IDA_LIMITATIONS,
         ...this.limitations,

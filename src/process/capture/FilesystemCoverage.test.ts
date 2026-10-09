@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { parseProcessScenario } from "../../domain/process/processScenario.js";
@@ -80,6 +80,51 @@ it("distinguishes unavailable content hashes from completed path enumeration", a
     ),
   ).toMatchObject({ status: "deleted", before: { sha256: null }, after: null });
 });
+
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "retains unreadable-file and sibling observations in a complete snapshot",
+  async () => {
+    const root = await createTestTempDirectory("rea-fs-unreadable-file-");
+    const unreadable = join(root, "unreadable.txt");
+    const readable = join(root, "readable.txt");
+    await writeFile(unreadable, "permission denied");
+    await writeFile(readable, "still observed");
+    await chmod(unreadable, 0);
+    const scenario = parseProcessScenario({
+      executable: process.execPath,
+      working_directory: root,
+      filesystem_observation_paths: [root],
+    });
+
+    try {
+      const snapshot = await snapshotRoots(scenario);
+      expect(snapshot.files.map(({ path }) => path)).toEqual([
+        "root_0:.",
+        "root_0:readable.txt",
+        "root_0:unreadable.txt",
+      ]);
+      expect(
+        snapshot.files.find(({ path }) => path === "root_0:readable.txt")
+          ?.sha256,
+      ).not.toBeNull();
+      expect(
+        snapshot.files.find(({ path }) => path === "root_0:unreadable.txt"),
+      ).toMatchObject({ type: "file", size: 17, sha256: null });
+      expect(snapshot.coverage.hash_omissions).toContainEqual({
+        path: "root_0:unreadable.txt",
+        size_bytes: 17,
+        remaining_budget_bytes:
+          scenario.limits.file_bytes - Buffer.byteLength("still observed"),
+        reason: "file_unavailable",
+        system_code: "EACCES",
+      });
+      expect(snapshot.completeRoots).toEqual(["root_0"]);
+    } finally {
+      await chmod(unreadable, 0o600);
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
 
 it("preserves creation when the selected root was observed missing before capture", async () => {
   const root = await createTestTempDirectory("rea-fs-missing-root-");

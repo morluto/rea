@@ -668,9 +668,16 @@ it("rejects static application Evidence whose subject path disagrees with its re
     },
   };
 
-  expect(() => parseApplicationGraphEvidence(inconsistent)).toThrow(
-    "JavaScript application Evidence subject does not match its result",
-  );
+  const parsed = parseApplicationGraphEvidence(inconsistent);
+  expect(parsed.ok).toBe(false);
+  if (!parsed.ok)
+    expect(parsed.error.issues).toContainEqual(
+      expect.objectContaining({
+        path: ["subject"],
+        reason: "invalid_value",
+        message: expect.stringContaining("subject must match"),
+      }),
+    );
 });
 
 const compareTrees = async (previous: string, current: string) => {
@@ -682,9 +689,11 @@ const compareTrees = async (previous: string, current: string) => {
   if (!reference.ok) throw new Error(reference.error.message);
   const analyzed = await analyzeJavaScriptApplication({ input_path: current });
   if (!analyzed.ok) throw analyzed.error;
-  const application = parseApplicationGraphEvidence(
+  const parsedApplication = parseApplicationGraphEvidence(
     JSON.parse(JSON.stringify(analyzed.value)),
   );
+  if (!parsedApplication.ok) throw new Error("Analysis Evidence must parse");
+  const application = parsedApplication.value;
   const comparison = compareSourceToBundle({
     reference: reference.value,
     application: {

@@ -716,6 +716,8 @@ def _analyze_function(document, params):
         "referenced_strings": referenced_strings,
         "referenced_names": referenced_names,
         "basic_blocks": blocks,
+        "native_api": None,
+        "native_value_flow": None,
         "limitations": [
             "Native CallReference classifications are observed where available; detailed reference flags remain unknown.",
             "Hopper's public Python API does not expose equivalent external or thunk classification in this dossier.",

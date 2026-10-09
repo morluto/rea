@@ -57,6 +57,12 @@ class FakeReferenceSegment:
     def getReferencesOfAddress(self, address):
         return []
 
+    def getCommentAtAddress(self, address):
+        return None
+
+    def getInlineCommentAtAddress(self, address):
+        return None
+
 
 class FakeProcedure:
     def __init__(self, segment):
@@ -86,6 +92,12 @@ class FakeProcedure:
     def getAllCallees(self):
         return []
 
+    def getAllCallerProcedures(self):
+        return []
+
+    def getAllCalleeProcedures(self):
+        return []
+
 
 class FakeBlock:
     def getStartingAddress(self):
@@ -93,6 +105,9 @@ class FakeBlock:
 
     def getEndingAddress(self):
         return 0x401004
+
+    def getSuccessorCount(self):
+        return 0
 def load_bridge(path):
     namespace = {
         "__file__": path,
@@ -184,6 +199,14 @@ def main():
     procedure_info = bridge["_dispatch"](
         "procedure_info", {"procedure": "0x401000"}
     )
+    bridge["_assembly"] = lambda procedure: "ret"
+    bridge["_pseudocode"] = lambda document, procedure: None
+    bridge["_native_calls"] = lambda procedure, direction: ({}, [])
+    bridge["_string_inventory"] = lambda document, targets=None: {}
+    bridge["_search_inventory"] = lambda document, kind: []
+    analyze_function = bridge["_dispatch"](
+        "analyze_function", {"procedure": "0x401000"}
+    )
     provider_faults = []
     for error_type in (TypeError, ValueError, KeyError):
         FakeDocumentProvider.current.address_error = error_type("credential=supersecret")
@@ -236,6 +259,7 @@ def main():
                 "containing_procedure": containing_procedure,
                 "procedure_references": procedure_references,
                 "procedure_info": procedure_info,
+                "analyze_function": analyze_function,
                 "provider_faults": provider_faults,
                 "malformed_requests": malformed_requests,
                 "session_document_reused": selected,

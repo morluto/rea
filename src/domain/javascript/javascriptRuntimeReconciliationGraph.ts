@@ -7,10 +7,8 @@ import type {
   ApplicationEdge,
   ApplicationNode,
 } from "./javascriptApplicationGraphSchemas.js";
-import type {
-  ParsedRuntimeCapture,
-  ParsedStaticLayer,
-} from "./javascriptRuntimeReconciliationParsing.js";
+import type { ParsedStaticLayer } from "./javascriptRuntimeReconciliationParsing.js";
+import type { ParsedRuntimeCapture } from "./javascriptRuntimeReconciliationCaptureParsing.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { RuntimeProjection } from "./javascriptRuntimeReconciliationRuntime.js";

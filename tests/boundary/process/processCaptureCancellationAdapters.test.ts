@@ -8,6 +8,7 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import pino from "pino";
 import { expect, onTestFinished } from "vitest";
 import { z } from "zod";
+import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSchemas.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { createServer } from "../../../src/server/createServer.js";
 import {
@@ -124,7 +125,8 @@ itWithCaptureCapability.each(["SIGINT", "SIGTERM"] as const)(
     await expect(access(join(root, "late-write"))).rejects.toMatchObject({
       code: "ENOENT",
     });
-    expect(JSON.parse(stdout)).toMatchObject({
+    const result = analysisCliErrorEnvelopeSchema.parse(JSON.parse(stdout));
+    expect(result, JSON.stringify(result.details)).toMatchObject({
       code: "cancelled",
       details: { operation: "process_capture", cleanup: "complete" },
     });

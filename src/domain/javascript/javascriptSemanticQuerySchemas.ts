@@ -5,24 +5,19 @@ import {
   JAVASCRIPT_SEMANTIC_RELATIONS,
   javaScriptSemanticNodeSchema,
   javaScriptSemanticRelationSchema,
+  javaScriptSemanticEvidenceContextSchema,
   javaScriptSemanticUnknownSchema,
 } from "./javascriptSemanticGraphSchemas.js";
-import { jsonValueSchema } from "../jsonValue.js";
 import { digestSchema } from "../digests.js";
 import { prefixedDigestSchema } from "../digests.js";
 
 const semanticNodeIdSchema = prefixedDigestSchema("jsrg_node");
-const literalValueSchema = jsonValueSchema.refine(
-  (value) =>
-    value === null ||
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean",
-  "Literal seeds accept only JSON primitive values",
-);
-// Zod derivations drop the shared schema's JSON Schema projection override;
-// re-apply it so MCP catalog generation keeps projecting `{}`.
-literalValueSchema._zod.toJSONSchema = () => ({});
+const literalValueSchema = z.union([
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.null(),
+]);
 
 const literalSeedSchema = z.strictObject({
   kind: z.literal("literal"),
@@ -93,6 +88,7 @@ export const javaScriptSemanticQueryResultSchema = z.strictObject({
   direction: javaScriptSemanticQueryInputSchema.shape.direction,
   status: z.enum(["found", "no-match", "ambiguous", "partial", "unsupported"]),
   seed_node_ids: z.array(semanticNodeIdSchema),
+  evidence_contexts: z.array(javaScriptSemanticEvidenceContextSchema),
   nodes: z.array(javaScriptSemanticNodeSchema),
   relations: z.array(javaScriptSemanticRelationSchema),
   unknowns: z.array(javaScriptSemanticUnknownSchema),

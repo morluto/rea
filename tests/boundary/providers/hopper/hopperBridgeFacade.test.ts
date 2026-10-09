@@ -4,6 +4,7 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { OFFICIAL_TOOL_CONTRACTS } from "../../../../src/contracts/officialToolContracts.js";
+import { functionDossierSchema } from "../../../../src/domain/hopperValues.js";
 
 const execute = promisify(execFile);
 const bridgePath = new URL(
@@ -48,6 +49,7 @@ const probeResultSchema = z.strictObject({
       reason: z.string(),
     }),
   }),
+  analyze_function: z.unknown(),
   procedure_references: z.strictObject({
     procedure: z.strictObject({
       address: z.literal("0x401000"),
@@ -153,6 +155,19 @@ describe("Hopper API facade", () => {
       if (!parsed.success) throw new Error(`${name}: ${parsed.error.message}`);
       expect(parsed.success, name).toBe(true);
     }
+    const dossier = functionDossierSchema.parse(result.analyze_function);
+    expect(dossier).toMatchObject({
+      procedure: {
+        classification: null,
+        body: {
+          available: false,
+          reason:
+            "Hopper's public Python API does not expose complete function body ranges",
+        },
+      },
+      native_api: null,
+      native_value_flow: null,
+    });
     expect(result.provider_faults.map((reply) => reply.error.message)).toEqual([
       "TypeError: Hopper bridge operation failed",
       "ValueError: Hopper bridge operation failed",

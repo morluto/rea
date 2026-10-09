@@ -23,6 +23,15 @@ artifact digest and structural graph ID. Semantic tracing requires the semantic
 relation graph and reports when it is unavailable rather than treating missing
 data as an empty graph.
 
+The semantic graph wire format stores shared non-location provenance once in
+its required `evidence_contexts` table. Each node, relation, fingerprint, and
+unknown retains its exact `evidence.location` and names the owning context with
+`evidence.context_id`. This is a breaking representation change: consumers
+reading fields such as `evidence.authority` must look up the context by ID and
+combine its fields with the fact's location. Semantic trace results include the
+canonical context subset referenced by their returned facts, so those facts
+remain self-contained in the response.
+
 ## Feature tracing
 
 Select one literal seed kind: node ID, route, string, API, IPC channel, module,

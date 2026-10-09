@@ -8,7 +8,7 @@ import type {
   ApplicationNode,
 } from "./javascriptApplicationGraphSchemas.js";
 import type { ApplicationGraphEvidence } from "./javascriptApplicationEvidenceSchemas.js";
-import type { ParsedRuntimeCapture } from "./javascriptRuntimeReconciliationParsing.js";
+import type { ParsedRuntimeCapture } from "./javascriptRuntimeReconciliationCaptureParsing.js";
 
 export interface RuntimeReconciliationEntity {
   readonly kind: "target" | "frame" | "script" | "worker";

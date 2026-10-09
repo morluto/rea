@@ -313,7 +313,7 @@ describe("evidence bundle filesystem adapter", () => {
       error: {
         _tag: "EvidenceIntegrityError",
         userMessage: expect.stringContaining(
-          "Evidence semantic identifier does not match its record",
+          "at records.0.evidence_id: Evidence semantic identifier does not match its record",
         ),
       },
     });

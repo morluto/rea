@@ -200,7 +200,10 @@ const validateCoverage = (
       coverage.hash_omissions.every(
         (omission) =>
           unhashedFiles.get(omission.path)?.size === omission.size_bytes &&
-          omission.remaining_budget_bytes <= coverage.hash_budget_bytes,
+          omission.remaining_budget_bytes <= coverage.hash_budget_bytes &&
+          (omission.reason === "file_unavailable"
+            ? omission.system_code !== null
+            : omission.system_code === null),
       ), `truncation_details.${name}.hash_omissions`, "every retained regular file without a digest must have one matching omission reason");
     require(coverage.hashed_bytes ===
       files

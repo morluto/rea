@@ -308,7 +308,16 @@ const makeProvider = (
             operation === "health"
               ? null
               : operation === "list_segments"
-                ? [{ name: "__TEXT", start: "0x1000", end: "0x2000" }]
+                ? [
+                    {
+                      name: "__TEXT",
+                      start: "0x1000",
+                      end: "0x2000",
+                      readable: null,
+                      writable: null,
+                      executable: null,
+                    },
+                  ]
                 : operation === "list_documents"
                   ? ["fixture"]
                   : operation === "list_procedures"

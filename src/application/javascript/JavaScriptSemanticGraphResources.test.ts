@@ -1,10 +1,10 @@
 import { expect, it } from "vitest";
 
+import { graphForJavaScript as graphFor } from "../../../tests/fixtures/javascriptSemanticGraph.js";
 import { buildJavaScriptSemanticGraph } from "./JavaScriptSemanticGraphBuilder.js";
 import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
-import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { queryJavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticQuery.js";
-import { analyzeJavaScriptSemantics } from "../../domain/javascript/javascriptSemanticAnalysis.js";
+import { resolveJavaScriptSemanticEvidence } from "../../domain/javascript/javascriptSemanticGraph.js";
 
 const SHA256 = "a".repeat(64);
 const GRAPH_ID = `jag_${"b".repeat(64)}`;
@@ -335,11 +335,15 @@ it("uses unavailable evidence when no source produced semantic IR", () => {
     applicationGraph: { graph_id: GRAPH_ID, nodes: [] },
     analysis: emptyAnalysis(),
   });
-  expect(graph.nodes[0]?.evidence).toMatchObject({
-    authority: "unknown",
-    state: "unavailable",
-    location: { available: false, reason: "not-observed" },
-  });
+  const root = graph.nodes[0];
+  if (root === undefined) throw new Error("Expected unavailable semantic root");
+  expect(resolveJavaScriptSemanticEvidence(graph, root.evidence)).toMatchObject(
+    {
+      authority: "unknown",
+      state: "unavailable",
+      location: { available: false, reason: "not-observed" },
+    },
+  );
 });
 
 const emptyAnalysis = (): JavaScriptArtifactAnalysis => ({
@@ -354,41 +358,3 @@ const emptyAnalysis = (): JavaScriptArtifactAnalysis => ({
   parse_failures: 0,
   limitations: [],
 });
-
-const graphFor = (source: string) => {
-  const file: JavaScriptArtifactFile = {
-    path: "app.js",
-    container_sha256: SHA256,
-    sha256: SHA256,
-    bytes: Buffer.byteLength(source),
-    inventory_artifact_id: `art_${SHA256}`,
-    kind: "javascript",
-    unpacked: false,
-    text: { included: true, value: source },
-  };
-  const analysis: JavaScriptArtifactAnalysis = {
-    files: [
-      {
-        file,
-        javascript: null,
-        semantic: {
-          ir: analyzeJavaScriptSemantics(source),
-        },
-      },
-    ],
-    packages: [],
-    json_modules: [],
-    html_scripts: [],
-    source_maps: [],
-    visited_ast_nodes: 0,
-    findings: 0,
-    modules: 0,
-    parse_failures: 0,
-    limitations: [],
-  };
-  return buildJavaScriptSemanticGraph({
-    rootArtifactSha256: SHA256,
-    applicationGraph: { graph_id: GRAPH_ID, nodes: [] },
-    analysis,
-  });
-};
