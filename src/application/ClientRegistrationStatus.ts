@@ -62,6 +62,7 @@ const registrationSchema = z
     tools: z.array(z.string()).optional(),
     disabled: z.boolean().optional(),
     enabled: z.boolean().optional(),
+    exposure: z.string().optional(),
   })
   .passthrough();
 
@@ -188,6 +189,12 @@ const registrationAligned = (
     registration.type !== "stdio"
   )
     return false;
+  // Pi infers stdio from a command, but only direct exposure declares tools.
+  if (
+    client.format === "pi" &&
+    (registration.type !== "stdio" || registration.exposure !== "direct")
+  )
+    return false;
   if (
     client.format === "copilot_cli" &&
     (registration.type !== "stdio" ||
@@ -245,7 +252,7 @@ const parseRegistration = (
   if (client.format === "commandcode" && registration.transport !== "stdio")
     throw new TypeError("Expected an stdio registration");
   if (
-    client.format === "omp" &&
+    (client.format === "omp" || client.format === "pi") &&
     registration.type !== undefined &&
     registration.type !== "stdio"
   )

@@ -16,6 +16,7 @@ export interface SetupClient {
     | "commandcode"
     | "grok"
     | "omp"
+    | "pi"
     | "unsupported";
 }
 
@@ -143,6 +144,36 @@ const ompAgentDirectory = (context: ClientPathContext): string => {
   return override !== undefined && override !== "" && isAbsolute(override)
     ? override
     : join(root, "agent");
+};
+
+/**
+ * Pi's user agent directory. The default is `~/.pi/agent`. Pi expands a
+ * leading `~` in `PI_CODING_AGENT_DIR` and otherwise uses that value as given.
+ * A relative override is resolved against each process's working directory, so
+ * only an absolute path names one file.
+ */
+const expandPiHomePath = (
+  path: string,
+  home: string,
+  platform: NodeJS.Platform,
+): string => {
+  if (path === "~") return home;
+  if (path.startsWith("~/") || (platform === "win32" && path.startsWith("~\\")))
+    return join(home, path.slice(2));
+  return path;
+};
+
+const piAgentDirectory = ({
+  home,
+  platform,
+  env,
+}: ClientPathContext): string => {
+  const override = env.PI_CODING_AGENT_DIR;
+  if (override !== undefined && override !== "") {
+    const expanded = expandPiHomePath(override, home, platform);
+    if (isAbsolute(expanded)) return expanded;
+  }
+  return join(home, ".pi", "agent");
 };
 
 const copilotDirectory = ({ home, env }: ClientPathContext): string =>
@@ -295,6 +326,14 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
       join(ompAgentDirectory(context), "mcp.json"),
     markerPath: ompAgentDirectory,
     format: "omp",
+  },
+  {
+    name: "pi",
+    displayName: "Pi",
+    configPath: (context: ClientPathContext) =>
+      join(piAgentDirectory(context), "mcp.json"),
+    markerPath: piAgentDirectory,
+    format: "pi",
   },
   {
     name: "grok_bot",

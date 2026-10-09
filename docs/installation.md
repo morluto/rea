@@ -138,6 +138,7 @@ listed after the table because its connector is not one of these files:
 | VS Code            | `vscode`         |
 | Grok Build         | `grok_build`     |
 | OMP                | `omp`            |
+| Pi                 | `pi`             |
 
 For OMP, setup writes a `type: "stdio"` entry to the user-level
 `~/.omp/agent/mcp.json`. It follows `PI_CONFIG_DIR`, an absolute
@@ -147,6 +148,25 @@ For OMP, setup writes a `type: "stdio"` entry to the user-level
 registration. Doctor treats an `enabled: false` entry as active when
 `enabledServers` lists `rea`, as OMP does, unless `disabledServers` also lists
 it. Run setup under each profile that should load REA.
+
+For Pi (the `pi` CLI from `@earendil-works/pi-coding-agent`), setup writes a
+`type: "stdio"` entry with `exposure: "direct"` to the user-level
+`~/.pi/agent/mcp.json`. An absolute `PI_CODING_AGENT_DIR`, including a
+leading `~/`, selects that agent directory. A relative value is left unused
+because Pi resolves it against each process's working directory. OMP also
+reads an absolute `PI_CODING_AGENT_DIR` when no named profile is selected, so
+that override can make both clients name the same `mcp.json`. Setup does
+not write the project file `.pi/mcp.json`. Pi reads that file only after the
+project is trusted, and a project entry replaces a user entry of the same
+name.
+
+Pi loads project instructions from `AGENTS.md` and `CLAUDE.md`. It discovers
+`SKILL.md` directories under `~/.pi/agent/skills` and, in a trusted project,
+`.pi/skills`. The shared skill setup installs at `~/.agents/skills` is already
+on that path. Session transcripts are JSONL files under
+`~/.pi/agent/sessions`; `PI_CODING_AGENT_SESSION_DIR` overrides that
+directory. `exposure: "direct"` declares REA's tools to the model. Pi's
+default `codemode` exposure would leave them undeclared.
 
 For OpenCode, setup writes the V1 `mcp.rea` entry, which OpenCode V1 and V2
 both load. If the configuration already uses OpenCode V2's native

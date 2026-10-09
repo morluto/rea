@@ -1337,6 +1337,16 @@ export const clientRegistrationEntry = (
         args,
         ...(Object.keys(environment).length === 0 ? {} : { env: environment }),
       };
+    case "pi":
+      // Pi's default codemode exposure leaves server tools undeclared. Direct
+      // exposure registers them with the model, as other clients do.
+      return {
+        type: "stdio",
+        command: executable,
+        args,
+        exposure: "direct",
+        ...(Object.keys(environment).length === 0 ? {} : { env: environment }),
+      };
     case "copilot_cli":
       return {
         type: "stdio",
