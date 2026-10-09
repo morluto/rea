@@ -28,7 +28,7 @@
 
 <img src="docs/assets/rea-hopper-analysis.png" alt="REA inicia su puente de análisis dentro de Hopper mientras inspecciona un binario nativo" width="1200" />
 
-<br />
+<br /><br />
 
 <table aria-label="Comunidad REA">
 <tr>
@@ -154,6 +154,8 @@ Los formatos nativos y los sistemas anfitriones compatibles varían según el pr
 
 ## Casos prácticos
 
+[![Ilustraciones de los casos de panoramización de sonido de DX-Ball, el puente del portapapeles de Notion y el anillo de proyectiles de TH04](docs/assets/rea-showcases.png)](https://rea.tools/showcase/)
+
 ### DX-Ball: reconstruir un cálculo de panoramización de sonido
 
 Sigue una llamada de sonido hasta la función auxiliar que convierte la posición en panoramización, inspecciona las instrucciones y transforma el pseudocódigo incompleto en C. La reconstrucción supera 3.205 casos con el x86 original y reproduce los 63 bytes de la función compilada.
@@ -252,16 +254,6 @@ Empieza con las [guías prácticas](https://rea.tools/guides/) del sitio web. Pa
 
 Informa de vulnerabilidades siguiendo [SECURITY.md](SECURITY.md).
 
-## Contribuir
-
-¡Nos encantaría que ayudaras con REA! [Abre una issue](https://github.com/morluto/rea/issues) para comunicar un error o proponer una función, o [envía una pull request](https://github.com/morluto/rea/pulls) para mejorar el código o la documentación.
-
-Consulta [CONTRIBUTING.md](CONTRIBUTING.md) para preparar el entorno de desarrollo y las comprobaciones, la [guía de pruebas](docs/testing.md) para los procesos de verificación y el [mapa de arquitectura](docs/architecture.mermaid) para la estructura del proyecto.
-
-## Enlaces del proyecto
-
-[Sitio web](https://rea.tools/) · [npm](https://www.npmjs.com/package/rea-agents) · [skills.sh](https://skills.sh/morluto/rea/reverse-engineer-anything) · [Issues](https://github.com/morluto/rea/issues) · [Seguridad](SECURITY.md)
-
 ## Historial de estrellas
 
 🎉 **30.000 estrellas en GitHub: ¡gracias!**
@@ -279,6 +271,12 @@ Gracias a quienes usan REA, informan de errores, solicitan funciones, prueban co
 ## Aviso legal
 
 REA proporciona herramientas para la investigación, el análisis y la reconstrucción mediante ingeniería inversa conforme a la ley. Eres responsable de obtener las autorizaciones necesarias y cumplir las leyes aplicables. El proyecto no respalda usos ilegales ni no autorizados.
+
+## Contribuir
+
+¡Nos encantaría que ayudaras con REA! [Abre una issue](https://github.com/morluto/rea/issues) para comunicar un error o proponer una función, o [envía una pull request](https://github.com/morluto/rea/pulls) para mejorar el código o la documentación.
+
+Consulta [CONTRIBUTING.md](CONTRIBUTING.md) para preparar el entorno de desarrollo y las comprobaciones, la [guía de pruebas](docs/testing.md) para los procesos de verificación y el [mapa de arquitectura](docs/architecture.mermaid) para la estructura del proyecto.
 
 ## Licencia
 

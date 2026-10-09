@@ -28,7 +28,7 @@
 
 <img src="docs/assets/rea-hopper-analysis.png" alt="اجرای پل تحلیل REA در Hopper هنگام بررسی یک فایل باینری بومی" width="1200" />
 
-<br />
+<br /><br />
 
 <table aria-label="انجمن REA"><tr><td align="center" width="360"><a href="https://discord.gg/GkcryMnJDM"><img    src="docs/assets/discord.svg" height="42" alt="Discord" /><br /><strong>به انجمن مهندسی معکوس بپیوندید</strong></a><br /><sub>دیسکورد · پرسش و پاسخ · نمایش دستاوردها</sub></td></tr></table>
 
@@ -146,6 +146,8 @@ REA به Node.js 22.x (>=22.19)، 24.x (>=24.11) یا 26+، به‌همراه np
 
 ## نمونه‌های عملی
 
+[![تصویرهایی از نمونه‌های پنینگ صدای DX-Ball، پل کلیپ‌بورد Notion و حلقهٔ گلوله‌های TH04](docs/assets/rea-showcases.png)](https://rea.tools/showcase/)
+
 ### DX-Ball: بازسازی محاسبهٔ موقعیت استریوی صدا
 
 یک فراخوانی صوتی را تا تابع کمکی تبدیل موقعیت به pan دنبال کنید، دستورالعمل‌ها را بررسی کنید و شبه‌کد ناقص را به C تبدیل کنید. بازسازی حاصل، هر ۳٬۲۰۵ مورد آزمایش x86 اصلی را با موفقیت پشت سر می‌گذارد و هر ۶۳ بایت تابع کامپایل‌شده را دقیقاً بازتولید می‌کند.
@@ -237,16 +239,6 @@ npx rea-agents@latest setup
 
 آسیب‌پذیری‌ها را از طریق [SECURITY.md](SECURITY.md) گزارش کنید.
 
-## مشارکت
-
-از کمک شما به REA استقبال می‌کنیم! برای گزارش خطا یا پیشنهاد قابلیت، یک [issue باز کنید](https://github.com/morluto/rea/issues) یا برای بهبود کد و مستندات [pull request بفرستید](https://github.com/morluto/rea/pulls).
-
-برای راه‌اندازی محیط توسعه و بررسی‌ها، [CONTRIBUTING.md](CONTRIBUTING.md)، برای مراحل اعتبارسنجی [آزمایش‌ها](docs/testing.md) و برای ساختار پروژه [نقشهٔ معماری](docs/architecture.mermaid) را ببینید.
-
-## لینک‌های پروژه
-
-[وب‌سایت](https://rea.tools/) · [npm](https://www.npmjs.com/package/rea-agents) · [skills.sh](https://skills.sh/morluto/rea/reverse-engineer-anything) · [Issues](https://github.com/morluto/rea/issues) · [امنیت](SECURITY.md)
-
 ## تاریخچهٔ ستاره‌ها
 
 🎉 **۳۰٬۰۰۰ ستارهٔ GitHub — سپاسگزاریم!**
@@ -258,6 +250,12 @@ npx rea-agents@latest setup
 ## سلب مسئولیت
 
 REA ابزارهایی برای پژوهش، تحلیل و بازسازی قانونی در حوزهٔ مهندسی معکوس فراهم می‌کند. مسئولیت دریافت مجوزهای لازم و رعایت قوانین مربوط بر عهدهٔ شماست. این پروژه استفادهٔ غیرقانونی یا بدون مجوز را تأیید نمی‌کند.
+
+## مشارکت
+
+از کمک شما به REA استقبال می‌کنیم! برای گزارش خطا یا پیشنهاد قابلیت، یک [issue باز کنید](https://github.com/morluto/rea/issues) یا برای بهبود کد و مستندات [pull request بفرستید](https://github.com/morluto/rea/pulls).
+
+برای راه‌اندازی محیط توسعه و بررسی‌ها، [CONTRIBUTING.md](CONTRIBUTING.md)، برای مراحل اعتبارسنجی [آزمایش‌ها](docs/testing.md) و برای ساختار پروژه [نقشهٔ معماری](docs/architecture.mermaid) را ببینید.
 
 ## مجوز
 

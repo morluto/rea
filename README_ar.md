@@ -28,7 +28,7 @@
 
 <img src="docs/assets/rea-hopper-analysis.png" alt="REA يشغّل جسر التحليل داخل Hopper لفحص ملف ثنائي للشيفرة الأصلية" width="1200" />
 
-<br />
+<br /><br />
 
 <table aria-label="مجتمع REA">
 <tr>
@@ -154,6 +154,8 @@ npx rea-agents@latest setup
 
 ## دراسات الحالة
 
+[![رسوم توضيحية لأمثلة توزيع الصوت في DX-Ball وجسر الحافظة في Notion وحلقة الطلقات في TH04](docs/assets/rea-showcases.png)](https://rea.tools/showcase/)
+
 ### DX-Ball: إعادة بناء حساب توزيع الصوت بين القناتين
 
 تتبّع استدعاء صوت إلى الدالة المساعدة التي تحوّل الموضع إلى توزيع بين القناتين، وافحص التعليمات، وحوّل الشيفرة شبه البرمجية غير المكتملة إلى C. تجتاز إعادة البناء 3,205 حالات اختبار على x86 الأصلي، وتعيد إنتاج جميع بايتات الدالة المترجمة البالغ عددها 63 بايتًا.
@@ -254,16 +256,6 @@ npx rea-agents@latest setup
 
 أبلغ عن الثغرات وفق [SECURITY.md](SECURITY.md).
 
-## المساهمة
-
-نرحّب بمساعدتك في تطوير REA! [افتح issue](https://github.com/morluto/rea/issues) للإبلاغ عن خطأ أو اقتراح ميزة، أو [أرسل pull request](https://github.com/morluto/rea/pulls) لتحسين الشيفرة أو التوثيق.
-
-راجع [CONTRIBUTING.md](CONTRIBUTING.md) لإعداد بيئة التطوير والفحوص، و[دليل الاختبار](docs/testing.md) لمسارات التحقق، و[خريطة البنية](docs/architecture.mermaid) لهيكل المشروع.
-
-## روابط المشروع
-
-[الموقع](https://rea.tools/) · [npm](https://www.npmjs.com/package/rea-agents) · [skills.sh](https://skills.sh/morluto/rea/reverse-engineer-anything) · [Issues](https://github.com/morluto/rea/issues) · [الأمان](SECURITY.md)
-
 ## سجل النجوم
 
 🎉 **30,000 نجمة على GitHub — شكرًا لكم!**
@@ -281,6 +273,12 @@ npx rea-agents@latest setup
 ## إخلاء المسؤولية
 
 يوفّر REA أدوات لأبحاث الهندسة العكسية والتحليل وإعادة البناء المشروعة. أنت مسؤول عن الحصول على أي تفويض مطلوب والالتزام بالقوانين المعمول بها. لا يؤيد المشروع الاستخدام غير القانوني أو غير المصرّح به.
+
+## المساهمة
+
+نرحّب بمساعدتك في تطوير REA! [افتح issue](https://github.com/morluto/rea/issues) للإبلاغ عن خطأ أو اقتراح ميزة، أو [أرسل pull request](https://github.com/morluto/rea/pulls) لتحسين الشيفرة أو التوثيق.
+
+راجع [CONTRIBUTING.md](CONTRIBUTING.md) لإعداد بيئة التطوير والفحوص، و[دليل الاختبار](docs/testing.md) لمسارات التحقق، و[خريطة البنية](docs/architecture.mermaid) لهيكل المشروع.
 
 ## الترخيص
 

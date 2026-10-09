@@ -28,7 +28,7 @@
 
 <img src="docs/assets/rea-hopper-analysis.png" alt="REA launching its analysis bridge inside Hopper while inspecting a native binary" width="1200" />
 
-<br />
+<br /><br />
 
 <table aria-label="REA community">
 <tr>
@@ -336,7 +336,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and checks,
 [architecture map](docs/architecture.mermaid) for the project structure.
 
 ## License
-
-[![Software license document with a check seal](docs/assets/rea-license.png)](LICENSE)
 
 [MIT](LICENSE)
