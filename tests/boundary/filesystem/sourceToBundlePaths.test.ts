@@ -6,6 +6,7 @@ import { analyzeJavaScriptApplication } from "../../../src/application/javascrip
 import { parseApplicationGraphEvidence } from "../../../src/application/javascript/JavaScriptApplicationEvidenceGraph.js";
 import { importReferenceSource } from "../../../src/application/ReferenceSourceImport.js";
 import { compareSourceToBundle } from "../../../src/domain/javascript/sourceToBundleComparison.js";
+import { resolveSourceMapSource } from "../../../src/javascript/sourceMaps/DecodedSourceMap.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it("keeps literal hash characters in historical/current filesystem paths", async () => {
@@ -112,6 +113,13 @@ it.each([
     expected: "pkg/src/a.js",
   },
   {
+    mapPath: "pkg/maps/main.map",
+    sourceRoot: "../src",
+    source: "/vendor/a.js",
+    expected: "pkg/src/vendor/a.js",
+    decoy: "vendor/a.js",
+  },
+  {
     mapPath: "pkg/maps/main.js.map",
     source: "modules/a.js",
     expected: "pkg/maps/modules/a.js",
@@ -170,6 +178,16 @@ it.each([
     expected,
     decoy: decoyPath = "src/a.js",
   }) => {
+    if (sourceRoot !== undefined) {
+      const resolved = resolveSourceMapSource(
+        source,
+        sourceRoot,
+        `https://example.test/${mapPath}`,
+      );
+      expect(decodeURIComponent(new URL(resolved).pathname)).toBe(
+        `/${expected}`,
+      );
+    }
     const root = await createTestTempDirectory("rea-nested-map-");
     const previous = join(root, "previous");
     const current = join(root, "current");
@@ -379,6 +397,61 @@ it.each(["#original.js", "?version.js", "?version.js#original.js"])(
 );
 
 it.each([
+  { filename: "a#b.js", decoyFilename: "a" },
+  { filename: "a?b.js", decoyFilename: "a" },
+  { filename: "a%23b.js", decoyFilename: "a#b.js" },
+])(
+  "preserves the literal UNC filesystem name $filename without selecting a URL decoy",
+  async ({ filename, decoyFilename }) => {
+    const root = await createTestTempDirectory("rea-source-map-unc-");
+    const previous = join(root, "previous");
+    const current = join(root, "current");
+    const source = `\\\\server\\share\\src\\${filename}`;
+    const expected = `src/${filename}`;
+    const decoy = `src/${decoyFilename}`;
+    await Promise.all([
+      mkdir(join(previous, "src"), { recursive: true }),
+      mkdir(join(current, "maps"), { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(join(previous, expected), "export const value = 1;"),
+      writeFile(join(previous, decoy), "export const decoy = 3;"),
+      writeFile(
+        join(current, "maps/main.map"),
+        JSON.stringify({
+          version: 3,
+          sources: [source],
+          sourcesContent: ["export const value = 2;"],
+          names: [],
+          mappings: "AAAA",
+        }),
+      ),
+    ]);
+    const { comparison, application } = await compareTrees(previous, current);
+    const actual = comparison.items.find(
+      ({ source_path }) => source_path === expected,
+    );
+    expect(actual?.current_node_ids).toHaveLength(1);
+    expect(actual?.candidates).toContainEqual(
+      expect.objectContaining({
+        signals: expect.arrayContaining([
+          expect.objectContaining({ kind: "source-map-original-path" }),
+        ]),
+      }),
+    );
+    expect(
+      comparison.items.find(({ source_path }) => source_path === decoy)
+        ?.current_node_ids,
+    ).toEqual([]);
+    expect(application.graph.nodes).toContainEqual(
+      expect.objectContaining({
+        identity: expect.objectContaining({ original_source: source }),
+      }),
+    );
+  },
+);
+
+it.each([
   { source: "", historicalPath: "maps.js" },
   { source: ".", historicalPath: "maps.js" },
   { source: "./", historicalPath: "maps.js" },
@@ -392,6 +465,7 @@ it.each([
   { source: "child%2fpart.js", historicalPath: "maps.js/child/part.js" },
   { source: "child%5cpart.js", historicalPath: "maps.js/child/part.js" },
   { source: "bad%zz.js", historicalPath: "maps.js/bad%zz.js" },
+  { source: "\\\\bad host\\share\\a.js", historicalPath: "share/a.js" },
   { source: "../../outside/a.js", historicalPath: "outside/a.js" },
 ])(
   "declines source references without a trustworthy file path: $source",

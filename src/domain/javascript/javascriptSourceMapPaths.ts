@@ -12,7 +12,7 @@ export const resolveJavaScriptSourceMapPath = (
   mapPath?: string,
 ): SourceMapPath | null => {
   const portable = source.replaceAll("\\", "/");
-  const windowsPath = /^[a-z]:\//iu.test(portable);
+  const windowsPath = /^[a-z]:\//iu.test(portable) || source.startsWith("\\\\");
   // Preserve parent traversal rather than letting URL resolution clamp at '/'.
   const anchor = `/${"source/".repeat(portable.split("/").length + 1)}`;
   const directory = posix.join(
@@ -20,9 +20,7 @@ export const resolveJavaScriptSourceMapPath = (
     posix.dirname(mapPath?.replaceAll("\\", "/") ?? "."),
   );
   const base = pathToFileURL(`${directory}/`, { windows: false });
-  const absolute = windowsPath
-    ? pathToFileURL(source, { windows: true })
-    : URL.parse(source);
+  const absolute = windowsPath ? windowsFileUrl(source) : URL.parse(source);
   const resolved = windowsPath ? absolute : URL.parse(source, base);
   if (
     resolved === null ||
@@ -44,6 +42,15 @@ export const resolveJavaScriptSourceMapPath = (
     value,
     scope: relative && mapPath !== undefined ? "artifact-relative" : "suffix",
   };
+};
+
+const windowsFileUrl = (path: string): URL | null => {
+  try {
+    return pathToFileURL(path, { windows: true });
+  } catch (cause: unknown) {
+    if (cause instanceof TypeError) return null;
+    throw cause;
+  }
 };
 
 const decodedUrlPath = (url: URL): string | null => {
