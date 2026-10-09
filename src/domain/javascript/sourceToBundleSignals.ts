@@ -316,8 +316,7 @@ const addPath = (
         portable,
       )?.[0];
   // Opaque URI payloads do not establish a filesystem path, even with slash text.
-  if (scheme !== undefined && !raw.slice(scheme.length).startsWith("/"))
-    return;
+  if (scheme !== undefined && !raw.slice(scheme.length).startsWith("/")) return;
   const reference =
     scheme !== undefined || sourceMapReference
       ? (portable.split(/[?#]/u, 1)[0] ?? "")
