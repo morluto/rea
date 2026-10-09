@@ -234,7 +234,10 @@ export const projectBinaryLayoutView = (
     );
   const rows =
     view.collection === "sections" ? layout.sections : layout.symbols;
-  const items = pageRows(rows, view.offset, view.limit);
+  const items =
+    view.collection === "sections"
+      ? pageRows(layout.sections, view.offset, view.limit)
+      : pageRows(layout.symbols, view.offset, view.limit);
   return ok({
     kind: "page",
     view,
@@ -247,10 +250,7 @@ export const projectBinaryLayoutView = (
 const selectLayoutItem = <Row extends { readonly name: LayoutName }>(
   collection: "sections" | "symbols",
   rows: readonly Row[],
-  selector: Extract<
-    AnalysisViewRequest,
-    { readonly kind: "item" }
-  >["selector"],
+  selector: Extract<AnalysisViewRequest, { readonly kind: "item" }>["selector"],
 ): Result<Row, AnalysisError> => {
   if ("index" in selector)
     return selectIndexed(collection, rows, selector.index);

@@ -89,7 +89,7 @@ it("rejects stale retained IDs and unsupported parent operations", () => {
   expect(missing).toMatchObject({
     ok: false,
     error: {
-      _tag: "EvidenceReferenceError",
+      _tag: "EvidenceIntegrityError",
       evidenceId: JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE.evidence_id,
     },
   });

@@ -235,5 +235,7 @@ it("projects a retained JavaScript summary without graph or semantic_graph", asy
   });
   expect(inline.isError).not.toBe(true);
   expect(referenced.structuredContent).toEqual(inline.structuredContent);
-  expect(JSON.stringify(inline.structuredContent)).not.toMatch(/semantic_graph/);
+  expect(JSON.stringify(inline.structuredContent)).not.toMatch(
+    /semantic_graph/,
+  );
 });

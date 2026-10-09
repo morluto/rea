@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../../contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import {
+  analysisViewBindJavaScriptGraphs,
   analysisViewJavaScriptAnalysis,
   analysisViewJavaScriptAnalysisWithSource,
   analysisViewLayoutEvidence,
@@ -11,7 +12,6 @@ import {
   createJavaScriptApplicationGraph,
   createJavaScriptApplicationNode,
 } from "../javascript/javascriptApplicationGraph.js";
-import { javascriptApplicationAnalysisResultSchema } from "../javascript/javascriptApplicationAnalysis.js";
 import {
   MEASURED_PAGE_LIMIT,
   completeWithinViewCoverage,
@@ -42,7 +42,7 @@ const javascriptParent = (
 });
 
 it("documents the measured page bound derived from the stdio budget", () => {
-  expect(MEASURED_PAGE_LIMIT).toBe(319);
+  expect(MEASURED_PAGE_LIMIT).toBe(318);
   expect(
     inspectAnalysisViewInputSchema.safeParse({
       source: {
@@ -78,6 +78,8 @@ it("projects layout summary, facet, item, and stable pages", () => {
     facet: "mitigations",
   });
   if (!mitigations.ok) throw mitigations.error;
+  if (mitigations.value.kind !== "facet")
+    throw new Error("expected facet view");
   expect(mitigations.value.facet).toEqual(layout.mitigations);
   const data = projectAnalysisView(parent, {
     kind: "item",
@@ -85,6 +87,7 @@ it("projects layout summary, facet, item, and stable pages", () => {
     selector: { name: ".data" },
   });
   if (!data.ok) throw data.error;
+  if (data.value.kind !== "item") throw new Error("expected item view");
   expect(data.value.item).toMatchObject({
     index: 2,
     name: { display: ".data" },
@@ -114,6 +117,7 @@ it("projects layout summary, facet, item, and stable pages", () => {
       exhausted: false,
     },
   });
+  if (page.value.kind !== "page") throw new Error("expected page view");
   expect(page.value.items).toHaveLength(2);
   const exhausted = projectAnalysisView(parent, {
     kind: "page",
@@ -154,7 +158,7 @@ it("projects JavaScript summary and module identity without graph or source text
   const parent = javascriptParent(analysis);
   const summary = projectAnalysisView(parent, { kind: "summary" });
   if (!summary.ok) throw summary.error;
-  expect(summary.value.kind).toBe("summary");
+  if (summary.value.kind !== "summary") throw new Error("expected summary");
   expect(summary.value.summary).toMatchObject({
     format: "directory",
     limitation_count: 0,
@@ -170,6 +174,7 @@ it("projects JavaScript summary and module identity without graph or source text
   const moduleNode = analysis.graph.nodes[0];
   if (moduleNode === undefined) throw new Error("missing module");
   expect(javascriptModulePath(moduleNode)).toBe("renderer.js");
+  if (item.value.kind !== "item") throw new Error("expected item view");
   expect(item.value.item).toMatchObject({
     path: "renderer.js",
     kind: "javascript-asset",
@@ -183,6 +188,7 @@ it("projects JavaScript summary and module identity without graph or source text
     limit: 8,
   });
   if (!page.ok) throw page.error;
+  if (page.value.kind !== "page") throw new Error("expected page view");
   expect(page.value.items).toEqual([
     {
       node_id: analysis.graph.nodes[0]?.node_id,
@@ -232,14 +238,7 @@ it("rejects ambiguous JavaScript module paths with candidate node ids", () => {
     limitations: analysis.graph.limitations,
   });
   const parent = javascriptParent(
-    javascriptApplicationAnalysisResultSchema.parse({
-      ...analysis,
-      graph,
-      semantic_graph: {
-        ...analysis.semantic_graph,
-        application_graph_id: graph.graph_id,
-      },
-    }),
+    analysisViewBindJavaScriptGraphs(analysis, graph),
   );
   const result = projectAnalysisView(parent, {
     kind: "item",

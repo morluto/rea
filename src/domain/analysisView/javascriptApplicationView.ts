@@ -154,9 +154,7 @@ const javascriptUnknowns = (
 ): readonly string[] => {
   const unknowns = [...analysis.limitations, ...analysis.graph.limitations];
   if (analysis.graph.coverage.status !== "complete")
-    unknowns.push(
-      `graph.coverage.status is ${analysis.graph.coverage.status}`,
-    );
+    unknowns.push(`graph.coverage.status is ${analysis.graph.coverage.status}`);
   return unknowns;
 };
 
@@ -181,10 +179,7 @@ const parentFields = (
 
 const selectModule = (
   nodes: readonly ApplicationNode[],
-  selector: Extract<
-    AnalysisViewRequest,
-    { readonly kind: "item" }
-  >["selector"],
+  selector: Extract<AnalysisViewRequest, { readonly kind: "item" }>["selector"],
 ): Result<ApplicationNode, AnalysisError> => {
   if ("node_id" in selector) {
     const matches = nodes.filter((node) => node.node_id === selector.node_id);
@@ -260,10 +255,7 @@ export const projectJavaScriptApplicationView = (
         electron: jsonObjectSchema.parse(analysis.summary),
         limitation_count: analysis.limitations.length,
       },
-      coverage: completeCoverage(
-        modules.length,
-        analysis.graph.nodes.length,
-      ),
+      coverage: completeCoverage(modules.length, analysis.graph.nodes.length),
       ...shared,
     });
   if (view.kind === "facet")

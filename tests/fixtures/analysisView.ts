@@ -8,6 +8,7 @@ import {
   createJavaScriptApplicationGraph,
   createJavaScriptApplicationNode,
 } from "../../src/domain/javascript/javascriptApplicationGraph.js";
+import { createJavaScriptSemanticGraph } from "../../src/domain/javascript/javascriptSemanticGraph.js";
 import type { BinaryLayout } from "../../src/domain/native/binaryLayout.js";
 import { binaryLayoutSchema } from "../../src/domain/native/binaryLayout.js";
 
@@ -140,15 +141,32 @@ export const analysisViewJavaScriptAnalysisWithSource =
       coverage: analysis.graph.coverage,
       limitations: analysis.graph.limitations,
     });
+    const { graph_id: _graphId, ...semantic } = analysis.semantic_graph;
     return javascriptApplicationAnalysisResultSchema.parse({
       ...analysis,
       graph,
-      semantic_graph: {
-        ...analysis.semantic_graph,
+      semantic_graph: createJavaScriptSemanticGraph({
+        ...semantic,
         application_graph_id: graph.graph_id,
-      },
+      }),
     });
   };
+
+/** Rebind a companion semantic graph after replacing the application graph. */
+export const analysisViewBindJavaScriptGraphs = (
+  analysis: JavaScriptApplicationAnalysisResult,
+  graph: ReturnType<typeof createJavaScriptApplicationGraph>,
+): JavaScriptApplicationAnalysisResult => {
+  const { graph_id: _graphId, ...semantic } = analysis.semantic_graph;
+  return javascriptApplicationAnalysisResultSchema.parse({
+    ...analysis,
+    graph,
+    semantic_graph: createJavaScriptSemanticGraph({
+      ...semantic,
+      application_graph_id: graph.graph_id,
+    }),
+  });
+};
 
 /** Wrap JavaScript application analysis as producer Evidence. */
 export const analysisViewJavaScriptEvidence = (

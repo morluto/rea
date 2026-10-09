@@ -49,10 +49,12 @@ it("advertises exact schemas and projects one layout section from retained Evide
   if (advertised?.outputSchema === undefined)
     throw new Error("inspect_analysis_view must publish both schemas");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
-  expect(ajv.validateSchema(advertised.inputSchema)).toBe(true);
-  expect(ajv.validateSchema(advertised.outputSchema)).toBe(true);
+  const inputSchema: Record<string, unknown> = advertised.inputSchema;
+  const outputSchema: Record<string, unknown> = advertised.outputSchema;
+  expect(ajv.validateSchema(inputSchema)).toBe(true);
+  expect(ajv.validateSchema(outputSchema)).toBe(true);
   expect(
-    ajv.validate(advertised.inputSchema, {
+    ajv.validate(inputSchema, {
       source: {
         kind: "retained-evidence",
         evidence_id: `ev_${"a".repeat(64)}`,
@@ -84,7 +86,7 @@ it("advertises exact schemas and projects one layout section from retained Evide
   });
   expect(response.isError).not.toBe(true);
   expect(
-    ajv.validate(advertised.outputSchema, response.structuredContent),
+    ajv.validate(outputSchema, response.structuredContent),
     JSON.stringify(ajv.errors),
   ).toBe(true);
   const parsed = toolContract("inspect_analysis_view").outputSchema.parse(
@@ -174,6 +176,7 @@ it("accepts a transport-constraint retained reference as the view source", async
     parent_evidence_id: parent.evidence_id,
     coverage: { exhausted: true },
   });
+  if (parsed.result.kind !== "page") throw new Error("expected page view");
   expect(parsed.result.items).toEqual([
     {
       node_id: expect.any(String),
