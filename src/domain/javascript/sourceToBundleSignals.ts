@@ -307,21 +307,34 @@ const addPath = (
   mapPath?: string,
 ): void => {
   const portable = raw.replaceAll("\\", "/");
+  const windowsPath = /^[a-z]:\//iu.test(portable);
+  const scheme = windowsPath ? undefined : URI_SCHEME.exec(portable)?.[0];
+  // Opaque URI payloads do not establish a filesystem path, even with slash text.
+  if (scheme !== undefined && !portable.slice(scheme.length).startsWith("/"))
+    return;
+  const reference =
+    scheme !== undefined ||
+    kind === "source-map-original" ||
+    mapPath !== undefined
+      ? (portable.split(/[?#]/u, 1)[0] ?? "")
+      : portable;
   if (
-    portable === "" ||
-    portable.endsWith("/") ||
-    /(?:^|\/)\.{1,2}$/u.test(portable)
+    reference === "" ||
+    reference.endsWith("/") ||
+    /(?:^|\/)\.{1,2}$/u.test(reference)
   )
     return;
   const relative =
-    !URI_SCHEME.test(portable) &&
-    !portable.startsWith("/") &&
-    !/^[a-z]:\//iu.test(portable);
+    scheme === undefined && !reference.startsWith("/") && !windowsPath;
   const resolved =
     mapPath !== undefined && relative
-      ? posix.join(posix.dirname(mapPath.replaceAll("\\", "/")), portable)
-      : raw;
-  const value = normalizeCurrentPath(resolved);
+      ? posix.join(posix.dirname(mapPath.replaceAll("\\", "/")), reference)
+      : reference;
+  const value = normalizeCurrentPath(
+    scheme === undefined
+      ? resolved
+      : resolved.slice(scheme.length).replace(/^\/+/u, ""),
+  );
   if (value !== null)
     paths.push({
       kind,
@@ -332,18 +345,10 @@ const addPath = (
 
 /** Recognize URI schemes even when the URI has no authority component. */
 const URI_SCHEME = /^[a-z][a-z0-9+.-]*:/iu;
-/** Matches a `scheme://...` URL prefix; bare filesystem paths keep `?`/`#`. */
-const SCHEME_URL = /^[a-z][a-z0-9+.-]*:\/\//iu;
-/** Matches a `scheme://...` URL prefix with any run of slashes, for stripping. */
-const SCHEME_URL_PREFIX = /^[a-z][a-z0-9+.-]*:\/\/+/iu;
 
 const normalizeCurrentPath = (raw: string): string | null => {
-  const withoutQuery = SCHEME_URL.test(raw)
-    ? (raw.split(/[?#]/u, 1)[0] ?? "")
-    : raw;
-  const withoutScheme = withoutQuery.replace(SCHEME_URL_PREFIX, "");
   const parts: string[] = [];
-  for (const part of withoutScheme.replaceAll("\\", "/").split("/")) {
+  for (const part of raw.split("/")) {
     if (part === "" || part === ".") continue;
     if (part === "..") {
       if (parts.length === 0) return null;

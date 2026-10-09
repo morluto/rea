@@ -230,12 +230,16 @@ it("retains every map location when identical map artifacts merge", async () => 
 });
 
 it.each([
-  "file:/repo/src/a.js",
-  "node:internal/src/a.js",
-  "data:text/javascript,virtual/src/a.js",
+  { source: "file:/repo/src/a.js", hasPath: true },
+  { source: "file:/repo/src/a.js?version=2#original", hasPath: true },
+  { source: "webpack:///src/a.js", hasPath: true },
+  { source: "https://example.com/src/a.js#original", hasPath: true },
+  { source: "node:internal/src/a.js", hasPath: false },
+  { source: "data:text/javascript,virtual/src/a.js", hasPath: false },
+  { source: "data:text/javascript,virtual/../src/a.js", hasPath: false },
 ])(
-  "preserves URI path candidates for %s without map-relative joining",
-  async (source) => {
+  "projects a filesystem path from $source only when it is hierarchical",
+  async ({ source, hasPath }) => {
     const root = await createTestTempDirectory("rea-source-map-uri-");
     const previous = join(root, "previous");
     const current = join(root, "current");
@@ -256,13 +260,74 @@ it.each([
         }),
       ),
     ]);
-    const { comparison } = await compareTrees(previous, current);
-    expect(comparison.items[0]?.candidates).toContainEqual(
+    const { comparison, application } = await compareTrees(previous, current);
+    expect(application.graph.nodes).toContainEqual(
+      expect.objectContaining({
+        identity: expect.objectContaining({ original_source: source }),
+      }),
+    );
+    if (hasPath)
+      expect(comparison.items[0]?.candidates).toContainEqual(
+        expect.objectContaining({
+          confidence: "high",
+          signals: expect.arrayContaining([
+            expect.objectContaining({ kind: "source-map-original-path" }),
+          ]),
+        }),
+      );
+    else expect(comparison.items[0]?.candidates).toEqual([]);
+  },
+);
+
+it.each(["#original.js", "?version.js", "?version.js#original.js"])(
+  "uses the relative URL pathname rather than a literal %s filename",
+  async (suffix) => {
+    const root = await createTestTempDirectory("rea-source-map-suffix-");
+    const previous = join(root, "previous");
+    const current = join(root, "current");
+    await Promise.all([
+      mkdir(join(previous, "src"), { recursive: true }),
+      mkdir(join(current, "maps"), { recursive: true }),
+    ]);
+    const source = `../src/a.js${suffix}`;
+    await Promise.all([
+      writeFile(join(previous, "src/a.js"), "export const value = 1;"),
+      writeFile(join(previous, `src/a.js${suffix}`), "export const decoy = 3;"),
+      writeFile(
+        join(current, "maps/main.js.map"),
+        JSON.stringify({
+          version: 3,
+          sources: [source],
+          sourcesContent: ["export const value = 2;"],
+          names: [],
+          mappings: "AAAA",
+        }),
+      ),
+    ]);
+    const { comparison, application } = await compareTrees(previous, current);
+    const actual = comparison.items.find(
+      ({ source_path }) => source_path === "src/a.js",
+    );
+    expect(actual?.current_node_ids).toHaveLength(1);
+    expect(actual?.candidates).toContainEqual(
       expect.objectContaining({
         confidence: "high",
         signals: expect.arrayContaining([
-          expect.objectContaining({ kind: "source-map-original-path" }),
+          expect.objectContaining({
+            kind: "source-map-original-path",
+            current_values: ["src/a.js"],
+          }),
         ]),
+      }),
+    );
+    const decoy = comparison.items.find(
+      ({ source_path }) => source_path === `src/a.js${suffix}`,
+    );
+    expect(decoy?.current_node_ids).toEqual([]);
+    expect(decoy?.candidates).toEqual([]);
+    expect(application.graph.nodes).toContainEqual(
+      expect.objectContaining({
+        identity: expect.objectContaining({ original_source: source }),
       }),
     );
   },
@@ -274,6 +339,9 @@ it.each([
   { source: "./", historicalPath: "maps.js" },
   { source: "child/..", historicalPath: "maps.js" },
   { source: "child.js/", historicalPath: "maps.js/child.js" },
+  { source: "#original.js", historicalPath: "maps.js" },
+  { source: "?version.js", historicalPath: "maps.js" },
+  { source: "./?version.js", historicalPath: "maps.js" },
 ])(
   "keeps the directory-only source name $source out of file path indices",
   async ({ source, historicalPath }) => {
@@ -389,5 +457,5 @@ const compareTrees = async (previous: string, current: string) => {
       graph: application.graph,
     },
   });
-  return { reference: reference.value, comparison };
+  return { reference: reference.value, comparison, application };
 };
