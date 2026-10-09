@@ -90,7 +90,7 @@ const buildJavaScriptArtifactGraphInput = (
   addJavaScriptSourceModules(context);
   const bundlerLimitations = addJavaScriptBundlerNodes(context);
   const relationshipOmissions = addJavaScriptModuleRelationships(context);
-  addJavaScriptStaticFindings(context);
+  const findingLimitations = addJavaScriptStaticFindings(context);
   addElectronBoundaries(context);
   addJavaScriptHtmlRoles(context);
   addJavaScriptSourceMapOriginals(context);
@@ -106,6 +106,7 @@ const buildJavaScriptArtifactGraphInput = (
     coverage,
     limitations: [
       ...bundlerLimitations,
+      ...findingLimitations,
       ...graphLimitations(context, coverage.status, relationshipOmissions),
     ],
   };

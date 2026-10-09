@@ -89,3 +89,48 @@ for (const scenario of [
     },
   );
 }
+
+cliTest(
+  "preserves bundle evidence when a module requires its own key",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-bundler-self-require-");
+    await writeFixtureFiles(root, {
+      "runtime.js": `
+        (self.webpackChunkdemo = self.webpackChunkdemo || []).push([
+          [5], {50(e,t,r){r(50); r(51)}, 51(e,t,r){r.r(t)}}
+        ]);
+      `,
+    });
+    const output = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--json"],
+    });
+    expect(output.exitCode).toBe(0);
+    const result = javascriptApplicationAnalysisResultSchema.parse(
+      parseEvidence(output.json).normalized_result,
+    );
+    const { graph } = result;
+    expect(
+      graph.edges.filter((edge) => edge.source_node_id === edge.target_node_id),
+    ).toEqual([]);
+    expect(graph.limitations).toContainEqual(
+      expect.stringMatching(
+        /^1 static reference resolved back to the referencing module itself and was omitted;/u,
+      ),
+    );
+    expect(result.limitations).toEqual(
+      expect.arrayContaining(graph.limitations),
+    );
+    expect(
+      graph.edges.filter(
+        ({ relation, properties }) =>
+          relation === "imports" &&
+          properties.kind === "require" &&
+          ["50", "51"].includes(String(properties.specifier)),
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        properties: expect.objectContaining({ specifier: "51" }),
+      }),
+    ]);
+  },
+);
