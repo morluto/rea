@@ -101,7 +101,21 @@ const resolveJavaScriptSourceMapPath = (
   return { path: value, kind: relative ? "artifact-relative" : "suffix" };
 };
 
+// Code points and escapes a file URL host cannot carry.
+const unusableHost = /[\0\t\n\r #/:<>?@[\\\]^|%]/u;
+
+const carriesUsableHost = (host: string): boolean =>
+  host !== "" && !unusableHost.test(host);
+
 const windowsFileUrl = (path: string): URL | null => {
+  // A malformed UNC host aborts pathToFileURL() on the Node builds this
+  // package admits, so decline the reference before handing the path over
+  // rather than trusting a TypeError that never arrives.
+  if (
+    path.startsWith("\\\\") &&
+    !carriesUsableHost(path.slice(2).split("\\")[0] ?? "")
+  )
+    return null;
   try {
     return pathToFileURL(path, { windows: true });
   } catch (cause: unknown) {
