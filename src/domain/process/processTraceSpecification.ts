@@ -1,6 +1,8 @@
 import canonicalize from "canonicalize";
 import { z } from "zod";
 
+import { IDENTIFIER_PATTERN } from "../stringPatterns.js";
+
 import { jsonValueSchema } from "../jsonValue.js";
 import {
   comparableProcessObservationPayload,
@@ -8,7 +10,7 @@ import {
   type ProcessObservationSource,
 } from "./processObservation.js";
 
-const identifierSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9._\x2d]*$/u);
+const identifierSchema = z.string().regex(IDENTIFIER_PATTERN);
 
 /** Process observation families admitted by a declared trace specification. */
 export const processTraceSourceSchema = processObservationSourceSchema;

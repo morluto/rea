@@ -1,11 +1,13 @@
 import { z } from "zod";
+
+import { IDENTIFIER_PATTERN } from "./stringPatterns.js";
 import { digestSchema } from "./../domain/digests.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 import { PROCESS_COMPARISON_DIMENSIONS } from "./process/processComparison.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const unknownIdSchema = prefixedDigestSchema("unk");
-const claimIdSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9._\x2d]*$/u);
+const claimIdSchema = z.string().regex(IDENTIFIER_PATTERN);
 const titleSchema = z.string().trim().min(1);
 const verificationStatusSchema = z.enum(["pass", "fail", "unknown"]);
 const commonClaim = {

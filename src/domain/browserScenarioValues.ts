@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { IDENTIFIER_PATTERN } from "./stringPatterns.js";
+
 import { isAbsoluteLocalPath, localPathStringSchema } from "./localPath.js";
 import { browserNetworkContentSelectionSchema } from "./browserNetworkEvidence.js";
 
@@ -8,9 +10,7 @@ import {
   browserOriginSchema,
 } from "./browserObservation.js";
 
-export const scenarioIdentifierSchema = z
-  .string()
-  .regex(/^[A-Za-z][A-Za-z0-9._\x2d]*$/u);
+export const scenarioIdentifierSchema = z.string().regex(IDENTIFIER_PATTERN);
 
 const browserExecutablePathSchema = localPathStringSchema.refine(
   isAbsoluteLocalPath,

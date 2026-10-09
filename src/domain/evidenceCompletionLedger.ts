@@ -2,10 +2,12 @@ import { createHash } from "node:crypto";
 
 import canonicalize from "canonicalize";
 import { z } from "zod";
+
+import { IDENTIFIER_PATTERN } from "./stringPatterns.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
-const claimIdSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9._\x2d]*$/u);
+const claimIdSchema = z.string().regex(IDENTIFIER_PATTERN);
 
 /** Terminal outcome recorded for one verifier claim. */
 export const evidenceCompletionStatusSchema = z.enum([

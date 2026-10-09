@@ -1,14 +1,12 @@
 import { z } from "zod";
+
+import { CANONICAL_BASE64_PATTERN } from "../stringPatterns.js";
 import { recordedNoteCoverageIssues } from "./recordedCrashNoteCoverage.js";
 
 const hex = z.string().regex(/^0x(?:0|[1-9a-f][0-9a-f]{0,15})$/);
 const index = z.number().int().nonnegative();
 const signed32 = z.number().int().min(-2147483648).max(2147483647);
-const base64 = z
-  .string()
-  .regex(
-    /^(?:[A-Za-z0-9+\x2f]{4})*(?:[A-Za-z0-9+\x2f][AQgw]==|[A-Za-z0-9+\x2f]{2}[AEIMQUYcgkosw048]=)?$/,
-  );
+const base64 = z.string().regex(CANONICAL_BASE64_PATTERN);
 const range = z.strictObject({ offset: hex, bytes: hex });
 const diagnostics = z.strictObject({
   stdout: z.string(),

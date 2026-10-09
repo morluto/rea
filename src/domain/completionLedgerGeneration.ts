@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import canonicalize from "canonicalize";
 import { z } from "zod";
 
+import { IDENTIFIER_PATTERN } from "./stringPatterns.js";
+
 import {
   createEvidenceCompletionLedger,
   evidenceCompletionRecordSchema,
@@ -11,7 +13,7 @@ import {
 import { digestSchema } from "./../domain/digests.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 
-const identifierSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9._\x2d]*$/u);
+const identifierSchema = z.string().regex(IDENTIFIER_PATTERN);
 const identitySchema = z.strictObject({
   id: identifierSchema,
   version: z.string().min(1),

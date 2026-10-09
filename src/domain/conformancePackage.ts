@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import canonicalize from "canonicalize";
 import { z } from "zod";
 
+import { IDENTIFIER_PATTERN } from "./stringPatterns.js";
+
 import { evidenceEnvelopeSchema } from "./evidence.js";
 import { evidenceBundleSchema } from "./evidenceBundle.js";
 import { err, ok, type Result } from "./result.js";
@@ -10,7 +12,7 @@ import { prefixedDigestSchema } from "./../domain/digests.js";
 
 const conformancePackageIdSchema = prefixedDigestSchema("cp");
 
-const scenarioIdSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9._\x2d]*$/u);
+const scenarioIdSchema = z.string().regex(IDENTIFIER_PATTERN);
 
 const scenarioManifestSchema = z.strictObject({
   scenario_id: scenarioIdSchema,
