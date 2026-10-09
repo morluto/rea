@@ -146,6 +146,7 @@
     "verify:keyed-archive": "npm run build:cached && node scripts/verify/apple/keyed-archive.mjs",
     "verify:macos-bundle": "npm run build:cached && node scripts/verify/apple/macos-bundle.mjs",
     "verify:ghidra": "npm run build:cached && node scripts/verify-real-ghidra.mjs",
+    "verify:ghidra:swift": "npm run build:cached && node scripts/verify-real-ghidra-swift.mjs",
     "verify:ida": "npm run build:cached && node scripts/verify-real-ida.mjs",
     "verify:ghidra:switch": "npm run build:cached && node scripts/verify-real-ghidra-switch.mjs",
     "verify:ghidra:dos": "npm run build:cached && node scripts/verify-real-ghidra-dos.mjs",

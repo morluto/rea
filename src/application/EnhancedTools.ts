@@ -8,6 +8,7 @@ import type { EnhancedToolName } from "../contracts/enhancedInputs.js";
 import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
 import {
   AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -358,9 +359,30 @@ export class EnhancedTools {
     signal?: AbortSignal,
   ): EnhancedResult {
     const procedures = await this.#allAddressed("list_procedures", signal);
-    return procedures.ok
-      ? ok(categorizeSwiftTypes(procedures.value, input))
-      : procedures;
+    if (!procedures.ok) return procedures;
+    const symbols = await this.#allAddressed("list_names", signal);
+    if (
+      !symbols.ok &&
+      !(symbols.error instanceof AnalysisCapabilityUnavailableError)
+    )
+      return symbols;
+    const result = categorizeSwiftTypes(
+      procedures.value,
+      input,
+      symbols.ok ? symbols.value : [],
+    );
+    return ok(
+      symbols.ok
+        ? result
+        : {
+            ...result,
+            symbol_inventory_error: projectAnalysisError(symbols.error),
+            limitations: [
+              ...result.limitations,
+              "The provider's symbol inventory is unavailable; demangled procedures could not be joined to their Swift aliases.",
+            ],
+          },
+    );
   }
 
   async #findXrefs(name: string, signal?: AbortSignal): EnhancedResult {

@@ -283,9 +283,21 @@ export const enhancedOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
         z.string(),
         z.object({
           count: z.number().int().min(0),
-          items: z.array(addressedEntry),
+          items: z.array(
+            addressedEntry.extend({
+              mangled_names: z.array(z.string()),
+            }),
+          ),
         }),
       ),
+      unclassified: z.array(
+        addressedEntry.extend({
+          mangled_names: z.array(z.string()),
+          reason: z.enum(["category_not_decoded", "conflicting_categories"]),
+        }),
+      ),
+      limitations: z.array(z.string()),
+      symbol_inventory_error: analysisErrorProjectionSchema.exactOptional(),
     }),
   ),
   find_xrefs_to_name: resultOf(

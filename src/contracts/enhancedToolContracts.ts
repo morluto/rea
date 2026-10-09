@@ -54,7 +54,7 @@ export const ENHANCED_TOOL_CONTRACTS = [
   ),
   enhanced(
     "analyze_swift_types",
-    'Categorize analyzed procedure names into Swift classes, structs, enums, protocols, extensions, and other symbols. Returns deduplicated names grouped with counts. Optionally select one category and/or apply a case-sensitive literal name filter; for example, use {category: "classes", pattern: "Account"} to find matching class symbols.',
+    'Categorize analyzed Swift procedure names using their manglings or same-address Swift symbol aliases. Decodes legacy and literal modern nominal contexts into classes, structs, enums, protocols, and extensions. Preserves provider names and supporting mangled_names; unresolved categories appear in other and in unclassified, which remains inline even under category filters. Returns deduplicated procedure-name counts, not unique source types, plus identification limitations. Optionally select one category and/or apply a case-sensitive literal filter to provider names or supporting manglings; for example, use {category: "structs", pattern: "Pair"}.',
     enhancedInputSchemas.analyze_swift_types,
   ),
   enhanced(

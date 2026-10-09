@@ -313,10 +313,17 @@ prove behavior on the verified Ghidra 12.1.4 and JDK 21 build.
 | Ghidra lane                                | Supported runner/target                                                            | Additional local tools                                              |
 | ------------------------------------------ | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
 | `npm run verify:ghidra`                    | Linux x64/arm64 ELF or macOS x64/arm64 Mach-O                                      | Host C compiler, Ghidra 12.1.4, and full JDK 21                     |
+| `npm run verify:ghidra:swift`              | macOS x64/arm64 Mach-O                                                             | Host Swift compiler, Ghidra 12.1.4, and full JDK 21                 |
 | `npm run verify:ghidra:switch`             | Linux x64 ELF; GCC/Clang optimized and stripped switch fixtures                    | GCC, Clang, GNU nm/objdump/strip, Ghidra 12.1.4, and full JDK 21    |
 | `npm run verify:ghidra:aarch64-jump-table` | Any supported Ghidra host; AArch64 ELF; byte/halfword tables; host ARM64 Mach-O    | Clang with AArch64 target support, Ghidra 12.1.4, and full JDK 21   |
 | `npm run verify:ghidra:cross-format`       | Any supported Ghidra host; also analyzes AArch64 ELF, x86-64 PE, and x86-64 Mach-O | `clang`, LLD, and `lld-link` in addition to host-lane prerequisites |
 | `npm run verify:ghidra:windows`            | Controlled Windows x64 with native x86-64 PE; `-- --x86` selects native x86 PE     | Ghidra 12.1.4, full JDK 21, and the matching native artifact        |
+
+The optional Swift lane compiles a source-owned fixture and checks modern and
+provider-demangled procedure names through real stdio MCP, with and without the
+dSYM companion. It checks unfiltered, structs, and literal-name filters,
+same-address alias evidence, deduplication, and explicit unresolved categories.
+It does not add a Swift prerequisite to the host C fixture lane.
 
 The host lane also verifies namespaced C++ ABI symbols and annotation identity.
 That facet requires Ghidra's matching `demangler_gnu_v2_41` native component in

@@ -30,12 +30,14 @@ export const enhancedInputSchemas = {
     category: z
       .enum(["classes", "structs", "enums", "protocols", "extensions", "other"])
       .optional()
-      .describe("Limit results to one Swift symbol category."),
+      .describe(
+        "Limit categorized results to one Swift category; unresolved category observations remain in unclassified.",
+      ),
     pattern: z
       .string()
       .optional()
       .describe(
-        "Case-sensitive literal filter applied to mangled symbol names.",
+        "Case-sensitive literal filter applied to provider procedure names and their supporting Swift manglings.",
       ),
   }),
   find_xrefs_to_name: z.strictObject({ name: z.string() }),
