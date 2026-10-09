@@ -1,6 +1,23 @@
+import { readFile } from "node:fs/promises";
+
 import { describe, expect, it } from "vitest";
 
 import { MachOSliceArtifactReader } from "./MachOSliceArtifactReader.js";
+
+/**
+ * Read a 32-bit FAT table directly. The host's /bin/ls changes between macOS
+ * releases, so the expected slice layout comes from the file itself.
+ */
+const fatSlices = async (
+  path: string,
+): Promise<readonly (readonly [number, number])[]> => {
+  const bytes = await readFile(path);
+  expect(bytes.readUInt32BE(0)).toBe(0xca_fe_ba_be);
+  return Array.from({ length: bytes.readUInt32BE(4) }, (_, index) => {
+    const entry = 8 + index * 20;
+    return [bytes.readUInt32BE(entry + 8), bytes.readUInt32BE(entry + 12)];
+  });
+};
 
 describe("Mach-O slice reader with system lipo", () => {
   it.skipIf(process.platform !== "darwin")(
@@ -18,10 +35,7 @@ describe("Mach-O slice reader with system lipo", () => {
           byteOffset,
           declaredSize,
         ]),
-      ).toEqual([
-        [16384, 48112],
-        [65536, 89088],
-      ]);
+      ).toEqual(await fatSlices("/bin/ls"));
     },
   );
 });
