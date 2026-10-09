@@ -1,3 +1,4 @@
+import { constants as bufferConstants } from "node:buffer";
 import { resolve } from "node:path";
 
 import {
@@ -23,6 +24,8 @@ export const parseCliJsonInput = async (
 > => {
   const inline = safeParseJson(value);
   if (inline.ok) return { ok: true, value: inline.value };
+  if (isStringLengthLimit(inline.cause))
+    return jsonTooLargeError(undefined, operation);
   try {
     // Read raw bytes so invalid UTF-8 is rejected instead of
     // being silently replaced by lossy "utf8" decoding.
@@ -30,6 +33,7 @@ export const parseCliJsonInput = async (
       await readRegularFile(value),
       operation,
       value,
+      "cli-json-input",
     );
     return parsed.ok
       ? { ok: true, value: parsed.value }
@@ -105,6 +109,13 @@ const cannotBeAnExistingFile = (cause: unknown): boolean =>
 const hasExplicitJsonFileExtension = (value: string): boolean =>
   value.toLowerCase().endsWith(".json");
 
+const isStringLengthLimit = (cause: unknown): boolean =>
+  cause instanceof Error &&
+  (("code" in cause && cause.code === "ERR_STRING_TOO_LONG") ||
+    /cannot create a string longer than|invalid string length/i.test(
+      cause.message,
+    ));
+
 const inputError = (operation: string): JsonValue => ({
   error: "Application workflow failed",
   ...projectAnalysisError(
@@ -155,3 +166,30 @@ const readFailureIssue = (path: string | undefined, cause: unknown) => {
         : `The JSON input file could not be read${code}: ${path ?? ""}`,
   };
 };
+
+const jsonTooLargeError = (
+  path: string | undefined,
+  operation: string,
+): { readonly ok: false; readonly error: JsonValue } => ({
+  ok: false,
+  error: {
+    error: "Application workflow failed",
+    ...projectAnalysisError(
+      new AnalysisResourceConstraintError(
+        operation,
+        "memory",
+        `The JSON input exceeds this Node.js runtime's maximum string length (${bufferConstants.MAX_STRING_LENGTH} UTF-16 code units) and cannot be parsed as one value.`,
+        {
+          boundary: "cli-json-input",
+          max_string_code_units: bufferConstants.MAX_STRING_LENGTH,
+        },
+        {
+          remediationAction:
+            "Provide a smaller JSON document or rerun its producer on a smaller selection. Splitting JSON text alone does not produce a valid workflow input.",
+        },
+      ),
+    ),
+    ...(path === undefined ? {} : { input_path: path }),
+    input_reason: "too-large",
+  },
+});

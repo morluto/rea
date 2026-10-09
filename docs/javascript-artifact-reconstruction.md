@@ -22,7 +22,7 @@ The tool reads the caller-selected local directory or ASAR path directly:
 ```bash
 rea analyze /absolute/path/to/apps/app.asar --json
 rea analyze-javascript-application /absolute/path/to/apps/app.asar \
-  --json
+  --integrity-policy record-and-continue --json
 ```
 
 Generic `rea analyze` selects this static provider for directories and `.asar`
@@ -47,11 +47,14 @@ The equivalent MCP input is:
 ```json
 {
   "input_path": "/absolute/path/to/apps/app.asar",
-  "format": "auto"
+  "format": "auto",
+  "integrity_policy": "fail"
 }
 ```
 
 `input_path` must be absolute. `format` accepts `auto`, `asar`, or `directory`.
+`integrity_policy` accepts `fail` or `record-and-continue`; both CLI routes and
+the MCP tool default to `fail`.
 The result retains the canonical local path, root artifact digest, artifact
 manifest and graph commitments, JavaScript Application Graph, static
 Electron summary, reconstruction statistics, and explicit limitations. It does
@@ -63,8 +66,12 @@ ASAR inventory checks Electron integrity metadata for embedded archive entries
 and supplied `.asar.unpacked` companion files. An integrity failure identifies
 the logical path, declared and calculated SHA-256 values, and whether the entry
 was unpacked. By default, a mismatch is returned as a failure with its artifact
-context. Requests that support `integrity_policy` can explicitly select
-`record-and-continue` to inspect verified siblings while retaining the mismatch.
+context. Application analysis can explicitly select `record-and-continue` to
+analyze observed bytes while retaining each contradiction's declared and
+observed hashes and `observed-untrusted` trust. Such results mark application
+graph coverage partial and include every contradicted path in the limitations.
+Mismatched nested ASARs stay opaque rather than being expanded. An unpacked
+entry whose companion bytes were not supplied remains `unavailable`.
 
 An unpacked entry whose companion bytes were not supplied remains
 `unavailable`. REA continues analyzing embedded JavaScript and records the
@@ -105,6 +112,13 @@ Field selection remains useful when the caller needs a
 smaller view, for example `--format json --filter-output
 evidence_id,normalized_result.statistics`. Streaming output does not bound the
 memory needed to construct the analysis graph itself.
+
+CLI workflows still parse each JSON input as one value. A valid input exceeding
+the Node runtime's maximum string length returns `resource_constraint` with
+`input_reason: "too-large"` and the runtime limit. Produce smaller independent
+analysis inputs before retrying; streaming output does not imply streaming
+input parsing.
+
 MCP prepares the complete repeated response incrementally against the pinned
 SDK's 10 MiB stdio receive-buffer budget. Oversized results return an actionable
 transport constraint and the exact same-session Evidence reference. Use

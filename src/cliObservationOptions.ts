@@ -63,4 +63,8 @@ export const javascriptApplicationOptions = z.object({
     .enum(["auto", "asar", "directory"])
     .default("auto")
     .describe("Application artifact format"),
+  integrityPolicy: z
+    .enum(["fail", "record-and-continue"])
+    .default("fail")
+    .describe("Behavior when declared application integrity does not match"),
 });

@@ -28,6 +28,7 @@ const captures = {
       "agm_f30ded9a83d43a3980417bbe63dfad569e83386f243c4d6a01af0166372cb9e6",
     inventory_graph_sha256:
       "4b8aceaf67e43fd8317ec1f5fd1df5235f8fa402335accf011683e008c6bc62c",
+    integrity_contradictions: [],
   },
   total: {
     input_path: "/examples/javascript-export-presence/right",
@@ -37,6 +38,7 @@ const captures = {
       "agm_d3ceaa1af38fb3474070ca25c0d4644282e5fb7d5824cee3e3a81391481e9fc1",
     inventory_graph_sha256:
       "3e9bc926951480c35385efe5650d9d781631bd74c37a523d543b5fbe06b01ce6",
+    integrity_contradictions: [],
   },
 };
 const summary = {
@@ -72,7 +74,6 @@ const statistics = {
   findings: 1,
   modules: 0,
   parse_failures: 0,
-  truncated_scopes: 0,
 };
 const modulePath = "parser.mjs";
 const limitations = [

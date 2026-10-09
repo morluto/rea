@@ -58,6 +58,7 @@ describe("Linux Hopper host classification", () => {
   it.each([
     ['ID=ubuntu\nVERSION_ID="24.04"\n', "deb"],
     ["ID=fedora\nVERSION_ID=41\n", "rpm"],
+    ['ID=nobara\nVERSION_ID="44"\nID_LIKE="rhel centos fedora"\n', "rpm"],
     ["ID=arch\n", "arch"],
     ["ID=cachyos\nID_LIKE=arch\n", "arch"],
   ] as const)("accepts an official Hopper distribution", (document, family) => {
@@ -88,6 +89,8 @@ describe("Linux Hopper host classification", () => {
   it.each([
     'ID=ubuntu\nVERSION_ID="22.04"\n',
     "ID=fedora\nVERSION_ID=40\n",
+    'ID=nobara\nVERSION_ID="43"\nID_LIKE="rhel centos fedora"\n',
+    'ID=derivative\nVERSION_ID="44"\nID_LIKE="rhel centos fedora"\n',
     'ID=debian\nVERSION_ID="13"\nID_LIKE=debian\n',
     "ID=manjaro\nID_LIKE=arch\n",
     "ID=garuda\nID_LIKE=arch\n",

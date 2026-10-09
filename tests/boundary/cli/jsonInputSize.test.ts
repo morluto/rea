@@ -23,7 +23,7 @@ cliTest(
     const limits = {
       input_path: input,
       input_bytes: constants.MAX_STRING_LENGTH + 1,
-      max_string_utf16_code_units: constants.MAX_STRING_LENGTH,
+      max_string_code_units: constants.MAX_STRING_LENGTH,
     };
     // Run readers sequentially in owned child processes, releasing each large
     // read buffer when its process exits instead of retaining it in Vitest.
@@ -39,7 +39,7 @@ cliTest(
       remediation: { action: expect.stringContaining("re-analyze") },
       details: {
         operation: "trace-application-feature",
-        resource: "file-size",
+        resource: "memory",
         reported_limits: limits,
       },
     });
@@ -59,7 +59,7 @@ cliTest(
       code: "resource_constraint",
       details: {
         operation: "read_evidence_file",
-        resource: "file-size",
+        resource: "memory",
         reported_limits: limits,
       },
     });

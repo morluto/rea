@@ -152,7 +152,8 @@ export const parseLinuxDistribution = (text: string): LinuxDistribution => {
     (id === "arch" ||
       id === "cachyos" ||
       (id === "ubuntu" && versionAtLeast(versionId, 24)) ||
-      (id === "fedora" && versionAtLeast(versionId, 41)));
+      (id === "fedora" && versionAtLeast(versionId, 41)) ||
+      (id === "nobara" && versionAtLeast(versionId, 44)));
   const identity = {
     id,
     ...(versionId === undefined ? {} : { versionId }),

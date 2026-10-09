@@ -26,6 +26,10 @@ async function fixture(eol = "\n") {
   await mkdir(join(sourceRoot, "references"), { recursive: true });
   await mkdir(join(root, "dist"));
   await writeFile(join(root, "package.json"), '{"type":"module"}\n');
+  await writeFile(
+    join(root, "dist/generatedPackageMetadata.js"),
+    'export const PACKAGE_METADATA = { name: "rea-agents", version: "6.2.0" };\n',
+  );
   await writeFile(join(sourceRoot, "SKILL.md"), authored.replaceAll("\n", eol));
   await writeFile(
     join(sourceRoot, "references/guide.md"),
@@ -108,6 +112,22 @@ it("rejects missing, stale, and extra packaged references and removes deleted so
   await expect(
     readFile(join(f.outputRoot, "references/removed.md")),
   ).rejects.toMatchObject({ code: "ENOENT" });
+  await f.generate("--check");
+});
+
+it("pins authored `@latest` commands to the packaged version", async () => {
+  const f = await fixture();
+  await writeFile(
+    join(f.sourceRoot, "SKILL.md"),
+    authored.replace(
+      "Inspect the caller-selected artifact.",
+      "Run `npx -y rea-agents@latest doctor --json` first.",
+    ),
+  );
+  await f.generate();
+  const generated = await readFile(join(f.outputRoot, "SKILL.md"), "utf8");
+  expect(generated).toContain("npx -y rea-agents@6.2.0 doctor --json");
+  expect(generated).not.toContain("rea-agents@latest");
   await f.generate("--check");
 });
 
