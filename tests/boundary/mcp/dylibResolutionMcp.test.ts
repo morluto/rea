@@ -23,7 +23,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 const withClient = async (
   verify: (client: Client) => Promise<void>,
 ): Promise<void> => {
-  const session = createTestBinarySession(new ArtifactProvider());
+  const session = createTestBinarySession(new ArtifactProvider(process.env));
   const server = createServer(session, session);
   const client = new Client({ name: "dylib-mcp-test", version: "1" });
   const [clientTransport, serverTransport] =
@@ -39,7 +39,7 @@ const withClient = async (
 };
 
 const structuredResult = (value: unknown): unknown =>
-  z.object({ result: z.unknown() }).parse(value).result;
+  z.object({ normalized_result: z.unknown() }).parse(value).normalized_result;
 
 it("traces dylib resolution for an opened app bundle and rejects a changed target", async () => {
   const app = join(

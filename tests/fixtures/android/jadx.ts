@@ -17,7 +17,10 @@ import { writeJadxJarInventory } from "./jadxJar.js";
 const fixture = fileURLToPath(new URL("./jadx-mcp.mjs", import.meta.url));
 
 /** Real owned subprocess running a synthetic MCP producer, with no module mocks. */
-export const createJadxProtocolFixture = async (mode = "normal") => {
+export const createJadxProtocolFixture = async (
+  mode = "normal",
+  cleanupFailure?: () => boolean,
+) => {
   const root = await createTestTempDirectory("rea-android-boundary-");
   const apk = join(root, "fixture.apk");
   const jar = join(root, "fixture.jar");
@@ -64,7 +67,7 @@ export const createJadxProtocolFixture = async (mode = "normal") => {
         legacyJavaOptions:
           options.env?._JAVA_OPTIONS ?? options.hostEnvironment?._JAVA_OPTIONS,
       });
-      if (mode === "cleanup-failure") {
+      if (mode === "cleanup-failure" || cleanupFailure !== undefined) {
         onTestFinished(async () => {
           const supervisor = new ProviderProcessSupervisor({
             ...spawned,
@@ -77,10 +80,13 @@ export const createJadxProtocolFixture = async (mode = "normal") => {
         });
         return {
           ...spawned,
-          cleanup: async () => ({
-            cleaned: false,
-            reason: "injected ownership verification failure",
-          }),
+          cleanup: async () =>
+            (cleanupFailure?.() ?? true)
+              ? {
+                  cleaned: false,
+                  reason: "injected ownership verification failure",
+                }
+              : cleanupOwnedProcessGroup(spawned.ownership),
         };
       }
       return spawned;

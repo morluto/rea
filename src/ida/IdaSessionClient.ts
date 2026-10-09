@@ -81,7 +81,8 @@ class IdaCleanupError extends ProviderAdapterError {
       cause,
       diagnostics: {
         reason:
-          "IDA worker release could not be verified. The private workspace was retained.",
+          "IDA cleanup could not be verified; the remaining connection or private workspace is retained for retry.",
+        failure_reason: cause instanceof Error ? cause.message : String(cause),
         workspace: path,
       },
     });
@@ -98,6 +99,7 @@ export class IdaSessionClient implements AnalysisClient {
   #closePromise: Promise<Result<null, AnalysisError>> | undefined;
   #workspace: IdaWorkspace | undefined;
   #database: string | undefined;
+  #databaseCloseAcknowledged = false;
   #openAttempted = false;
   #openCompleted = false;
   #initialIdentity: string | undefined;
@@ -285,10 +287,11 @@ export class IdaSessionClient implements AnalysisClient {
         `IDA MCP ${this.config.mode} compatibility profile is missing tools: ${missing.join(", ")}. Attached mode requires the legacy 1.4 profile; headless mode requires the database supervisor profile. See docs/ida-provider.md.`,
       );
     if (this.config.mode === "headless") {
-      this.#workspace = await IdaWorkspace.create(
+      this.#workspace = await IdaWorkspace.allocate(
         this.target,
         this.config.workspaceRoot,
       );
+      await this.#workspace.copyInput();
       this.#openAttempted = true;
       const raw = await this.connection.call("idb_open", {
         input_path: this.#workspace.inputPath,
@@ -385,7 +388,7 @@ export class IdaSessionClient implements AnalysisClient {
     return this.#metadata;
   }
 
-  async closeWithOutcome(): Promise<Result<null, AnalysisError>> {
+  async close(): Promise<Result<null, AnalysisError>> {
     if (this.#closePromise !== undefined) return this.#closePromise;
     const closing = this.#closeOnce();
     const shared = closing.finally(() => {
@@ -424,21 +427,24 @@ export class IdaSessionClient implements AnalysisClient {
             );
         }
         if (this.#database !== undefined) {
-          const closed = closeDatabaseSchema.parse(
-            await this.connection.call("idb_close", {
-              database: this.#database,
-              save: false,
-            }),
-          );
-          if (
-            closed.session_id !== this.#database ||
-            closed.saved === true ||
-            closed.owned !== true ||
-            closed.backend !== "worker"
-          )
-            throw new AnalysisProtocolError(
-              "IDA database close did not confirm the requested owned, unsaved session release.",
+          if (!this.#databaseCloseAcknowledged) {
+            const closed = closeDatabaseSchema.parse(
+              await this.connection.call("idb_close", {
+                database: this.#database,
+                save: false,
+              }),
             );
+            if (
+              closed.session_id !== this.#database ||
+              closed.saved === true ||
+              closed.owned !== true ||
+              closed.backend !== "worker"
+            )
+              throw new AnalysisProtocolError(
+                "IDA database close did not confirm the requested owned, unsaved session release.",
+              );
+            this.#databaseCloseAcknowledged = true;
+          }
           const inventory = databaseListSchema.parse(
             await this.connection.call("idb_list", {}),
           );
@@ -455,18 +461,19 @@ export class IdaSessionClient implements AnalysisClient {
             throw new AnalysisProtocolError(
               "IDA worker remains registered after close.",
             );
+          this.#database = undefined;
         }
         if (!this.#openCompleted)
           throw new AnalysisProtocolError(
             "IDA database open did not return a completed response. Worker inventory cannot prove that the request has stopped; the private workspace was retained.",
           );
+        this.#openAttempted = false;
       }
       await this.connection.close();
       await this.#workspace?.remove();
       this.#closed = true;
       return ok(null);
     } catch (cause: unknown) {
-      await this.connection.close().catch(() => undefined);
       return err(
         new IdaCleanupError(
           this.#workspace?.directory ?? "IDA MCP connection",
@@ -474,10 +481,5 @@ export class IdaSessionClient implements AnalysisClient {
         ),
       );
     }
-  }
-
-  async close(): Promise<void> {
-    const result = await this.closeWithOutcome();
-    if (!result.ok) throw result.error;
   }
 }

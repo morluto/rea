@@ -29,7 +29,7 @@ describe("artifact directory diagnostics", () => {
       try {
         const target = await parseBinaryTarget(appPath);
         if (!target.ok) throw target.error;
-        const result = await new ArtifactProvider()
+        const result = await new ArtifactProvider(process.env)
           .createClient(target.value)
           .execute("inventory_artifact", {});
         expect(result.ok).toBe(false);

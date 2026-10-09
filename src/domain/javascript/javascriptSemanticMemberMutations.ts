@@ -6,10 +6,7 @@ import {
 } from "./javascriptSemanticState.js";
 import { evaluateSemanticBinding } from "./javascriptSemanticValues.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
-import {
-  semanticStaticPropertyKey,
-  semanticStaticPropertyName,
-} from "./javascriptAstValues.js";
+import { semanticStaticPropertyKey } from "./javascriptAstValues.js";
 
 type PropertyPath = readonly (string | number | null)[];
 
@@ -105,13 +102,11 @@ const referencedValues = (
           if (t.isSpreadElement(property))
             return [{ node: property.argument, path }];
           if (!t.isObjectProperty(property)) return [];
-          const name = semanticStaticPropertyName(
+          const name = semanticStaticPropertyKey(
             property.key,
             property.computed,
           );
-          return key === null ||
-            (name === "" && !t.isStringLiteral(property.key, { value: "" })) ||
-            String(key) === name
+          return key === null || name === null || String(key) === name
             ? [{ node: property.value, path: remaining }]
             : [];
         });

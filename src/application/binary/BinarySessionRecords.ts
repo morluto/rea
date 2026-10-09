@@ -42,7 +42,7 @@ export interface WorkflowSnapshotRecordInput {
   >[0]["execution"];
 }
 
-/** Binary snapshot owner and compatibility facade for composed investigation records. */
+/** Own binary snapshots and coordinate the composed investigation records. */
 export abstract class BinarySessionRecords {
   readonly #records: InvestigationRecords;
   readonly #snapshot = new AnalysisSnapshotCache();

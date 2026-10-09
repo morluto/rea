@@ -67,6 +67,6 @@ cliTest(
     });
     expect(response.isError).not.toBe(true);
     const expected = cliResponse.json;
-    expect(response.structuredContent).toMatchObject({ evidence: expected });
+    expect(response.structuredContent).toEqual(expected);
   },
 );

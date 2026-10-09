@@ -1,6 +1,6 @@
 import { z } from "incur";
 
-import { runProviderAnalysis } from "../composition/directAnalysis.js";
+import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { createArtifactExtractionDestination } from "../application/artifacts/ArtifactExtractionDestination.js";
 import { logCliCommand } from "../cliLogging.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -10,12 +10,13 @@ import type { CliInstance } from "./types.js";
 export const registerArtifactCommands = (
   cli: CliInstance,
   logger: Logger,
+  runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
 ): void => {
-  registerInspectionCommand(cli, logger);
-  registerExtractionCommand(cli, logger);
-  registerInterfaceBuilderCommand(cli, logger);
-  registerAssetCatalogCommand(cli, logger);
-  registerDylibResolutionCommand(cli, logger);
+  registerInspectionCommand(cli, logger, runProviderAnalysis);
+  registerExtractionCommand(cli, logger, runProviderAnalysis);
+  registerInterfaceBuilderCommand(cli, logger, runProviderAnalysis);
+  registerAssetCatalogCommand(cli, logger, runProviderAnalysis);
+  registerDylibResolutionCommand(cli, logger, runProviderAnalysis);
   cli.command(CLI_COMMANDS.inspectKeyedArchive, {
     description:
       "Inspect a Foundation keyed archive as an object-reference graph",
@@ -62,6 +63,7 @@ export const registerArtifactCommands = (
 const registerDylibResolutionCommand = (
   cli: CliInstance,
   logger: Logger,
+  runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.traceDylibResolution, {
     description:
@@ -101,6 +103,7 @@ const registerDylibResolutionCommand = (
 const registerAssetCatalogCommand = (
   cli: CliInstance,
   logger: Logger,
+  runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.inspectAssetCatalog, {
     description: "Inspect compiled Apple asset catalog metadata",
@@ -136,6 +139,7 @@ const registerAssetCatalogCommand = (
 const registerInterfaceBuilderCommand = (
   cli: CliInstance,
   logger: Logger,
+  runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.decodeInterfaceBuilder, {
     description:
@@ -187,7 +191,11 @@ const registerInterfaceBuilderCommand = (
   });
 };
 
-const registerExtractionCommand = (cli: CliInstance, logger: Logger): void => {
+const registerExtractionCommand = (
+  cli: CliInstance,
+  logger: Logger,
+  runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
+): void => {
   cli.command(CLI_COMMANDS.extractArtifact, {
     description: "Extract all regular artifact contents safely",
     args: z.object({
@@ -208,7 +216,11 @@ const registerExtractionCommand = (cli: CliInstance, logger: Logger): void => {
   });
 };
 
-const registerInspectionCommand = (cli: CliInstance, logger: Logger): void => {
+const registerInspectionCommand = (
+  cli: CliInstance,
+  logger: Logger,
+  runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
+): void => {
   cli.command(CLI_COMMANDS.inspectArtifact, {
     description:
       "Inspect one artifact and return all available observations and next probes",

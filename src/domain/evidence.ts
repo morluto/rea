@@ -98,6 +98,7 @@ const evidenceBaseSchema = z
     evidence_id: prefixedDigestSchema("ev"),
     subject: subjectSchema.nullable(),
     provider: providerSchema,
+    analysis_profile: analysisProfileSchema.nullable(),
     predicate_type: z.string().min(1),
     operation: z.string().min(1),
     parameters: jsonObjectSchema,
@@ -112,18 +113,17 @@ const evidenceBaseSchema = z
   })
   .strict();
 
-/** Object envelope used to specialize caller-visible Evidence result schemas. */
-export const evidenceEnvelopeSchema = evidenceBaseSchema.extend({
-  analysis_profile: analysisProfileSchema.optional(),
-});
-
-const validateAnalysisProfileProvider = (
-  evidence: z.infer<typeof evidenceEnvelopeSchema>,
+/** Require a reported analysis profile to identify the observation provider. */
+export const validateAnalysisProfileProvider = (
+  evidence: Pick<
+    z.infer<typeof evidenceBaseSchema>,
+    "analysis_profile" | "provider"
+  >,
   context: z.RefinementCtx,
 ): void => {
   const profile = evidence.analysis_profile;
   if (
-    profile !== undefined &&
+    profile !== null &&
     (profile.provider.id !== evidence.provider.id ||
       profile.provider.name !== evidence.provider.name ||
       profile.provider.version !== evidence.provider.version)
@@ -136,21 +136,14 @@ const validateAnalysisProfileProvider = (
 };
 
 /** Strict, provider-neutral record for one successful public observation. */
-export const evidenceSchema = evidenceEnvelopeSchema.superRefine(
+export const evidenceSchema = evidenceBaseSchema.superRefine(
   validateAnalysisProfileProvider,
 );
 
-const profiledEvidenceSchema = evidenceBaseSchema
-  .extend({ analysis_profile: analysisProfileSchema })
-  .superRefine(validateAnalysisProfileProvider);
-
-/** JSON-exact union used where Evidence participates in larger schemas. */
-export const evidenceRecordSchema = z.union([
-  profiledEvidenceSchema,
-  evidenceBaseSchema,
-]);
-
-export type Evidence = z.infer<typeof evidenceRecordSchema>;
+/** Complete observation whose normalized payload retains its operation-specific type. */
+export type Evidence<Result extends JsonValue = JsonValue> = z.infer<
+  typeof evidenceSchema
+> & { readonly normalized_result: Result };
 const immutableEvidenceSnapshots = new WeakMap<object, Evidence>();
 const immutableResultSchema = z
   .custom<JsonValue>(isImmutableJsonSnapshot)
@@ -194,10 +187,7 @@ export interface EvidenceObservation {
   readonly evidenceLinks?: readonly string[];
 }
 
-type WithoutEvidenceId<Record_> = Record_ extends unknown
-  ? Omit<Record_, "evidence_id">
-  : never;
-type EvidenceWithoutId = WithoutEvidenceId<Evidence>;
+type EvidenceWithoutId = Omit<Evidence, "evidence_id">;
 
 const semanticProjection = (evidence: EvidenceWithoutId): JsonValue => ({
   subject:
@@ -209,9 +199,7 @@ const semanticProjection = (evidence: EvidenceWithoutId): JsonValue => ({
           architecture: evidence.subject.architecture,
         },
   provider: evidence.provider,
-  ...(!("analysis_profile" in evidence)
-    ? {}
-    : { analysis_profile: evidence.analysis_profile }),
+  analysis_profile: evidence.analysis_profile,
   predicate_type: evidence.predicate_type,
   operation: evidence.operation,
   parameters: evidence.parameters,
@@ -236,14 +224,7 @@ export const parseEvidence = (input: unknown): Evidence => {
       ? immutableEvidenceSnapshots.get(input)
       : undefined;
   if (immutable !== undefined) return immutable;
-  // Select the producer's envelope before traversing its payload. A legacy
-  // record cannot satisfy the required-profile branch, whose failed parse
-  // would otherwise clone the entire normalized result before trying legacy.
-  const schema =
-    typeof input === "object" && input !== null && "analysis_profile" in input
-      ? profiledEvidenceSchema
-      : evidenceBaseSchema;
-  const evidence = schema.parse(input);
+  const evidence = evidenceSchema.parse(input);
   const { evidence_id: evidenceId, ...withoutId } = evidence;
   if (computeEvidenceId(withoutId) !== evidenceId)
     throw new TypeError(
@@ -340,9 +321,7 @@ const normalizeEvidenceObservation = (
       name: provider.name,
       version: provider.version,
     },
-    ...(observation.analysisProfile === undefined
-      ? {}
-      : { analysis_profile: observation.analysisProfile }),
+    analysis_profile: observation.analysisProfile ?? null,
     predicate_type: observation.predicateType ?? "rea.analysis",
     operation: observation.operation,
     parameters: observation.parameters,
@@ -363,20 +342,13 @@ const normalizeEvidenceObservation = (
     locations: [...(observation.locations ?? [])],
     evidence_links: [...(observation.evidenceLinks ?? [])],
   } satisfies JsonValue;
-  // Select the known envelope before parsing. A union otherwise traverses and
-  // clones a legacy result for the profiled branch before rejecting its absent
-  // profile and trying the legacy branch.
-  const schema =
-    observation.analysisProfile === undefined
-      ? evidenceBaseSchema
-      : profiledEvidenceSchema;
   const sharedResult =
     typeof observation.result === "object" &&
     observation.result !== null &&
     isImmutableJsonSnapshot(observation.result);
   const selectedSchema = sharedResult
-    ? schema.safeExtend({ normalized_result: immutableResultSchema })
-    : schema;
+    ? evidenceSchema.safeExtend({ normalized_result: immutableResultSchema })
+    : evidenceSchema;
   const normalized = selectedSchema.parse({
     ...semantic,
     evidence_id: `ev_${"0".repeat(64)}`,

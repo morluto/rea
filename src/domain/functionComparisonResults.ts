@@ -48,14 +48,13 @@ export const dimensionResult = (
 
 export const unresolvedDimension = (input: {
   readonly dimension: DimensionName;
-  readonly status: "truncated" | "unknown";
   readonly links: readonly string[];
   readonly leftCount: number | null;
   readonly rightCount: number | null;
   readonly limitations: readonly string[];
 }): FunctionDimension => ({
   dimension: input.dimension,
-  status: input.status,
+  status: "unknown",
   left_digest: null,
   right_digest: null,
   left_count: input.leftCount,
@@ -70,8 +69,6 @@ export const overallStatus = (
   dimensions: readonly FunctionDimension[],
   match: FunctionComparisonResult["function_match"]["status"],
 ): FunctionComparisonResult["status"] => {
-  if (dimensions.some(({ status }) => status === "truncated"))
-    return "truncated";
   if (
     match === "ambiguous" ||
     dimensions.some(({ status }) => status === "unknown")
@@ -86,7 +83,6 @@ export const overallStatus = (
 export const summarize = (dimensions: readonly FunctionDimension[]) => ({
   unchanged: dimensions.filter(({ status }) => status === "unchanged").length,
   changed: dimensions.filter(({ status }) => status === "changed").length,
-  truncated: dimensions.filter(({ status }) => status === "truncated").length,
   unknown: dimensions.filter(({ status }) => status === "unknown").length,
 });
 

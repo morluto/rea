@@ -64,20 +64,6 @@ describe("workflow input contracts", () => {
     ).toBe(false);
   });
 
-  it("accepts each complete managed application Evidence source", () => {
-    for (const input of [
-      { managed_artifact: MANAGED_APPLICATION_GRAPH_EXAMPLE.managed_members },
-      { managed_members: MANAGED_APPLICATION_GRAPH_EXAMPLE.managed_members },
-      {
-        managed_native_boundaries:
-          MANAGED_APPLICATION_GRAPH_EXAMPLE.managed_members,
-      },
-    ])
-      expect(
-        managedApplicationGraphReferenceInputSchema.safeParse(input).success,
-      ).toBe(true);
-  });
-
   it("accepts an explicit artifact integrity continuation policy", () => {
     const input = { integrity_policy: "record-and-continue" as const };
     const inspect = ARTIFACT_TOOL_CONTRACTS.find(

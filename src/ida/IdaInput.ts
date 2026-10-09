@@ -1,4 +1,3 @@
-import { z } from "zod";
 import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
@@ -12,19 +11,7 @@ export const parseIdaInput = (
   parameters: Readonly<Record<string, JsonValue>>,
 ) => {
   const contract = TOOL_CONTRACTS.find(({ name }) => name === operation);
-  const schema = contract?.inputSchema;
-  if (schema instanceof z.ZodObject) {
-    const shape: Readonly<Record<string, z.ZodType>> = schema.shape;
-    parameters = Object.fromEntries(
-      Object.entries(parameters).filter(
-        ([key, value]) =>
-          value !== null || shape[key]?.safeParse(undefined).success !== true,
-      ),
-    );
-  }
-  const parsed = (
-    schema instanceof z.ZodObject ? schema.strict() : schema
-  )?.safeParse(parameters);
+  const parsed = contract?.inputSchema.safeParse(parameters);
   if (parsed?.success !== true)
     return err(
       new AnalysisInputError(

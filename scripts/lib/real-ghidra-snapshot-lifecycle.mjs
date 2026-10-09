@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseAnalysisSnapshot } from "../../dist/domain/analysisSnapshot.js";
 import { parseEvidenceBundle } from "../../dist/domain/evidenceBundle.js";
-import { requireMcpResult } from "./mcp-verifier-results.mjs";
+import { requireMcpOperationResult } from "./mcp-verifier-results.mjs";
 
 /** Keep mutable Ghidra observations out of immutable snapshots across target opens. */
 export async function verifyGhidraSnapshotLifecycle(
@@ -17,7 +17,7 @@ export async function verifyGhidraSnapshotLifecycle(
   let successfulCalls = 0;
   let rejectedCalls = 0;
   const call = async (name, args = {}) => {
-    const result = requireMcpResult(
+    const result = requireMcpOperationResult(
       await client.callTool({ name, arguments: args }, { timeout: 180000 }),
       name,
     );

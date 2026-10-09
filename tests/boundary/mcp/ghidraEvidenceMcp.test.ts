@@ -34,7 +34,7 @@ it("rejects contradictory annotation readback across the provider and MCP bounda
     });
     expect(accepted.isError).not.toBe(true);
     expect(accepted.structuredContent).toMatchObject({
-      result: { annotations },
+      normalized_result: { annotations },
     });
     for (const value of [
       { ...original, annotations: { ...annotations, name: "different" } },

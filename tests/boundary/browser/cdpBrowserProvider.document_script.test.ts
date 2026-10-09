@@ -61,6 +61,61 @@ describe("CdpBrowserProvider: approved accessibility and source capture", () => 
     );
   });
 
+  it.each([{}, { scriptSource: null }, { scriptSource: 123 }])(
+    "rejects malformed source replies instead of inventing empty source: %j",
+    async (reply) => {
+      const browser = await startFakeCdpBrowser({
+        commandResult: ({ method }) =>
+          method === "Debugger.getScriptSource" ? reply : undefined,
+      });
+      trackBrowser(browser);
+      const result = await new CdpBrowserProvider().inspectPage(
+        inspectWebPageInputSchema.parse({
+          cdp_endpoint: browser.endpoint,
+          target_id: "allowed-page",
+          observation_ms: 0,
+          include_script_sources: true,
+        }),
+      );
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          operation: "inspect_web_page",
+          reason: "protocol_error",
+          userMessage: expect.stringContaining("scriptSource must be a string"),
+        },
+      });
+      expect(browser.commands.map(({ method }) => method)).toContain(
+        "Target.detachFromTarget",
+      );
+    },
+  );
+
+  it("retains an explicitly empty producer script", async () => {
+    const browser = await startFakeCdpBrowser({
+      commandResult: ({ method }) =>
+        method === "Debugger.getScriptSource"
+          ? { scriptSource: "" }
+          : undefined,
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        target_id: "allowed-page",
+        observation_ms: 0,
+        include_script_sources: true,
+      }),
+    );
+
+    if (!result.ok) throw result.error;
+    expect(result.value.scripts.items[0]?.source).toMatchObject({
+      included: true,
+      artifact: { text: "", bytes: 0 },
+    });
+  });
+
   it("fetches and validates source maps only after separate approval", async () => {
     const browser = await startFakeCdpBrowser({
       sourceMapBody: JSON.stringify({

@@ -49,7 +49,6 @@ export interface AnalysisProviderBinding {
   readonly identity: ProviderIdentity & { readonly version: string };
   readonly selectionSource: "request" | "environment" | "auto-single-candidate";
   readonly profile: AnalysisProfileCommitment;
-  readonly compatibility: Readonly<Record<string, JsonValue>>;
 }
 
 /** Complete result used for both a bound and intentionally unbound target. */
@@ -247,10 +246,7 @@ export class AnalysisProviderRegistry {
     if (evaluated.profileError !== undefined)
       return err(evaluated.profileError);
     const statuses = replaceCandidate(baseline, evaluated.status);
-    if (
-      evaluated.profile === undefined ||
-      evaluated.compatibility === undefined
-    )
+    if (evaluated.profile === undefined)
       return err(selectionError("provider_unavailable", providerId, statuses));
     return ok(
       selectedResult(
@@ -259,7 +255,6 @@ export class AnalysisProviderRegistry {
         {
           ...evaluated,
           profile: evaluated.profile,
-          compatibility: evaluated.compatibility,
         },
         statuses,
       ),
@@ -312,10 +307,7 @@ export class AnalysisProviderRegistry {
         evaluation,
       ): evaluation is AnalysisProviderCandidateEvaluation & {
         readonly profile: AnalysisProfileCommitment;
-        readonly compatibility: Readonly<Record<string, JsonValue>>;
-      } =>
-        evaluation.profile !== undefined &&
-        evaluation.compatibility !== undefined,
+      } => evaluation.profile !== undefined,
     );
     if (usable.length === 0)
       return ok({
@@ -363,7 +355,6 @@ const selectedResult = (
   source: AnalysisProviderBinding["selectionSource"],
   evaluated: AnalysisProviderCandidateEvaluation & {
     readonly profile: AnalysisProfileCommitment;
-    readonly compatibility: Readonly<Record<string, JsonValue>>;
   },
   statuses: readonly AnalysisProviderCandidateStatus[],
 ): AnalysisProviderSelection => {
@@ -379,7 +370,6 @@ const selectedResult = (
       identity: structuredClone(evaluated.profile.provider),
       selectionSource: source,
       profile: structuredClone(evaluated.profile),
-      compatibility: structuredClone(evaluated.compatibility),
     },
     candidates: replaceCandidate(statuses, selectedStatus),
   };

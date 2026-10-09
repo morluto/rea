@@ -10,9 +10,6 @@ import {
 import { compareCodePoints } from "../canonicalOrdering.js";
 
 type Shape = ProjectedExportReturnShapes["static_return_shapes"][number];
-type Field = Shape["fields"][number];
-type NormalizedField = Field & { presence: NonNullable<Field["presence"]> };
-type NormalizedShape = Omit<Shape, "fields"> & { fields: NormalizedField[] };
 type SelectorResult = JavaScriptExportShapeComparisonResult["left"];
 type SelectorBase = Omit<SelectorResult, "status" | "selected_node_id">;
 type ReturnShapeSelection =
@@ -58,7 +55,7 @@ export type SelectedJavaScriptExport =
 
 /** Complete return-shape inventory retained from an authenticated projection. */
 export interface RetainedJavaScriptExportShapes {
-  readonly shapes: readonly NormalizedShape[];
+  readonly shapes: readonly Shape[];
   readonly omitted: number;
 }
 
@@ -129,24 +126,13 @@ export const selectJavaScriptExport = (
   };
 };
 
-/** Retain every variant and normalize legacy presence on comparison-owned copies. */
+/** Retain every authenticated variant with its explicit slot presence. */
 export const retainJavaScriptExportShapes = (
   selection: SelectedJavaScriptExport,
-): RetainedJavaScriptExportShapes => {
-  const shapes = (
-    selection.projection?.static_return_shapes ?? []
-  ).map<NormalizedShape>((shape) => ({
-    ...shape,
-    fields: shape.fields.map<NormalizedField>((field) => ({
-      ...field,
-      // Legacy unknown fields did not distinguish values from uncertain slots.
-      presence:
-        field.presence ??
-        (field.state === "unknown" ? "unknown-coverage" : "present"),
-    })),
-  }));
-  return { shapes, omitted: 0 };
-};
+): RetainedJavaScriptExportShapes => ({
+  shapes: selection.projection?.static_return_shapes ?? [],
+  omitted: 0,
+});
 
 const selectorBase = (
   side: JavaScriptExportShapeSideInput,

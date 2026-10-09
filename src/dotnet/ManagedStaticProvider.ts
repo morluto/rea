@@ -22,6 +22,7 @@ import {
   managedNativeBoundaryInputSchema,
   type ManagedToolName,
 } from "../contracts/managed/managedToolContracts.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import {
   AnalysisCancelledError,
@@ -36,7 +37,7 @@ import type {
   ManagedMemberInspection,
   ManagedNativeBoundaryInspection,
 } from "../domain/managed/managedArtifact.js";
-import { err, ok } from "../domain/result.js";
+import { err, ok, type Result } from "../domain/result.js";
 import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 import { inspectManagedNativeBoundariesBytes } from "./ManagedNativeBoundaryInspector.js";
@@ -126,9 +127,9 @@ class ManagedStaticClient implements AnalysisClient {
     }
   }
 
-  close(): Promise<void> {
+  close(): Promise<Result<null, AnalysisError>> {
     this.#snapshotBytes = undefined;
-    return Promise.resolve();
+    return Promise.resolve(ok(null));
   }
 }
 

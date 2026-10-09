@@ -1,3 +1,4 @@
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { realpath } from "node:fs/promises";
@@ -83,10 +84,14 @@ export type NativeToolResolver = (
 
 /** Run allowlisted Xcode tools directly without a shell. */
 export class XcrunCommandRunner implements NativeCommandRunner {
+  private readonly environment: NodeJS.ProcessEnv;
   constructor(
+    environment: Readonly<NodeJS.ProcessEnv>,
     private readonly resolveTool: NativeToolResolver = (tool, signal) =>
-      resolveXcrunTool(tool, signal),
-  ) {}
+      resolveXcrunTool(tool, this.environment, signal),
+  ) {
+    this.environment = snapshotEnvironment(environment);
+  }
 
   run(
     tool: string,
@@ -104,6 +109,7 @@ export class XcrunCommandRunner implements NativeCommandRunner {
         arguments_,
         tool,
         options,
+        this.environment,
       );
       return captured.ok
         ? ok({
@@ -144,6 +150,7 @@ const ALLOWED_TOOLS = new Set([
 /** Locate an Xcode tool through `xcrun --find` and sample its executable digest. */
 export const resolveXcrunTool = async (
   tool: string,
+  environment: Readonly<NodeJS.ProcessEnv>,
   signal?: AbortSignal,
 ): Promise<Result<ResolvedTool, NativeCommandFailure>> => {
   const found = await captureProcess(
@@ -151,6 +158,7 @@ export const resolveXcrunTool = async (
     ["--find", tool],
     "xcrun",
     signal === undefined ? {} : { signal },
+    environment,
   );
   if (!found.ok) {
     return err(
@@ -247,6 +255,7 @@ const captureProcess = async (
     readonly signal?: AbortSignal;
     readonly acceptNonZero?: boolean;
   },
+  environment: Readonly<NodeJS.ProcessEnv>,
 ): Promise<Result<ProcessCapture, NativeCommandFailure>> => {
   const runId = `rea-native-command-${randomUUID()}`;
   try {
@@ -256,11 +265,10 @@ const captureProcess = async (
         arguments: [...arguments_],
         runId,
         env: {
-          PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
           LC_ALL: "C",
           LANG: "C",
         },
-        hostEnvironment: {},
+        hostEnvironment: environment,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       },
       {

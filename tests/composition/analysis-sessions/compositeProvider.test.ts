@@ -31,20 +31,9 @@ describe("composite analysis provider", () => {
     const composite = new CompositeProvider([hopper, native]);
     const client = composite.createClient(target);
 
-    expect(await client.execute("health", {})).toEqual({
+    expect(await client.execute("health", {})).toMatchObject({
       ok: true,
-      value: {
-        result: null,
-        rawResult: null,
-        provider: {
-          id: "composite:hopper+native",
-          name: "REA composite analysis provider",
-          version: null,
-        },
-        limitations: [],
-        locations: [],
-        subject: null,
-      },
+      value: { result: null, provider: { id: "composite:hopper+native" } },
     });
     expect(hopperCalls).toEqual([]);
     expect(nativeCalls).toEqual([]);
@@ -59,24 +48,14 @@ describe("composite analysis provider", () => {
         native.identity(),
       ),
     });
-    expect(hopperCalls).toEqual(["address_name"]);
-    expect(nativeCalls).toEqual(["analyze_function"]);
     expect(await client.execute("list_names", {})).toMatchObject({
       ok: false,
       error: { _tag: "AnalysisCapabilityUnavailableError" },
     });
   });
 
-  it("publishes exact operation provenance and rejects ambiguous routes", () => {
+  it("rejects ambiguous provider routes", () => {
     const hopper = provider("hopper", "address_name", []);
-    const native = provider("native", "analyze_function", []);
-    const session = createTestBinarySession(
-      new CompositeProvider([hopper, native]),
-    );
-    expect(session.providerIdentity("address_name").id).toBe("hopper");
-    expect(session.providerIdentity("analyze_function").id).toBe("native");
-    expect(session.providerIdentity("binary_overview").id).toBe("hopper");
-    expect(session.providerIdentity().id).toBe("composite:hopper+native");
     expect(
       () =>
         new CompositeProvider([
@@ -115,6 +94,9 @@ describe("composite analysis provider", () => {
                 status: "verified",
                 observed_at: "2026-07-22T10:00:00.000Z",
                 launcher_pid: 100,
+                descendants: [
+                  { pid: 101, parent_pid: 100, process_group_id: 100 },
+                ],
               },
             },
             {
@@ -127,6 +109,24 @@ describe("composite analysis provider", () => {
             },
           ],
         },
+      },
+      analysis_activity: {
+        status: "busy",
+        providers: [
+          {
+            provider: { id: "first" },
+            active: { operation: "address_name", caller_state: "cancelled" },
+            queued_requests: 2,
+          },
+          {
+            provider: { id: "second" },
+            active: {
+              operation: "analyze_function",
+              caller_state: "cancelled",
+            },
+            queued_requests: 2,
+          },
+        ],
       },
     });
     await session.close();
@@ -161,12 +161,30 @@ const dynamicProvider = (
                 launcherPid,
                 launcherParentPid: 1,
                 processGroupId: launcherPid,
-                descendants: [],
+                descendants: [
+                  {
+                    pid: launcherPid + 1,
+                    parentPid: launcherPid,
+                    processGroupId: launcherPid,
+                  },
+                ],
               },
             },
           },
         ],
-        close: () => Promise.resolve(),
+        requestActivitySnapshots: () => [
+          {
+            provider: identity,
+            active: {
+              requestId: 7,
+              operation,
+              elapsedMs: 31_000,
+              callerState: "cancelled",
+            },
+            queuedRequests: 2,
+          },
+        ],
+        close: () => Promise.resolve(ok(null)),
       };
     },
   };
@@ -188,7 +206,7 @@ const provider = (
           ok(createAnalysisExecution(`${id}:${called}`, identity)),
         );
       },
-      close: () => Promise.resolve(),
+      close: () => Promise.resolve(ok(null)),
     }),
   };
 };

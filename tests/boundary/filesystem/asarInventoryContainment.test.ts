@@ -55,12 +55,16 @@ describe("expanded ASAR inventory containment", () => {
     const direct = await inventoryArtifact(archive);
     expect(artifactParentPaths(nested)).toEqual(expectedNestedParents);
     const container = artifactOccurrenceAt(nested, "resources/app.asar");
-    expect(container.entry_kind).toBe("file");
+    expect(container).toMatchObject({
+      entry_kind: "file",
+      artifact_kind: "container",
+      artifact_format: "asar",
+    });
     expect(container.artifact_id).toBe(direct.manifest.root_artifact_id);
     expect(
       nested.nodes.find((node) => node.artifact_id === container.artifact_id),
     ).toMatchObject({
-      format: "asar",
+      format: "file",
       content_state: "embedded",
       sha256: createHash("sha256")
         .update(await readFile(archive))

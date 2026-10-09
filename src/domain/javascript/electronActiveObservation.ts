@@ -89,58 +89,10 @@ export type ElectronActiveObservationInput = z.infer<
   typeof electronActiveObservationInputSchema
 >;
 
-const ipcEventSchema = z.strictObject({
+/** Canonical active Electron event shared by the hook boundary and public timeline. */
+export const electronActiveTimelineEventSchema = z.strictObject({
   sequence: z.number().int().min(1),
-  correlation_id: z.string().nullable().default(null),
-  kind: z.enum([
-    "main-handler-invocation",
-    "main-event-invocation",
-    "utility-process-fork",
-    "utility-process-message",
-    "ipc-main-to-renderer",
-    "ipc-utility-to-main",
-    "ipc-renderer-send",
-    "ipc-renderer-invoke",
-    "ipc-renderer-post-message",
-  ]),
-  event: z.string().nullable().optional(),
-  phase: z
-    .enum(["attempted", "completed", "blocked", "failed", "observed"])
-    .nullable()
-    .optional(),
-  channel: z.string().nullable(),
-  direction: z
-    .enum([
-      "renderer-to-main",
-      "main-to-renderer",
-      "main-to-utility",
-      "utility-to-main",
-    ])
-    .nullable()
-    .optional(),
-  sender: z.string().nullable().optional(),
-  receiver: z.string().nullable().optional(),
-  frame: z.string().nullable().default(null),
-  target: z.string().nullable().optional(),
-  argument_shapes: z.array(z.string()),
-  result_shape: z.string().nullable(),
-  process_type: z.string().nullable(),
-  source: z.string().default("electron-active-hook"),
-  capture_method: z
-    .enum(["api-wrapper", "event-emitter", "process-hook"])
-    .default("api-wrapper"),
-  artifact_path: z.string().nullable().default(null),
-  artifact_sha256: z
-    .string()
-    .regex(/^[a-f0-9]{64}$/u)
-    .nullable()
-    .default(null),
-  error: z.boolean(),
-});
-
-const timelineEventSchema = z.strictObject({
-  sequence: z.number().int().min(1),
-  correlation_id: z.string().nullable().default(null),
+  correlation_id: z.string().nullable(),
   kind: z.enum([
     "main-handler-invocation",
     "main-event-invocation",
@@ -192,6 +144,20 @@ const timelineEventSchema = z.strictObject({
     .regex(/^[a-f0-9]{64}$/u)
     .nullable(),
   error: z.boolean(),
+});
+
+const ipcEventSchema = electronActiveTimelineEventSchema.extend({
+  kind: z.enum([
+    "main-handler-invocation",
+    "main-event-invocation",
+    "utility-process-fork",
+    "utility-process-message",
+    "ipc-main-to-renderer",
+    "ipc-utility-to-main",
+    "ipc-renderer-send",
+    "ipc-renderer-invoke",
+    "ipc-renderer-post-message",
+  ]),
 });
 
 const processMetricSchema = z.strictObject({
@@ -268,48 +234,37 @@ export const electronActiveObservationResultSchema = z.strictObject({
   ipc: z.strictObject({
     events: z.array(ipcEventSchema),
     observed: z.number().int().min(0),
-    dropped: z.number().int().min(0).nullable().default(null),
+    dropped: z.number().int().min(0),
   }),
-  timeline: z
-    .strictObject({
-      events: z.array(timelineEventSchema),
-      observed: z.number().int().min(0),
-      dropped: z.number().int().min(0).nullable().default(null),
-    })
-    .default({ events: [], observed: 0, dropped: null }),
-  retention: z
-    .strictObject({
-      budget_bytes: z.number().int().min(0),
-      estimated_retained_bytes: z.number().int().min(0),
-      event_serialized_byte_upper_bound: z.number().int().min(0),
-      retained: z.number().int().min(0),
-      dropped: z.number().int().min(0),
-      dropped_event_families: z.array(
-        z.strictObject({
-          family: z.string().min(1),
-          count: z.number().int().min(1),
-        }),
-      ),
-      dropped_event_roles: z.array(
-        z.strictObject({
-          role: z.string().min(1),
-          count: z.number().int().min(1),
-        }),
-      ),
-      observed_ipc: z.number().int().min(0),
-      dropped_ipc: z.number().int().min(0),
-      observed_runtime: z.number().int().min(0),
-      dropped_runtime: z.number().int().min(0),
-    })
-    .nullable()
-    .default(null),
-  coverage: coverageSchema.default({
-    status: "partial_attach",
-    observed_event_families: [],
-    unavailable_event_families: [],
-    observed_roles: [],
-    pre_capture_activity: "unavailable",
+  timeline: z.strictObject({
+    events: z.array(electronActiveTimelineEventSchema),
+    observed: z.number().int().min(0),
+    dropped: z.number().int().min(0),
   }),
+  retention: z.strictObject({
+    budget_bytes: z.number().int().min(0),
+    estimated_retained_bytes: z.number().int().min(0),
+    event_serialized_byte_upper_bound: z.number().int().min(0),
+    retained: z.number().int().min(0),
+    dropped: z.number().int().min(0),
+    dropped_event_families: z.array(
+      z.strictObject({
+        family: z.string().min(1),
+        count: z.number().int().min(1),
+      }),
+    ),
+    dropped_event_roles: z.array(
+      z.strictObject({
+        role: z.string().min(1),
+        count: z.number().int().min(1),
+      }),
+    ),
+    observed_ipc: z.number().int().min(0),
+    dropped_ipc: z.number().int().min(0),
+    observed_runtime: z.number().int().min(0),
+    dropped_runtime: z.number().int().min(0),
+  }),
+  coverage: coverageSchema,
   limitations: z.array(z.string()),
 });
 export type ElectronActiveObservationResult = z.infer<

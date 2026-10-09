@@ -184,7 +184,7 @@ describe("historical source graph", () => {
     }
   });
 
-  it("retains actual external targets and accepts legacy markers", () => {
+  it("retains actual external targets and rejects placeholder targets", () => {
     const input = { ...graphInput(), inventory_state: "partial" as const };
     input.entries[2] = symlinkEntry({
       target: "/private/shared/target.js",
@@ -205,7 +205,7 @@ describe("historical source graph", () => {
             : entry,
         ),
       }),
-    ).not.toThrow();
+    ).toThrow(/target path does not match/u);
   });
 
   it("derives language and manifest indexes and enforces code-point order", () => {
@@ -337,7 +337,7 @@ describe("historical source graph validation", () => {
             : entry,
         ),
       }),
-    ).not.toThrow();
+    ).toThrow(/target path does not match/u);
     expect(() =>
       createHistoricalSourceGraph({
         ...graphInput(),

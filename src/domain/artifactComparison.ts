@@ -1,3 +1,4 @@
+import { compareCodePoints } from "./canonicalOrdering.js";
 import { z } from "zod";
 
 import {
@@ -146,7 +147,7 @@ export const compareArtifacts = (
     right_manifest_id: right.inventory.manifest.manifest_id,
     summary,
     changes,
-    limitations: [...new Set(limitations)].sort((a, b) => a.localeCompare(b)),
+    limitations: [...new Set(limitations)].sort(compareCodePoints),
   });
 };
 
@@ -170,7 +171,7 @@ const compareOccurrences = (
   const rightRelations = relationsByPath(right);
   const paths = [
     ...new Set([...leftByPath.keys(), ...rightByPath.keys()]),
-  ].sort((a, b) => a.localeCompare(b, "en"));
+  ].sort(compareCodePoints);
   const output: ArtifactChange[] = [];
   for (const path of paths) {
     const leftOccurrence = leftByPath.get(path);
@@ -288,8 +289,17 @@ const changedDimensions = (input: {
     boolean,
   ][] = [
     ["content", left.sha256 !== right.sha256],
-    ["kind", left.kind !== right.kind],
-    ["format", left.format !== right.format],
+    [
+      "kind",
+      input.leftOccurrence?.artifact_kind !==
+        input.rightOccurrence?.artifact_kind,
+    ],
+    [
+      "format",
+      left.format !== right.format ||
+        input.leftOccurrence?.artifact_format !==
+          input.rightOccurrence?.artifact_format,
+    ],
     ["size", left.size !== right.size],
     [
       "executable",
@@ -317,7 +327,6 @@ const metadataChanged = (
 ): boolean =>
   left.media_type !== right.media_type ||
   left.architecture !== right.architecture ||
-  left.executable !== right.executable ||
   left.content_state !== right.content_state ||
   input.leftOccurrence?.entry_kind !== input.rightOccurrence?.entry_kind ||
   input.leftOccurrence?.encrypted !== input.rightOccurrence?.encrypted ||
@@ -361,7 +370,7 @@ const relationsByPath = (
   }
   for (const values of output.values())
     values.sort((left, right) =>
-      canonicalJson(left).localeCompare(canonicalJson(right)),
+      compareCodePoints(canonicalJson(left), canonicalJson(right)),
     );
   return output;
 };

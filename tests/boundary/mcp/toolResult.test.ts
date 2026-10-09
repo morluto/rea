@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { McpServer } from "@modelcontextprotocol/server";
+import {
+  McpServer,
+  STDIO_DEFAULT_MAX_BUFFER_SIZE,
+} from "@modelcontextprotocol/server";
 
 import { ProcessCaptureError } from "../../../src/process/capture/ProcessCaptureError.js";
 import { resolveProcessResult } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
@@ -9,16 +12,18 @@ import {
   toolContract,
   type ToolContract,
 } from "../../../src/contracts/toolContracts.js";
-import { err, ok } from "../../../src/domain/result.js";
+import { err } from "../../../src/domain/result.js";
 import { HopperProcessError } from "../../../src/domain/hopperErrors.js";
 import type { IncompleteProcessCaptureObservations } from "../../../src/domain/process/processCapture.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
-import { toCallToolResult } from "../../../src/server/toolResult.js";
+import { ToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { emptyProcessCapture } from "../../../src/domain/process/processCapture.fixture.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { evidenceResultOf } from "../../../src/contracts/toolOutputSchemas.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
+
+const delivery = new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 
 const contract: ToolContract = {
   name: "provider_neutral_fixture",
@@ -72,7 +77,7 @@ describe("completed partial process capture MCP projection", () => {
     if (failure === undefined)
       throw new Error("expected process capture failure");
 
-    const result = toCallToolResult(
+    const result = delivery.toCallToolResult(
       err(failure),
       toolContract("capture_process_scenario"),
     );
@@ -130,7 +135,7 @@ describe("completed partial process capture MCP projection", () => {
     server.registerTool(
       captureContract.name,
       toolRegistrationOptions(captureContract),
-      async () => toCallToolResult(err(failure), captureContract),
+      async () => delivery.toCallToolResult(err(failure), captureContract),
     );
     const client = new Client({
       name: "process-partial-error-client",
@@ -261,7 +266,7 @@ describe("incomplete partial process observations MCP projection", () => {
     server.registerTool(
       captureContract.name,
       toolRegistrationOptions(captureContract),
-      async () => toCallToolResult(err(failure), captureContract),
+      async () => delivery.toCallToolResult(err(failure), captureContract),
     );
     const client = new Client({
       name: "process-partial-observations-client",
@@ -305,7 +310,10 @@ describe("incomplete partial process observations MCP projection", () => {
 
 describe("tool result projection", () => {
   it("exposes an actionable adapter code to MCP callers", () => {
-    const result = toCallToolResult(err(new HopperProcessError(76)), contract);
+    const result = delivery.toCallToolResult(
+      err(new HopperProcessError(76)),
+      contract,
+    );
     expect(result.structuredContent).toMatchObject({
       error: {
         code: "provider_unavailable",
@@ -315,7 +323,7 @@ describe("tool result projection", () => {
     });
   });
   it("projects bounded private-display coordinates without raw stderr", () => {
-    const result = toCallToolResult(
+    const result = delivery.toCallToolResult(
       err(
         new HopperProcessError(80, {
           component: "hopper_private_display",
@@ -350,7 +358,7 @@ describe("tool result projection", () => {
       },
     });
   });
-  it("returns result and complete Evidence context in one call", () => {
+  it("returns one complete Evidence record with its typed normalized result", () => {
     const evidence = createEvidence(
       undefined,
       { id: "fixture", name: "Fixture", version: "1" },
@@ -365,25 +373,14 @@ describe("tool result projection", () => {
       outputSchema: evidenceResultOf(z.object({ value: z.string() })),
     };
 
-    const result = toCallToolResult(ok(evidence), evidenceContract);
-    expect(result.structuredContent).toMatchObject({
-      result: { value: "observed" },
-      evidence_id: evidence.evidence_id,
-      evidence: {
-        normalized_result: { value: "observed" },
-        provider: { id: "fixture", name: "Fixture", version: "1" },
-        operation: "fixture",
-        predicate_type: "rea.analysis",
-        parameters: {},
-        raw_result: null,
-        confidence: "observed",
-        authority: "shipped-artifact",
-        environment: null,
-        limitations: evidence.limitations,
-        locations: [],
-        evidence_links: [],
-      },
-    });
+    const result = delivery.toEvidenceToolResult(
+      evidence,
+      evidenceContract,
+      undefined,
+    );
+    expect(result.structuredContent).toEqual(evidence);
+    expect(result.structuredContent).not.toHaveProperty("result");
+    expect(result.structuredContent).not.toHaveProperty("evidence");
     expect(result.content[0]).toMatchObject({
       type: "text",
       text: expect.stringContaining('"value":"observed"'),
@@ -391,7 +388,7 @@ describe("tool result projection", () => {
     const parsed = evidenceContract.outputSchema.parse(
       result.structuredContent,
     );
-    expect(parseEvidence(parsed.evidence)).toEqual(evidence);
+    expect(parseEvidence(parsed)).toEqual(evidence);
   });
 
   it.each<JsonValue>([null, false, 0, "", [], { nested: [false, null, 7] }])(
@@ -406,22 +403,23 @@ describe("tool result projection", () => {
         ...contract,
         outputSchema: evidenceResultOf(z.json()),
       };
-      const result = toCallToolResult(ok(evidence), evidenceContract);
+      const result = delivery.toEvidenceToolResult(
+        evidence,
+        evidenceContract,
+        undefined,
+      );
       const parsed = evidenceContract.outputSchema.parse(
         result.structuredContent,
       );
-      expect(parsed.result).toEqual(value);
-      expect(parseEvidence(parsed.evidence)).toEqual(evidence);
+      expect(parsed.normalized_result).toEqual(value);
+      expect(parseEvidence(parsed)).toEqual(evidence);
       expect(result.content).toEqual([
         { type: "text", text: JSON.stringify(parsed) },
       ]);
       const { normalized_result: _missingResult, ...incomplete } = evidence;
-      expect(
-        evidenceContract.outputSchema.safeParse({
-          ...parsed,
-          evidence: incomplete,
-        }).success,
-      ).toBe(false);
+      expect(evidenceContract.outputSchema.safeParse(incomplete).success).toBe(
+        false,
+      );
     },
   );
 });

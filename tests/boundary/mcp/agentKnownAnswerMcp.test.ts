@@ -247,16 +247,7 @@ describe("source-produced parser comparison known answers", () => {
 
 const resultEvidence = (result: {
   readonly structuredContent?: unknown;
-}): Evidence => {
-  const content = result.structuredContent;
-  if (
-    content === null ||
-    typeof content !== "object" ||
-    !("evidence" in content)
-  )
-    throw new TypeError("Missing produced MCP Evidence");
-  return parseEvidence(content.evidence);
-};
+}): Evidence => parseEvidence(result.structuredContent);
 
 const toolEvent = (id: string, tool: string, result: unknown) => ({
   type: "item.completed",

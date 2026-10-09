@@ -1,3 +1,4 @@
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { spawnSync } from "node:child_process";
 import { constants } from "node:fs";
 import { accessSync, readFileSync } from "node:fs";
@@ -37,6 +38,7 @@ const NATIVE_PLATFORMS: Readonly<
 
 /** Caller-owned paths and host coordinates used for one installation probe. */
 export interface GhidraInstallationOptions {
+  readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly installDir?: string;
   readonly javaHome?: string;
   readonly platform?: NodeJS.Platform;
@@ -298,7 +300,11 @@ const installationCoordinates = (
       options.javaHome === undefined || path.isAbsolute(options.javaHome)
         ? host.probeJava(
             javaCommand,
-            ghidraJavaEnvironment(options.javaHome, process.env, platform),
+            ghidraJavaEnvironment(
+              options.javaHome,
+              options.environment,
+              platform,
+            ),
           )
         : undefined,
   };
@@ -424,11 +430,12 @@ export const ghidraInstallationDiagnostics = (
 /** Environment that makes an explicitly selected JDK win over PATH discovery. */
 export const ghidraJavaEnvironment = (
   javaHome: string | undefined,
-  environment: NodeJS.ProcessEnv = process.env,
+  environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform = process.platform,
 ): NodeJS.ProcessEnv => {
+  const selectedEnvironment = snapshotEnvironment(environment, platform);
   const boundedEnvironment = {
-    ...environment,
+    ...selectedEnvironment,
     _JAVA_OPTIONS: "",
     JAVA_TOOL_OPTIONS: "",
     JDK_JAVA_OPTIONS: "",
@@ -442,7 +449,7 @@ export const ghidraJavaEnvironment = (
         PATH: `${(platform === "win32" ? win32 : posix).join(
           javaHome,
           "bin",
-        )}${platform === "win32" ? win32.delimiter : posix.delimiter}${environment.PATH ?? ""}`,
+        )}${platform === "win32" ? win32.delimiter : posix.delimiter}${selectedEnvironment.PATH ?? ""}`,
       };
 };
 

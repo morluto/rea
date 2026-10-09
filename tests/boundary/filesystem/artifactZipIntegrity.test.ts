@@ -54,7 +54,7 @@ it("rejects overlapping ZIP member data ranges through artifact inventory", asyn
 
   const target = await parseBinaryTarget(path);
   if (!target.ok) throw target.error;
-  const result = await new ArtifactProvider()
+  const result = await new ArtifactProvider(process.env)
     .createClient(target.value)
     .execute("inventory_artifact", {});
 
@@ -75,7 +75,7 @@ it("preserves encrypted-member and corrupt-CRC observations", async () => {
 
   const encryptedTarget = await parseBinaryTarget(encryptedPath);
   if (!encryptedTarget.ok) throw encryptedTarget.error;
-  const encryptedResult = await new ArtifactProvider()
+  const encryptedResult = await new ArtifactProvider(process.env)
     .createClient(encryptedTarget.value)
     .execute("inventory_artifact", {});
   if (!encryptedResult.ok) throw encryptedResult.error;
@@ -92,7 +92,7 @@ it("preserves encrypted-member and corrupt-CRC observations", async () => {
   // REA does not decrypt entries, so complete extraction is unsupported.
   const extractionRoot = join(root, "encrypted-output");
   expect(
-    await new ArtifactProvider()
+    await new ArtifactProvider(process.env)
       .createClient(encryptedTarget.value)
       .execute("extract_artifact", { output_root: extractionRoot }),
   ).toMatchObject({
@@ -126,7 +126,7 @@ it("preserves encrypted-member and corrupt-CRC observations", async () => {
 
   const corruptTarget = await parseBinaryTarget(corruptPath);
   if (!corruptTarget.ok) throw corruptTarget.error;
-  const corruptResult = await new ArtifactProvider()
+  const corruptResult = await new ArtifactProvider(process.env)
     .createClient(corruptTarget.value)
     .execute("inventory_artifact", {});
   expect(corruptResult).toMatchObject({
@@ -142,7 +142,7 @@ it("rejects a truncated ZIP through artifact inventory", async () => {
 
   const target = await parseBinaryTarget(path);
   if (!target.ok) throw target.error;
-  const result = await new ArtifactProvider()
+  const result = await new ArtifactProvider(process.env)
     .createClient(target.value)
     .execute("inventory_artifact", {});
 

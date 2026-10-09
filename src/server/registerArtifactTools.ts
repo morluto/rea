@@ -1,5 +1,5 @@
+import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
-import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "../contracts/artifactToolContracts.js";
@@ -10,7 +10,7 @@ import { artifactInspectionResultSchema } from "../domain/artifactInspection.js"
 
 /** Register deterministic artifact inventory and safe extraction operations. */
 export const registerArtifactTools = (
-  server: McpServer,
+  server: EvidenceMcpServer,
   analysis: AnalysisOperationPort,
   options: {
     readonly logger: Logger;

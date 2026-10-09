@@ -46,6 +46,7 @@ const signatureTarget = async (
 it("distinguishes a codesign execution failure from an observed unsigned artifact", async () => {
   for (const kind of ["missing", "unsigned"] as const) {
     const client = new NativeMacOSProvider(
+      {},
       new FixtureRunner(
         {
           codesign: await fixture(`dyld-inventory/codesign-${kind}.txt`),
@@ -78,6 +79,7 @@ it("reports unsigned slices when a universal Mach-O has mixed signatures", async
       `Format=Mach-O universal (x86_64 ${signedArchitecture})`,
     );
     const client = new NativeMacOSProvider(
+      {},
       signatureRunner({ signed, unsigned, entitlements }),
       "darwin",
     ).createClient(await signatureTarget(signedArchitecture));
@@ -120,6 +122,7 @@ it("rejects nonzero supplemental codesign output that is not an unsigned observa
   const signed = await fixture("codesign.txt");
   const entitlements = await fixture("entitlements.xml");
   const client = new NativeMacOSProvider(
+    {},
     signatureRunner({
       signed,
       unsigned: "/private/fixture: invalid or unsupported format\n",
@@ -144,6 +147,7 @@ it("retains native inventory facts from captured Apple tool output", async () =>
   const exportsOutput = await fixture("dyld-inventory/exports.txt");
   outputs["dyld_info:-exports"] = exportsOutput;
   const client = new NativeMacOSProvider(
+    {},
     new FixtureRunner(outputs),
     "darwin",
   ).createClient(machoTarget("/private/fixture"));

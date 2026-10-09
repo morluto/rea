@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -28,6 +29,7 @@ if (process.env.GHIDRA_INSTALL_DIR === undefined)
     "verify:ghidra:com prerequisite missing: GHIDRA_INSTALL_DIR (bring your own Ghidra).",
   );
 const installation = inspectGhidraInstallation({
+  environment: process.env,
   installDir: process.env.GHIDRA_INSTALL_DIR,
   ...(process.env.JAVA_HOME === undefined
     ? {}
@@ -331,12 +333,15 @@ async function call(name, args = {}) {
     { timeout: 240000 },
   );
   assert.notEqual(value.isError, true, JSON.stringify(value));
-  if (name === "open_binary") return value.structuredContent.result;
-  if (name === "close_binary") return value.structuredContent;
-  const evidence = parseEvidence(value.structuredContent.evidence);
+  const projected = requireMcpOperationResult(value, name);
+  if (name === "open_binary" || name === "close_binary") return projected;
+  const evidence = parseEvidence(value.structuredContent);
   assert.equal(evidence.subject.digest.sha256, sha256);
-  assert.deepEqual(evidence.normalized_result, value.structuredContent.result);
-  return value.structuredContent.result;
+  assert.deepEqual(
+    evidence.normalized_result,
+    value.structuredContent.normalized_result,
+  );
+  return projected;
 }
 async function cli(command, address, options = []) {
   const { stdout } = await promisify(execFile)(

@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 
 import { CdpBrowserProvider } from "../dist/browser/CdpBrowserProvider.js";
 import { waitForBrowserDevtoolsPort } from "../dist/browser/BrowserProcessStartup.js";
-import { PlaywrightBrowserScenarioProvider } from "../dist/browser/PlaywrightBrowserScenarioProvider.js";
+import { createBrowserScenarioProvider } from "../dist/composition/browserScenario.js";
 import {
   inspectWebPageInputSchema,
   listBrowserTargetsInputSchema,
@@ -240,10 +240,9 @@ try {
   try {
     attachedScenario = await runScenarioCli(attachedScenarioInput);
   } catch (cliError) {
-    const direct =
-      await new PlaywrightBrowserScenarioProvider().captureScenario(
-        attachedScenarioInput,
-      );
+    const direct = await createBrowserScenarioProvider(
+      process.env,
+    ).captureScenario(attachedScenarioInput);
     if (!direct.ok) {
       const underlying = direct.error.cause;
       const details =
@@ -274,16 +273,17 @@ try {
     throw new Error("Scenario attachment terminated its external browser");
 
   const profilesBefore = await scenarioProfiles();
-  const launchedScenario =
-    await new PlaywrightBrowserScenarioProvider().captureScenario(
-      browserScenario(
-        {
-          mode: "launch",
-          executable_path: executable,
-        },
-        site.origin,
-      ),
-    );
+  const launchedScenario = await createBrowserScenarioProvider(
+    process.env,
+  ).captureScenario(
+    browserScenario(
+      {
+        mode: "launch",
+        executable_path: executable,
+      },
+      site.origin,
+    ),
+  );
   if (!launchedScenario.ok) throw launchedScenario.error;
   if (
     launchedScenario.value.browser.cleanup !== "terminated-owned-process" ||

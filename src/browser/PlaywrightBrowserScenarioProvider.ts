@@ -29,19 +29,6 @@ import type {
 } from "./BrowserScenarioSessionPort.js";
 
 const OPERATION = "capture_browser_scenario" as const;
-let defaultFactory: Promise<BrowserScenarioSessionFactory> | undefined;
-
-const lazyPlaywrightFactory: BrowserScenarioSessionFactory = {
-  async open(scenario, options) {
-    defaultFactory ??= import("./PlaywrightScenarioSession.js").then(
-      ({ PlaywrightScenarioSessionFactory }) =>
-        new PlaywrightScenarioSessionFactory(),
-    );
-    return (await defaultFactory).open(scenario, options);
-  },
-};
-
-export { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "./providerIdentities.js";
 import { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "./providerIdentities.js";
 
 type SnapshotKind = BrowserScenario["capture"]["after_each_step"][number];
@@ -310,9 +297,7 @@ const runScenario = async (
 
 /** Controlled Playwright/CDP scenario driver with exact process ownership. */
 export class PlaywrightBrowserScenarioProvider implements BrowserScenarioCapturePort {
-  constructor(
-    private readonly factory: BrowserScenarioSessionFactory = lazyPlaywrightFactory,
-  ) {}
+  constructor(private readonly factory: BrowserScenarioSessionFactory) {}
 
   identity(): ProviderIdentity {
     return PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY;

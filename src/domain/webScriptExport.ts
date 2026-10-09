@@ -28,7 +28,7 @@ const sourceSchema = z.discriminatedUnion("kind", [
     kind: z.literal("page-script"),
     script_key: z.string().min(1),
     frame_id: z.string().nullable(),
-    is_module: z.boolean(),
+    is_module: z.boolean().nullable(),
     language: z.string().nullable(),
     source_map_url: z.string().nullable(),
   }),

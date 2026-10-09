@@ -2,7 +2,7 @@ import { open } from "node:fs/promises";
 
 import { classifyArtifactContent } from "./ArtifactGraphConstruction.js";
 import { ARTIFACT_CLASSIFICATION_PREFIX_BYTES } from "../ArtifactHash.js";
-import type { ArtifactNode } from "../../domain/artifactGraph.js";
+import type { ArtifactOccurrence } from "../../domain/artifactGraph.js";
 import {
   hasZipSignature,
   zipPackageFormatForPath,
@@ -10,7 +10,7 @@ import {
 
 const classifyContainerExtension = (
   path: string,
-): ArtifactNode["format"] | undefined => {
+): ArtifactOccurrence["artifact_format"] | undefined => {
   const lower = path.toLowerCase();
   const zipPackage = zipPackageFormatForPath(lower);
   if (zipPackage !== undefined) return zipPackage;
@@ -22,7 +22,7 @@ const classifyContainerExtension = (
 export const classifyRoot = async (
   path: string,
   directory: boolean,
-): Promise<ArtifactNode["format"]> => {
+): Promise<ArtifactOccurrence["artifact_format"]> => {
   if (directory) return "directory";
   const extensionFormat = classifyContainerExtension(path);
   if (extensionFormat !== undefined) return extensionFormat;

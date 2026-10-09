@@ -9,6 +9,7 @@ import type {
   BridgeLauncher,
   BridgeSession,
 } from "../../../../src/hopper/BridgeLauncher.js";
+import { waitForExit } from "../../../support/process/processFixture.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 
 export const hopperFixturePath = fileURLToPath(
@@ -56,7 +57,17 @@ export class HopperFixtureLauncher implements BridgeLauncher {
         process: child,
         ownsProcessLifetime: true as const,
         providerLifetime: "launcher-process" as const,
-        shutdownMode: "bridge-request" as const,
+        shutdownMode: "process-cleanup" as const,
+        cleanup: async () => {
+          const exited = child.exitCode !== null || child.signalCode !== null;
+          const signaled = !exited && child.kill("SIGTERM");
+          return (await waitForExit(child, 5_000))
+            ? { cleaned: true as const, signaled }
+            : {
+                cleaned: false as const,
+                reason: "Fixture process did not exit",
+              };
+        },
       }),
     );
   }
@@ -93,7 +104,9 @@ export class HopperFixtureLauncher implements BridgeLauncher {
 
 /** Register owned client cleanup before any startup assertion can fail. */
 export const trackHopperClient = (client: HopperClient): HopperClient => {
-  onTestFinished(() => client.close());
+  onTestFinished(async () => {
+    await client.close();
+  });
   return client;
 };
 

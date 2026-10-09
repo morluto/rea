@@ -7,6 +7,7 @@ import {
   numberValue,
   recordValue,
   recordsValue,
+  scriptMetadataValues,
   cdpStringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
@@ -84,15 +85,7 @@ export const handleScriptParsed = (
     rawUrl,
     url: sanitized.url,
     origin: sanitized.origin,
-    hash: cdpStringValue(params.hash) ?? "",
-    length: Math.max(
-      0,
-      Math.min(
-        Number.MAX_SAFE_INTEGER,
-        Math.trunc(numberValue(params.length) ?? 0),
-      ),
-    ),
-    isModule: params.isModule === true,
+    ...scriptMetadataValues(params),
     language: cdpStringValue(params.scriptLanguage) ?? null,
     executionContextKey: executionContextKey(params.executionContextId),
   };
@@ -135,7 +128,7 @@ const scriptMetadataStringBytes = (script: {
   readonly rawUrl: string;
   readonly url: string;
   readonly origin: string | null;
-  readonly hash: string;
+  readonly hash: string | null;
   readonly language: string | null;
   readonly executionContextKey: string | null;
 }): number =>

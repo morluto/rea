@@ -31,6 +31,14 @@ overall coverage becomes `partial` and a limitation explains the omission.
 Duplicate inventory pages are merged by artifact identity and occurrence path;
 their Evidence IDs remain attached as source Evidence.
 
+Content nodes identify bytes by SHA-256 and report only content-derived formats.
+Each occurrence reports its own `artifact_kind`, `artifact_format`, and executable
+permission. Identical bytes can therefore appear as a script, resource, or native
+addon at different paths without overwriting another occurrence's role. Package
+formats such as APK and IPA belong to the occurrence; their ZIP bytes share a
+content format. Graph and directory identities use locale-independent Unicode
+ordering.
+
 For IPA inventories, archive components outside every application root remain
 in the component lists. Their JavaScript and native candidates are grouped with
 other unrooted components, preserving the inventory projection's path pairing

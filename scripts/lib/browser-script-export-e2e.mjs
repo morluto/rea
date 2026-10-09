@@ -69,7 +69,7 @@ export async function verifyBrowserScriptExport(
     const call = async (name, args) => {
       const result = await client.callTool({ name, arguments: args });
       assert.notEqual(result.isError, true, mcpTextValue(result));
-      return parseEvidence(JSON.parse(mcpTextValue(result)).evidence);
+      return parseEvidence(JSON.parse(mcpTextValue(result)));
     };
     const mcpCapture = await call("capture_browser_scenario", scenario);
     const mcpInput = await save("mcp", mcpCapture);

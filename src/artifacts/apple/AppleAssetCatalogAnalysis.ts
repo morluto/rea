@@ -29,6 +29,7 @@ const RESOURCE_KEY_FIELDS = new Set([
 export const analyzeAppleAssetCatalogs = async (input: {
   readonly bundlePath: string;
   readonly targetSha256: string;
+  readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly page?: unknown;
   readonly signal?: AbortSignal;
   readonly runAssetUtil?: (
@@ -60,7 +61,9 @@ export const analyzeAppleAssetCatalogs = async (input: {
       const inspected = await inspectAssetCatalogEntry({
         reader,
         entry,
-        runAssetUtil: input.runAssetUtil ?? runAssetUtil,
+        runAssetUtil:
+          input.runAssetUtil ??
+          ((path, signal) => runAssetUtil(path, input.environment, signal)),
         ...(input.signal === undefined ? {} : { signal: input.signal }),
       });
       totalMetadataBytes += inspected.metadataBytes;
@@ -222,11 +225,13 @@ export const collectInterfaceBuilderResourceKeys = (
 
 const runAssetUtil = async (
   path: string,
+  environment: Readonly<NodeJS.ProcessEnv>,
   signal?: AbortSignal,
 ): Promise<string> => {
   try {
     return (
       await execFileOutput(ASSETUTIL, ["--info", path], {
+        env: environment,
         timeout: 60_000,
         maxBuffer: MAX_CATALOG_BYTES,
         ...(signal === undefined ? {} : { signal }),

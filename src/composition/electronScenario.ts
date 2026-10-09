@@ -2,5 +2,7 @@ import type { ElectronActiveObservationPort } from "../application/javascript/El
 import { PlaywrightElectronActiveProvider } from "../browser/PlaywrightElectronActiveProvider.js";
 
 /** Construct a fresh provider without opening a target or acquiring an engine. */
-export const createElectronScenarioProvider =
-  (): ElectronActiveObservationPort => new PlaywrightElectronActiveProvider();
+export const createElectronScenarioProvider = (
+  environment: Readonly<Record<string, string | undefined>>,
+): ElectronActiveObservationPort =>
+  new PlaywrightElectronActiveProvider(environment);

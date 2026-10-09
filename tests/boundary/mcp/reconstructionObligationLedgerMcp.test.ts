@@ -1,3 +1,4 @@
+import { ok as resultOk } from "../../../src/domain/result.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
 
@@ -10,7 +11,7 @@ describe("reconstruction obligation ledger MCP parity", () => {
   it("returns the complete Evidence-backed ledger inline", async () => {
     const session = createTestBinarySession(() => ({
       execute: () => Promise.resolve(observed(null)),
-      close: () => Promise.resolve(),
+      close: () => Promise.resolve(resultOk(null)),
     }));
     const server = createServer(session, session);
     const client = new Client({ name: "obligation-ledger-test", version: "1" });
@@ -33,14 +34,14 @@ describe("reconstruction obligation ledger MCP parity", () => {
       expect(result.isError).not.toBe(true);
       expect(result.structuredContent).toMatchObject({
         evidence_id: expect.stringMatching(/^ev_[a-f0-9]{64}$/u),
-        result: {
+        normalized_result: {
           schema: "ReconstructionObligationLedger",
           status: "unknown",
           summary: { total: 0 },
         },
       });
       expect(result.structuredContent).toHaveProperty(
-        "result.schema",
+        "normalized_result.schema",
         "ReconstructionObligationLedger",
       );
     } finally {

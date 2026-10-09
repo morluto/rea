@@ -140,10 +140,10 @@ describe("production stdio runtime", () => {
       const observation = evidenceResultOf(z.literal("fixture")).parse(
         result.structuredContent,
       );
-      const evidence = parseEvidence(observation.evidence);
+      const evidence = parseEvidence(observation);
       expect(evidence.operation).toBe("current_document");
       expect(evidence.provider.id).toBe("hopper");
-      expect(evidence.normalized_result).toBe(observation.result);
+      expect(evidence.normalized_result).toBe(observation.normalized_result);
       expect(records).toContainEqual(
         expect.objectContaining({
           application: "rea",

@@ -1,5 +1,5 @@
+import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
-import type { McpServer } from "@modelcontextprotocol/server";
 
 import type {
   AnalysisOperation,
@@ -13,7 +13,6 @@ import type { Logger } from "../logger.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { toCallToolResult, toEvidenceToolResult } from "./toolResult.js";
 import { createArtifactExtractionDestination } from "../application/artifacts/ArtifactExtractionDestination.js";
 
 interface EvidenceToolRegistration {
@@ -28,7 +27,7 @@ interface EvidenceToolRegistration {
 
 /** Register provider-backed contracts that return atomic Evidence observations. */
 export const registerEvidenceTools = (
-  server: McpServer,
+  server: EvidenceMcpServer,
   analysis: AnalysisOperationPort,
   contracts: readonly ToolContract<Exclude<AnalysisOperation, "health">>[],
   options: EvidenceToolRegistration,
@@ -69,7 +68,8 @@ export const registerEvidenceTools = (
           message: execution.ok ? "completed" : "failed",
           terminal: true,
         });
-        if (!execution.ok) return toCallToolResult(execution, contract);
+        if (!execution.ok)
+          return server.delivery.toCallToolResult(execution, contract);
         const sourceEvidence =
           options.sourceEvidence?.(contract.name, execution.value.result) ?? [];
         const evidence = createEvidence(
@@ -91,10 +91,14 @@ export const registerEvidenceTools = (
         for (const source of sourceEvidence) {
           const sourceRecorded = options.recordEvidence?.(source);
           if (sourceRecorded !== undefined && !sourceRecorded.ok)
-            return toCallToolResult(sourceRecorded, contract);
+            return server.delivery.toCallToolResult(sourceRecorded, contract);
         }
         const recorded = options.recordEvidence?.(evidence);
-        return toEvidenceToolResult(evidence, contract, recorded);
+        return server.delivery.toEvidenceToolResult(
+          evidence,
+          contract,
+          recorded,
+        );
       },
     );
   }

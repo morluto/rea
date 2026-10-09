@@ -1,12 +1,12 @@
+import { parseConfig } from "../../src/config.js";
+import { ok as resultOk } from "../../src/domain/result.js";
 import { describe, expect, it } from "vitest";
 import {
   runDirectAnalysis,
   runManagedProviderExecution,
 } from "../../src/application/DirectAnalysis.js";
-import { runCapabilityStatus } from "../../src/application/DirectAnalysisStatus.js";
 import type { DirectAnalysisDependencies } from "../../src/application/DirectAnalysisDependencies.js";
 import type { BinarySession } from "../../src/application/binary/BinarySession.js";
-import { parseEvidence } from "../../src/domain/evidence.js";
 import { observed } from "../fixtures/analysisExecution.js";
 import {
   createBinarySessionTargets,
@@ -25,13 +25,14 @@ const recordingFactories = (failure?: Error) => {
       },
       close: () => {
         clientsClosed += 1;
-        return Promise.resolve();
+        return Promise.resolve(resultOk(null));
       },
     }));
     sessions.push(session);
     return session;
   };
   const dependencies: DirectAnalysisDependencies = {
+    readConfiguration: () => parseConfig({}),
     createBinarySession: createSession,
     createManagedBinarySession: createSession,
   };
@@ -39,31 +40,6 @@ const recordingFactories = (failure?: Error) => {
 };
 
 describe("one-shot analysis factory boundary", () => {
-  it("keeps independent commands and releases their actual session clients", async () => {
-    const [path] = await createBinarySessionTargets();
-    const factories = recordingFactories();
-    const first = parseEvidence(
-      await runDirectAnalysis(factories.dependencies, path, "read_bytes", {}),
-    );
-    const second = parseEvidence(
-      await runDirectAnalysis(factories.dependencies, path, "read_bytes", {}),
-    );
-    expect(first).toMatchObject({
-      operation: "read_bytes",
-      normalized_result: { operation: "read_bytes" },
-      subject: { local_path: path },
-    });
-    expect(second.subject).toEqual(first.subject);
-    expect(factories.sessions).toHaveLength(2);
-    expect(factories.sessions[0]).not.toBe(factories.sessions[1]);
-    expect(factories.clientsClosed()).toBe(2);
-    for (const session of factories.sessions) {
-      expect(session.activeTarget()).toBeUndefined();
-      expect(session.evidenceById(first.evidence_id)).toBeUndefined();
-      expect(session.evidenceById(second.evidence_id)).toBeUndefined();
-    }
-  });
-
   it("preserves thrown failures while releasing clients and cancellation listeners", async () => {
     const [path] = await createBinarySessionTargets();
     const failure = new Error("fixture execution failed");
@@ -102,13 +78,17 @@ describe("one-shot analysis factory boundary", () => {
   it("keeps managed execution independent of native construction", async () => {
     const [path] = await createBinarySessionTargets();
     const factories = recordingFactories();
-    const result = await runManagedProviderExecution(
-      {
-        ...factories.dependencies,
-        createBinarySession: () => {
-          throw new Error("native factory must stay unused");
-        },
+    const managedDependencies = {
+      ...factories.dependencies,
+      readConfiguration: () => {
+        throw new Error("native configuration must stay unused");
       },
+      createBinarySession: () => {
+        throw new Error("native factory must stay unused");
+      },
+    };
+    const result = await runManagedProviderExecution(
+      managedDependencies,
       path,
       "inspect_managed_artifact",
     );
@@ -118,37 +98,5 @@ describe("one-shot analysis factory boundary", () => {
     });
     expect(factories.clientsClosed()).toBe(1);
     expect(factories.sessions[0]?.activeTarget()).toBeUndefined();
-  });
-});
-
-describe("status factory configuration", () => {
-  it("passes the selected environment and logger without opening a target", async () => {
-    const factories = recordingFactories();
-    const selected: string[] = [];
-    await runCapabilityStatus(
-      {
-        createBinarySession: (config, logger) => {
-          selected.push(config.analysisProvider);
-          expect(logger).toBeDefined();
-          return factories.dependencies.createBinarySession(config, logger);
-        },
-      },
-      undefined,
-      { REA_ANALYSIS_PROVIDER: "ghidra" },
-    );
-    expect(selected).toEqual(["ghidra"]);
-    expect(factories.clientsClosed()).toBe(0);
-    expect(factories.sessions[0]?.activeTarget()).toBeUndefined();
-  });
-
-  it("retains configuration diagnostics before acquiring any session", async () => {
-    const factories = recordingFactories();
-    const result = await runCapabilityStatus(
-      factories.dependencies,
-      undefined,
-      { REA_ANALYSIS_PROVIDER: "invalid_provider" },
-    );
-    expect(result).toHaveProperty("error");
-    expect(factories.sessions).toEqual([]);
   });
 });

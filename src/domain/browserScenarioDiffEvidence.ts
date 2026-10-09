@@ -123,23 +123,6 @@ export const networkContentCoverageReason = (
 ): string | undefined => {
   const left = before.scenario.network_content;
   const right = after.scenario.network_content;
-  if (left === undefined || right === undefined) {
-    const events = [...before.events.items, ...after.events.items];
-    if (
-      events.some((event) => event.kind === "network-content") ||
-      ((left === undefined) !== (right === undefined) &&
-        events.some(
-          (event) =>
-            event.kind === "request" ||
-            event.kind === "response" ||
-            event.kind === "request-failed" ||
-            event.kind === "request-finished" ||
-            event.kind === "request-unfinished",
-        ))
-    )
-      return "Network content selection is unknown in a legacy capture; capture both sides with matching content selection.";
-    return undefined;
-  }
   return left.request_body !== right.request_body ||
     left.response_body !== right.response_body ||
     left.header_values !== right.header_values

@@ -107,8 +107,18 @@ const javascriptRuntimeScriptSchema = z.strictObject({
   location: javascriptRuntimeLocationSchema,
   execution_context_key: z.string().nullable(),
   cdp_hash: z.string().nullable(),
-  length: z.number().int().min(0),
-  is_module: z.boolean(),
+  length: z
+    .number()
+    .int()
+    .min(0)
+    .nullable()
+    .describe("Producer-reported script length; null when unavailable."),
+  is_module: z
+    .boolean()
+    .nullable()
+    .describe(
+      "Producer-reported module classification; null when unavailable.",
+    ),
   status: z.literal("observed-loaded"),
 });
 

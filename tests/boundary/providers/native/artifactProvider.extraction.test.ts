@@ -24,7 +24,7 @@ import type { BinaryTarget } from "../../../../src/domain/binaryTarget.js";
 describe("artifact extraction", () => {
   it("declares possible native mounts and fresh extraction directories", () => {
     for (const platform of ["linux", "darwin"] as const) {
-      const provider = new ArtifactProvider(platform);
+      const provider = new ArtifactProvider(process.env, platform);
       for (const operation of [
         "inventory_artifact",
         "inspect_artifact",
@@ -65,7 +65,7 @@ describe("artifact extraction", () => {
     const cancelledOutput = join(root, "cancelled-output");
     const controller = new AbortController();
     controller.abort();
-    const cancelled = await new ArtifactProvider()
+    const cancelled = await new ArtifactProvider(process.env)
       .createClient(targetValue)
       .execute(
         "extract_artifact",
@@ -80,7 +80,7 @@ describe("artifact extraction", () => {
     });
     await expect(access(cancelledOutput)).rejects.toThrow();
     const output = join(root, "output");
-    const result = await new ArtifactProvider()
+    const result = await new ArtifactProvider(process.env)
       .createClient(targetValue)
       .execute(
         "extract_artifact",
@@ -108,7 +108,7 @@ describe("artifact extraction", () => {
     );
 
     const relocatedOutput = join(root, "relocated-output");
-    const relocated = await new ArtifactProvider()
+    const relocated = await new ArtifactProvider(process.env)
       .createClient(targetValue)
       .execute(
         "extract_artifact",
@@ -122,7 +122,7 @@ describe("artifact extraction", () => {
         .extraction_manifest,
     ).toEqual(firstExtraction.extraction_manifest);
 
-    const second = await new ArtifactProvider()
+    const second = await new ArtifactProvider(process.env)
       .createClient(targetValue)
       .execute(
         "extract_artifact",
@@ -149,7 +149,7 @@ describe("artifact extraction", () => {
     await symlink(image, alias);
     const output = join(root, "output");
     const extract = (signal?: AbortSignal) =>
-      new ArtifactProvider()
+      new ArtifactProvider(process.env)
         .createClient(target(alias, "dmg"))
         .execute(
           "extract_artifact",
@@ -175,7 +175,7 @@ describe("artifact extraction", () => {
   });
 });
 const inventory = async (targetValue: BinaryTarget) => {
-  const result = await new ArtifactProvider()
+  const result = await new ArtifactProvider(process.env)
     .createClient(targetValue)
     .execute("inventory_artifact", {});
   if (!result.ok) throw result.error;

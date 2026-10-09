@@ -131,7 +131,7 @@ export const finalizeInspectorCapture = async ({
     .map((context) => ({
       context_key: context.contextKey,
       state: context.state,
-      name: null,
+      name: context.name,
       origin: context.origin,
     }))
     .sort((left, right) =>

@@ -10,11 +10,13 @@ import {
 } from "@zip.js/zip.js";
 import { afterEach, expect, it } from "vitest";
 
-import { runProviderAnalysis } from "../../../src/composition/directAnalysis.js";
+import { createDirectAnalysis } from "../../../src/composition/directAnalysis.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createServer } from "../../../src/server/createServer.js";
+
+const { runProviderAnalysis } = createDirectAnalysis({});
 
 const resources: Array<{ close(): Promise<unknown> }> = [];
 afterEach(async () => {
@@ -87,12 +89,10 @@ it("advertises and executes Android and Apple inventory projections", async () =
     arguments: { inventory_evidence: [apkInventory] },
   });
   if (android.isError === true)
-    throw new Error(JSON.stringify(android.structuredContent, null, 2));
+    throw new Error(JSON.stringify(android, null, 2));
   expect(android.structuredContent).toMatchObject({
-    evidence: {
-      operation: "project_android_application_graph",
-      provider: { id: "rea-android-application" },
-    },
+    operation: "project_android_application_graph",
+    provider: { id: "rea-android-application" },
   });
 
   const ipaInventory = parseEvidence(
@@ -102,12 +102,9 @@ it("advertises and executes Android and Apple inventory projections", async () =
     name: "project_apple_application_graph",
     arguments: { inventory_evidence: [ipaInventory] },
   });
-  if (apple.isError === true)
-    throw new Error(JSON.stringify(apple.structuredContent, null, 2));
+  if (apple.isError === true) throw new Error(JSON.stringify(apple, null, 2));
   expect(apple.structuredContent).toMatchObject({
-    evidence: {
-      operation: "project_apple_application_graph",
-      provider: { id: "rea-apple-application" },
-    },
+    operation: "project_apple_application_graph",
+    provider: { id: "rea-apple-application" },
   });
 });

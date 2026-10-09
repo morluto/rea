@@ -9,22 +9,28 @@ import { inspectIdaRegistration } from "./ida/IdaDoctor.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
 
 /** Compose provider diagnostics at the outer CLI adapter boundary. */
-export const createSystemDoctorHost = (): DoctorHost =>
+export const createSystemDoctorHost = (
+  environment: Readonly<NodeJS.ProcessEnv> = process.env,
+): DoctorHost =>
   systemDoctorHost({
+    environment,
     providerInspections: async () => [
-      await inspectSystemGhidraProvider(),
-      inspectIdaRegistration(process.env.REA_IDA_MCP_CONFIG),
+      await inspectSystemGhidraProvider(environment),
+      inspectIdaRegistration(environment.REA_IDA_MCP_CONFIG),
     ],
-    linuxDemoRuntimeCheck: inspectLinuxPrivateDisplay,
+    linuxDemoRuntimeCheck: () => inspectLinuxPrivateDisplay(environment),
   });
 
 const HOPPER_DEMO_HELPER_PATH = fileURLToPath(
   new URL("../scripts/hopper-demo-x11.py", import.meta.url),
 );
 
-const inspectLinuxPrivateDisplay = async (): Promise<DoctorCheck> => {
+const inspectLinuxPrivateDisplay = async (
+  environment: Readonly<NodeJS.ProcessEnv>,
+): Promise<DoctorCheck> => {
   const selection = await selectLinuxPrivateDisplayStrategy({
     helperPath: HOPPER_DEMO_HELPER_PATH,
+    environment,
   });
   const value = selection.diagnostic;
   const detail = [

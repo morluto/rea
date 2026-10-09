@@ -34,6 +34,7 @@ const fixture = (version = "12.1.4") => {
   const provider = new GhidraProvider(
     config.value,
     silentLogger,
+    {},
     {
       platform: "linux",
       architecture: "x64",
@@ -107,7 +108,7 @@ const fixture = (version = "12.1.4") => {
           operation === "procedure_pseudo_code" ? dossier.pseudocode : dossier,
         );
       },
-      close: async () => {},
+      close: async () => ok(null),
     }),
   );
   return {

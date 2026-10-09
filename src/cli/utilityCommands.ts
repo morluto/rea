@@ -1,10 +1,6 @@
 import { z } from "incur";
 
-import {
-  runCapabilityStatus,
-  runProviderAnalysis,
-  runProviderStatus,
-} from "../composition/directAnalysis.js";
+import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { importReferenceSource } from "../application/ReferenceSourceImport.js";
 import { projectReferenceSourceImportError } from "../application/ReferenceSourceImportTypes.js";
 import { parseConfig } from "../config.js";
@@ -25,11 +21,16 @@ import { registerNativeCallCommands } from "./nativeCallCommands.js";
 export const registerUtilityCommands = (
   cli: CliInstance,
   logger: Logger,
-  environment: Readonly<Record<string, string | undefined>> = process.env,
+  environment: Readonly<Record<string, string | undefined>>,
+  analysis: Pick<
+    DirectAnalysis,
+    "runProviderAnalysis" | "runProviderStatus" | "runCapabilityStatus"
+  >,
 ): void => {
-  registerCapabilityCommands(cli, logger);
-  registerNativeCommands(cli, logger);
-  registerNativeCallCommands(cli, logger);
+  const { runProviderAnalysis } = analysis;
+  registerCapabilityCommands(cli, logger, analysis);
+  registerNativeCommands(cli, logger, runProviderAnalysis);
+  registerNativeCallCommands(cli, logger, runProviderAnalysis);
   for (const [command, operation] of [
     [CLI_COMMANDS.observeNativeUi, "observe_native_ui"],
     [CLI_COMMANDS.captureNativeUiScenario, "capture_native_ui_scenario"],
@@ -125,7 +126,14 @@ const invalidNativeUiScenarioInput = (
   ...projectAnalysisError(new AnalysisInputError(operation, undefined, issues)),
 });
 
-const registerCapabilityCommands = (cli: CliInstance, logger: Logger): void => {
+const registerCapabilityCommands = (
+  cli: CliInstance,
+  logger: Logger,
+  {
+    runProviderStatus,
+    runCapabilityStatus,
+  }: Pick<DirectAnalysis, "runProviderStatus" | "runCapabilityStatus">,
+): void => {
   for (const command of [
     CLI_COMMANDS.capabilities,
     CLI_COMMANDS.providers,
@@ -145,7 +153,11 @@ const registerCapabilityCommands = (cli: CliInstance, logger: Logger): void => {
   }
 };
 
-const registerNativeCommands = (cli: CliInstance, logger: Logger): void => {
+const registerNativeCommands = (
+  cli: CliInstance,
+  logger: Logger,
+  runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
+): void => {
   for (const [command, tool] of [
     [CLI_COMMANDS.inspectMacho, "inspect_macho"],
     [CLI_COMMANDS.inspectSignature, "inspect_signature"],
@@ -205,7 +217,7 @@ const registerNativeCommands = (cli: CliInstance, logger: Logger): void => {
 const registerReferenceSourceCommand = (
   cli: CliInstance,
   logger: Logger,
-  environment: Readonly<Record<string, string | undefined>> = process.env,
+  environment: Readonly<Record<string, string | undefined>>,
 ): void => {
   cli.command(CLI_COMMANDS.importReferenceSource, {
     description: "Import a source tree as historical reference only",

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { javascriptSourceMapReferenceSchema } from "./javascriptSourceMapPaths.js";
 import {
   applicationCoverageSchema,
   applicationGraphEvidenceSchema,
@@ -76,15 +77,23 @@ const applicationPropertiesSchema = z.record(
 );
 
 /** One node observation before its semantic identifier is derived. */
-const applicationNodeObservationInputSchema = z.strictObject({
+const applicationNodeObservationBaseSchema = z.strictObject({
   label: z.string().min(1).nullable(),
+  source_map_reference: javascriptSourceMapReferenceSchema.nullable(),
   properties: applicationPropertiesSchema,
   evidence: applicationGraphEvidenceSchema,
 });
 
+const applicationNodeObservationInputSchema =
+  applicationNodeObservationBaseSchema.extend({
+    source_map_reference: javascriptSourceMapReferenceSchema
+      .nullable()
+      .default(null),
+  });
+
 /** One immutable, evidence-bearing observation attached to an entity. */
 export const applicationNodeObservationSchema =
-  applicationNodeObservationInputSchema.extend({
+  applicationNodeObservationBaseSchema.extend({
     observation_id: prefixedDigestSchema("jag_observation"),
     identifier_strategy: z.strictObject({
       strategy: z.literal("semantic-content-sha256"),

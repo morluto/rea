@@ -206,6 +206,22 @@ it("preserves validation for the referenced record's operation, predicate, and s
       },
     });
   }
+  for (const reference of [
+    { evidence_id: application.evidence_id },
+    { ...retained(application.evidence_id), kind: "another-session" },
+    retained("ev_short"),
+    { ...retained(application.evidence_id), session_id: "foreign" },
+    { ...retained(application.evidence_id), normalized_result: {} },
+  ]) {
+    const rejected = await client.callTool({
+      name: "trace_application_feature",
+      arguments: {
+        ...JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
+        application: reference,
+      },
+    });
+    expect(rejected.isError).toBe(true);
+  }
   const tampered = {
     ...application,
     provider: { ...application.provider, id: "tampered" },
@@ -239,6 +255,6 @@ it("projects a retained JavaScript summary without graph or semantic_graph", asy
   expect(inline.isError).not.toBe(true);
   expect(referenced.structuredContent).toEqual(inline.structuredContent);
   expect(inline.structuredContent).not.toHaveProperty(
-    "result.summary.semantic_graph",
+    "normalized_result.summary.semantic_graph",
   );
 });

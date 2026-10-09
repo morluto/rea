@@ -161,6 +161,7 @@ export async function verifyGhidraNamespaceAnnotations({
 
 async function requireNamespaceDemangler(env) {
   const inspection = inspectGhidraInstallation({
+    environment: process.env,
     installDir: env.GHIDRA_INSTALL_DIR,
     ...(env.JAVA_HOME === undefined ? {} : { javaHome: env.JAVA_HOME }),
   });

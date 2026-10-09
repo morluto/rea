@@ -10,10 +10,6 @@ import {
   type JavaScriptApplicationGraph,
 } from "./javascriptApplicationGraph.js";
 import {
-  JAVASCRIPT_APPLICATION_NODE_KINDS,
-  JAVASCRIPT_APPLICATION_RELATIONS,
-} from "./javascriptApplicationGraphSchemas.js";
-import {
   APPLICATION_GRAPH_DIGESTS,
   artifactEvidence,
   buildSyntheticJavaScriptApplicationGraph,
@@ -27,6 +23,7 @@ import {
   unknownEvidence,
 } from "./javascriptApplicationGraph.fixture.js";
 
+import { resolveJavaScriptSourceMapReference } from "./javascriptSourceMapPaths.js";
 const createLargeNativeExportGraph = (): JavaScriptApplicationGraph => {
   const properties = Object.fromEntries(
     Array.from({ length: 1_001 }, (_, index) => [
@@ -123,59 +120,6 @@ it("accepts deeply nested canonical application properties", () => {
 });
 
 describe("JavaScript Application Graph: vocabulary", () => {
-  it("defines the complete provider-neutral node and relation vocabulary", () => {
-    expect(JAVASCRIPT_APPLICATION_NODE_KINDS).toEqual([
-      "package",
-      "installer",
-      "artifact",
-      "asar-entry",
-      "electron-main",
-      "electron-preload",
-      "electron-renderer",
-      "electron-utility",
-      "javascript-asset",
-      "javascript-chunk",
-      "javascript-module",
-      "source-map",
-      "source-module",
-      "browser-window",
-      "frame",
-      "target",
-      "context-bridge-api",
-      "ipc-channel",
-      "ipc-handler",
-      "worker",
-      "service-worker",
-      "endpoint",
-      "storage",
-      "native-addon",
-      "native-export",
-      "managed-assembly",
-      "managed-module",
-      "managed-type",
-      "managed-method",
-      "managed-field",
-      "managed-pinvoke-import",
-      "managed-native-implementation",
-      "runtime-script-instance",
-      "unknown",
-    ]);
-    expect(JAVASCRIPT_APPLICATION_RELATIONS).toEqual([
-      "contains",
-      "loads",
-      "imports",
-      "maps_to",
-      "exposes",
-      "sends",
-      "invokes",
-      "handles",
-      "calls",
-      "persists_to",
-      "observed_as",
-      "changed_from",
-    ]);
-  });
-
   it("round-trips one canonical, byte-stable graph", () => {
     const graph = buildSyntheticJavaScriptApplicationGraph();
     const serialized = serializeJavaScriptApplicationGraph(graph);
@@ -485,6 +429,7 @@ describe("JavaScript Application Graph: source maps and observations", () => {
       kind: "source-module",
       identity: {
         strategy: "source-map-original",
+        source_root: null,
         stability: "source-map-exact",
         source_map_sha256: APPLICATION_GRAPH_DIGESTS.asar,
         original_source: "webpack:///src/editor.ts",
@@ -493,6 +438,11 @@ describe("JavaScript Application Graph: source maps and observations", () => {
       observations: [
         {
           label: "src/editor.ts",
+          source_map_reference: resolveJavaScriptSourceMapReference(
+            "webpack:///src/editor.ts",
+            null,
+            "dist/app.js.map",
+          ),
           properties: { recovered_from: "source-map" },
           evidence: artifactEvidence(
             APPLICATION_GRAPH_DIGESTS.asar,
@@ -524,6 +474,44 @@ describe("JavaScript Application Graph: source maps and observations", () => {
 
     expect(graphForNode(sourceModule).nodes).toEqual([sourceModule]);
     expect(graphForNode(observationScoped).nodes).toEqual([observationScoped]);
+    const sourceObservation = firstOf(
+      sourceModule.observations,
+      "source observation",
+    );
+    const {
+      source_map_reference,
+      observation_id,
+      identifier_strategy,
+      ...withoutReference
+    } = sourceObservation;
+    void observation_id;
+    void identifier_strategy;
+    expect(() =>
+      graphForNode(
+        createJavaScriptApplicationNode({
+          kind: sourceModule.kind,
+          identity: sourceModule.identity,
+          observations: [withoutReference],
+        }),
+      ),
+    ).toThrow(/Source-map observation/u);
+    expect(() =>
+      graphForNode(
+        createJavaScriptApplicationNode({
+          kind: sourceModule.kind,
+          identity: sourceModule.identity,
+          observations: [
+            {
+              ...withoutReference,
+              source_map_reference: {
+                ...source_map_reference,
+                map_path: "different/map.js.map",
+              },
+            },
+          ],
+        }),
+      ),
+    ).toThrow(/Source-map observation/u);
   });
 
   it("rejects unknown fields and stale commitments", () => {

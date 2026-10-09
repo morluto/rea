@@ -1,3 +1,4 @@
+import { ok as resultOk } from "../../../src/domain/result.js";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -15,6 +16,7 @@ import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph
 import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { createPromptCompletionSource } from "../../../src/server/promptCompletion.js";
 import { observed } from "../../fixtures/analysisExecution.js";
+import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 
 let directory: string | undefined;
 
@@ -27,7 +29,21 @@ afterEach(async () => {
 describe("guided prompt completion from live analysis", () => {
   it("reads live documents and complete procedures without ambiguous names", async () => {
     const requests: Array<Readonly<Record<string, unknown>>> = [];
-    const session = createTestBinarySession(() => client(requests));
+    const session = createTestBinarySession(() => client(requests), {
+      resolveAnalysisProfile: () =>
+        Promise.resolve(
+          resultOk({
+            profile: createAnalysisProfile(
+              {
+                id: "fixture",
+                name: "Fixture analysis provider",
+                version: "1",
+              },
+              { fixture: true },
+            ),
+          }),
+        ),
+    });
     directory = await createTestTempDirectory("rea-prompt-completion-");
     const target = join(directory, "fixture.hop");
     await writeFile(target, "fixture");
@@ -44,9 +60,7 @@ describe("guided prompt completion from live analysis", () => {
       }),
     ).toEqual(["0x1000", "0x2000", "0x3000", "0x4000", "tail", "unique"]);
     expect(requests).toEqual([{ document: "App" }]);
-    expect(await completion.complete("provider", "uni")).toEqual([
-      "unidentified",
-    ]);
+    expect(await completion.complete("provider", "fix")).toEqual(["fixture"]);
     expect(await completion.complete("document", "x".repeat(4_097))).toEqual(
       [],
     );
@@ -58,7 +72,7 @@ describe("guided prompt completion from live analysis", () => {
 });
 
 describe("guided prompt completion from investigation records", () => {
-  it("completes process captures imported in the original v3 format", async () => {
+  it("excludes process captures missing canonical executable identity", async () => {
     const session = createTestBinarySession(() => client([]));
     const {
       selected_executable_sha256: _selectedDigest,
@@ -83,7 +97,7 @@ describe("guided prompt completion from investigation records", () => {
 
     expect(
       await completion.complete("capture", evidence.evidence_id.slice(0, 8)),
-    ).toEqual([evidence.evidence_id]);
+    ).toEqual([]);
 
     await session.close();
   });
@@ -272,5 +286,5 @@ const client = (
     }
     return Promise.resolve(observed(null));
   },
-  close: () => Promise.resolve(),
+  close: () => Promise.resolve(resultOk(null)),
 });

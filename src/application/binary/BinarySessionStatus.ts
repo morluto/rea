@@ -36,10 +36,7 @@ export const binarySessionStatus = ({
   requestActivitySnapshots,
   providerOperationHealth,
 }: BinarySessionStatusInput): JsonValue => {
-  const configuredProvider = router.configuredIdentity();
-  const provider = providerSummary(configuredProvider);
-  const providers = router.providerIdentities(route).map(providerSummary);
-  const capabilities = [...(route.capabilities?.values() ?? [])]
+  const capabilities = [...route.capabilities.values()]
     .filter(({ operation }) => operation !== "inventory_artifact")
     .sort((left, right) => left.operation.localeCompare(right.operation))
     .map((descriptor) => {
@@ -75,8 +72,6 @@ export const binarySessionStatus = ({
         .map(capabilityStatus),
     }));
   const common = {
-    provider,
-    providers,
     capabilities,
     analysis_provider_binding: analysisProviderBinding,
     analysis_provider_candidates: analysisProviderCandidates,

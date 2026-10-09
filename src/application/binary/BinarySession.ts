@@ -60,7 +60,6 @@ interface SessionBinding {
   readonly target: BinaryTarget;
   readonly client: AnalysisClient;
   readonly profile: AnalysisProfileCommitment | null;
-  readonly compatibility: Readonly<Record<string, JsonValue>>;
   readonly route: SessionProviderRoute;
   readonly runId: string;
 }
@@ -105,13 +104,13 @@ export class BinarySession
   /** Identify the provider producing evidence for this session. */
   providerIdentity(operation?: AnalysisOperation): ProviderIdentity {
     const route = this.#currentRoute();
-    let selected = route.identity;
+    let selected = route.binding?.identity ?? route.identity;
     if (operation !== undefined) {
-      const exact = route.capabilities?.get(operation)?.provider;
+      const exact = route.capabilities.get(operation)?.provider;
       if (exact !== undefined) selected = exact;
       else if (ENHANCED_OPERATIONS.has(operation)) {
         const providers = new Map<string, ProviderIdentity>();
-        for (const descriptor of route.capabilities?.values() ?? [])
+        for (const descriptor of route.capabilities.values())
           if (
             descriptor.available &&
             OFFICIAL_OPERATIONS.has(descriptor.operation)
@@ -155,11 +154,6 @@ export class BinarySession
     )
       return undefined;
     return structuredClone(profile);
-  }
-
-  /** Return opaque adapter metadata retained for legacy open_binary output. */
-  openCompatibility(): Readonly<Record<string, JsonValue>> {
-    return structuredClone(this.#active?.compatibility ?? {});
   }
 
   /** Observe runtime provider-health changes that affect discovery metadata. */
@@ -241,7 +235,7 @@ export class BinarySession
       const resolved = await resolve();
       if (!resolved.ok) return resolved;
       const { target, route, sameTarget } = resolved.value;
-      const { profile, compatibility } = route;
+      const { profile } = route;
       if (isAborted(options.signal))
         return err(new AnalysisCancelledError("open_binary"));
       const activeProfile = this.#active?.profile;
@@ -310,7 +304,6 @@ export class BinarySession
         target,
         client,
         profile,
-        compatibility: structuredClone(compatibility),
         route,
         runId,
       };
@@ -370,9 +363,8 @@ export class BinarySession
       return closed.ok
         ? ok({
             ...written.value,
-            entries: snapshot.value.entries.length,
             primitive_entries: snapshot.value.entries.length,
-            workflow_entries: snapshot.value.workflow_entries?.length ?? 0,
+            workflow_entries: snapshot.value.workflow_entries.length,
             evidence_records: snapshot.value.evidence_bundle.records.length,
           })
         : closed;
@@ -584,7 +576,7 @@ export class BinarySession
         parameters: arguments_,
         execution: profiled.value,
       });
-    } else if (profiled.ok && capability?.effects.mutatesArtifact === true) {
+    } else if (profiled.ok && capability.effects.mutatesArtifact) {
       this.invalidateSnapshot();
     }
     return profiled;
@@ -699,7 +691,6 @@ export class BinarySession
         target: previous.target,
         client,
         profile: previous.profile,
-        compatibility: previous.compatibility,
         route: previous.route,
         runId,
       };

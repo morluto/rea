@@ -20,7 +20,7 @@ export const resolveGhidraAnalysisProfile = (
   if (signal?.aborted === true)
     return Promise.resolve(err(new AnalysisCancelledError("open_binary")));
   if (target.kind !== "executable")
-    return Promise.resolve(ok({ profile: null, compatibility: {} }));
+    return Promise.resolve(ok({ profile: null }));
   if (installation.status === "unavailable")
     return Promise.resolve(
       err(new ProviderAdapterError(identity.id, "resolve_analysis_profile")),
@@ -85,10 +85,6 @@ export const resolveGhidraAnalysisProfile = (
           : {}),
         analyzer_preset: "ghidra-default",
       }),
-      compatibility: {
-        languageId: dos ? "x86:LE:16:Real Mode" : "auto",
-        compilerSpecId: dos ? "default" : "auto",
-      },
     }),
   );
 };

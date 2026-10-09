@@ -43,8 +43,6 @@ import { projectElectronActiveCapture } from "./PlaywrightElectronActiveProjecti
 const OPERATION = "capture_electron_scenario" as const;
 const STARTUP_TIMEOUT_MS = 60_000;
 
-/** Public identity for provider-owned Electron runtime experiments. */
-export { PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY } from "./providerIdentities.js";
 import { PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY } from "./providerIdentities.js";
 
 const hookPath = fileURLToPath(
@@ -60,6 +58,12 @@ type ElectronPaths = {
 
 /** Launch an owned Electron application through the official Playwright API. */
 export class PlaywrightElectronActiveProvider implements ElectronActiveObservationPort {
+  constructor(
+    private readonly environment: Readonly<Record<string, string | undefined>>,
+    private readonly launch: typeof electron.launch = (options) =>
+      electron.launch(options),
+  ) {}
+
   identity(): ProviderIdentity {
     return PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY;
   }
@@ -89,10 +93,10 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         await systemProcessOwnershipHost.captureBaseline?.(options.signal);
       if (options.signal?.aborted)
         throw new BrowserObservationError(OPERATION, "cancelled");
-      application = await electron.launch({
+      application = await this.launch({
         executablePath: paths.executable,
         cwd: paths.root,
-        env: safeElectronEnvironment(runId),
+        env: safeElectronEnvironment(this.environment, runId),
         args: ["-r", hookPath, paths.application, ...input.args],
         timeout: Math.max(1, startupDeadline - Date.now()),
       });
@@ -353,7 +357,10 @@ const canonicalPaths = async (
   return { executable, application, root };
 };
 
-const safeElectronEnvironment = (runId: string): Record<string, string> =>
+const safeElectronEnvironment = (
+  environment: Readonly<Record<string, string | undefined>>,
+  runId: string,
+): Record<string, string> =>
   Object.fromEntries([
     ...[
       "HOME",
@@ -365,7 +372,7 @@ const safeElectronEnvironment = (runId: string): Record<string, string> =>
       "DISPLAY",
       "WAYLAND_DISPLAY",
     ]
-      .map((name) => [name, process.env[name]] as const)
+      .map((name) => [name, environment[name]] as const)
       .filter(
         (entry): entry is readonly [string, string] => entry[1] !== undefined,
       ),

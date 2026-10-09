@@ -12,7 +12,7 @@ describe("Ghidra MCP capability routing", () => {
       });
       expect(batch.isError).not.toBe(true);
       expect(batch.structuredContent).toMatchObject({
-        result: {
+        normalized_result: {
           succeeded: 1,
           failed: 0,
           items: [{ status: "ok" }],

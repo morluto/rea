@@ -2,8 +2,7 @@ import { z } from "zod";
 import canonicalize from "canonicalize";
 
 import {
-  evidenceEnvelopeSchema,
-  evidenceRecordSchema,
+  evidenceSchema,
   immutableEvidence,
   parseEvidence,
   providerSchema,
@@ -15,23 +14,20 @@ import {
 } from "./residualUnknown.js";
 import { freezeJsonSnapshot } from "./immutableJson.js";
 
-const artifactManifestSchema = evidenceEnvelopeSchema.shape.subject
-  .unwrap()
-  .pick({
-    digest: true,
-    format: true,
-    architecture: true,
-  });
+const artifactManifestSchema = evidenceSchema.shape.subject.unwrap().pick({
+  digest: true,
+  format: true,
+  architecture: true,
+});
 const providerManifestSchema = providerSchema;
-const environmentManifestSchema =
-  evidenceEnvelopeSchema.shape.environment.unwrap();
+const environmentManifestSchema = evidenceSchema.shape.environment.unwrap();
 const scenarioManifestSchema = z.object({
-  evidence_id: evidenceEnvelopeSchema.shape.evidence_id,
+  evidence_id: evidenceSchema.shape.evidence_id,
   operation: z.string().min(1),
   authority: z.literal("controlled-replay"),
 });
 const captureManifestSchema = z.object({
-  evidence_id: evidenceEnvelopeSchema.shape.evidence_id,
+  evidence_id: evidenceSchema.shape.evidence_id,
   predicate_type: z.string().min(1),
 });
 
@@ -42,7 +38,7 @@ export const evidenceBundleSchema = z.object({
   scenarios: z.array(scenarioManifestSchema),
   captures: z.array(captureManifestSchema),
   unknowns: z.array(residualUnknownSchema),
-  records: z.array(evidenceRecordSchema),
+  records: z.array(evidenceSchema),
 });
 
 export type EvidenceBundle = z.infer<typeof evidenceBundleSchema>;
@@ -215,7 +211,7 @@ export const describeEvidenceBundleFailure = (
   input: unknown,
   cause: unknown,
 ): string => {
-  const record = evidenceRecordSchema.safeParse(input);
+  const record = evidenceSchema.safeParse(input);
   if (record.success)
     return `Expected an Evidence bundle with records and manifest arrays, but this JSON is one Evidence record (${record.data.evidence_id}). Export a session bundle with the MCP export_evidence_bundle tool and supply that file.`;
   return cause instanceof z.ZodError

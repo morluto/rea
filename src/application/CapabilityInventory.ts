@@ -352,7 +352,7 @@ const workflowAvailabilityFor = ({
               : "provider_missing",
           remediation:
             policy.androidAnalysisAvailability?.reason ??
-            "Set REA_JADX_MCP_JAR to a caller-supplied jadx-headless-mcp 0.7.1 JAR and provide a full JDK on Linux or macOS.",
+            "Set REA_JADX_MCP_JAR to a caller-supplied jadx-headless-mcp 0.7.1 JAR and provide a full JDK on Linux, macOS, or Windows x64 with its matching bundled native controls.",
         };
   const browser = browserProviderAvailability(name, kind, policy);
   if (browser !== null) return browser;

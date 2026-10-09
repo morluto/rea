@@ -1,11 +1,10 @@
+import type { EvidenceMcpServer } from "../EvidenceMcpServer.js";
 import { recordSessionEvidenceSources } from "../sessionEvidence.js";
-import type { McpServer } from "@modelcontextprotocol/server";
 
 import { verifyManagedNativeBoundariesEvidence } from "../../application/managed/ManagedNativeVerificationService.js";
 import { managedNativeVerificationResultSchema } from "../../domain/managed/managedNativeVerification.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
-import { toCallToolResult, toEvidenceToolResult } from "../toolResult.js";
 import { managedWorkflowContract } from "./contract.js";
 import {
   resolveManagedBoundaryEvidence,
@@ -19,7 +18,7 @@ const nativeVerificationContract = managedWorkflowContract(
 
 /** Register the managed/native boundary verification workflow tool. */
 export const registerVerifyManagedNativeBoundaries = (
-  server: McpServer,
+  server: EvidenceMcpServer,
   options: ManagedWorkflowToolRegistration,
 ): void => {
   server.registerTool(
@@ -30,12 +29,18 @@ export const registerVerifyManagedNativeBoundaries = (
         input.managed_boundaries,
       );
       if (!managedBoundaries.ok)
-        return toCallToolResult(managedBoundaries, nativeVerificationContract);
+        return server.delivery.toCallToolResult(
+          managedBoundaries,
+          nativeVerificationContract,
+        );
       const nativeObservations = resolveNativeEvidence(
         input.native_observations,
       );
       if (!nativeObservations.ok)
-        return toCallToolResult(nativeObservations, nativeVerificationContract);
+        return server.delivery.toCallToolResult(
+          nativeObservations,
+          nativeVerificationContract,
+        );
       const managedBoundary = managedBoundaries.value[0];
       if (managedBoundary === undefined)
         throw new TypeError("Managed boundary Evidence resolution failed");
@@ -50,13 +55,19 @@ export const registerVerifyManagedNativeBoundaries = (
         () => Promise.resolve(verifyManagedNativeBoundariesEvidence(parsed)),
       );
       if (!result.ok)
-        return toCallToolResult(result, nativeVerificationContract);
+        return server.delivery.toCallToolResult(
+          result,
+          nativeVerificationContract,
+        );
       const recordedSources = recordSessionEvidenceSources(
         options.recordEvidence,
         [parsed.managed_boundaries, ...parsed.native_observations],
       );
       if (!recordedSources.ok)
-        return toCallToolResult(recordedSources, nativeVerificationContract);
+        return server.delivery.toCallToolResult(
+          recordedSources,
+          nativeVerificationContract,
+        );
       const verification = managedNativeVerificationResultSchema.parse(
         result.value.normalized_result,
       );
@@ -90,7 +101,7 @@ export const registerVerifyManagedNativeBoundaries = (
             relationships: [],
           })
         : options.recordEvidence?.(result.value);
-      return toEvidenceToolResult(
+      return server.delivery.toEvidenceToolResult(
         result.value,
         nativeVerificationContract,
         output,

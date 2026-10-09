@@ -1,5 +1,5 @@
 import { realpath } from "node:fs/promises";
-import { homedir } from "node:os";
+import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import spawn from "cross-spawn";
@@ -26,6 +26,7 @@ export interface NpmInstallationHost {
 /** Run an updater subprocess with complete diagnostics and isolated machine output. */
 export const runUpdateCommand = (
   command: readonly string[],
+  selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
   output: UpdateOutput = "structured",
 ): Promise<Result<string, string>> =>
   new Promise((resolveResult) => {
@@ -34,7 +35,7 @@ export const runUpdateCommand = (
       resolveResult(err("No executable supplied."));
       return;
     }
-    const environment = { ...process.env };
+    const environment = { ...selectedEnvironment };
     // A fresh installed entry point must not inherit npx's invocation identity.
     delete environment.npm_command;
     const child = spawn(executable, args, {
@@ -72,8 +73,9 @@ export const runUpdateCommand = (
 
 const requireCommandOutput = async (
   command: readonly string[],
+  environment: Readonly<NodeJS.ProcessEnv>,
 ): Promise<string> => {
-  const result = await runUpdateCommand(command);
+  const result = await runUpdateCommand(command, environment);
   if (!result.ok) throw new Error(result.error);
   return result.value;
 };
@@ -174,35 +176,46 @@ export const npmReleaseLookup = (
 /** Create npm, registry, verification, and read-only maintenance effects. */
 export const systemUpdateHost = (
   packageRoot = fileURLToPath(new URL("../..", import.meta.url)),
-  home = homedir(),
+  home: string | undefined = undefined,
+  environment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): UpdateHost => ({
   installation: () =>
     detectNpmInstallation(packageRoot, {
       canonicalPath: realpath,
-      globalRoot: () => requireCommandOutput(["npm", "root", "--global"]),
-      globalPrefix: () => requireCommandOutput(["npm", "prefix", "--global"]),
+      globalRoot: () =>
+        requireCommandOutput(["npm", "root", "--global"], environment),
+      globalPrefix: () =>
+        requireCommandOutput(["npm", "prefix", "--global"], environment),
     }),
   latestVersion: async (installation) =>
     npmReleaseLookup(
-      await runUpdateCommand(npmLatestVersionCommand(installation)),
+      await runUpdateCommand(
+        npmLatestVersionCommand(installation),
+        environment,
+      ),
     ),
   installVersion: async (installation, version, output) => {
     const result = await runUpdateCommand(
       updateInstallCommand(installation, version),
+      environment,
       output,
     );
     return result.ok ? ok(undefined) : result;
   },
   installedVersion: (installation) =>
-    runUpdateCommand([
-      process.execPath,
-      join(installation.packageRoot, "scripts", "rea.mjs"),
-      "--version",
-    ]),
+    runUpdateCommand(
+      [
+        process.execPath,
+        join(installation.packageRoot, "scripts", "rea.mjs"),
+        "--version",
+      ],
+      environment,
+    ),
   planMaintenance: (installation) =>
     planIntegrationMaintenance(
-      home,
+      home ?? homeDirectoryFromEnvironment(environment, process.platform),
       join(installation.packageRoot, "scripts", "rea.mjs"),
-      runUpdateCommand,
+      environment,
+      (command) => runUpdateCommand(command, environment),
     ),
 });

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -38,6 +39,7 @@ if (process.env.GHIDRA_INSTALL_DIR === undefined)
     "verify:ghidra:dos prerequisite missing: GHIDRA_INSTALL_DIR (bring your own Ghidra).",
   );
 const installation = inspectGhidraInstallation({
+  environment: process.env,
   installDir: process.env.GHIDRA_INSTALL_DIR,
   ...(process.env.JAVA_HOME === undefined
     ? {}
@@ -552,11 +554,8 @@ async function call(name, arguments_ = {}) {
     { timeout: 240000 },
   );
   assert.notEqual(result.isError, true, JSON.stringify(result));
-  assert.ok(
-    result.structuredContent && "result" in result.structuredContent,
-    `${name} omitted structured result`,
-  );
-  return result.structuredContent.result;
+  assert.ok(result.structuredContent, `${name} omitted structured result`);
+  return requireMcpOperationResult(result, name);
 }
 async function evidenceCall(name, arguments_) {
   const result = await client.callTool(
@@ -564,10 +563,7 @@ async function evidenceCall(name, arguments_) {
     { timeout: 240000 },
   );
   assert.notEqual(result.isError, true, JSON.stringify(result));
-  const evidence = parseEvidence({
-    ...result.structuredContent?.evidence,
-    normalized_result: result.structuredContent?.result,
-  });
+  const evidence = parseEvidence(result.structuredContent);
   assert.equal(evidence.subject.digest.sha256, sha256);
   assert.equal(evidence.provider.id, "ghidra");
   assertProfile(evidence.analysis_profile);

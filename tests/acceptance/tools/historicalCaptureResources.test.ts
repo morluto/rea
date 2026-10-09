@@ -103,7 +103,7 @@ it("reports real HAR heap exhaustion through CLI and MCP and preserves server us
   });
   expect(control.isError, JSON.stringify(control)).not.toBe(true);
   expect(control.structuredContent).toMatchObject({
-    result: { total_records: 2 },
+    normalized_result: { total_records: 2 },
   });
   await truncate(path, WEB_NETWORK_CAPTURE_LIMITS.inputBytes + 1);
   const oversized = await call("inspect_web_network_capture", {

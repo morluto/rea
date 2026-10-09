@@ -20,6 +20,7 @@ import {
   numberValue,
   recordValue,
   cdpStringValue,
+  scriptMetadataValues,
   delayWithCancellation,
 } from "../browser/CdpCaptureValues.js";
 import { CdpConnection, type CdpEvent } from "../browser/CdpConnection.js";
@@ -52,13 +53,14 @@ export interface ScriptDraft {
   readonly rawUrl: string;
   readonly executionContextKey: string | null;
   readonly cdpHash: string | null;
-  readonly length: number;
-  readonly isModule: boolean;
+  readonly length: number | null;
+  readonly isModule: boolean | null;
 }
 
 export interface ContextDraft {
   readonly contextKey: string;
   state: "created" | "destroyed" | "cleared";
+  readonly name: string | null;
   readonly origin: string | null;
 }
 
@@ -157,7 +159,7 @@ export class V8InspectorProvider implements JavaScriptRuntimeObservationPort {
       );
       const state = emptyCaptureState();
       const removeListener = connection.onEvent((event) =>
-        ingestEvent(event, input, state),
+        ingestEvent(event, state),
       );
       try {
         await connection.send("Runtime.enable", {}, undefined, options.signal);
@@ -306,11 +308,7 @@ const emptyCaptureState = (): CaptureState => ({
   truncationReasons: new Set(),
 });
 
-const ingestEvent = (
-  event: CdpEvent,
-  input: ObserveJavaScriptRuntimeInput,
-  state: CaptureState,
-): void => {
+const ingestEvent = (event: CdpEvent, state: CaptureState): void => {
   if (
     event.method !== "Debugger.scriptParsed" &&
     event.method !== "Debugger.scriptFailedToParse" &&
@@ -321,7 +319,7 @@ const ingestEvent = (
     return;
   state.eventsObserved += 1;
   if (event.method === "Debugger.scriptParsed") {
-    ingestScript(event, input, state);
+    ingestScript(event, state);
     return;
   }
   if (event.method === "Debugger.scriptFailedToParse") {
@@ -329,14 +327,10 @@ const ingestEvent = (
     retainEvent(state, 0);
     return;
   }
-  ingestContext(event, input, state);
+  ingestContext(event, state);
 };
 
-const ingestScript = (
-  event: CdpEvent,
-  input: ObserveJavaScriptRuntimeInput,
-  state: CaptureState,
-): void => {
+const ingestScript = (event: CdpEvent, state: CaptureState): void => {
   state.scriptsObserved += 1;
   const value = recordValue(event.params);
   const rawUrl = cdpStringValue(value?.url);
@@ -345,23 +339,20 @@ const ingestScript = (
     retainEvent(state, 0);
     return;
   }
+  const metadata = scriptMetadataValues(value);
   const draft: ScriptDraft = {
     rawUrl,
     executionContextKey: contextKey(value?.executionContextId),
-    cdpHash: cdpStringValue(value?.hash) ?? null,
-    length: nonnegativeInteger(value?.length),
-    isModule: value?.isModule === true,
+    cdpHash: metadata.hash,
+    length: metadata.length,
+    isModule: metadata.isModule,
   };
   const bytes = retainedMetadataBytes(draft);
   if (!retainEvent(state, bytes)) return;
   state.scripts.push(draft);
 };
 
-const ingestContext = (
-  event: CdpEvent,
-  input: ObserveJavaScriptRuntimeInput,
-  state: CaptureState,
-): void => {
+const ingestContext = (event: CdpEvent, state: CaptureState): void => {
   if (event.method === "Runtime.executionContextsCleared") {
     let byteDelta = 0;
     for (const context of state.contexts.values()) {
@@ -389,19 +380,18 @@ const ingestContext = (
     retainEvent(state, 0);
     return;
   }
-  const origin =
-    event.method === "Runtime.executionContextCreated"
-      ? (cdpStringValue(runtimeContext?.origin) ?? null)
-      : null;
+  const previous = state.contexts.get(key);
+  const created = event.method === "Runtime.executionContextCreated";
   const draft: ContextDraft = {
     contextKey: key,
-    state:
-      event.method === "Runtime.executionContextCreated"
-        ? "created"
-        : "destroyed",
-    origin: origin === "" ? null : origin,
+    state: created ? "created" : "destroyed",
+    name: created
+      ? (cdpStringValue(runtimeContext?.name) ?? null)
+      : (previous?.name ?? null),
+    origin: created
+      ? (cdpStringValue(runtimeContext?.origin) ?? null)
+      : (previous?.origin ?? null),
   };
-  const previous = state.contexts.get(key);
   const bytes =
     retainedMetadataBytes(draft) -
     (previous === undefined ? 0 : retainedMetadataBytes(previous));
@@ -456,16 +446,11 @@ const retainedMetadataBytes = (value: ScriptDraft | ContextDraft): number => {
   const strings =
     "rawUrl" in value
       ? [value.rawUrl, value.rawUrl, value.executionContextKey, value.cdpHash]
-      : [value.contextKey, value.origin];
+      : [value.contextKey, value.name, value.origin];
   return (
     RETAINED_OBJECT_OVERHEAD_BYTES +
     strings.reduce((total, text) => total + (text?.length ?? 0) * 2, 0)
   );
-};
-
-const nonnegativeInteger = (value: unknown): number => {
-  const parsed = numberValue(value);
-  return parsed === undefined ? 0 : Math.max(0, Math.trunc(parsed));
 };
 
 const contextKey = (value: unknown): string | null => {

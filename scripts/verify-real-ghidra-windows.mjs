@@ -48,6 +48,7 @@ if (installDir === undefined || !isAbsolute(installDir))
     "Set GHIDRA_INSTALL_DIR to the absolute root of Ghidra 12.1.4.",
   );
 const installation = inspectGhidraInstallation({
+  environment: process.env,
   installDir,
   ...(process.env.JAVA_HOME === undefined
     ? {}
@@ -94,6 +95,7 @@ if (!profile.ok || profile.value.profile === null)
 const client = new GhidraClient({
   platform: installation.platform,
   launcher: new GhidraHeadlessLauncher({
+    environment: process.env,
     analyzeHeadlessPath: installation.analyzeHeadlessPath,
     ...(process.env.JAVA_HOME === undefined
       ? {}
@@ -112,6 +114,7 @@ const client = new GhidraClient({
 
 let coordinates;
 let report;
+let primaryFailure;
 const observed = new Set();
 try {
   const started = await client.start();
@@ -257,8 +260,18 @@ try {
       "no-gui-or-mutation-authority",
     ],
   };
+} catch (cause) {
+  primaryFailure = cause;
+  throw cause;
 } finally {
-  await client.close();
+  const closed = await client.close();
+  if (!closed.ok)
+    throw primaryFailure === undefined
+      ? closed.error
+      : new AggregateError(
+          [primaryFailure, closed.error],
+          "Ghidra verification and cleanup failed",
+        );
   if (coordinates !== undefined) await assertCleanup(coordinates);
 }
 if (report === undefined)

@@ -8,13 +8,17 @@ export async function verifyPackageCapabilitiesAndSearch({ cli, environment }) {
   if (!Array.isArray(capabilities.capabilities))
     throw new Error("packaged capabilities CLI failed");
   const providers = json(await run(cli, ["providers", "--json"], environment));
+  const candidates = providers.analysis_provider_candidates;
   if (
-    !Array.isArray(providers.providers) ||
-    providers.providers.some(({ id }) => typeof id !== "string") ||
+    !Array.isArray(candidates) ||
+    candidates.some(
+      (candidate) =>
+        typeof candidate?.provider?.id !== "string" ||
+        candidate.selected !== false,
+    ) ||
     providers.analysis_provider_binding !== null ||
-    providers.analysis_provider_candidates?.find(
-      ({ provider }) => provider?.id === "hopper",
-    )?.target_support?.status !== "unknown"
+    candidates.find(({ provider }) => provider?.id === "hopper")?.target_support
+      ?.status !== "unknown"
   )
     throw new Error("packaged providers CLI failed");
   if (process.platform !== "linux") {

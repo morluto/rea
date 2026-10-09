@@ -6,7 +6,12 @@ import { basename, join } from "node:path";
 import { promisify } from "node:util";
 import Ajv from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
-import { mcpTextValue, requireMcpResult } from "./mcp-verifier-results.mjs";
+import {
+  mcpTextValue,
+  requireMcpEvidenceResult,
+  requireMcpOperationResult,
+  requireMcpLifecycleResult,
+} from "./mcp-verifier-results.mjs";
 import { verifyHopperCliSelectors } from "./real-hopper-cli-selectors.mjs";
 import { verifyLinuxHopperLaunchIsolation } from "./real-hopper-session-isolation.mjs";
 import { verifyHopperNavigationAndText } from "./real-hopper-navigation.mjs";
@@ -44,7 +49,7 @@ export async function verifyHopperBoundaryContracts(
   const rejectedOperations = new Set();
   const call = async (name, args = {}) => {
     const reply = await client.callTool({ name, arguments: args }, options);
-    const result = requireMcpResult(reply, name);
+    const result = requireMcpOperationResult(reply, name);
     const validate = validators.get(name);
     assert.ok(validate, `${name} is missing from tools/list`);
     assert.ok(
@@ -301,7 +306,7 @@ export async function verifyHopperLifecycleAndCli(client, options, targets) {
   const primary = join(directory, `primary-${suffix}`);
   const secondary = join(directory, `secondary-${suffix}`);
   const call = async (name, args = {}) =>
-    requireMcpResult(
+    requireMcpOperationResult(
       await client.callTool({ name, arguments: args }, options),
       name,
     );
@@ -508,14 +513,14 @@ const verifyBatchCancellation = async (client, options, procedures) => {
     /aborted/u,
   );
   assert.ok(cancelled, "cancellation did not follow a real Hopper response");
-  const recovered = requireMcpResult(
+  const recovered = requireMcpEvidenceResult(
     await client.callTool({ name: "list_procedures", arguments: {} }, options),
-    "list_procedures after cancellation",
+    "list_procedures",
   );
   assert.deepEqual(recovered, procedures);
-  const status = requireMcpResult(
+  const status = requireMcpLifecycleResult(
     await client.callTool({ name: "binary_session", arguments: {} }, options),
-    "binary_session after cancellation",
+    "binary_session",
   );
   assert.equal(status.provider_operation_health.state, "idle");
 };

@@ -9,13 +9,11 @@ const inventory = (digit: string) => {
   const nodes = [
     {
       artifact_id: artifactId,
-      kind: "resource",
       format: "file",
       sha256: sha,
       size: 1,
       media_type: null,
       architecture: null,
-      executable: false,
       content_state: "materialized",
       limitations: [],
     },
@@ -27,6 +25,8 @@ const inventory = (digit: string) => {
       parent_occurrence_id: null,
       logical_path: ".",
       entry_kind: "file",
+      artifact_kind: "resource",
+      artifact_format: "file",
       declared_size: 1,
       compressed_size: null,
       executable: false,

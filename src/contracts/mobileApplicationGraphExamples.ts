@@ -12,13 +12,11 @@ const inventory = (format: "apk" | "ipa" | "directory", digit: string) => {
   const nodes = [
     {
       artifact_id: artifactId,
-      kind: "resource",
-      format,
+      format: format === "directory" ? "directory" : "zip",
       sha256: sha,
       size: 1,
       media_type: null,
       architecture: null,
-      executable: false,
       content_state: "materialized",
       limitations: [],
     },
@@ -30,6 +28,8 @@ const inventory = (format: "apk" | "ipa" | "directory", digit: string) => {
       parent_occurrence_id: null,
       logical_path: ".",
       entry_kind: "file",
+      artifact_kind: "resource",
+      artifact_format: format,
       declared_size: 1,
       compressed_size: null,
       executable: false,

@@ -102,62 +102,11 @@ const describeSchema = (
   );
 };
 
-const flattenRootUnion = (
-  value: Record<string, unknown>,
-  describeProperty: (property: string) => string,
-): Record<string, unknown> => {
-  if (!Array.isArray(value.anyOf)) return value;
-  const branches = value.anyOf;
-  const objects = branches.filter(isObject);
-  if (objects.length === 0 || objects.length !== branches.length) return value;
-  const properties = new Map<string, unknown>();
-  for (const branch of objects) {
-    if (!isObject(branch.properties)) return value;
-    for (const [name, schema] of Object.entries(branch.properties)) {
-      const previous = properties.get(name);
-      if (!properties.has(name)) properties.set(name, schema);
-      else if (JSON.stringify(previous) !== JSON.stringify(schema))
-        properties.set(name, {
-          anyOf: [previous, schema],
-          description: describeProperty(name),
-        });
-    }
-  }
-  // Invocation still uses the exact canonical union, including branch rules.
-  const { anyOf: _anyOf, required: _required, ...root } = value;
-  const requiredByBranch = objects.map((branch) =>
-    Array.isArray(branch.required)
-      ? branch.required.filter(
-          (item): item is string => typeof item === "string",
-        )
-      : [],
-  );
-  const required = requiredByBranch.reduce((common, current) =>
-    common.filter((name) => current.includes(name)),
-  );
-  const minProperties = Math.max(
-    typeof root.minProperties === "number" ? root.minProperties : 0,
-    Math.min(...requiredByBranch.map((names) => names.length)),
-  );
-  return {
-    ...root,
-    type: "object",
-    properties: Object.fromEntries(properties),
-    ...(minProperties > 0 ? { minProperties } : {}),
-    ...(required.length > 0 ? { required } : {}),
-    ...(objects.every((branch) => branch.additionalProperties === false)
-      ? { additionalProperties: false }
-      : {}),
-  };
-};
-
-/** Preserve property guidance and literal data while advertising object roots. */
+/** Describe canonical input fields without changing structural constraints. */
 export const presentInputJsonSchema = (
   root: Record<string, unknown>,
   describeProperty: (property: string) => string,
 ): Record<string, unknown> => {
   const described = describeSchema(root, root, describeProperty);
-  return isObject(described)
-    ? flattenRootUnion(described, describeProperty)
-    : root;
+  return isObject(described) ? described : root;
 };

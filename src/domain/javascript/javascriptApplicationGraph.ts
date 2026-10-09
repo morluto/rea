@@ -149,6 +149,27 @@ const checkEvidenceNormalization = (
     });
 };
 
+const sourceMapObservationMatchesIdentity = (
+  identity: Extract<
+    ApplicationNodeIdentity,
+    { readonly strategy: "source-map-original" }
+  >,
+  observation: ApplicationNode["observations"][number],
+): boolean => {
+  const { evidence, source_map_reference: reference } = observation;
+  return (
+    reference !== null &&
+    evidence.state === "observed" &&
+    evidence.artifact.available &&
+    evidence.artifact.sha256 === identity.source_map_sha256 &&
+    reference.source_name === identity.original_source &&
+    reference.source_root === identity.source_root &&
+    evidence.location.available &&
+    evidence.location.value.kind === "artifact-path" &&
+    reference.map_path === evidence.location.value.path
+  );
+};
+
 const observationMatchesIdentity = (
   node: ApplicationNode,
   observation: ApplicationNode["observations"][number],
@@ -162,11 +183,7 @@ const observationMatchesIdentity = (
       evidence.artifact.sha256 === identity.sha256
     );
   if (identity.strategy === "source-map-original")
-    return (
-      evidence.state === "observed" &&
-      evidence.artifact.available &&
-      evidence.artifact.sha256 === identity.source_map_sha256
-    );
+    return sourceMapObservationMatchesIdentity(identity, observation);
   if (identity.strategy === "canonical-path")
     return (
       evidence.artifact.available &&
@@ -245,6 +262,22 @@ const checkNode = (
           "observations",
           observationIndex,
           "observation_id",
+        ],
+      });
+    if (
+      node.identity.strategy === "source-map-original" &&
+      !observationMatchesIdentity(node, observation)
+    )
+      context.addIssue({
+        code: "custom",
+        message:
+          "Source-map observation must retain its exact declaration and map location",
+        path: [
+          "nodes",
+          index,
+          "observations",
+          observationIndex,
+          "source_map_reference",
         ],
       });
     checkEvidenceNormalization(

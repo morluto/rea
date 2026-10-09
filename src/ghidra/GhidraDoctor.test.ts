@@ -37,6 +37,7 @@ const inspection = (
 ): GhidraInstallationInspection =>
   inspectGhidraInstallation(
     {
+      environment: {},
       platform: options.platform ?? "linux",
       architecture: options.architecture ?? "x64",
       ...(options.installDir === undefined

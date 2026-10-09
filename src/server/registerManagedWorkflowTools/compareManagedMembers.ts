@@ -1,11 +1,10 @@
+import type { EvidenceMcpServer } from "../EvidenceMcpServer.js";
 import { recordSessionEvidenceSources } from "../sessionEvidence.js";
-import type { McpServer } from "@modelcontextprotocol/server";
 
 import { compareManagedMembersEvidenceValidated } from "../../application/managed/ManagedMemberComparisonService.js";
 import { managedMemberComparisonResultSchema } from "../../domain/managed/managedMemberComparison.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
-import { toCallToolResult, toEvidenceToolResult } from "../toolResult.js";
 import { managedWorkflowContract } from "./contract.js";
 import { resolveManagedEvidence } from "./evidence.js";
 import type { ManagedWorkflowToolRegistration } from "./types.js";
@@ -14,7 +13,7 @@ const compareContract = managedWorkflowContract("compare_managed_members");
 
 /** Register the managed member comparison workflow tool. */
 export const registerCompareManagedMembers = (
-  server: McpServer,
+  server: EvidenceMcpServer,
   options: ManagedWorkflowToolRegistration,
 ): void => {
   server.registerTool(
@@ -24,9 +23,9 @@ export const registerCompareManagedMembers = (
       const leftResolved = resolveManagedEvidence(input.left);
       const rightResolved = resolveManagedEvidence(input.right);
       if (!leftResolved.ok)
-        return toCallToolResult(leftResolved, compareContract);
+        return server.delivery.toCallToolResult(leftResolved, compareContract);
       if (!rightResolved.ok)
-        return toCallToolResult(rightResolved, compareContract);
+        return server.delivery.toCallToolResult(rightResolved, compareContract);
       const [left] = leftResolved.value;
       const [right] = rightResolved.value;
       if (left === undefined || right === undefined)
@@ -37,12 +36,14 @@ export const registerCompareManagedMembers = (
         compareContract.name,
         () => Promise.resolve(compareManagedMembersEvidenceValidated(parsed)),
       );
-      if (!result.ok) return toCallToolResult(result, compareContract);
+      if (!result.ok)
+        return server.delivery.toCallToolResult(result, compareContract);
       const recorded = recordSessionEvidenceSources(options.recordEvidence, [
         parsed.left,
         parsed.right,
       ]);
-      if (!recorded.ok) return toCallToolResult(recorded, compareContract);
+      if (!recorded.ok)
+        return server.delivery.toCallToolResult(recorded, compareContract);
       const comparison = managedMemberComparisonResultSchema.parse(
         result.value.normalized_result,
       );
@@ -68,7 +69,11 @@ export const registerCompareManagedMembers = (
             relationships: [],
           })
         : options.recordEvidence?.(result.value);
-      return toEvidenceToolResult(result.value, compareContract, output);
+      return server.delivery.toEvidenceToolResult(
+        result.value,
+        compareContract,
+        output,
+      );
     },
   );
 };

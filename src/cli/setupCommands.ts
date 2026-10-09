@@ -11,7 +11,12 @@ import {
 } from "../application/SetupTypes.js";
 import { runSetup } from "../application/Setup.js";
 import { systemSetupHost } from "../application/SetupHost.js";
-import { isUninstallFailure, runUninstall } from "../application/Uninstall.js";
+import {
+  isUninstallFailure,
+  runUninstall,
+  systemUninstallHost,
+} from "../application/Uninstall.js";
+import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { isUpdateFailure, runUpdate } from "../application/Update.js";
 import { systemUpdateHost } from "../application/UpdateRuntime.js";
 import {
@@ -39,13 +44,18 @@ const supportedClientSchema = z
 export const registerSetupCommands = (
   cli: CliInstance,
   logger: Logger,
+  environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
-  registerSetupCommand(cli, logger);
-  registerDoctorCommand(cli, logger);
-  registerMaintenanceCommands(cli, logger);
+  registerSetupCommand(cli, logger, environment);
+  registerDoctorCommand(cli, logger, environment);
+  registerMaintenanceCommands(cli, logger, environment);
 };
 
-const registerSetupCommand = (cli: CliInstance, logger: Logger): void => {
+const registerSetupCommand = (
+  cli: CliInstance,
+  logger: Logger,
+  environment: Readonly<NodeJS.ProcessEnv>,
+): void => {
   cli.command(CLI_COMMANDS.setup, {
     description: "Configure agent integrations and optional analysis providers",
     outputPolicy: "agent-only",
@@ -86,13 +96,17 @@ const registerSetupCommand = (cli: CliInstance, logger: Logger): void => {
       logCliCommand(
         logger,
         CLI_COMMANDS.setup,
-        () => runSetupCommand({ options, formatExplicit }),
+        () => runSetupCommand({ options, formatExplicit }, environment),
         isSetupFailure,
       ),
   });
 };
 
-const registerDoctorCommand = (cli: CliInstance, logger: Logger): void => {
+const registerDoctorCommand = (
+  cli: CliInstance,
+  logger: Logger,
+  environment: Readonly<NodeJS.ProcessEnv>,
+): void => {
   cli.command(CLI_COMMANDS.doctor, {
     description: "Check whether REA is ready",
     options: z.object({
@@ -114,7 +128,7 @@ const registerDoctorCommand = (cli: CliInstance, logger: Logger): void => {
       logCliCommand(logger, "doctor", () =>
         runDoctor(
           options.target,
-          createSystemDoctorHost(),
+          createSystemDoctorHost(environment),
           doctorScope(options),
         ),
       ),
@@ -124,6 +138,7 @@ const registerDoctorCommand = (cli: CliInstance, logger: Logger): void => {
 const registerMaintenanceCommands = (
   cli: CliInstance,
   logger: Logger,
+  environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
   cli.command(CLI_COMMANDS.uninstall, {
     description: "Remove REA-owned agent configuration and skill files",
@@ -138,7 +153,15 @@ const registerMaintenanceCommands = (
       logCliCommand(
         logger,
         "uninstall",
-        () => runUninstall(options.purgeData),
+        () =>
+          runUninstall(
+            options.purgeData,
+            systemUninstallHost(
+              homeDirectoryFromEnvironment(environment, process.platform),
+              undefined,
+              environment,
+            ),
+          ),
         isUninstallFailure,
       ),
   });
@@ -152,7 +175,7 @@ const registerMaintenanceCommands = (
         () =>
           runUpdate(
             PRODUCT_IDENTITY.packageVersion,
-            systemUpdateHost(),
+            systemUpdateHost(undefined, undefined, environment),
             formatExplicit ? "structured" : "human",
           ),
         isUpdateFailure,
@@ -170,22 +193,25 @@ interface SetupCommandOptions {
   readonly accessible: boolean;
 }
 
-const runSetupCommand = async (input: {
-  readonly options: SetupCommandOptions;
-  readonly formatExplicit: boolean;
-}) => {
+const runSetupCommand = async (
+  input: {
+    readonly options: SetupCommandOptions;
+    readonly formatExplicit: boolean;
+  },
+  environment: Readonly<NodeJS.ProcessEnv>,
+) => {
   const { options } = input;
   const interactive = setupIsInteractive(options, input.formatExplicit);
   const hasExplicitScope = setupHasExplicitScope(options);
   const result = await runSetup(
     setupRunOptions(input, interactive, hasExplicitScope),
-    systemSetupHost(createSystemDoctorHost()),
+    systemSetupHost(createSystemDoctorHost(environment), environment),
     interactive
       ? (actions, context) =>
           confirmInteractiveSetup(actions, options.accessible, context)
       : undefined,
   );
-  if (interactive) renderInteractiveSetupResult(result);
+  if (interactive) renderInteractiveSetupResult(result, environment);
   return result;
 };
 

@@ -24,7 +24,7 @@ async function runInlineEvidenceScenarios(
   });
   expect(traced.isError).not.toBe(true);
   expect(traced.structuredContent).toMatchObject({
-    result: {
+    normalized_result: {
       seed: { kind: "module", value: "renderer.js", match: "exact" },
       summary: { matched_seeds: 1, traced_nodes: 1, unknown_facts: 0 },
       coverage: {
@@ -43,7 +43,7 @@ async function runInlineEvidenceScenarios(
   });
   expect(compared.isError).not.toBe(true);
   expect(compared.structuredContent).toMatchObject({
-    result: {
+    normalized_result: {
       summary: { unchanged: 0, added: 2, removed: 0, changed: 1, unknown: 0 },
       coverage: {
         left_graph_status: "complete",
@@ -62,7 +62,7 @@ async function runInlineEvidenceScenarios(
   });
   expect(sourceCompared.isError).not.toBe(true);
   expect(sourceCompared.structuredContent).toMatchObject({
-    result: {
+    normalized_result: {
       reference: {
         root_sha256: SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE.reference.root_sha256,
       },
@@ -83,7 +83,7 @@ async function runInlineWorkflowScenarios(
   });
   expect(tracedInline.isError).not.toBe(true);
   expect(tracedInline.structuredContent).toMatchObject({
-    result: {
+    normalized_result: {
       seed: { kind: "module", value: "renderer.js", match: "exact" },
       summary: { matched_seeds: 1, traced_nodes: 1, unknown_facts: 0 },
       coverage: {
@@ -102,7 +102,7 @@ async function runInlineWorkflowScenarios(
   });
   expect(comparedInline).toMatchObject({
     structuredContent: {
-      result: {
+      normalized_result: {
         evidence_links: expect.arrayContaining([
           JAVASCRIPT_VERSION_COMPARISON_FULL_EVIDENCE_EXAMPLE.left.evidence_id,
           JAVASCRIPT_VERSION_COMPARISON_FULL_EVIDENCE_EXAMPLE.right.evidence_id,
@@ -130,7 +130,7 @@ async function runInlineWorkflowScenarios(
   });
   expect(sourceComparedById.isError).not.toBe(true);
   expect(sourceComparedById.structuredContent).toMatchObject({
-    result: {
+    normalized_result: {
       reference: {
         root_sha256: SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE.reference.root_sha256,
         inventory_state: "complete",

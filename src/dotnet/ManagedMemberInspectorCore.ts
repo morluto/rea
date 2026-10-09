@@ -1,6 +1,7 @@
 import {
   managedFailure,
   ManagedReaderFailure,
+  readManagedValue,
 } from "./ManagedReaderFailure.js";
 import type {
   ManagedMemberInspection,
@@ -34,7 +35,7 @@ export type ManagedExceptionRegion =
 
 export interface TypeRange {
   readonly token: string;
-  readonly fullName: string;
+  readonly fullName: string | null;
   readonly fieldStart: number;
   readonly fieldEnd: number;
   readonly methodStart: number;
@@ -87,23 +88,28 @@ const readTypeRange = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
   row: number,
+  issues: ManagedParseIssue[],
 ): TypeRange => {
   const methods = layout.table(6);
   const fields = layout.table(4);
   const cursor = metadataRowCursor(bytes, layout, 2, row);
   cursor.readUInt32();
-  const name = readMetadataString(
-    bytes,
-    layout,
-    cursor.readIndex(layout.stringIndexSize),
-    layout.strings.size,
-  );
-  const namespace = readMetadataString(
-    bytes,
-    layout,
-    cursor.readIndex(layout.stringIndexSize),
-    layout.strings.size,
-  );
+  const nameIndex = cursor.readIndex(layout.stringIndexSize);
+  const namespaceIndex = cursor.readIndex(layout.stringIndexSize);
+  const declaredName =
+    readManagedValue(
+      () =>
+        fullName(
+          readMetadataString(
+            bytes,
+            layout,
+            namespaceIndex,
+            layout.strings.size,
+          ),
+          readMetadataString(bytes, layout, nameIndex, layout.strings.size),
+        ),
+      issues,
+    ) ?? null;
   cursor.readIndex(layout.codedIndexSize("TypeDefOrRef"));
   const fieldStart = cursor.readIndex(layout.tableIndexSize(4));
   const methodStart = cursor.readIndex(layout.tableIndexSize(6));
@@ -121,7 +127,7 @@ const readTypeRange = (
   }
   return {
     token: metadataToken(2, row),
-    fullName: fullName(namespace, name),
+    fullName: declaredName,
     fieldStart,
     fieldEnd: nextField,
     methodStart,
@@ -132,11 +138,12 @@ const readTypeRange = (
 export const typeRanges = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
+  issues: ManagedParseIssue[],
 ): readonly TypeRange[] => {
   const typeTable = layout.table(2);
   const ranges: TypeRange[] = [];
   for (let row = 1; row <= (typeTable?.rowCount ?? 0); row += 1)
-    ranges.push(readTypeRange(bytes, layout, row));
+    ranges.push(readTypeRange(bytes, layout, row, issues));
   return ranges;
 };
 
@@ -144,7 +151,7 @@ export const declaringType = (
   ranges: readonly TypeRange[],
   table: "field" | "method",
   row: number,
-): { readonly token: string; readonly fullName: string } | null => {
+): { readonly token: string; readonly fullName: string | null } | null => {
   for (const range of ranges) {
     const start = table === "field" ? range.fieldStart : range.methodStart;
     const end = table === "field" ? range.fieldEnd : range.methodEnd;
@@ -204,68 +211,76 @@ export const parseTypes = (
   const items: ManagedType[] = [];
   const issues: ManagedParseIssue[] = [];
   for (let row = 1; row <= (typeTable?.rowCount ?? 0); row += 1) {
-    const cursor = metadataRowCursor(bytes, layout, 2, row);
-    const flags = cursor.readUInt32();
-    const name = readMetadataString(
-      bytes,
-      layout,
-      cursor.readIndex(layout.stringIndexSize),
-      layout.strings.size,
-    );
-    const namespace = readMetadataString(
-      bytes,
-      layout,
-      cursor.readIndex(layout.stringIndexSize),
-      layout.strings.size,
-    );
-    const extendsOffset = cursor.offset;
-    const extendsRaw = cursor.readIndex(layout.codedIndexSize("TypeDefOrRef"));
-    const fieldStart = cursor.readIndex(layout.tableIndexSize(4));
-    const methodStart = cursor.readIndex(layout.tableIndexSize(6));
-    const nextRange = ranges[row] ?? null;
-    const fieldRange = rowRange(fields, fieldStart, nextRange?.fieldStart ?? 0);
-    const methodRange = rowRange(
-      methods,
-      methodStart,
-      nextRange?.methodStart ?? 0,
-    );
-    const extendsReason = metadataCodedTokenInvalidReason(
-      extendsRaw,
-      2,
-      [2, 1, 27],
-      layout.rowCounts,
-    );
-    if (extendsReason !== null)
-      issues.push({
-        code: "invalid-row",
-        scope: `metadata.TypeDef:${metadataToken(2, row)}`,
-        offset: extendsOffset,
-        detail: `TypeDef Extends coded index 0x${extendsRaw.toString(16)} is invalid: ${extendsReason}`,
-      });
-    items.push({
-      token: metadataToken(2, row),
-      row_offset: cursor.start,
-      namespace,
-      name,
-      full_name: fullName(namespace, name),
-      flags,
-      extends_token: metadataCodedToken(
+    readManagedValue(() => {
+      const cursor = metadataRowCursor(bytes, layout, 2, row);
+      const flags = cursor.readUInt32();
+      const name = readMetadataString(
+        bytes,
+        layout,
+        cursor.readIndex(layout.stringIndexSize),
+        layout.strings.size,
+      );
+      const namespace = readMetadataString(
+        bytes,
+        layout,
+        cursor.readIndex(layout.stringIndexSize),
+        layout.strings.size,
+      );
+      const extendsOffset = cursor.offset;
+      const extendsRaw = cursor.readIndex(
+        layout.codedIndexSize("TypeDefOrRef"),
+      );
+      const fieldStart = cursor.readIndex(layout.tableIndexSize(4));
+      const methodStart = cursor.readIndex(layout.tableIndexSize(6));
+      const nextRange = ranges[row] ?? null;
+      const fieldRange = rowRange(
+        fields,
+        fieldStart,
+        nextRange?.fieldStart ?? 0,
+      );
+      const methodRange = rowRange(
+        methods,
+        methodStart,
+        nextRange?.methodStart ?? 0,
+      );
+      const extendsReason = metadataCodedTokenInvalidReason(
         extendsRaw,
         2,
         [2, 1, 27],
         layout.rowCounts,
-      ),
-      field_list: {
-        first_row: fieldRange.first,
-        last_row: fieldRange.last,
-        count: fieldRange.count,
-      },
-      method_list: {
-        first_row: methodRange.first,
-        last_row: methodRange.last,
-        count: methodRange.count,
-      },
-    });
+      );
+      if (extendsReason !== null)
+        issues.push({
+          code: "invalid-row",
+          scope: `metadata.TypeDef:${metadataToken(2, row)}`,
+          offset: extendsOffset,
+          detail: `TypeDef Extends coded index 0x${extendsRaw.toString(16)} is invalid: ${extendsReason}`,
+        });
+      items.push({
+        token: metadataToken(2, row),
+        row_offset: cursor.start,
+        namespace,
+        name,
+        full_name: fullName(namespace, name),
+        flags,
+        extends_token: metadataCodedToken(
+          extendsRaw,
+          2,
+          [2, 1, 27],
+          layout.rowCounts,
+        ),
+        field_list: {
+          first_row: fieldRange.first,
+          last_row: fieldRange.last,
+          count: fieldRange.count,
+        },
+        method_list: {
+          first_row: methodRange.first,
+          last_row: methodRange.last,
+          count: methodRange.count,
+        },
+      });
+    }, issues);
   }
   return { types: items, issues };
 };

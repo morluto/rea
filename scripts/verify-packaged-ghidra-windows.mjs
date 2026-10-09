@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
+import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -171,7 +172,14 @@ try {
       })
     ).stdout,
   );
-  assert.ok(JSON.stringify(providers).includes("ghidra"));
+  assert.equal(providers.analysis_provider_binding, null);
+  assert.ok(Array.isArray(providers.analysis_provider_candidates));
+  const ghidra = providers.analysis_provider_candidates.find(
+    ({ provider }) => provider.id === "ghidra",
+  );
+  assert.ok(ghidra !== undefined);
+  assert.equal(ghidra.selected, false);
+  assert.equal(ghidra.target_support.status, "unknown");
   report.cli.providers = true;
   const inspected = await exec(
     process.execPath,
@@ -210,12 +218,9 @@ try {
       { timeout: 360_000 },
     );
     assert.notEqual(result.isError, true, `Packaged operation failed: ${name}`);
-    const structured =
-      result.structuredContent ??
-      JSON.parse(result.content.find((item) => item.type === "text").text);
-    const parsed = contract.outputSchema.parse(structured);
+    const projected = requireMcpOperationResult(result, name, contract);
     report.mcpOperations.push(name);
-    return parsed.result;
+    return projected;
   };
   try {
     await client.connect(transport);

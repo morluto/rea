@@ -7,10 +7,9 @@ import type { CapturedResource } from "./CdpCaptureDocuments.js";
 import type { CdpCaptureEvents } from "./CdpCaptureEvents.js";
 import type { CapturedScript } from "./CdpCaptureEventTypes.js";
 import {
-  requiredRecord,
+  requiredScriptSource,
   sourceExcluded,
   sourceResult,
-  cdpStringValue,
 } from "./CdpCaptureValues.js";
 import type { CaptureContext } from "./CdpPageCapture.js";
 import type { WebSourceMapRequest } from "./WebSourceMapFetcher.js";
@@ -107,15 +106,15 @@ const captureScriptSource = async (
   state: ScriptDraftState,
 ): Promise<WebPageInspection["scripts"]["items"][number]["source"]> => {
   const { context } = state;
-  const result = requiredRecord(
+  const content = requiredScriptSource(
     await context.connection.send(
       "Debugger.getScriptSource",
       { scriptId: script.scriptId },
       context.sessionId,
       context.signal,
     ),
+    context.operation,
   );
-  const content = cdpStringValue(result.scriptSource) ?? "";
   return sourceResult(content);
 };
 

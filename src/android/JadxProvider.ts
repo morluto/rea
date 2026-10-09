@@ -14,6 +14,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AndroidRequest } from "../domain/android/androidAnalysis.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -103,18 +104,23 @@ const executionError = (context: {
   });
 };
 
-const cleanup = async <Value>(
-  session: JadxSession | undefined,
-  root: PrivateRuntimeRoot | undefined,
-  previous: Result<Value, AnalysisError>,
-): Promise<Result<Value, AnalysisError>> => {
+interface PendingCleanup {
+  session: JadxSession | undefined;
+  root: PrivateRuntimeRoot | undefined;
+  readonly previousError: AnalysisError | undefined;
+}
+
+const cleanup = async (
+  resources: PendingCleanup,
+): Promise<Result<void, AnalysisError>> => {
+  const { session, root, previousError } = resources;
   const diagnostics = {
-    previous_error: previous.ok
-      ? null
-      : { tag: previous.error._tag, message: previous.error.message },
+    previous_error:
+      previousError === undefined ? null : projectAnalysisError(previousError),
   };
   try {
     await session?.close();
+    resources.session = undefined;
   } catch (cause) {
     // Retain an uncertain workspace until the caller can resolve process ownership.
     return err(
@@ -132,12 +138,13 @@ const cleanup = async <Value>(
               ? (cause.diagnostics ?? null)
               : null,
         },
-        { cause },
+        { cause: previousError ?? cause },
       ),
     );
   }
   try {
     await root?.close();
+    resources.root = undefined;
   } catch (cause) {
     return err(
       new ProviderCleanupError(
@@ -147,11 +154,11 @@ const cleanup = async <Value>(
           ...diagnostics,
           reason: cause instanceof Error ? cause.message : String(cause),
         },
-        { cause },
+        { cause: previousError ?? cause },
       ),
     );
   }
-  return previous;
+  return ok(undefined);
 };
 
 interface RetainedSession {
@@ -166,15 +173,13 @@ interface RetainedSession {
 /** One serialized, immutable APK session per REA instance, retired on idle or shutdown. */
 export class JadxProvider implements AndroidAnalysisPort {
   #tail: Promise<void> = Promise.resolve();
-  #cleanupFailure: AnalysisError | undefined;
+  #pendingCleanup: PendingCleanup | undefined;
   #retained: RetainedSession | undefined;
   #idle: NodeJS.Timeout | undefined;
   readonly #shutdown = new AbortController();
   #closePromise: Promise<void> | undefined;
   constructor(
-    readonly environment: Readonly<
-      Record<string, string | undefined>
-    > = process.env,
+    readonly environment: Readonly<Record<string, string | undefined>>,
     readonly launcher?: JadxLauncher,
   ) {}
 
@@ -209,11 +214,12 @@ export class JadxProvider implements AndroidAnalysisPort {
     try {
       if (signal.aborted)
         return err(new AnalysisCancelledError(request.operation));
-      if (this.#cleanupFailure !== undefined) return err(this.#cleanupFailure);
       clearTimeout(this.#idle);
+      if (this.#pendingCleanup !== undefined) {
+        const retired = await this.#retire();
+        if (!retired.ok) return retired;
+      }
       const outcome = await this.#execute(target, request, { signal });
-      if (!outcome.ok && outcome.error.cleanupIncomplete)
-        this.#cleanupFailure = outcome.error;
       if (outcome.ok) this.#scheduleIdle();
       return outcome;
     } finally {
@@ -225,29 +231,38 @@ export class JadxProvider implements AndroidAnalysisPort {
   close(): Promise<void> {
     this.#shutdown.abort();
     clearTimeout(this.#idle);
-    this.#closePromise ??= this.#tail.then(() => this.#retire());
+    this.#closePromise ??= this.#tail
+      .then(async () => {
+        const retired = await this.#retire();
+        if (!retired.ok) throw retired.error;
+      })
+      .catch((cause: unknown) => {
+        this.#closePromise = undefined;
+        throw cause;
+      });
     return this.#closePromise;
   }
 
-  async #retire(): Promise<void> {
-    if (this.#cleanupFailure !== undefined) throw this.#cleanupFailure;
-    const retained = this.#retained;
-    this.#retained = undefined;
-    const result = await cleanup(
-      retained?.session,
-      retained?.root,
-      ok(undefined),
-    );
-    if (!result.ok) {
-      this.#cleanupFailure = result.error;
-      throw result.error;
+  async #retire(): Promise<Result<void, AnalysisError>> {
+    if (this.#pendingCleanup === undefined && this.#retained !== undefined) {
+      this.#pendingCleanup = {
+        session: this.#retained.session,
+        root: this.#retained.root,
+        previousError: undefined,
+      };
+      this.#retained = undefined;
     }
+    if (this.#pendingCleanup === undefined) return ok(undefined);
+    const result = await cleanup(this.#pendingCleanup);
+    if (result.ok) this.#pendingCleanup = undefined;
+    return result;
   }
 
   #scheduleIdle(): void {
     this.#idle = setTimeout(() => {
-      const retirement = this.#tail.then(() => this.#retire());
-      this.#tail = retirement.catch(() => undefined);
+      this.#tail = this.#tail.then(async () => {
+        await this.#retire();
+      });
     }, 60_000);
     this.#idle.unref();
   }
@@ -264,7 +279,6 @@ export class JadxProvider implements AndroidAnalysisPort {
         : AbortSignal.any([options.signal, timeout]);
     let root: PrivateRuntimeRoot | undefined;
     let session: JadxSession | undefined;
-    let outcome: Outcome;
     try {
       if (target.format !== "apk")
         throw new AnalysisCapabilityUnavailableError(
@@ -305,8 +319,10 @@ export class JadxProvider implements AndroidAnalysisPort {
           this.environment.JAVA_HOME,
         ],
       });
-      if (this.#retained !== undefined && this.#retained.key !== key)
-        await this.#retire();
+      if (this.#retained !== undefined && this.#retained.key !== key) {
+        const retired = await this.#retire();
+        if (!retired.ok) return retired;
+      }
       let retained = this.#retained;
       if (retained === undefined) {
         root = await PrivateRuntimeRoot.create({ prefix: "rea-android-" });
@@ -359,7 +375,7 @@ export class JadxProvider implements AndroidAnalysisPort {
       root = retained.root;
       session = retained.session;
       const { snapshot } = retained;
-      outcome = ok(
+      const outcome = ok(
         await session.execute({
           request,
           target,
@@ -373,20 +389,20 @@ export class JadxProvider implements AndroidAnalysisPort {
       this.#retained = retained;
       return outcome;
     } catch (cause) {
-      outcome = err(
-        executionError({
-          cause,
-          request,
-          timeout,
-          signal: options?.signal,
-          session,
-        }),
-      );
+      const previousError = executionError({
+        cause,
+        request,
+        timeout,
+        signal: options?.signal,
+        session,
+      });
+      // Admission can fail before selecting an existing session for execution.
+      root ??= this.#retained?.root;
+      session ??= this.#retained?.session;
+      this.#retained = undefined;
+      this.#pendingCleanup = { session, root, previousError };
+      const retired = await this.#retire();
+      return retired.ok ? err(previousError) : retired;
     }
-    // An existing session also needs retirement when admission fails before selection.
-    root ??= this.#retained?.root;
-    session ??= this.#retained?.session;
-    this.#retained = undefined;
-    return cleanup(session, root, outcome);
   }
 }

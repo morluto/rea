@@ -1,8 +1,12 @@
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import {
+  DEFAULT_INHERITED_ENV_VARS,
+  StdioClientTransport,
+} from "@modelcontextprotocol/client/stdio";
 import { z } from "zod";
 import type { IdaConfiguration } from "./IdaConfiguration.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
@@ -102,6 +106,7 @@ export const redactIdaTransportFailure = (
 /** Create a standard SDK connection to an existing upstream registration. */
 export const createIdaMcpConnection = (
   config: IdaConfiguration,
+  environment: Readonly<NodeJS.ProcessEnv>,
 ): IdaMcpConnection => {
   const client = new Client({ name: "rea-ida-provider", version: "1" });
   const transportFailure = (cause: unknown): never => {
@@ -113,13 +118,18 @@ export const createIdaMcpConnection = (
           command: config.command,
           args: config.args,
           env: {
+            // The SDK always merges ambient defaults. Its string-only environment
+            // API requires empty values to suppress omitted caller-selected keys.
             ...Object.fromEntries(
-              Object.entries(process.env).filter(
+              DEFAULT_INHERITED_ENV_VARS.map((key) => [key, ""]),
+            ),
+            ...Object.fromEntries(
+              Object.entries(snapshotEnvironment(environment)).filter(
                 (entry): entry is [string, string] => entry[1] !== undefined,
               ),
             ),
             IDA_MCP_MAX_WORKERS: "1",
-            ...config.env,
+            ...snapshotEnvironment(config.env),
           },
           stderr: "pipe",
         })

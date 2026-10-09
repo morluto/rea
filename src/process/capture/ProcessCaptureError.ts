@@ -1,3 +1,4 @@
+import { DarwinProcessOwnershipInspectionError } from "../DarwinProcessRunTokenReader.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type {
   PartialProcessCaptureObservation,
@@ -61,3 +62,20 @@ export const processCaptureCancelled = (): ProcessCaptureError =>
     reason: "cancelled",
     userMessage: "Process capture was cancelled. Start it again when ready.",
   });
+
+/** Preserve typed process-inspection preflight failures at the capture boundary. */
+export const normalizeCaptureFailure = (
+  cause: unknown,
+  signal: AbortSignal | undefined,
+): unknown => {
+  if (cause instanceof ProcessCaptureError) return cause;
+  if (cause instanceof DarwinProcessOwnershipInspectionError)
+    return new ProcessCaptureError(cause.message, { cause });
+  if (
+    signal?.aborted === true &&
+    (cause === signal.reason ||
+      (cause instanceof Error && cause.name === "AbortError"))
+  )
+    return processCaptureCancelled();
+  return cause;
+};

@@ -1,20 +1,26 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
-/** Caller-selected network content; omission retains metadata alone. */
+/** Resolved network content selection recorded by a capture. */
 export const browserNetworkContentSelectionValuesSchema = z.strictObject({
-  request_body: z.boolean().default(false),
-  response_body: z.boolean().default(false),
-  header_values: z.boolean().default(false),
+  request_body: z.boolean(),
+  response_body: z.boolean(),
+  header_values: z.boolean(),
 });
 
-/** Input omission selects metadata without defaulting legacy capture coverage. */
+/** Caller omission selects metadata alone; individual content facets remain optional. */
 export const browserNetworkContentSelectionSchema =
-  browserNetworkContentSelectionValuesSchema.default({
-    request_body: false,
-    response_body: false,
-    header_values: false,
-  });
+  browserNetworkContentSelectionValuesSchema
+    .extend({
+      request_body: z.boolean().default(false),
+      response_body: z.boolean().default(false),
+      header_values: z.boolean().default(false),
+    })
+    .default({
+      request_body: false,
+      response_body: false,
+      header_values: false,
+    });
 
 /** Self-verifying retained bytes, after any declared-secret redaction. */
 export const browserNetworkBodySchema = z.union([

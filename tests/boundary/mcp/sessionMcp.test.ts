@@ -201,9 +201,7 @@ describe("target-free MCP lifecycle", () => {
     const closed: string[] = [];
     const session = createTestBinarySession(provider(closed), {
       resolveAnalysisProfile: () =>
-        Promise.resolve(
-          resultOk({ profile: SNAPSHOT_PROFILE, compatibility: {} }),
-        ),
+        Promise.resolve(resultOk({ profile: SNAPSHOT_PROFILE })),
     });
     const server = createServer(session, session, { logger: silentLogger });
     const mcp = new Client({ name: "replaced-target", version: "1.0.0" });
@@ -219,6 +217,9 @@ describe("target-free MCP lifecycle", () => {
         arguments: { path: targetPath },
       }),
     ).result;
+    expect(
+      (await mcp.callTool({ name: "current_document", arguments: {} })).isError,
+    ).not.toBe(true);
     await writeFile(targetPath, "second");
     const second = structured(
       await mcp.callTool({
@@ -349,7 +350,6 @@ describe("target-free MCP workflow", () => {
       ).result,
     ).toMatchObject({
       path: snapshotPath,
-      entries: 0,
       primitive_entries: 0,
       workflow_entries: 0,
       evidence_records: 0,
@@ -456,12 +456,16 @@ const client = (path: string, closed: string[]): AnalysisClient => ({
     ),
   close: () => {
     closed.push(path);
-    return Promise.resolve();
+    return Promise.resolve(resultOk(null));
   },
 });
 
 const provider = (closed: string[]): AnalysisProvider => {
-  const identity = { id: "fixture", name: "Fixture", version: "1" };
+  const identity = {
+    id: "fixture",
+    name: "Fixture analysis provider",
+    version: "1",
+  };
   const capability: CapabilityDescriptor = {
     provider: identity,
     operation: "current_document",

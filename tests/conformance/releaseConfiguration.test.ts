@@ -119,14 +119,4 @@ describe("release configuration", () => {
       ],
     });
   });
-
-  it("keeps generated API HTML out of the tracked tree", async () => {
-    await expect(readFile("typedoc.json", "utf8")).rejects.toMatchObject({
-      code: "ENOENT",
-    });
-    const packageJson = (await readJson("package.json")) as {
-      scripts?: Record<string, string>;
-    };
-    expect(packageJson.scripts?.["docs:api"]).toBeUndefined();
-  });
 });

@@ -331,7 +331,11 @@ const locations = (node: ApplicationNode) =>
 
 const properties = (node: ApplicationNode) =>
   node.observations
-    .map(({ label, properties: values }) => ({ label, properties: values }))
+    .map(({ label, properties: values, source_map_reference }) => ({
+      label,
+      properties: values,
+      source_map_reference,
+    }))
     .sort((left, right) =>
       compareCodePoints(canonicalJson(left), canonicalJson(right)),
     );

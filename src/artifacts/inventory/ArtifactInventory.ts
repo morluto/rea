@@ -7,7 +7,6 @@ import {
 import { abortIfNeeded } from "../ArtifactHash.js";
 import { scanCanonicalArtifactInventory } from "./scanCanonical.js";
 import type {
-  ArtifactIntegrityPolicy,
   ArtifactInventoryOptions,
   ArtifactInventorySnapshot,
 } from "./types.js";
@@ -15,7 +14,6 @@ import type {
 export { scanCanonicalArtifactInventory } from "./scanCanonical.js";
 
 export type {
-  ArtifactIntegrityPolicy,
   ArtifactInventoryOptions,
   ArtifactInventorySnapshot,
 } from "./types.js";
@@ -23,10 +21,7 @@ export type {
 /** Inventory one local artifact and return every graph collection inline. */
 export const inventoryArtifact = async (
   inputPath: string,
-  options: {
-    readonly signal?: AbortSignal;
-    readonly integrity?: ArtifactIntegrityPolicy;
-  } = {},
+  options: ArtifactInventoryOptions = {},
 ): Promise<ArtifactInventoryResult> => {
   const snapshot = await scanArtifactInventory(inputPath, options);
   return artifactInventoryResultSchema.parse(snapshot);

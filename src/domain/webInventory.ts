@@ -12,9 +12,9 @@ export interface WebInventoryResourceInput {
 
 export interface WebInventoryScriptInput {
   readonly url: string;
-  readonly cdp_hash: string;
-  readonly length: number;
-  readonly is_module: boolean;
+  readonly cdp_hash: string | null;
+  readonly length: number | null;
+  readonly is_module: boolean | null;
   readonly language: string | null;
   readonly source_map_url: string | null;
 }

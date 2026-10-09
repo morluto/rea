@@ -9,12 +9,15 @@ import {
   type ManagedPeLayout,
 } from "./ManagedPeReader.js";
 import {
-  type ManagedResourceDirectory,
+  readManagedResourceDirectory,
   managedTableRowCounts,
   readManagedMetadataInventory,
 } from "./ManagedMetadataInventory.js";
 import { readManagedMetadataLayout } from "./ManagedMetadataLayout.js";
-import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
+import {
+  ManagedReaderFailure,
+  uniqueManagedParseIssues,
+} from "./ManagedReaderFailure.js";
 import { parseTypes, typeRanges } from "./ManagedMemberInspectorCore.js";
 import {
   edges,
@@ -63,26 +66,11 @@ const unavailable = (
     ],
   });
 
-const resourceDirectory = (
+const readMemberInventory = (
+  bytes: Buffer,
   pe: ManagedPeLayout,
-): ManagedResourceDirectory | null => {
-  if (
-    pe.cli === null ||
-    pe.cli.resources.rva === 0 ||
-    pe.cli.resources.size === 0
-  )
-    return null;
-  return {
-    offset: pe.rvaToOffset(
-      pe.cli.resources.rva,
-      pe.cli.resources.size,
-      "cli.resources",
-    ),
-    size: pe.cli.resources.size,
-  };
-};
-
-const readMemberInventory = (bytes: Buffer, pe: ManagedPeLayout) => {
+  issues: ManagedParseIssue[],
+) => {
   const cli = pe.cli;
   if (cli === null)
     throw new TypeError("Managed inventory requires CLI metadata");
@@ -99,7 +87,7 @@ const readMemberInventory = (bytes: Buffer, pe: ManagedPeLayout) => {
   const inventory = readManagedMetadataInventory(
     bytes,
     layout,
-    resourceDirectory(pe),
+    readManagedResourceDirectory(pe, issues),
   );
   return { layout, inventory };
 };
@@ -113,9 +101,9 @@ export const inspectManagedMembersBytes = (
   if (pe.cli === null) return unavailable(target, bytes, pe.cliIssue);
   const issues: ManagedParseIssue[] = [];
   try {
-    const { layout, inventory } = readMemberInventory(bytes, pe);
+    const { layout, inventory } = readMemberInventory(bytes, pe, issues);
     issues.push(...inventory.issues);
-    const ranges = typeRanges(bytes, layout);
+    const ranges = typeRanges(bytes, layout, issues);
     const parsedTypes = parseTypes(bytes, layout, ranges);
     issues.push(...parsedTypes.issues);
     const fields = parseFields(bytes, layout, ranges);
@@ -127,7 +115,17 @@ export const inspectManagedMembersBytes = (
       pe,
       ranges,
     });
-    const coverageIssues = issues;
+    issues.push(...fields.issues, ...methods.issues);
+    const coverageIssues = uniqueManagedParseIssues(issues);
+    const incompleteMembers =
+      [...fields.fields, ...memberRefs.refs, ...methods.methods].some(
+        (member) => member.signature.parse_status !== "decoded",
+      ) ||
+      methods.methods.some(
+        (method) =>
+          method.body.status === "partial" ||
+          method.body.status === "malformed",
+      );
     const related = edges(
       methods.methods,
       methods.core,
@@ -159,7 +157,8 @@ export const inspectManagedMembersBytes = (
       call_edges: related.callEdges,
       field_accesses: related.fieldAccesses,
       coverage: {
-        state: coverageIssues.length === 0 ? "complete" : "partial",
+        state:
+          issues.length === 0 && !incompleteMembers ? "complete" : "partial",
         issues: coverageIssues,
       },
       limitations: [

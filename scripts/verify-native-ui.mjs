@@ -118,9 +118,14 @@ try {
   );
   const target = await parseBinaryTarget(executable);
   if (!target.ok) throw target.error;
-  const observation = await observeNativeUi(target.value, "observe_native_ui", {
-    ...scope,
-  });
+  const observation = await observeNativeUi(
+    target.value,
+    "observe_native_ui",
+    {
+      ...scope,
+    },
+    { environment: process.env },
+  );
   if (
     !observation.ok &&
     !/accessibility-denied|screen-recording-denied/u.test(
@@ -150,6 +155,7 @@ try {
           { kind: "wait", milliseconds: 200 },
         ],
       },
+      { environment: process.env },
     );
     if (!scenario.ok) throw scenario.error;
     if (
@@ -234,6 +240,7 @@ try {
     { ...target.value, sha256: "0".repeat(64) },
     "observe_native_ui",
     scope,
+    { environment: process.env },
   );
   if (mismatch.ok || !mismatch.error.message.includes("target-mismatch"))
     throw new Error("Real helper did not reject changed target bytes");

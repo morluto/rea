@@ -170,8 +170,8 @@ async function runMcp(name, arguments_) {
     true,
     JSON.stringify(response.structuredContent),
   );
-  assert.ok(response.structuredContent?.result);
-  return response.structuredContent.result;
+  assert.ok(response.structuredContent?.normalized_result);
+  return response.structuredContent.normalized_result;
 }
 
 async function inspectorUrl(process_) {

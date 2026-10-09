@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/server";
+import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 
 import type { BinarySessionPort } from "../application/binary/BinarySession.js";
 import { toolContract } from "../contracts/toolContracts.js";
@@ -17,11 +17,10 @@ import { recordSessionEvidenceSources } from "./sessionEvidence.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
 import { FUNCTION_COMPARISON_PROVIDER } from "./sessionToolPolicies.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { toCallToolResult, toEvidenceToolResult } from "./toolResult.js";
 
 /** Register explicit Evidence-backed function comparison. */
 export const registerFunctionComparisonTool = (
-  server: McpServer,
+  server: EvidenceMcpServer,
   session: BinarySessionPort,
   contract: ReturnType<typeof toolContract<"compare_functions">>,
 ): void => {
@@ -35,7 +34,7 @@ export const registerFunctionComparisonTool = (
         leftEvidence = parseEvidence(input.left);
         rightEvidence = parseEvidence(input.right);
       } catch (cause: unknown) {
-        return toCallToolResult(
+        return server.delivery.toCallToolResult(
           err(
             new EvidenceIntegrityError(
               cause instanceof Error ? cause.message : "Invalid Evidence",
@@ -50,7 +49,7 @@ export const registerFunctionComparisonTool = (
         leftEvidence.predicate_type !== "rea.analysis" ||
         rightEvidence.predicate_type !== "rea.analysis"
       )
-        return toCallToolResult(
+        return server.delivery.toCallToolResult(
           err(new EvidenceIntegrityError("Expected analyze_function Evidence")),
           contract,
         );
@@ -59,14 +58,15 @@ export const registerFunctionComparisonTool = (
       const computed = await runDerivedOperation(context, contract.name, () =>
         compareFunctions(leftEvidence, rightEvidence),
       );
-      if (!computed.ok) return toCallToolResult(computed, contract);
+      if (!computed.ok)
+        return server.delivery.toCallToolResult(computed, contract);
       const comparison = computed.value;
       const recordedSources = recordSessionEvidenceSources(
         (evidence) => session.recordEvidence(evidence),
         [leftEvidence, rightEvidence],
       );
       if (!recordedSources.ok)
-        return toCallToolResult(recordedSources, contract);
+        return server.delivery.toCallToolResult(recordedSources, contract);
       const evidence = createEvidence(undefined, FUNCTION_COMPARISON_PROVIDER, {
         predicateType: "rea.function-comparison",
         operation: contract.name,
@@ -90,7 +90,7 @@ export const registerFunctionComparisonTool = (
           comparisonEvidenceId: evidence.evidence_id,
         }),
       );
-      return toEvidenceToolResult(evidence, contract, recorded);
+      return server.delivery.toEvidenceToolResult(evidence, contract, recorded);
     },
   );
 };

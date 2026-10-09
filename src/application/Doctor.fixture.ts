@@ -7,6 +7,7 @@ export const createDoctorHostFixture = (
   overrides: Partial<DoctorHost> = {},
 ): DoctorHost => ({
   platform: "darwin",
+  homeDirectory: "/fixture/home",
   architecture: "x64",
   nodeVersion: "24.18.0",
   macosVersion: () => Promise.resolve("14.0"),

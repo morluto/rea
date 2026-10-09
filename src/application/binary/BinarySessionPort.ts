@@ -21,8 +21,7 @@ import type {
 export interface SavedAnalysisSnapshot {
   readonly path: string;
   readonly bytes: number;
-  readonly entries: number;
-  /** Eligible primitive query bindings; also reported by the legacy entries field. */
+  /** Eligible primitive query bindings. */
   readonly primitive_entries: number;
   /** Eligible composed workflow bindings, separate from primitive queries. */
   readonly workflow_entries: number;
@@ -68,7 +67,6 @@ export interface BinarySessionPort
   recordWorkflowSnapshot(
     input: WorkflowSnapshotRecordInput,
   ): Result<null, EvidenceIntegrityError>;
-  openCompatibility(): Readonly<Record<string, JsonValue>>;
   onAvailabilityChanged?(listener: () => void | Promise<void>): () => void;
   onAnalysisSnapshotChanged?(listener: () => void | Promise<void>): () => void;
 }

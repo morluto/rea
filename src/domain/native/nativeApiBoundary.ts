@@ -82,7 +82,7 @@ const inferredJumpTableSchema = z
     dispatch_address: z.string().min(1),
     data_sources: z.array(jumpTableDataSourceSchema),
     mappings: z.array(jumpTableMappingSchema),
-    default_targets: z.array(jumpTableDefaultTargetSchema).default([]),
+    default_targets: z.array(jumpTableDefaultTargetSchema),
     limitations: z.array(z.string()),
   })
   .strict();

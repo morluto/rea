@@ -107,7 +107,7 @@ export async function verifyRealHopperFixture({
       },
       options,
     ),
-    "set_comment fixture marker",
+    "set_comment",
   );
   if (commentSet !== true)
     throw new Error("Hopper did not read back the fixture comment marker");
@@ -138,7 +138,7 @@ export async function verifyRealHopperFixture({
       },
       options,
     ),
-    "procedure_references native calls",
+    "procedure_references",
   );
   assert.deepEqual(entryDossier.unresolved_calls, observed.unresolved_calls);
   for (const call of calls) {
@@ -266,7 +266,7 @@ export async function resolveFixtureProcedure(
       },
       options,
     ),
-    `search_procedures ${expectedName}`,
+    "search_procedures",
   );
   const exactMatches = Array.isArray(matches)
     ? matches.filter(
@@ -301,5 +301,5 @@ export const analyzeFixtureProcedure = async (
       },
       options,
     ),
-    `analyze_function ${procedure.name}`,
+    "analyze_function",
   );

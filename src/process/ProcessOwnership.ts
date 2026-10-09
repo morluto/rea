@@ -189,13 +189,9 @@ export const cleanupWindowsProcessTree = async (
     const result = await host.terminateTree(rootPid);
     return { cleaned: true, signaled: result === "terminated" };
   } catch (cause: unknown) {
-    // The reason string is a pinned validation contract; keep it stable and
-    // do not interpolate the cause into caller-visible diagnostics here.
-    void cause;
     return {
       cleaned: false,
-      reason:
-        "Windows P0 process-tree termination failed; Job Object ownership is unavailable",
+      reason: `Windows process-tree termination failed for PID ${String(rootPid)}: ${errorMessage(cause)}`,
     };
   }
 };

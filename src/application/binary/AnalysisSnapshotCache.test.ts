@@ -72,6 +72,7 @@ it("exports independent nested query, workflow and Evidence payloads", () => {
     }),
     createEvidence(target, REA_WORKFLOW_PROVIDER, {
       operation: "analyze_function",
+      confidence: "derived",
       parameters,
       result,
       rawResult: result,
@@ -91,7 +92,7 @@ it("exports independent nested query, workflow and Evidence payloads", () => {
       execution.result,
       execution.raw_result,
     ]),
-    ...(exported.value.workflow_entries ?? []).flatMap(({ execution }) => [
+    ...exported.value.workflow_entries.flatMap(({ execution }) => [
       execution.result,
       execution.raw_result,
     ]),
@@ -186,6 +187,7 @@ describe("analysis snapshot cache capacity", () => {
     });
     const evidence = createEvidence(target, REA_WORKFLOW_PROVIDER, {
       operation: workflowInput.operation,
+      confidence: "derived",
       parameters: workflowInput.parameters,
       result: execution.result,
       rawResult: execution.rawResult,

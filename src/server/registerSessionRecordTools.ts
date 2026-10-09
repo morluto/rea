@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/server";
+import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 
 import type { BinarySessionPort } from "../application/binary/BinarySession.js";
 import {
@@ -9,10 +9,9 @@ import { toolContract } from "../contracts/toolContracts.js";
 import type { EvidenceBundle } from "../domain/evidenceBundle.js";
 import { ok } from "../domain/result.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { toCallToolResult } from "./toolResult.js";
 
 interface EvidenceToolRegistration {
-  readonly server: McpServer;
+  readonly server: EvidenceMcpServer;
   readonly session: BinarySessionPort;
   readonly exportContract: ReturnType<
     typeof toolContract<"export_evidence_bundle">
@@ -51,7 +50,7 @@ const registerExportEvidenceTool = ({
         context.mcpReq.signal,
       );
       return written.ok
-        ? toCallToolResult(
+        ? server.delivery.toCallToolResult(
             ok({
               path: written.value.path,
               bytes: written.value.bytes,
@@ -60,7 +59,7 @@ const registerExportEvidenceTool = ({
             }),
             exportContract,
           )
-        : toCallToolResult(written, exportContract);
+        : server.delivery.toCallToolResult(written, exportContract);
     },
   );
 };
@@ -74,7 +73,10 @@ const registerSnapshotEvidenceTool = ({
     snapshotContract.name,
     toolRegistrationOptions(snapshotContract),
     () =>
-      toCallToolResult(ok(bundleForSerialization(session)), snapshotContract),
+      server.delivery.toCallToolResult(
+        ok(bundleForSerialization(session)),
+        snapshotContract,
+      ),
   );
 };
 
@@ -89,7 +91,8 @@ const registerImportEvidenceTool = ({
     async (input) => {
       const path = input.path;
       const loaded = await readEvidenceBundle(path);
-      if (!loaded.ok) return toCallToolResult(loaded, importContract);
+      if (!loaded.ok)
+        return server.delivery.toCallToolResult(loaded, importContract);
       const retainedUnknownRevisions = new Set(
         bundleForSerialization(session).unknowns.map((unknown) =>
           unknownRevisionKey(unknown),
@@ -97,7 +100,7 @@ const registerImportEvidenceTool = ({
       );
       const imported = session.importEvidenceBundle(loaded.value);
       return imported.ok
-        ? toCallToolResult(
+        ? server.delivery.toCallToolResult(
             ok({
               imported: imported.value,
               unknowns_added: loaded.value.unknowns.filter(
@@ -108,7 +111,7 @@ const registerImportEvidenceTool = ({
             }),
             importContract,
           )
-        : toCallToolResult(imported, importContract);
+        : server.delivery.toCallToolResult(imported, importContract);
     },
   );
 };
@@ -121,7 +124,7 @@ const unknownRevisionKey = (
 ): string => `${unknown.unknown_id}:${String(unknown.revision)}`;
 
 interface UnknownToolRegistration {
-  readonly server: McpServer;
+  readonly server: EvidenceMcpServer;
   readonly session: BinarySessionPort;
 }
 
@@ -143,7 +146,7 @@ const registerListUnknownsTool = ({
           : { severity: filters.severity }),
         ...(filters.domain === undefined ? {} : { domain: filters.domain }),
       });
-      return toCallToolResult(
+      return server.delivery.toCallToolResult(
         ok({
           items: all,
           total: all.length,
@@ -164,7 +167,7 @@ const registerRecordUnknownTool = ({
     toolRegistrationOptions(recordContract),
     (input) => {
       const result = session.recordUnknown(input);
-      return toCallToolResult(result, recordContract);
+      return server.delivery.toCallToolResult(result, recordContract);
     },
   );
 };
@@ -179,7 +182,7 @@ const registerUpdateUnknownTool = ({
     toolRegistrationOptions(updateContract),
     (input) => {
       const result = session.updateUnknown(input);
-      return toCallToolResult(result, updateContract);
+      return server.delivery.toCallToolResult(result, updateContract);
     },
   );
 };
@@ -193,7 +196,7 @@ const registerVerifyUnknownTool = ({
     verifyContract.name,
     toolRegistrationOptions(verifyContract),
     (input) =>
-      toCallToolResult(
+      server.delivery.toCallToolResult(
         session.verifyUnknownResolution(input.unknown_id),
         verifyContract,
       ),

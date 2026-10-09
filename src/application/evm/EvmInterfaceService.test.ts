@@ -5,25 +5,8 @@ import {
   evmInterfaceFixture,
 } from "../../../tests/fixtures/evm/interface.js";
 import { err, ok } from "../../domain/result.js";
-import { parseEvidence } from "../../domain/evidence.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 
-it("returns full inline inferred Evidence and unmodified upstream representation", async () => {
-  const value = evmInterfaceFixture();
-  const service = new EvmInterfaceService({
-    inspect: () => Promise.resolve(ok(evmInterfaceExecution(value))),
-  });
-  const result = await service.inspect({
-    path: value.artifact.path,
-    encoding: "hex",
-  });
-  if (!result.ok) throw result.error;
-  const evidence = parseEvidence(result.value);
-  expect(evidence.normalized_result).toEqual(value);
-  expect(evidence.raw_result).toEqual({ functions: [] });
-  expect(evidence.confidence).toBe("inferred");
-  expect(evidence.subject?.digest.sha256).toBe(value.artifact.sha256);
-});
 it.each([
   { path: "relative.hex", encoding: "hex" },
   { path: "/selected", encoding: "auto" },

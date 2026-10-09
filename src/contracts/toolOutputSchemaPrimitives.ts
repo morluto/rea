@@ -8,7 +8,10 @@ import {
   functionBodySchema,
 } from "../domain/hopperValues.js";
 import { analysisProfileSchema } from "../domain/analysisProfile.js";
-import { evidenceEnvelopeSchema } from "../domain/evidence.js";
+import {
+  evidenceSchema,
+  validateAnalysisProfileProvider,
+} from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
   PROVIDER_REJECTION_CODES,
@@ -20,18 +23,12 @@ import {
   PROVIDER_RETRY_ACTIONS,
 } from "../domain/providerOperationHealth.js";
 import { analysisErrorProjectionSchema } from "./errorSchemas.js";
-import { prefixedDigestSchema } from "./../domain/digests.js";
 
-/** Inline result with its complete Evidence record. */
-export const inlineEvidenceRecordSchema = evidenceEnvelopeSchema;
-
-/** Wrap a result and its Evidence while preserving the result schema type. */
+/** Specialize the single normalized result inside a complete Evidence record. */
 export const evidenceResultOf = <Schema extends z.ZodType>(schema: Schema) =>
-  z.strictObject({
-    result: schema,
-    evidence_id: prefixedDigestSchema("ev"),
-    evidence: inlineEvidenceRecordSchema,
-  });
+  z
+    .strictObject({ ...evidenceSchema.shape, normalized_result: schema })
+    .superRefine(validateAnalysisProfileProvider);
 
 const resultOf = evidenceResultOf;
 /** Wrap a lifecycle result while preserving its exact schema type. */
@@ -336,8 +333,6 @@ export type ToolUnavailabilityReason = z.output<
 
 export const sessionProvider = z
   .object({
-    provider: providerIdentity,
-    providers: z.array(providerIdentity),
     capabilities: z.array(providerCapability),
     analysis_run: analysisRun,
     analysis_activity: analysisActivity,

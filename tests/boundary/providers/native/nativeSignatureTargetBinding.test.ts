@@ -61,7 +61,7 @@ class Captures extends NativeFixtureRunner {
 describe("native signature target identity", () => {
   it("inspects an unchanged registered executable", async () => {
     const { target } = await fixture();
-    const result = await new NativeMacOSProvider(new Captures(), "darwin")
+    const result = await new NativeMacOSProvider({}, new Captures(), "darwin")
       .createClient(target)
       .execute("inspect_signature", {});
     expect(result.ok && result.value.result).toMatchObject({
@@ -83,7 +83,7 @@ describe("native signature target identity", () => {
         }
       }
       const runner = new Captures();
-      const result = await new NativeMacOSProvider(runner, "darwin")
+      const result = await new NativeMacOSProvider({}, runner, "darwin")
         .createClient(target)
         .execute("inspect_signature", {});
       if (result.ok) throw new Error("Expected target-change failure");
@@ -109,7 +109,7 @@ describe("native signature target identity", () => {
           await rename(replacement, path);
         }
       });
-      const result = await new NativeMacOSProvider(runner, "darwin")
+      const result = await new NativeMacOSProvider({}, runner, "darwin")
         .createClient(target)
         .execute("inspect_signature", {});
       if (result.ok) throw new Error("Expected target-change failure");
@@ -127,7 +127,7 @@ describe("native signature target identity", () => {
       await chmod(path, 0);
       const runner = new Captures();
       try {
-        const result = await new NativeMacOSProvider(runner, "darwin")
+        const result = await new NativeMacOSProvider({}, runner, "darwin")
           .createClient(target)
           .execute("inspect_signature", {});
         if (result.ok) throw new Error("Expected access denial");
@@ -150,7 +150,7 @@ describe("native signature target identity", () => {
         if (args.includes("--entitlements")) await chmod(directory, 0);
       });
       try {
-        const result = await new NativeMacOSProvider(runner, "darwin")
+        const result = await new NativeMacOSProvider({}, runner, "darwin")
           .createClient(target)
           .execute("inspect_signature", {});
         if (result.ok) throw new Error("Expected access denial");
@@ -212,7 +212,7 @@ it.each([
         return replay.run(tool, args);
       },
     };
-    const result = await new NativeMacOSProvider(runner, "darwin")
+    const result = await new NativeMacOSProvider({}, runner, "darwin")
       .createClient(target)
       .execute("inspect_signature", {});
     expect(failed).toBe(true);
@@ -235,7 +235,7 @@ it("rejects an intermediate replacement before a later capture can restore the o
       await rename(original, path);
     }
   });
-  const result = await new NativeMacOSProvider(runner, "darwin")
+  const result = await new NativeMacOSProvider({}, runner, "darwin")
     .createClient(target)
     .execute("inspect_signature", {});
   expect(result).toMatchObject({
@@ -250,7 +250,7 @@ it("returns typed cancellation during target acquisition before commands run", a
   const target = await nativeMachoTargetForFile(path);
   const controller = new AbortController();
   const runner = new Captures();
-  const pending = new NativeMacOSProvider(runner, "darwin")
+  const pending = new NativeMacOSProvider({}, runner, "darwin")
     .createClient(target)
     .execute("inspect_signature", {}, { signal: controller.signal });
   controller.abort();
@@ -296,7 +296,7 @@ it("preserves cancellation after a capture instead of classifying it as invalid 
   const runner = new Captures(async () => {
     controller.abort();
   });
-  const result = await new NativeMacOSProvider(runner, "darwin")
+  const result = await new NativeMacOSProvider({}, runner, "darwin")
     .createClient(target)
     .execute("inspect_signature", {}, { signal: controller.signal });
   expect(result).toMatchObject({
@@ -325,7 +325,7 @@ it.each(["success", "failure", "cancellation", "throw"] as const)(
         return new NativeFixtureRunner().run(tool, args);
       },
     };
-    const result = await new NativeMacOSProvider(runner, "darwin")
+    const result = await new NativeMacOSProvider({}, runner, "darwin")
       .createClient(target)
       .execute("inspect_signature", {}, { signal: controller.signal });
     expect(result.ok).toBe(outcome === "success");
@@ -390,7 +390,7 @@ it.skipIf(process.platform !== "darwin")(
       ]);
     }
     const target = await nativeMachoTargetForFile(path);
-    const real = new XcrunCommandRunner();
+    const real = new XcrunCommandRunner({});
     let capturedPath: string | undefined;
     const runner: NativeCommandRunner = {
       async run(tool, args, options) {
@@ -408,7 +408,7 @@ it.skipIf(process.platform !== "darwin")(
         }
       },
     };
-    const result = await new NativeMacOSProvider(runner, "darwin")
+    const result = await new NativeMacOSProvider({}, runner, "darwin")
       .createClient(target)
       .execute("inspect_signature", {});
     expect(result.ok && result.value.result).toMatchObject({

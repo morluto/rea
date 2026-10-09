@@ -1,3 +1,5 @@
+import { snapshotEnvironment } from "./process/snapshotEnvironment.js";
+import { createDirectAnalysis } from "./composition/directAnalysis.js";
 import { registerEvmCommands } from "./cli/evmCommands.js";
 import { registerAnalysisViewCommands } from "./cli/analysisViewCommands.js";
 import { registerBinaryDiagnosticsCommands } from "./cli/binaryDiagnosticsCommands.js";
@@ -37,9 +39,13 @@ import type { CliResultOutput } from "./cli/streamedJsonOutput.js";
  * `--mcp` are intercepted by the executable dispatcher before this module loads.
  */
 export const createCli = (
-  environment: Readonly<Record<string, string | undefined>> = process.env,
+  selectedEnvironment: Readonly<
+    Record<string, string | undefined>
+  > = process.env,
   resultOutput?: CliResultOutput,
 ): CliInstance => {
+  const environment = snapshotEnvironment(selectedEnvironment);
+  const analysis = createDirectAnalysis(environment);
   const logger = createLogger(
     "cli",
     environment.REA_LOG_LEVEL === undefined
@@ -57,12 +63,17 @@ export const createCli = (
     sync: false,
   });
 
-  registerSetupCommands(cli, logger);
-  registerCoreAnalysisCommands(cli, logger, resultOutput);
-  registerUtilityCommands(cli, logger, environment);
+  registerSetupCommands(cli, logger, environment);
+  registerCoreAnalysisCommands(
+    cli,
+    logger,
+    analysis.runDirectAnalysis,
+    resultOutput,
+  );
+  registerUtilityCommands(cli, logger, environment, analysis);
   registerEvmCommands(cli, logger, environment);
-  registerArtifactCommands(cli, logger);
-  registerManagedCommands(cli, logger);
+  registerArtifactCommands(cli, logger, analysis.runProviderAnalysis);
+  registerManagedCommands(cli, logger, analysis.runProviderAnalysis);
   registerAndroidCommands(cli, logger, environment);
   registerFirmwareCommands(cli, logger, environment);
   registerBinaryDiagnosticsCommands(cli, logger, environment);
@@ -77,8 +88,8 @@ export const createCli = (
   registerWebNetworkCaptureCommands(cli, logger, environment);
   registerJavaScriptRecoveryCommands(cli, logger, environment);
   registerAdvancedBrowserCommands(cli, logger);
-  registerBrowserScenarioCommands(cli, logger);
-  registerElectronCommands(cli, logger, resultOutput);
+  registerBrowserScenarioCommands(cli, logger, environment);
+  registerElectronCommands(cli, logger, environment, resultOutput);
   registerJavaScriptRuntimeObservationCommands(cli, logger);
   registerApplicationCommands(cli, logger);
   presentOmittableDefaults(cli);

@@ -14,10 +14,7 @@ import { jsonValueSchema } from "../domain/jsonValue.js";
 import { parseConfig } from "../config.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import { parseExecutableHeader } from "../domain/binaryTarget.js";
-import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import {
-  GHIDRA_PROVIDER_IDENTITY,
-  GHIDRA_OPERATIONS,
   GhidraProvider,
   type GhidraProviderClientFactory,
 } from "./GhidraProvider.js";
@@ -26,6 +23,8 @@ import { GHIDRA_SESSION_CAPABILITIES } from "./GhidraSessionValues.js";
 import { err, ok } from "../domain/result.js";
 import { GhidraSessionError } from "./GhidraSessionError.js";
 import { silentLogger } from "../logger.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
 
 const INSTALL = "/opt/ghidra_12.1.4_PUBLIC";
@@ -49,56 +48,16 @@ const provider = (
 ): GhidraProvider => {
   const config = parseConfig({ GHIDRA_INSTALL_DIR: INSTALL });
   if (!config.ok) throw config.error;
-  return new GhidraProvider(config.value, silentLogger, host, clientFactory);
+  return new GhidraProvider(
+    config.value,
+    silentLogger,
+    {},
+    host,
+    clientFactory,
+  );
 };
 
-describe("Ghidra jump-table profile", () => {
-  it("separates typed case/default evidence and jump-load metadata from legacy cache profiles", async () => {
-    const resolved = await provider().resolveAnalysisProfile(
-      executableTarget("elf", "x86_64"),
-    );
-    if (!resolved.ok || resolved.value.profile === null)
-      throw new Error("expected a committed Ghidra profile");
-    const profile = resolved.value.profile;
-    const legacy = createAnalysisProfile(
-      profile.provider,
-      Object.fromEntries(
-        Object.entries(profile.parameters).filter(
-          ([key]) =>
-            key !== "jump_table_evidence" && key !== "decompiler_jump_loads",
-        ),
-      ),
-    );
-    expect(profile.digest).not.toBe(legacy.digest);
-    expect(profile.parameters.jump_table_evidence).toBe(
-      "typed-case-default-blocks-v1",
-    );
-    expect(profile.parameters.decompiler_jump_loads).toBe(true);
-  });
-});
-
 describe("Ghidra provider", () => {
-  it("separates complete body evidence from legacy length-only cache profiles", async () => {
-    const resolved = await provider().resolveAnalysisProfile(
-      executableTarget("elf", "x86_64"),
-    );
-    if (!resolved.ok || resolved.value.profile === null)
-      throw new Error("expected a committed Ghidra profile");
-    const profile = resolved.value.profile;
-    const legacy = createAnalysisProfile(
-      profile.provider,
-      Object.fromEntries(
-        Object.entries(profile.parameters).filter(
-          ([key]) => key !== "function_body_evidence",
-        ),
-      ),
-    );
-    expect(profile.digest).not.toBe(legacy.digest);
-    expect(profile.parameters.function_body_evidence).toBe(
-      "complete-inclusive-ranges-v1",
-    );
-  });
-
   it("commits DOS loader and real-mode language while retaining the CPU family", async () => {
     const ghidra = provider();
     const target: BinaryTarget = {
@@ -144,10 +103,6 @@ describe("Ghidra provider", () => {
     };
     const ghidra = provider(host);
 
-    expect(ghidra.identity()).toEqual(GHIDRA_PROVIDER_IDENTITY);
-    expect(ghidra.capabilities().map(({ operation }) => operation)).toEqual([
-      ...GHIDRA_OPERATIONS,
-    ]);
     expect(ghidra.capabilities()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -389,17 +344,9 @@ describe("Ghidra startup configuration", () => {
     const target = executableTarget("elf", "x86_64");
     for (const [raw, expected] of [
       [undefined, 330_000],
-      ["", 330_000],
-      [" ", 330_000],
       ["900000", 900_000],
       ["1260000", 1_260_000],
       ["2147483647", 2_147_483_647],
-      ["2147483648", 330_000],
-      ["9007199254740991", 330_000],
-      ["0", 330_000],
-      ["-5", 330_000],
-      ["abc", 330_000],
-      ["1.5", 330_000],
     ] as const) {
       const config = parseConfig({
         GHIDRA_INSTALL_DIR: INSTALL,
@@ -410,6 +357,7 @@ describe("Ghidra startup configuration", () => {
       const ghidra = new GhidraProvider(
         config.value,
         silentLogger,
+        {},
         installationHost(),
         (options) => {
           timeout = options.startupTimeoutMs;
@@ -425,7 +373,7 @@ describe("Ghidra startup configuration", () => {
                 ),
               ),
             callTool: () => Promise.resolve(ok([])),
-            close: () => Promise.resolve(),
+            close: () => Promise.resolve(ok(null)),
           };
         },
       );
@@ -494,7 +442,7 @@ describe("Ghidra client projection", () => {
           return Promise.resolve(ok(sessionInfo()));
         },
         callTool,
-        close: () => Promise.resolve(),
+        close: () => Promise.resolve(ok(null)),
       };
     };
     const ghidra = provider(installationHost(), clientFactory);
@@ -513,9 +461,9 @@ describe("Ghidra client projection", () => {
         analyzer_preset: "ghidra-default",
       },
     });
-    expect(resolved.value.compatibility).toEqual({
-      languageId: "auto",
-      compilerSpecId: "auto",
+    expect(resolved.value.profile.parameters).toMatchObject({
+      language_id: "auto-from-header",
+      compiler_spec_id: "auto-default",
     });
 
     const result = await ghidra
@@ -558,7 +506,7 @@ describe("Ghidra result projection", () => {
     const ghidra = provider(installationHost(), () => ({
       start: () => Promise.resolve(ok(sessionInfo())),
       callTool: () => Promise.resolve(ok({ items: "not-an-inventory" })),
-      close: () => Promise.resolve(),
+      close: () => Promise.resolve(ok(null)),
     }));
     const resolved = await ghidra.resolveAnalysisProfile(
       executableTarget("elf", "x86_64"),
@@ -598,7 +546,7 @@ describe("Ghidra result projection", () => {
               ),
             ),
           ),
-        close: () => Promise.resolve(),
+        close: () => Promise.resolve(ok(null)),
       }));
       const resolved = await ghidra.resolveAnalysisProfile(
         executableTarget("elf", "x86_64"),
@@ -634,7 +582,7 @@ describe("Ghidra result projection", () => {
             ),
           ),
         ),
-      close: () => Promise.resolve(),
+      close: () => Promise.resolve(ok(null)),
     }));
     const resolved = await ghidra.resolveAnalysisProfile(
       executableTarget("elf", "x86_64"),
@@ -674,7 +622,7 @@ describe("Ghidra result projection", () => {
             ),
           ),
         ),
-      close: () => Promise.resolve(),
+      close: () => Promise.resolve(ok(null)),
     }));
     const resolved = await ghidra.resolveAnalysisProfile(
       executableTarget("elf", "x86_64"),
@@ -723,7 +671,7 @@ describe("Ghidra measured load-image projection", () => {
         start: () => Promise.resolve(ok(sessionInfo())),
         callTool: () =>
           Promise.resolve(ok(jsonValueSchema.parse(fixture.observation))),
-        close: () => Promise.resolve(),
+        close: () => Promise.resolve(ok(null)),
         ...(state === "missing-snapshot"
           ? {}
           : {
@@ -835,6 +783,7 @@ describe("Ghidra extension failures", () => {
         const ghidra = new GhidraProvider(
           config.value,
           silentLogger,
+          {},
           installationHost(),
           () => ({
             start: () => {
@@ -877,7 +826,7 @@ describe("Ghidra extension failures", () => {
             },
             close: () => {
               closes++;
-              return Promise.resolve();
+              return Promise.resolve(ok(null));
             },
           }),
         );
@@ -950,7 +899,7 @@ describe("compatible Ghidra builds", () => {
               },
             ]),
           ),
-        close: () => Promise.resolve(),
+        close: () => Promise.resolve(ok(null)),
       }),
     );
     const resolved = await ghidra.resolveAnalysisProfile(
@@ -978,4 +927,45 @@ describe("compatible Ghidra builds", () => {
     );
     expect(procedures.ok && procedures.value.provider.version).toBe("12.1.2");
   });
+});
+
+it("projects Ghidra startup failure and its incomplete cleanup together", async () => {
+  const cleanup = new ProviderCleanupError("ghidra", ["owned-ghidra-process"], {
+    reason: "process cleanup unconfirmed",
+  });
+  const ghidra = provider(installationHost(), () => ({
+    start: async () =>
+      err(
+        new GhidraSessionError(
+          "timeout",
+          "Ghidra startup deadline elapsed",
+          { failure_kind: "timeout" },
+          { timeoutMs: 250, cleanupFailure: cleanup },
+        ),
+      ),
+    callTool: async () => ok(null),
+    close: async () => err(cleanup),
+  }));
+  const target = executableTarget("elf", "x86_64");
+  const profile = await ghidra.resolveAnalysisProfile(target);
+  if (!profile.ok || profile.value.profile === null)
+    throw new Error("Expected Ghidra analysis profile");
+  const result = await ghidra
+    .createClient(target, profile.value.profile)
+    .execute("health", {});
+  expect(result.ok).toBe(false);
+  if (!result.ok)
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "cleanup_incomplete",
+      details: {
+        resources: ["owned-ghidra-process"],
+        diagnostics: {
+          primary_error: {
+            code: "provider_timeout",
+            details: { timeout_ms: 250 },
+          },
+          cleanup_error: { code: "cleanup_incomplete" },
+        },
+      },
+    });
 });

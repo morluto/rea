@@ -62,7 +62,7 @@ describe("MZ artifact classification", () => {
     );
     expect(standalone.manifest.root_format).toBe("dos-mz");
     expect(standalone.nodes).toContainEqual(
-      expect.objectContaining({ kind: "executable", format: "dos-mz" }),
+      expect.objectContaining({ format: "dos-mz" }),
     );
 
     const tree = join(directory, "tree");

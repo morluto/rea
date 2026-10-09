@@ -8,7 +8,10 @@ import { promisify } from "node:util";
 import Ajv from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { analysisErrorProjectionSchema } from "../../dist/contracts/errorSchemas.js";
-import { mcpTextValue, requireMcpResult } from "./mcp-verifier-results.mjs";
+import {
+  mcpTextValue,
+  requireMcpOperationResult,
+} from "./mcp-verifier-results.mjs";
 import { verifyLegacyGhidraReferenceSnapshot } from "./ghidra-reference-snapshot-e2e.mjs";
 import { verifyGhidraSnapshotLifecycle } from "./real-ghidra-snapshot-lifecycle.mjs";
 import { verifyGhidraTargetAdmission } from "./real-ghidra-target-admission.mjs";
@@ -40,7 +43,7 @@ export async function verifyGhidraBoundaries(
   let rejectedCalls = 0;
   const call = async (name, args = {}) => {
     const reply = await client.callTool({ name, arguments: args }, options);
-    const result = requireMcpResult(reply, name);
+    const result = requireMcpOperationResult(reply, name);
     const validate = validators.get(name);
     assert.ok(validate, `${name} missing from catalog`);
     assert.ok(

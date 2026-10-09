@@ -1,14 +1,11 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "incremental": true,
     "rootDir": "src",
-    "tsBuildInfoFile": ".cache/tsconfig.build.tsbuildinfo",
     "types": ["node"]
   },
   "include": ["src/**/*.ts"],
   "exclude": [
-    "src/generatedMcpToolCatalog.ts",
     "src/**/*.fixture.ts",
     "src/**/*.test.ts",
     "tests",

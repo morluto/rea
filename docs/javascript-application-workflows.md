@@ -189,8 +189,8 @@ writeFileSync("trace-input.json", JSON.stringify({
 rea trace-application-feature ./trace-input.json --json
 ```
 
-MCP analysis returns an envelope containing `result`, `evidence_id`, and full
-`evidence`. If the connected server advertises retained references, reuse its
+MCP analysis returns the complete Evidence record, with the operation result
+in `normalized_result` and its identity in `evidence_id`. If the connected server advertises retained references, reuse its
 exact returned ID as `{"kind":"retained-evidence","evidence_id":"RETURNED_ID"}`
 in `application`, or `left`/`right` for comparisons. `RETURNED_ID` is a template,
 not a literal valid ID. Native Evidence arrays still use complete records.

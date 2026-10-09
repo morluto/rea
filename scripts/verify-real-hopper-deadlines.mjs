@@ -27,6 +27,7 @@ const root = await realpath(
 );
 const target = join(root, "deadline-fixture");
 let client;
+let primaryFailure;
 try {
   await copyFile(fixtures.primary.path, target);
   const parsed = await parseBinaryTarget(target);
@@ -40,14 +41,27 @@ try {
     provider: HOPPER_PROVIDER_IDENTITY,
   });
   if (!resolved.ok) throw resolved.error;
-  const image = resolved.value.profile?.parameters.prepared_image;
+  const profile = resolved.value.profile;
+  assert.notEqual(
+    profile,
+    null,
+    "This lane requires a resolved Hopper launcher profile",
+  );
+  const loaderArgs = profile.parameters.loader?.arguments;
+  assert.ok(
+    Array.isArray(loaderArgs) &&
+      loaderArgs.every((argument) => typeof argument === "string"),
+    "The Hopper profile must report its effective loader arguments",
+  );
+  const image = profile.parameters.prepared_image;
   client = new HopperClient({
     launcher: new HopperApplicationLauncher({
+      environment: process.env,
       launcherPath,
       targetPath: target,
       targetKind: "executable",
       launchMode: "native",
-      loaderArgs: resolved.value.compatibility.loaderArgs,
+      loaderArgs,
       ...(image === undefined
         ? {}
         : {
@@ -102,7 +116,7 @@ try {
   const activityAfterDeadline = client.requestActivity();
   await call("health");
   assert.equal(client.requestActivity(), null);
-  const closed = await client.closeWithOutcome();
+  const closed = await client.close();
   if (!closed.ok) throw closed.error;
   console.log(
     JSON.stringify(
@@ -120,7 +134,19 @@ try {
       2,
     ),
   );
+} catch (cause) {
+  primaryFailure = cause;
+  throw cause;
 } finally {
-  if (client !== undefined) await client.close();
+  if (client !== undefined) {
+    const closed = await client.close();
+    if (!closed.ok)
+      throw primaryFailure === undefined
+        ? closed.error
+        : new AggregateError(
+            [primaryFailure, closed.error],
+            "Hopper verification and cleanup failed",
+          );
+  }
   await rm(root, { recursive: true, force: true });
 }

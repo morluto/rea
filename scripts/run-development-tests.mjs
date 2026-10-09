@@ -47,15 +47,24 @@ try {
         ? `Focused tests: ${request.paths.join(", ")}`
         : `Source-test feedback${baseCommit ? ` from merge base ${baseCommit}` : ""}; compiled boundaries and real providers need explicit verification.`,
     );
-    if (plan.needsBuild) {
-      if (!process.env.npm_execpath)
-        throw new Error("Run compiled tests through npm run test:focused");
-      const built = await run(process.execPath, [
-        process.env.npm_execpath,
-        "run",
-        "build:cached",
+    if (plan.needsBuild || plan.artifactTasks.length > 0) {
+      const dependencies = await run(process.execPath, [
+        "scripts/check-dependency-install.mjs",
       ]);
-      if (built.code !== 0) process.exitCode = built.code;
+      if (dependencies.code !== 0)
+        throw new Error(
+          "Test prerequisites require the locked dependency installation",
+        );
+      const prepared = await run(process.execPath, [
+        "scripts/run-exclusive.mjs",
+        "artifacts",
+        process.execPath,
+        resolve("node_modules/turbo/bin/turbo"),
+        "run",
+        ...(plan.needsBuild ? ["artifacts:skills"] : []),
+        ...plan.artifactTasks,
+      ]);
+      if (prepared.code !== 0) process.exitCode = prepared.code;
     }
     if (!process.exitCode && !shutdownSignal) {
       const tested = await run(process.execPath, [

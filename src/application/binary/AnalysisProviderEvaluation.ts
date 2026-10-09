@@ -19,7 +19,6 @@ export interface AnalysisProviderCandidateEvaluation {
   readonly candidate: AnalysisProviderCandidate;
   readonly status: AnalysisProviderCandidateStatus;
   readonly profile?: AnalysisProfileCommitment;
-  readonly compatibility?: Readonly<Record<string, JsonValue>>;
   readonly profileError?: AnalysisError;
 }
 
@@ -87,7 +86,6 @@ export const evaluateAnalysisProviderCandidate = async (
         ),
       );
     const profile = analysisProfileSchema.parse(resolved.value.profile);
-    const compatibility = jsonObjectSchema.parse(resolved.value.compatibility);
     const identity = candidate.identity();
     if (
       profile.provider.id !== identity.id ||
@@ -102,7 +100,7 @@ export const evaluateAnalysisProviderCandidate = async (
           "Resolved analysis profile has mismatched provider identity",
         ),
       );
-    return ok({ candidate, status, profile, compatibility });
+    return ok({ candidate, status, profile });
   } catch (cause: unknown) {
     void cause;
     return ok(

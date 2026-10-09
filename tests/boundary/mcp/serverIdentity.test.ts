@@ -1,3 +1,4 @@
+import { ok as resultOk } from "../../../src/domain/result.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -55,7 +56,7 @@ const availabilityProvider = (
     createClient: () => ({
       health: () => Promise.resolve(),
       execute: () => Promise.resolve(observed(null)),
-      close: () => Promise.resolve(),
+      close: () => Promise.resolve(resultOk(null)),
     }),
   };
 };
@@ -87,17 +88,6 @@ const statusCapability = (
 });
 
 describe("server and catalog identity", () => {
-  it("retains all catalog identity fields through transport serialization and detached clones", () => {
-    const serialized = JSON.parse(JSON.stringify(CATALOG_IDENTITY));
-    expect(structuredClone(CATALOG_IDENTITY)).toEqual(serialized);
-    expect(serialized.digests).toEqual(CATALOG_IDENTITY.digests);
-    expect(serialized.tools).toHaveLength(TOOL_CONTRACTS.length);
-    const identity = createServerIdentity({
-      startedAt: "2026-07-13T00:00:00.000Z",
-    });
-    expect(JSON.parse(JSON.stringify(identity)).catalog).toEqual(serialized);
-  });
-
   it("derives package and SDK versions from canonical package metadata", async () => {
     const packageJson = JSON.parse(await readFile("package.json", "utf8"));
     const packageLock = JSON.parse(await readFile("package-lock.json", "utf8"));
@@ -369,6 +359,7 @@ const assertLiveIdentity = async (client: Client): Promise<void> => {
         },
         client: { name: "identity-test", version: "9" },
         negotiated_protocol_version: expect.any(String),
+        catalog: CATALOG_IDENTITY,
         alignment: { state: "unknown" },
       },
     },

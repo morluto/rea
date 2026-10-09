@@ -7,7 +7,7 @@ import {
 
 const normalize = (value: unknown): unknown => value;
 
-describe("real Hopper semantic fixture resolution", () => {
+describe("Hopper verifier semantic fixture resolution", () => {
   it("binds mutations to the active document, not the first listed one", async () => {
     await expect(
       requireCurrentDocument(

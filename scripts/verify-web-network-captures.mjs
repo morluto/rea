@@ -912,8 +912,8 @@ async function inspect(mode, input, errorCategory) {
       return value.error;
     }
     assert.notEqual(result.isError, true, mcpTextValue(result));
-    assertSensitiveLimitations(value.evidence, input.sensitive_values ?? []);
-    return value.result;
+    assertSensitiveLimitations(value, input.sensitive_values ?? []);
+    return value.normalized_result;
   }
   const args = [
     entrypoint,

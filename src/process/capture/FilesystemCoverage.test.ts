@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { parseProcessScenario } from "../../domain/process/processCapture.js";
@@ -103,35 +103,3 @@ it("preserves creation when the selected root was observed missing before captur
     },
   ]);
 });
-
-it.skipIf(process.platform === "win32")(
-  "keeps paths below an unfollowed replacement symlink unknown while preserving sibling deletion",
-  async () => {
-    const root = await createTestTempDirectory("rea-fs-symlink-coverage-");
-    const target = await createTestTempDirectory("rea-fs-symlink-target-");
-    await mkdir(join(root, "subtree"));
-    await writeFile(join(root, "subtree", "z.txt"), "unchanged");
-    await writeFile(join(target, "z.txt"), "unchanged");
-    await writeFile(join(root, "removed.txt"), "removed");
-    const scenario = parseProcessScenario({
-      executable: process.execPath,
-      working_directory: root,
-      filesystem_observation_paths: [root],
-    });
-    const before = await snapshotRoots(scenario);
-    await rm(join(root, "subtree"), { recursive: true });
-    await symlink(target, join(root, "subtree"));
-    await rm(join(root, "removed.txt"));
-    const after = await snapshotRoots(scenario);
-    expect(await readFile(join(root, "subtree", "z.txt"), "utf8")).toBe(
-      "unchanged",
-    );
-    const effects = classifyFilesystemEffects(before, after);
-    expect(
-      effects.find(({ path }) => path === "root_0:subtree/z.txt")?.status,
-    ).toBe("unknown");
-    expect(
-      effects.find(({ path }) => path === "root_0:removed.txt")?.status,
-    ).toBe("deleted");
-  },
-);

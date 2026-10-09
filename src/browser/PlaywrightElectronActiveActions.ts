@@ -3,71 +3,16 @@ import { z } from "zod";
 
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
-import type {
-  ElectronActiveObservationInput,
-  ElectronActiveObservationResult,
+import {
+  electronActiveTimelineEventSchema,
+  type ElectronActiveObservationInput,
+  type ElectronActiveObservationResult,
 } from "../domain/javascript/electronActiveObservation.js";
 
 const OPERATION = "capture_electron_scenario" as const;
 
-const hookEventSchema = z.strictObject({
-  sequence: z.number().int().min(1),
-  correlation_id: z.string().nullable(),
-  kind: z.enum([
-    "main-handler-invocation",
-    "main-event-invocation",
-    "utility-process-fork",
-    "utility-process-message",
-    "ipc-main-to-renderer",
-    "ipc-utility-to-main",
-    "ipc-renderer-send",
-    "ipc-renderer-invoke",
-    "ipc-renderer-post-message",
-    "app-lifecycle",
-    "window-lifecycle",
-    "web-contents-lifecycle",
-    "navigation",
-    "shell-attempt",
-    "process-lifecycle",
-    "permission",
-    "popup-attempt",
-    "download",
-    "protocol",
-    "preload",
-    "native-addon",
-    "updater",
-    "error",
-  ]),
-  event: z.string().nullable(),
-  phase: z.enum(["attempted", "completed", "blocked", "failed", "observed"]),
-  channel: z.string().nullable(),
-  direction: z
-    .enum([
-      "renderer-to-main",
-      "main-to-renderer",
-      "main-to-utility",
-      "utility-to-main",
-    ])
-    .nullable(),
-  sender: z.string().nullable(),
-  receiver: z.string().nullable(),
-  frame: z.string().nullable(),
-  target: z.string().nullable(),
-  argument_shapes: z.array(z.string()),
-  result_shape: z.string().nullable(),
-  process_type: z.string().nullable(),
-  source: z.string(),
-  capture_method: z.enum(["api-wrapper", "event-emitter", "process-hook"]),
-  artifact_path: z.string().nullable(),
-  artifact_sha256: z
-    .string()
-    .regex(/^[a-f0-9]{64}$/u)
-    .nullable(),
-  error: z.boolean(),
-});
-
 const hookSnapshotSchema = z.strictObject({
-  events: z.array(hookEventSchema),
+  events: z.array(electronActiveTimelineEventSchema),
   retention_budget_bytes: z.number().int().min(0),
   estimated_retained_bytes: z.number().int().min(0),
   event_serialized_byte_upper_bound: z.number().int().min(0),
@@ -113,7 +58,9 @@ type ElectronAction = ElectronActiveObservationInput["actions"][number];
 type ElectronActions = ElectronActiveObservationResult["actions"];
 
 export type ElectronHookSnapshot = z.infer<typeof hookSnapshotSchema>;
-export type ElectronHookEvent = z.infer<typeof hookEventSchema>;
+export type ElectronHookEvent = z.infer<
+  typeof electronActiveTimelineEventSchema
+>;
 export type ElectronMetrics = z.infer<typeof metricSchema>[];
 type ElectronWindowMetadata = z.infer<typeof windowMetadataSchema>;
 

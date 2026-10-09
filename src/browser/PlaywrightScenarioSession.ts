@@ -285,9 +285,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
 /** Production Playwright/CDP session factory. */
 export class PlaywrightScenarioSessionFactory implements BrowserScenarioSessionFactory {
   constructor(
-    private readonly environment: Readonly<
-      Record<string, string | undefined>
-    > = process.env,
+    private readonly environment: Readonly<Record<string, string | undefined>>,
   ) {}
 
   open(

@@ -1,28 +1,22 @@
+import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
-import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
-import { z } from "zod";
+import type { ServerContext } from "@modelcontextprotocol/server";
 
 import type {
   AnalysisExecution,
   AnalysisOperationPort,
 } from "../application/AnalysisProvider.js";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
-import type { ToolContract } from "../contracts/toolContracts.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { createEvidence } from "../domain/evidence.js";
-import {
-  jsonObjectSchema,
-  jsonValueSchema,
-  type JsonValue,
-} from "../domain/jsonValue.js";
+import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
 import type { Logger } from "../logger.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { toCallToolResult, toEvidenceToolResult } from "./toolResult.js";
 
 /** Optional session services used by direct tool registration. */
 export interface OfficialToolRegistration {
@@ -33,7 +27,7 @@ export interface OfficialToolRegistration {
 
 /** Register direct bridge proxies, preserving MCP cancellation and typed errors. */
 export const registerOfficialTools = (
-  server: McpServer,
+  server: EvidenceMcpServer,
   analysis: AnalysisOperationPort,
   options: OfficialToolRegistration,
 ): void => {
@@ -47,7 +41,7 @@ export const registerOfficialTools = (
 };
 
 const registerOfficialTool = (
-  server: McpServer,
+  server: EvidenceMcpServer,
   analysis: AnalysisOperationPort,
   contract: (typeof OFFICIAL_TOOL_CONTRACTS)[number],
   registration: {
@@ -60,7 +54,9 @@ const registerOfficialTool = (
     contract.name,
     toolRegistrationOptions(contract),
     async (input: unknown, context: ServerContext) => {
-      const arguments_ = projectOfficialArguments(contract, input);
+      const arguments_ = jsonObjectSchema.parse(
+        contract.inputSchema.parse(input),
+      );
       const progress = mcpProgressReporter(context);
       const result = await runOfficialOperation(
         analysis,
@@ -73,7 +69,7 @@ const registerOfficialTool = (
         },
       );
       if (!result.ok) {
-        return toCallToolResult(result, contract);
+        return server.delivery.toCallToolResult(result, contract);
       }
       const evidence = createEvidence(
         result.value.subject ?? registration.activeTarget?.(),
@@ -91,7 +87,7 @@ const registerOfficialTool = (
         },
       );
       const recorded = registration.recordEvidence?.(evidence);
-      return toEvidenceToolResult(evidence, contract, recorded);
+      return server.delivery.toEvidenceToolResult(evidence, contract, recorded);
     },
   );
 };
@@ -126,24 +122,4 @@ const runOfficialOperation = async (
     terminal: true,
   });
   return result;
-};
-
-const projectOfficialArguments = (
-  contract: ToolContract,
-  input: unknown,
-): Readonly<Record<string, JsonValue>> => {
-  // Annotation omissions preserve existing values; they are not Python defaults.
-  if (contract.name === "annotate_native_function")
-    return jsonObjectSchema.parse(contract.inputSchema.parse(input));
-  const parsed = jsonObjectSchema.parse(input);
-  if (!(contract.inputSchema instanceof z.ZodObject))
-    throw new TypeError(
-      "Official tool input contract must be an object schema",
-    );
-
-  const projected: Record<string, JsonValue> = {};
-  for (const key of Object.keys(contract.inputSchema.shape)) {
-    projected[key] = jsonValueSchema.parse(parsed[key] ?? null);
-  }
-  return projected;
 };

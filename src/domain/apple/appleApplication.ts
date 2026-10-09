@@ -129,7 +129,7 @@ export const projectAppleApplication = (
           path: occurrence.logical_path,
           artifact_id: node.artifact_id,
           sha256: node.sha256,
-          format: node.format,
+          format: occurrence.artifact_format,
         },
       };
     });

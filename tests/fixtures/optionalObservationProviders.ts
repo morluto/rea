@@ -66,9 +66,9 @@ export const optionalObservationFactories = (
   };
   return {
     browserObservation: async () => browser,
-    browserScenarioCapture: async () => createBrowserScenarioProvider(),
+    browserScenarioCapture: async () => createBrowserScenarioProvider({}),
     electronObservation: async () => createElectronObservationProvider(),
-    electronActiveObservation: async () => createElectronScenarioProvider(),
+    electronActiveObservation: async () => createElectronScenarioProvider({}),
     javascriptRuntimeObservation: async () => runtime,
   };
 };

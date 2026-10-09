@@ -1,12 +1,8 @@
-import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { constants as bufferConstants } from "node:buffer";
 
 import type { JsonValue } from "../domain/jsonValue.js";
 import { bufferedJsonParts, jsonParts } from "../domain/jsonSerialization.js";
 
-// Leave room for the SDK's JSON-RPC envelope and protocol metadata. This budget
-// follows the pinned client's actual default framing limit, not a result-row cap.
-export const MCP_RESULT_BUDGET_BYTES = STDIO_DEFAULT_MAX_BUFFER_SIZE - 1024;
 export const MCP_RESULT_STRING_LIMIT = bufferConstants.MAX_STRING_LENGTH - 1024;
 
 const RESULT_ENVELOPE_BYTES =
@@ -30,7 +26,7 @@ export type ToolResultEncoding =
 /** Account for structured JSON and escaped text before allocating the complete text. */
 export const encodeToolResult = (
   value: JsonValue,
-  budgetBytes = MCP_RESULT_BUDGET_BYTES,
+  budgetBytes: number,
 ): ToolResultEncoding => {
   const parts: string[] = [];
   let bytes = RESULT_ENVELOPE_BYTES;

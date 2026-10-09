@@ -1,10 +1,9 @@
+import type { EvidenceMcpServer } from "../EvidenceMcpServer.js";
 import { recordSessionEvidenceSources } from "../sessionEvidence.js";
-import type { McpServer } from "@modelcontextprotocol/server";
 
 import { projectManagedApplicationGraphEvidence } from "../../application/managed/ManagedApplicationGraphService.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
-import { toCallToolResult, toEvidenceToolResult } from "../toolResult.js";
 import { managedWorkflowContract } from "./contract.js";
 import {
   resolveManagedArtifactEvidence,
@@ -20,7 +19,7 @@ const graphContract = managedWorkflowContract(
 
 /** Register the managed application graph projection workflow tool. */
 export const registerProjectManagedApplicationGraph = (
-  server: McpServer,
+  server: EvidenceMcpServer,
   options: ManagedWorkflowToolRegistration,
 ): void => {
   server.registerTool(
@@ -32,19 +31,22 @@ export const registerProjectManagedApplicationGraph = (
           ? undefined
           : resolveManagedArtifactEvidence(input.managed_artifact);
       if (managedArtifact !== undefined && !managedArtifact.ok)
-        return toCallToolResult(managedArtifact, graphContract);
+        return server.delivery.toCallToolResult(managedArtifact, graphContract);
       const managedMembers =
         input.managed_members === undefined
           ? undefined
           : resolveManagedEvidence(input.managed_members);
       if (managedMembers !== undefined && !managedMembers.ok)
-        return toCallToolResult(managedMembers, graphContract);
+        return server.delivery.toCallToolResult(managedMembers, graphContract);
       const managedBoundaries =
         input.managed_native_boundaries === undefined
           ? undefined
           : resolveManagedBoundaryEvidence(input.managed_native_boundaries);
       if (managedBoundaries !== undefined && !managedBoundaries.ok)
-        return toCallToolResult(managedBoundaries, graphContract);
+        return server.delivery.toCallToolResult(
+          managedBoundaries,
+          graphContract,
+        );
       const parsed = {
         managed_artifact: managedArtifact?.value[0],
         managed_members: managedMembers?.value[0],
@@ -55,15 +57,20 @@ export const registerProjectManagedApplicationGraph = (
         graphContract.name,
         () => Promise.resolve(projectManagedApplicationGraphEvidence(parsed)),
       );
-      if (!result.ok) return toCallToolResult(result, graphContract);
+      if (!result.ok)
+        return server.delivery.toCallToolResult(result, graphContract);
       const recordedSources = recordSessionEvidenceSources(
         options.recordEvidence,
         sourceEvidence(parsed),
       );
       if (!recordedSources.ok)
-        return toCallToolResult(recordedSources, graphContract);
+        return server.delivery.toCallToolResult(recordedSources, graphContract);
       const recorded = options.recordEvidence?.(result.value);
-      return toEvidenceToolResult(result.value, graphContract, recorded);
+      return server.delivery.toEvidenceToolResult(
+        result.value,
+        graphContract,
+        recorded,
+      );
     },
   );
 };

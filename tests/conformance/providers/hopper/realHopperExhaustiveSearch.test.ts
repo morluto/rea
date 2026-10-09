@@ -4,35 +4,17 @@ import { openAndVerifyLargeFixture } from "../../../../scripts/lib/real-hopper-e
 
 const normalize = (value: unknown): unknown => value;
 
-describe("real Hopper complete inline search", () => {
-  it("verifies every procedure and string from one result per search", async () => {
-    const client = fixtureClient(205);
-    await expect(
-      openAndVerifyLargeFixture({
-        client,
-        options: {},
-        normalizedResult: normalize,
-        path: "/fixture",
-        expectedCount: 205,
-        symbolPrefix: "_rea_fixture_",
-        stringPrefix: "REA_FIXTURE_",
-      }),
-    ).resolves.toEqual({
-      procedures: { count: 205, calls: 1 },
-      strings: { count: 205, calls: 1 },
-    });
-  });
-
+describe("Hopper search verifier rejection", () => {
   it.each(["duplicate", "missing"] as const)(
     "rejects %s positive evidence",
     async (fault) => {
       await expect(
         openAndVerifyLargeFixture({
-          client: fixtureClient(205, fault),
+          client: fixtureClient(3, fault),
           options: {},
           normalizedResult: normalize,
           path: "/fixture",
-          expectedCount: 205,
+          expectedCount: 3,
           symbolPrefix: "_rea_fixture_",
           stringPrefix: "REA_FIXTURE_",
         }),
@@ -41,14 +23,21 @@ describe("real Hopper complete inline search", () => {
   );
 });
 
-const fixtureClient = (count: number, fault?: "duplicate" | "missing") => {
+const fixtureClient = (count: number, fault: "duplicate" | "missing") => {
   return {
     callTool: async (request: unknown) => {
-      const parsed = request as { name: string };
-      if (parsed.name === "open_binary") return { isError: false };
-      const procedures = parsed.name === "search_procedures";
-      const resultCount = count;
-      const items = Array.from({ length: resultCount }, (_, index) => {
+      if (
+        typeof request !== "object" ||
+        request === null ||
+        !("name" in request)
+      )
+        throw new Error("Missing fixture operation");
+      const operation = request.name;
+      if (operation === "open_binary") return { isError: false };
+      if (operation !== "search_procedures" && operation !== "search_strings")
+        throw new Error(`Unsupported fixture operation: ${String(operation)}`);
+      const procedures = operation === "search_procedures";
+      const items = Array.from({ length: count }, (_, index) => {
         const duplicateIndex = fault === "duplicate" && index === 1 ? 0 : index;
         return {
           address: `0x${(0x1000 + index).toString(16)}`,

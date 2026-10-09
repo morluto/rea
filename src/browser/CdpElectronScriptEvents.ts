@@ -3,15 +3,16 @@ import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import {
   numberValue,
   recordValue,
+  scriptMetadataValues,
   cdpStringValue,
 } from "./CdpCaptureValues.js";
 
 export interface ElectronScriptDraft {
   readonly scriptId: string;
   readonly rawUrl: string;
-  readonly hash: string;
-  readonly length: number;
-  readonly isModule: boolean;
+  readonly hash: string | null;
+  readonly length: number | null;
+  readonly isModule: boolean | null;
   readonly language: string | null;
   readonly executionContextKey: string | null;
 }
@@ -52,9 +53,7 @@ export const ingestElectronScriptEvent = (input: {
   input.scripts.push({
     scriptId,
     rawUrl,
-    hash: cdpStringValue(value?.hash) ?? "",
-    length: nonnegativeInteger(value?.length),
-    isModule: value?.isModule === true,
+    ...scriptMetadataValues(value),
     language: cdpStringValue(value?.scriptLanguage) ?? null,
     executionContextKey: executionContextKey(value?.executionContextId),
   });
@@ -70,11 +69,6 @@ const retainExecutionContext = (
   const frameId = cdpStringValue(recordValue(runtimeContext?.auxData)?.frameId);
   if (contextKey === null || frameId === undefined) return;
   frames.set(contextKey, frameId);
-};
-
-const nonnegativeInteger = (value: unknown): number => {
-  const number = numberValue(value);
-  return number === undefined ? 0 : Math.max(0, Math.trunc(number));
 };
 
 const executionContextKey = (value: unknown): string | null => {

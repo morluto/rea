@@ -1,13 +1,18 @@
 # Testing REA
 
-Prefer evidence in this order: full end-to-end workflows with real production
-providers, integration tests across data/API boundaries, then golden regressions
-from real captured inputs. Keep focused module tests for distinct failure or
-semantic cases that these workflows cannot reliably reproduce. A test's path
-or suite name does not establish its behavioral depth.
+Prefer evidence in this order: full end-to-end workflows through the public
+CLI or MCP with real production providers and no mocked dependencies,
+integration across production data/API boundaries, then golden regressions
+from real captured inputs. Keep a focused module test only for a distinct
+failure or semantic case that stronger workflows cannot reliably reproduce.
+A test's path, compiled imports, or suite name does not establish its depth.
 
-Avoid tests that mirror getters, enum mappings, fixture helpers, or prescribed
-call sequences, or assert cache object identity without a caller-visible contract.
+Delete tests that only mirror getters, serialization helpers, enum mappings,
+fixture helpers, prescribed call sequences, arbitrary counts or snapshots,
+or cache object identity without a caller-visible contract. Do not retain a
+weaker test merely because it is fast when a stronger workflow already proves
+the same claim. Keep format-specific malformed representations and actual
+capacity, cleanup, permission and target-identity regressions.
 Prefer representative workflows over a Cartesian matrix when rows cross the
 same boundary. Retain combinations that exercise a distinct interaction, such as
 filtering within a full-output envelope. Keep distinct command handlers,
@@ -458,6 +463,13 @@ Electron GUI behavior or another engine.
 
 ## Android APK analysis
 
+The real Android lane also runs on Windows x64 with its matching bundled native
+controls. It verifies bidirectional protocol input, CLI/MCP result parity,
+real MCP cancellation/disconnect and Java exit after abrupt CLI owner
+termination. The forced Windows exit does not exercise the POSIX SIGTERM
+handler and can leave temporary workspace files. `verify:windows-native`
+separately checks binary input, backpressure, EOF and pending-write job closure.
+
 `npm run verify:android` requires an existing Java 17+ and an explicit
 `REA_JADX_MCP_JAR` for jadx-headless-mcp 0.7.1. Set `REA_ANDROID_TEST_APK` to the
 fixed public ApiDemos v6.0.18 fixture. Obtain both with the explicit
@@ -646,6 +658,17 @@ selections do not use `--changed` or permit zero-test success.
 The dry-run option reports the chosen merge base, scope and build prerequisite
 without executing tests or building. A missing Git base reports how to fetch
 it or select another revision.
+
+Source typechecking needs no compiled runtime or generated test metadata.
+`npm run build:cached` compiles the CLI/MCP runtime and its packaged skill.
+`npm run test:prepare` also generates the MCP contract test catalog, product
+catalog, and portable managed evidence used by the complete suite. Focused
+tests prepare those extra outputs only when their selected files consume them.
+The MCP test catalog is JSON in `.cache/mcp-tool-catalog.json`; the tracked
+test loader supplies its types without making generation a source-check
+prerequisite. Run `npm run mcp-catalog:generate` to refresh it independently.
+Documentation generation and managed conformance run through their separate
+`docs:generate` and `evidence:generate` task graphs.
 
 Changed selection can miss runtime registration, generated data, shell
 entrypoints, bridges, or other relationships absent from the import graph.

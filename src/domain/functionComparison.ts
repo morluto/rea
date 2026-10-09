@@ -20,11 +20,11 @@ export const compareFunctions = (
 ): FunctionComparisonResult => {
   const left = parseFunctionEvidence(leftInput);
   const right = parseFunctionEvidence(rightInput);
-  const links = [left.evidence[0].evidence_id, right.evidence[0].evidence_id];
+  const links = [left.evidence.evidence_id, right.evidence.evidence_id];
   const providersDiffer =
-    canonicalJson(left.provider, "Function comparison") !==
-    canonicalJson(right.provider, "Function comparison");
-  const dimensions = compareDimensions(left, right, links, providersDiffer);
+    canonicalJson(left.evidence.provider, "Function comparison") !==
+    canonicalJson(right.evidence.provider, "Function comparison");
+  const dimensions = compareDimensions(left, right, { links, providersDiffer });
   const match = functionMatch(left, right);
   const changes = dimensions.filter(({ status }) => status !== "unchanged");
   return functionComparisonResultSchema.parse({

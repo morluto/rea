@@ -1,16 +1,13 @@
 import { canonicalJson } from "./comparisonSemantics.js";
 import { compareCodePoints } from "./canonicalOrdering.js";
 
-import type {
-  FunctionCollection,
-  FunctionSnapshot,
-} from "./functionDossierEvidence.js";
+import type { FunctionSnapshot } from "./functionDossierEvidence.js";
 import type { FunctionComparisonResult } from "./functionComparisonSchemas.js";
 
 export const identityProjection = (snapshot: FunctionSnapshot) => ({
-  name: snapshot.procedure.name,
-  signature: snapshot.procedure.signature,
-  locals: snapshot.procedure.locals
+  name: snapshot.dossier.procedure.name,
+  signature: snapshot.dossier.procedure.signature,
+  locals: snapshot.dossier.procedure.locals
     .map(({ description }) => description)
     .sort(),
 });
@@ -20,26 +17,28 @@ export const functionMatch = (
   right: FunctionSnapshot,
 ): FunctionComparisonResult["function_match"] => {
   if (
-    !isAutoName(left.procedure.name) &&
-    left.procedure.name === right.procedure.name
+    !isAutoName(left.dossier.procedure.name) &&
+    left.dossier.procedure.name === right.dossier.procedure.name
   )
     return {
       status: "matched",
       method: "symbol",
-      left_name: left.procedure.name,
-      right_name: right.procedure.name,
+      left_name: left.dossier.procedure.name,
+      right_name: right.dossier.procedure.name,
     };
   return {
     status:
-      left.procedure.name === right.procedure.name ? "ambiguous" : "mismatched",
+      left.dossier.procedure.name === right.dossier.procedure.name
+        ? "ambiguous"
+        : "mismatched",
     method: "explicit",
-    left_name: left.procedure.name,
-    right_name: right.procedure.name,
+    left_name: left.dossier.procedure.name,
+    right_name: right.dossier.procedure.name,
   };
 };
 
 export const normalizeCfg = (
-  blocks: FunctionSnapshot["collections"]["basic_blocks"]["items"],
+  blocks: FunctionSnapshot["dossier"]["basic_blocks"],
 ): readonly unknown[] | null => {
   const parsed: {
     block: (typeof blocks)[number];
@@ -78,12 +77,12 @@ export const normalizeCfg = (
 
 export const referenceProjection = (snapshot: FunctionSnapshot) =>
   sorted([
-    ...snapshot.collections.incoming_references.items.map((item) => ({
+    ...snapshot.dossier.incoming_references.map((item) => ({
       direction: "in",
       source: item.source_procedure?.name ?? null,
       target: item.target_procedure?.name ?? null,
     })),
-    ...snapshot.collections.outgoing_references.items.map((item) => ({
+    ...snapshot.dossier.outgoing_references.map((item) => ({
       direction: "out",
       source: item.source_procedure?.name ?? null,
       target: item.target_procedure?.name ?? null,
@@ -94,11 +93,11 @@ export const referenceKindProjection = (
   snapshot: FunctionSnapshot,
 ): readonly unknown[] | null => {
   const edges = [
-    ...snapshot.collections.incoming_references.items.map((edge) => ({
+    ...snapshot.dossier.incoming_references.map((edge) => ({
       direction: "in",
       edge,
     })),
-    ...snapshot.collections.outgoing_references.items.map((edge) => ({
+    ...snapshot.dossier.outgoing_references.map((edge) => ({
       direction: "out",
       edge,
     })),
@@ -136,13 +135,11 @@ export const referenceKindProjection = (
 export const commentProjection = (
   snapshot: FunctionSnapshot,
 ): readonly unknown[] | null => {
-  const values = snapshot.collections.comments.items.map(
-    ({ address, kind, text }) => ({
-      offset: relativeAddress(address, snapshot.procedure.address),
-      kind,
-      text,
-    }),
-  );
+  const values = snapshot.dossier.comments.map(({ address, kind, text }) => ({
+    offset: relativeAddress(address, snapshot.dossier.procedure.address),
+    kind,
+    text,
+  }));
   return values.some(({ offset }) => offset === null) ? null : sorted(values);
 };
 
@@ -150,22 +147,22 @@ export const stringAndNameProjection = (
   snapshot: FunctionSnapshot,
 ): readonly unknown[] | null => {
   const values = [
-    ...snapshot.collections.referenced_strings.items.map(
+    ...snapshot.dossier.referenced_strings.map(
       ({ source_address: sourceAddress, value }) => ({
         kind: "string",
         source_offset: relativeAddress(
           sourceAddress,
-          snapshot.procedure.address,
+          snapshot.dossier.procedure.address,
         ),
         value,
       }),
     ),
-    ...snapshot.collections.referenced_names.items.map(
+    ...snapshot.dossier.referenced_names.map(
       ({ source_address: sourceAddress, value }) => ({
         kind: "name",
         source_offset: relativeAddress(
           sourceAddress,
-          snapshot.procedure.address,
+          snapshot.dossier.procedure.address,
         ),
         value,
       }),
@@ -182,31 +179,8 @@ export const sorted = (values: readonly unknown[]): readonly unknown[] =>
       value,
       json: canonicalJson(value, "Function normalization"),
     }))
-    .sort((left, right) => {
-      // Preserve existing collation while ordering distinct values within a tie.
-      return (
-        left.json.localeCompare(right.json) ||
-        compareCodePoints(left.json, right.json)
-      );
-    })
+    .sort((left, right) => compareCodePoints(left.json, right.json))
     .map(({ value }) => value);
-
-export const combineCoverage = <Item>(
-  left: FunctionCollection<Item>,
-  right: FunctionCollection<Item>,
-): FunctionCollection<Item> => {
-  return {
-    items: [...left.items, ...right.items],
-    total: left.total + right.total,
-    complete: true,
-    truncated: false,
-  };
-};
-
-export const project = <Input, Output>(
-  collection: FunctionCollection<Input>,
-  mapper: (item: Input) => Output,
-): Output[] => collection.items.map(mapper);
 
 export const isAutoName = (name: string): boolean =>
   /^(?:sub_[0-9a-f]+|fcn\.[0-9a-f]+)$/iu.test(name);

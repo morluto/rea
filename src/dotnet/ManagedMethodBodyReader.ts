@@ -6,6 +6,7 @@ import {
 } from "./ManagedMemberInstructionDecoder.js";
 import { validateExceptionRegionRanges } from "./ManagedExceptionRegionValidation.js";
 import { sha256Bytes } from "./ManagedMetadataHeaps.js";
+import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
 
 const bodyStatus = (
   decodedIssue: string | null,
@@ -178,6 +179,11 @@ export const methodBody = (
           : null),
     };
   } catch (cause: unknown) {
+    if (
+      !(cause instanceof ManagedReaderFailure) &&
+      !(cause instanceof RangeError)
+    )
+      throw cause;
     return emptyMethodBody(
       rva,
       "malformed",

@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { systemWindowsNativeAuthority } from "../windows/WindowsNativeLoader.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -116,7 +117,7 @@ const readJadxConfiguration = async (
 ): Promise<JadxConfiguration> => {
   requireSupportedHost();
   const jar = await resolveJar(environment);
-  const java = resolveJava(environment);
+  const java = await resolveJava(environment, signal);
   await requireJavaHomeExecutable(environment.JAVA_HOME, java);
   const jvmArguments = resolveJvmArguments(environment);
   await inspectJavaRuntime(java, environment, signal);
@@ -169,9 +170,26 @@ const requireEngineArchive = async (
 
 const requireSupportedHost = (): void => {
   if (process.platform === "linux" || process.platform === "darwin") return;
+  if (process.platform === "win32" && process.arch === "x64") {
+    const loaded = systemWindowsNativeAuthority();
+    if (loaded.available && loaded.authority.inspection.protocolStdin === true)
+      return;
+    throw configurationFailure(
+      "runtime_missing",
+      loaded.available
+        ? "The bundled Windows native artifact lacks owned protocol stdin; use a matching current Windows x64 REA package."
+        : loaded.reason,
+      {
+        platform: process.platform,
+        architecture: process.arch,
+        phase: "process-ownership",
+        owned_protocol_stdin: false,
+      },
+    );
+  }
   throw configurationFailure(
     "unsupported_host",
-    `Android JADX subprocess ownership is unsupported on ${process.platform}; use Linux or macOS. The metadata bridge has real-provider verification on macOS arm64.`,
+    `Android JADX subprocess ownership is unsupported on ${process.platform}/${process.arch}; use Linux, macOS, or Windows x64 with its bundled native controls.`,
     { platform: process.platform },
   );
 };
@@ -206,12 +224,52 @@ const resolveJar = async (
   }
 };
 
-const resolveJava = (
+const resolveJava = async (
   environment: Readonly<Record<string, string | undefined>>,
-): string => {
-  if (environment.JAVA_HOME === undefined) return "java";
+  signal?: AbortSignal,
+): Promise<string> => {
+  const executable = process.platform === "win32" ? "java.exe" : "java";
+  if (environment.JAVA_HOME === undefined) {
+    if (process.platform !== "win32") return executable;
+    const path =
+      Object.entries(environment).find(
+        ([key]) => key.toLowerCase() === "path",
+      )?.[1] ?? "";
+    for (const directory of [process.cwd(), ...path.split(delimiter)]) {
+      signal?.throwIfAborted();
+      // Windows PATH commonly quotes individual entries containing spaces.
+      const selected =
+        directory.startsWith('"') && directory.endsWith('"')
+          ? directory.slice(1, -1)
+          : directory;
+      const candidate = resolve(selected, executable);
+      try {
+        await access(candidate, constants.R_OK | constants.X_OK);
+        if ((await stat(candidate)).isFile()) return await realpath(candidate);
+      } catch (cause: unknown) {
+        if (
+          typeof cause === "object" &&
+          cause !== null &&
+          "code" in cause &&
+          (cause.code === "ENOENT" || cause.code === "ENOTDIR")
+        )
+          continue;
+        throw configurationFailure(
+          "runtime_missing",
+          `Cannot inspect selected Java executable ${candidate}: ${errorText(cause)}`,
+          { java_executable: candidate },
+          cause,
+        );
+      }
+    }
+    throw configurationFailure(
+      "runtime_missing",
+      "Cannot find java.exe on the selected Windows PATH. Select a full JDK with JAVA_HOME or PATH, then verify it with java --list-modules. REA does not install Java.",
+      { java_executable: executable },
+    );
+  }
   if (isAbsolute(environment.JAVA_HOME))
-    return join(environment.JAVA_HOME, "bin", "java");
+    return join(environment.JAVA_HOME, "bin", executable);
   throw configurationFailure(
     "open_options_invalid",
     "JAVA_HOME must select an existing JDK by absolute path; omit it to use java on PATH.",

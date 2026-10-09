@@ -21,60 +21,74 @@ const configurationSchema = z.object({
   }),
 });
 
-it("migrates bare Windows npx registrations idempotently and uninstalls only REA", async () => {
-  const home = await createTestTempDirectory("rea-windows-registration-");
-  const configPath = join(home, ".claude.json");
-  const original = JSON.stringify({
-    theme: "dark",
-    mcpServers: {
-      other: { command: "another-server" },
-      rea: {
-        command: "npx",
-        args: ["-y", PRODUCT_IDENTITY.registrationPackageSpecifier, "mcp"],
+it.each([
+  {
+    previousCommand: [
+      "npx",
+      "-y",
+      PRODUCT_IDENTITY.registrationPackageSpecifier,
+      "mcp",
+    ],
+  },
+  { previousCommand: ["cmd", "/c", "npx", "-y", "rea-agents@5.0.0", "mcp"] },
+])(
+  "migrates Windows npx registration $previousCommand idempotently and uninstalls only REA",
+  async ({ previousCommand }) => {
+    const home = await createTestTempDirectory("rea-windows-registration-");
+    const configPath = join(home, ".claude.json");
+    const original = JSON.stringify({
+      theme: "dark",
+      mcpServers: {
+        other: { command: "another-server" },
+        rea: {
+          command: previousCommand[0],
+          args: previousCommand.slice(1),
+        },
       },
-    },
-  });
-  await writeFile(configPath, original);
-  expect(
-    await readClientRegistrationStatuses(home, undefined, {
-      platform: "win32",
-      environment: {},
-    }),
-  ).toContainEqual(
-    expect.objectContaining({ client: "claude_code", state: "stale" }),
-  );
-  const client = { name: "claude_code", configPath, format: "json" } as const;
-  const command = setupRegistrationCommand("win32", true);
-  expect(await configureClientConfiguration(client, {}, command)).toMatchObject(
-    { status: "configured" },
-  );
-  expect(
-    await readClientRegistrationStatuses(home, undefined, {
-      platform: "win32",
-      environment: {},
-    }),
-  ).toContainEqual(
-    expect.objectContaining({ client: "claude_code", state: "aligned" }),
-  );
-  expect(await configureClientConfiguration(client, {}, command)).toEqual({
-    status: "unchanged",
-  });
-  expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(original);
-  expect(await systemUninstallHost(home).removeClient(client)).toMatchObject({
-    status: "removed",
-  });
-  const remaining: unknown = JSON.parse(await readFile(configPath, "utf8"));
-  expect(remaining).toEqual({
-    theme: "dark",
-    mcpServers: { other: { command: "another-server" } },
-  });
-});
+    });
+    await writeFile(configPath, original);
+    expect(
+      await readClientRegistrationStatuses(home, undefined, {
+        platform: "win32",
+        environment: {},
+      }),
+    ).toContainEqual(
+      expect.objectContaining({ client: "claude_code", state: "stale" }),
+    );
+    const client = { name: "claude_code", configPath, format: "json" } as const;
+    const command = setupRegistrationCommand("win32", true);
+    expect(
+      await configureClientConfiguration(client, {}, command),
+    ).toMatchObject({ status: "configured" });
+    expect(
+      await readClientRegistrationStatuses(home, undefined, {
+        platform: "win32",
+        environment: {},
+      }),
+    ).toContainEqual(
+      expect.objectContaining({ client: "claude_code", state: "aligned" }),
+    );
+    expect(await configureClientConfiguration(client, {}, command)).toEqual({
+      status: "unchanged",
+    });
+    expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(original);
+    expect(await systemUninstallHost(home).removeClient(client)).toMatchObject({
+      status: "removed",
+    });
+    const remaining: unknown = JSON.parse(await readFile(configPath, "utf8"));
+    expect(remaining).toEqual({
+      theme: "dark",
+      mcpServers: { other: { command: "another-server" } },
+    });
+  },
+);
 
 it("keeps the Windows launcher aligned through Codex TOML setup and removal", async () => {
   const home = await createTestTempDirectory("rea-windows-codex-");
   await mkdir(join(home, ".codex"));
   const configPath = join(home, ".codex", "config.toml");
-  const original = '[mcp_servers.other]\ncommand = "another-server"\n';
+  const original =
+    '\uFEFF# Keep this explanation.\nnotify = ["a", "b"]\nliteral = \'C:\\demo\\path\'\ndisabled_mcp_servers = ["rea"]\n\n[mcp_servers.other]\ncommand = "another-server"\n';
   await writeFile(configPath, original);
   const client = { name: "codex", configPath, format: "toml" } as const;
   const command = setupRegistrationCommand("win32", true);
@@ -96,10 +110,33 @@ it("keeps the Windows launcher aligned through Codex TOML setup and removal", as
   expect(await systemUninstallHost(home).removeClient(client)).toMatchObject({
     status: "removed",
   });
-  const remaining = await readFile(configPath, "utf8");
-  expect(remaining).toContain("[mcp_servers.other]");
-  expect(remaining).toContain('command = "another-server"');
-  expect(remaining).not.toContain("mcp_servers.rea");
+  expect(await readFile(configPath, "utf8")).toBe(original);
+});
+
+it("retains rea-named custom shell registrations without writing a backup", async () => {
+  const home = await createTestTempDirectory("rea-custom-shell-registration-");
+  const configPath = join(home, ".claude.json");
+  const client = { name: "claude_code", configPath, format: "json" } as const;
+  for (const command of [
+    ["cmd.exe", "/d", "/c", "node", "custom.js", "mcp"],
+    ["cmd.exe", "/k", "npx", "-y", "rea-agents@5.0.0", "mcp"],
+    ["cmd.exe", "/c", "npx -y rea-agents@5.0.0 mcp"],
+    ["cmd.exe", "/c", "npx", "-y", "another-package", "mcp"],
+    ["cmd.exe", "/c", "npx", "-y", "rea-agents@5.0.0", "mcp", "&", "other"],
+    ["cmd.exe", "/c", "npx", "-y", "rea-agents@5.0.0 & other", "mcp"],
+  ]) {
+    const original = JSON.stringify({
+      mcpServers: { rea: { command: command[0], args: command.slice(1) } },
+    });
+    await writeFile(configPath, original);
+    expect(await systemUninstallHost(home).removeClient(client)).toMatchObject({
+      status: "retained",
+    });
+    expect(await readFile(configPath, "utf8")).toBe(original);
+    await expect(readFile(`${configPath}.rea.backup`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  }
 });
 
 it.skipIf(process.platform !== "win32")(

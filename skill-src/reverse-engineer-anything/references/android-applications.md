@@ -19,9 +19,12 @@ can select Java. REA setup does not install or configure that JAR, and doctor
 provider scopes cover Hopper/Ghidra rather than JADX. Use existing tools and
 report missing prerequisites for the Android task specifically.
 
-Real verification covers Linux. macOS has the POSIX launch boundary but no
-claimed real-provider verification; Windows is unsupported. Calls use one
-worker, a bounded JVM heap, and provider deadlines. The APK is never launched,
+Linux and macOS use the POSIX owned-process boundary. Windows x64 requires the
+matching bundled native controls and uses an owned Job Object with bidirectional
+stdio. A full JDK, including `jdk.compiler`, is required on every host; Windows
+`JAVA_HOME` selects `bin\java.exe`. Consult the Android guide for actual host
+verification coverage. Calls use one worker and provider deadlines; optional
+`REA_JADX_HEAP_MIB` selects the JVM heap. The APK is never launched,
 and no emulator is required.
 
 Manifest entries and decompiled text are static observations, not execution or

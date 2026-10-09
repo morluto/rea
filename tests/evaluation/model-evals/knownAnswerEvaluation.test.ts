@@ -1,3 +1,4 @@
+import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { describe, expect, it } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
@@ -5,7 +6,9 @@ import { createEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { evaluateCodexEvents } from "../../../src/evaluation/CodexAgentEval.js";
 import type { FixtureClaimExpectation } from "../../../src/evaluation/KnownAnswerEvaluation.js";
-import { toEvidenceToolResult } from "../../../src/server/toolResult.js";
+import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+
+const delivery = new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 
 const provider = { id: "fixture", name: "Fixture analysis", version: "1" };
 const subject = {
@@ -28,7 +31,7 @@ const createObservation = (
     authority: "shipped-artifact",
   });
 const resultFor = (evidence: Evidence) =>
-  toEvidenceToolResult(
+  delivery.toEvidenceToolResult(
     evidence,
     toolContract("analyze_javascript_application"),
     undefined,
@@ -269,9 +272,8 @@ describe("successful Evidence grounding", () => {
     const event = delivered(evidence, {
       result: {
         structuredContent: {
-          evidence_id: evidence.evidence_id,
-          result: evidence.normalized_result,
-          evidence: { ...evidence, authority: "controlled-replay" },
+          ...evidence,
+          authority: "controlled-replay",
         },
       },
     });
@@ -318,9 +320,10 @@ describe("successful Evidence grounding", () => {
           : {
               ...resultFor(evidence),
               structuredContent: {
-                evidence_id: evidence.evidence_id,
-                evidence,
-                result: { fact: { present: false, channel: "profile:read" } },
+                ...evidence,
+                normalized_result: {
+                  fact: { present: false, channel: "profile:read" },
+                },
               },
             };
       const event = delivered(evidence, { output });

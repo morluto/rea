@@ -7,13 +7,15 @@ import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
-import { runProviderAnalysis } from "../../../../src/composition/directAnalysis.js";
+import { createDirectAnalysis } from "../../../../src/composition/directAnalysis.js";
 import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
 import { artifactInventoryResultSchema } from "../../../../src/domain/artifactGraph.js";
 import { artifactInspectionResultSchema } from "../../../../src/domain/artifactInspection.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTarget.js";
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
+
+const { runProviderAnalysis } = createDirectAnalysis({});
 
 describe("artifact archive inventory", () => {
   it("returns complete ZIP and official ASAR inventories inline", async () => {
@@ -28,9 +30,9 @@ describe("artifact archive inventory", () => {
     if (!parsed.ok) return;
     const zipResult = await inventory(parsed.value);
     expect(zipResult.occurrences.length).toBe(3);
-    expect(zipResult.nodes.map(({ kind }) => kind)).toEqual(
-      expect.arrayContaining(["javascript", "dynamic-library"]),
-    );
+    expect(
+      zipResult.occurrences.map(({ artifact_kind }) => artifact_kind),
+    ).toEqual(expect.arrayContaining(["javascript", "dynamic-library"]));
     const cliEvidence = parseEvidence(
       await runProviderAnalysis(zipPath, "inventory_artifact", {}),
     );
@@ -106,7 +108,7 @@ describe("artifact archive inventory", () => {
       join(`${unpackedPath}.unpacked`, "main.js"),
       "changed();\n",
     );
-    const corrupted = await new ArtifactProvider()
+    const corrupted = await new ArtifactProvider(process.env)
       .createClient(target(unpackedPath, "asar"))
       .execute("inventory_artifact", {});
     expect(corrupted).toMatchObject({
@@ -120,7 +122,7 @@ describe("artifact archive inventory", () => {
         },
       },
     });
-    const failedInspection = await new ArtifactProvider()
+    const failedInspection = await new ArtifactProvider(process.env)
       .createClient(target(unpackedPath, "asar"))
       .execute("inspect_artifact", {});
     expect(failedInspection).toMatchObject({
@@ -130,7 +132,7 @@ describe("artifact archive inventory", () => {
   });
 });
 const inventory = async (targetValue: BinaryTarget) => {
-  const result = await new ArtifactProvider()
+  const result = await new ArtifactProvider(process.env)
     .createClient(targetValue)
     .execute("inventory_artifact", {});
   if (!result.ok) throw result.error;

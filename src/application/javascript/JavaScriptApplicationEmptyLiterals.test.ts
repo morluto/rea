@@ -106,6 +106,8 @@ it("keeps exact values for empty literals without synthetic application labels",
 
 it.each([
   { version: 3, sources: [""], names: [], mappings: "AAAA" },
+  { version: 3, sourceRoot: null, sources: [""], names: [], mappings: "AAAA" },
+  { version: 3, sourceRoot: "", sources: [""], names: [], mappings: "AAAA" },
   {
     version: 3,
     sections: [
@@ -126,7 +128,9 @@ it.each([
         identity.strategy === "source-map-original"
           ? identity.original_source
           : null,
-      sources: observations.map(({ properties }) => properties.source),
+      sources: observations.map(
+        ({ source_map_reference }) => source_map_reference?.source_name,
+      ),
     }));
   expect(originals).toEqual([{ originalSource: "", sources: [""] }]);
 });
@@ -266,4 +270,76 @@ it("selects an empty context-bridge API with an exact empty seed", async () => {
     case_sensitive: true,
   });
   expect(matches.map(({ node_id: nodeId }) => apis.get(nodeId))).toEqual([""]);
+});
+
+it("pairs indexed source-map leaves by raw source name and root", async () => {
+  const map = (value: number) =>
+    JSON.stringify({
+      version: 3,
+      sections: ["one", "two"].map((name, line) => ({
+        offset: { line, column: 0 },
+        map: {
+          version: 3,
+          sourceRoot: `../${name}`,
+          sources: ["same.js"],
+          sourcesContent: [`export const value = ${String(value)};`],
+          names: [],
+          mappings: "AAAA",
+        },
+      })),
+    });
+  const left = await analyzeSource("//# sourceMappingURL=app.js.map", {
+    "app.js.map": map(1),
+  });
+  const right = await analyzeSource("//# sourceMappingURL=app.js.map", {
+    "app.js.map": map(2),
+  });
+  const matching = matchJavaScriptApplicationVersions(
+    left.graph.nodes,
+    right.graph.nodes,
+  );
+  const originals = matching.pairs.filter(
+    ({ left: node }) => node.kind === "source-module",
+  );
+  expect(originals).toHaveLength(2);
+  for (const pair of originals) {
+    expect(pair).toMatchObject({
+      basis: "source-map-identity",
+      confidence: "high",
+    });
+    expect(pair.left.identity).toMatchObject({
+      original_source: "same.js",
+      source_root: expect.any(String),
+    });
+    if (pair.left.identity.strategy !== "source-map-original")
+      throw new Error("Expected source identity");
+    expect(pair.right.identity).toMatchObject({
+      source_root: pair.left.identity.source_root,
+    });
+  }
+});
+
+it("reports malformed source roots without manufacturing an original path", async () => {
+  const output = await analyzeSource("//# sourceMappingURL=app.js.map", {
+    "app.js.map": JSON.stringify({
+      version: 3,
+      sourceRoot: 42,
+      sources: ["a.js"],
+      names: [],
+      mappings: "AAAA",
+    }),
+  });
+  expect(
+    output.graph.nodes.filter(({ kind }) => kind === "source-module"),
+  ).toEqual([]);
+  expect(
+    output.graph.nodes.flatMap(({ observations }) => observations),
+  ).toContainEqual(
+    expect.objectContaining({
+      properties: expect.objectContaining({
+        limitation: "Source map sourceRoot must be a string or null.",
+      }),
+      evidence: expect.objectContaining({ state: "unavailable" }),
+    }),
+  );
 });

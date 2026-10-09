@@ -3,9 +3,8 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { inlineLocalJsonSchemaReferences } from "../../tests/fixtures/localJsonSchemaReferences.js";
 import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
-import { TOOL_CONTRACTS, toolContract } from "./toolContracts.js";
+import { toolContract } from "./toolContracts.js";
 import { toolInputSchemaWithMetadata } from "./toolSchemaMetadata.js";
 
 describe("advertised input references", () => {
@@ -29,46 +28,32 @@ describe("advertised input references", () => {
         "bad[selector]:",
         "set\0Foo:",
         "setFoo:\n",
-      ])
-        for (const extra of [{}, { unexpected: true }]) {
-          const sample = {
-            breakpoints: [
-              {
-                kind: "objc-method",
-                class_name: "NSURLSession",
-                selector,
-                ...extra,
-              },
-            ],
-          };
-          expect(validate(sample)).toBe(
-            contract.inputSchema.safeParse(sample).success,
-          );
-        }
-    },
-  );
-
-  it.each(["draft-2020-12", "draft-07"] as const)(
-    "preserves complete input meaning and examples through %s references",
-    (target) => {
-      for (const contract of TOOL_CONTRACTS) {
-        const projection =
-          toolInputSchemaWithMetadata(contract)["~standard"].jsonSchema.input;
-        const referenced = projection({ target });
-        const inline = projection({
-          target,
-          libraryOptions: { reused: "inline" },
-        });
-        expect(referenced.type, contract.name).toBe("object");
-        expect(
-          inlineLocalJsonSchemaReferences(referenced),
-          contract.name,
-        ).toEqual(inlineLocalJsonSchemaReferences(inline));
-        expect(referenced.examples, contract.name).toEqual(
-          contract.examples.map(({ input }) => input),
+      ]) {
+        const sample = {
+          breakpoints: [
+            {
+              kind: "objc-method",
+              class_name: "NSURLSession",
+              selector,
+            },
+          ],
+        };
+        expect(validate(sample)).toBe(
+          contract.inputSchema.safeParse(sample).success,
         );
-        expect(projection({ target })).toBe(referenced);
       }
+      const unexpected = {
+        breakpoints: [
+          {
+            kind: "objc-method",
+            class_name: "NSURLSession",
+            selector: "setFoo:",
+            unexpected: true,
+          },
+        ],
+      };
+      expect(contract.inputSchema.safeParse(unexpected).success).toBe(false);
+      expect(validate(unexpected)).toBe(false);
     },
   );
 
@@ -100,7 +85,14 @@ describe("advertised input references", () => {
         ...toolContract("open_binary"),
         inputSchema: canonical,
       })["~standard"].jsonSchema.input({ target });
-      expect(inlineLocalJsonSchemaReferences(advertised)).toMatchObject({
+      const inline = toolInputSchemaWithMetadata({
+        ...toolContract("open_binary"),
+        inputSchema: canonical,
+      })["~standard"].jsonSchema.input({
+        target,
+        libraryOptions: { reused: "inline" },
+      });
+      expect(inline).toMatchObject({
         properties: {
           before: { description: "Exact byte range in the selected artifact." },
           after: { description: "Exact byte range in the selected artifact." },
@@ -142,32 +134,6 @@ describe("advertised input references", () => {
 });
 
 describe("root input presentation", () => {
-  it("normalizes repeated string intersections without widening validation", () => {
-    const root = {
-      type: "string",
-      minLength: 1,
-      description: "Exact selector.",
-      allOf: [
-        { type: "string", pattern: "^[^\\s]+$" },
-        { allOf: [{ type: "string", pattern: "^[^\\s]+$" }], minLength: 2 },
-      ],
-    };
-    const normalized = inlineLocalJsonSchemaReferences(root);
-    expect(normalized).toEqual({
-      type: "string",
-      minLength: 2,
-      pattern: "^[^\\s]+$",
-      description: "Exact selector.",
-    });
-    const ajv = new Ajv2020({ strict: false });
-    const original = ajv.compile(root);
-    const projected = ajv.compile(
-      z.record(z.string(), z.unknown()).parse(normalized),
-    );
-    for (const sample of ["", "a", "aa", "a a", "a\n", null, {}])
-      expect(projected(sample)).toBe(original(sample));
-  });
-
   it("preserves prototype-named properties in object-root presentation", () => {
     const fields = Object.fromEntries([
       ["__proto__", { type: "string" }],
@@ -183,16 +149,49 @@ describe("root input presentation", () => {
       { anyOf: [branch, branch] },
       (property) => `Parameter ${property}`,
     );
-    expect(presented).toMatchObject({
-      type: "object",
-      required: ["__proto__"],
-      minProperties: 1,
-      additionalProperties: false,
-      properties: fields,
-    });
-    expect(presented.anyOf).toBeUndefined();
-    expect(Object.getPrototypeOf(presented.properties)).toBe(Object.prototype);
-    expect(Object.hasOwn(presented.properties ?? {}, "__proto__")).toBe(true);
+    const branches = z
+      .array(z.record(z.string(), z.unknown()))
+      .parse(presented.anyOf);
+    expect(branches).toHaveLength(2);
+    for (const presentedBranch of branches) {
+      expect(presentedBranch).toMatchObject(branch);
+      const properties = presentedBranch.properties;
+      if (typeof properties !== "object" || properties === null)
+        throw new Error("Missing branch properties");
+      expect(Object.getPrototypeOf(properties)).toBe(Object.prototype);
+      expect(Object.hasOwn(properties, "__proto__")).toBe(true);
+    }
+  });
+
+  it("preserves root alternatives, required pairs, and mixed-family exclusions", () => {
+    const schema = z.union([
+      z.strictObject({ before: z.string(), after: z.string() }),
+      z.strictObject({
+        before_scenario: z.number(),
+        after_scenario: z.number(),
+      }),
+    ]);
+    const canonical = z.toJSONSchema(schema, { io: "input" });
+    const advertised = presentInputJsonSchema(
+      canonical,
+      (property) => property,
+    );
+    const validate = new Ajv2020({ strict: false }).compile(advertised);
+    for (const input of [
+      {},
+      { before: "first" },
+      { before: "first", after: "second" },
+      { before_scenario: 1, after_scenario: 2 },
+      { before: "first", after_scenario: 2 },
+      {
+        before: "first",
+        after: "second",
+        before_scenario: 1,
+        after_scenario: 2,
+      },
+      { before_scenario: 1, after_scenario: "wrong" },
+    ])
+      expect(validate(input)).toBe(schema.safeParse(input).success);
   });
 
   it("retains reference siblings and does not manufacture root branch constraints", () => {

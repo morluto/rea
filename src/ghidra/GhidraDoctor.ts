@@ -58,20 +58,22 @@ export const projectGhidraDoctorInspection = (
 };
 
 /** Inspect the process-configured BYO Ghidra installation for `rea doctor`. */
-export const inspectSystemGhidraProvider =
-  (): Promise<DoctorProviderInspection> =>
-    Promise.resolve(
-      projectGhidraDoctorInspection(
-        inspectGhidraInstallation({
-          ...(process.env.GHIDRA_INSTALL_DIR === undefined
-            ? {}
-            : { installDir: process.env.GHIDRA_INSTALL_DIR }),
-          ...(process.env.JAVA_HOME === undefined
-            ? {}
-            : { javaHome: process.env.JAVA_HOME }),
-        }),
-      ),
-    );
+export const inspectSystemGhidraProvider = (
+  environment: Readonly<NodeJS.ProcessEnv>,
+): Promise<DoctorProviderInspection> =>
+  Promise.resolve(
+    projectGhidraDoctorInspection(
+      inspectGhidraInstallation({
+        environment,
+        ...(environment.GHIDRA_INSTALL_DIR === undefined
+          ? {}
+          : { installDir: environment.GHIDRA_INSTALL_DIR }),
+        ...(environment.JAVA_HOME === undefined
+          ? {}
+          : { javaHome: environment.JAVA_HOME }),
+      }),
+    ),
+  );
 
 const selectedChecks = (
   inspection: GhidraInstallationInspection,

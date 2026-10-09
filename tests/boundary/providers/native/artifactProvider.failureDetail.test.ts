@@ -23,7 +23,7 @@ it.each([
     await writeOrderedZip(path, entries);
     const target = await parseBinaryTarget(path);
     if (!target.ok) throw new Error("expected a ZIP target");
-    const result = await new ArtifactProvider()
+    const result = await new ArtifactProvider(process.env)
       .createClient(target.value)
       .execute("inventory_artifact", {});
     if (result.ok) throw new Error("expected the path constraint to fail");

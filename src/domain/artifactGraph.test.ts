@@ -23,13 +23,11 @@ describe("artifact graph path and provenance fields", () => {
       nodes: [
         {
           artifact_id: artifactId,
-          kind: "container",
           format: "directory",
           sha256: "c".repeat(64),
           size: 0,
           media_type: null,
           architecture: null,
-          executable: false,
           content_state: "materialized",
           limitations: [],
         },
@@ -41,6 +39,8 @@ describe("artifact graph path and provenance fields", () => {
           parent_occurrence_id: null,
           logical_path: path,
           entry_kind: "file",
+          artifact_kind: "resource",
+          artifact_format: "file",
           declared_size: 0,
           compressed_size: 0,
           executable: false,

@@ -293,7 +293,7 @@ const functionFindings = (evidence: Evidence): Finding[] => {
             scope: "static_candidate",
             status: dimension.status,
             classification:
-              dimension.status === "unknown" || dimension.status === "truncated"
+              dimension.status === "unknown"
                 ? "unresolved_branch"
                 : dimension.conclusion_kind,
             limitations: dimension.limitations,

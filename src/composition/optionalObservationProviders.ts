@@ -1,3 +1,4 @@
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import type {
   OptionalObservationProviders,
   OptionalProviderLoadFailure,
@@ -19,23 +20,33 @@ export type OptionalObservationFactories = {
   >;
 };
 
-const productionFactories: OptionalObservationFactories = {
-  browserObservation: async () =>
-    (
-      await import("./browserObservation.js")
-    ).createBrowserObservationProvider(),
-  browserScenarioCapture: async () =>
-    (await import("./browserScenario.js")).createBrowserScenarioProvider(),
-  electronObservation: async () =>
-    (
-      await import("./electronObservation.js")
-    ).createElectronObservationProvider(),
-  electronActiveObservation: async () =>
-    (await import("./electronScenario.js")).createElectronScenarioProvider(),
-  javascriptRuntimeObservation: async () =>
-    (
-      await import("./javascriptRuntimeObservation.js")
-    ).createJavaScriptRuntimeObservationProvider(),
+/** Bind optional provider construction to one caller-selected process environment. */
+export const createOptionalObservationFactories = (
+  selectedEnvironment: Readonly<Record<string, string | undefined>>,
+): OptionalObservationFactories => {
+  const environment = snapshotEnvironment(selectedEnvironment);
+  return {
+    browserObservation: async () =>
+      (
+        await import("./browserObservation.js")
+      ).createBrowserObservationProvider(),
+    browserScenarioCapture: async () =>
+      (await import("./browserScenario.js")).createBrowserScenarioProvider(
+        environment,
+      ),
+    electronObservation: async () =>
+      (
+        await import("./electronObservation.js")
+      ).createElectronObservationProvider(),
+    electronActiveObservation: async () =>
+      (await import("./electronScenario.js")).createElectronScenarioProvider(
+        environment,
+      ),
+    javascriptRuntimeObservation: async () =>
+      (
+        await import("./javascriptRuntimeObservation.js")
+      ).createJavaScriptRuntimeObservationProvider(),
+  };
 };
 
 const loadPort = async <Port>(
@@ -54,7 +65,7 @@ const loadPort = async <Port>(
 
 /** Load each adapter independently, retaining healthy peers and exact failures. */
 export const loadOptionalObservationProviders = async (
-  factories: OptionalObservationFactories = productionFactories,
+  factories: OptionalObservationFactories,
 ): Promise<OptionalProviderLoadResult> => {
   const [browser, scenario, electron, electronActive, runtime] =
     await Promise.all([

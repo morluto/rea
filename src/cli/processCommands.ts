@@ -14,7 +14,7 @@ import { withCommandCancellation } from "./commandCancellation.js";
 export const registerProcessCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
-  environment: Readonly<Record<string, string | undefined>> = process.env,
+  environment: Readonly<Record<string, string | undefined>>,
 ): void => {
   cli.command(CLI_COMMANDS.captureProcess, {
     description: "Capture one caller-selected process scenario",

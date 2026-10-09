@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -392,12 +393,13 @@ async function call(name, args = {}) {
     { timeout: 360000 },
   );
   assert.notEqual(response.isError, true, JSON.stringify(response));
-  if (name === "close_binary") return response.structuredContent;
-  const evidence = parseEvidence(response.structuredContent.evidence);
+  const projected = requireMcpOperationResult(response, name);
+  if (name === "close_binary") return projected;
+  const evidence = parseEvidence(response.structuredContent);
   assert.equal(evidence.subject.digest.sha256, sha256);
   assert.deepEqual(
     evidence.normalized_result,
-    response.structuredContent.result,
+    response.structuredContent.normalized_result,
   );
-  return response.structuredContent.result;
+  return projected;
 }

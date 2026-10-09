@@ -42,6 +42,20 @@ describe("Electron CLI parity", () => {
       await writeFile(join(root, "app.js"), "export const app = true;");
       const browser = await startFakeCdpBrowser({
         electronFileUrl: pathToFileURL(join(root, "index.html")).href,
+        commandEvents: ({ method }) =>
+          method === "Debugger.enable"
+            ? [
+                {
+                  method: "Debugger.scriptParsed",
+                  sessionId: "session-1",
+                  params: {
+                    scriptId: "partial-script",
+                    url: pathToFileURL(join(root, "app.js")).href,
+                    executionContextId: 1,
+                  },
+                },
+              ]
+            : undefined,
       });
       browsers.push(browser);
       const environment = { ...process.env };
@@ -71,6 +85,9 @@ describe("Electron CLI parity", () => {
         provider: { id: "rea-cdp-electron" },
         normalized_result: {
           target: { file_path: join(root, "index.html") },
+          scripts: {
+            items: [{ cdp_hash: null, length: null, is_module: null }],
+          },
         },
       });
     },

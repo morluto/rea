@@ -1,3 +1,4 @@
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
 import { createEvmInterfaceService } from "../composition/evm.js";
 import { registerEvmTools } from "./registerEvmTools.js";
@@ -8,8 +9,12 @@ import { registerAnalysisViewTool } from "./registerAnalysisViewTool.js";
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
 import { createBinaryLayoutService } from "../composition/binaryDiagnostics.js";
 import type { BinaryLayoutService } from "../application/binaryDiagnostics/BinaryLayoutService.js";
-import type { McpServer } from "@modelcontextprotocol/server";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
+import {
+  createToolResultDelivery,
+  type ToolResultDelivery,
+} from "./toolResult.js";
+import { parseMcpResponseBudget } from "../config/mcpResponseBudget.js";
 import { isAbsolute } from "node:path";
 
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
@@ -70,6 +75,8 @@ const ACTIVE_TARGET_INSTRUCTIONS =
   "REA analyzes the active reverse-engineering target. Use the analysis tool that answers the question directly. Search or list symbols when discovery is needed; analyze_function provides a function dossier, and focused procedure tools return individual facets.";
 
 export interface CreateServerOptions {
+  readonly environment?: Readonly<NodeJS.ProcessEnv>;
+  readonly delivery?: ToolResultDelivery;
   readonly evmInterface?: EvmInterfaceService;
   readonly logger?: Logger;
   readonly binaryLayout?: BinaryLayoutService;
@@ -91,44 +98,34 @@ export interface CreateServerOptions {
 }
 
 const installSessionToolAvailability = (
-  server: McpServer,
   session: BinarySessionPort | undefined,
   options: CreateServerOptions,
+  environment: Readonly<NodeJS.ProcessEnv>,
 ) => {
   if (session === undefined) return undefined;
+  const linux = process.platform === "linux";
+  const linuxX64 = linux && process.arch === "x64";
+  const pwntools =
+    linuxX64 && isAbsolute(environment.REA_PWNTOOLS_PYTHON ?? "");
   const policy = sessionAvailabilityPolicy(options.availabilityPolicy, {
     optionalProviderLoadFailures: options.optionalProviderLoadFailures,
     optionalFeatures: {
-      evmInterfaceEnabled:
-        options.evmInterface !== undefined ||
-        (process.platform === "linux" && process.arch === "x64"),
+      evmInterfaceEnabled: options.evmInterface !== undefined || linuxX64,
       webModuleResolutionEnabled:
         options.webModuleTrace !== undefined ||
-        isAbsolute(process.env.REA_BROWSER_EXECUTABLE ?? ""),
-      recordedCrashEnabled:
-        options.recordedCrash !== undefined ||
-        (process.platform === "linux" &&
-          process.arch === "x64" &&
-          isAbsolute(process.env.REA_PWNTOOLS_PYTHON ?? "")),
-      binaryLayoutEnabled:
-        options.binaryLayout !== undefined ||
-        (process.platform === "linux" &&
-          process.arch === "x64" &&
-          isAbsolute(process.env.REA_PWNTOOLS_PYTHON ?? "")),
+        isAbsolute(environment.REA_BROWSER_EXECUTABLE ?? ""),
+      recordedCrashEnabled: options.recordedCrash !== undefined || pwntools,
+      binaryLayoutEnabled: options.binaryLayout !== undefined || pwntools,
       firmwareInspectionEnabled:
         options.firmwareAnalysis !== undefined ||
-        (process.platform === "linux" &&
-          isAbsolute(process.env.REA_BINWALK_COMMAND ?? "")),
+        (linux && isAbsolute(environment.REA_BINWALK_COMMAND ?? "")),
       firmwareExtractionEnabled:
         options.firmwareAnalysis !== undefined ||
-        (process.platform === "linux" &&
-          isAbsolute(process.env.REA_UNBLOB_COMMAND ?? "")),
+        (linux && isAbsolute(environment.REA_UNBLOB_COMMAND ?? "")),
       browserObservationEnabled: options.browserObservation !== undefined,
       javascriptRecoveryEnabled:
         options.javascriptRecovery !== undefined ||
-        (process.platform === "linux" &&
-          process.arch === "x64" &&
-          isAbsolute(process.env.REA_WAKARU_COMMAND ?? "")),
+        (linuxX64 && isAbsolute(environment.REA_WAKARU_COMMAND ?? "")),
       browserScenarioEnabled: options.browserScenarioCapture !== undefined,
       electronObservationEnabled: options.electronObservation !== undefined,
       electronAutomationEnabled:
@@ -142,7 +139,10 @@ const installSessionToolAvailability = (
   };
 };
 
-const createMcpServer = (session: BinarySessionPort | undefined): McpServer =>
+const createMcpServer = (
+  session: BinarySessionPort | undefined,
+  delivery: ToolResultDelivery,
+): EvidenceMcpServer =>
   new EvidenceMcpServer(
     {
       name: PRODUCT_IDENTITY.mcpServerKey,
@@ -158,6 +158,7 @@ const createMcpServer = (session: BinarySessionPort | undefined): McpServer =>
     session === undefined
       ? undefined
       : (evidence) => session.recordEvidence(evidence),
+    delivery,
   );
 
 /**
@@ -169,12 +170,20 @@ export const createServer = (
   analysis: AnalysisOperationPort,
   session?: BinarySessionPort,
   options: CreateServerOptions = {},
-): McpServer => {
+): EvidenceMcpServer => {
+  const environment = snapshotEnvironment(options.environment ?? process.env);
+  const delivery = selectToolResultDelivery(environment, options.delivery);
+  const selectedOptions = { ...options, environment, delivery };
   const startedAt = new Date().toISOString();
   const logger = options.logger ?? silentLogger;
-  const server = createMcpServer(session);
-  const android = options.androidAnalysis ?? createAndroidAnalysisProvider();
-  const availability = installSessionToolAvailability(server, session, options);
+  const server = createMcpServer(session, delivery);
+  const android =
+    options.androidAnalysis ?? createAndroidAnalysisProvider(environment);
+  const availability = installSessionToolAvailability(
+    session,
+    selectedOptions,
+    environment,
+  );
   const toolLogger = logger.child({ layer: "server" });
   const {
     evidenceById,
@@ -186,7 +195,8 @@ export const createServer = (
     server,
     analysis,
     session,
-    options,
+    options: selectedOptions,
+    environment,
     logger: toolLogger,
     evidenceById,
     activeTarget,
@@ -210,76 +220,12 @@ export const createServer = (
     for (const result of results)
       if (result.status === "rejected") throw result.reason;
   };
-  registerAndroidTools(
-    server,
-    new AndroidAnalysisService(android),
-    toolLogger,
-    recordEvidence,
-  );
-  registerBinaryDiagnosticsTools(
-    server,
-    options.binaryLayout ?? createBinaryLayoutService(),
-    toolLogger,
-    recordEvidence,
-  );
-  registerAnalysisViewTool(server, toolLogger, evidenceById, recordEvidence);
-  registerEvmTools(
-    server,
-    options.evmInterface ?? createEvmInterfaceService(),
-    toolLogger,
-    recordEvidence,
-  );
-  registerRecordedCrashTools(
-    server,
-    options.recordedCrash ?? createRecordedCrashService(),
-    toolLogger,
-    recordEvidence,
-  );
-  registerFirmwareTools(
-    server,
-    new FirmwareAnalysisService(
-      options.firmwareAnalysis ?? createFirmwareAnalysisProvider(),
-    ),
-    toolLogger,
-    recordEvidence,
-  );
+  registerConfiguredAnalysisTools(toolContext, android);
   registerObservationTools(toolContext);
-  registerWebModuleTool(
-    server,
-    options.webModuleTrace ?? createWebModuleTraceService(),
-    toolLogger,
-    recordEvidence,
-  );
-  registerWebSourceLocationTool(
-    server,
-    options.webSourceLocation ?? createWebSourceLocationService(),
-    toolLogger,
-    recordEvidence,
-  );
-  registerWebRuntimeTools(
-    server,
-    options.webRuntime ?? createWebRuntimeService(),
-    toolLogger,
-    recordEvidence,
-  );
-  registerWebNetworkCaptureTool(
-    server,
-    options.webNetworkCapture ?? createWebNetworkCaptureService(),
-    toolLogger,
-    recordEvidence,
-  );
-  registerJavaScriptRecoveryTool(
-    server,
-    new JavaScriptRecoveryService(
-      options.javascriptRecovery ?? createJavaScriptRecoveryProvider(),
-    ),
-    toolLogger,
-    recordEvidence,
-  );
   registerGuidedPrompts(server, analysis, session);
   if (session !== undefined) {
     registerSessionTools(server, session, toolLogger, {
-      ...options,
+      ...selectedOptions,
       ...(availability === undefined
         ? {}
         : { availabilityPolicy: availability.policy }),
@@ -291,8 +237,99 @@ export const createServer = (
   return server;
 };
 
+const selectToolResultDelivery = (
+  environment: Readonly<NodeJS.ProcessEnv>,
+  selected: ToolResultDelivery | undefined,
+): ToolResultDelivery => {
+  if (selected !== undefined) return selected;
+  const configured = parseMcpResponseBudget(
+    environment.REA_MCP_MAX_RESPONSE_BYTES,
+  );
+  if (!configured.ok) throw configured.error;
+  return createToolResultDelivery(configured.value);
+};
+
+const registerConfiguredAnalysisTools = (
+  {
+    server,
+    options,
+    environment,
+    logger: toolLogger,
+    evidenceById,
+    recordEvidence,
+  }: ServerToolContext,
+  android: AndroidAnalysisPort,
+): void => {
+  registerAndroidTools(
+    server,
+    new AndroidAnalysisService(android),
+    toolLogger,
+    recordEvidence,
+  );
+  registerBinaryDiagnosticsTools(
+    server,
+    options.binaryLayout ?? createBinaryLayoutService(environment),
+    toolLogger,
+    recordEvidence,
+  );
+  registerAnalysisViewTool(server, toolLogger, evidenceById, recordEvidence);
+  registerEvmTools(
+    server,
+    options.evmInterface ?? createEvmInterfaceService(environment),
+    toolLogger,
+    recordEvidence,
+  );
+  registerRecordedCrashTools(
+    server,
+    options.recordedCrash ?? createRecordedCrashService(environment),
+    toolLogger,
+    recordEvidence,
+  );
+  registerFirmwareTools(
+    server,
+    new FirmwareAnalysisService(
+      options.firmwareAnalysis ?? createFirmwareAnalysisProvider(environment),
+    ),
+    toolLogger,
+    recordEvidence,
+  );
+  registerWebModuleTool(
+    server,
+    options.webModuleTrace ?? createWebModuleTraceService(environment),
+    toolLogger,
+    recordEvidence,
+  );
+  registerWebSourceLocationTool(
+    server,
+    options.webSourceLocation ?? createWebSourceLocationService(environment),
+    toolLogger,
+    recordEvidence,
+  );
+  registerWebRuntimeTools(
+    server,
+    options.webRuntime ?? createWebRuntimeService(),
+    toolLogger,
+    recordEvidence,
+  );
+  registerWebNetworkCaptureTool(
+    server,
+    options.webNetworkCapture ?? createWebNetworkCaptureService(environment),
+    toolLogger,
+    recordEvidence,
+  );
+  registerJavaScriptRecoveryTool(
+    server,
+    new JavaScriptRecoveryService(
+      options.javascriptRecovery ??
+        createJavaScriptRecoveryProvider(environment),
+    ),
+    toolLogger,
+    recordEvidence,
+  );
+};
+
 const createSessionRecorders = (
-  server: McpServer,
+  server: EvidenceMcpServer,
   session: BinarySessionPort | undefined,
 ) => ({
   evidenceById:
@@ -323,10 +360,11 @@ const createSessionRecorders = (
 });
 
 interface ServerToolContext extends ReturnType<typeof createSessionRecorders> {
-  readonly server: McpServer;
+  readonly server: EvidenceMcpServer;
   readonly analysis: AnalysisOperationPort;
   readonly session: BinarySessionPort | undefined;
   readonly options: CreateServerOptions;
+  readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly logger: Logger;
 }
 

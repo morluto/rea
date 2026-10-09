@@ -5,9 +5,11 @@ import { createPackageWithOptions } from "@electron/asar";
 import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
-import { runProviderAnalysis } from "../../../../src/composition/directAnalysis.js";
+import { createDirectAnalysis } from "../../../../src/composition/directAnalysis.js";
 import { artifactInspectionResultSchema } from "../../../../src/domain/artifactInspection.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
+
+const { runProviderAnalysis } = createDirectAnalysis({});
 
 it("inspects an artifact through the direct CLI workflow without an REA grant", async () => {
   const root = await createTestTempDirectory("rea-artifact-direct-");

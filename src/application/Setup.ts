@@ -21,8 +21,6 @@ import { discoverSetupState, planSetupActions } from "./SetupPlan.js";
 import {
   filterClientsNeedingConfigure,
   hostRemediation,
-  initialProviderEnvironment,
-  setupRegistrationCommand,
   systemSetupHost,
 } from "./SetupHost.js";
 
@@ -45,25 +43,15 @@ export const runSetup = async (
     );
   const unsupported = await hostRemediation(host, false);
   if (unsupported !== undefined) return fail(unsupported);
-  const initialState = await host.initialSetupState?.(options.readinessScope);
-  let hopperPath =
-    initialState === undefined
-      ? await host.hopperPath()
-      : initialState.hopperPath;
-  let providerEnvironment =
-    initialState === undefined
-      ? await initialProviderEnvironment(host, hopperPath)
-      : initialState.providerEnvironment;
+  const initialState = await host.initialSetupState(options.readinessScope);
+  let { hopperPath, providerEnvironment } = initialState;
   const discovery = await discoverSetupState({
     host,
     providerEnvironment,
     forceHopperInstall: options.installHopper,
     proposeHopper:
       options.proposeHopper ?? (confirm !== undefined && !options.structured),
-    doctorScope: options.readinessScope,
-    ...(initialState === undefined
-      ? {}
-      : { initialDoctor: initialState.doctor }),
+    initialDoctor: initialState.doctor,
   });
   clientStates = discovery.clientStates;
   const clientSelectionAllowed =
@@ -91,7 +79,7 @@ export const runSetup = async (
       discovery,
       host,
       providerEnvironment,
-      command: setupRegistrationCommand(host.platform),
+      command: host.registrationCommand,
       clientIds: [],
       installSkill: offerSkillAction,
     });
@@ -143,7 +131,7 @@ export const runSetup = async (
     discovery: planDiscovery,
     host,
     providerEnvironment,
-    command: setupRegistrationCommand(host.platform),
+    command: host.registrationCommand,
     clientIds: selectedClientIds,
     installSkill,
   });
@@ -241,7 +229,7 @@ export const runSetup = async (
     host,
     detectedClients: selectedClients,
     providerEnvironment,
-    command: setupRegistrationCommand(host.platform),
+    command: host.registrationCommand,
     clients,
     appliedActions,
     ...(options.onProgress === undefined
@@ -333,7 +321,7 @@ const installHopperAction = async (input: {
       input.host,
       input.selectedClients,
       providerEnvironment,
-      setupRegistrationCommand(input.host.platform),
+      input.host.registrationCommand,
     ),
   };
 };

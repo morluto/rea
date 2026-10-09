@@ -53,13 +53,14 @@ const snapshotWithHistoricalEvidence = () => {
       target,
       binding,
       entries: [entry],
+      workflow_entries: [],
       evidence_bundle: createEvidenceBundle([
         makeEvidence("older"),
         current,
         createEvidence(ANALYSIS_SNAPSHOT_TARGET, ANALYSIS_SNAPSHOT_PROVIDER, {
-          operation: "legacy_query",
+          operation: "unprofiled_query",
           parameters: {},
-          result: { summary: "legacy" },
+          result: { summary: "unprofiled" },
         }),
       ]),
     } satisfies AnalysisSnapshot,
@@ -101,6 +102,7 @@ describe("analysis snapshot contract", () => {
           },
         },
       ],
+      workflow_entries: [],
       evidence_bundle: createEvidenceBundle([evidence]),
     });
     expect(parsed.target).toMatchObject({
@@ -131,6 +133,7 @@ describe("analysis snapshot contract", () => {
       target: snapshotTarget(ANALYSIS_SNAPSHOT_TARGET),
       binding,
       entries: Array.from({ length: 10_001 }, () => entry),
+      workflow_entries: [],
       evidence_bundle: createEvidenceBundle([]),
     });
 
@@ -139,7 +142,7 @@ describe("analysis snapshot contract", () => {
 });
 
 describe("analysis snapshot canonical ordering and scope", () => {
-  it("rejects reordered queries and foreign-target records while retaining legacy Evidence", () => {
+  it("rejects reordered queries and foreign-target records while preserving unprofiled observations", () => {
     const { snapshot } = snapshotWithHistoricalEvidence();
     const first = snapshot.entries[0];
     if (first === undefined) throw new Error("Missing fixture query");
@@ -157,8 +160,25 @@ describe("analysis snapshot canonical ordering and scope", () => {
     const entries = [first, second].sort((left, right) =>
       left.query_id.localeCompare(right.query_id),
     );
-    const canonical = { ...snapshot, entries };
-    expect(parseAnalysisSnapshot(canonical).entries).toEqual([first]);
+    const secondEvidence = createEvidence(
+      ANALYSIS_SNAPSHOT_TARGET,
+      ANALYSIS_SNAPSHOT_PROVIDER,
+      {
+        operation: second.operation,
+        parameters,
+        result: second.execution.result,
+        analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
+      },
+    );
+    const canonical = {
+      ...snapshot,
+      entries,
+      evidence_bundle: createEvidenceBundle([
+        ...snapshot.evidence_bundle.records,
+        secondEvidence,
+      ]),
+    };
+    expect(parseAnalysisSnapshot(canonical).entries).toEqual(entries);
     expect(() =>
       parseAnalysisSnapshot({ ...canonical, entries: [...entries].reverse() }),
     ).toThrow(/entries are not canonical/u);
@@ -169,13 +189,30 @@ describe("analysis snapshot canonical ordering and scope", () => {
         analysis_profile: ANALYSIS_SNAPSHOT_PROFILE,
       },
     }));
+    const workflowEvidence = workflows.map((entry) =>
+      createEvidence(ANALYSIS_SNAPSHOT_TARGET, ANALYSIS_SNAPSHOT_PROVIDER, {
+        operation: entry.operation,
+        parameters: entry.parameters,
+        result: entry.execution.result,
+        analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
+        confidence: "derived",
+      }),
+    );
     expect(
       parseAnalysisSnapshot({
         ...snapshot,
         entries: [],
         workflow_entries: workflows,
+        evidence_bundle: createEvidenceBundle(workflowEvidence),
       }).workflow_entries,
-    ).toEqual([]);
+    ).toEqual(workflows);
+    expect(() =>
+      parseAnalysisSnapshot({
+        ...snapshot,
+        entries: [],
+        workflow_entries: workflows,
+      }),
+    ).toThrow(/no profile-bound Evidence/u);
     expect(() =>
       parseAnalysisSnapshot({
         ...snapshot,
@@ -187,7 +224,7 @@ describe("analysis snapshot canonical ordering and scope", () => {
       { ...ANALYSIS_SNAPSHOT_TARGET, sha256: "b".repeat(64) },
       ANALYSIS_SNAPSHOT_PROVIDER,
       {
-        operation: "legacy_query",
+        operation: "unprofiled_query",
         parameters: {},
         result: null,
       },
@@ -221,7 +258,7 @@ describe("analysis snapshot Evidence binding", () => {
       snapshotEvidenceForQuery(snapshot, {
         target: ANALYSIS_SNAPSHOT_TARGET,
         bindingProfile: ANALYSIS_SNAPSHOT_PROFILE,
-        operation: "legacy_query",
+        operation: "unprofiled_query",
         parameters: {},
         provider: ANALYSIS_SNAPSHOT_PROVIDER,
         evidenceProfile: ANALYSIS_SNAPSHOT_PROFILE,
@@ -271,15 +308,20 @@ describe("analysis snapshot Evidence binding", () => {
       target,
       binding,
       entries: [entry],
+      workflow_entries: [],
       evidence_bundle: createEvidenceBundle([evidence]),
     };
     expect(parseAnalysisSnapshot(snapshot)).toEqual(snapshot);
 
-    const legacy = parseAnalysisSnapshot({
-      ...snapshot,
-      evidence_bundle: createEvidenceBundle([]),
-    });
-    expect(legacy.entries).toEqual([]);
+    expect(() =>
+      parseAnalysisSnapshot({
+        ...snapshot,
+        evidence_bundle: createEvidenceBundle([]),
+      }),
+    ).toThrow(/no profile-bound Evidence/u);
+    const { workflow_entries: _workflows, ...missingWorkflowEntries } =
+      snapshot;
+    expect(() => parseAnalysisSnapshot(missingWorkflowEntries)).toThrow();
 
     const alterations = [
       (altered: typeof snapshot) => {

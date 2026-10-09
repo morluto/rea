@@ -1,5 +1,6 @@
+import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
-import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
+import type { ServerContext } from "@modelcontextprotocol/server";
 import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { ToolContract } from "../contracts/toolContractTypes.js";
@@ -7,11 +8,10 @@ import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { toCallToolResult, toEvidenceToolResult } from "./toolResult.js";
 
 /** Bind Android handlers to their exact named contracts through shared workflows. */
 export const registerAndroidTools = (
-  server: McpServer,
+  server: EvidenceMcpServer,
   service: AndroidAnalysisService,
   logger: Logger,
   recordEvidence?: EvidenceWriter["recordEvidence"],
@@ -22,9 +22,13 @@ export const registerAndroidTools = (
       const result = await logToolExecution(logger, name, () =>
         service.execute(name, input, { signal: context.mcpReq.signal }),
       );
-      if (!result.ok) return toCallToolResult(result, contract);
+      if (!result.ok) return server.delivery.toCallToolResult(result, contract);
       const recorded = recordEvidence?.(result.value);
-      return toEvidenceToolResult(result.value, contract, recorded);
+      return server.delivery.toEvidenceToolResult(
+        result.value,
+        contract,
+        recorded,
+      );
     };
   };
   const packageContract = toolContract("inspect_android_package");

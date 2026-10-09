@@ -11,7 +11,7 @@ it("retains native re-export dependencies alongside ordinary and identity comman
   const runner = new NativeFixtureRunner({
     otool: await nativeFixture("native-reexport/otool-load.txt"),
   });
-  const client = new NativeMacOSProvider(runner, "darwin").createClient(
+  const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
     nativeMachoTarget("/owned/libOuter.dylib"),
   );
   const result = await client.execute("inspect_macho", {});

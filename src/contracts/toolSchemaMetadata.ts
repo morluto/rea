@@ -62,17 +62,8 @@ export const toolInputSchemaWithMetadata = <Contract extends ToolContract>(
         ...options,
         libraryOptions: { reused: "ref", ...options.libraryOptions },
       });
-      // Root-union flattening compares branch properties before widening them.
-      // Keep its inline representation: distinct references can name equal
-      // schemas and otherwise introduce redundant, deeper anyOf properties.
-      const compatible = Array.isArray(shared.anyOf)
-        ? project({
-            ...options,
-            libraryOptions: { ...options.libraryOptions, reused: "inline" },
-          })
-        : shared;
       return {
-        ...presentInputJsonSchema(compatible, fallbackPropertyDescription),
+        ...presentInputJsonSchema(shared, fallbackPropertyDescription),
         examples: contract.examples.map(({ input }) => input),
       };
     },

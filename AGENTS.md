@@ -24,15 +24,15 @@ REA is a layered ESM TypeScript application. Dependencies flow inward from pure 
 - `src/application/` composes shared CLI/MCP workflows, including Evidence provenance, unknowns, and eligible snapshot bindings; `src/server/` translates MCP requests; `src/cli.ts` and `src/main.ts` are the CLI and MCP entry points.
 - `src/process/` owns shared process lifecycle primitives, not provider wire protocols. Reuse its supervision and identity primitives before adding provider-local lifecycle code; a PID and executable pathname alone do not establish ownership after exit or reuse. `bridge/` contains provider-side adapters.
 - `tests/` contains unit, composition, boundary, acceptance, and conformance tests. `scripts/verify-*` and capability directories under `scripts/verify/` contain real-toolchain checks.
-- `docs/public/product-catalog.json`, `docs/verification/managed-conformance-*.json`, and `skills/` are ignored build outputs. Update source contracts and authored instructions in `skill-src/`, then run `npm run build:cached`; never commit derived catalog digests or portable conformance projections.
-- `src/generatedMcpToolCatalog.ts` is build-generated and gitignored. Never commit it; resolve any trace of it in merges by deleting it and running `npm run build:cached`.
+- `docs/public/product-catalog.json`, `docs/verification/managed-conformance-*.json`, and `skills/` are ignored build outputs. Update source contracts and authored instructions in `skill-src/`, then run `npm run docs:generate`; never commit derived catalog digests or portable conformance projections.
+- `.cache/mcp-tool-catalog.json` is generated test metadata. Generate it with `npm run mcp-catalog:generate`; source checking and runtime builds do not consume it.
 
 ## Build, Test, and Development Commands
 
 - `npm ci`: install the locked dependencies.
-- `npm run build:cached`: build the CLI and MCP server.
+- `npm run build:cached`: compile the CLI/MCP runtime and bundle its authored skill. Test catalogs and documentation/conformance artifacts have separate tasks.
 - `npm run test:local`: run changed source tests without building; pass exact source test paths to run them regardless of Git status.
-- `npm run test:focused -- PATH...`: run exact test files; build first for boundary, acceptance, or process-global tests.
+- `npm run test:focused -- PATH...`: run exact test files, preparing runtime and generated artifacts required by the selected tests.
 - `npm run check:changed`: run cached static checks and source tests affected since the branch merge base (default `origin/main`).
 - `npm run check:fast`: run cached typecheck and lint checks.
 - `npm run check:pr`: opt into the complete local deterministic gate and generated-document checks for broad changes; CI owns full coverage. Routine iterations need focused tests and relevant checks, not the whole gate each time.
@@ -94,7 +94,7 @@ See [docs/tool-design.md](docs/tool-design.md) for the design checklist. When us
 
 ## Testing Guidelines
 
-Prioritize real end-to-end workflows, boundary integration, and golden producer data. Keep a focused module test when it covers a distinct failure or semantic case absent from those workflows; test paths do not establish depth. See [docs/testing.md](docs/testing.md) for pruning and classification rules.
+Prefer full end-to-end workflows through the public CLI or MCP with real providers and no mocked dependencies, then integration across production boundaries, then goldens captured from real producers. Keep a focused module test only for a distinct failure or semantic case that stronger workflows cannot reliably reproduce. Delete redundant getter, serialization, enum, count, and snapshot assertions when a stronger consumer workflow already proves the claim. Test paths, compiled imports, and suites named E2E do not establish end-to-end coverage. See [docs/testing.md](docs/testing.md) for pruning and classification rules.
 
 Treat advertised examples as executable contracts: derive them from representative producer data, exercise them through the advertised CLI or MCP workflow, and assert the behavior they claim to demonstrate. Share production projections where practical and declare omitted coverage explicitly.
 

@@ -3,12 +3,7 @@ import { describe, expect } from "vitest";
 
 import { createAnalysisProfile } from "./analysisProfile.js";
 import type { BinaryTarget } from "./binaryTarget.js";
-import {
-  createEvidence,
-  evidenceRecordSchema,
-  evidenceSchema,
-  parseEvidence,
-} from "./evidence.js";
+import { createEvidence, evidenceSchema, parseEvidence } from "./evidence.js";
 import { MAX_JSON_DEPTH, type JsonValue } from "./jsonValue.js";
 import { createEvidenceBundle } from "./evidenceBundle.js";
 import { freezeJsonSnapshot } from "./immutableJson.js";
@@ -78,7 +73,7 @@ it("preserves prototype-named own members when reusing an owned result", () => {
 });
 
 it("preserves producer envelope admission and profile validation", () => {
-  const legacy = createEvidence(TARGET, PROVIDER, {
+  const unprofiled = createEvidence(TARGET, PROVIDER, {
     operation: "inspect",
     parameters: {},
     result: { observed: [1, 2, 3] },
@@ -89,19 +84,28 @@ it("preserves producer envelope admission and profile validation", () => {
     result: { observed: [1, 2, 3] },
     analysisProfile: PROFILE,
   });
+  const { analysis_profile: _missingProfile, ...missingProfile } = unprofiled;
+  expect(evidenceSchema.safeParse(missingProfile).success).toBe(false);
+  expect(
+    evidenceSchema.safeParse({
+      ...unprofiled,
+      analysis_profile: undefined,
+    }).success,
+  ).toBe(false);
   const candidates: unknown[] = [
-    legacy,
+    missingProfile,
+    unprofiled,
     profiled,
-    { ...legacy, analysis_profile: undefined },
-    { ...legacy, analysis_profile: null },
+    { ...unprofiled, analysis_profile: undefined },
+    { ...unprofiled, analysis_profile: null },
     {
       ...profiled,
       analysis_profile: { ...PROFILE, provider: { ...PROVIDER, id: "other" } },
     },
-    { ...legacy, unexpected: true },
+    { ...unprofiled, unexpected: true },
   ];
   for (const candidate of candidates) {
-    const canonical = evidenceRecordSchema.safeParse(candidate);
+    const canonical = evidenceSchema.safeParse(candidate);
     if (canonical.success)
       expect(parseEvidence(candidate)).toEqual(canonical.data);
     else expect(() => parseEvidence(candidate)).toThrow();
@@ -222,13 +226,14 @@ describe("analysis evidence identity", () => {
     expect(createEvidence(TARGET, PROVIDER, observation)).toEqual(evidence);
   });
 
-  it("preserves legacy records while binding profiled Evidence to its profile", () => {
-    const legacy = createEvidence(TARGET, PROVIDER, {
+  it("records absent profiles as null and binds reported profiles into identity", () => {
+    const unprofiled = createEvidence(TARGET, PROVIDER, {
       operation: "procedure_info",
       parameters: { procedure: "main" },
       result: { name: "main" },
     });
-    expect(parseEvidence(legacy)).toEqual(legacy);
+    expect(unprofiled.analysis_profile).toBeNull();
+    expect(parseEvidence(unprofiled)).toEqual(unprofiled);
 
     const profiled = createEvidence(TARGET, PROVIDER, {
       operation: "procedure_info",
@@ -237,7 +242,7 @@ describe("analysis evidence identity", () => {
       analysisProfile: PROFILE,
     });
     expect(profiled).toMatchObject({ analysis_profile: PROFILE });
-    expect(profiled.evidence_id).not.toBe(legacy.evidence_id);
+    expect(profiled.evidence_id).not.toBe(unprofiled.evidence_id);
     expect(() =>
       createEvidence(
         TARGET,

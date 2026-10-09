@@ -60,6 +60,7 @@ describe("analysis snapshots: persistence", () => {
       target,
       binding,
       entries: [entry],
+      workflow_entries: [],
       evidence_bundle: createEvidenceBundle([evidence]),
     };
     const written = await writeAnalysisSnapshot(snapshot, path, false);

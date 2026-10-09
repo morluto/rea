@@ -1,3 +1,4 @@
+import { parseConfig } from "../../../src/config.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -48,8 +49,7 @@ describe("MCP composed workflow snapshot replay", () => {
     const calls: string[] = [];
     const provider = makeProvider(starts, calls);
     const session = createTestBinarySession(provider, {
-      resolveAnalysisProfile: () =>
-        Promise.resolve(ok({ profile, compatibility: {} })),
+      resolveAnalysisProfile: () => Promise.resolve(ok({ profile })),
     });
     const server = createServer(session, session, { logger: silentLogger });
     const mcp = new Client({ name: "workflow-snapshot", version: "1.0.0" });
@@ -78,7 +78,7 @@ describe("MCP composed workflow snapshot replay", () => {
         analysis_profile: z.object({ digest: z.string() }),
       })
       .passthrough()
-      .parse(output.evidence);
+      .parse(output);
     const afterAnalysisCalls = [...calls];
     const afterAnalysisStarts = [...starts];
 
@@ -94,9 +94,8 @@ describe("MCP composed workflow snapshot replay", () => {
     ).result;
     expect(receipt).toMatchObject({
       path: snapshotPath,
-      entries: snapshot.value.entries.length,
       primitive_entries: snapshot.value.entries.length,
-      workflow_entries: snapshot.value.workflow_entries?.length ?? 0,
+      workflow_entries: snapshot.value.workflow_entries.length,
       evidence_records: snapshot.value.evidence_bundle.records.length,
     });
     expect(snapshot.value.workflow_entries).toHaveLength(1);
@@ -108,15 +107,14 @@ describe("MCP composed workflow snapshot replay", () => {
     );
 
     const dependencies: DirectAnalysisDependencies = {
+      readConfiguration: () => parseConfig({}),
       createBinarySession: () =>
         createTestBinarySession(provider, {
-          resolveAnalysisProfile: () =>
-            Promise.resolve(ok({ profile, compatibility: {} })),
+          resolveAnalysisProfile: () => Promise.resolve(ok({ profile })),
         }),
       createManagedBinarySession: () =>
         createTestBinarySession(provider, {
-          resolveAnalysisProfile: () =>
-            Promise.resolve(ok({ profile, compatibility: {} })),
+          resolveAnalysisProfile: () => Promise.resolve(ok({ profile })),
         }),
     };
     const replay = await runDirectAnalysis(
@@ -127,7 +125,7 @@ describe("MCP composed workflow snapshot replay", () => {
       { snapshotPath },
     );
 
-    expect(replay).toEqual(output.evidence);
+    expect(replay).toEqual(output);
     expect(calls).toEqual(afterAnalysisCalls);
     expect(starts).toEqual(afterAnalysisStarts);
   });
@@ -144,8 +142,7 @@ describe("MCP composed workflow snapshot replay", () => {
     const session = createTestBinarySession(
       makeProvider(starts, calls, "list_strings"),
       {
-        resolveAnalysisProfile: () =>
-          Promise.resolve(ok({ profile, compatibility: {} })),
+        resolveAnalysisProfile: () => Promise.resolve(ok({ profile })),
       },
     );
     const server = createServer(session, session, { logger: silentLogger });
@@ -175,7 +172,7 @@ describe("MCP composed workflow snapshot replay", () => {
     expect(
       toolContract("binary_overview").outputSchema.parse(
         analyzed.structuredContent,
-      ).evidence,
+      ),
     ).toMatchObject({ operation: "binary_overview" });
     const closed = await mcp.callTool({
       name: "close_binary",
@@ -185,7 +182,7 @@ describe("MCP composed workflow snapshot replay", () => {
 
     const snapshot = await readAnalysisSnapshot(snapshotPath);
     if (!snapshot.ok) throw snapshot.error;
-    expect(snapshot.value.workflow_entries ?? []).toEqual([]);
+    expect(snapshot.value.workflow_entries).toEqual([]);
   });
 });
 
@@ -214,8 +211,7 @@ const makeProvider = (
   return {
     identity: () => identity,
     capabilities: () => capabilities,
-    resolveAnalysisProfile: () =>
-      Promise.resolve(ok({ profile, compatibility: {} })),
+    resolveAnalysisProfile: () => Promise.resolve(ok({ profile })),
     createClient: () => {
       starts.push("start");
       return {
@@ -233,7 +229,7 @@ const makeProvider = (
                     : { "0x1000": "fixture" };
           return ok(createAnalysisExecution(result, identity));
         },
-        close: () => Promise.resolve(),
+        close: () => Promise.resolve(ok(null)),
       };
     },
   };

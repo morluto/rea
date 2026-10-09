@@ -254,17 +254,8 @@ it("distinguishes an unreported Java version from an unsupported old version", a
 it("cancels an in-flight Java readiness probe", async () => {
   const root = await createTestTempDirectory("rea-jadx-cancel-");
   const jar = join(root, "jadx-headless-mcp.jar");
-  const javaHome = join(root, "fake-jdk");
-  const bin = join(javaHome, "bin");
-  const java = join(bin, "java");
-  const marker = join(root, "java-probe-started");
-  await mkdir(bin, { recursive: true });
+  const { javaHome, marker } = await createHangingJdk(root);
   await writeJadxJarInventory(jar);
-  await writeFile(
-    java,
-    `#!/bin/sh\nexec ${process.execPath} -e 'require("node:fs").writeFileSync(process.argv[1], "ready"); setTimeout(() => {}, 30_000)' '${marker}'\n`,
-  );
-  await chmod(java, 0o700);
   const controller = new AbortController();
   const pending = inspectJadxAvailability(
     { REA_JADX_MCP_JAR: jar, JAVA_HOME: javaHome },
@@ -272,11 +263,13 @@ it("cancels an in-flight Java readiness probe", async () => {
   );
   try {
     await expect
-      .poll(() =>
-        readFile(marker, "utf8").then(
-          () => true,
-          () => false,
-        ),
+      .poll(
+        () =>
+          readFile(marker, "utf8").then(
+            () => true,
+            () => false,
+          ),
+        { timeout: 10_000 },
       )
       .toBe(true);
     controller.abort();
@@ -290,17 +283,8 @@ it("cancels an in-flight Java readiness probe", async () => {
 it("reports a killed Java probe as unresolved instead of missing runtime", async () => {
   const root = await createTestTempDirectory("rea-jadx-timeout-");
   const jar = join(root, "jadx-headless-mcp.jar");
-  const javaHome = join(root, "fake-jdk");
-  const bin = join(javaHome, "bin");
-  const java = join(bin, "java");
-  const marker = join(root, "java-probe-started");
-  await mkdir(bin, { recursive: true });
+  const { javaHome, java } = await createHangingJdk(root);
   await writeJadxJarInventory(jar);
-  await writeFile(
-    java,
-    `#!/bin/sh\nexec ${process.execPath} -e 'require("node:fs").writeFileSync(process.argv[1], "ready"); setTimeout(() => {}, 30_000)' '${marker}'\n`,
-  );
-  await chmod(java, 0o700);
 
   const availability = await inspectJadxAvailability({
     REA_JADX_MCP_JAR: jar,
@@ -319,6 +303,20 @@ it("reports a killed Java probe as unresolved instead of missing runtime", async
   });
   expect(availability.reason).not.toContain("Select a full JDK");
 });
+
+const createHangingJdk = async (root: string) => {
+  const javaHome = join(root, "fake-jdk");
+  const bin = join(javaHome, "bin");
+  const java = join(bin, "java");
+  const marker = join(root, "java-probe-started");
+  await mkdir(bin, { recursive: true });
+  await writeFile(
+    java,
+    `#!/bin/sh\nexec ${process.execPath} -e 'require("node:fs").writeFileSync(process.argv[1], "ready"); setTimeout(() => {}, 30_000)' '${marker}'\n`,
+  );
+  await chmod(java, 0o700);
+  return { javaHome, java, marker };
+};
 
 const createFakeJdk = async (
   root: string,

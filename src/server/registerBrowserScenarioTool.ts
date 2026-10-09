@@ -1,10 +1,10 @@
+import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import {
   optionalProviderUnavailable,
   type OptionalProviderLoadFailure,
 } from "../application/OptionalObservationProviders.js";
 import { err } from "../domain/result.js";
-import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { BrowserScenarioCapturePort } from "../application/BrowserScenarioCapturePort.js";
 import { captureBrowserScenario } from "../application/BrowserScenarioCaptureService.js";
@@ -13,7 +13,6 @@ import { browserScenarioSchema } from "../domain/browserScenario.js";
 import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { toCallToolResult, toEvidenceToolResult } from "./toolResult.js";
 
 interface BrowserScenarioToolRegistration {
   readonly logger: Logger;
@@ -24,7 +23,7 @@ interface BrowserScenarioToolRegistration {
 
 /** Register the browser scenario tool with execution-time provider diagnostics. */
 export const registerBrowserScenarioTool = (
-  server: McpServer,
+  server: EvidenceMcpServer,
   options: BrowserScenarioToolRegistration,
 ): void => {
   const contract = toolContract("capture_browser_scenario");
@@ -34,7 +33,7 @@ export const registerBrowserScenarioTool = (
     async (input, context) => {
       const scenario = browserScenarioSchema.parse(input);
       if (options.loadFailure !== undefined)
-        return toCallToolResult(
+        return server.delivery.toCallToolResult(
           err(optionalProviderUnavailable(options.loadFailure, contract.name)),
           contract,
         );
@@ -43,9 +42,13 @@ export const registerBrowserScenarioTool = (
           signal: context.mcpReq.signal,
         }),
       );
-      if (!result.ok) return toCallToolResult(result, contract);
+      if (!result.ok) return server.delivery.toCallToolResult(result, contract);
       const recorded = options.recordEvidence?.(result.value);
-      return toEvidenceToolResult(result.value, contract, recorded);
+      return server.delivery.toEvidenceToolResult(
+        result.value,
+        contract,
+        recorded,
+      );
     },
   );
 };

@@ -1,3 +1,5 @@
+import { compareCodePoints } from "../../domain/canonicalOrdering.js";
+
 import { createReadStream } from "node:fs";
 import { lstat } from "node:fs/promises";
 import type { Stats } from "node:fs";
@@ -10,6 +12,7 @@ import {
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,
   type ArtifactNode,
+  type ArtifactOccurrence,
   type IntegrityContradiction,
 } from "../../domain/artifactGraph.js";
 import {
@@ -49,7 +52,12 @@ export const scanCanonicalArtifactInventory = async (
   const rootDigest = metadata.isDirectory()
     ? null
     : await hashReadable(createReadStream(path), options.signal);
-  const reader = await createReader(path, rootFormat, options.signal);
+  const reader = await createReader(
+    path,
+    rootFormat,
+    options.environment ?? {},
+    options.signal,
+  );
 
   try {
     const { nodes, occurrences, pendingContradictions } = await scanReader(
@@ -76,7 +84,7 @@ export const scanCanonicalArtifactInventory = async (
 interface SnapshotBuildInput {
   readonly path: string;
   readonly metadata: Stats;
-  readonly rootFormat: ArtifactNode["format"];
+  readonly rootFormat: ArtifactOccurrence["artifact_format"];
   readonly rootDigest: HashResult | null;
   readonly reader: ArtifactReader | undefined;
   readonly signal: AbortSignal | undefined;
@@ -91,15 +99,17 @@ const buildInventorySnapshot = async (
   const { path, metadata, rootFormat, rootDigest, reader, signal } = input;
   materializeDirectoryNodes(input.occurrences, input.nodes);
   const rootNode = createRootNode({
-    path,
-    format: rootFormat,
-    directory: metadata.isDirectory(),
     digest: rootDigest,
     occurrences: input.occurrences,
   });
   input.nodes.set(rootNode.artifact_id, rootNode);
   rekeyOccurrences(rootNode.artifact_id, input.occurrences);
-  const rootOccurrence = rootOccurrenceFor(rootNode, metadata.size);
+  const rootOccurrence = rootOccurrenceFor(rootNode, {
+    size: metadata.size,
+    executable: (metadata.mode & 0o111) !== 0,
+    format: rootFormat,
+    path,
+  });
   for (const occurrence of input.occurrences)
     if (occurrence.parent_occurrence_id === null)
       occurrence.parent_occurrence_id = rootOccurrence.occurrence_id;
@@ -125,7 +135,10 @@ const buildInventorySnapshot = async (
   );
   const orderedNodes = sortNodes([...input.nodes.values()]);
   const orderedOccurrences = sortOccurrences(input.occurrences);
-  const orderedEdges = sortEdges(edges);
+  const orderedEdges = sortEdges(edges).map((edge, ordinal) => ({
+    ...edge,
+    ordinal,
+  }));
 
   await verifyRootDigest(path, rootDigest, signal);
 
@@ -137,6 +150,7 @@ const buildInventorySnapshot = async (
   });
   const manifest = buildManifest({
     rootNode,
+    rootFormat,
     graphSha256,
     orderedNodes,
     orderedOccurrences,
@@ -212,27 +226,29 @@ const verifyRootDigest = async (
 
 const sortNodes = (nodes: ArtifactNode[]): ArtifactNode[] =>
   nodes.sort((left, right) =>
-    left.artifact_id.localeCompare(right.artifact_id),
+    compareCodePoints(left.artifact_id, right.artifact_id),
   );
 
 const sortOccurrences = (
   occurrences: MutableOccurrence[],
 ): MutableOccurrence[] =>
   occurrences.sort((left, right) =>
-    left.logical_path.localeCompare(right.logical_path, "en"),
+    compareCodePoints(left.logical_path, right.logical_path),
   );
 
 const sortEdges = <T extends { edge_id: string }>(edges: T[]): T[] =>
-  edges.sort((left, right) => left.edge_id.localeCompare(right.edge_id));
+  edges.sort((left, right) => compareCodePoints(left.edge_id, right.edge_id));
 
 const buildManifest = ({
   rootNode,
+  rootFormat,
   graphSha256,
   orderedNodes,
   orderedOccurrences,
   orderedEdges,
 }: {
   readonly rootNode: ArtifactNode;
+  readonly rootFormat: ArtifactOccurrence["artifact_format"];
   readonly graphSha256: string;
   readonly orderedNodes: readonly ArtifactNode[];
   readonly orderedOccurrences: readonly unknown[];
@@ -242,7 +258,7 @@ const buildManifest = ({
     manifest_id: artifactManifestId(rootNode.artifact_id, graphSha256),
     root_artifact_id: rootNode.artifact_id,
     root_sha256: rootNode.sha256,
-    root_format: rootNode.format,
+    root_format: rootFormat,
     graph_sha256: graphSha256,
     node_count: orderedNodes.length,
     occurrence_count: orderedOccurrences.length,
@@ -250,7 +266,7 @@ const buildManifest = ({
   });
 
 const buildLimitations = (
-  rootFormat: ArtifactNode["format"],
+  rootFormat: ArtifactOccurrence["artifact_format"],
   reader: ArtifactReader | undefined,
   integrityContradictions: readonly IntegrityContradiction[],
 ): string[] => [

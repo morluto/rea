@@ -40,6 +40,25 @@ describe("development test selection", () => {
     expect(plan.vitestArguments).not.toContain("--changed");
   });
 
+  it("prepares test catalogs and managed evidence only for their consumers", () => {
+    const ordinary = developmentTestPlan(
+      parseDevelopmentTestRequest("focused", [
+        "tests/boundary/mcp/sessionMcp.test.ts",
+      ]),
+    );
+    expect(ordinary.artifactTasks).toEqual([]);
+    const consumers = developmentTestPlan(
+      parseDevelopmentTestRequest("focused", [
+        "tests/boundary/mcp/toolSchemaValidity.test.ts",
+        "tests/boundary/filesystem/setupSkill.test.ts",
+      ]),
+    );
+    expect(consumers.artifactTasks).toEqual([
+      "artifacts:mcp-catalog",
+      "artifacts:managed-evidence",
+    ]);
+  });
+
   it("uses the resolved branch merge base for committed source changes", () => {
     const request = parseDevelopmentTestRequest("changed", ["--base", "main"]);
     const plan = developmentTestPlan(request, "a".repeat(40));

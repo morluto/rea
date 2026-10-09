@@ -414,7 +414,6 @@ export const sessionOutputSchemas = {
       path: z.string(),
       format: targetFormatSchema,
       kind: targetKindSchema,
-      loaderArgs: z.array(z.string()),
       sha256: z.string().regex(/^[a-f0-9]{64}$/u),
       architecture: z.enum(["x86", "x86_64", "arm", "arm64"]).nullable(),
     }),
@@ -425,11 +424,6 @@ export const sessionOutputSchemas = {
       z.object({
         path: z.string(),
         bytes: z.number().int().min(0),
-        entries: z
-          .number()
-          .int()
-          .min(0)
-          .describe("Legacy primitive query count."),
         primitive_entries: z
           .number()
           .int()

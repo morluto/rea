@@ -2,6 +2,9 @@ import type { StdioServerHandle } from "@modelcontextprotocol/server/stdio";
 
 import type { BinarySession } from "../application/binary/BinarySession.js";
 import type { Logger } from "../logger.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import type { RuntimeDependencies } from "./types.js";
 import { MCP_SHUTDOWN_FAILED } from "./messages.js";
 
@@ -9,25 +12,24 @@ export const createShutdown = (input: {
   readonly handle: StdioServerHandle;
   readonly closeAndroid?: () => Promise<void>;
   readonly session: BinarySession;
-  readonly unregisterReload: () => void;
   readonly dependencies: RuntimeDependencies;
   readonly serverLogger: Logger;
 }): {
   readonly shutdown: () => Promise<void>;
   readonly request: () => void;
 } => {
-  const { handle, session, unregisterReload, dependencies, serverLogger } =
-    input;
+  const { handle, session, dependencies, serverLogger } = input;
   let shutdownPromise: Promise<void> | undefined;
   let unregisterShutdown = (): void => undefined;
   const shutdown = async (): Promise<void> => {
     shutdownPromise ??= (async () => {
-      unregisterReload();
       unregisterShutdown();
       const results = await Promise.allSettled([
         handle.close(),
         input.closeAndroid?.(),
-        session.close({ retainProviderDocuments: true }),
+        session.close({ retainProviderDocuments: true }).then((closed) => {
+          if (!closed.ok) throw closed.error;
+        }),
       ]);
       for (const result of results)
         if (result.status === "rejected") throw result.reason;
@@ -43,6 +45,8 @@ export const createShutdown = (input: {
       dependencies.setExitCode(1);
       serverLogger.error(MCP_SHUTDOWN_FAILED);
       dependencies.writeStderr(`${MCP_SHUTDOWN_FAILED}\n`);
+      if (cause instanceof AnalysisError)
+        dependencies.writeStderr(`${projectAnalysisError(cause).message}\n`);
     });
   };
   unregisterShutdown = dependencies.registerShutdown(requestShutdown);
@@ -51,7 +55,9 @@ export const createShutdown = (input: {
 
 const describeShutdownFailure = (
   cause: unknown,
-): Readonly<Record<string, string | number | boolean | null>> => {
+): Readonly<Record<string, JsonValue>> => {
+  if (cause instanceof AnalysisError)
+    return { analysis_error: projectAnalysisError(cause) };
   if (cause instanceof Error) {
     const code = "code" in cause ? cause.code : undefined;
     return {

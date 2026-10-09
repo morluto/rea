@@ -42,7 +42,7 @@ describe("Hopper analysis profiles", () => {
     expect("loaderArgs" in input).toBe(false);
   });
 
-  it("keeps compatibility output but declines cache identity when version is unresolved", async () => {
+  it("reports an unresolved profile when the launcher version is unavailable", async () => {
     const resolved = await resolveHopperAnalysisProfile(
       target("elf", "x86_64"),
       {
@@ -55,12 +55,46 @@ describe("Hopper analysis profiles", () => {
       ok: true,
       value: {
         profile: null,
-        compatibility: {
-          loaderArgs: ["-l", "ELF", "--intel-64"],
-        },
       },
     });
   });
+
+  it.each([
+    { override: [], source: "derived", arguments: ["-l", "ELF", "--intel-64"] },
+    {
+      override: ["-l", "Custom Loader", "--intel-64"],
+      source: "configured_override",
+      arguments: ["-l", "Custom Loader", "--intel-64"],
+    },
+  ])(
+    "commits effective loader arguments from $source in the profile",
+    async (scenario) => {
+      directory = await createTestTempDirectory("rea-hopper-profile-loader-");
+      const launcherPath = join(directory, "hopper");
+      await writeFile(launcherPath, "Hopper build");
+      const resolved = await resolveHopperAnalysisProfile(
+        target("elf", "x86_64"),
+        {
+          launcherPath,
+          loaderArgsOverride: scenario.override,
+          provider: HOPPER_PROVIDER_IDENTITY,
+        },
+      );
+      expect(resolved).toMatchObject({
+        ok: true,
+        value: {
+          profile: {
+            parameters: {
+              loader: {
+                source: scenario.source,
+                arguments: scenario.arguments,
+              },
+            },
+          },
+        },
+      });
+    },
+  );
 
   it("stops launcher hashing when profile resolution is cancelled", async () => {
     directory = await createTestTempDirectory("rea-hopper-profile-cancel-");

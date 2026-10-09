@@ -24,7 +24,7 @@ import {
 } from "../../../src/process/ProcessOwnershipObservation.js";
 import { createDarwinProcessRunTokenReader } from "../../../src/process/DarwinProcessRunTokenReader.js";
 import { execFileOutput } from "../../../src/process/ExecFileOutput.js";
-import { normalizeCaptureFailure } from "../../../src/process/capture/ProcessHarness.js";
+import { normalizeCaptureFailure } from "../../../src/process/capture/ProcessCaptureError.js";
 import { PlaywrightElectronActiveProvider } from "../../../src/browser/PlaywrightElectronActiveProvider.js";
 import { electronActiveObservationInputSchema } from "../../../src/domain/javascript/electronActiveObservation.js";
 
@@ -538,7 +538,7 @@ it.skipIf(process.platform === "win32")(
         executable_path: "/missing/electron",
         application_path: "/missing/application.js",
       });
-      captureOutcome = new PlaywrightElectronActiveProvider()
+      captureOutcome = new PlaywrightElectronActiveProvider({})
         .capture(input, { signal: controller.signal })
         .then(
           (value) => ({ state: "result" as const, value }),
@@ -650,7 +650,7 @@ it.skipIf(process.platform === "win32")(
         application_path: fileURLToPath(import.meta.url),
         application_root: process.cwd(),
       });
-      captureOutcome = new PlaywrightElectronActiveProvider()
+      captureOutcome = new PlaywrightElectronActiveProvider({})
         .capture(input, { signal: controller.signal })
         .then(
           (value) => ({ state: "result" as const, value }),

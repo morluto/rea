@@ -177,7 +177,7 @@ export const readLinuxDistribution = async (): Promise<
 
 /** Download, verify, install, and read back the official Hopper Linux package. */
 export const installLinuxHopper = async (
-  host: LinuxHopperInstallHost = systemLinuxHopperInstallHost(),
+  host: LinuxHopperInstallHost = systemLinuxHopperInstallHost(process.env),
   options: {
     readonly signal?: AbortSignal;
     readonly releases?: Readonly<
@@ -225,7 +225,10 @@ export const installLinuxHopper = async (
 export const linuxHopperLauncherPath = (home: string): string =>
   join(home, ".local/share/rea/hopper/bin/Hopper");
 
-const systemLinuxHopperInstallHost = (): LinuxHopperInstallHost => ({
+/** Compose package-manager and linker checks from the selected caller environment. */
+export const systemLinuxHopperInstallHost = (
+  environment: Readonly<NodeJS.ProcessEnv>,
+): LinuxHopperInstallHost => ({
   distribution: readLinuxDistribution,
   async download(url, options) {
     const response = await fetch(url, {
@@ -239,11 +242,12 @@ const systemLinuxHopperInstallHost = (): LinuxHopperInstallHost => ({
   },
   createTemporaryDirectory: () => mkdtemp(join(tmpdir(), "rea-hopper-")),
   writeArchive: (path, bytes) => writeFile(path, bytes, { mode: 0o600 }),
-  installPackage: installSystemPackage,
+  installPackage: (family, archive) =>
+    installSystemPackage(family, archive, environment),
   async launcherStatus(path) {
     try {
       await access(path);
-      const linked = await execFileOutput("ldd", [path]);
+      const linked = await execFileOutput("ldd", [path], { env: environment });
       if (!linuxSharedLibrariesAvailable(`${linked.stdout}\n${linked.stderr}`))
         return "runtime_dependencies";
       return (await linuxHopperBinarySupported(path))
@@ -284,6 +288,7 @@ export const linuxSharedLibrariesAvailable = (output: string): boolean =>
 const installSystemPackage = async (
   family: LinuxPackageFamily,
   archive: string,
+  environment: Readonly<NodeJS.ProcessEnv>,
 ): Promise<boolean> => {
   try {
     for (const command of linuxPackageManagerCommands(
@@ -291,7 +296,9 @@ const installSystemPackage = async (
       archive,
       process.getuid?.() === 0,
     ))
-      await execFileAsync(command.executable, command.args);
+      await execFileAsync(command.executable, command.args, {
+        env: environment,
+      });
     return true;
   } catch (cause: unknown) {
     // Package-manager failure is reported by the false return.

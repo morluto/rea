@@ -151,16 +151,13 @@ export const spawnOwnedProviderProcess = async (
     REA_PROCESS_RUN_ID: options.runId,
   };
   if (platform === "win32" && process.platform === "win32") {
-    if (options.stdin === "pipe")
-      throw new Error(
-        "Owned Windows provider processes do not support protocol stdin",
-      );
     const child = new WindowsOwnedProcess(
       options.command,
       options.arguments,
       options.cwd,
       environment,
       options.windowsVerbatimArguments ?? false,
+      options.stdin === "pipe",
     );
     return {
       process: child,

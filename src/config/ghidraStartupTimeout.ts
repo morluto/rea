@@ -9,12 +9,7 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647;
 /** Parse the optional setting without reading the ambient process environment. */
 export const ghidraStartupTimeoutSchema = z
   .string()
-  .optional()
-  .transform((raw) => {
-    const value = Number(raw);
-    return Number.isSafeInteger(value) &&
-      value > 0 &&
-      value <= MAX_TIMER_DELAY_MS
-      ? value
-      : DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS;
-  });
+  .regex(/^[1-9]\d*$/u, "must be a positive decimal integer")
+  .transform(Number)
+  .pipe(z.number().int().min(1).max(MAX_TIMER_DELAY_MS))
+  .default(DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS);

@@ -9,13 +9,12 @@ import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 import {
   renderCliOutputArgumentError,
   renderEmptyFilteredCliOutput,
-  sanitizeCliOutput,
   validateCliOutputArguments,
 } from "../../../src/cliOutput.js";
 
 const CLI_INTEGRATION_TIMEOUT_MS = 60_000;
 
-describe("CLI output argument and sanitization boundary", () => {
+describe("CLI output argument boundary", () => {
   it("rejects token windows that would corrupt structured output", () => {
     for (const format of ["json", "jsonl", "yaml"] as const) {
       const validation = validateCliOutputArguments([
@@ -157,57 +156,7 @@ describe("CLI output valued-flag parsing", () => {
   );
 });
 
-describe("CLI output argument and sanitization boundary", () => {
-  it("preserves normal output and sanitizes text and JSON validation errors", () => {
-    expect(sanitizeCliOutput("result: ok\n")).toBe("result: ok\n");
-    expect(sanitizeCliOutput("result: VALIDATION_ERROR\n")).toBe(
-      "result: VALIDATION_ERROR\n",
-    );
-    const raw =
-      'code: VALIDATION_ERROR\nmessage: "raw Zod details"\nfieldErrors: SECRET\n';
-    expect(sanitizeCliOutput(raw)).toBe(
-      'code: VALIDATION_ERROR\nmessage: "REA could not read the command arguments. Run `rea --help`, correct the arguments, then try again."\n',
-    );
-    expect(
-      JSON.parse(
-        sanitizeCliOutput(
-          JSON.stringify({
-            code: "VALIDATION_ERROR",
-            message: "raw Zod details",
-            fieldErrors: [{ code: "invalid_type" }],
-          }),
-        ),
-      ),
-    ).toEqual({
-      code: "VALIDATION_ERROR",
-      message:
-        "REA could not read the command arguments. Run `rea --help`, correct the arguments, then try again.",
-    });
-    expect(
-      JSON.parse(
-        sanitizeCliOutput(
-          JSON.stringify({
-            ok: false,
-            error: {
-              code: "VALIDATION_ERROR",
-              message: "raw Zod details",
-              fieldErrors: [{ code: "invalid_type" }],
-            },
-            meta: { command: "analyze" },
-          }),
-        ),
-      ),
-    ).toEqual({
-      ok: false,
-      error: {
-        code: "VALIDATION_ERROR",
-        message:
-          "REA could not read the command arguments. Run `rea --help`, correct the arguments, then try again.",
-      },
-      meta: { command: "analyze" },
-    });
-  });
-
+describe("CLI output argument boundary", () => {
   it("renders an explicit empty projection for structured filtered output", () => {
     for (const format of ["json", "jsonl", "yaml"])
       expect(
@@ -287,33 +236,98 @@ describe("compiled CLI output boundary", () => {
   );
 
   workspaceCliTest(
-    "sanitizes a real missing-argument dispatcher failure",
+    "preserves missing-argument coordinates through every dispatcher formatter",
     async ({ cli }) => {
-      const ordinary = await cli.run({ arguments: ["analyze"] });
-      expect(ordinary).toMatchObject({
-        exitCode: 1,
-        stdout:
-          'code: VALIDATION_ERROR\nmessage: "REA could not read the command arguments. Run `rea --help`, correct the arguments, then try again."\n',
-      });
-      const json = await cli.run({
-        arguments: ["--json", "analyze"],
-      });
+      const json = await cli.run({ arguments: ["--json", "analyze"] });
       expect(json).toMatchObject({
         exitCode: 1,
-        stdout: expect.not.stringContaining("fieldErrors"),
+        json: {
+          code: "VALIDATION_ERROR",
+          message: expect.stringContaining("expected string"),
+          fieldErrors: [
+            {
+              path: "path",
+              code: "invalid_type",
+              missing: true,
+              expected: "string",
+            },
+          ],
+        },
       });
-      const yaml = await cli.run({
-        arguments: ["--full-output", "analyze"],
+      for (const arguments_ of [
+        ["analyze"],
+        ["--format", "yaml", "analyze"],
+        ["--full-output", "analyze"],
+      ]) {
+        const result = await cli.run({ arguments: arguments_ });
+        expect(result.exitCode).toBe(1);
+        expect(result.stdout).toContain("VALIDATION_ERROR");
+        expect(result.stdout).toContain("fieldErrors");
+        expect(result.stdout).toContain("path");
+        expect(result.stdout).toContain("expected string");
+      }
+    },
+    CLI_INTEGRATION_TIMEOUT_MS,
+  );
+
+  workspaceCliTest(
+    "preserves invalid option names and enum constraints in structured diagnostics",
+    async ({ cli }) => {
+      const result = await cli.run({
+        arguments: [
+          "search",
+          "/caller/local/input",
+          "needle",
+          "--kind",
+          "unrecognized",
+          "--json",
+        ],
       });
-      expect(yaml).toMatchObject({
+      expect(result).toMatchObject({
         exitCode: 1,
-        stdout:
-          'ok: false\nerror:\n  code: VALIDATION_ERROR\n  message: "REA could not read the command arguments. Run `rea --help`, correct the arguments, then try again."\n',
+        json: {
+          code: "VALIDATION_ERROR",
+          fieldErrors: [
+            {
+              path: "kind",
+              code: "invalid_value",
+              missing: false,
+              message: expect.stringContaining('"strings"|"procedures"'),
+            },
+          ],
+        },
       });
     },
     CLI_INTEGRATION_TIMEOUT_MS,
   );
 
+  workspaceCliTest(
+    "prints field-specific missing-argument recovery in terminal mode",
+    async ({ processes }) => {
+      const result = await processes.run(
+        process.execPath,
+        [
+          "--input-type=module",
+          "--eval",
+          [
+            'import { createCli } from "./dist/cli.js";',
+            'Object.defineProperty(process.stdout, "isTTY", { value: true });',
+            'await createCli({}).serve(["analyze"], { exit: (code) => { process.exitCode = code; } });',
+          ].join("\n"),
+        ],
+        { cwd: process.cwd() },
+      );
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toContain(
+        "Error: missing required argument <path>",
+      );
+      expect(result.stdout).toContain("See below for usage.");
+    },
+    CLI_INTEGRATION_TIMEOUT_MS,
+  );
+});
+
+describe("compiled CLI artifact diagnostics", () => {
   workspaceCliTest(
     "preserves artifact diagnostics in JSON output",
     async ({ cli, workspace }) => {

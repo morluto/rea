@@ -1,3 +1,4 @@
+import { canonicalJson } from "../comparisonSemantics.js";
 import { compareCodePoints } from "../canonicalOrdering.js";
 import type { ApplicationNode } from "./javascriptApplicationGraph.js";
 import type { JsonValue } from "../jsonValue.js";
@@ -195,7 +196,7 @@ const moduleSourceDigestKey = (node: ApplicationNode): string | null => {
 const sourceMapKey = (node: ApplicationNode): string | null =>
   node.kind === "source-module" &&
   node.identity.strategy === "source-map-original"
-    ? `source-map\0${node.identity.original_source}`
+    ? `source-map\0${canonicalJson([node.identity.source_root, node.identity.original_source])}`
     : null;
 
 const structuralFingerprintKey = (node: ApplicationNode): string | null => {

@@ -1,3 +1,4 @@
+import { ok as resultOk } from "../../../src/domain/result.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterEach, expect, it } from "vitest";
@@ -11,6 +12,7 @@ import type {
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
+import { toolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 
 const resources: Array<{ close(): Promise<void> }> = [];
 
@@ -72,7 +74,7 @@ it("executes a realistic workflow: list methods, decompile selected, get xrefs",
   });
   expect(listResult.isError).not.toBe(true);
   expect(structured(listResult)).toMatchObject({
-    result: [
+    normalized_result: [
       { address: "0x1000", value: "main" },
       { address: "0x2000", value: "helper" },
     ],
@@ -83,7 +85,7 @@ it("executes a realistic workflow: list methods, decompile selected, get xrefs",
     arguments: { procedure: "0x1000" },
   });
   expect(structured(decompileResult)).toMatchObject({
-    result: "pseudo for 0x1000",
+    normalized_result: "pseudo for 0x1000",
   });
 
   const xrefResult = await client.callTool({
@@ -91,7 +93,7 @@ it("executes a realistic workflow: list methods, decompile selected, get xrefs",
     arguments: {},
   });
   expect(structured(xrefResult)).toMatchObject({
-    result: ["0x1000"],
+    normalized_result: ["0x1000"],
   });
 });
 
@@ -100,7 +102,7 @@ it("advertises the complete currently available inventory with a session", async
     (_path) =>
       ({
         execute: () => Promise.resolve(ok(null)),
-        close: () => Promise.resolve(),
+        close: () => Promise.resolve(resultOk(null)),
       }) satisfies AnalysisClient,
   );
   const server = createServer(
@@ -125,18 +127,21 @@ it("advertises the complete currently available inventory with a session", async
       arguments: {},
     }),
   );
+  const inventory = z
+    .object({
+      result: z.object({ tool_availability: z.array(toolAvailability) }),
+    })
+    .parse(status).result.tool_availability;
+  for (const availability of inventory) {
+    if (availability.available) continue;
+    expect(availability.reason).not.toBe("available");
+    expect(
+      availability.remediation?.trim().length,
+      availability.name,
+    ).toBeGreaterThan(0);
+  }
   const available = new Set(
-    z
-      .object({
-        result: z.object({
-          tool_availability: z.array(
-            z.object({ name: z.string(), available: z.boolean() }),
-          ),
-        }),
-      })
-      .parse(status)
-      .result.tool_availability.filter((item) => item.available)
-      .map(({ name }) => name),
+    inventory.filter((item) => item.available).map(({ name }) => name),
   );
   expect(new Set(names)).toEqual(
     new Set(TOOL_CONTRACTS.map(({ name }) => name)),

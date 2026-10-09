@@ -308,7 +308,6 @@ const candidate = (
                   { id, name: identity.name, version: "1" },
                   { fixture: id },
                 ),
-          compatibility: {},
         }),
       );
     },
@@ -325,7 +324,7 @@ const candidate = (
               ),
             ),
           ),
-        close: () => Promise.resolve(),
+        close: () => Promise.resolve(ok(null)),
       };
     },
   };

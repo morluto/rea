@@ -149,13 +149,13 @@ try {
     { timeout: 30_000 },
   );
   const inspectedMcp = await call("inspect_firmware_regions", { path });
-  const mcpEvidence = parseEvidence(inspectedMcp.evidence);
+  const mcpEvidence = parseEvidence(inspectedMcp);
   assert.deepEqual(verifyRegions(mcpEvidence), cliRegions);
   const extractedMcp = await call("extract_firmware", {
     path,
     output_directory: join(root, "mcp-output"),
   });
-  const mcpFiles = await verifyFiles(parseEvidence(extractedMcp.evidence));
+  const mcpFiles = await verifyFiles(parseEvidence(extractedMcp));
   const contentIdentity = (result) =>
     result.files.map(({ relative_path, sha256, size }) => ({
       relative_path,
@@ -168,7 +168,7 @@ try {
     output_directory: join(root, "selected-output"),
     range: { offset: oracle.offset, length: oracle.length },
   });
-  const selectedFiles = await verifyFiles(parseEvidence(selected.evidence));
+  const selectedFiles = await verifyFiles(parseEvidence(selected));
   assert.equal(selectedFiles.selection.offset, oracle.offset);
   assert.equal(selectedFiles.selection.length, oracle.length);
   const depth = await call("extract_firmware", {
@@ -177,7 +177,7 @@ try {
     max_depth: 1,
   });
   const depthResult = firmwareResultSchemas.extract_firmware.parse(
-    depth.result,
+    depth.normalized_result,
   );
   assert.equal(depthResult.coverage, "partial");
   assert.ok(depthResult.depth_limited_paths.length > 0);
@@ -192,7 +192,7 @@ try {
       output_directory: join(root, "ext4-output"),
     });
     const result = firmwareResultSchemas.extract_firmware.parse(
-      response.result,
+      response.normalized_result,
     );
     assert.ok(result.chunks.some((chunk) => chunk.handler === "extfs"));
     assert.equal(result.coverage, "complete");
@@ -234,7 +234,7 @@ try {
     const dossier = await call("analyze_function", {
       procedure: "firmware_probe",
     });
-    const evidence = parseEvidence(dossier.evidence);
+    const evidence = parseEvidence(dossier);
     assert.equal(
       evidence.subject.digest.sha256,
       oracle.files["usr/bin/probe"].sha256,
@@ -242,7 +242,7 @@ try {
     const pseudocode = await call("procedure_pseudo_code", {
       procedure: "firmware_probe",
     });
-    assert.equal(parseEvidence(pseudocode.evidence).provider.id, "ghidra");
+    assert.equal(parseEvidence(pseudocode).provider.id, "ghidra");
     assert.ok(
       JSON.stringify(evidence.normalized_result).includes("firmware_probe"),
     );

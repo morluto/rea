@@ -41,15 +41,15 @@ export type ClientConfigurationInspection =
 /** Effects required by the idempotent, non-blocking setup workflow. */
 export interface SetupHost {
   readonly platform: NodeJS.Platform;
+  readonly homeDirectory: string;
+  readonly registrationCommand: readonly string[];
   readonly nodeVersion: string;
   macosVersion(): Promise<string | undefined>;
   linuxDistribution(): Promise<LinuxDistribution | undefined>;
-  hopperPath(): Promise<string | undefined>;
-  initialSetupState?(scope?: DoctorScope): Promise<SetupInitialState>;
+  initialSetupState(scope?: DoctorScope): Promise<SetupInitialState>;
   installHopper(replaceExisting: boolean): Promise<SetupHopperInstallResult>;
-  providerEnvironment?(): Promise<SetupProviderEnvironment>;
   detectedClients(): Promise<readonly SetupClient[]>;
-  supportedClients?(): Promise<readonly SetupClient[]>;
+  supportedClients(): Promise<readonly SetupClient[]>;
   configureClient(
     client: SetupClient,
     providerEnvironment: SetupProviderEnvironment,
@@ -60,7 +60,7 @@ export interface SetupHost {
     providerEnvironment: SetupProviderEnvironment,
     command: readonly string[],
   ): Promise<boolean>;
-  inspectClientConfiguration?(
+  inspectClientConfiguration(
     client: SetupClient,
     providerEnvironment: SetupProviderEnvironment,
     command: readonly string[],

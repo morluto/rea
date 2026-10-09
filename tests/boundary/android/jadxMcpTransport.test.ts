@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { PassThrough } from "node:stream";
+import { PassThrough, Writable } from "node:stream";
 import {
   serializeMessage,
   type JSONRPCMessage,
@@ -14,7 +14,9 @@ import {
 class FixtureProcess extends EventEmitter implements ProviderProcessHandle {
   readonly pid = 1;
   readonly stdout = new PassThrough();
-  readonly stdin = new PassThrough();
+  constructor(readonly stdin: Writable = new PassThrough()) {
+    super();
+  }
   readonly stderr = new PassThrough();
   readonly exitCode = null;
   readonly signalCode = null;
@@ -23,6 +25,48 @@ class FixtureProcess extends EventEmitter implements ProviderProcessHandle {
     return true;
   }
 }
+
+it("joins pending input errors before detaching the owned protocol stream", async () => {
+  let completeWrite: ((cause: Error) => void) | undefined;
+  const failure = new Error("owned pipe closed during cancellation");
+  const process = new FixtureProcess(
+    new Writable({
+      write: (_chunk, _encoding, callback) => {
+        completeWrite = callback;
+      },
+    }),
+  );
+  const transport = new JadxMcpTransport(
+    { command: "fixture", arguments: [] },
+    async ({ runId }) => ({
+      process,
+      ownership: { runId, leaderPid: 1, processGroupId: 1 },
+      cleanup: async () => {
+        completeWrite?.(failure);
+        process.emit("exit", 1, null);
+        process.emit("close", 1, null);
+        process.stdout.end();
+        process.stderr.end();
+        return { cleaned: true, signaled: true };
+      },
+    }),
+  );
+  const errors: Error[] = [];
+  transport.onerror = (cause) => errors.push(cause);
+  await transport.start();
+  const pending = transport
+    .send({ jsonrpc: "2.0", id: 1, method: "probe" })
+    .then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+  expect(completeWrite).toBeTypeOf("function");
+  await transport.close();
+  expect(await pending).toBe(failure);
+  expect(errors).toEqual([failure]);
+  expect(process.stdin.closed).toBe(true);
+  await transport.close();
+});
 
 it("decodes split UTF-8 and newline bytes, then routes multiple complete frames", async () => {
   const process = new FixtureProcess();
@@ -123,5 +167,39 @@ it("accepts a complete JSON-RPC frame at the 8 MiB boundary", async () => {
   process.stdout.write(frame);
 
   expect(received).toEqual([maxFrameResponse]);
+  await transport.close();
+});
+
+it("retries an incomplete owned stop while joining concurrent close callers", async () => {
+  const process = new FixtureProcess();
+  let cleanupFails = true;
+  const transport = new JadxMcpTransport(
+    { command: "fixture", arguments: [] },
+    async ({ runId }) => ({
+      process,
+      ownership: {
+        runId,
+        leaderPid: process.pid,
+        processGroupId: process.pid,
+        expectedParentPid: process.pid,
+      },
+      cleanup: async () => {
+        if (cleanupFails)
+          return {
+            cleaned: false,
+            reason: "ownership verification unavailable",
+          };
+        process.emit("exit", 0, null);
+        process.emit("close", 0, null);
+        return { cleaned: true, signaled: false };
+      },
+    }),
+  );
+  await transport.start();
+  const firstClose = transport.close();
+  expect(transport.close()).toBe(firstClose);
+  await expect(firstClose).rejects.toMatchObject({ cleanupIncomplete: true });
+  cleanupFails = false;
+  await transport.close();
   await transport.close();
 });

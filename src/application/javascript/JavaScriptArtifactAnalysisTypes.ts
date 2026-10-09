@@ -1,3 +1,4 @@
+import type { JavaScriptSourceMapReference } from "../../domain/javascript/javascriptSourceMapPaths.js";
 import type {
   JavaScriptSourceRange,
   JavaScriptStaticAnalysis,
@@ -44,7 +45,7 @@ export interface JavaScriptHtmlScriptObservation {
 
 /** One original source declared by a local source map. */
 export interface JavaScriptSourceMapOriginal {
-  readonly source: string;
+  readonly reference: JavaScriptSourceMapReference;
   readonly content: string | null;
   readonly content_sha256: string | null;
 }

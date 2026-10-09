@@ -5,15 +5,14 @@ import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js"
 import type {
   AnalysisClient,
   AnalysisClientContext,
-  AnalysisProfileResolutionOptions,
   AnalysisProvider,
   CapabilityDescriptor,
   ProviderIdentity,
 } from "../AnalysisProvider.js";
 import { closeAnalysisClient } from "./AnalysisClientCleanup.js";
 
-/** Synthetic compatibility identity for a deterministic provider set. */
-export const compositeProviderIdentity = (
+/** Synthetic identity for a deterministic provider set. */
+const compositeProviderIdentity = (
   identities: readonly ProviderIdentity[],
 ): ProviderIdentity => ({
   id: `composite:${identities
@@ -29,19 +28,10 @@ export class CompositeProvider implements AnalysisProvider {
   readonly #identity: ProviderIdentity;
   readonly #capabilities: readonly CapabilityDescriptor[];
   readonly #providerByOperation: ReadonlyMap<string, AnalysisProvider>;
-  readonly #profileProvider: AnalysisProvider | undefined;
 
   constructor(readonly providers: readonly AnalysisProvider[]) {
     if (providers.length === 0)
       throw new RangeError("CompositeProvider requires at least one provider");
-    const profileProviders = providers.filter(
-      ({ resolveAnalysisProfile }) => resolveAnalysisProfile !== undefined,
-    );
-    if (profileProviders.length > 1)
-      throw new TypeError(
-        "CompositeProvider supports at most one target-bound analysis profile",
-      );
-    this.#profileProvider = profileProviders[0];
     this.#identity = Object.freeze(
       compositeProviderIdentity(
         providers.map((provider) => provider.identity()),
@@ -77,16 +67,6 @@ export class CompositeProvider implements AnalysisProvider {
     return this.#capabilities;
   }
 
-  resolveAnalysisProfile(
-    target: BinaryTarget,
-    options?: AnalysisProfileResolutionOptions,
-  ) {
-    const resolve = this.#profileProvider?.resolveAnalysisProfile;
-    return resolve === undefined
-      ? Promise.resolve(ok({ profile: null, compatibility: {} }))
-      : resolve.call(this.#profileProvider, target, options);
-  }
-
   createClient(
     target: BinaryTarget,
     profile?: AnalysisProfileCommitment,
@@ -104,9 +84,7 @@ export class CompositeProvider implements AnalysisProvider {
       clients.set(provider, created);
       return created;
     };
-    const closeWithOutcome: NonNullable<
-      AnalysisClient["closeWithOutcome"]
-    > = async (options) => {
+    const close: AnalysisClient["close"] = async (options) => {
       const outcomes = await Promise.all(
         [...clients.entries()].map(([provider, client]) =>
           closeAnalysisClient(client, provider.identity().id, options),
@@ -164,10 +142,7 @@ export class CompositeProvider implements AnalysisProvider {
         }
         return undefined;
       },
-      closeWithOutcome,
-      close: async () => {
-        await closeWithOutcome();
-      },
+      close,
     };
   }
 }

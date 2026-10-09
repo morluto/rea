@@ -200,7 +200,7 @@ export const providerCatalog = (sources) => {
         sources.webNetworkCaptureContracts.WEB_NETWORK_CAPTURE_TOOL_CONTRACTS,
     },
     {
-      identity: sources.browserProvider.CDP_BROWSER_PROVIDER_IDENTITY,
+      identity: sources.browserIdentities.CDP_BROWSER_PROVIDER_IDENTITY,
       contracts: [
         ...sources.browserContracts.BROWSER_TOOL_CONTRACTS,
         ...sources.webRuntimeContracts.WEB_RUNTIME_TOOL_CONTRACTS,
@@ -208,19 +208,17 @@ export const providerCatalog = (sources) => {
     },
     {
       identity:
-        sources.browserScenarioProvider
-          .PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY,
+        sources.browserIdentities.PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY,
       contracts:
         sources.browserScenarioContracts.BROWSER_SCENARIO_TOOL_CONTRACTS,
     },
     {
-      identity: sources.electronProvider.CDP_ELECTRON_PROVIDER_IDENTITY,
+      identity: sources.browserIdentities.CDP_ELECTRON_PROVIDER_IDENTITY,
       contracts: observationContracts,
     },
     {
       identity:
-        sources.electronActiveProvider
-          .PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY,
+        sources.browserIdentities.PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY,
       contracts: activeContracts,
     },
     {

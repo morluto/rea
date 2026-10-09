@@ -1,3 +1,4 @@
+import { parseEvidence } from "../../../src/domain/evidence.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -13,7 +14,6 @@ import { AnalysisProviderRegistry } from "../../../src/application/binary/Analys
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import type { BinaryTarget } from "../../../src/domain/binaryTarget.js";
-import { SessionProviderRouter } from "../../../src/application/binary/SessionProviderRouter.js";
 import { MANAGED_NATIVE_VERIFICATION_EXAMPLE } from "../../../src/contracts/managed/managedWorkflowExamples.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { ManagedStaticProvider } from "../../../src/dotnet/ManagedStaticProvider.js";
@@ -30,11 +30,9 @@ it("runs every managed static inspection independently of an active native targe
   const otherPath = join(directory, "other-fixture.dll");
   await writeFile(path, buildManagedPeFixture());
   await writeFile(otherPath, buildManagedPeFixture({ methodName: "Other" }));
-  const session = composeBinarySession(
-    SessionProviderRouter.selectable(new AnalysisProviderRegistry([]), [
-      new ManagedStaticProvider(),
-    ]),
-  );
+  const session = composeBinarySession(new AnalysisProviderRegistry([]), [
+    new ManagedStaticProvider(),
+  ]);
   const server = createServer(
     session,
     sessionWithUnrelatedNativeTarget(session),
@@ -69,11 +67,9 @@ it("runs every managed static inspection independently of an active native targe
       }),
     );
     expect(artifact).toMatchObject({
-      evidence: {
-        operation: "inspect_managed_artifact",
-        provider: { id: "rea-dotnet-static" },
-        subject: { local_path: path, format: "pe" },
-      },
+      operation: "inspect_managed_artifact",
+      provider: { id: "rea-dotnet-static" },
+      subject: { local_path: path, format: "pe" },
     });
     const misspelledPath = await client.callTool({
       name: "inspect_managed_members",
@@ -89,11 +85,9 @@ it("runs every managed static inspection independently of an active native targe
       await client.callTool({ name: "inspect_managed_members", arguments: {} }),
     );
     expect(members).toMatchObject({
-      evidence: {
-        operation: "inspect_managed_members",
-        provider: { id: "rea-dotnet-static" },
-        subject: { local_path: path, format: "pe" },
-      },
+      operation: "inspect_managed_members",
+      provider: { id: "rea-dotnet-static" },
+      subject: { local_path: path, format: "pe" },
     });
     const otherArtifact = structured(
       await client.callTool({
@@ -102,16 +96,14 @@ it("runs every managed static inspection independently of an active native targe
       }),
     );
     expect(otherArtifact).toMatchObject({
-      evidence: { subject: { local_path: otherPath, format: "pe" } },
+      subject: { local_path: otherPath, format: "pe" },
     });
     const reusedOtherTarget = structured(
       await client.callTool({ name: "inspect_managed_members", arguments: {} }),
     );
     expect(reusedOtherTarget).toMatchObject({
-      evidence: {
-        operation: "inspect_managed_members",
-        subject: { local_path: otherPath, format: "pe" },
-      },
+      operation: "inspect_managed_members",
+      subject: { local_path: otherPath, format: "pe" },
     });
     const boundaries = structured(
       await client.callTool({
@@ -120,11 +112,9 @@ it("runs every managed static inspection independently of an active native targe
       }),
     );
     expect(boundaries).toMatchObject({
-      evidence: {
-        operation: "inspect_managed_native_boundaries",
-        provider: { id: "rea-dotnet-static" },
-        subject: { local_path: path, format: "pe" },
-      },
+      operation: "inspect_managed_native_boundaries",
+      provider: { id: "rea-dotnet-static" },
+      subject: { local_path: path, format: "pe" },
     });
   } finally {
     await Promise.all([client.close(), server.close()]);
@@ -138,11 +128,9 @@ it("opens a managed PE and executes the managed static provider through MCP", as
   const rightPath = join(directory, "fixture-renamed.exe");
   await writeFile(path, buildManagedPeFixture());
   await writeFile(rightPath, buildManagedPeFixture({ methodName: "Renamed" }));
-  const session = composeBinarySession(
-    SessionProviderRouter.selectable(new AnalysisProviderRegistry([]), [
-      new ManagedStaticProvider(),
-    ]),
-  );
+  const session = composeBinarySession(new AnalysisProviderRegistry([]), [
+    new ManagedStaticProvider(),
+  ]);
   const server = createServer(
     session,
     sessionWithUnrelatedNativeTarget(session),
@@ -214,7 +202,7 @@ const verifyManagedCatalogAndNativeWorkflow = async (
   await outputAssertion.assert("verify_managed_native_boundaries", verified);
   expect(verified).toMatchObject({
     evidence_id: expect.stringMatching(/^ev_[a-f0-9]{64}$/u),
-    result: {
+    normalized_result: {
       summary: { verified: 1 },
       algorithm: { token_to_address_mapping: "not-inferred" },
     },
@@ -251,7 +239,7 @@ const inspectManagedStaticWorkflow = async (
   );
   await outputAssertion.assert("inspect_managed_artifact", inspected);
   expect(inspected).toMatchObject({
-    result: {
+    normalized_result: {
       classification: { status: "managed", runtime_family: "modern-dotnet" },
       references: [expect.objectContaining({ name: "System.Runtime" })],
     },
@@ -269,11 +257,7 @@ const inspectManagedStaticWorkflow = async (
       }),
     ),
   );
-  await outputAssertion.assert("inspect_managed_members", {
-    result: members.normalized_result,
-    evidence_id: members.evidence_id,
-    evidence: members,
-  });
+  await outputAssertion.assert("inspect_managed_members", members);
   expect(members).toMatchObject({
     operation: "inspect_managed_members",
     provider: { id: "rea-dotnet-static" },
@@ -297,7 +281,7 @@ const inspectManagedStaticWorkflow = async (
   );
   await outputAssertion.assert("inspect_managed_native_boundaries", boundaries);
   expect(boundaries).toMatchObject({
-    result: {
+    normalized_result: {
       identity_scope: { token_identity: "build-local" },
       pinvoke_imports: [],
       native_implementations: [],
@@ -371,11 +355,7 @@ const verifyManagedComparisonAndReconstruction = async (
       }),
     ),
   );
-  await outputAssertion.assert("compare_managed_members", {
-    result: compared.normalized_result,
-    evidence_id: compared.evidence_id,
-    evidence: compared,
-  });
+  await outputAssertion.assert("compare_managed_members", compared);
   expect(compared).toMatchObject({
     operation: "compare_managed_members",
     provider: { id: "rea-dotnet-workflows" },
@@ -482,16 +462,5 @@ const createOutputAssertion = async (client: Client) => {
 const inlineEvidence = (
   value: Readonly<Record<string, unknown>>,
 ): Record<string, unknown> => {
-  const parsed = z
-    .object({
-      evidence_id: z.string(),
-      result: z.unknown(),
-      evidence: z.object({}).passthrough(),
-    })
-    .parse(value);
-  return {
-    ...parsed.evidence,
-    evidence_id: parsed.evidence_id,
-    normalized_result: parsed.result,
-  };
+  return parseEvidence(value);
 };

@@ -179,12 +179,12 @@ async function verifyNativeValueAdapters(
       { timeout: 180000 },
     );
     assert.notEqual(result.isError, true, JSON.stringify(result));
-    const mcpEvidence = parseEvidence(result.structuredContent?.evidence);
+    const mcpEvidence = parseEvidence(result.structuredContent);
     assert.equal(mcpEvidence.operation, "trace_native_values");
     assert.equal(mcpEvidence.provider.id, "rea-workflow");
     assert.deepEqual(mcpEvidence.analysis_profile, workflowProfile);
     const mcpGraph = verifyGraph(
-      result.structuredContent?.result,
+      result.structuredContent?.normalized_result,
       target,
       procedure,
       globalAddress,
@@ -196,9 +196,7 @@ async function verifyNativeValueAdapters(
       { timeout: 180000 },
     );
     assert.notEqual(analyzed.isError, true, JSON.stringify(analyzed));
-    const functionEvidence = parseEvidence(
-      analyzed.structuredContent?.evidence,
-    );
+    const functionEvidence = parseEvidence(analyzed.structuredContent);
     assert.equal(functionEvidence.operation, "analyze_function");
     assert.equal(functionEvidence.provider.id, "ghidra");
     const functionProfile = analysisProfileSchema.parse(
@@ -207,26 +205,24 @@ async function verifyNativeValueAdapters(
     assert.deepEqual(functionProfile, upstreamProfile);
     assert.deepEqual(
       functionEvidence.normalized_result,
-      analyzed.structuredContent?.result,
+      analyzed.structuredContent?.normalized_result,
     );
     const comparison = await client.callTool(
       {
         name: "compare_functions",
         arguments: {
-          left: analyzed.structuredContent.evidence,
-          right: analyzed.structuredContent.evidence,
+          left: analyzed.structuredContent,
+          right: analyzed.structuredContent,
         },
       },
       { timeout: 180000 },
     );
     assert.notEqual(comparison.isError, true, JSON.stringify(comparison));
-    const comparisonEvidence = parseEvidence(
-      comparison.structuredContent?.evidence,
-    );
+    const comparisonEvidence = parseEvidence(comparison.structuredContent);
     assert.equal(comparisonEvidence.normalized_result.status, "unchanged");
     assert.deepEqual(
       comparisonEvidence.normalized_result,
-      comparison.structuredContent?.result,
+      comparison.structuredContent?.normalized_result,
     );
     assert.ok(
       comparisonEvidence.evidence_links.includes(functionEvidence.evidence_id),

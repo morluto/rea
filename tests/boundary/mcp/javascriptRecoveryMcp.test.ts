@@ -55,8 +55,18 @@ it.skipIf(process.platform !== "linux" || process.arch !== "x64")(
     const parsed = toolContract(
       "recover_javascript_sources",
     ).outputSchema.parse(response.structuredContent);
-    const evidence = parseEvidence(parsed.evidence);
-    expect(parsed.result).toEqual(evidence.normalized_result);
+    const evidence = parseEvidence(parsed);
+    expect(evidence).toMatchObject({
+      operation: "recover_javascript_sources",
+      confidence: "derived",
+      authority: "shipped-artifact",
+      parameters: {
+        ...args,
+        extraction_mode: "structural",
+        rewrite_level: "standard",
+      },
+    });
+    expect(parsed.normalized_result).toEqual(evidence.normalized_result);
     expect(parsed.evidence_id).toBe(evidence.evidence_id);
     expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
     await assertRecoveryCleanup(fixture.launches);

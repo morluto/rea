@@ -3,6 +3,7 @@ import type { ReferenceSourcePolicy } from "../domain/referenceSourcePolicy.js";
 import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
 
 export interface AppConfig {
+  readonly mcpMaxResponseBytes?: number;
   readonly analysisProvider: AnalysisProviderSelector;
   readonly idaMcpConfigPath?: string;
   readonly ghidraInstallDir: string | undefined;

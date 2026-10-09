@@ -1,15 +1,15 @@
-import type { McpServer } from "@modelcontextprotocol/server";
+import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
+
 import type { BinaryLayoutService } from "../application/binaryDiagnostics/BinaryLayoutService.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { toCallToolResult, toEvidenceToolResult } from "./toolResult.js";
 
 /** Bind offline layout inspection to its named contract and session Evidence owner. */
 export const registerBinaryDiagnosticsTools = (
-  server: McpServer,
+  server: EvidenceMcpServer,
   service: BinaryLayoutService,
   logger: Logger,
   recordEvidence?: EvidenceWriter["recordEvidence"],
@@ -22,9 +22,13 @@ export const registerBinaryDiagnosticsTools = (
       const result = await logToolExecution(logger, contract.name, () =>
         service.inspect(input, { signal: context.mcpReq.signal }),
       );
-      if (!result.ok) return toCallToolResult(result, contract);
+      if (!result.ok) return server.delivery.toCallToolResult(result, contract);
       const recorded = recordEvidence?.(result.value);
-      return toEvidenceToolResult(result.value, contract, recorded);
+      return server.delivery.toEvidenceToolResult(
+        result.value,
+        contract,
+        recorded,
+      );
     },
   );
 };

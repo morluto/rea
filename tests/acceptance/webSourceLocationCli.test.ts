@@ -86,9 +86,7 @@ cliTest(
       },
     });
     expect(mcpResponse.isError, JSON.stringify(mcpResponse)).not.toBe(true);
-    expect(mcpResponse.structuredContent).toMatchObject({
-      evidence: response.json,
-    });
+    expect(mcpResponse.structuredContent).toEqual(response.json);
     const invalid = await cli.run({
       arguments: [
         "trace-web-source-location",

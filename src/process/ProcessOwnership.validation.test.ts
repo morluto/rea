@@ -306,7 +306,7 @@ describe("Windows P0 process-tree cleanup", () => {
     await expect(cleanupWindowsProcessTree(42, failing)).resolves.toEqual({
       cleaned: false,
       reason:
-        "Windows P0 process-tree termination failed; Job Object ownership is unavailable",
+        "Windows process-tree termination failed for PID 42: taskkill failed",
     });
   });
 });

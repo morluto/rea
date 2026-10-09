@@ -182,11 +182,6 @@ export interface UnverifiedProcessCapture {
     readonly selected_executable_sha256: string | null;
     /** Digest associated with the launch only when path metadata stayed stable across spawn. */
     readonly executable_sha256: string | null;
-    /**
-     * Digest recorded by the original v3 format before selected and launch
-     * executable digests were distinguished. Kept only on migrated captures.
-     */
-    readonly legacy_executable_sha256?: string | undefined;
     readonly executable_identity: {
       readonly state: "path_metadata_unchanged" | "unknown";
       readonly reason: string | null;
@@ -205,12 +200,8 @@ export interface UnverifiedProcessCapture {
   readonly settlement: VerifiedProcessSettlement;
   readonly process_samples: readonly ProcessSample[];
   readonly filesystem_checkpoints: readonly FilesystemCheckpoint[];
-  /**
-   * Global observation order across independently recorded collections.
-   *
-   * Absence is accepted for captures written before this journal existed.
-   */
-  readonly event_journal?: readonly ProcessCaptureEventJournalEntry[];
+  /** Global observation order across independently recorded collections. */
+  readonly event_journal: readonly ProcessCaptureEventJournalEntry[];
   readonly files_before: readonly FileState[];
   readonly files_after: readonly FileState[];
   readonly filesystem_effects: readonly FileEffect[];
@@ -401,10 +392,6 @@ const processCaptureShapeSchema = z.strictObject({
       .string()
       .regex(/^[a-f0-9]{64}$/u)
       .nullable(),
-    legacy_executable_sha256: z
-      .string()
-      .regex(/^[a-f0-9]{64}$/u)
-      .optional(),
     executable_identity: z.strictObject({
       state: z.enum(["path_metadata_unchanged", "unknown"]),
       reason: z.string().nullable(),
@@ -479,15 +466,13 @@ const processCaptureShapeSchema = z.strictObject({
       truncated: z.boolean(),
     }),
   ),
-  event_journal: z
-    .array(
-      z.object({
-        capture_order: z.number().int().nonnegative(),
-        collection: z.enum(PROCESS_CAPTURE_EVENT_COLLECTIONS),
-        index: z.number().int().nonnegative(),
-      }),
-    )
-    .default([]),
+  event_journal: z.array(
+    z.object({
+      capture_order: z.number().int().nonnegative(),
+      collection: z.enum(PROCESS_CAPTURE_EVENT_COLLECTIONS),
+      index: z.number().int().nonnegative(),
+    }),
+  ),
   files_before: z.array(fileStateSchema),
   files_after: z.array(fileStateSchema),
   filesystem_effects: z.array(fileEffectSchema),
@@ -681,7 +666,7 @@ export const processCaptureSchema = processCaptureShapeSchema
       });
   })
   .describe(
-    "The capture must preserve its canonical scenario, comparison, and normalization SHA-256 commitments; ordered capture timestamps and contiguous sequence numbers; before and final filesystem snapshots with truncation propagated; and exit-code consistency with deadline termination. When parsing older input without an event journal, REA supplies an empty journal; empty journals are valid. A non-empty journal must reference every captured observation exactly once with unique in-range references. These cross-field invariants are checked by REA after capture.",
+    "The capture must preserve its canonical scenario, comparison, and normalization SHA-256 commitments; ordered capture timestamps and contiguous sequence numbers; before and final filesystem snapshots with truncation propagated; and exit-code consistency with deadline termination. The event journal is required; empty journals are valid. A non-empty journal must reference every captured observation exactly once with unique in-range references. These cross-field invariants are checked by REA after capture.",
   );
 
 export { parseProcessCapture } from "./processCaptureParsing.js";

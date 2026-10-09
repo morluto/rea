@@ -181,6 +181,11 @@ it("accepts complete scenario output beyond former string caps", () => {
       start_origin: longText,
       action_count: 1,
       secret_references: [longText],
+      network_content: {
+        request_body: false,
+        response_body: false,
+        header_values: false,
+      },
     },
     duration_ms: 0,
     steps: [step(0), step(1)],

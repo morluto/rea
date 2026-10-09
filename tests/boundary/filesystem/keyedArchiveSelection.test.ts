@@ -134,7 +134,7 @@ it.each([
     const root = await createTestTempDirectory("rea-keyed-kind-");
     const path = join(root, "Defaults.plist");
     await writeFile(path, Buffer.from(build({ plain: true })));
-    const result = await new ArtifactProvider(platform)
+    const result = await new ArtifactProvider(process.env, platform)
       .createClient({
         path,
         sha256: "0".repeat(64),

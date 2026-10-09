@@ -9,12 +9,10 @@ import { SessionProviderRouter } from "./SessionProviderRouter.js";
  * disjoint auxiliary operation families.
  */
 export const composeBinarySession = (
-  registry: AnalysisProviderRegistry | SessionProviderRouter,
+  registry: AnalysisProviderRegistry,
   auxiliaryProviders: readonly AnalysisProvider[] = [],
 ): BinarySession =>
   new BinarySession(
-    registry instanceof SessionProviderRouter
-      ? registry
-      : SessionProviderRouter.selectable(registry, auxiliaryProviders),
+    SessionProviderRouter.selectable(registry, auxiliaryProviders),
     new InvestigationRecords(),
   );

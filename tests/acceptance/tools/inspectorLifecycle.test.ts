@@ -39,7 +39,7 @@ it("observes a real Node Inspector and releases attachments after cancellation a
   const targets = toolContract(
     "list_javascript_runtime_targets",
   ).outputSchema.parse(discovery.structuredContent);
-  const id = targets.result.targets[0]?.target_id;
+  const id = targets.normalized_result.targets[0]?.target_id;
   if (id === undefined) throw new Error("Node Inspector target was not listed");
   const request = {
     inspector_endpoint: endpoint,
@@ -50,7 +50,7 @@ it("observes a real Node Inspector and releases attachments after cancellation a
   const observation = toolContract(
     "observe_javascript_runtime",
   ).outputSchema.parse(observed.structuredContent);
-  expect(observation.result.scripts.items).toEqual(
+  expect(observation.normalized_result.scripts.items).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
         location: expect.objectContaining({ file_path: fixture }),

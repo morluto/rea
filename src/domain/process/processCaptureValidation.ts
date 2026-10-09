@@ -26,17 +26,8 @@ const validateCommitments = (
   require: RequireInvariant,
 ): void => {
   const { manifest } = capture;
-  if (manifest.legacy_executable_sha256 !== undefined) {
-    require(manifest.selected_executable_sha256 === null &&
-      manifest.executable_sha256 === null &&
-      manifest.executable_identity.state === "unknown" &&
-      manifest.executable_identity.reason !== null &&
-      manifest.scenario.executable_sha256 ===
-        manifest.legacy_executable_sha256, "manifest.legacy_executable_sha256", "legacy executable digest must remain distinct from unknown selected and launch digests");
-  } else {
-    require(manifest.scenario.executable_sha256 ===
-      manifest.selected_executable_sha256, "manifest.selected_executable_sha256", "selected executable commitment does not match the scenario projection");
-  }
+  require(manifest.scenario.executable_sha256 ===
+    manifest.selected_executable_sha256, "manifest.selected_executable_sha256", "selected executable commitment does not match the scenario projection");
   require(manifest.executable_identity.state === "path_metadata_unchanged"
     ? manifest.executable_sha256 === manifest.selected_executable_sha256 &&
         manifest.executable_identity.reason === null
@@ -82,7 +73,7 @@ const validateEventJournal = (
   capture: UnverifiedProcessCapture,
   require: RequireInvariant,
 ): void => {
-  const journal = capture.event_journal ?? [];
+  const journal = capture.event_journal;
   if (journal.length === 0) return;
   const sizes = {
     frames: capture.frames.length,

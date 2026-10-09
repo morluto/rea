@@ -13,7 +13,7 @@ import {
   managedTableRowCounts,
   readManagedMetadataInventory,
   type ManagedMetadataInventory,
-  type ManagedResourceDirectory,
+  readManagedResourceDirectory,
 } from "./ManagedMetadataInventory.js";
 import {
   readManagedMetadataLayout,
@@ -320,30 +320,6 @@ const partialMetadataResult = ({
   ],
 });
 
-const mapResources = (
-  bytes: Buffer,
-  layout: ManagedPeLayout,
-  issues: ManagedParseIssue[],
-): ManagedResourceDirectory | null => {
-  const resources = layout.cli?.resources;
-  if (resources === undefined || (resources.rva === 0 && resources.size === 0))
-    return null;
-  try {
-    return {
-      offset: layout.rvaToOffset(
-        resources.rva,
-        resources.size,
-        "cli.resources",
-      ),
-      size: resources.size,
-    };
-  } catch (cause: unknown) {
-    if (!(cause instanceof ManagedReaderFailure)) throw cause;
-    issues.push(cause.issue);
-    return null;
-  }
-};
-
 /** Inspect PE/CLI identity directly from local bytes without CLR loading. */
 export const inspectManagedArtifactBytes = (
   bytes: Buffer,
@@ -376,7 +352,10 @@ export const inspectManagedArtifactBytes = (
     );
   }
   const resourceIssues: ManagedParseIssue[] = [];
-  const resourceDirectory = mapResources(bytes, layout, resourceIssues);
+  const resourceDirectory = readManagedResourceDirectory(
+    layout,
+    resourceIssues,
+  );
   const inventory = readManagedMetadataInventory(
     bytes,
     metadata,

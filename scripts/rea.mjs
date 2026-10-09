@@ -44,7 +44,6 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   const {
     renderCliOutputArgumentError,
     renderEmptyFilteredCliOutput,
-    sanitizeCliOutput,
     validateCliOutputArguments,
   } = await import("../dist/cliOutput.js");
   const outputArguments = validateCliOutputArguments(args);
@@ -57,13 +56,11 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
     await createCli(process.env, resultOutput).serve(args, {
       stdout: (output) => {
         if (resultOutput?.handled) {
-          if (resultOutput.failed)
-            process.stderr.write(sanitizeCliOutput(output));
+          if (resultOutput.failed) process.stderr.write(output);
           return;
         }
-        const sanitized = sanitizeCliOutput(output);
-        if (sanitized.length > 0) wroteOutput = true;
-        process.stdout.write(sanitized);
+        if (output.length > 0) wroteOutput = true;
+        process.stdout.write(output);
       },
     });
     if (!wroteOutput && !resultOutput?.handled)

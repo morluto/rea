@@ -295,6 +295,12 @@ describe("HopperClient startup failures", () => {
     clients.push(client);
     const result = await client.start();
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error._tag).toBe("HopperTimeoutError");
+    if (!result.ok) {
+      expect(result.error).toMatchObject({
+        cleanupIncomplete: true,
+        cause: { _tag: "HopperTimeoutError" },
+        diagnostics: { primary_error: { code: "provider_timeout" } },
+      });
+    }
   });
 });

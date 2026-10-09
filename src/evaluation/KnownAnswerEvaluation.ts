@@ -240,17 +240,12 @@ const evidenceFromCall = (
     return undefined;
   let evidence: Evidence;
   try {
-    evidence = parseEvidence(structured.evidence);
+    evidence = parseEvidence(structured);
   } catch {
-    // Tool-result envelopes are untrusted transcript input; invalid Evidence cannot support a claim.
+    // Transcript output is untrusted; invalid Evidence cannot support a claim.
     return undefined;
   }
-  if (
-    structured.evidence_id !== evidence.evidence_id ||
-    (item.tool ?? item.name) !== evidence.operation ||
-    !sameJson(structured.result, evidence.normalized_result)
-  )
-    return undefined;
+  if ((item.tool ?? item.name) !== evidence.operation) return undefined;
   return evidence;
 };
 

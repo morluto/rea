@@ -1,3 +1,4 @@
+import { parseConfig } from "../../src/config.js";
 import { describe, expect, it } from "vitest";
 import { runDirectAnalysis } from "../../src/application/DirectAnalysis.js";
 import type { DirectAnalysisDependencies } from "../../src/application/DirectAnalysisDependencies.js";
@@ -8,7 +9,7 @@ import {
   AnalysisInputError,
 } from "../../src/domain/analysisErrorCore.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
-import { err } from "../../src/domain/result.js";
+import { err, ok as resultOk } from "../../src/domain/result.js";
 import { observed } from "../fixtures/analysisExecution.js";
 import {
   createBinarySessionTargets,
@@ -75,10 +76,11 @@ const fixture = (
       },
       close: () => {
         closed += 1;
-        return Promise.resolve();
+        return Promise.resolve(resultOk(null));
       },
     }));
   const dependencies: DirectAnalysisDependencies = {
+    readConfiguration: () => parseConfig({}),
     createBinarySession: createSession,
     createManagedBinarySession: createSession,
   };

@@ -12,7 +12,9 @@ describe("HopperClient restart", () => {
       launcher: new FixtureLauncher(),
       startupTimeoutMs: 1_000,
     });
-    onTestFinished(() => client.close());
+    onTestFinished(async () => {
+      await client.close();
+    });
 
     const starting = client.start();
     await client.close();

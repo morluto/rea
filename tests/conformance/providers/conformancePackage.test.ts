@@ -206,6 +206,7 @@ describe("conformance package construction", () => {
         required_dimensions: [],
         envelopes: Array.from({ length: 101 }, (_, index) => ({
           evidence_id: `ev_${String(index).padStart(64, "0")}`,
+          analysis_profile: null,
           subject: null,
           provider: { id: "fixture", name: "Fixture", version: null },
           predicate_type: "observation",

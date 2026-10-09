@@ -5,6 +5,7 @@ import {
   runProviderAnalysis,
 } from "../../src/application/DirectAnalysis.js";
 import type { DirectAnalysisDependencies } from "../../src/application/DirectAnalysisDependencies.js";
+import { parseConfig } from "../../src/config.js";
 import type { AnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { AnalysisTimeoutError } from "../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
@@ -48,8 +49,7 @@ const factories = (
         ? observed({ operation, observation: "retained result" })
         : err(options.executionError);
     },
-    close: async () => undefined,
-    closeWithOutcome: async () => {
+    close: async () => {
       if (options.thrownCleanup !== undefined) throw options.thrownCleanup;
       return options.cleanupError === undefined
         ? ok(null)
@@ -57,6 +57,7 @@ const factories = (
     },
   }));
   const dependencies: DirectAnalysisDependencies = {
+    readConfiguration: () => parseConfig({}),
     createBinarySession: () => session,
     createManagedBinarySession: () => session,
   };

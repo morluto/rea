@@ -112,10 +112,7 @@ export async function verifyBrowserNetworkEvidence(
         { timeout: 60_000 },
       );
       assert.notEqual(result.isError, true, JSON.stringify(result));
-      const evidence = parseEvidence({
-        ...result.structuredContent?.evidence,
-        normalized_result: result.structuredContent?.result,
-      });
+      const evidence = parseEvidence(result.structuredContent);
       mcpProof = assertBrowserNetworkEvidence(
         browserScenarioCaptureSchema.parse(evidence.normalized_result),
         site.origin,
@@ -130,10 +127,7 @@ export async function verifyBrowserNetworkEvidence(
           { timeout: 60_000 },
         );
         assert.notEqual(connected.isError, true, JSON.stringify(connected));
-        const connectedEvidence = parseEvidence({
-          ...connected.structuredContent?.evidence,
-          normalized_result: connected.structuredContent?.result,
-        });
+        const connectedEvidence = parseEvidence(connected.structuredContent);
         assert.deepEqual(
           assertBrowserNetworkEvidence(
             browserScenarioCaptureSchema.parse(

@@ -16,6 +16,7 @@ import { type AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   describeProcessCaptureExecutionFailure,
   ProcessCaptureError,
+  normalizeCaptureFailure,
   processCaptureCancelled,
 } from "./ProcessCaptureError.js";
 export { ProcessCaptureError } from "./ProcessCaptureError.js";
@@ -55,7 +56,6 @@ import { makeProcessCaptureEnvironment } from "./ProcessCaptureEnvironment.js";
 import { classifyFilesystemEffects } from "./ProcessFilesystemEffects.js";
 import { processCaptureOwnershipUnavailableReason } from "./ProcessCaptureCapability.js";
 import type { ProcessOwnershipBaseline } from "../ProcessOwnership.js";
-import { DarwinProcessOwnershipInspectionError } from "../DarwinProcessRunTokenReader.js";
 export { probeProcessCaptureCapability } from "./ProcessCaptureCapability.js";
 
 interface StartedCaptureRuntime {
@@ -89,7 +89,6 @@ const cleanupFailedStartup = async (options: {
           options.observations.process_samples.value,
         ).filter((groupId) => groupId !== options.terminal?.pid)
       : undefined;
-  options.terminal?.kill("SIGKILL");
   if (options.observations !== undefined && options.renderer !== undefined) {
     try {
       options.observations.rendered_frames = {
@@ -320,23 +319,6 @@ const finishProcessRun = async (options: {
     options.observations,
     partialContext,
   );
-};
-
-/** Preserve typed process-inspection preflight failures at the capture boundary. */
-export const normalizeCaptureFailure = (
-  cause: unknown,
-  signal: AbortSignal | undefined,
-): unknown => {
-  if (cause instanceof ProcessCaptureError) return cause;
-  if (cause instanceof DarwinProcessOwnershipInspectionError)
-    return new ProcessCaptureError(cause.message, { cause });
-  if (
-    signal?.aborted === true &&
-    (cause === signal.reason ||
-      (cause instanceof Error && cause.name === "AbortError"))
-  )
-    return processCaptureCancelled();
-  return cause;
 };
 
 const completeCapture = async (options: {
@@ -572,7 +554,6 @@ const runProcessScenario = async (
       ...(signal === undefined ? {} : { signal }),
     });
   } catch (cause: unknown) {
-    runtime?.terminal.kill("SIGKILL");
     executionFailure = normalizeCaptureFailure(cause, signal);
     if (
       runtime !== undefined &&

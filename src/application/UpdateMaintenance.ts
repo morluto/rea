@@ -51,9 +51,12 @@ const setupPlanSchema = z.object({
 export const existingMaintenanceScope = async (
   home: string,
   entryPoint: string,
+  environment: Readonly<NodeJS.ProcessEnv>,
 ): Promise<MaintenanceScope> => {
-  const registrations = await readClientRegistrationStatuses(home, entryPoint);
-  const supported = supportedClients(home);
+  const registrations = await readClientRegistrationStatuses(home, entryPoint, {
+    environment,
+  });
+  const supported = supportedClients(home, process.platform, environment);
   const clients: string[] = [];
   for (const registration of registrations) {
     if (
@@ -96,10 +99,11 @@ export const existingMaintenanceScope = async (
 export const planIntegrationMaintenance = async (
   home: string,
   entryPoint: string,
+  environment: Readonly<NodeJS.ProcessEnv>,
   execute: (command: readonly string[]) => Promise<Result<string, string>>,
 ): Promise<IntegrationMaintenance> => {
   try {
-    const scope = await existingMaintenanceScope(home, entryPoint);
+    const scope = await existingMaintenanceScope(home, entryPoint, environment);
     if (scope.clients.length === 0 && !scope.skill)
       return { status: "current", plannedActions: [] };
     const command = [

@@ -1,3 +1,4 @@
+import { ok as resultOk } from "../../../src/domain/result.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
 
@@ -11,7 +12,7 @@ describe("reconstruction coverage MCP", () => {
   it("evaluates inline fail-closed coverage without session retention", async () => {
     const session = createTestBinarySession(() => ({
       execute: () => Promise.resolve(observed(null)),
-      close: () => Promise.resolve(),
+      close: () => Promise.resolve(resultOk(null)),
     }));
     const server = createServer(session, session);
     const client = new Client({ name: "coverage-mcp-test", version: "1" });

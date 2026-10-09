@@ -249,7 +249,6 @@ const deepProvider = (id: string): DeepProviderFixture => {
             { id, name: identity.name, version: "1" },
             { provider: id },
           ),
-          compatibility: {},
         }),
       );
     },
@@ -258,6 +257,8 @@ const deepProvider = (id: string): DeepProviderFixture => {
       fixture.clients.push(state);
       return {
         execute: (operation) => {
+          if (operation === "health")
+            return Promise.resolve(successfulExecution(id, profile?.provider));
           state.calls.push(operation);
           if (fixture.fail)
             return Promise.resolve(
@@ -268,7 +269,7 @@ const deepProvider = (id: string): DeepProviderFixture => {
         },
         close: () => {
           state.closed = true;
-          return Promise.resolve();
+          return Promise.resolve(ok(null));
         },
       };
     },
@@ -317,7 +318,7 @@ const auxiliaryProvider = (
             ),
           ),
         ),
-      close: () => Promise.resolve(),
+      close: () => Promise.resolve(ok(null)),
     }),
   };
 };

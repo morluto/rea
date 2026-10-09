@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import type { Socket } from "node:net";
 import { tmpdir } from "node:os";
 
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -150,11 +151,24 @@ export class GhidraClient {
   /** Launch Ghidra once and require its exact post-analysis handshake. */
   start(signal?: AbortSignal): Promise<GhidraStartResult> {
     if (this.#closePromise !== undefined)
-      return this.#closePromise.then(() => this.start(signal));
+      return this.#closePromise.then(
+        () => this.start(signal),
+        (cause: unknown) =>
+          err(
+            new GhidraSessionError(
+              "process",
+              "Ghidra cleanup remains incomplete",
+              this.#diagnostics(),
+              { cause, cleanupFailure: this.#cleanupError(cause) },
+            ),
+          ),
+      );
     if (this.#startPromise !== undefined) {
       if (this.#startupController?.signal.aborted && !signal?.aborted)
         return this.#startPromise.then((result) =>
-          result.ok ? result : this.start(signal),
+          result.ok || result.error.cleanupFailure !== undefined
+            ? result
+            : this.start(signal),
         );
       return this.#startPromise;
     }
@@ -238,8 +252,58 @@ export class GhidraClient {
   }
 
   /** Stop the owned process group and remove all project/runtime artifacts. */
-  close(): Promise<void> {
-    return this.#requestClose(false);
+  async close(): Promise<Result<null, AnalysisError>> {
+    try {
+      await this.#requestClose(false);
+      return ok(null);
+    } catch (cause: unknown) {
+      return err(this.#cleanupError(cause));
+    }
+  }
+
+  #cleanupError(cause: unknown): AnalysisError {
+    if (cause instanceof AnalysisError && cause.cleanupIncomplete) return cause;
+    return new ProviderCleanupError(
+      "ghidra",
+      [
+        ...(this.#process === undefined ? [] : ["ghidra-process"]),
+        ...[this.#runtimeRoot, this.#socketRoot].flatMap((root) =>
+          root === undefined ? [] : [root.path],
+        ),
+      ],
+      {
+        reason: cause instanceof Error ? cause.message : String(cause),
+        diagnostics: this.#diagnostics(),
+      },
+      { cause },
+    );
+  }
+
+  async #startupFailure(
+    primary: GhidraSessionError,
+  ): Promise<GhidraStartResult> {
+    try {
+      await this.#cleanup();
+      return err(primary);
+    } catch (cause: unknown) {
+      return err(
+        new GhidraSessionError(
+          primary.kind,
+          primary.message,
+          primary.diagnostics,
+          {
+            ...(primary.cause === undefined ? {} : { cause: primary.cause }),
+            ...(primary.timeoutMs === undefined
+              ? {}
+              : { timeoutMs: primary.timeoutMs }),
+            ...(primary.remoteCode === undefined
+              ? {}
+              : { remoteCode: primary.remoteCode }),
+            cleanupFailure: this.#cleanupError(cause),
+          },
+        ),
+      );
+    }
   }
 
   #requestClose(forceStop: boolean): Promise<void> {
@@ -323,8 +387,7 @@ export class GhidraClient {
         "Ghidra private endpoint allocation failed",
         cause,
       );
-      await this.#cleanup();
-      return err(failure);
+      return this.#startupFailure(failure);
     }
     try {
       const snapshot = await createGhidraTargetSnapshot(
@@ -342,8 +405,7 @@ export class GhidraClient {
         "Ghidra target snapshot failed admission",
         cause,
       );
-      await this.#cleanup();
-      return err(failure);
+      return this.#startupFailure(failure);
     }
     if (deadline.signal.aborted) return this.#startupInterrupted(deadline);
     this.#token = randomBytes(32).toString("hex");
@@ -374,8 +436,7 @@ export class GhidraClient {
         : launched.error instanceof GhidraSessionError
           ? launched.error
           : this.#failure("start", launched.error.message, launched.error);
-      await this.#cleanup();
-      return err(failure);
+      return this.#startupFailure(failure);
     }
     this.#launch = launched.value;
     this.#process = new ProviderProcessSupervisor(launched.value, {
@@ -384,22 +445,19 @@ export class GhidraClient {
     const connected = await this.#connect(endpoint, deadline);
     if (!connected.ok) {
       const failure = connected.error;
-      await this.#cleanup();
-      return err(failure);
+      return this.#startupFailure(failure);
     }
     const completed = await completeGhidraStartupHandshake({
       deadline,
       request: (method, params, requestOptions) =>
         this.#wire.request(method, params, requestOptions),
       parseSessionInfo: (value) => this.#parseSessionInfo(value),
-      cleanup: () => this.#cleanup(),
       failure: this.#failure,
       startupTimeoutMs: this.#options.startupTimeoutMs,
     });
-    if (completed.ok) {
-      await this.#lineage.observe(this.#launch);
-      this.#requestQueue.reopen();
-    }
+    if (!completed.ok) return this.#startupFailure(completed.error);
+    await this.#lineage.observe(this.#launch);
+    this.#requestQueue.reopen();
     return completed;
   }
 
@@ -644,8 +702,7 @@ export class GhidraClient {
     deadline: ProviderStartupDeadline,
   ): Promise<GhidraStartResult> {
     const failure = this.#interruptionFailure(deadline);
-    await this.#cleanup();
-    return err(failure);
+    return this.#startupFailure(failure);
   }
 
   #interruptionFailure(deadline: ProviderStartupDeadline): GhidraSessionError {

@@ -96,7 +96,7 @@ const verifyMcpNonLinuxCurrentDocument = async (
   mcpOptions,
   current,
 ) => {
-  if (json(prompts.mcpText(current)).result !== "fixture")
+  if (json(prompts.mcpText(current)).normalized_result !== "fixture")
     throw new Error("packaged MCP bridge call failed");
   const batch = await client.callTool(
     {
@@ -105,7 +105,7 @@ const verifyMcpNonLinuxCurrentDocument = async (
     },
     mcpOptions,
   );
-  const batchResult = json(prompts.mcpText(batch)).result;
+  const batchResult = json(prompts.mcpText(batch)).normalized_result;
   if (
     batch.isError === true ||
     batchResult?.total !== 1 ||
@@ -175,10 +175,10 @@ const verifyMcpInlineArtifactEvidence = async (
       mcpOptions,
     );
     assert.notEqual(inspected.isError, true, JSON.stringify(inspected));
-    const source = parseEvidence(inspected.structuredContent?.evidence);
+    const source = parseEvidence(inspected.structuredContent);
     assert.deepEqual(
       source.normalized_result,
-      inspected.structuredContent?.result,
+      inspected.structuredContent?.normalized_result,
     );
     assert.deepEqual(
       json(prompts.mcpText(inspected)),
@@ -188,17 +188,17 @@ const verifyMcpInlineArtifactEvidence = async (
       {
         name: "compare_artifacts",
         arguments: {
-          left: inspected.structuredContent.evidence,
-          right: inspected.structuredContent.evidence,
+          left: inspected.structuredContent,
+          right: inspected.structuredContent,
         },
       },
       mcpOptions,
     );
     assert.notEqual(compared.isError, true, JSON.stringify(compared));
-    const comparison = parseEvidence(compared.structuredContent?.evidence);
+    const comparison = parseEvidence(compared.structuredContent);
     assert.deepEqual(
       comparison.normalized_result,
-      compared.structuredContent?.result,
+      compared.structuredContent?.normalized_result,
     );
     assert.ok(comparison.evidence_links.includes(source.evidence_id));
     const bundle = await client.callTool(
@@ -219,12 +219,12 @@ const verifyMcpInlineArtifactEvidence = async (
       mcpOptions,
     );
     assert.notEqual(extracted.isError, true, JSON.stringify(extracted));
-    const extraction = parseEvidence(extracted.structuredContent?.evidence);
+    const extraction = parseEvidence(extracted.structuredContent);
     assert.deepEqual(
       extraction.normalized_result,
-      extracted.structuredContent?.result,
+      extracted.structuredContent?.normalized_result,
     );
-    const materialized = extracted.structuredContent?.result;
+    const materialized = extracted.structuredContent?.normalized_result;
     assert.equal(typeof materialized?.output_root, "string");
     outputRoot = materialized.output_root;
     assert.equal(materialized.containment_verified, true);

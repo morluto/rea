@@ -4,11 +4,12 @@ import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { MachOSliceArtifactReader } from "../MachOSliceArtifactReader.js";
 import { NativeDmgArtifactReader } from "../NativeDmgArtifactReader.js";
 import { ZipArtifactReader } from "../ZipArtifactReader.js";
-import type { ArtifactNode } from "../../domain/artifactGraph.js";
+import type { ArtifactOccurrence } from "../../domain/artifactGraph.js";
 
 export const createReader = async (
   path: string,
-  format: ArtifactNode["format"],
+  format: ArtifactOccurrence["artifact_format"],
+  environment: Readonly<NodeJS.ProcessEnv>,
   signal?: AbortSignal,
 ): Promise<ArtifactReader | undefined> => {
   switch (format) {
@@ -24,18 +25,18 @@ export const createReader = async (
       return new AsarArtifactReader(path);
     case "mach-o-universal":
       return process.platform === "darwin"
-        ? new MachOSliceArtifactReader(path)
+        ? new MachOSliceArtifactReader(path, environment)
         : undefined;
     case "dmg":
       if (process.platform !== "darwin") return undefined;
-      return NativeDmgArtifactReader.create(path, signal);
+      return NativeDmgArtifactReader.create(path, environment, signal);
     default:
       return undefined;
   }
 };
 
 export const inventoryLimitations = (
-  format: ArtifactNode["format"],
+  format: ArtifactOccurrence["artifact_format"],
   reader: ArtifactReader | undefined,
 ): string[] => {
   if (reader !== undefined) return [];

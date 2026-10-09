@@ -1,3 +1,5 @@
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
+import { parseConfig } from "../config.js";
 import {
   runDirectAnalysis as executeDirectAnalysis,
   runProviderAnalysis as executeProviderAnalysis,
@@ -10,37 +12,32 @@ import {
 import type { DirectAnalysisDependencies } from "../application/DirectAnalysisDependencies.js";
 import { createBinarySession, createManagedBinarySession } from "./binary.js";
 
-const dependencies: DirectAnalysisDependencies = {
-  createBinarySession,
-  createManagedBinarySession,
+/** Bind one-shot analysis and status commands to one caller-selected environment. */
+export const createDirectAnalysis = (
+  selectedEnvironment: Readonly<Record<string, string | undefined>>,
+) => {
+  const environment = snapshotEnvironment(selectedEnvironment);
+  const dependencies: DirectAnalysisDependencies = {
+    readConfiguration: () => parseConfig(environment),
+    createBinarySession: (config, logger) =>
+      createBinarySession(config, logger, environment),
+    createManagedBinarySession,
+  };
+  return {
+    runDirectAnalysis: executeDirectAnalysis.bind(undefined, dependencies),
+    runProviderAnalysis: executeProviderAnalysis.bind(undefined, dependencies),
+    runProviderStatus: executeProviderStatus.bind(undefined, dependencies),
+    runCapabilityStatus: executeCapabilityStatus.bind(undefined, dependencies),
+  };
 };
 
-/** Run one isolated binary operation through the production session factory. */
-export const runDirectAnalysis = executeDirectAnalysis.bind(
-  undefined,
-  dependencies,
-);
+/** Bound operations used by CLI command registration. */
+export type DirectAnalysis = ReturnType<typeof createDirectAnalysis>;
 
-/** Run one isolated native, artifact or managed operation. */
-export const runProviderAnalysis = executeProviderAnalysis.bind(
-  undefined,
-  dependencies,
-);
-
-/** Execute managed metadata without constructing native provider candidates. */
+/** Execute managed metadata without configuration or native provider candidates. */
 export const runManagedProviderExecution = executeManagedProvider.bind(
   undefined,
-  dependencies,
-);
-
-/** Report production provider candidates without opening a target. */
-export const runProviderStatus = executeProviderStatus.bind(
-  undefined,
-  dependencies,
-);
-
-/** Report production session operations without opening a target. */
-export const runCapabilityStatus = executeCapabilityStatus.bind(
-  undefined,
-  dependencies,
+  {
+    createManagedBinarySession,
+  },
 );

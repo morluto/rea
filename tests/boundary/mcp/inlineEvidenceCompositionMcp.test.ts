@@ -20,18 +20,20 @@ describe("inline MCP Evidence composition", () => {
       );
       const comparison = await mcp.callTool({
         name: "compare_functions",
-        arguments: { left: analyzed.evidence, right: analyzed.evidence },
+        arguments: { left: analyzed, right: analyzed },
       });
       expect(comparison.isError).not.toBe(true);
-      const inline = parseEvidence(analyzed.evidence);
-      expect(inline.normalized_result).toEqual(analyzed.result);
+      const inline = parseEvidence(analyzed);
+      expect(inline.normalized_result).toEqual(analyzed.normalized_result);
       expect(session.evidenceById(inline.evidence_id)).toEqual(inline);
       const compared = toolContract("compare_functions").outputSchema.parse(
         comparison.structuredContent,
       );
-      const comparisonEvidence = parseEvidence(compared.evidence);
+      const comparisonEvidence = parseEvidence(compared);
       expect(comparisonEvidence.evidence_links).toContain(inline.evidence_id);
-      expect(comparisonEvidence.normalized_result).toEqual(compared.result);
+      expect(comparisonEvidence.normalized_result).toEqual(
+        compared.normalized_result,
+      );
       const bundle = await mcp.callTool({
         name: "get_evidence_bundle",
         arguments: {},

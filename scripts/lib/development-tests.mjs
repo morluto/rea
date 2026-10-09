@@ -49,7 +49,20 @@ export const parseDevelopmentTestRequest = (mode, arguments_) => {
   return { mode, paths: [...new Set(paths)], base, dryRun };
 };
 
-/** Plan source feedback or a strict explicit run with its build prerequisite. */
+// Test-only outputs are declared beside the test planner rather than becoming
+// runtime or typecheck prerequisites. Add a consumer here when it reads one.
+const artifactConsumers = {
+  "artifacts:mcp-catalog": [
+    "tests/boundary/mcp/contractPresentation.test.ts",
+    "tests/boundary/mcp/toolSchemaValidity.test.ts",
+  ],
+  "artifacts:product-catalog": ["tests/boundary/cli/productCatalog.test.ts"],
+  "artifacts:managed-evidence": [
+    "tests/boundary/filesystem/setupSkill.test.ts",
+  ],
+};
+
+/** Plan source feedback or explicit tests with their runtime/artifact prerequisites. */
 export const developmentTestPlan = (request, baseCommit) => {
   const explicit = request.paths.length > 0;
   if (
@@ -60,6 +73,10 @@ export const developmentTestPlan = (request, baseCommit) => {
   const projects = request.mode === "focused" ? [] : sourceProjects;
   return {
     needsBuild: request.paths.some((path) => !sourceTest(path)),
+    artifactTasks: Object.entries(artifactConsumers).flatMap(
+      ([task, consumers]) =>
+        request.paths.some((path) => consumers.includes(path)) ? [task] : [],
+    ),
     vitestArguments: [
       "run",
       ...projects.flatMap((project) => ["--project", project]),

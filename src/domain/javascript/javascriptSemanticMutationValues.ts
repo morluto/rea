@@ -32,25 +32,26 @@ export const invalidateSemanticMutationPath = (
     return { ...value, properties };
   }
   if (value.status === "array") {
-    const index = typeof key === "number" ? key : Number(key);
-    if (
-      !Number.isSafeInteger(index) ||
-      index < 0 ||
-      String(index) !== String(key)
-    )
-      return unknown;
-    const items = value.items.map((item, position) =>
-      position === index
-        ? invalidateSemanticMutationPath(item, remaining)
+    const name = String(key);
+    // Array length writes can remove every index; ordinary named properties
+    // and sparse indices affect only their own slot.
+    if (name === "length") return unknown;
+    const observed = value.items.some((item) => item.name === name);
+    const items = value.items.map((item) =>
+      item.name === name
+        ? {
+            ...item,
+            presence:
+              remaining.length === 0
+                ? ("unknown-coverage" as const)
+                : item.presence,
+            value: invalidateSemanticMutationPath(item.value, remaining),
+          }
         : item,
     );
-    const itemPresence = {
-      ...value.itemPresence,
-      ...(remaining.length === 0 || value.items[index] === undefined
-        ? { [index]: "unknown-coverage" as const }
-        : {}),
-    };
-    return { ...value, items, itemPresence };
+    if (!observed)
+      items.push({ name, presence: "unknown-coverage", value: unknown });
+    return { ...value, items };
   }
   return unknown;
 };

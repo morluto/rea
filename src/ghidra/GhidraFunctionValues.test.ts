@@ -8,7 +8,6 @@ import {
 } from "./GhidraFunctionValues.js";
 import {
   ghidraFunctionClassification,
-  ghidraFunctionBody,
   ghidraFunctionDossier,
   ghidraFunctionIdentity,
   ghidraNativeApiBoundary,
@@ -16,6 +15,28 @@ import {
 } from "../domain/ghidraValues.fixture.js";
 
 describe("Ghidra function-analysis result values", () => {
+  it.each(["reference_kinds_available", "unresolved_calls"])(
+    "rejects omitted %s instead of inventing complete reference observations",
+    (field) => {
+      const output = {
+        procedure: ghidraFunctionIdentity(),
+        direction: "outgoing",
+        references: [ghidraReferenceEdge()],
+        reference_kinds_available: true,
+        unresolved_calls: [],
+      };
+      const incomplete = Object.fromEntries(
+        Object.entries(output).filter(([key]) => key !== field),
+      );
+      expect(
+        parseGhidraFunctionResult("procedure_references", output),
+      ).toMatchObject({ ok: true });
+      expect(
+        parseGhidraFunctionResult("procedure_references", incomplete),
+      ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
+    },
+  );
+
   it("rejects p-code relationships that refer to omitted operation IDs", () => {
     const dossier = ghidraFunctionDossier();
     if (
@@ -100,7 +121,7 @@ describe("Ghidra jump-table mapping contract", () => {
     });
   });
 
-  it("normalizes legacy missing defaults without promoting unknown cases", () => {
+  it("rejects omitted default observations instead of repairing obsolete bridge output", () => {
     const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
     const boundary = dossier.native_api;
     if (boundary?.available !== true)
@@ -109,19 +130,20 @@ describe("Ghidra jump-table mapping contract", () => {
     const mapping = table?.mappings[0];
     if (table === undefined || mapping === undefined)
       throw new TypeError("Ghidra jump-table fixture is unavailable");
-    const { default_targets: _legacyDefaults, ...legacy } = table;
+    const { default_targets: omittedDefaults, ...withoutDefaults } = table;
+    expect(omittedDefaults).toHaveLength(1);
     const parsed = parseGhidraFunctionResult("analyze_function", {
       ...dossier,
       native_api: {
         ...boundary,
         jump_tables: [
-          { ...legacy, mappings: [{ ...mapping, case_value: null }] },
+          { ...withoutDefaults, mappings: [{ ...mapping, case_value: null }] },
         ],
       },
     });
-    if (!parsed.ok) throw parsed.error;
-    expect(functionDossierSchema.parse(parsed.value).native_api).toMatchObject({
-      jump_tables: [{ default_targets: [], mappings: [{ case_value: null }] }],
+    expect(parsed).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisOutputError" },
     });
   });
 

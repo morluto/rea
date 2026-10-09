@@ -105,9 +105,7 @@ export async function verifyBrowserModules(
       arguments: input,
     });
     assert.notEqual(response.isError, true, mcpTextValue(response));
-    const mcpEvidence = parseEvidence(
-      JSON.parse(mcpTextValue(response)).evidence,
-    );
+    const mcpEvidence = parseEvidence(JSON.parse(mcpTextValue(response)));
     const mcpResult = assertTrace(mcpEvidence, oracle, site, scriptIndex);
     assert.deepEqual(mcpResult, cliResult, "CLI and MCP module traces differ");
     assert.equal(
@@ -143,7 +141,7 @@ export async function verifyBrowserModules(
                     },
                   }),
                 ),
-              ).evidence,
+              ),
             );
       const result = webModuleTraceResultSchema.parse(
         withoutMap.normalized_result,
@@ -236,7 +234,7 @@ export async function verifyBrowserModules(
             },
           });
           assert.notEqual(response.isError, true, mcpTextValue(response));
-          evidence = parseEvidence(JSON.parse(mcpTextValue(response)).evidence);
+          evidence = parseEvidence(JSON.parse(mcpTextValue(response)));
         }
         const result = webModuleTraceResultSchema.parse(
           evidence.normalized_result,

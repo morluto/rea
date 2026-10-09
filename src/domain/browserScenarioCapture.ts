@@ -34,7 +34,7 @@ export const browserScenarioCaptureSchema = z
       start_origin: z.string().min(1),
       action_count: z.number().int().min(1),
       secret_references: z.array(z.string().min(1)),
-      network_content: browserNetworkContentSelectionValuesSchema.optional(),
+      network_content: browserNetworkContentSelectionValuesSchema,
     }),
     duration_ms: z.number().int().min(0),
     steps: z.array(browserScenarioStepSchema).min(1),

@@ -1,5 +1,4 @@
 import type { ExecutableFormatHint } from "../domain/dosCom.js";
-import { parseConfig } from "../config.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { EnhancedTools } from "./EnhancedTools.js";
 import { executeFunctionAnalysisEvidence } from "./FunctionAnalysisEvidence.js";
@@ -132,7 +131,7 @@ export const runProviderAnalysis = async (
 
 /** Execute managed metadata inspection in an isolated managed-only session. */
 export const runManagedProviderExecution = async (
-  dependencies: DirectAnalysisDependencies,
+  dependencies: Pick<DirectAnalysisDependencies, "createManagedBinarySession">,
   path: string,
   tool: ManagedToolName,
   signal?: AbortSignal,
@@ -189,18 +188,10 @@ const runAnalysis = async (
     readonly signal: AbortSignal;
     readonly providerId?: AnalysisProviderSelector;
     readonly formatHint?: ExecutableFormatHint;
-    /**
-     * Environment the configuration is read from. Defaults to the process
-     * environment so existing callers are unchanged, but a caller may supply
-     * one — which is what lets the MCP path's injected environment reach this
-     * code, and what makes configuration-driven behaviour testable without
-     * mutating `process.env`.
-     */
-    readonly environment?: Readonly<Record<string, string | undefined>>;
   },
 ): Promise<JsonValue> => {
   const { logger, signal, snapshotPath } = options;
-  const config = parseConfig(options.environment ?? process.env);
+  const config = dependencies.readConfiguration();
   if (!config.ok) return cliError(config.error);
   const session = dependencies.createBinarySession(config.value, logger);
   return withSessionCleanup(

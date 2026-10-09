@@ -16,7 +16,6 @@ import {
   CAPTURE_SKIP_REASON,
   itWithCaptureCapability,
 } from "./processCaptureCapability.js";
-import { z } from "zod";
 
 const exec = promisify(execFile);
 
@@ -40,10 +39,7 @@ const captureViaMcp = async (scenario: Record<string, unknown>) => {
     arguments: scenario,
   });
   expect(result.isError, JSON.stringify(result)).not.toBe(true);
-  const evidence = parseEvidence(
-    z.object({ evidence: z.unknown() }).parse(result.structuredContent)
-      .evidence,
-  );
+  const evidence = parseEvidence(result.structuredContent);
   await client.ping();
   return evidence;
 };

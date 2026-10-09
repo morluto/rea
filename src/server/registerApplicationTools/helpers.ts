@@ -1,10 +1,12 @@
+import type { ToolResultDelivery } from "../toolResult.js";
 import { APPLICATION_TOOL_CONTRACTS } from "../../contracts/applicationToolContracts.js";
 import type { Evidence } from "../../domain/evidence.js";
-import { toEvidenceToolResult } from "../toolResult.js";
 import type { ApplicationToolRegistration } from "./types.js";
 
 export const recordResult = (
-  options: ApplicationToolRegistration,
+  options: ApplicationToolRegistration & {
+    readonly delivery: ToolResultDelivery;
+  },
   contract: (typeof APPLICATION_TOOL_CONTRACTS)[number],
   evidence: Evidence,
   unknownKind?:
@@ -19,7 +21,7 @@ export const recordResult = (
           evidence,
           unknownRegistration(evidence, unknownKind),
         );
-  return toEvidenceToolResult(evidence, contract, recorded);
+  return options.delivery.toEvidenceToolResult(evidence, contract, recorded);
 };
 
 const unknownRegistration = (

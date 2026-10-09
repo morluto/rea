@@ -48,8 +48,7 @@ export async function verifyBrowserDomDestinations(
     });
     assert.notEqual(result.isError, true, mcpTextValue(result));
     assertFormDestinations(
-      parseEvidence(JSON.parse(mcpTextValue(result)).evidence)
-        .normalized_result,
+      parseEvidence(JSON.parse(mcpTextValue(result))).normalized_result,
       documentUrl,
     );
     return { cli: true, stdio_mcp: true, current_document_destinations: 4 };

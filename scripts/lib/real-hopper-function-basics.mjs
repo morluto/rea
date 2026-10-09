@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { requireMcpResult } from "./mcp-verifier-results.mjs";
+import { requireMcpEvidenceResult } from "./mcp-verifier-results.mjs";
 
 export const verifyHopperFunctionBasics = async (
   client,
   options,
   procedure,
 ) => {
-  const containment = requireMcpResult(
+  const containment = requireMcpEvidenceResult(
     await client.callTool(
       {
         name: "resolve_containing_procedure",
@@ -25,7 +25,7 @@ export const verifyHopperFunctionBasics = async (
     );
   }
 
-  const references = requireMcpResult(
+  const references = requireMcpEvidenceResult(
     await client.callTool(
       {
         name: "procedure_references",
@@ -42,7 +42,7 @@ export const verifyHopperFunctionBasics = async (
     throw new Error("procedure_references returned an invalid result");
   }
 
-  const instructions = requireMcpResult(
+  const instructions = requireMcpEvidenceResult(
     await client.callTool(
       {
         name: "read_function_instructions",

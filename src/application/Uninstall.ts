@@ -8,7 +8,7 @@ import {
 } from "./ClientConfigurationDocument.js";
 import { copyFile, lstat, readFile, realpath, rm } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
-import { homedir } from "node:os";
+import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { join } from "node:path";
 
 import writeFileAtomic from "write-file-atomic";
@@ -161,23 +161,30 @@ const removeAll = async (
 
 /** Create uninstall effects contained to detected client configs and REA-owned paths. */
 export const systemUninstallHost = (
-  home = homedir(),
+  selectedHome: string | undefined = undefined,
   fileSystem: UninstallFileSystem = systemFileSystem,
-): UninstallHost => ({
-  clients: () => Promise.resolve(supportedClients(home)),
-  inspectClient: async (client) => {
-    const read = await readClientConfiguration(client, fileSystem);
-    return read.kind === "item" && read.item.status === "failed"
-      ? read.item
-      : undefined;
-  },
-  removeClient: (client) => removeClient(client, fileSystem),
-  removeSkill: () => removeManagedSkills(home, fileSystem),
-  purgeData: async () => [
-    await removeManagedPath(join(home, ".rea/cache"), "cache", fileSystem),
-    await removeManagedPath(join(home, ".rea/state"), "state", fileSystem),
-  ],
-});
+  environment: Readonly<NodeJS.ProcessEnv> = process.env,
+  platform: NodeJS.Platform = process.platform,
+): UninstallHost => {
+  const home =
+    selectedHome ?? homeDirectoryFromEnvironment(environment, platform);
+  return {
+    clients: () =>
+      Promise.resolve(supportedClients(home, platform, environment)),
+    inspectClient: async (client) => {
+      const read = await readClientConfiguration(client, fileSystem);
+      return read.kind === "item" && read.item.status === "failed"
+        ? read.item
+        : undefined;
+    },
+    removeClient: (client) => removeClient(client, fileSystem),
+    removeSkill: () => removeManagedSkills(home, fileSystem),
+    purgeData: async () => [
+      await removeManagedPath(join(home, ".rea/cache"), "cache", fileSystem),
+      await removeManagedPath(join(home, ".rea/state"), "state", fileSystem),
+    ],
+  };
+};
 
 type ClientConfigurationRead =
   | { readonly kind: "item"; readonly item: UninstallItem }

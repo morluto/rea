@@ -61,8 +61,8 @@ it("advertises actual SDK schemas, instrumentation effects and session-owned inl
     const parsed = toolContract(name).outputSchema.parse(
       response.structuredContent,
     );
-    const evidence = parseEvidence(parsed.evidence);
-    expect(parsed.result).toEqual(evidence.normalized_result);
+    const evidence = parseEvidence(parsed);
+    expect(parsed.normalized_result).toEqual(evidence.normalized_result);
     expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
   }
   expect(toolContract("observe_web_execution").effects).toMatchObject({

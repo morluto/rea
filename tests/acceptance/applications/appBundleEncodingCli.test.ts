@@ -155,7 +155,7 @@ describe.skipIf(process.platform !== "darwin")(
         });
         expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
         expect(inspected.structuredContent).toMatchObject({
-          result: {
+          normalized_result: {
             value: {
               CFBundleExecutable: "App",
               CFBundleIdentifier: "dev.rea.encoding",

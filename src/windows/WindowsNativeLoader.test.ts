@@ -7,7 +7,7 @@ import {
   type WindowsNativeLoadHost,
 } from "./WindowsNativeLoader.js";
 
-const fixture = () => {
+const fixture = (protocolStdin?: boolean) => {
   const bytes = Buffer.alloc(128);
   bytes.write("MZ");
   bytes.writeUInt32LE(64, 0x3c);
@@ -51,6 +51,7 @@ const fixture = () => {
           privateDacl: true,
           atomicJobAssignment: true,
           killOnOwnerClose: true,
+          ...(protocolStdin === undefined ? {} : { protocolStdin }),
         }),
       };
     },
@@ -59,6 +60,22 @@ const fixture = () => {
 };
 
 describe("packaged Windows native admission", () => {
+  it.each([true, false])(
+    "preserves protocol stdin capability %s alongside existing job controls",
+    (protocolStdin) => {
+      const value = fixture(protocolStdin);
+      expect(loadWindowsNativeAuthority(value.host)).toMatchObject({
+        available: true,
+        authority: {
+          inspection: {
+            protocolStdin,
+            atomicJobAssignment: true,
+            killOnOwnerClose: true,
+          },
+        },
+      });
+    },
+  );
   it("loads only after compatibility and digest checks, preserving producer identity", () => {
     const value = fixture();
     expect(loadWindowsNativeAuthority(value.host)).toMatchObject({

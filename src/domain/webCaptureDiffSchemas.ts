@@ -6,8 +6,15 @@ import { webMcpDiscoverySchema } from "./webMcpDiscovery.js";
 
 /** One normalized passive page snapshot accepted by capture comparison. */
 export const captureSnapshotSchema = z.object({
-  inspection: webPageInspectionSchema,
-  webmcp: webMcpDiscoverySchema.nullable().default(null),
+  inspection: webPageInspectionSchema.describe(
+    "Complete normalized_result from inspect_web_page, including capture identity, observations, completeness, and limitations.",
+  ),
+  webmcp: webMcpDiscoverySchema
+    .nullable()
+    .default(null)
+    .describe(
+      "Complete normalized_result from discover_webmcp_tools for this capture, or null when it was not recorded.",
+    ),
 });
 
 /** Input for deterministic comparison of two normalized web captures. */

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { resolveJavaScriptSourceMapReference } from "./javascriptSourceMapPaths.js";
 import {
   createJavaScriptApplicationGraph,
   createJavaScriptApplicationNode,
@@ -143,6 +144,7 @@ describe("source to bundle digest changes", () => {
       kind: "source-module",
       identity: {
         strategy: "source-map-original",
+        source_root: null,
         stability: "source-map-exact",
         source_map_sha256: HASH.artifact,
         original_source: "webpack://fixture/./src/modified.ts",
@@ -150,8 +152,16 @@ describe("source to bundle digest changes", () => {
       },
       observations: [
         {
-          label: "src/modified.ts",
-          properties: { source_sha256: HASH.unchanged },
+          label: "display label",
+          source_map_reference: resolveJavaScriptSourceMapReference(
+            "webpack://fixture/./src/modified.ts",
+            null,
+            "dist/main.js.map",
+          ),
+          properties: {
+            source_sha256: HASH.unchanged,
+            source: "src/removed.ts",
+          },
           evidence: artifactEvidence(HASH.artifact, "dist/main.js.map"),
         },
       ],
@@ -170,7 +180,10 @@ describe("source to bundle digest changes", () => {
       limitations: [],
     });
     const result = compareSourceToBundle({
-      reference: historicalGraph("complete", ["src/modified.ts"]),
+      reference: historicalGraph("complete", [
+        "src/modified.ts",
+        "src/removed.ts",
+      ]),
       application: {
         evidenceId: EVIDENCE_ID,
         rootArtifactSha256: HASH.artifact,
@@ -179,6 +192,7 @@ describe("source to bundle digest changes", () => {
     });
 
     expect(result.summary).toMatchObject({ modified: 1, unknown: 0 });
+    expect(item(result, "src/removed.ts").candidates).toEqual([]);
     expect(item(result, "src/modified.ts")).toMatchObject({
       status: "modified",
       confidence: "high",

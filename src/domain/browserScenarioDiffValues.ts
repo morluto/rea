@@ -75,10 +75,10 @@ const normalizationInputSchema = z
 /** Input for step-aligned comparison of two browser scenario captures. */
 export const compareBrowserScenariosInputSchema = z.strictObject({
   before_scenario: browserScenarioCaptureSchema.describe(
-    "Earlier complete capture_browser_scenario result.",
+    "Earlier complete normalized_result from capture_browser_scenario.",
   ),
   after_scenario: browserScenarioCaptureSchema.describe(
-    "Later complete capture_browser_scenario result.",
+    "Later complete normalized_result from capture_browser_scenario.",
   ),
   normalization: normalizationInputSchema
     .default({ rules: [] })

@@ -16,6 +16,7 @@ import { TOOL_CONTRACTS } from "../../../dist/contracts/toolContracts.js";
 /** Real unusable Java runtimes and selectors must lead to applicable recovery. */
 export async function verifyAndroidFailureRecovery({
   java,
+  jvmArguments = [],
   entrypoint,
   environment,
   path,
@@ -24,6 +25,8 @@ export async function verifyAndroidFailureRecovery({
   fixture,
 }) {
   const root = await mkdtemp(join(tmpdir(), "rea-android-recovery-"));
+  const javaName = process.platform === "win32" ? "java.exe" : "java";
+  const jlinkName = process.platform === "win32" ? "jlink.exe" : "jlink";
   try {
     const withoutJar = { ...environment };
     delete withoutJar.REA_JADX_MCP_JAR;
@@ -36,10 +39,10 @@ export async function verifyAndroidFailureRecovery({
     });
     let jlink;
     for (const candidate of isAbsolute(java)
-      ? [join(dirname(java), "jlink")]
+      ? [join(dirname(java), jlinkName)]
       : (environment.PATH ?? "")
           .split(delimiter)
-          .map((directory) => join(directory, "jlink"))) {
+          .map((directory) => join(directory, jlinkName))) {
       try {
         await access(candidate);
         jlink = candidate;
@@ -53,10 +56,22 @@ export async function verifyAndroidFailureRecovery({
         "Android failure-recovery verification requires the full JDK's jlink via JAVA_HOME or PATH.",
       );
     const jre = join(root, "jre");
-    await execute(jlink, ["--add-modules", "java.base", "--output", jre], {
-      timeout: 60_000,
+    await execute(
+      jlink,
+      [
+        ...jvmArguments.map((argument) => `-J${argument}`),
+        "--add-modules",
+        "java.base",
+        "--output",
+        jre,
+      ],
+      {
+        timeout: 60_000,
+      },
+    );
+    await execute(join(jre, "bin", javaName), ["-version"], {
+      timeout: 10_000,
     });
-    await execute(join(jre, "bin/java"), ["-version"], { timeout: 10_000 });
     const empty = join(root, "empty-path");
     await mkdir(empty);
     if (process.platform === "linux") {
@@ -74,6 +89,8 @@ export async function verifyAndroidFailureRecovery({
     }
     const withoutJavaHome = { ...environment };
     delete withoutJavaHome.JAVA_HOME;
+    for (const key of Object.keys(withoutJavaHome))
+      if (key.toLowerCase() === "path") delete withoutJavaHome[key];
     const invalidJar = join(root, "invalid.jar");
     await writeFile(invalidJar, "not a Java archive");
     const environments = [
@@ -85,7 +102,8 @@ export async function verifyAndroidFailureRecovery({
       {
         label: "missing java",
         env: { ...withoutJavaHome, PATH: empty },
-        observation: "ENOENT",
+        observation:
+          process.platform === "win32" ? "Cannot find java.exe" : "ENOENT",
       },
       {
         label: "invalid engine archive with a working JDK",
@@ -224,7 +242,7 @@ export async function verifyAndroidFailureRecovery({
       );
       assert.notEqual(control.isError, true, JSON.stringify(control));
       assert.equal(
-        control.structuredContent.result.package_name,
+        control.structuredContent.normalized_result.package_name,
         fixture.package,
       );
       console.log("PASS MCP valid package after selector failures");

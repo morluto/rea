@@ -75,7 +75,7 @@ export const compareJavaScriptExportShapesInputSchema = z
 
 const projectedReturnFieldShape = {
   path: jsonPointerSchema,
-  presence: z.enum(["present", "absent", "unknown-coverage"]).optional(),
+  presence: z.enum(["present", "absent", "unknown-coverage"]),
 };
 const projectedReturnFieldSchema = z.discriminatedUnion("state", [
   z.strictObject({

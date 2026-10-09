@@ -45,7 +45,7 @@ const call = async (name, args) => {
     timeout: 150000,
   });
   assert.notEqual(result.isError, true, mcpTextValue(result));
-  return parseEvidence(JSON.parse(mcpTextValue(result)).evidence);
+  return parseEvidence(JSON.parse(mcpTextValue(result)));
 };
 const fingerprint = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const counts = [];

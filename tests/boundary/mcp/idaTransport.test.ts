@@ -89,12 +89,15 @@ const fixture = async (redirectUrl?: string, cycle = false) => {
   const address = server.address();
   if (address === null || typeof address === "string")
     throw new Error("Missing HTTP fixture address");
-  const connection: IdaMcpConnection = createIdaMcpConnection({
-    url: `http://127.0.0.1:${address.port}/mcp`,
-    headers: { Authorization: "Bearer transport-fixture-secret" },
-    mode: "headless",
-    timeoutMs: 2000,
-  });
+  const connection: IdaMcpConnection = createIdaMcpConnection(
+    {
+      url: `http://127.0.0.1:${address.port}/mcp`,
+      headers: { Authorization: "Bearer transport-fixture-secret" },
+      mode: "headless",
+      timeoutMs: 2000,
+    },
+    {},
+  );
   cleanups.push(() => connection.close());
   return {
     connection,

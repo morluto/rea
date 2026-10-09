@@ -154,8 +154,8 @@ const analyzeThroughStdioMcp = async (
       expect.arrayContaining([expect.objectContaining({ type: "text" })]),
     );
     const result = z
-      .object({ result: javascriptApplicationAnalysisResultSchema })
-      .parse(response.structuredContent).result;
+      .object({ normalized_result: javascriptApplicationAnalysisResultSchema })
+      .parse(response.structuredContent).normalized_result;
     expect(result).toMatchObject({
       input_path: inputPath,
       format: "directory",

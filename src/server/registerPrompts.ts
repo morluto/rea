@@ -1,6 +1,6 @@
+import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import {
   completable,
-  type McpServer,
   type RegisteredPrompt,
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
@@ -27,7 +27,7 @@ export interface GuidedPromptRegistry {
 
 /** Register every guided workflow and its session-scoped argument completers. */
 export const registerGuidedPrompts = (
-  server: McpServer,
+  server: EvidenceMcpServer,
   analysis: AnalysisOperationPort,
   session?: BinarySessionPort,
 ): GuidedPromptRegistry => {
@@ -52,7 +52,7 @@ export const registerGuidedPrompts = (
 };
 
 const registerPrompt = (
-  server: McpServer,
+  server: EvidenceMcpServer,
   contract: PromptContract,
   completion: PromptCompletionSource,
 ): RegisteredPrompt => {

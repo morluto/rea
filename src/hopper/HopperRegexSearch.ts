@@ -19,11 +19,6 @@ const MATCHING_DEADLINE_MS = 5_000;
 const inputSchema = z.strictObject({
   ...analysisSearchInput,
   mode: z.literal("regex"),
-  document: z.string().nullish(),
-  case_sensitive: z
-    .boolean()
-    .nullish()
-    .transform((value) => value ?? false),
 });
 const replySchema = z.discriminatedUnion("status", [
   z.strictObject({
@@ -104,7 +99,9 @@ export class HopperRegexSearch {
     };
     const inventory = await this.client.callTool(
       operation === "search_strings" ? "list_strings" : "list_procedures",
-      input.data.document == null ? {} : { document: input.data.document },
+      input.data.document === undefined
+        ? {}
+        : { document: input.data.document },
       inventoryOptions,
     );
     if (!inventory.ok) return inventory;

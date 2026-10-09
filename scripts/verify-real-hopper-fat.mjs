@@ -18,7 +18,10 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import Ajv from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
-import { mcpTextValue, requireMcpResult } from "./lib/mcp-verifier-results.mjs";
+import {
+  mcpTextValue,
+  requireMcpOperationResult,
+} from "./lib/mcp-verifier-results.mjs";
 import { snapshotHopperRuntime } from "./lib/real-hopper-cleanup.mjs";
 import { HOPPER_TARGET_LEASE_DIRECTORY } from "../dist/hopper/HopperTargetLease.js";
 import { parseConfig } from "../dist/config.js";
@@ -219,7 +222,7 @@ try {
       { name, arguments: args },
       { timeout: 180_000 },
     );
-    const result = requireMcpResult(reply, name);
+    const result = requireMcpOperationResult(reply, name);
     const schema = catalog.tools.find(
       (tool) => tool.name === name,
     )?.outputSchema;

@@ -166,14 +166,14 @@ describe("HopperClient cleanup", () => {
     clients.push(client);
     expect((await client.start()).ok).toBe(true);
 
-    const closed = await client.closeWithOutcome();
+    const closed = await client.close();
 
     expect(closed).toMatchObject({
       ok: false,
       error: {
         _tag: "ProviderAdapterError",
         cleanupIncomplete: true,
-        cleanupResources: ["hopper-document"],
+        cleanupResources: expect.arrayContaining(["hopper-document"]),
       },
     });
     if (!closed.ok)
@@ -183,7 +183,7 @@ describe("HopperClient cleanup", () => {
           provider_id: "hopper",
           operation: "close_binary",
           cleanup: "incomplete",
-          resources: ["hopper-document"],
+          resources: expect.arrayContaining(["hopper-document"]),
         },
       });
   });
@@ -196,14 +196,14 @@ describe("HopperClient cleanup", () => {
     clients.push(client);
     expect((await client.start()).ok).toBe(true);
 
-    const closed = await client.closeWithOutcome();
+    const closed = await client.close();
 
     expect(closed).toMatchObject({
       ok: false,
       error: {
         _tag: "ProviderAdapterError",
         cleanupIncomplete: true,
-        cleanupResources: ["hopper-document"],
+        cleanupResources: expect.arrayContaining(["hopper-document"]),
       },
     });
   });

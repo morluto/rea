@@ -1,13 +1,12 @@
+import type { EvidenceMcpServer } from "../EvidenceMcpServer.js";
 import { resolvePairedEvidenceRequest } from "../../application/EvidenceInputResolver.js";
 import { recordSessionEvidenceSources } from "../sessionEvidence.js";
-import type { McpServer } from "@modelcontextprotocol/server";
 
 import { compareApplicationVersionsEvidenceValidated } from "../../application/javascript/JavaScriptApplicationWorkflowService.js";
 import { applicationToolContract } from "../../contracts/applicationToolContracts.js";
 import { applicationVersionComparisonResultSchema } from "../../domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
-import { toCallToolResult } from "../toolResult.js";
 import { recordResult } from "./helpers.js";
 import type { ApplicationToolRegistration } from "./types.js";
 
@@ -15,7 +14,7 @@ const compareContract = applicationToolContract("compare_application_versions");
 
 /** Register the provider-neutral JavaScript version comparison tool. */
 export const registerCompareApplicationVersionsTool = (
-  server: McpServer,
+  server: EvidenceMcpServer,
   options: ApplicationToolRegistration,
 ): void => {
   server.registerTool(
@@ -26,7 +25,8 @@ export const registerCompareApplicationVersionsTool = (
         input,
         options.evidenceById,
       );
-      if (!resolved.ok) return toCallToolResult(resolved, compareContract);
+      if (!resolved.ok)
+        return server.delivery.toCallToolResult(resolved, compareContract);
       const parsed = resolved.value;
       const result = await logToolExecution(
         options.logger,
@@ -34,7 +34,8 @@ export const registerCompareApplicationVersionsTool = (
         () =>
           Promise.resolve(compareApplicationVersionsEvidenceValidated(parsed)),
       );
-      if (!result.ok) return toCallToolResult(result, compareContract);
+      if (!result.ok)
+        return server.delivery.toCallToolResult(result, compareContract);
       const sources = [
         parsed.left,
         parsed.right,
@@ -45,13 +46,14 @@ export const registerCompareApplicationVersionsTool = (
         options.recordEvidence,
         sources,
       );
-      if (!recorded.ok) return toCallToolResult(recorded, compareContract);
+      if (!recorded.ok)
+        return server.delivery.toCallToolResult(recorded, compareContract);
       const comparison = applicationVersionComparisonResultSchema.parse(
         result.value.normalized_result,
       );
       const unknown = comparison.summary.unknown > 0;
       return recordResult(
-        options,
+        { ...options, delivery: server.delivery },
         compareContract,
         result.value,
         unknown ? "application-version-comparison" : undefined,

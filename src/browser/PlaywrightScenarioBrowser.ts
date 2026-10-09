@@ -105,12 +105,17 @@ const configureAttachedEnvironment = async (
   }
 };
 
+/** Launch or attach using the caller-selected environment and browser engine. */
 export const openPlaywrightScenarioBrowser = async (
   scenario: BrowserScenario,
   environment: Readonly<Record<string, string | undefined>>,
+  launcher: Pick<
+    typeof chromium,
+    "connectOverCDP" | "launchPersistentContext"
+  > = chromium,
 ): Promise<OpenedScenarioBrowser> => {
   if (scenario.browser.mode === "connect") {
-    const browser = await chromium.connectOverCDP(
+    const browser = await launcher.connectOverCDP(
       scenario.browser.cdp_endpoint,
       { timeout: 0 },
     );
@@ -130,7 +135,7 @@ export const openPlaywrightScenarioBrowser = async (
   const profilePath = await mkdtemp(join(tmpdir(), "rea-browser-scenario-"));
   await chmod(profilePath, 0o700);
   try {
-    const context = await chromium.launchPersistentContext(profilePath, {
+    const context = await launcher.launchPersistentContext(profilePath, {
       executablePath: resolve(scenario.browser.executable_path),
       headless: scenario.browser.headless,
       acceptDownloads: false,

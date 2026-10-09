@@ -27,7 +27,9 @@ import {
 import {
   mcpTextValue,
   requireEvidenceProvider,
-  requireMcpResult,
+  requireMcpOperationResult,
+  requireMcpLifecycleResult,
+  requireMcpEvidenceResult,
   requireWorkflowEvidenceProvider,
 } from "./lib/mcp-verifier-results.mjs";
 import {
@@ -64,7 +66,6 @@ const sessionsBefore = await snapshotHopperRuntime(
 );
 const ownedProcessIds = new Set();
 const textValue = mcpTextValue;
-const requireSuccessfulTool = requireMcpResult;
 
 const requireOverview = (value, operation) => {
   if (
@@ -87,7 +88,7 @@ const verifyRelationships = async (client, options, procedure) => {
   const related = {};
   for (const operation of ["procedure_callers", "procedure_callees"]) {
     related[operation] = requireAddressArray(
-      requireSuccessfulTool(
+      requireMcpEvidenceResult(
         await client.callTool(
           { name: operation, arguments: { procedure } },
           options,
@@ -98,7 +99,7 @@ const verifyRelationships = async (client, options, procedure) => {
     );
   }
   related.xrefs = requireAddressArray(
-    requireSuccessfulTool(
+    requireMcpEvidenceResult(
       await client.callTool(
         { name: "xrefs", arguments: { address: procedure } },
         options,
@@ -111,7 +112,7 @@ const verifyRelationships = async (client, options, procedure) => {
 };
 
 const verifyByteAccess = async (client, options, firstAddress) => {
-  const byteRead = requireSuccessfulTool(
+  const byteRead = requireMcpEvidenceResult(
     await client.callTool(
       { name: "read_bytes", arguments: { address: firstAddress, length: 16 } },
       options,
@@ -127,7 +128,7 @@ const verifyByteAccess = async (client, options, firstAddress) => {
   ) {
     throw new Error("read_bytes returned an invalid bounded byte window");
   }
-  const mappedOffset = requireSuccessfulTool(
+  const mappedOffset = requireMcpEvidenceResult(
     await client.callTool(
       {
         name: "address_to_file_offset",
@@ -151,7 +152,7 @@ const verifyByteAccess = async (client, options, firstAddress) => {
 };
 
 const verifyCurrentTarget = async (client, options) => {
-  const procedures = requireSuccessfulTool(
+  const procedures = requireMcpEvidenceResult(
     await client.callTool({ name: "list_procedures", arguments: {} }, options),
     "list_procedures",
   );
@@ -167,7 +168,7 @@ const verifyCurrentTarget = async (client, options) => {
     options,
     firstAddress,
   );
-  const boundedResult = requireSuccessfulTool(
+  const boundedResult = requireMcpEvidenceResult(
     await client.callTool(
       {
         name: "batch_decompile",
@@ -196,7 +197,7 @@ const verifyCurrentTarget = async (client, options) => {
     "batch_decompile",
   );
   const dossier = requireFunctionDossier(
-    requireSuccessfulTool(
+    requireMcpEvidenceResult(
       await client.callTool(
         {
           name: "analyze_function",
@@ -274,7 +275,10 @@ try {
   const fullSessionStatus = () =>
     client.callTool({ name: "binary_session", arguments: {} }, options);
   const initialSession = await fullSessionStatus();
-  const initialStatus = requireMcpResult(initialSession, "binary_session");
+  const initialStatus = requireMcpLifecycleResult(
+    initialSession,
+    "binary_session",
+  );
   const listed = await client.listTools();
   const availableTools = initialStatus.tool_availability;
   if (!Array.isArray(availableTools))
@@ -300,7 +304,7 @@ try {
     options,
   );
   if (opened.isError === true) throw new Error(textValue(opened));
-  const firstStatus = requireMcpResult(
+  const firstStatus = requireMcpLifecycleResult(
     await fullSessionStatus(),
     "binary_session",
   );
@@ -312,7 +316,7 @@ try {
     { name: "list_documents", arguments: {} },
     options,
   );
-  requireSuccessfulTool(documents, "list_documents");
+  requireMcpEvidenceResult(documents, "list_documents");
   requireBridgeProgress(progressUpdates);
   const rejectedProcedure = await client.callTool(
     {
@@ -327,7 +331,7 @@ try {
     { name: "binary_overview", arguments: {} },
     options,
   );
-  requireSuccessfulTool(overview, "binary_overview");
+  requireMcpEvidenceResult(overview, "binary_overview");
   const inventoryCounts = await verifyHopperInventories(client, options);
   requireEvidenceProvider(
     documents,
@@ -343,9 +347,9 @@ try {
     options,
   );
   requireTruthfulMemoryRegions(
-    requireSuccessfulTool(segments, "list_segments"),
+    requireMcpEvidenceResult(segments, "list_segments"),
   );
-  const firstDocuments = requireSuccessfulTool(documents, "list_documents");
+  const firstDocuments = requireMcpEvidenceResult(documents, "list_documents");
   if (
     !Array.isArray(firstDocuments) ||
     firstDocuments.length === 0 ||
@@ -356,10 +360,10 @@ try {
     client,
     options,
     firstDocuments,
-    requireSuccessfulTool,
+    requireMcpEvidenceResult,
   );
   const firstOverview = requireOverview(
-    requireSuccessfulTool(overview, "binary_overview"),
+    requireMcpEvidenceResult(overview, "binary_overview"),
     "binary_overview",
   );
   if (firstOverview.document !== currentDocument)
@@ -372,7 +376,7 @@ try {
     options,
     document: currentDocument,
     oracle: fixtureTargets.oracle,
-    normalizedResult: requireSuccessfulTool,
+    normalizedResult: requireMcpEvidenceResult,
   });
   const boundaryContracts = await verifyHopperBoundaryContracts(
     client,
@@ -385,7 +389,7 @@ try {
     options,
   );
   if (switched.isError === true) throw new Error(textValue(switched));
-  const secondSession = requireMcpResult(
+  const secondSession = requireMcpLifecycleResult(
     await fullSessionStatus(),
     "binary_session",
   );
@@ -400,19 +404,19 @@ try {
     options,
   );
   const verifiedSecondOverview = requireOverview(
-    requireSuccessfulTool(secondOverview, "binary_overview"),
+    requireMcpEvidenceResult(secondOverview, "binary_overview"),
     "binary_overview after target switch",
   );
   const secondAnalysis = await verifyCurrentTarget(client, options);
-  const documentsAfterTargetSwitch = requireMcpResult(
+  const documentsAfterTargetSwitch = requireMcpEvidenceResult(
     await client.callTool({ name: "list_documents", arguments: {} }, options),
-    "list_documents after target switch",
+    "list_documents",
   );
   const secondDocument = await requireCurrentDocument(
     client,
     options,
     documentsAfterTargetSwitch,
-    requireSuccessfulTool,
+    requireMcpEvidenceResult,
   );
   if (verifiedSecondOverview.document !== secondDocument)
     throw new Error(
@@ -432,9 +436,9 @@ try {
   );
   if (reopenedTarget.isError === true)
     throw new Error(textValue(reopenedTarget));
-  const documentsAfterReopen = requireMcpResult(
+  const documentsAfterReopen = requireMcpEvidenceResult(
     await client.callTool({ name: "list_documents", arguments: {} }, options),
-    "list_documents after reopening target B",
+    "list_documents",
   );
   if (
     !Array.isArray(documentsAfterReopen) ||
@@ -446,7 +450,7 @@ try {
   const largeInventory = await openAndVerifyLargeFixture({
     client,
     options,
-    normalizedResult: requireSuccessfulTool,
+    normalizedResult: requireMcpEvidenceResult,
     path: largeTarget,
     expectedCount: fixtureTargets.largeOracle.symbolCount,
     symbolPrefix: fixtureTargets.largeOracle.symbolPrefix,
@@ -471,7 +475,7 @@ try {
   let terminalInstructions = null;
   if (fixtureTargets.unicode !== undefined) {
     const call = async (name, args = {}) =>
-      requireSuccessfulTool(
+      requireMcpOperationResult(
         await client.callTool({ name, arguments: args }, options),
         name,
       );
@@ -492,7 +496,7 @@ try {
       : { unicode: fixtureTargets.unicode.path }),
     ownedProcessIds,
   });
-  const closedSession = requireMcpResult(
+  const closedSession = requireMcpLifecycleResult(
     await fullSessionStatus(),
     "binary_session",
   );

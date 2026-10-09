@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { writeAnalysisSnapshot } from "../../../src/application/binary/AnalysisSnapshotFiles.js";
-import { runDirectAnalysis } from "../../../src/composition/directAnalysis.js";
+import { createDirectAnalysis } from "../../../src/composition/directAnalysis.js";
 import type { AnalysisSnapshot } from "../../../src/domain/analysisSnapshot.js";
 import {
   snapshotBinding,
@@ -35,7 +35,7 @@ describe("direct analysis snapshot files", () => {
     vi.stubEnv("REA_ANALYSIS_PROVIDER", "environment-provider");
 
     await expect(
-      runDirectAnalysis(
+      createDirectAnalysis(process.env).runDirectAnalysis(
         targetPath,
         "binary_overview",
         {},
@@ -81,6 +81,7 @@ describe("direct analysis snapshot files", () => {
       target: snapshotTarget(target.value),
       binding: snapshotBinding(profile),
       entries: [],
+      workflow_entries: [],
       evidence_bundle: createEvidenceBundle([evidence]),
     };
     expect(
@@ -89,7 +90,7 @@ describe("direct analysis snapshot files", () => {
     vi.stubEnv("HOPPER_LAUNCHER_PATH", launcherPath);
 
     await expect(
-      runDirectAnalysis(
+      createDirectAnalysis(process.env).runDirectAnalysis(
         process.execPath,
         "binary_overview",
         {},

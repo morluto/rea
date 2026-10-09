@@ -54,6 +54,7 @@ export const EMPTY_PROCESS_CAPTURE_EXAMPLE = {
       truncated: false,
     },
   ],
+  event_journal: [],
   files_before: [],
   files_after: [],
   filesystem_effects: [],

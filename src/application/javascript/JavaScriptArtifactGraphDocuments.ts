@@ -124,16 +124,16 @@ export const addJavaScriptSourceMapOriginals = (
           strategy: "source-map-original",
           stability: "source-map-exact",
           source_map_sha256: mapFile.sha256,
-          original_source: original.source,
+          original_source: original.reference.source_name,
+          source_root: original.reference.source_root,
           source_sha256: original.content_sha256,
         },
         observations: [
           {
-            label: original.source,
+            label: original.reference.source_name || null,
+            source_map_reference: original.reference,
             properties: {
-              source: original.source,
               content_available: original.content !== null,
-              source_sha256: original.content_sha256,
             },
             evidence: artifactObservationEvidence({
               sha256: mapFile.sha256,
@@ -150,7 +150,10 @@ export const addJavaScriptSourceMapOriginals = (
         source_node_id: mapNode.node_id,
         target_node_id: node.node_id,
         relation: "contains",
-        properties: { original_source: original.source },
+        properties: {
+          original_source: original.reference.source_name,
+          source_root: original.reference.source_root,
+        },
         evidence: artifactObservationEvidence({
           sha256: mapFile.sha256,
           path: mapFile.path,

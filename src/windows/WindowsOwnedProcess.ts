@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { PassThrough } from "node:stream";
+import { PassThrough, Writable } from "node:stream";
 
 import { z } from "zod";
 
@@ -36,6 +36,7 @@ export const quoteWindowsProcessArgument = (value: string): string => {
 export class WindowsOwnedProcess extends EventEmitter {
   readonly stdout = new PassThrough();
   readonly stderr = new PassThrough();
+  readonly stdin: Writable | null;
   readonly signalCode: NodeJS.Signals | null = null;
   exitCode: number | null = null;
   readonly pid: number;
@@ -55,9 +56,14 @@ export class WindowsOwnedProcess extends EventEmitter {
     cwd: string | undefined,
     environment: NodeJS.ProcessEnv,
     verbatim: boolean,
+    protocolStdin = false,
   ) {
     super();
     this.#authority = requireWindowsNativeAuthority();
+    if (protocolStdin && this.#authority.inspection.protocolStdin !== true)
+      throw new Error(
+        "The bundled Windows native artifact does not support owned protocol stdin; use a matching current Windows x64 REA package.",
+      );
     const entries = Object.entries(environment)
       .filter((entry): entry is [string, string] => entry[1] !== undefined)
       .map(([key, value]) => `${key}=${value}`);
@@ -75,14 +81,68 @@ export class WindowsOwnedProcess extends EventEmitter {
         line,
         cwd ?? "",
         entries,
+        ...(protocolStdin ? [true] : []),
       ]),
     );
     this.pid = launched.pid;
     this.#handle = launched.handle;
+    this.stdin = protocolStdin
+      ? new Writable({
+          write: (chunk: unknown, _encoding, callback) => {
+            void this.#writeInput(chunk).then(
+              () => callback(),
+              (cause: unknown) =>
+                callback(
+                  cause instanceof Error ? cause : new Error(String(cause)),
+                ),
+            );
+          },
+          final: (callback) => {
+            try {
+              this.#authority.call("process_stdin_close", [this.#handle]);
+              callback();
+            } catch (cause: unknown) {
+              callback(
+                cause instanceof Error ? cause : new Error(String(cause)),
+              );
+            }
+          },
+          destroy: (cause, callback) => {
+            try {
+              if (!this.#closed)
+                this.#authority.call("process_stdin_close", [this.#handle]);
+              callback(cause);
+            } catch (failure: unknown) {
+              callback(
+                failure instanceof Error ? failure : new Error(String(failure)),
+              );
+            }
+          },
+        })
+      : null;
     this.#settled = new Promise((resolve) => {
       this.#settle = resolve;
     });
     this.#schedule();
+  }
+
+  async #writeInput(chunk: unknown): Promise<void> {
+    const bytes = z.instanceof(Buffer).parse(chunk);
+    const written = z
+      .number()
+      .int()
+      .nonnegative()
+      .max(Number.MAX_SAFE_INTEGER)
+      .parse(
+        await this.#authority.call("process_stdin_write", [
+          this.#handle,
+          bytes,
+        ]),
+      );
+    if (written !== bytes.length)
+      throw new Error(
+        "Owned Windows input write did not preserve all requested bytes",
+      );
   }
 
   /** Terminate the retained job, never a PID supplied by another caller. */
@@ -184,6 +244,7 @@ export class WindowsOwnedProcess extends EventEmitter {
     if (this.#timer !== undefined) clearTimeout(this.#timer);
     this.#authority.call("process_close", [this.#handle]);
     this.#closed = true;
+    this.stdin?.destroy();
     this.stdout.end();
     this.stderr.end();
     this.#settle?.();

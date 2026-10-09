@@ -252,7 +252,7 @@ No request can cross a concurrent target or provider transition.
 canonical path, source digest, generic kind and format, selected architecture,
 and available architectures. Hopper loader arguments leave the domain model.
 Provider-owned databases use a generic analysis-database classification; their
-adapter determines support. A legacy `.hop` target is therefore accepted only
+adapter determines support. A `.hop` analysis database is therefore accepted only
 by Hopper without teaching the domain how to open it. Ghidra v1 continues to use
 private temporary projects and does not open user projects.
 
@@ -336,19 +336,19 @@ entries, so snapshots must be recaptured before they can be used as a cache.
 An embedded Evidence bundle can still be imported separately through the
 Evidence import flow; it is never promoted into an analysis cache.
 
-### 8. Add profile commitments to new deep Evidence while preserving legacy records
+### 8. Commit concrete or explicitly unknown analysis profiles in Evidence
 
-The optional `analysis_profile` field uses the canonical envelope above. Every
-newly created deep-analysis observation must include it, and its provider ID
-and version must match the record's provider. The field participates in the
-Evidence semantic ID.
+Every Evidence record includes `analysis_profile`, either the canonical profile
+envelope above or `null` when no profile was observed. Deep-analysis observations
+commit the resolved provider ID, version, and effective configuration in this
+profile. The field participates in the Evidence semantic ID.
 
-Existing Evidence records without `analysis_profile` remain valid and keep
-their existing IDs. Absence on a legacy deep record means the analysis profile
-is unknown; REA does not infer or enrich it during import. Such evidence can be
-displayed and cited but cannot establish profile compatibility, seed snapshot
-replay, or support an "unchanged" conclusion that depends on identical analysis
-semantics.
+An explicitly unknown profile can be displayed and cited, but cannot establish
+profile compatibility, seed snapshot replay, or support an "unchanged"
+conclusion that depends on identical analysis semantics. Snapshot query entries
+must have matching profile-bound Evidence; imports reject missing or mismatched
+observations instead of silently dropping query entries. Both `entries` and
+`workflow_entries` are required arrays, including when empty.
 
 Different providers or profile digests are never snapshot-compatible. A
 derived comparison may compare cross-provider normalized facts only when its
@@ -407,12 +407,12 @@ means no dynamic provider has supplied a snapshot. Once one or more start,
 snapshots are not live inventories, and a point-in-time observation never proves
 historical absence.
 
-The existing flat `provider`, `providers`, and `capabilities` status fields stay
-during the 1.x compatibility window. Their effective deep-operation entries
-come only from the active binding; target-free ambiguity is unavailable rather
-than arbitrarily collapsed. The new candidate fields are authoritative for
-selection. A future major release may remove the synthetic composite provider
-field after callers have migrated.
+Status exposes `analysis_provider_candidates` for configured deep providers and
+`analysis_provider_binding` for the selected concrete provider and profile.
+`capabilities` retains effective operation availability and exact provider
+provenance, including auxiliary operation families. There are no synthetic
+flat `provider` or `providers` aliases. Provider prompt completion uses the
+actual selectable candidates.
 
 Selection failures extend the tagged `ProviderSelectionError` with a stable
 reason:
@@ -448,26 +448,20 @@ snapshot's provider.
 - Tool names and normalized output contracts remain provider-neutral. REA does
   not add `ghidra_decompile` or `hopper_decompile` tools.
 
-## Compatibility and migration
+## Provider and snapshot representations
 
-| Existing behavior or data                            | Decision                                                                                                       |
-| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| No provider selector, only Hopper usable             | `auto` selects the sole candidate; behavior remains equivalent                                                 |
-| No deep provider usable                              | Automatic open may remain unbound for auxiliary operations; deep capabilities explain why they are unavailable |
-| Hopper and Ghidra both usable, no preference         | Open fails with `ambiguous`; installation order never becomes policy                                           |
-| Existing Hopper environment settings                 | Remain supported as Hopper adapter configuration                                                               |
-| `open_binary` and CLI structured `loaderArgs` output | Retained as a deprecated Hopper-only compatibility projection for 1.x; the analysis profile is authoritative   |
-| `BinaryTarget.loaderArgs`                            | Removed; Hopper derives them inside its adapter and commits normalized semantics in the profile                |
-| Legacy `.hop` input                                  | Classified generically as an analysis database and accepted only by Hopper                                     |
-| Snapshot v1                                          | Not accepted as the current snapshot format; recapture before cache replay                                     |
-| Existing Evidence without a profile                  | Accepted unchanged; profile compatibility is unknown                                                           |
-| New deep-analysis Evidence                           | Must include `analysis_profile`; its semantic ID commits the field                                             |
-| Existing status fields                               | Retained for 1.x with additive binding and candidate fields                                                    |
-| Provider failure after selection                     | Returned from the selected provider; no transparent retry through another engine                               |
-
-The deprecated `loaderArgs` response must never be read to select a provider or
-validate a snapshot. It is empty for non-Hopper bindings and may be removed only
-with a separately documented major contract change.
+| Behavior or data                                   | Contract                                                                                                             |
+| -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| No selector, one usable deep provider              | `auto` selects the sole candidate                                                                                    |
+| No usable deep provider                            | Automatic open may remain unbound for auxiliary operations; deep capabilities explain their unavailability           |
+| Several usable deep providers without a preference | Open fails with `ambiguous`; installation order never becomes policy                                                 |
+| Hopper environment settings                        | Adapter configuration committed into the typed analysis profile, including effective loader arguments                |
+| `open_binary` output                               | Provider-neutral target identity only; no `loaderArgs` projection                                                    |
+| `.hop` input                                       | Analysis database accepted only by Hopper                                                                            |
+| Snapshots                                          | Concrete provider/profile binding, required primitive and workflow entry arrays, and matching authenticated Evidence |
+| Evidence without an observed profile               | Explicit `analysis_profile: null`; ineligible for profile-dependent replay                                           |
+| Snapshot save receipt                              | `primitive_entries`, `workflow_entries`, and `evidence_records` counts without a duplicate `entries` alias           |
+| Provider failure after selection                   | Returned from that provider, without transparent retry through another engine                                        |
 
 ## Required behavior scenarios
 

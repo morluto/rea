@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { HOPPER_PROVIDER_IDENTITY } from "../../dist/hopper/HopperProvider.js";
 import {
-  requireMcpResult,
+  requireMcpEvidenceResult,
   requireEvidenceProvider,
 } from "./mcp-verifier-results.mjs";
 
@@ -13,7 +13,7 @@ export async function verifyHopperInventories(client, options) {
       { name: operation, arguments: {} },
       options,
     );
-    const inventory = requireMcpResult(called, operation);
+    const inventory = requireMcpEvidenceResult(called, operation);
     requireEvidenceProvider(called, operation, HOPPER_PROVIDER_IDENTITY.id);
     assert.ok(
       Array.isArray(inventory) && inventory.length > 0,
@@ -30,7 +30,7 @@ export async function verifyHopperInventories(client, options) {
       );
       previous = address;
     }
-    const filtered = requireMcpResult(
+    const filtered = requireMcpEvidenceResult(
       await client.callTool(
         {
           name: operation,

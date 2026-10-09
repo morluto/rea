@@ -5,8 +5,10 @@ import type { StdioServerHandle } from "@modelcontextprotocol/server/stdio";
 import type { BinarySession } from "../application/binary/BinarySession.js";
 import type { Logger } from "../logger.js";
 import { createServer } from "../server/createServer.js";
+import type { ToolResultDelivery } from "../server/toolResult.js";
 import type { RuntimeDependencies } from "./types.js";
 import type { OptionalProviderLoadResult } from "../application/OptionalObservationProviders.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   MCP_CONNECTION_LOST,
   MCP_CONNECTION_START_FAILED,
@@ -16,6 +18,8 @@ import {
 export type OptionalProviders = OptionalProviderLoadResult;
 
 interface ServerContext {
+  readonly environment: Readonly<NodeJS.ProcessEnv>;
+  readonly delivery: ToolResultDelivery;
   readonly logger: Logger;
   readonly serverLogger: Logger;
   readonly loadOptionalProviders: () => Promise<OptionalProviders>;
@@ -66,10 +70,14 @@ export const startMcpTransport = async (
     handle = dependencies.serve(
       () => {
         // The SDK can discard a discovery probe and construct a replacement server.
-        const android = createAndroidAnalysisProvider(dependencies.env);
+        const android = createAndroidAnalysisProvider(
+          serverContext.environment,
+        );
         androidProviders.push(android);
         return (dependencies.createServer ?? createServer)(session, session, {
           logger: serverContext.logger,
+          environment: serverContext.environment,
+          delivery: serverContext.delivery,
           ...optionalProviders,
           androidAnalysis: android,
         });
@@ -82,7 +90,10 @@ export const startMcpTransport = async (
       },
     );
   } catch (cause: unknown) {
-    await Promise.allSettled([session.close(), closeAndroid()]);
+    const [binaryCleanup, androidCleanup] = await Promise.allSettled([
+      session.close(),
+      closeAndroid(),
+    ]);
     serverLogger.error(
       {
         error: cause instanceof Error ? cause.message : String(cause),
@@ -90,6 +101,27 @@ export const startMcpTransport = async (
       MCP_CONNECTION_START_FAILED,
     );
     dependencies.writeStderr(`${MCP_CONNECTION_START_FAILED}\n`);
+    if (binaryCleanup.status === "fulfilled" && !binaryCleanup.value.ok) {
+      const cleanupError = projectAnalysisError(binaryCleanup.value.error);
+      serverLogger.error(
+        { cleanup_error: cleanupError },
+        "Binary provider cleanup failed after MCP startup",
+      );
+      dependencies.writeStderr(`${cleanupError.message}\n`);
+    }
+    for (const cleanup of [binaryCleanup, androidCleanup]) {
+      if (cleanup.status === "rejected") {
+        const reason =
+          cleanup.reason instanceof Error
+            ? cleanup.reason.message
+            : String(cleanup.reason);
+        serverLogger.error(
+          { cleanup_error: reason },
+          "Provider cleanup rejected after MCP startup",
+        );
+        dependencies.writeStderr(`Provider cleanup failed: ${reason}\n`);
+      }
+    }
     return { ok: false };
   }
   return { ok: true, handle, closeAndroid };

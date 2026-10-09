@@ -1,3 +1,4 @@
+import { parseConfig } from "../../dist/config.js";
 import { access, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -7,6 +8,7 @@ import {
 } from "../../dist/application/DirectAnalysis.js";
 import { BinarySession } from "../../dist/application/binary/BinarySession.js";
 import { SessionProviderRouter } from "../../dist/application/binary/SessionProviderRouter.js";
+import { AnalysisProviderRegistry } from "../../dist/application/binary/AnalysisProviderRegistry.js";
 import { createAnalysisExecution } from "../../dist/application/AnalysisProvider.js";
 import { AnalysisCancelledError } from "../../dist/domain/analysisErrorCore.js";
 import { err, ok } from "../../dist/domain/result.js";
@@ -47,11 +49,41 @@ const client = {
       await delay(5);
     }
     await writeFile(join(root, "cleanup-complete"), "complete");
+    return ok(null);
   },
 };
+const identity = { id: "fixture", name: "Fixture", version: "1" };
+const provider = {
+  identity: () => identity,
+  capabilities: () =>
+    ["read_bytes", "procedure_address", "inspect_managed_artifact"].map(
+      (operation) => ({
+        provider: identity,
+        operation,
+        available: true,
+        reason: null,
+        effects: {
+          mutatesArtifact: false,
+          launchesProcess: false,
+          mayShowUi: false,
+          mayAccessNetwork: false,
+          mayWriteFilesystem: false,
+          changesPermissions: false,
+          requiresRoot: false,
+        },
+        limitations: [],
+      }),
+    ),
+  createClient: () => client,
+};
 const createSession = () =>
-  new BinarySession(SessionProviderRouter.single(() => client));
+  new BinarySession(
+    SessionProviderRouter.selectable(new AnalysisProviderRegistry([]), [
+      provider,
+    ]),
+  );
 const dependencies = {
+  readConfiguration: () => parseConfig({}),
   createBinarySession: createSession,
   createManagedBinarySession: createSession,
 };

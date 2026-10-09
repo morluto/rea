@@ -52,9 +52,12 @@ describe("Hopper shutdown rejection diagnostics", () => {
     const { logger, logs } = loggerHarness();
     const result = await cleanupHopperSession({
       socket: new Socket(),
-      launch: undefined,
-      processSupervisor: undefined,
-      runtimeRoot: undefined,
+      resources: {
+        launch: undefined,
+        processSupervisor: undefined,
+        runtimeRoot: undefined,
+        shutdownConfirmed: false,
+      },
       activeRequest: null,
       retainDocument: false,
       progress: undefined,
@@ -88,9 +91,12 @@ describe("Hopper shutdown rejection diagnostics", () => {
     const methods: string[] = [];
     const result = await cleanupHopperSession({
       socket: new Socket(),
-      launch: processCleanupLaunch(),
-      processSupervisor: undefined,
-      runtimeRoot: undefined,
+      resources: {
+        launch: processCleanupLaunch(),
+        processSupervisor: undefined,
+        runtimeRoot: undefined,
+        shutdownConfirmed: false,
+      },
       activeRequest: null,
       retainDocument: false,
       progress: undefined,
@@ -141,9 +147,12 @@ it("keeps a prepared backing image when native document closure cannot be confir
     };
     const result = await cleanupHopperSession({
       socket: new Socket(),
-      launch,
-      runtimeRoot,
-      processSupervisor: undefined,
+      resources: {
+        launch,
+        runtimeRoot,
+        processSupervisor: undefined,
+        shutdownConfirmed: false,
+      },
       activeRequest: null,
       retainDocument: true,
       progress: undefined,

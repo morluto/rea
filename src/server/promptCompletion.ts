@@ -11,10 +11,9 @@ import { parseProcessCapture } from "../domain/process/processCapture.js";
 
 const documentListSchema = z.array(z.string().min(1));
 const providerStatusSchema = z.object({
-  providers: z.array(z.object({ id: z.string().min(1) })),
-  analysis_provider_candidates: z
-    .array(z.object({ provider: z.object({ id: z.string().min(1) }) }))
-    .optional(),
+  analysis_provider_candidates: z.array(
+    z.object({ provider: z.object({ id: z.string().min(1) }) }),
+  ),
 });
 
 interface CompletionContext {
@@ -118,12 +117,9 @@ const providerCandidates = (
   if (session === undefined) return [];
   const parsed = providerStatusSchema.safeParse(session.status());
   if (!parsed.success) return [];
-  const candidates =
-    (parsed.data.analysis_provider_candidates?.length ?? 0) > 0
-      ? (parsed.data.analysis_provider_candidates?.map(
-          ({ provider }) => provider.id,
-        ) ?? [])
-      : parsed.data.providers.map(({ id }) => id);
+  const candidates = parsed.data.analysis_provider_candidates.map(
+    ({ provider }) => provider.id,
+  );
   return ["auto", ...candidates];
 };
 

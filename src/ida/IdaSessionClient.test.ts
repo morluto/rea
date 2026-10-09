@@ -127,29 +127,29 @@ describe("attached IDA observation semantics", () => {
     ).toBe(false);
     await client.close();
   });
-  it("accepts MCP's null projection for omitted optional fields without accepting null required fields", async () => {
+  it("preserves omitted optional arguments and rejects explicit null before connecting", async () => {
     const { producer, client } = await fixture();
+    for (const [operation, parameters] of [
+      ["list_procedures", { document: null }],
+      ["list_strings", { address: null }],
+      ["procedure_pseudo_code", { procedure: null }],
+    ] as const) {
+      const result = await client.execute(operation, parameters);
+      expect(result.ok).toBe(false);
+      if (!result.ok)
+        expect(result.error).toMatchObject({
+          _tag: "AnalysisInputError",
+          operation,
+          issues: [{ path: Object.keys(parameters), reason: "invalid_type" }],
+        });
+    }
+    expect(producer.connects).toBe(0);
+    expect(producer.calls).toEqual([]);
+    expect((await client.execute("list_procedures", {})).ok).toBe(true);
+    expect((await client.execute("list_strings", {})).ok).toBe(true);
     expect(
-      (await client.execute("list_procedures", { document: null })).ok,
+      (await client.execute("procedure_pseudo_code", { procedure: "main" })).ok,
     ).toBe(true);
-    expect(
-      (await client.execute("list_strings", { document: null, address: null }))
-        .ok,
-    ).toBe(true);
-    expect(
-      (
-        await client.execute("procedure_pseudo_code", {
-          document: null,
-          procedure: "main",
-        })
-      ).ok,
-    ).toBe(true);
-    const required = await client.execute("procedure_pseudo_code", {
-      document: null,
-      procedure: null,
-    });
-    expect(required.ok).toBe(false);
-    if (!required.ok) expect(required.error._tag).toBe("AnalysisInputError");
     expect(
       producer.calls.filter(({ name }) => name === "decompile_function"),
     ).toHaveLength(1);
@@ -287,7 +287,7 @@ describe("attached IDA function observations", () => {
     );
     await started;
     controller.abort();
-    const close = client.closeWithOutcome();
+    const close = client.close();
     expect(producer.closes).toBe(0);
     release?.();
     const result = await call;
@@ -303,7 +303,7 @@ describe("headless IDA lifecycle boundaries", () => {
     const { producer, client } = await fixture("headless");
     producer.owned = false;
     expect((await client.execute("health", {})).ok).toBe(false);
-    const closed = await client.closeWithOutcome();
+    const closed = await client.close();
     expect(closed.ok).toBe(false);
     if (!closed.ok) expect(closed.error.cleanupIncomplete).toBe(true);
     expect(producer.calls.some(({ name }) => name === "idb_close")).toBe(false);
@@ -328,9 +328,9 @@ describe("headless IDA session ownership and cleanup", () => {
       });
     };
 
-    const first = client.closeWithOutcome();
+    const first = client.close();
     await closeStarted;
-    const second = client.closeWithOutcome();
+    const second = client.close();
     release?.();
     const results = await Promise.all([first, second]);
 
@@ -352,13 +352,13 @@ describe("headless IDA session ownership and cleanup", () => {
     expect(
       producer.calls.filter(({ name }) => name === "idb_open"),
     ).toHaveLength(1);
-    const closed = await client.closeWithOutcome();
+    const closed = await client.close();
     expect(closed.ok).toBe(false);
     if (!closed.ok) expect(closed.error.cleanupIncomplete).toBe(true);
     expect(
       (await readdir(root)).some((name) => name.startsWith("rea-ida-")),
     ).toBe(true);
-    expect(producer.closes).toBe(1);
+    expect(producer.closes).toBe(0);
   });
   it("opens a private digest-verified copy, scopes requests, closes without saving, and removes only its workspace", async () => {
     const { producer, client, root, target } = await fixture("headless");
@@ -383,7 +383,7 @@ describe("headless IDA session ownership and cleanup", () => {
       ({ name }) => !["idb_open", "idb_list"].includes(name),
     ))
       expect(call.args.database).toBe(producer.database);
-    expect((await client.closeWithOutcome()).ok).toBe(true);
+    expect((await client.close()).ok).toBe(true);
     expect(
       producer.calls.find(({ name }) => name === "idb_close")?.args.save,
     ).toBe(false);
@@ -394,12 +394,58 @@ describe("headless IDA session ownership and cleanup", () => {
     const { producer, client, root } = await fixture("headless");
     await client.execute("health", {});
     producer.failClose = true;
-    const result = await client.closeWithOutcome();
+    const result = await client.close();
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.cleanupIncomplete).toBe(true);
     expect(
       (await readdir(root)).some((name) => name.startsWith("rea-ida-")),
     ).toBe(true);
+  });
+});
+
+describe("headless IDA cleanup verification", () => {
+  it("retries failed worker release through the retained connection before removing its workspace", async () => {
+    const { producer, client, root } = await fixture("headless");
+    expect((await client.execute("health", {})).ok).toBe(true);
+    producer.failClose = true;
+    expect((await client.close()).ok).toBe(false);
+    expect(producer.closes).toBe(0);
+    expect(
+      (await readdir(root)).some((name) => name.startsWith("rea-ida-")),
+    ).toBe(true);
+    producer.failClose = false;
+    expect((await client.close()).ok).toBe(true);
+    expect(
+      producer.calls.filter(({ name }) => name === "idb_close"),
+    ).toHaveLength(2);
+    expect(producer.closes).toBe(1);
+    expect(await readdir(root)).toEqual(["target.elf"]);
+  });
+  it("retries post-close inventory verification without closing an already released database again", async () => {
+    const { producer, client, root } = await fixture("headless");
+    expect((await client.execute("health", {})).ok).toBe(true);
+    let inventoryFails = true;
+    producer.beforeCall = async (name) => {
+      if (
+        name === "idb_list" &&
+        producer.database === undefined &&
+        inventoryFails
+      )
+        throw new Error(
+          "Worker inventory unavailable after acknowledged close",
+        );
+    };
+    expect((await client.close()).ok).toBe(false);
+    expect(producer.closes).toBe(0);
+    expect(
+      (await readdir(root)).some((name) => name.startsWith("rea-ida-")),
+    ).toBe(true);
+    inventoryFails = false;
+    expect((await client.close()).ok).toBe(true);
+    expect(
+      producer.calls.filter(({ name }) => name === "idb_close"),
+    ).toHaveLength(1);
+    expect(await readdir(root)).toEqual(["target.elf"]);
   });
   it("never closes an unrelated database when startup returns a different input identity", async () => {
     const { producer, client, root } = await fixture("headless");
@@ -414,7 +460,7 @@ describe("headless IDA session ownership and cleanup", () => {
           }
         : undefined;
     expect((await client.execute("health", {})).ok).toBe(false);
-    expect((await client.closeWithOutcome()).ok).toBe(true);
+    expect((await client.close()).ok).toBe(true);
     expect(producer.calls.some(({ name }) => name === "idb_close")).toBe(false);
     expect(await readdir(root)).toEqual(["target.elf"]);
   });
@@ -434,7 +480,7 @@ describe("headless IDA session ownership and cleanup", () => {
           })
         : undefined;
     expect((await client.execute("health", {})).ok).toBe(false);
-    expect((await client.closeWithOutcome()).ok).toBe(true);
+    expect((await client.close()).ok).toBe(true);
     expect(
       producer.calls.find(({ name }) => name === "idb_close")?.args.database,
     ).toMatch(/^rea-/u);

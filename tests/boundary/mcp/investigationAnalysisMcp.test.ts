@@ -1,6 +1,7 @@
+import { parseEvidence } from "../../../src/domain/evidence.js";
+import { ok as resultOk } from "../../../src/domain/result.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
-import { z } from "zod";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
@@ -321,7 +322,7 @@ const connected = async () => {
   const session = createTestBinarySession(() => ({
     health: () => Promise.resolve(),
     execute: () => Promise.resolve(observed(null)),
-    close: () => Promise.resolve(),
+    close: () => Promise.resolve(resultOk(null)),
   }));
   const server = createServer(session, session);
   const client = new Client({ name: "investigation-test", version: "1" });
@@ -332,20 +333,7 @@ const connected = async () => {
   return { session, server, client };
 };
 
-const inlineEvidence = (value: unknown) => {
-  const parsed = z
-    .object({
-      evidence_id: z.string().regex(/^ev_[a-f0-9]{64}$/u),
-      result: z.unknown(),
-      evidence: z.object({ limitations: z.array(z.string()) }).passthrough(),
-    })
-    .parse(value);
-  return {
-    ...parsed.evidence,
-    evidence_id: parsed.evidence_id,
-    normalized_result: parsed.result,
-  };
-};
+const inlineEvidence = (value: unknown) => parseEvidence(value);
 
 const close = async (
   session: BinarySession,

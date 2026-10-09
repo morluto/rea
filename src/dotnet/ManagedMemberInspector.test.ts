@@ -328,7 +328,62 @@ it.each([
       anchors: [],
     });
     expect(result.methods[0]?.body.issue).toMatch(/CIL/u);
+    expect(result.coverage.state).toBe("partial");
     expect(result.call_edges).toEqual([]);
     expect(result.field_accesses).toEqual([]);
+  },
+);
+
+it.each([
+  { facet: "fields", nameOffset: 2 },
+  { facet: "methods", nameOffset: 8 },
+  { facet: "member_refs", nameOffset: 2 },
+  { facet: "types", nameOffset: 4 },
+] as const)(
+  "preserves independent metadata when a $facet name is unreadable",
+  ({ facet, nameOffset }) => {
+    const bytes = buildManagedPeFixture();
+    const original = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    const row = original[facet][0]?.row_offset;
+    if (row === undefined) throw new Error(`Fixture must contain ${facet}`);
+    bytes.writeUInt16LE(0xffff, row + nameOffset);
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.module?.mvid).toBe(original.module?.mvid);
+    expect(result.metadata.status).toBe("partial");
+    expect(result[facet]).toEqual([]);
+    for (const remaining of [
+      "fields",
+      "methods",
+      "member_refs",
+      "types",
+    ] as const)
+      if (remaining !== facet)
+        expect(result[remaining]).toHaveLength(original[remaining].length);
+    expect(result.coverage).toMatchObject({
+      state: "partial",
+      issues: [
+        expect.objectContaining({
+          code: "invalid-heap-index",
+          scope: "metadata.#Strings",
+        }),
+      ],
+    });
+    if (facet === "types") {
+      expect(result.fields[0]).toMatchObject({
+        declaring_type_token: "0x02000001",
+        declaring_type: null,
+      });
+      expect(result.methods[0]).toMatchObject({
+        declaring_type_token: "0x02000001",
+        declaring_type: null,
+      });
+    }
   },
 );

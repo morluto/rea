@@ -81,9 +81,9 @@ interface NormalizedV8Inspection {
     readonly items: readonly (Readonly<{
       script_key: string;
       frame_id: string | null;
-      cdp_hash: string;
-      length: number;
-      is_module: boolean;
+      cdp_hash: string | null;
+      length: number | null;
+      is_module: boolean | null;
       language: null;
       source: { readonly included: false; readonly reason: string };
     }> &
@@ -319,7 +319,7 @@ const normalizeV8Inspection = (
       script_key: script.script_key,
       frame_id: script.execution_context_key,
       ...runtimeLocation(script.location),
-      cdp_hash: script.cdp_hash ?? "",
+      cdp_hash: script.cdp_hash,
       length: script.length,
       is_module: script.is_module,
       language: null,

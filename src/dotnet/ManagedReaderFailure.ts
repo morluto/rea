@@ -18,3 +18,24 @@ export const managedFailure = (
   offset: number | null = null,
 ): ManagedReaderFailure =>
   new ManagedReaderFailure({ code, scope, offset, detail });
+
+/** Retain one malformed item's location while allowing independent items to be read. */
+export const readManagedValue = <Value>(
+  operation: () => Value,
+  issues: ManagedParseIssue[],
+): Value | undefined => {
+  try {
+    return operation();
+  } catch (cause: unknown) {
+    if (!(cause instanceof ManagedReaderFailure)) throw cause;
+    issues.push(cause.issue);
+    return undefined;
+  }
+};
+
+/** Preserve issue order while collapsing the same malformed producer fact across facets. */
+export const uniqueManagedParseIssues = (
+  issues: readonly ManagedParseIssue[],
+): readonly ManagedParseIssue[] => [
+  ...new Map(issues.map((issue) => [JSON.stringify(issue), issue])).values(),
+];

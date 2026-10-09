@@ -4,7 +4,4 @@ import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-await Promise.all([
-  rm(join(root, "dist"), { recursive: true, force: true }),
-  rm(join(root, ".cache", "tsconfig.build.tsbuildinfo"), { force: true }),
-]);
+await rm(join(root, "dist"), { recursive: true, force: true });

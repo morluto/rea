@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
-import { runProviderAnalysis } from "../../../../src/composition/directAnalysis.js";
+import { createDirectAnalysis } from "../../../../src/composition/directAnalysis.js";
 import {
   ArtifactPathRegistry,
   normalizeArtifactPath,
@@ -18,6 +18,8 @@ import { artifactInventoryResultSchema } from "../../../../src/domain/artifactGr
 import type { BinaryTarget } from "../../../../src/domain/binaryTarget.js";
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
+
+const { runProviderAnalysis } = createDirectAnalysis({});
 
 describe("artifact archive safety", () => {
   it.each([
@@ -47,16 +49,16 @@ describe("artifact archive safety", () => {
       if (!parsed.ok) return;
       const result = await inventory(parsed.value);
       expect(result.manifest.root_format).toBe(format);
-      expect(result.nodes.map(({ kind }) => kind)).toEqual(
-        expect.arrayContaining(["javascript", "native-addon"]),
-      );
+      expect(
+        result.occurrences.map(({ artifact_kind }) => artifact_kind),
+      ).toEqual(expect.arrayContaining(["javascript", "native-addon"]));
       expect(
         result.occurrences.some(
           ({ logical_path: logicalPath }) => logicalPath === "Assets/main.js",
         ),
       ).toBe(true);
       const output = join(root, "output");
-      const extracted = await new ArtifactProvider()
+      const extracted = await new ArtifactProvider(process.env)
         .createClient(parsed.value)
         .execute(
           "extract_artifact",
@@ -128,7 +130,7 @@ describe("artifact archive safety", () => {
   });
 });
 const inventory = async (targetValue: BinaryTarget) => {
-  const result = await new ArtifactProvider()
+  const result = await new ArtifactProvider(process.env)
     .createClient(targetValue)
     .execute("inventory_artifact", {});
   if (!result.ok) throw result.error;

@@ -3,7 +3,6 @@ import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
-import { z } from "zod";
 
 import { compareProcessEvidenceFiles } from "../../../src/application/process/ProcessCli.js";
 import { PROCESS_PROVIDER } from "../../../src/application/process/ProcessEvidence.js";
@@ -51,10 +50,7 @@ const captureEvidence = (
   });
 
 const inlineEvidence = (response: { structuredContent?: unknown }) =>
-  parseEvidence(
-    z.object({ evidence: z.unknown() }).parse(response.structuredContent)
-      .evidence,
-  );
+  parseEvidence(response.structuredContent);
 
 const connectedComparison = async () => {
   const session = createTestBinarySession(() => {

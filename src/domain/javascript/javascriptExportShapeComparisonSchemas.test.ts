@@ -71,6 +71,7 @@ it("parses projected fields into literal, union, or unknown values", () => {
     projectedExportReturnShapesSchema.safeParse(
       projectionWithField({
         path: "/kind",
+        presence: "present",
         state: "unknown",
         value: "invented",
         reason: "Dynamic property",
@@ -81,10 +82,24 @@ it("parses projected fields into literal, union, or unknown values", () => {
     projectedExportReturnShapesSchema.safeParse(
       projectionWithField({
         path: "/kind",
+        presence: "present",
         state: "union",
         value: ["success", "failure"],
         reason: null,
       }),
     ).success,
   ).toBe(true);
+});
+
+it("rejects return fields that omit slot presence", () => {
+  expect(
+    projectedExportReturnShapesSchema.safeParse(
+      projectionWithField({
+        path: "/kind",
+        state: "literal",
+        value: "result",
+        reason: null,
+      }),
+    ).success,
+  ).toBe(false);
 });

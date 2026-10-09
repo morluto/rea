@@ -7,7 +7,6 @@ import { mcpProgressReporter } from "./mcpProgress.js";
 import type { LifecycleToolRegistration } from "./registerSessionTools.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { toCallToolResult } from "./toolResult.js";
 
 /** Register provider cleanup and optional pre-close snapshot persistence. */
 export const registerCloseLifecycleTool = ({
@@ -28,7 +27,7 @@ export const registerCloseLifecycleTool = ({
           session.close({ progress }),
         );
         await reportLifecycleEnd(progress, closeContract.name, closed.ok);
-        return toCallToolResult(closed, closeContract);
+        return server.delivery.toCallToolResult(closed, closeContract);
       }
       await reportLifecycleStart(
         progress,
@@ -41,7 +40,7 @@ export const registerCloseLifecycleTool = ({
         }),
       );
       await reportLifecycleEnd(progress, closeContract.name, closed.ok);
-      return toCallToolResult(
+      return server.delivery.toCallToolResult(
         closed.ok ? ok({ ...closed.value }) : closed,
         closeContract,
       );

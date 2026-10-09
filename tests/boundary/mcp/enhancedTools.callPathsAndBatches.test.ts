@@ -40,7 +40,7 @@ describe("enhanced MCP tools", () => {
     });
     expect(result.isError).not.toBe(true);
     expect(result.structuredContent).toMatchObject({
-      result: {
+      normalized_result: {
         items: addresses.map((address) => ({
           address,
           procedure: {
@@ -161,7 +161,7 @@ describe("batch procedure identity", () => {
     });
     expect(result.isError).not.toBe(true);
     expect(result.structuredContent).toMatchObject({
-      result: {
+      normalized_result: {
         items: [
           ...selectors.slice(0, 3).map((address) => ({
             address,

@@ -1,7 +1,7 @@
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
-import { err, ok, type Result } from "../../domain/result.js";
+import { err, type Result } from "../../domain/result.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { AnalysisClient, ExecutionOptions } from "../AnalysisProvider.js";
 
@@ -14,10 +14,7 @@ export const closeAnalysisClient = async (
   } = {},
 ): Promise<Result<null, AnalysisError>> => {
   try {
-    if (client.closeWithOutcome !== undefined)
-      return await client.closeWithOutcome(options);
-    await client.close();
-    return ok(null);
+    return await client.close(options);
   } catch (cause: unknown) {
     // A typed cleanup failure already names its leftover resources.
     if (cause instanceof AnalysisError && cause.cleanupIncomplete)
@@ -45,6 +42,13 @@ export const analysisErrorWithCleanupFailure = (
     operation,
     {
       cause: primary,
+      userMessage: projectAnalysisError(primary).message,
+      ...(primary.capturedOutput === undefined
+        ? {}
+        : { capturedOutput: primary.capturedOutput }),
+      ...(primary.partialObservation === undefined
+        ? {}
+        : { partialObservation: primary.partialObservation }),
       cleanup: {
         reason: projected.message,
         resources: cleanup.cleanupResources,

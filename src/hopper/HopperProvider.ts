@@ -1,3 +1,4 @@
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { fileURLToPath } from "node:url";
 import { accessSync, constants } from "node:fs";
 
@@ -17,7 +18,7 @@ import type { AppConfig } from "../config.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
 import type { Logger } from "../logger.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
-import { err } from "../domain/result.js";
+import { err, ok } from "../domain/result.js";
 import { HopperApplicationLauncher } from "./BridgeLauncher.js";
 import {
   hopperLoaderArgsForTarget,
@@ -42,6 +43,8 @@ const IDENTITY = HOPPER_PROVIDER_IDENTITY;
 
 /** Concrete analysis provider backed by REA's private Hopper bridge. */
 export class HopperProvider implements AnalysisProviderCandidate {
+  private readonly environment: Readonly<NodeJS.ProcessEnv>;
+
   /**
    * Host platform, injected so availability and launch-mode decisions can be
    * exercised for any host rather than only the machine running the suite.
@@ -51,8 +54,11 @@ export class HopperProvider implements AnalysisProviderCandidate {
   constructor(
     private readonly config: AppConfig,
     private readonly logger: Logger,
+    environment: Readonly<NodeJS.ProcessEnv>,
     private readonly platform: NodeJS.Platform = process.platform,
-  ) {}
+  ) {
+    this.environment = snapshotEnvironment(environment, platform);
+  }
 
   identity(): ProviderIdentity {
     return IDENTITY;
@@ -159,7 +165,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
               ),
             ),
           ),
-        close: () => Promise.resolve(),
+        close: () => Promise.resolve(ok(null)),
       };
     const preparation = profile?.parameters.prepared_image;
     const parsedImage =
@@ -178,7 +184,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
               ),
             ),
           ),
-        close: () => Promise.resolve(),
+        close: () => Promise.resolve(ok(null)),
       };
     const preparedImage = parsedImage?.data;
     const container =
@@ -194,11 +200,12 @@ export class HopperProvider implements AnalysisProviderCandidate {
     if (!derivedLoaderArgs.ok)
       return {
         execute: () => Promise.resolve(err(derivedLoaderArgs.error)),
-        close: () => Promise.resolve(),
+        close: () => Promise.resolve(ok(null)),
       };
     const executionProvider = profile?.provider ?? IDENTITY;
     const client = new HopperClient({
       launcher: new HopperApplicationLauncher({
+        environment: this.environment,
         launcherPath: this.config.hopperLauncherPath,
         targetPath: target.path,
         targetKind: target.kind,
@@ -300,13 +307,9 @@ export class HopperProvider implements AnalysisProviderCandidate {
         ];
       },
       operationHealthSnapshot: () => client.operationHealth(),
-      closeWithOutcome: async (options) => {
+      close: async (options) => {
         await regexSearch.close();
-        return client.closeWithOutcome(options);
-      },
-      close: async () => {
-        await regexSearch.close();
-        await client.close();
+        return client.close(options);
       },
     };
   }

@@ -8,7 +8,8 @@ import { HopperStartError } from "../../src/domain/hopperErrors.js";
 import type { Result } from "../../src/domain/result.js";
 import type {
   AnalysisClient,
-  AnalysisClientFactory,
+  AnalysisOperation,
+  AnalysisProviderCandidate,
   CapabilityDescriptor,
   AnalysisProfileResolution,
   AnalysisProfileResolutionOptions,
@@ -16,6 +17,12 @@ import type {
 } from "../../src/application/AnalysisProvider.js";
 import { BinarySession } from "../../src/application/binary/BinarySession.js";
 import { SessionProviderRouter } from "../../src/application/binary/SessionProviderRouter.js";
+import { AnalysisProviderRegistry } from "../../src/application/binary/AnalysisProviderRegistry.js";
+import { OFFICIAL_TOOL_CONTRACTS } from "../../src/contracts/officialToolContracts.js";
+import { ENHANCED_TOOL_CONTRACTS } from "../../src/contracts/enhancedToolContracts.js";
+import { NATIVE_TOOL_CONTRACTS } from "../../src/contracts/native/nativeToolContracts.js";
+import { MANAGED_TOOL_CONTRACTS } from "../../src/contracts/managed/managedToolContracts.js";
+import { ARTIFACT_TOOL_CONTRACTS } from "../../src/contracts/artifactToolContracts.js";
 
 import { err, ok as resultOk } from "../../src/domain/result.js";
 import { observed } from "./analysisExecution.js";
@@ -28,21 +35,90 @@ type TestBinarySessionOptions = {
   ) => Promise<Result<AnalysisProfileResolution, AnalysisError>>;
 };
 
-type TestBinarySessionOptionsOrResolver =
-  | TestBinarySessionOptions
-  | TestBinarySessionOptions["resolveAnalysisProfile"];
+type FixtureClientFactory = AnalysisProvider["createClient"];
 
-/** Create a focused session around a test-owned provider or client factory. */
-export const createTestBinarySession = (
-  provider: AnalysisProvider | AnalysisClientFactory,
-  optionsOrResolver?: TestBinarySessionOptionsOrResolver,
-): BinarySession => {
-  const options =
-    typeof optionsOrResolver === "function"
-      ? { resolveAnalysisProfile: optionsOrResolver }
-      : (optionsOrResolver ?? {});
-  return new BinarySession(SessionProviderRouter.single(provider, options));
+const FIXTURE_IDENTITY = {
+  id: "fixture",
+  name: "Fixture analysis provider",
+  version: "1",
+} as const;
+
+const FIXTURE_OPERATIONS: readonly Exclude<AnalysisOperation, "health">[] = [
+  ...OFFICIAL_TOOL_CONTRACTS,
+  ...ENHANCED_TOOL_CONTRACTS,
+  ...NATIVE_TOOL_CONTRACTS,
+  ...MANAGED_TOOL_CONTRACTS,
+  ...ARTIFACT_TOOL_CONTRACTS,
+].map(({ name }) => name);
+
+/** Declare fixture client operations before composing the production registry route. */
+export const createTestProviderRouter = (
+  provider: AnalysisProvider | FixtureClientFactory,
+  options: TestBinarySessionOptions = {},
+): SessionProviderRouter => {
+  const declared: AnalysisProvider =
+    typeof provider === "function"
+      ? {
+          identity: () => FIXTURE_IDENTITY,
+          capabilities: () =>
+            FIXTURE_OPERATIONS.map((operation) => ({
+              provider: FIXTURE_IDENTITY,
+              operation,
+              available: true,
+              reason: null,
+              cachePolicy: "live",
+              effects: {
+                mutatesArtifact: false,
+                launchesProcess: false,
+                mayShowUi: false,
+                mayAccessNetwork: false,
+                mayWriteFilesystem: false,
+                changesPermissions: false,
+                requiresRoot: false,
+              },
+              limitations: [],
+            })),
+          createClient: provider,
+        }
+      : provider;
+  const resolve =
+    options.resolveAnalysisProfile ??
+    declared.resolveAnalysisProfile?.bind(declared);
+  if (resolve === undefined)
+    return SessionProviderRouter.selectable(new AnalysisProviderRegistry([]), [
+      declared,
+    ]);
+  const candidate: AnalysisProviderCandidate = {
+    identity: () => declared.identity(),
+    capabilities: () => declared.capabilities(),
+    createClient: (target, profile, context) =>
+      declared.createClient(target, profile, context),
+    resolveAnalysisProfile: resolve,
+    inspectAvailability: () => ({
+      status: "available",
+      code: null,
+      reason: null,
+      diagnostics: {},
+    }),
+    inspectTargetSupport: () => ({
+      status: "supported",
+      code: null,
+      reason: null,
+      diagnostics: {},
+    }),
+  };
+  return SessionProviderRouter.selectable(
+    new AnalysisProviderRegistry([candidate]),
+    [],
+  );
 };
+
+/** Create a focused session with production registry and auxiliary routing. */
+export const createTestBinarySession = (
+  provider: AnalysisProvider | FixtureClientFactory,
+  options: TestBinarySessionOptions = {},
+): BinarySession =>
+  new BinarySession(createTestProviderRouter(provider, options));
 
 /** Materialize two distinct targets for session lifecycle tests. */
 export const createBinarySessionTargets = async (): Promise<
@@ -71,7 +147,6 @@ export const createCacheProvider = (
       Promise.resolve(
         resultOk({
           profile: createAnalysisProfile(identity, { fixture: true }),
-          compatibility: {},
         }),
       ),
     capabilities: () => [
@@ -83,7 +158,7 @@ export const createCacheProvider = (
         calls.push(operation);
         return Promise.resolve(observed(operation));
       },
-      close: () => Promise.resolve(),
+      close: () => Promise.resolve(resultOk(null)),
     }),
   };
 };
@@ -106,9 +181,9 @@ export class ControllableAnalysisClient implements AnalysisClient {
     return this.pendingCall ?? Promise.resolve(observed(null));
   }
 
-  close(): Promise<void> {
+  close(): Promise<Result<null, AnalysisError>> {
     this.closed += 1;
-    return Promise.resolve();
+    return Promise.resolve(resultOk(null));
   }
 }
 

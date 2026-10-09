@@ -1,24 +1,13 @@
 import type { AnalysisProviderSelector } from "../../contracts/providerSelection.js";
-import {
-  analysisProfileSchema,
-  type AnalysisProfileCommitment,
-} from "../../domain/analysisProfile.js";
+import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import type { BinaryTarget } from "../../domain/binaryTarget.js";
-import {
-  AnalysisCancelledError,
-  AnalysisCapabilityUnavailableError,
-} from "../../domain/analysisErrorCore.js";
-import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import { ProviderSelectionError } from "../../domain/providerSelectionError.js";
 import { type AnalysisError } from "../../domain/analysisErrorBase.js";
-import { jsonObjectSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import type {
   AnalysisClient,
   AnalysisClientContext,
-  AnalysisClientFactory,
-  AnalysisProfileResolution,
-  AnalysisProfileResolutionOptions,
   AnalysisProvider,
   CapabilityDescriptor,
   ProviderIdentity,
@@ -29,18 +18,13 @@ import {
   type AnalysisProviderCandidateStatus,
   type AnalysisProviderSelection,
 } from "./AnalysisProviderRegistry.js";
-import { ABORTED, waitForAbortable } from "./AbortablePromise.js";
-import {
-  CompositeProvider,
-  compositeProviderIdentity,
-} from "./CompositeProvider.js";
+import { CompositeProvider } from "./CompositeProvider.js";
 
 /** Immutable operation routes and binding metadata for one target transition. */
 export interface SessionProviderRoute {
   readonly identity: ProviderIdentity;
-  readonly capabilities: ReadonlyMap<string, CapabilityDescriptor> | undefined;
+  readonly capabilities: ReadonlyMap<string, CapabilityDescriptor>;
   readonly profile: AnalysisProfileCommitment | null;
-  readonly compatibility: Readonly<Record<string, JsonValue>>;
   readonly binding: AnalysisProviderBinding | null;
   readonly selection: AnalysisProviderSelection | undefined;
   createClient(
@@ -49,68 +33,13 @@ export interface SessionProviderRoute {
   ): AnalysisClient;
 }
 
-interface SingleProviderRuntime {
-  readonly kind: "single";
-  readonly provider: AnalysisProvider | AnalysisClientFactory;
-  readonly identity: ProviderIdentity;
-  readonly capabilities: ReadonlyMap<string, CapabilityDescriptor> | undefined;
-  readonly resolveProfile: (
-    target: BinaryTarget,
-    options?: AnalysisProfileResolutionOptions,
-  ) => Promise<Result<AnalysisProfileResolution, AnalysisError>>;
-}
-
-interface SelectableProviderRuntime {
-  readonly kind: "selectable";
-  readonly registry: AnalysisProviderRegistry;
-  readonly auxiliaryProviders: readonly AnalysisProvider[];
-  readonly identity: ProviderIdentity;
-  readonly initialRoute: SessionProviderRoute;
-}
-
-/** Resolve either the compatibility single-provider seam or a selectable set. */
+/** Resolve one registry-selected deep provider and disjoint auxiliary families. */
 export class SessionProviderRouter {
   private constructor(
-    private readonly runtime: SingleProviderRuntime | SelectableProviderRuntime,
+    private readonly registry: AnalysisProviderRegistry,
+    private readonly auxiliaryProviders: readonly AnalysisProvider[],
+    private readonly route: SessionProviderRoute,
   ) {}
-
-  /** Create routing for an embedding backed by one fixed provider or factory. */
-  static single(
-    provider: AnalysisProvider | AnalysisClientFactory,
-    options: {
-      readonly resolveAnalysisProfile?: (
-        target: BinaryTarget,
-        resolutionOptions?: AnalysisProfileResolutionOptions,
-      ) => Promise<Result<AnalysisProfileResolution, AnalysisError>>;
-    } = {},
-  ): SessionProviderRouter {
-    const identity =
-      typeof provider === "function"
-        ? { id: "unidentified", name: "Unidentified provider", version: null }
-        : provider.identity();
-    const capabilities =
-      typeof provider === "function"
-        ? undefined
-        : capabilityMap(provider.capabilities());
-    const resolveProfile =
-      options.resolveAnalysisProfile ??
-      (typeof provider === "function" ||
-      provider.resolveAnalysisProfile === undefined
-        ? () => Promise.resolve(ok({ profile: null, compatibility: {} }))
-        : (
-            target: BinaryTarget,
-            resolutionOptions?: AnalysisProfileResolutionOptions,
-          ) =>
-            provider.resolveAnalysisProfile?.(target, resolutionOptions) ??
-            Promise.resolve(ok({ profile: null, compatibility: {} })));
-    return new SessionProviderRouter({
-      kind: "single",
-      provider,
-      identity,
-      capabilities,
-      resolveProfile,
-    });
-  }
 
   /** Create selection-aware routing while keeping auxiliary families disjoint. */
   static selectable(
@@ -129,56 +58,16 @@ export class SessionProviderRouter {
           `Deep and auxiliary providers both declare operation ${operation}`,
         );
     const initialRoute = selectableRoute(auxiliaryProviders, undefined);
-    return new SessionProviderRouter({
-      kind: "selectable",
+    return new SessionProviderRouter(
       registry,
-      auxiliaryProviders: [...auxiliaryProviders],
-      identity:
-        identities.length === 0
-          ? emptyProviderIdentity()
-          : compositeProviderIdentity(identities),
+      [...auxiliaryProviders],
       initialRoute,
-    });
-  }
-
-  /** Compatibility identity covering every configured provider. */
-  configuredIdentity(): ProviderIdentity {
-    return structuredClone(this.runtime.identity);
-  }
-
-  /** Provider identities exposed through the flat 1.x compatibility field. */
-  providerIdentities(route: SessionProviderRoute): readonly ProviderIdentity[] {
-    if (this.runtime.kind === "single") {
-      if (route.capabilities === undefined) return [route.identity];
-      return uniqueProviderIdentities(
-        [...route.capabilities.values()].map(({ provider }) => provider),
-      );
-    }
-    const selected = route.binding?.identity;
-    return uniqueProviderIdentities([
-      ...this.runtime.auxiliaryProviders.map((provider) => provider.identity()),
-      ...this.runtime.registry
-        .identities()
-        .map((identity) =>
-          identity.id === selected?.id ? selected : identity,
-        ),
-    ]);
+    );
   }
 
   /** Target-free routes and discovery metadata. */
   initialRoute(): SessionProviderRoute {
-    if (this.runtime.kind === "selectable") return this.runtime.initialRoute;
-    const runtime = this.runtime;
-    return {
-      identity: structuredClone(runtime.identity),
-      capabilities: runtime.capabilities,
-      profile: null,
-      compatibility: {},
-      binding: null,
-      selection: undefined,
-      createClient: (target, context) =>
-        createSingleProviderClient(runtime, target, undefined, context),
-    };
+    return this.route;
   }
 
   /** Resolve target routes before any provider client is created. */
@@ -188,64 +77,21 @@ export class SessionProviderRouter {
     signal?: AbortSignal,
   ): Promise<Result<SessionProviderRoute, AnalysisError>> {
     const resolutionOptions = signal === undefined ? undefined : { signal };
-    if (this.runtime.kind === "selectable") {
-      const selected = await this.runtime.registry.select(
-        target,
-        providerId,
-        resolutionOptions,
-      );
-      return selected.ok
-        ? ok(selectableRoute(this.runtime.auxiliaryProviders, selected.value))
-        : selected;
-    }
-    const runtime = this.runtime;
-    if (
-      providerId !== undefined &&
-      providerId !== "auto" &&
-      providerId !== runtime.identity.id
-    )
-      return err(
-        new ProviderSelectionError({
-          reason: "unknown_provider",
-          requestedProviderId: providerId,
-          candidateIds: [runtime.identity.id],
-        }),
-      );
-    const resolved = await waitForAbortable(
-      runtime.resolveProfile(target, resolutionOptions),
-      signal,
+    const selected = await this.registry.select(
+      target,
+      providerId,
+      resolutionOptions,
     );
-    if (resolved === ABORTED)
-      return err(new AnalysisCancelledError("open_binary"));
-    if (!resolved.ok) return resolved;
-    const normalized = normalizeProfileResolution(
-      resolved.value,
-      runtime.identity.id,
-    );
-    if (!normalized.ok) return normalized;
-    return ok({
-      identity: structuredClone(runtime.identity),
-      capabilities: runtime.capabilities,
-      profile: normalized.value.profile,
-      compatibility: normalized.value.compatibility,
-      binding: null,
-      selection: undefined,
-      createClient: (openedTarget, context) =>
-        createSingleProviderClient(
-          runtime,
-          openedTarget,
-          normalized.value.profile ?? undefined,
-          context,
-        ),
-    });
+    return selected.ok
+      ? ok(selectableRoute(this.auxiliaryProviders, selected.value))
+      : selected;
   }
 
   /** Candidate status authoritative for the active or target-free route. */
   candidateStatuses(
     route: SessionProviderRoute,
   ): readonly AnalysisProviderCandidateStatus[] {
-    if (this.runtime.kind === "single") return [];
-    return route.selection?.candidates ?? this.runtime.registry.candidates();
+    return route.selection?.candidates ?? this.registry.candidates();
   }
 
   /** Produce exact candidate rejections for an intentionally unbound route. */
@@ -254,15 +100,12 @@ export class SessionProviderRouter {
     route: SessionProviderRoute,
   ): ProviderSelectionError | undefined {
     if (
-      this.runtime.kind !== "selectable" ||
       route.binding !== null ||
-      route.selection === undefined
+      route.selection === undefined ||
+      !this.registry.declaredOperations().includes(operation)
     )
       return undefined;
-    return this.runtime.registry.unboundOperationError(
-      operation,
-      route.selection,
-    );
+    return this.registry.unboundOperationError(operation, route.selection);
   }
 }
 
@@ -276,14 +119,17 @@ const selectableRoute = (
     ...(binding === null ? [] : [binding.provider]),
   ];
   const provider =
-    providers.length === 0 ? undefined : new CompositeProvider(providers);
+    binding === null && providers.length === 1
+      ? providers[0]
+      : providers.length === 0
+        ? undefined
+        : new CompositeProvider(providers);
   const identity = provider?.identity() ?? emptyProviderIdentity();
   const capabilities = capabilityMap(provider?.capabilities() ?? []);
   return {
     identity,
     capabilities,
     profile: binding?.profile ?? null,
-    compatibility: structuredClone(binding?.compatibility ?? {}),
     binding,
     selection,
     createClient: (target, context) =>
@@ -291,16 +137,6 @@ const selectableRoute = (
       emptyClient(identity),
   };
 };
-
-const createSingleProviderClient = (
-  runtime: SingleProviderRuntime,
-  target: BinaryTarget,
-  profile: AnalysisProfileCommitment | undefined,
-  context: AnalysisClientContext,
-): AnalysisClient =>
-  typeof runtime.provider === "function"
-    ? runtime.provider(target, profile, context)
-    : runtime.provider.createClient(target, profile, context);
 
 const emptyClient = (identity: ProviderIdentity): AnalysisClient => ({
   execute: (operation) =>
@@ -324,7 +160,7 @@ const emptyClient = (identity: ProviderIdentity): AnalysisClient => ({
             ),
           ),
         ),
-  close: () => Promise.resolve(),
+  close: () => Promise.resolve(ok(null)),
 });
 
 const emptyProviderIdentity = (): ProviderIdentity => ({
@@ -337,13 +173,6 @@ const capabilityMap = (
   capabilities: readonly CapabilityDescriptor[],
 ): ReadonlyMap<string, CapabilityDescriptor> =>
   new Map(capabilities.map((descriptor) => [descriptor.operation, descriptor]));
-
-const uniqueProviderIdentities = (
-  identities: readonly ProviderIdentity[],
-): readonly ProviderIdentity[] =>
-  [...new Map(identities.map((identity) => [identity.id, identity])).values()]
-    .sort((left, right) => left.id.localeCompare(right.id))
-    .map((identity) => structuredClone(identity));
 
 const assertDisjoint = (
   providers: readonly AnalysisProvider[],
@@ -368,26 +197,5 @@ const assertUniqueProviderIds = (
     if (ids.has(identity.id))
       throw new TypeError(`Duplicate configured provider ID: ${identity.id}`);
     ids.add(identity.id);
-  }
-};
-
-const normalizeProfileResolution = (
-  resolution: AnalysisProfileResolution,
-  providerId: string,
-): Result<AnalysisProfileResolution, ProviderAdapterError> => {
-  try {
-    return ok({
-      profile:
-        resolution.profile === null
-          ? null
-          : analysisProfileSchema.parse(resolution.profile),
-      compatibility: jsonObjectSchema.parse(resolution.compatibility),
-    });
-  } catch (cause: unknown) {
-    return err(
-      new ProviderAdapterError(providerId, "resolve_analysis_profile", {
-        cause,
-      }),
-    );
   }
 };

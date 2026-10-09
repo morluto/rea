@@ -41,7 +41,7 @@ export const createSessionMcpHarness = async (
   const closed: string[] = [];
   const session = createTestBinarySession(provider(closed), {
     resolveAnalysisProfile: () =>
-      Promise.resolve(ok({ profile: SNAPSHOT_PROFILE, compatibility: {} })),
+      Promise.resolve(ok({ profile: SNAPSHOT_PROFILE })),
   });
   const server = createServer(session, session, {
     logger: silentLogger,

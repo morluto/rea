@@ -89,9 +89,22 @@ const browserScriptSchema = z.object({
   frame_id: z.string().nullable().default(null),
   url: z.string(),
   origin: z.string().nullable(),
-  cdp_hash: z.string(),
-  length: z.number().int().min(0),
-  is_module: z.boolean(),
+  cdp_hash: z
+    .string()
+    .nullable()
+    .describe("Producer-reported script hash; null when unavailable."),
+  length: z
+    .number()
+    .int()
+    .min(0)
+    .nullable()
+    .describe("Producer-reported script length; null when unavailable."),
+  is_module: z
+    .boolean()
+    .nullable()
+    .describe(
+      "Producer-reported module classification; null when unavailable.",
+    ),
   language: z.string().nullable(),
   source_map_url: z.string().nullable(),
   resource_reconciliation: browserResourceReconciliationSchema,

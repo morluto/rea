@@ -3,7 +3,7 @@ import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { resolveCliAnalysisSelector } from "./analysisSelector.js";
-import { runDirectAnalysis } from "../composition/directAnalysis.js";
+import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "../logger.js";
@@ -21,20 +21,22 @@ import type { CliResultOutput } from "./streamedJsonOutput.js";
 export const registerCoreBinaryCommands = (
   cli: CliInstance,
   logger: Logger,
+  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
   resultOutput?: CliResultOutput,
 ): void => {
-  registerOverviewCommands(cli, logger, resultOutput);
-  registerDecompileCommand(cli, logger);
-  registerFunctionCommand(cli, logger);
-  registerInstructionsCommand(cli, logger);
-  registerSearchCommand(cli, logger);
-  registerXrefsCommand(cli, logger);
-  registerTraceCommand(cli, logger);
+  registerOverviewCommands(cli, logger, runDirectAnalysis, resultOutput);
+  registerDecompileCommand(cli, logger, runDirectAnalysis);
+  registerFunctionCommand(cli, logger, runDirectAnalysis);
+  registerInstructionsCommand(cli, logger, runDirectAnalysis);
+  registerSearchCommand(cli, logger, runDirectAnalysis);
+  registerXrefsCommand(cli, logger, runDirectAnalysis);
+  registerTraceCommand(cli, logger, runDirectAnalysis);
 };
 
 const registerOverviewCommands = (
   cli: CliInstance,
   logger: Logger,
+  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
   resultOutput?: CliResultOutput,
 ): void => {
   const overviewOptions = z.object({
@@ -108,7 +110,11 @@ const registerOverviewCommands = (
   });
 };
 
-const registerDecompileCommand = (cli: CliInstance, logger: Logger): void => {
+const registerDecompileCommand = (
+  cli: CliInstance,
+  logger: Logger,
+  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
+): void => {
   cli.command(CLI_COMMANDS.decompile, {
     description: "Read one part of an app as code",
     args: z.object({
@@ -187,7 +193,11 @@ const isJavaScriptApplicationPath = async (path: string): Promise<boolean> => {
   }
 };
 
-const registerXrefsCommand = (cli: CliInstance, logger: Logger): void => {
+const registerXrefsCommand = (
+  cli: CliInstance,
+  logger: Logger,
+  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
+): void => {
   cli.command(CLI_COMMANDS.xrefs, {
     description: "List bounded references to an analyzed address",
     args: z.object({
@@ -234,7 +244,11 @@ const registerXrefsCommand = (cli: CliInstance, logger: Logger): void => {
   });
 };
 
-const registerTraceCommand = (cli: CliInstance, logger: Logger): void => {
+const registerTraceCommand = (
+  cli: CliInstance,
+  logger: Logger,
+  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
+): void => {
   cli.command(CLI_COMMANDS.trace, {
     description: "Trace a literal feature through analyzed references",
     args: z.object({
@@ -289,7 +303,11 @@ const registerTraceCommand = (cli: CliInstance, logger: Logger): void => {
   });
 };
 
-const registerFunctionCommand = (cli: CliInstance, logger: Logger): void => {
+const registerFunctionCommand = (
+  cli: CliInstance,
+  logger: Logger,
+  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
+): void => {
   cli.command(CLI_COMMANDS.function, {
     description: "Analyze one complete function with evidence",
     args: z.object({
@@ -343,6 +361,7 @@ const registerFunctionCommand = (cli: CliInstance, logger: Logger): void => {
 const registerInstructionsCommand = (
   cli: CliInstance,
   logger: Logger,
+  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.instructions, {
     description: "Read every raw instruction without decompiling",
@@ -394,7 +413,11 @@ const registerInstructionsCommand = (
   });
 };
 
-const registerSearchCommand = (cli: CliInstance, logger: Logger): void => {
+const registerSearchCommand = (
+  cli: CliInstance,
+  logger: Logger,
+  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
+): void => {
   cli.command(CLI_COMMANDS.search, {
     description: "Search every analyzed string or procedure name",
     args: z.object({

@@ -99,16 +99,16 @@ it("advertises exact schemas and projects one layout section from retained Evide
   const parsed = toolContract("inspect_analysis_view").outputSchema.parse(
     response.structuredContent,
   );
-  expect(parsed.result).toMatchObject({
+  expect(parsed.normalized_result).toMatchObject({
     kind: "item",
     parent_evidence_id: parent.evidence_id,
     item: { name: { display: ".data" } },
   });
-  expect(parsed.result).toEqual(
-    parseEvidence(parsed.evidence).normalized_result,
+  expect(parsed.normalized_result).toEqual(
+    parseEvidence(parsed).normalized_result,
   );
   expect(session.evidenceById(parsed.evidence_id)).toEqual(
-    parseEvidence(parsed.evidence),
+    parseEvidence(parsed),
   );
 });
 
@@ -117,7 +117,7 @@ it("retains an oversized selected observation and keeps subsequent views usable"
   const analysis = analysisViewJavaScriptAnalysisWithSource();
   const original = analysis.graph.nodes[0];
   if (original === undefined) throw new Error("missing module");
-  const source = "\0".repeat(500_000);
+  const source = "\0".repeat(1_000_000);
   const node = createJavaScriptApplicationNode({
     kind: original.kind,
     identity: original.identity,
@@ -206,12 +206,12 @@ it("returns a JavaScript summary without graph payloads from a retained referenc
   const parsed = toolContract("inspect_analysis_view").outputSchema.parse(
     response.structuredContent,
   );
-  expect(parsed.result).toMatchObject({
+  expect(parsed.normalized_result).toMatchObject({
     kind: "summary",
     parent_operation: "analyze_javascript_application",
     summary: { format: "directory" },
   });
-  expect(parsed.result).not.toHaveProperty("summary.semantic_graph");
+  expect(parsed.normalized_result).not.toHaveProperty("summary.semantic_graph");
   const stale = await client.callTool({
     name: "inspect_analysis_view",
     arguments: {
@@ -254,13 +254,14 @@ it("accepts a transport-constraint retained reference as the view source", async
   const parsed = toolContract("inspect_analysis_view").outputSchema.parse(
     response.structuredContent,
   );
-  expect(parsed.result).toMatchObject({
+  expect(parsed.normalized_result).toMatchObject({
     kind: "page",
     parent_evidence_id: parent.evidence_id,
     coverage: { exhausted: true },
   });
-  if (parsed.result.kind !== "page") throw new Error("expected page view");
-  expect(parsed.result.items).toEqual([
+  if (parsed.normalized_result.kind !== "page")
+    throw new Error("expected page view");
+  expect(parsed.normalized_result.items).toEqual([
     {
       node_id: expect.any(String),
       kind: "javascript-asset",

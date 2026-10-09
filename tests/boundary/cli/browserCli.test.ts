@@ -6,11 +6,30 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   startFakeCdpBrowser,
   type FakeCdpBrowser,
+  type FakeOptions,
 } from "../../fixtures/fakeCdpBrowser.js";
 
 const execute = promisify(execFile);
 const browsers: FakeCdpBrowser[] = [];
 const INTEGRATION_TEST_TIMEOUT_MS = 60_000;
+
+const partialScriptEvents: FakeOptions["commandEvents"] = (
+  { method },
+  origin,
+) =>
+  method === "Debugger.enable"
+    ? [
+        {
+          method: "Debugger.scriptParsed",
+          sessionId: "session-1",
+          params: {
+            scriptId: "partial-script",
+            url: `${origin}/app.js`,
+            executionContextId: 1,
+          },
+        },
+      ]
+    : undefined;
 
 afterEach(async () => {
   await Promise.all(browsers.splice(0).map(async (browser) => browser.close()));
@@ -24,6 +43,7 @@ describe("browser CLI parity", () => {
         sessionTimeline: "same_origin",
         webMcpTools: true,
         sensitiveShapes: true,
+        commandEvents: partialScriptEvents,
       });
       browsers.push(browser);
       const listed = await runCli(
@@ -59,6 +79,9 @@ describe("browser CLI parity", () => {
         provider: { id: "rea-cdp-browser" },
         normalized_result: {
           target: { target_id: "allowed-page" },
+          scripts: {
+            items: [{ cdp_hash: null, length: null, is_module: null }],
+          },
           network: {
             prior_activity_available: false,
             requests: [
@@ -355,6 +378,11 @@ const completeScenarioCapture = () => {
       start_origin: "https://app.example.test",
       action_count: 1,
       secret_references: [],
+      network_content: {
+        request_body: false,
+        response_body: false,
+        header_values: false,
+      },
     },
     duration_ms: 1,
     steps: [

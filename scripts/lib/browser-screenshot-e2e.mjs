@@ -94,10 +94,7 @@ export async function verifyLargeScreenshotE2e(endpoint, origin) {
       { timeout: 60000 },
     );
     assert.notEqual(captured.isError, true, JSON.stringify(captured));
-    const mcpEvidence = parseEvidence({
-      ...captured.structuredContent?.evidence,
-      normalized_result: captured.structuredContent?.result,
-    });
+    const mcpEvidence = parseEvidence(captured.structuredContent);
     const mcpScreenshot = webScreenshotSchema.parse(
       mcpEvidence.normalized_result,
     );

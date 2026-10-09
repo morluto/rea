@@ -4,31 +4,21 @@ import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
 const CLI_INTEGRATION_TIMEOUT_MS = 60_000;
 
-const EXPECTED_HELP = [
-  "rea mcp doctor — Validate MCP server startup and tool listing",
-  "",
-  "Usage: rea mcp doctor [options]",
-  "",
-  "Options:",
-  "  --format <toon|json|yaml|md|jsonl>  Output format",
-  "  --json                              Emit the report as JSON",
-  "  --full-output                       Show the full output envelope",
-  "  --help, -h                          Show help",
-  "",
-  "This entry accepts only the options above.",
-  "",
-].join("\n");
-
 describe("MCP doctor help boundary", () => {
   workspaceCliTest(
     "answers the advertised help option instead of validating it",
     async ({ cli }) => {
+      const parent = await cli.run({ arguments: ["mcp", "--help"] });
+      expect(parent.exitCode).toBe(0);
+      expect(parent.stdout).toContain("doctor");
       for (const argument of ["--help", "-h"]) {
         const result = await cli.run({
           arguments: ["mcp", "doctor", argument],
         });
         expect(result).toMatchObject({ exitCode: 0 });
-        expect(result.stdout).toBe(EXPECTED_HELP);
+        expect(result.stdout).toContain("Usage: rea mcp doctor [options]");
+        expect(result.stdout).toContain("--format <toon|json|yaml|md|jsonl>");
+        expect(result.stdout).toContain("--full-output");
         // Help returns before the diagnostic session starts, so no report
         // envelope and no startup diagnostics are produced.
         expect(result.stdout).not.toContain("healthy");

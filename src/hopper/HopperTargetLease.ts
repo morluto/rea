@@ -149,10 +149,10 @@ const tryAcquireLease = async (
     lease: {
       release: async () => {
         if (released) return;
-        released = true;
         // Node removes a bound Unix socket on close. A second unlink here
         // could remove a new owner's socket bound after that close.
         await closeServer(server);
+        released = true;
       },
     },
   };

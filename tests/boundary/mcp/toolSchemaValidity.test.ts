@@ -7,7 +7,7 @@ import { z } from "zod";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import { emptyArraySchema } from "../../../src/domain/emptyArraySchema.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
-import { GENERATED_MCP_TOOL_CATALOG } from "../../../src/generatedMcpToolCatalog.js";
+import { GENERATED_MCP_TOOL_CATALOG } from "../../fixtures/mcpToolCatalog.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 
 interface ToolSchemas {
@@ -93,6 +93,23 @@ function expectKnownAuthorityHints(tools: readonly ToolSchemas[]): void {
       destructiveHint: true,
       idempotentHint: false,
       openWorldHint: false,
+    },
+    export_web_scripts: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+    capture_process_scenario: {
+      openWorldHint: true,
+    },
+    export_evidence_bundle: {
+      readOnlyHint: false,
+      destructiveHint: true,
+    },
+    import_evidence_bundle: {
+      readOnlyHint: false,
+      destructiveHint: false,
     },
   } as const;
 
@@ -383,8 +400,11 @@ describe("MCP root input schemas", () => {
       for (const contract of TOOL_CONTRACTS) {
         const inputSchema = advertised.get(contract.name)!.inputSchema;
         expect(inputSchema.type, contract.name).toBe("object");
-        expect(inputSchema.properties, contract.name).toBeDefined();
-        expect(inputSchema.anyOf, contract.name).toBeUndefined();
+        expect(
+          inputSchema.properties !== undefined ||
+            Array.isArray(inputSchema.anyOf),
+          contract.name,
+        ).toBe(true);
         const validate = ajv.compile(inputSchema);
         for (const example of contract.examples)
           expect(

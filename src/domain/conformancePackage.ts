@@ -5,7 +5,7 @@ import { z } from "zod";
 
 import { IDENTIFIER_PATTERN } from "./stringPatterns.js";
 
-import { evidenceEnvelopeSchema } from "./evidence.js";
+import { evidenceSchema } from "./evidence.js";
 import { evidenceBundleSchema } from "./evidenceBundle.js";
 import { err, ok, type Result } from "./result.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
@@ -59,7 +59,7 @@ const shimPlanSchema = z.strictObject({
 const expectedEvidenceSchema = z.strictObject({
   scenario_id: scenarioIdSchema,
   /** Expected evidence envelopes. */
-  envelopes: z.array(evidenceEnvelopeSchema),
+  envelopes: z.array(evidenceSchema),
   /** Expected evidence bundle. */
   bundle: evidenceBundleSchema.nullable(),
   /** Required dimensions that must be present in the evidence. */

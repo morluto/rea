@@ -8,7 +8,7 @@ import {
   captureProcessScenarioFile,
   isProcessCliFailure,
 } from "../../../src/application/process/ProcessCli.js";
-import { runCapabilityStatus } from "../../../src/composition/directAnalysis.js";
+import { createDirectAnalysis } from "../../../src/composition/directAnalysis.js";
 import { probeProcessCaptureCapability } from "../../../src/process/capture/ProcessHarness.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { parseProcessCapture } from "../../../src/domain/process/processCapture.js";
@@ -68,9 +68,9 @@ describe("the CLI takes its environment as an input", () => {
   it("reports session status from a supplied environment", async () => {
     // An invalid configuration must surface through the caller's supplied
     // environment rather than whatever the process happens to carry.
-    const result = await runCapabilityStatus(undefined, {
+    const result = await createDirectAnalysis({
       REA_LOG_LEVEL: "not-a-level",
-    });
+    }).runCapabilityStatus();
     expect(result).toMatchObject({ error: expect.anything() });
   });
 });

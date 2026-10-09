@@ -47,8 +47,8 @@ export async function connectRecordedCrash({ entrypoint, environment }) {
           return value.error;
         }
         assert.notEqual(response.isError, true, JSON.stringify(value));
-        evidence = parseEvidence(value.evidence);
-        assert.deepEqual(value.result, evidence.normalized_result);
+        evidence = parseEvidence(value);
+        assert.deepEqual(value.normalized_result, evidence.normalized_result);
       } else {
         assert.equal(mode, "cli");
         let response;

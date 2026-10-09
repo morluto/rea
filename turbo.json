@@ -1,42 +1,24 @@
 {
   "$schema": "https://turborepo.dev/schema.json",
   "tasks": {
-    "build": {
+    "compile": {
+      "dependsOn": ["metadata:check"],
       "inputs": [
         ".nvmrc",
         "package.json",
         "package-lock.json",
         "scripts/check-dependency-install.mjs",
         "scripts/clean-build-output.mjs",
-        "scripts/generate-mcp-tool-catalog.mjs",
         "scripts/generate-package-metadata.mjs",
-        "scripts/generate-skill-metadata.mjs",
-        "scripts/generate-product-catalog.mjs",
-        "scripts/generate-completion-ledger.mjs",
-        "scripts/lib/**/*.mjs",
-        "scripts/verify/managed/**",
-        "scripts/fixtures/managed/**",
-        ".oxfmtrc.json",
-        "skill-src/**",
         "src/**/*.ts",
         "!src/**/*.test.ts",
         "!src/**/*.fixture.ts",
-        "!src/generatedMcpToolCatalog.ts",
         "tsconfig.json",
         "tsconfig.build.json"
       ],
-      "outputs": [
-        "dist/**",
-        ".cache/tsconfig.build.tsbuildinfo",
-        "src/generatedMcpToolCatalog.ts",
-        "skills/**",
-        "docs/public/product-catalog.json",
-        "docs/verification/managed-conformance-manifest.json",
-        "docs/verification/managed-conformance-ledger.json"
-      ]
+      "outputs": ["dist/**"]
     },
     "typecheck": {
-      "dependsOn": ["build"],
       "inputs": [
         ".nvmrc",
         "package.json",
@@ -46,9 +28,10 @@
         "tsconfig.json",
         "tsconfig.build.json",
         "vitest.config.ts",
-        "scripts/**/*.d.mts"
+        "scripts/**/*.d.mts",
+        "docs/.vitepress/config.ts"
       ],
-      "outputs": [".cache/tsconfig.typecheck.tsbuildinfo"]
+      "outputs": []
     },
     "metadata:check": {
       "inputs": [
@@ -74,7 +57,7 @@
     },
     "format:check": {},
     "knip": {
-      "dependsOn": ["build"],
+      "dependsOn": ["compile"],
       "inputs": [
         ".nvmrc",
         "knip.json",
@@ -106,7 +89,12 @@
       ]
     },
     "test:run": {
-      "dependsOn": ["build"],
+      "dependsOn": [
+        "artifacts:mcp-catalog",
+        "artifacts:product-catalog",
+        "artifacts:managed-evidence",
+        "artifacts:skills"
+      ],
       "inputs": [
         ".nvmrc",
         "package.json",
@@ -115,11 +103,25 @@
         "tests/**",
         "scripts/**",
         "bridge/**",
-        "vitest.config.ts"
+        "vitest.config.ts",
+        {
+          "mode": "dependencyOutputs",
+          "globs": [
+            ".cache/mcp-tool-catalog.json",
+            "skills/**",
+            "docs/public/product-catalog.json",
+            "docs/verification/managed-conformance-manifest.json",
+            "docs/verification/managed-conformance-ledger.json"
+          ]
+        }
       ]
     },
     "docs:check:built": {
-      "dependsOn": ["build"],
+      "dependsOn": [
+        "artifacts:product-catalog",
+        "artifacts:managed-evidence",
+        "artifacts:skills"
+      ],
       "inputs": [
         ".nvmrc",
         "package.json",
@@ -134,9 +136,116 @@
         "src/generated*.ts",
         "src/contracts/**/*.ts",
         "docs/**",
+        "!docs/public/product-catalog.json",
+        "!docs/verification/managed-conformance-*.json",
         "skill-src/**",
-        "skills/**/SKILL.md",
-        "README.md"
+        "README.md",
+        {
+          "mode": "dependencyOutputs",
+          "globs": [
+            "skills/**",
+            "docs/public/product-catalog.json",
+            "docs/verification/managed-conformance-manifest.json",
+            "docs/verification/managed-conformance-ledger.json"
+          ]
+        }
+      ]
+    },
+    "artifacts:mcp-catalog": {
+      "dependsOn": ["compile"],
+      "inputs": [
+        ".nvmrc",
+        "package.json",
+        "package-lock.json",
+        "scripts/generate-mcp-tool-catalog.mjs",
+        "scripts/lib/generated-file.mjs"
+      ],
+      "outputs": [".cache/mcp-tool-catalog.json"]
+    },
+    "artifacts:skills": {
+      "dependsOn": ["compile"],
+      "inputs": [
+        ".nvmrc",
+        "package.json",
+        "package-lock.json",
+        "scripts/generate-skill-metadata.mjs",
+        "scripts/lib/generated-file.mjs",
+        "skill-src/**"
+      ],
+      "outputs": ["skills/**"]
+    },
+    "artifacts:product-catalog": {
+      "dependsOn": ["compile"],
+      "inputs": [
+        ".nvmrc",
+        "package.json",
+        "package-lock.json",
+        "scripts/generate-product-catalog.mjs",
+        "scripts/lib/**/*.mjs",
+        ".oxfmtrc.json"
+      ],
+      "outputs": ["docs/public/product-catalog.json"]
+    },
+    "artifacts:managed-evidence": {
+      "dependsOn": ["artifacts:skills"],
+      "inputs": [
+        ".nvmrc",
+        "package.json",
+        "package-lock.json",
+        "scripts/generate-completion-ledger.mjs",
+        "scripts/lib/generated-file.mjs",
+        "scripts/verify/managed/**",
+        "scripts/fixtures/managed/**"
+      ],
+      "outputs": [
+        "docs/verification/managed-conformance-manifest.json",
+        "docs/verification/managed-conformance-ledger.json"
+      ]
+    },
+    "artifacts:error-schema": {
+      "dependsOn": ["compile"],
+      "inputs": [
+        ".nvmrc",
+        "package.json",
+        "package-lock.json",
+        "scripts/generate-error-schema.mjs",
+        "scripts/lib/generated-file.mjs",
+        "scripts/lib/format-generated-file.mjs",
+        ".oxfmtrc.json"
+      ],
+      "outputs": ["docs/error-contract.schema.json"]
+    },
+    "mcp-catalog:check:built": {
+      "dependsOn": ["artifacts:mcp-catalog"],
+      "inputs": [
+        ".nvmrc",
+        "package.json",
+        "package-lock.json",
+        "scripts/generate-mcp-tool-catalog.mjs",
+        "scripts/lib/generated-file.mjs",
+        {
+          "mode": "dependencyOutputs",
+          "globs": [".cache/mcp-tool-catalog.json"]
+        }
+      ]
+    },
+    "evidence:check:built": {
+      "dependsOn": ["artifacts:managed-evidence"],
+      "inputs": [
+        ".nvmrc",
+        "package.json",
+        "package-lock.json",
+        "scripts/generate-completion-ledger.mjs",
+        "scripts/lib/generated-file.mjs",
+        "scripts/verify/managed/**",
+        "scripts/fixtures/managed/**",
+        {
+          "mode": "dependencyOutputs",
+          "globs": [
+            "docs/verification/managed-conformance-manifest.json",
+            "docs/verification/managed-conformance-ledger.json"
+          ]
+        }
       ]
     }
   }

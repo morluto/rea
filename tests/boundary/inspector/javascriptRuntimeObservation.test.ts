@@ -22,6 +22,97 @@ import { javascriptRuntimeReconciliationResultSchema } from "../../../src/domain
 import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
+describe("Inspector execution-context lifecycle metadata", () => {
+  test.each([
+    [
+      "Runtime.executionContextDestroyed",
+      { executionContextId: 1 },
+      "destroyed",
+    ],
+    ["Runtime.executionContextsCleared", {}, "cleared"],
+  ] as const)(
+    "preserves observed context metadata after %s",
+    async (method, params, state) => {
+      const fixture = await runtimeFixture();
+      const fake = await startFakeV8Inspector({
+        targetUrl: pathToFileURL(fixture.entry).href,
+        runtimeEvents: [
+          {
+            method: "Runtime.executionContextCreated",
+            params: {
+              context: {
+                id: 1,
+                origin: "https://context.example",
+                name: "worker#one",
+              },
+            },
+          },
+          { method, params },
+        ],
+      });
+      try {
+        const result = await new V8InspectorProvider().observe(
+          observeInput(fake.endpoint, fake.targetId, "node"),
+        );
+        if (!result.ok) throw result.error;
+        expect(result.value.execution_contexts).toEqual([
+          {
+            context_key: "1",
+            state,
+            name: "worker#one",
+            origin: "https://context.example",
+          },
+        ]);
+      } finally {
+        await fake.close();
+      }
+    },
+  );
+
+  test("replaces context metadata only when a new context creation is observed", async () => {
+    const fixture = await runtimeFixture();
+    const fake = await startFakeV8Inspector({
+      targetUrl: pathToFileURL(fixture.entry).href,
+      runtimeEvents: [
+        {
+          method: "Runtime.executionContextCreated",
+          params: {
+            context: {
+              id: 1,
+              origin: "https://old.example",
+              name: "old context",
+            },
+          },
+        },
+        {
+          method: "Runtime.executionContextDestroyed",
+          params: { executionContextId: 1 },
+        },
+        {
+          method: "Runtime.executionContextCreated",
+          params: { context: { id: 1, origin: "", name: "" } },
+        },
+        {
+          method: "Runtime.executionContextDestroyed",
+          params: { executionContextId: 2 },
+        },
+      ],
+    });
+    try {
+      const result = await new V8InspectorProvider().observe(
+        observeInput(fake.endpoint, fake.targetId, "node"),
+      );
+      if (!result.ok) throw result.error;
+      expect(result.value.execution_contexts).toEqual([
+        { context_key: "1", state: "created", name: "", origin: "" },
+        { context_key: "2", state: "destroyed", name: null, origin: null },
+      ]);
+    } finally {
+      await fake.close();
+    }
+  });
+});
+
 describe("passive V8 Inspector provider", () => {
   test("rejects unknown runtime observation fields", () => {
     expect(
@@ -94,8 +185,8 @@ describe("passive V8 Inspector provider", () => {
         {
           context_key: "1",
           state: "created",
-          name: null,
-          origin: null,
+          name: "node[fixture]",
+          origin: "",
         },
       ]);
       expect(new Set(fake.commands.map(({ method }) => method))).toEqual(

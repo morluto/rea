@@ -10,12 +10,13 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { inspectGhidraInstallation } from "../dist/ghidra/GhidraInstallation.js";
 import { toolContract } from "../dist/contracts/toolContracts.js";
-import { requireMcpResult } from "./lib/mcp-verifier-results.mjs";
+import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
 const execute = promisify(execFile);
 const run = createVerifierRun();
 const installation = inspectGhidraInstallation({
+  environment: process.env,
   installDir: process.env.GHIDRA_INSTALL_DIR,
   javaHome: process.env.JAVA_HOME,
 });
@@ -156,5 +157,5 @@ async function call(name, arguments_) {
   );
   if (name === "analyze_swift_types")
     toolContract(name).outputSchema.parse(response.structuredContent);
-  return requireMcpResult(response, name);
+  return requireMcpOperationResult(response, name);
 }

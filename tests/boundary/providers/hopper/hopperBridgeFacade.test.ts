@@ -148,7 +148,8 @@ describe("Hopper API facade", () => {
         (candidate) => candidate.name === name,
       );
       if (contract === undefined) throw new Error(`missing ${name} contract`);
-      const parsed = contract.outputSchema.shape.result.safeParse(value);
+      const parsed =
+        contract.outputSchema.shape.normalized_result.safeParse(value);
       if (!parsed.success) throw new Error(`${name}: ${parsed.error.message}`);
       expect(parsed.success, name).toBe(true);
     }

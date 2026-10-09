@@ -10,8 +10,7 @@ verified manifest into one caller-selected, absent directory.
 For passive inspection, select `include_script_sources: true` (CLI:
 `--include-script-sources`). For scenarios, select
 `capture.network.response_body: true`. Save either the complete Evidence record
-or its normalized result as UTF-8 JSON. The compact MCP wrapper's `evidence`
-field contains the complete Evidence record.
+or its normalized result as UTF-8 JSON. MCP `structuredContent` contains the complete Evidence record.
 
 ```sh
 rea export-web-scripts /analysis/capture.json /analysis/exported-scripts --json

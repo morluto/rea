@@ -42,9 +42,10 @@ npm run check:fast
 
 `npm ci` installs the exact dependencies and prepares the Husky hooks without
 building the project. Run `npm run build:cached` when you need the standalone
-CLI or MCP server; `npm run build` remains the uncached compiler leaf used by
-Turbo. Turbo caches deterministic builds and static checks across Git
-worktrees. After a package, lockfile, or managed-skill version change, run
+CLI or MCP server; it compiles the runtime and bundles the authored skill.
+`npm run build` forces those tasks to rerun. Neither command generates test
+catalogs, documentation projections, or managed verification evidence. Turbo
+caches deterministic builds and static checks across Git worktrees. After a package, lockfile, or managed-skill version change, run
 `npm run metadata:generate` before building.
 
 Keep dependencies flowing inward through the existing domain, contracts, provider, application, server, and adapter layers. Parse unknown values at process and protocol boundaries, model expected failures with `Result`, and preserve the canonical tool inventory defined by `TOOL_CONTRACTS` unless a deliberate contract change updates every verifier, generated catalog artifact, and snapshot. Keep tool discovery complete and report capability- and session-scoped availability through `binary_session`.
@@ -96,7 +97,22 @@ Packaging, setup, installation, or distribution changes also require
 `npm run verify:package` and `npm pack --dry-run`. Provider behavior changes
 require the matching real-provider `verify:*` lane.
 
-`check:fast` runs cached typecheck and lint, reporting diagnostics on failure.
+`check:fast` runs cached source/test typecheck and lint without compiling or
+running generators. `npm run test:prepare` prepares all artifacts consumed by
+the complete suite; focused tests prepare only their runtime and declared
+artifact dependencies. The test-only MCP catalog lives at
+`.cache/mcp-tool-catalog.json` and can be regenerated independently with
+`npm run mcp-catalog:generate`.
+
+Build and generation commands hold one SQLite exclusive transaction around
+their whole Turbo graph, including cache restoration. The persistent database
+in `.cache/rea-command-locks/` is a lock identity, not a stale-file marker;
+the operating system releases ownership when the command supervisor exits.
+On POSIX, that supervisor retains the transaction and process-group identity
+through cancellation, including loss of its parent runner. Windows cancellation
+waits for the command to complete. Do not remove the database while commands
+are running.
+
 `check` adds formatting, dead-code, and package-metadata freshness checks.
 Formatting uses Oxfmt and the committed `.oxfmtrc.json`; generated sources use
 the same configuration. Pre-commit formats and lints staged files; pre-push runs
@@ -104,8 +120,10 @@ the same configuration. Pre-commit formats and lints staged files; pre-push runs
 `docs:check` builds and validates generated metadata for the current checkout.
 The product catalog (`docs/public/product-catalog.json`), portable managed
 conformance projections (`docs/verification/managed-conformance-*.json`), and
-packaged skill (`skills/`) are ignored build outputs. Edit skill instructions
-and references in `skill-src/`; the build adds catalog-dependent metadata to
+packaged skill (`skills/`) are ignored generated outputs. `docs:generate`
+prepares documentation and managed evidence; `evidence:generate` prepares only
+the managed commitment and its runtime/skill dependencies. Edit skill
+instructions and references in `skill-src/`; the skill task adds metadata to
 the packaged copy without rewriting authored files. The generated manifest
 commits to that exact packaged skill bundle. It is a portable projection of
 the deterministic managed verifier, not a record of optional real-provider runs.

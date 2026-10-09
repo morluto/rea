@@ -1,18 +1,15 @@
-import type {
-  McpServer,
-  StandardSchemaWithJSON,
-} from "@modelcontextprotocol/server";
+import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
+import type { StandardSchemaWithJSON } from "@modelcontextprotocol/server";
 import type { WebNetworkCaptureService } from "../application/WebNetworkCaptureService.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { Logger } from "../logger.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { toCallToolResult, toEvidenceToolResult } from "./toolResult.js";
 
 /** Bind historical inspection to its named contract and caller-owned Evidence writer. */
 export const registerWebNetworkCaptureTool = (
-  server: McpServer,
+  server: EvidenceMcpServer,
   service: WebNetworkCaptureService,
   logger: Logger,
   recordEvidence?: EvidenceWriter["recordEvidence"],
@@ -36,9 +33,13 @@ export const registerWebNetworkCaptureTool = (
       const result = await logToolExecution(logger, contract.name, () =>
         service.inspect(input, { signal: context.mcpReq.signal }),
       );
-      if (!result.ok) return toCallToolResult(result, contract);
+      if (!result.ok) return server.delivery.toCallToolResult(result, contract);
       const recorded = recordEvidence?.(result.value);
-      return toEvidenceToolResult(result.value, contract, recorded);
+      return server.delivery.toEvidenceToolResult(
+        result.value,
+        contract,
+        recorded,
+      );
     },
   );
 };

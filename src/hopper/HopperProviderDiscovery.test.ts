@@ -49,7 +49,7 @@ describe("Hopper provider discovery", () => {
 const provider = (launcherPath: string): HopperProvider => {
   const config = parseConfig({ HOPPER_LAUNCHER_PATH: launcherPath });
   if (!config.ok) throw config.error;
-  return new HopperProvider(config.value, silentLogger);
+  return new HopperProvider(config.value, silentLogger, {});
 };
 
 const databaseTarget = (): BinaryTarget => ({

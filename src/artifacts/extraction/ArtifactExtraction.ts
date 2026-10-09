@@ -32,6 +32,7 @@ export interface ArtifactExtractionInput {
   readonly inputPath: string;
   readonly inputFormat: BinaryTarget["format"];
   readonly outputRoot: string;
+  readonly environment: Readonly<NodeJS.ProcessEnv>;
 }
 
 /** Extract every regular inventory occurrence into an exclusively owned absent root. */
@@ -45,6 +46,7 @@ export const extractArtifact = async (
   await requireExtractableFormat(sourcePath, input);
   const snapshot = await scanArtifactInventory(sourcePath, {
     signal,
+    environment: input.environment,
   });
   const selectedOccurrences = snapshot.occurrences.filter(
     (occurrence) =>
@@ -286,14 +288,17 @@ const requireExtractableFormat = async (
 
 const createReader = async (
   path: string,
-  input: Pick<ArtifactExtractionInput, "inputPath" | "inputFormat">,
+  input: Pick<
+    ArtifactExtractionInput,
+    "inputPath" | "inputFormat" | "environment"
+  >,
 ): Promise<ArtifactReader> => {
   const format = input.inputFormat;
   if (await requireExtractableFormat(path, input))
     return new DirectoryArtifactReader(path);
   if (format === "asar") return new AsarArtifactReader(path);
   if (isZipFormat(format)) return new ZipArtifactReader(path, format);
-  return new MachOSliceArtifactReader(path);
+  return new MachOSliceArtifactReader(path, input.environment);
 };
 
 const preflight = (entry: ArtifactEntry): void => {

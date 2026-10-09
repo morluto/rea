@@ -126,7 +126,7 @@ export async function verifyBrowserRuntime(
       mcpTextValue(listenerResponse),
     );
     const mcpListenerProof = assertListeners(
-      parseEvidence(JSON.parse(mcpTextValue(listenerResponse)).evidence),
+      parseEvidence(JSON.parse(mcpTextValue(listenerResponse))),
       site,
     );
     const mcpProof = await executionMcp(
@@ -231,7 +231,7 @@ async function executionMcp(
   await actionPromise;
   assert.notEqual(response.isError, true, mcpTextValue(response));
   return assertExecution(
-    parseEvidence(JSON.parse(mcpTextValue(response)).evidence),
+    parseEvidence(JSON.parse(mcpTextValue(response))),
     site,
     requireBlock,
   );

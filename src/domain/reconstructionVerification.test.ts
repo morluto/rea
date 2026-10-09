@@ -288,40 +288,20 @@ describe("reconstruction verification", () => {
   });
 });
 
-describe("saved v3 reconstruction capture compatibility", () => {
-  it("verifies saved v3 process captures and rejects a malformed legacy digest", () => {
-    const legacy = legacyV3Capture();
-    const left = source("1", "controlled-replay", "observed", legacy);
-    const right = source("2", "controlled-replay");
-    const comparison = processComparison(left, right, processResult());
-    const bundle = createEvidenceBundle([comparison, left, right]);
-
-    expect(
-      verifyReconstruction(behavioralSpec(comparison), bundle),
-    ).toMatchObject({
-      status: "pass",
-      summary: { total: 1, passed: 1, failed: 0, unknown: 0 },
-    });
-
-    const malformedLegacy = {
-      ...legacy,
-      manifest: { ...legacy.manifest, executable_sha256: null },
-    };
-    const malformedLeft = source(
-      "3",
+describe("reconstruction process capture input", () => {
+  it("rejects saved captures without explicit executable identity", () => {
+    const left = source(
+      "1",
       "controlled-replay",
       "observed",
-      malformedLegacy,
+      legacyV3Capture(),
     );
-    const malformedComparison = processComparison(
-      malformedLeft,
-      right,
-      processResult(),
-    );
+    const right = source("2", "controlled-replay");
+    const comparison = processComparison(left, right, processResult());
     expect(() =>
       verifyReconstruction(
-        behavioralSpec(malformedComparison),
-        createEvidenceBundle([malformedComparison, malformedLeft, right]),
+        behavioralSpec(comparison),
+        createEvidenceBundle([comparison, left, right]),
       ),
     ).toThrow();
   });

@@ -8,7 +8,7 @@ describe("Hopper provider capabilities", () => {
   it("declines DOS MZ targets with a provider-specific support reason", () => {
     const config = parseConfig({});
     if (!config.ok) throw new Error("expected valid configuration");
-    const provider = new HopperProvider(config.value, silentLogger);
+    const provider = new HopperProvider(config.value, silentLogger, {});
     expect(
       provider.inspectTargetSupport({
         path: "/tmp/legacy.exe",

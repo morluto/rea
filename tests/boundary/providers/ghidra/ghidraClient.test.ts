@@ -5,7 +5,7 @@ import { access, chmod, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import pino from "pino";
 import type { Logger } from "../../../../src/logger.js";
 
@@ -99,7 +99,7 @@ class FixtureLauncher implements GhidraLauncher {
     process_.once("spawn", () => this.#notifyStarted?.(process_));
     return ok({
       process: process_,
-      ownsProcessLifetime: true,
+      ownsProcessLifetime: true as const,
       projectRoot,
       ghidraLogPath: join(session.runtimeRoot, "ghidra.log"),
       scriptLogPath: join(session.runtimeRoot, "script.log"),
@@ -397,17 +397,20 @@ describe("GhidraClient runtime removal failures", () => {
       // Without write permission its entries cannot be removed.
       await chmod(runtimeRoot, 0o500);
       try {
-        await expect(client.close()).rejects.toMatchObject({
-          cleanupIncomplete: true,
-          cleanupResources: [runtimeRoot],
-          diagnostics: { leftover_paths: [runtimeRoot] },
+        await expect(client.close()).resolves.toMatchObject({
+          ok: false,
+          error: {
+            cleanupIncomplete: true,
+            cleanupResources: [runtimeRoot],
+            diagnostics: { leftover_paths: [runtimeRoot] },
+          },
         });
         await expect(access(runtimeRoot)).resolves.toBeUndefined();
       } finally {
         await chmod(runtimeRoot, 0o700);
       }
 
-      await expect(client.close()).resolves.toBeUndefined();
+      await expect(client.close()).resolves.toEqual({ ok: true, value: null });
       await expect(access(runtimeRoot)).rejects.toMatchObject({
         code: "ENOENT",
       });
@@ -629,7 +632,7 @@ describe("GhidraClient shutdown diagnostics", () => {
     );
     const client = clientFor(launcher, { logger });
     await expect(client.start()).resolves.toMatchObject({ ok: true });
-    await expect(client.close()).resolves.toBeUndefined();
+    await expect(client.close()).resolves.toEqual({ ok: true, value: null });
     const warning: unknown[] = logs.map((line) => JSON.parse(line));
     expect(warning).toContainEqual(
       expect.objectContaining({
@@ -667,7 +670,7 @@ describe("GhidraClient shutdown diagnostics", () => {
       );
       const client = clientFor(launcher, { logger });
       await expect(client.start()).resolves.toMatchObject({ ok: true });
-      await expect(client.close()).resolves.toBeUndefined();
+      await expect(client.close()).resolves.toEqual({ ok: true, value: null });
       const warning: unknown[] = logs.map((line) => JSON.parse(line));
       expect(warning).toContainEqual(
         expect.objectContaining({
@@ -695,4 +698,50 @@ describe("GhidraClient shutdown diagnostics", () => {
       await expect(waitForExit(launcher.processes[0])).resolves.toBe(true);
     },
   );
+});
+
+it("preserves failed startup and retained Ghidra cleanup capabilities until a verified retry", async () => {
+  const fixture = new FixtureLauncher("wrong_identity");
+  let cleanupAllowed = false;
+  let cleanupAttempts = 0;
+  const launcher: GhidraLauncher = {
+    launch: async (session) => {
+      const launched = await fixture.launch(session);
+      if (!launched.ok) return launched;
+      return ok({
+        ...launched.value,
+        cleanup: async () => {
+          cleanupAttempts += 1;
+          return cleanupAllowed
+            ? { cleaned: true as const, signaled: false }
+            : {
+                cleaned: false as const,
+                reason: "fixture process cleanup unconfirmed",
+              };
+        },
+      });
+    },
+  };
+  const client = clientFor(launcher);
+  onTestFinished(async () => {
+    cleanupAllowed = true;
+    await client.close();
+  });
+  expect(await client.start()).toMatchObject({
+    ok: false,
+    error: { kind: "protocol", cleanupFailure: { cleanupIncomplete: true } },
+  });
+  const runtime = fixture.runtimeRoots[0];
+  if (runtime === undefined)
+    throw new Error("Fixture runtime was not captured");
+  await access(runtime);
+  expect(cleanupAttempts).toBe(1);
+  expect(await client.close()).toMatchObject({
+    ok: false,
+    error: { cleanupIncomplete: true },
+  });
+  cleanupAllowed = true;
+  expect(await client.close()).toEqual(ok(null));
+  expect(cleanupAttempts).toBe(3);
+  await expect(access(runtime)).rejects.toMatchObject({ code: "ENOENT" });
 });

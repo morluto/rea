@@ -87,7 +87,7 @@ it("routes observe_native_calls through MCP with schema-checked input and output
   const path = join(directory, "Tool");
   await writeFile(path, machoHeader());
   const session = createTestBinarySession(
-    new NativeMacOSProvider(new NativeFixtureRunner(), "darwin", tracer),
+    new NativeMacOSProvider({}, new NativeFixtureRunner(), "darwin", tracer),
   );
   const server = createServer(session, session);
   const client = new Client({ name: "native-calls-mcp-test", version: "1" });
@@ -112,7 +112,9 @@ it("routes observe_native_calls through MCP with schema-checked input and output
       true,
     );
     const result = nativeCallObservationResultSchema.parse(
-      z.object({ result: z.unknown() }).parse(called.structuredContent).result,
+      z
+        .object({ normalized_result: z.unknown() })
+        .parse(called.structuredContent).normalized_result,
     );
     expect(result.process).toMatchObject({ pid: 99, outcome: "exited" });
     expect(result.breakpoints[0]?.request).toEqual({
@@ -228,7 +230,7 @@ it.each([
         ),
     };
     const session = createTestBinarySession(
-      new NativeMacOSProvider(new NativeFixtureRunner(), "darwin", tracer),
+      new NativeMacOSProvider({}, new NativeFixtureRunner(), "darwin", tracer),
     );
     const server = createServer(session, session);
     const client = new Client({

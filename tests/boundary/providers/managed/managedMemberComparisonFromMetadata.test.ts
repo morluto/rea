@@ -160,11 +160,13 @@ describe("managed member comparison uncertainty", () => {
     const leftPartial = {
       ...left.result,
       fields: [],
+      metadata: { ...left.result.metadata, status: "partial" as const },
       coverage: { ...left.result.coverage, state: "partial" as const },
     };
     const rightPartial = {
       ...right.result,
       methods: [],
+      metadata: { ...right.result.metadata, status: "partial" as const },
       coverage: { ...right.result.coverage, state: "partial" as const },
     };
     const result = compareManagedMembers(
@@ -266,7 +268,8 @@ describe("managed member comparison of undecoded signatures", () => {
       "/tmp/undecoded-method-renamed.dll",
     );
     expect(left.result.methods[0]?.signature.parse_status).toBe("unsupported");
-    expect(renamed.result.coverage.state).toBe("complete");
+    expect(renamed.result.metadata.status).toBe("complete");
+    expect(renamed.result.coverage.state).toBe("partial");
 
     const exact = compareManagedMembers(left, renamed);
     expect(exact.methods).toEqual([
@@ -318,7 +321,8 @@ describe("managed member comparison of undecoded signatures", () => {
       buildManagedPeFixture(undecoded),
       "/tmp/undecoded-right.dll",
     );
-    expect(left.result.coverage.state).toBe("complete");
+    expect(left.result.metadata.status).toBe("complete");
+    expect(left.result.coverage.state).toBe("partial");
     expect(left.result.methods[0]?.signature.parse_status).toBe("unsupported");
     expect(left.result.fields[0]?.signature.parse_status).toBe("unsupported");
     const result = compareManagedMembers(left, right);
@@ -338,7 +342,7 @@ describe("managed member comparison of undecoded signatures", () => {
     });
   });
 
-  it("keeps unmatched undecoded members unknown in complete inventories", () => {
+  it("keeps unmatched undecoded members unknown with complete metadata inventories", () => {
     const left = inspect(
       buildManagedPeFixture({
         methodSignature: Buffer.from([0x00, 0x00, 0x7f]),
@@ -353,7 +357,8 @@ describe("managed member comparison of undecoded signatures", () => {
       }),
       "/tmp/undecoded-after.dll",
     );
-    expect(right.result.coverage.state).toBe("complete");
+    expect(right.result.metadata.status).toBe("complete");
+    expect(right.result.coverage.state).toBe("partial");
     const result = compareManagedMembers(left, right);
     expect(result.summary).toMatchObject({ added: 0, removed: 0, unknown: 4 });
     for (const item of [...result.methods, ...result.fields])
@@ -375,7 +380,8 @@ describe("managed member comparison of undecoded signatures", () => {
     );
     expect(left.result.methods[0]?.signature.parse_status).toBe("decoded");
     expect(left.result.fields[0]?.signature.parse_status).toBe("decoded");
-    expect(right.result.coverage.state).toBe("complete");
+    expect(right.result.metadata.status).toBe("complete");
+    expect(right.result.coverage.state).toBe("partial");
     const result = compareManagedMembers(left, right);
     expect(result.summary).toMatchObject({ added: 0, removed: 0, unknown: 4 });
     for (const item of [...result.methods, ...result.fields])

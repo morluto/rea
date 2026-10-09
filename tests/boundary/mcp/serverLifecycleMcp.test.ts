@@ -129,7 +129,7 @@ it("preserves distinct results across concurrent tool calls", async () => {
   results.forEach((result, index) => {
     expect(result.isError).not.toBe(true);
     expect(structured(result)).toMatchObject({
-      result: payloads.get(names[index] ?? ""),
+      normalized_result: payloads.get(names[index] ?? ""),
     });
   });
 });

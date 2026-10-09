@@ -14,16 +14,12 @@ import {
 
 import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
-import { parseMcpResponseBudget } from "../config/mcpResponseBudget.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { createEvidence } from "../domain/evidence.js";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
-import { toErrorToolResult } from "./toolResult.js";
-import {
-  encodeToolResult,
-  MCP_RESULT_BUDGET_BYTES,
-} from "./toolResultEncoding.js";
+import type { ToolResultDelivery } from "./toolResult.js";
+import { encodeToolResult } from "./toolResultEncoding.js";
 
 /** Bind oversized MCP error recovery to this server's Evidence ledger. */
 export class EvidenceMcpServer extends McpServer {
@@ -33,6 +29,7 @@ export class EvidenceMcpServer extends McpServer {
     private readonly recordEvidence:
       | EvidenceWriter["recordEvidence"]
       | undefined,
+    readonly delivery: ToolResultDelivery,
   ) {
     super(info, options);
   }
@@ -40,7 +37,7 @@ export class EvidenceMcpServer extends McpServer {
   /** Preserve the SDK transport lifecycle while retaining oversized errors. */
   override connect(transport: Transport): Promise<void> {
     return super.connect(
-      new ErrorEvidenceTransport(transport, this.recordEvidence),
+      new ErrorEvidenceTransport(transport, this.recordEvidence, this.delivery),
     );
   }
 }
@@ -57,6 +54,7 @@ class ErrorEvidenceTransport implements Transport {
     private readonly recordEvidence:
       | EvidenceWriter["recordEvidence"]
       | undefined,
+    private readonly delivery: ToolResultDelivery,
   ) {
     if (transport.hasPerRequestStream !== undefined)
       this.hasPerRequestStream = transport.hasPerRequestStream;
@@ -143,13 +141,7 @@ class ErrorEvidenceTransport implements Transport {
     )
       return message;
     const structured = jsonObjectSchema.parse(message.result.structuredContent);
-    const configured = parseMcpResponseBudget(
-      process.env.REA_MCP_MAX_RESPONSE_BYTES,
-    );
-    const budget =
-      configured.ok && configured.value !== undefined
-        ? configured.value - 1024
-        : MCP_RESULT_BUDGET_BYTES;
+    const budget = this.delivery.resultBudgetBytes;
     const encoded = encodeToolResult(structured, budget);
     if (encoded.ok) return message;
     const operation = tool ?? "mcp_tool_error";
@@ -198,9 +190,9 @@ class ErrorEvidenceTransport implements Transport {
       {
         remediationAction: retained
           ? "Export the retained original error through export_evidence_bundle to a caller-selected path. The connection remains usable."
-          : "Configure a larger REA_MCP_MAX_RESPONSE_BYTES and matching client receive buffer, then retry. The original error could not be retained by this server.",
+          : "Restart REA with a larger REA_MCP_MAX_RESPONSE_BYTES and matching client receive buffer, then retry. The original error could not be retained by this server.",
       },
     );
-    return { ...message, result: toErrorToolResult(failure) };
+    return { ...message, result: this.delivery.toErrorToolResult(failure) };
   }
 }

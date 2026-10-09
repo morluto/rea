@@ -160,8 +160,8 @@ const parseSnapshots = (
   const snapshots = new Map<string, FunctionSnapshot>();
   for (const group of groups) {
     const snapshot = parseFunctionEvidence(group);
-    const address = normalizeAddress(snapshot.procedure.address);
-    for (const callee of snapshot.collections.callees.items)
+    const address = normalizeAddress(snapshot.dossier.procedure.address);
+    for (const callee of snapshot.dossier.callees)
       normalizeAddress(callee.address);
     if (snapshots.has(address))
       throw new TypeError(`Duplicate function Evidence for ${address}`);
@@ -184,9 +184,9 @@ const assertCompatible = (
     )
       throw new TypeError("Call-path Evidence mixes artifact subjects");
     if (
-      snapshot.provider.id !== first.provider.id ||
-      snapshot.provider.name !== first.provider.name ||
-      snapshot.provider.version !== first.provider.version
+      snapshot.evidence.provider.id !== first.evidence.provider.id ||
+      snapshot.evidence.provider.name !== first.evidence.provider.name ||
+      snapshot.evidence.provider.version !== first.evidence.provider.version
     )
       throw new TypeError("Call-path Evidence mixes providers");
   }
@@ -198,7 +198,7 @@ const createGraph = (
   const graph = new CallGraph();
   for (const [address, snapshot] of snapshots) {
     graph.mergeNode(address);
-    for (const callee of snapshot.collections.callees.items) {
+    for (const callee of snapshot.dossier.callees) {
       const calleeAddress = normalizeAddress(callee.address);
       graph.mergeNode(calleeAddress);
       graph.mergeDirectedEdge(address, calleeAddress);
@@ -346,7 +346,7 @@ const citePath = (
       (index > 0 ? snapshots.get(addresses[index - 1] ?? "") : undefined);
     return {
       address,
-      name: snapshot?.procedure.name ?? null,
+      name: snapshot?.dossier.procedure.name ?? null,
       evidence_links: snapshotLinks(supporting),
     };
   });
@@ -367,7 +367,7 @@ const citePath = (
 const snapshotLinks = (snapshot: FunctionSnapshot | undefined): string[] => {
   if (snapshot === undefined)
     throw new TypeError("Every call-path claim requires supporting Evidence");
-  return snapshot.evidence.map(({ evidence_id }) => evidence_id);
+  return [snapshot.evidence.evidence_id];
 };
 
 const uniqueEvidence = (snapshots: Iterable<FunctionSnapshot>): string[] =>

@@ -1,5 +1,7 @@
 import * as t from "@babel/types";
 
+import { semanticSlotAtPath } from "./javascriptSemanticSlots.js";
+
 import { invalidateSemanticMutationPath } from "./javascriptSemanticMutationValues.js";
 
 import type {
@@ -195,9 +197,12 @@ const evaluateTemplate = (
   let candidates = [""];
   for (let index = 0; index < node.quasis.length; index += 1) {
     const quasi = node.quasis[index];
-    // Semantic template evaluation retains its established raw fallback for
-    // synthetic AST inputs; exact atom readers remain cooked-only.
-    const text = quasi?.value.cooked ?? quasi?.value.raw ?? "";
+    const text = quasi?.value.cooked;
+    if (text === undefined || text === null)
+      return {
+        status: "unknown",
+        reason: "Template text has no cooked representation.",
+      };
     if (exceedsSemanticTemplateByteBudget(candidates, [text]))
       return semanticResourceLimitUnknown("primitive-bytes");
     candidates = candidates.map((prefix) => `${prefix}${text}`);
@@ -235,6 +240,7 @@ const evaluateObject = (
     for (const [name] of propertiesByName)
       propertiesByName.set(name, {
         name,
+        presence: "present",
         value: {
           status: "unknown",
           reason: "A later property may overwrite this value.",
@@ -268,6 +274,7 @@ const evaluateObject = (
     }
     propertiesByName.set(name, {
       name,
+      presence: "present",
       value: t.isObjectProperty(property)
         ? evaluateExpression(property.value, nestedContext(context))
         : {
@@ -298,8 +305,7 @@ const evaluateArray = (
   node: t.ArrayExpression,
   context: EvaluationContext,
 ): JavaScriptSemanticValue => {
-  const items: JavaScriptSemanticValue[] = [];
-  const itemPresence: Record<number, "absent"> = {};
+  const items: JavaScriptSemanticProperty[] = [];
   let unknownItems = false;
   let omittedItems: number | null = 0;
   for (const element of node.elements) {
@@ -310,21 +316,24 @@ const evaluateArray = (
       break;
     }
     if (element === null) {
-      itemPresence[items.length] = "absent";
       items.push({
-        status: "unknown",
-        reason: "Array hole has no primitive value.",
+        name: String(items.length),
+        presence: "absent",
+        value: { status: "unknown", reason: "Array hole has no own value." },
       });
       continue;
     }
-    items.push(evaluateExpression(element, nestedContext(context)));
+    items.push({
+      name: String(items.length),
+      presence: "present",
+      value: evaluateExpression(element, nestedContext(context)),
+    });
   }
   return unknownItems
-    ? { status: "array", items, itemPresence, unknownItems: true, omittedItems }
+    ? { status: "array", items, unknownItems: true, omittedItems }
     : {
         status: "array",
         items,
-        itemPresence,
         unknownItems: false,
         omittedItems: 0,
       };
@@ -436,46 +445,16 @@ const projectValue = (
   value: JavaScriptSemanticValue,
   projection: readonly (string | number | null)[],
 ): JavaScriptSemanticValue => {
-  let current = value;
-  for (const key of projection) {
-    if (key === null)
-      return {
+  if (projection.includes(null))
+    return { status: "unknown", reason: "Cannot project a dynamic property." };
+  const path = projection.map((key) => String(key));
+  const slot = semanticSlotAtPath(value, path);
+  return slot.presence === "present"
+    ? slot.value
+    : {
         status: "unknown",
-        reason: "Cannot project a dynamic property.",
+        reason: `Own property ${path.join("/")} is ${slot.presence}.`,
       };
-    if (current.status === "object" && typeof key === "string") {
-      const property = current.properties.find(({ name }) => name === key);
-      if (property === undefined)
-        return {
-          status: current.unknownProperties ? "unknown" : "unknown",
-          reason: `Object property ${key} was not observed.`,
-        };
-      current = property.value;
-    } else if (current.status === "array") {
-      const index = typeof key === "number" ? key : Number(key);
-      if (
-        !Number.isSafeInteger(index) ||
-        index < 0 ||
-        String(index) !== String(key)
-      )
-        return {
-          status: "unknown",
-          reason: `Array property ${String(key)} is not a canonical index.`,
-        };
-      const item = current.items[index];
-      if (item === undefined)
-        return {
-          status: "unknown",
-          reason: `Array item ${String(key)} missing.`,
-        };
-      current = item;
-    } else
-      return {
-        status: "unknown",
-        reason: `Cannot project ${String(key)} from ${current.status}.`,
-      };
-  }
-  return current;
 };
 
 const provenanceForBinding = (

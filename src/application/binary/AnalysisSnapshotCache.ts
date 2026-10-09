@@ -124,7 +124,7 @@ export class AnalysisSnapshotCache {
       if (!this.#entries.has(entry.query_id)) imported += 1;
       this.#entries.set(entry.query_id, structuredClone(entry));
     }
-    for (const entry of snapshot.workflow_entries ?? []) {
+    for (const entry of snapshot.workflow_entries) {
       if (!this.#workflowEntries.has(entry.query_id) && !this.#hasCapacity())
         continue;
       this.#workflowEntries.set(entry.query_id, structuredClone(entry));
@@ -156,7 +156,7 @@ export class AnalysisSnapshotCache {
           target: snapshotTargetIdentity,
           binding,
           entries,
-          ...(workflows.length === 0 ? {} : { workflow_entries: workflows }),
+          workflow_entries: workflows,
           evidence_bundle: evidenceBundle,
         }),
       );

@@ -10,6 +10,7 @@ describe("Linux Hopper application leases in the launcher", () => {
       let probedDisplay = false;
       const launcher = new HopperApplicationLauncher(
         {
+          environment: {},
           launcherPath: "/unused/Hopper",
           targetPath,
           targetKind: "executable",
@@ -55,6 +56,7 @@ describe("Linux Hopper application leases in the launcher", () => {
     });
     const launcher = new HopperApplicationLauncher(
       {
+        environment: {},
         launcherPath: "/unused/Hopper",
         targetPath: "/target",
         targetKind: "executable",
@@ -86,6 +88,7 @@ describe("Hopper launch leases", () => {
     let leaseChecks = 0;
     const launcher = new HopperApplicationLauncher(
       {
+        environment: {},
         launcherPath:
           "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper",
         targetPath: "/target",
@@ -130,6 +133,7 @@ describe("Hopper launch leases", () => {
       let releases = 0;
       const launcher = new HopperApplicationLauncher(
         {
+          environment: {},
           launcherPath: "/unused/hopper",
           targetPath: "/target",
           targetKind: "executable",

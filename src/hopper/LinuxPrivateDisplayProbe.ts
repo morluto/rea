@@ -40,6 +40,7 @@ export type LinuxPrivateDisplayProbeRunner = (
   strategy: LinuxPrivateDisplayRunnableStrategy,
   options: {
     readonly helperPath: string;
+    readonly environment?: Readonly<NodeJS.ProcessEnv>;
     readonly timeoutMs: number;
     readonly signal?: AbortSignal;
   },
@@ -61,6 +62,7 @@ export type LinuxPrivateDisplaySelection =
 /** Probe the exact Xvfb boundary and select the least-privileged viable strategy. */
 export const selectLinuxPrivateDisplayStrategy = async (options: {
   readonly helperPath: string;
+  readonly environment?: Readonly<NodeJS.ProcessEnv>;
   readonly timeoutMs?: number;
   readonly signal?: AbortSignal;
   readonly runProbe?: LinuxPrivateDisplayProbeRunner;
@@ -113,6 +115,9 @@ export const runLinuxPrivateDisplayProbe: LinuxPrivateDisplayProbeRunner =
         arguments: command.arguments,
         runId: randomUUID(),
         expectedCommand: null,
+        ...(options.environment === undefined
+          ? {}
+          : { hostEnvironment: options.environment }),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
     } catch (cause: unknown) {
@@ -183,6 +188,7 @@ const evaluatedProbe = async (
   strategy: LinuxPrivateDisplayRunnableStrategy,
   options: {
     readonly helperPath: string;
+    readonly environment?: Readonly<NodeJS.ProcessEnv>;
     readonly signal?: AbortSignal;
   },
   timeoutMs: number,
@@ -202,6 +208,9 @@ const evaluatedProbe = async (
   try {
     processResult = await runner(strategy, {
       helperPath: options.helperPath,
+      ...(options.environment === undefined
+        ? {}
+        : { environment: options.environment }),
       timeoutMs,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });

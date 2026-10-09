@@ -1,5 +1,5 @@
+import type { EvidenceMcpServer } from "../EvidenceMcpServer.js";
 import { recordSessionEvidenceSources } from "../sessionEvidence.js";
-import type { McpServer } from "@modelcontextprotocol/server";
 
 import {
   buildReconstructionObligationLedgerEvidenceValidated,
@@ -8,7 +8,6 @@ import {
 import { applicationToolContract } from "../../contracts/applicationToolContracts.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
-import { toCallToolResult } from "../toolResult.js";
 import { recordResult } from "./helpers.js";
 import type { ApplicationToolRegistration } from "./types.js";
 
@@ -18,7 +17,7 @@ const contract = applicationToolContract(
 
 /** Register conservative reconstruction-obligation generation and closure. */
 export const registerReconstructionObligationLedgerTool = (
-  server: McpServer,
+  server: EvidenceMcpServer,
   options: ApplicationToolRegistration,
 ): void => {
   server.registerTool(
@@ -26,19 +25,25 @@ export const registerReconstructionObligationLedgerTool = (
     toolRegistrationOptions(contract),
     async (input) => {
       const resolved = resolveReconstructionObligationLedgerRequest(input);
-      if (!resolved.ok) return toCallToolResult(resolved, contract);
+      if (!resolved.ok)
+        return server.delivery.toCallToolResult(resolved, contract);
       const result = await logToolExecution(options.logger, contract.name, () =>
         Promise.resolve(
           buildReconstructionObligationLedgerEvidenceValidated(resolved.value),
         ),
       );
-      if (!result.ok) return toCallToolResult(result, contract);
+      if (!result.ok) return server.delivery.toCallToolResult(result, contract);
       const recorded = recordSessionEvidenceSources(
         options.recordEvidence,
         resolved.value.evidence_bundle.records,
       );
-      if (!recorded.ok) return toCallToolResult(recorded, contract);
-      return recordResult(options, contract, result.value);
+      if (!recorded.ok)
+        return server.delivery.toCallToolResult(recorded, contract);
+      return recordResult(
+        { ...options, delivery: server.delivery },
+        contract,
+        result.value,
+      );
     },
   );
 };

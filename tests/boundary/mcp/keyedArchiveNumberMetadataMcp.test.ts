@@ -1,3 +1,4 @@
+import { silentLogger } from "../../../src/logger.js";
 import { expect } from "vitest";
 import { z } from "zod";
 
@@ -18,7 +19,11 @@ mcpTest.for(archiveNumberMetadataCases)(
     const fixture = await keyedArchiveNumberMetadataFixture(item);
     const configured = parseConfig({ REA_ANALYSIS_PROVIDER: "auto" });
     if (!configured.ok) throw configured.error;
-    const session = createBinarySession(configured.value);
+    const session = createBinarySession(
+      configured.value,
+      silentLogger,
+      process.env,
+    );
     onTestFinished(async () => {
       await session.close();
     });
@@ -35,8 +40,8 @@ mcpTest.for(archiveNumberMetadataCases)(
     expect(result.isError, JSON.stringify(result.content)).not.toBe(true);
     expectKeyedArchiveNumberMetadata(
       z
-        .object({ result: keyedArchiveResultSchema })
-        .parse(result.structuredContent).result,
+        .object({ normalized_result: keyedArchiveResultSchema })
+        .parse(result.structuredContent).normalized_result,
       item,
       fixture.digest,
     );

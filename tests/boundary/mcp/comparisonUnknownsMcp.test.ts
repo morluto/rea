@@ -1,6 +1,5 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
-import { z } from "zod";
 
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../../../src/contracts/artifactComparisonExample.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
@@ -70,7 +69,7 @@ it("retains one open unknown for an incomplete artifact compared with itself", a
   });
   expect(response.isError, JSON.stringify(response)).not.toBe(true);
   expect(response.structuredContent).toMatchObject({
-    result: { status: "truncated" },
+    normalized_result: { status: "truncated" },
   });
   expect(session.listUnknowns({ domain: "artifact-comparison" })).toMatchObject(
     [
@@ -106,7 +105,7 @@ it.each([
       });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
       expect(response.structuredContent).toMatchObject({
-        result: { status: "changed" },
+        normalized_result: { status: "changed" },
       });
     }
     expect(session.listUnknowns({ domain })).toHaveLength(2);
@@ -116,10 +115,7 @@ it.each([
       arguments: { left: pair.left, right },
     });
     expect(repeated.isError, JSON.stringify(repeated)).not.toBe(true);
-    const compared = parseEvidence(
-      z.object({ evidence: z.unknown() }).parse(repeated.structuredContent)
-        .evidence,
-    );
+    const compared = parseEvidence(repeated.structuredContent);
     expect(session.evidenceById(compared.evidence_id)).toEqual(compared);
     expect(session.exportEvidenceBundle()).toEqual(before);
   },

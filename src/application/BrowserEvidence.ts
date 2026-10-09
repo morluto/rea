@@ -100,11 +100,7 @@ const browserParameters = (
   result: BrowserEvidenceResult,
 ): EvidenceObservation["parameters"] => {
   if (!("cdp_endpoint" in input)) {
-    if (
-      "before_scenario" in input &&
-      input.before_scenario !== undefined &&
-      input.after_scenario !== undefined
-    )
+    if ("before_scenario" in input)
       return {
         comparison_kind: "browser_scenario",
         before_browser: input.before_scenario.browser,
@@ -112,15 +108,10 @@ const browserParameters = (
         before_start_origin: input.before_scenario.scenario.start_origin,
         after_start_origin: input.after_scenario.scenario.start_origin,
         normalization_sha256: commitBrowserScenarioNormalization(
-          input.normalization ?? { rules: [] },
+          input.normalization,
         ).sha256,
       };
-    if (
-      input.before !== undefined &&
-      input.after !== undefined &&
-      "inspection" in input.before &&
-      "inspection" in input.after
-    )
+    if ("inspection" in input.before && "inspection" in input.after)
       return {
         before_target_id: input.before.inspection.target.target_id,
         before_capture_ended_at:

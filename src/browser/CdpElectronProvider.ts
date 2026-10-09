@@ -29,8 +29,6 @@ import {
 import { inspectCdpElectronPage } from "./CdpElectronInspection.js";
 import { authorizedElectronFile } from "./ElectronFileScope.js";
 
-/** Public identity committed by passive Electron observations. */
-export { CDP_ELECTRON_PROVIDER_IDENTITY } from "./providerIdentities.js";
 import { CDP_ELECTRON_PROVIDER_IDENTITY } from "./providerIdentities.js";
 const IDENTITY = CDP_ELECTRON_PROVIDER_IDENTITY;
 

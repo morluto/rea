@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/server";
+import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 
 import type { BinarySessionPort } from "../application/binary/BinarySession.js";
 import { toolContract } from "../contracts/toolContracts.js";
@@ -25,7 +25,6 @@ import { recordSessionEvidenceSources } from "./sessionEvidence.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
 import { PROCESS_PROVIDER } from "./sessionToolPolicies.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { toCallToolResult, toEvidenceToolResult } from "./toolResult.js";
 
 const PROCESS_CAPTURE_EVIDENCE = {
   operation: "capture_process_scenario",
@@ -90,7 +89,7 @@ const parseCaptureSide = (
 
 /** Register deterministic process-capture comparison and contradiction tracking. */
 export const registerProcessComparisonTool = (
-  server: McpServer,
+  server: EvidenceMcpServer,
   session: BinarySessionPort,
   contract: ReturnType<typeof toolContract<"compare_process_captures">>,
   now: () => number = Date.now,
@@ -100,9 +99,9 @@ export const registerProcessComparisonTool = (
     toolRegistrationOptions(contract),
     async (input, context) => {
       const left = parseCaptureSide(contract.name, "left", input.left);
-      if (!left.ok) return toCallToolResult(left, contract);
+      if (!left.ok) return server.delivery.toCallToolResult(left, contract);
       const right = parseCaptureSide(contract.name, "right", input.right);
-      if (!right.ok) return toCallToolResult(right, contract);
+      if (!right.ok) return server.delivery.toCallToolResult(right, contract);
       const { record: leftRecord, capture: leftCapture } = left.value;
       const { record: rightRecord, capture: rightCapture } = right.value;
       const computed = await runDerivedOperation(context, contract.name, () =>
@@ -116,7 +115,8 @@ export const registerProcessComparisonTool = (
           now,
         }),
       );
-      if (!computed.ok) return toCallToolResult(computed, contract);
+      if (!computed.ok)
+        return server.delivery.toCallToolResult(computed, contract);
       const comparison = computed.value;
       const evidence = createEvidence(undefined, PROCESS_PROVIDER, {
         predicateType: "rea.process-comparison",
@@ -142,8 +142,8 @@ export const registerProcessComparisonTool = (
         [leftRecord, rightRecord],
       );
       if (!recordedSources.ok)
-        return toCallToolResult(recordedSources, contract);
-      return toEvidenceToolResult(
+        return server.delivery.toCallToolResult(recordedSources, contract);
+      return server.delivery.toEvidenceToolResult(
         evidence,
         contract,
         recordDerivedEvidence(

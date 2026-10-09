@@ -1,15 +1,15 @@
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import type { AppConfig } from "../config.js";
 import type { BinarySession } from "../application/binary/BinarySession.js";
 import { HopperProvider } from "../hopper/HopperProvider.js";
 import { GhidraProvider } from "../ghidra/GhidraProvider.js";
 import { IdaProvider } from "../ida/IdaProvider.js";
-import { silentLogger, type Logger } from "../logger.js";
+import type { Logger } from "../logger.js";
 import { auxiliaryAnalysisProviderDeclarations } from "./auxiliaryAnalysisProviders.js";
 import { AnalysisProviderRegistry } from "../application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../application/binary/BinarySessionComposition.js";
 import { LazyAnalysisProvider } from "../application/binary/LazyAnalysisProvider.js";
 import { ManagedStaticProvider } from "../dotnet/ManagedStaticProvider.js";
-import { SessionProviderRouter } from "../application/binary/SessionProviderRouter.js";
 
 /**
  * Compose the target-switching runtime shared directly by CLI and MCP adapters.
@@ -18,17 +18,19 @@ import { SessionProviderRouter } from "../application/binary/SessionProviderRout
  */
 export const createBinarySession = (
   config: AppConfig,
-  logger: Logger = silentLogger,
+  logger: Logger,
+  selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
 ): BinarySession => {
-  const hopper = new HopperProvider(config, logger);
-  const ghidra = new GhidraProvider(config, logger);
-  const ida = new IdaProvider(config);
+  const environment = snapshotEnvironment(selectedEnvironment);
+  const hopper = new HopperProvider(config, logger, environment);
+  const ghidra = new GhidraProvider(config, logger, environment);
+  const ida = new IdaProvider(config, environment);
   return composeBinarySession(
     new AnalysisProviderRegistry(
       [hopper, ghidra, ida],
       config.analysisProvider,
     ),
-    auxiliaryAnalysisProviderDeclarations().map(
+    auxiliaryAnalysisProviderDeclarations(environment).map(
       (declaration) => new LazyAnalysisProvider(declaration),
     ),
   );
@@ -36,8 +38,6 @@ export const createBinarySession = (
 
 /** Compose an execution-free managed session without native provider selection. */
 export const createManagedBinarySession = (): BinarySession =>
-  composeBinarySession(
-    SessionProviderRouter.selectable(new AnalysisProviderRegistry([]), [
-      new ManagedStaticProvider(),
-    ]),
-  );
+  composeBinarySession(new AnalysisProviderRegistry([]), [
+    new ManagedStaticProvider(),
+  ]);

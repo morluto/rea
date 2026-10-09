@@ -17,21 +17,21 @@ describe("JavaScript semantic analysis: dataflow 1", () => {
     `);
 
     expect(
-      ir.objectOperations.map(({ kind, propertyName, resolution }) => ({
+      ir.objectOperations.map(({ kind, propertyPath, resolution }) => ({
         kind,
-        propertyName,
+        propertyPath,
         resolution,
       })),
     ).toEqual(
       expect.arrayContaining([
         {
           kind: "destructure",
-          propertyName: "token",
+          propertyPath: ["token"],
           resolution: "complete",
         },
-        { kind: "spread", propertyName: null, resolution: "complete" },
-        { kind: "write", propertyName: "count", resolution: "complete" },
-        { kind: "read", propertyName: "token", resolution: "complete" },
+        { kind: "spread", propertyPath: [], resolution: "complete" },
+        { kind: "write", propertyPath: ["count"], resolution: "complete" },
+        { kind: "read", propertyPath: ["token"], resolution: "complete" },
       ]),
     );
   });
@@ -50,11 +50,11 @@ describe("JavaScript semantic analysis: dataflow 1", () => {
       ({ kind }) => kind === "destructure",
     );
 
-    expect(destructures.map(({ propertyName }) => propertyName)).toEqual([
-      "token",
-      "token",
-      "token",
-      "1",
+    expect(destructures.map(({ propertyPath }) => propertyPath)).toEqual([
+      ["token"],
+      ["token"],
+      ["token"],
+      ["1"],
     ]);
     expect(
       destructures.every(({ resolution }) => resolution === "complete"),
@@ -127,10 +127,19 @@ describe("JavaScript semantic analysis: dataflow 1", () => {
       unknownProperties: false,
       omittedProperties: 0,
       properties: expect.arrayContaining([
-        { name: "depth", value: { status: "literal", value: 1 } },
-        { name: "type", value: { status: "literal", value: "heading" } },
+        {
+          name: "depth",
+          presence: "present",
+          value: { status: "literal", value: 1 },
+        },
+        {
+          name: "type",
+          presence: "present",
+          value: { status: "literal", value: "heading" },
+        },
         {
           name: "text",
+          presence: "present",
           value: {
             status: "unknown",
             reason: "Unsupported CallExpression value.",

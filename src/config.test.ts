@@ -114,6 +114,18 @@ describe("runtime target configuration", () => {
 });
 
 describe("runtime collection configuration", () => {
+  it("preserves empty loader arguments and rejects empty exclusion patterns", () => {
+    expect(
+      parseConfig({ HOPPER_LOADER_ARGS_JSON: '["", " ", "--option"]' }),
+    ).toMatchObject({
+      ok: true,
+      value: { hopperLoaderArgs: ["", " ", "--option"] },
+    });
+    expect(parseConfig({ REA_REFERENCE_SECRET_PATTERNS_JSON: '[""]' }).ok).toBe(
+      false,
+    );
+  });
+
   it.each(["not-json", "{}", '"just a string"', '["ok",1]'])(
     "rejects invalid loader args: %s",
     (encoded) => {
@@ -158,6 +170,36 @@ describe("runtime collection configuration", () => {
 });
 
 describe("configuration failure diagnostics", () => {
+  it.each([
+    "",
+    " ",
+    "0",
+    "-5",
+    "abc",
+    "1.5",
+    "1e3",
+    "0x100",
+    "2147483648",
+    "9007199254740991",
+  ])(
+    "rejects malformed Ghidra startup deadline %j with its setting and constraint",
+    (value) => {
+      const result = parseConfig({ REA_GHIDRA_STARTUP_TIMEOUT_MS: value });
+      if (result.ok) throw new Error("Expected invalid startup deadline");
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "configuration_invalid",
+        details: {
+          settings: [
+            {
+              setting: "REA_GHIDRA_STARTUP_TIMEOUT_MS",
+              constraint: expect.any(String),
+            },
+          ],
+        },
+      });
+    },
+  );
+
   it.each([
     ["GHIDRA_INSTALL_DIR", "./fixture"],
     ["JAVA_HOME", "./jdk"],

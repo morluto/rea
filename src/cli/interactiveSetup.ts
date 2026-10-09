@@ -82,13 +82,16 @@ export const renderSetupProgress = (event: SetupProgressEvent): void => {
 };
 
 /** Finish an interactive setup journey without exposing the full doctor catalog. */
-export const renderInteractiveSetupResult = (result: SetupResult): void => {
+export const renderInteractiveSetupResult = (
+  result: SetupResult,
+  environment: Readonly<NodeJS.ProcessEnv> = process.env,
+): void => {
   if (result.status === "ready") {
     const changedClients = Object.entries(result.clients)
       .filter(([, client]) => client.status === "configured")
       .map(([client]) => clientDisplayNames.get(client) ?? client);
     const readyClients = readyAgentClients(result, changedClients);
-    renderReadyCapabilities(result, readyClients);
+    renderReadyCapabilities(result, readyClients, environment);
     outro(
       changedClients.length === 0
         ? "REA is ready for local app analysis."
@@ -100,7 +103,7 @@ export const renderInteractiveSetupResult = (result: SetupResult): void => {
   if (result.status === "planned" || result.status === "cancelled") return;
   writeLine(`!  ${result.remediation ?? "Setup needs attention."}`);
   outro(
-    `Run \`${cliInvocation()} doctor\` for the remaining checks.`,
+    `Run \`${cliInvocation(environment)} doctor\` for the remaining checks.`,
     promptStreams,
   );
 };
@@ -221,12 +224,13 @@ const renderKeyboardHelp = (accessible: boolean): void => {
   );
 };
 
-const cliInvocation = (): string =>
-  process.env.npm_command === "exec" ? "npx rea-agents" : "rea";
+const cliInvocation = (environment: Readonly<NodeJS.ProcessEnv>): string =>
+  environment.npm_command === "exec" ? "npx rea-agents" : "rea";
 
 const renderReadyCapabilities = (
   result: SetupResult,
   readyClients: readonly string[],
+  environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
   writeLine("◆  What you can do now");
   const providers = readyProviders(result);
@@ -237,7 +241,7 @@ const renderReadyCapabilities = (
   if (result.doctor.identity?.skill.state === "aligned")
     writeLine("│  Guided reverse-engineering workflows: installed");
   writeLine(
-    `│  CLI: ${cliInvocation()} ${providers.length > 0 ? "analyze /path/to/app" : "capabilities"}`,
+    `│  CLI: ${cliInvocation(environment)} ${providers.length > 0 ? "analyze /path/to/app" : "capabilities"}`,
   );
   const firstClient = readyClients[0];
   if (firstClient !== undefined)

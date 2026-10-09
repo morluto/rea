@@ -175,10 +175,9 @@ const readJson = async (path: string): Promise<unknown> => {
   try {
     bytes = await readFile(path);
   } catch (cause: unknown) {
-    void cause;
     throw new ProcessCliFailure(
       "invalid_input",
-      "Process input file could not be read. Check that the path exists and is readable.",
+      `Process input file could not be read: ${path} (${describeValidationFailure(cause)}). Check the reported filesystem constraint and retry.`,
     );
   }
   try {
@@ -189,10 +188,9 @@ const readJson = async (path: string): Promise<unknown> => {
     const parsed: unknown = JSON.parse(text);
     return parsed;
   } catch (cause: unknown) {
-    void cause;
     throw new ProcessCliFailure(
       "invalid_input",
-      "Process input file is not valid JSON. Repair the file, then try again.",
+      `Process input file is not valid UTF-8 JSON: ${path} (${describeValidationFailure(cause)}). Repair the file, then try again.`,
     );
   }
 };
@@ -211,7 +209,7 @@ const cliAnalysisError = (error: AnalysisError): ProcessCliErrorOutput => ({
   ...projectAnalysisError(error),
 });
 
-/** Project any process CLI failure without exposing its cause. */
+/** Preserve typed failures and local diagnostics at the process CLI boundary. */
 export const projectProcessCliError = (
   cause: unknown,
 ): ProcessCliErrorOutput => {
@@ -225,7 +223,6 @@ export const projectProcessCliError = (
   return {
     error: "Process command failed",
     category: "execution_failure",
-    message:
-      "Process command could not complete. Check the input files and run `rea doctor`, then try again.",
+    message: `Process command could not complete: ${describeValidationFailure(cause)}`,
   };
 };

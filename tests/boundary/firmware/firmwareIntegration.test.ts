@@ -1,3 +1,4 @@
+import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { expect, it as test } from "vitest";
 import {
@@ -9,7 +10,9 @@ import { FirmwareAnalysisService } from "../../../src/application/firmware/Firmw
 import { FirmwareProvider } from "../../../src/firmware/FirmwareProvider.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { toCallToolResult } from "../../../src/server/toolResult.js";
+import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+
+const delivery = new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 
 const it = test.skipIf(process.platform !== "linux");
 
@@ -228,7 +231,7 @@ it("retains startup stderr when Unblob exits 1 without a report", async () => {
   };
   expect(projectAnalysisError(result.error)).toMatchObject({ details });
   expect(
-    toCallToolResult(result, toolContract("extract_firmware"))
+    delivery.toCallToolResult(result, toolContract("extract_firmware"))
       .structuredContent,
   ).toMatchObject({ error: { details } });
   expect(result).toMatchObject({

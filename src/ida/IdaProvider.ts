@@ -1,3 +1,4 @@
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTarget.js";
@@ -36,12 +37,17 @@ export { IDA_PROVIDER_IDENTITY } from "./IdaProviderCapabilities.js";
 /** Bring-your-own IDA MCP candidate; discovery performs no provider startup. */
 export class IdaProvider implements AnalysisProviderCandidate {
   #registration: Result<IdaConfiguration, ConfigurationError> | undefined;
+  private readonly environment: NodeJS.ProcessEnv;
   constructor(
     private readonly config: AppConfig,
+    environment: Readonly<NodeJS.ProcessEnv>,
     private readonly connectionFactory: (
       config: IdaConfiguration,
+      environment: Readonly<NodeJS.ProcessEnv>,
     ) => IdaMcpConnection = createIdaMcpConnection,
-  ) {}
+  ) {
+    this.environment = snapshotEnvironment(environment);
+  }
 
   identity() {
     return IDA_PROVIDER_IDENTITY;
@@ -131,11 +137,6 @@ export class IdaProvider implements AnalysisProviderCandidate {
           .update(canonicalize(config.value) ?? "")
           .digest("hex"),
       }),
-      compatibility: {
-        mode: config.value.mode,
-        engine_version: null,
-        upstream_distribution_version: null,
-      },
     });
   }
   createClient(
@@ -146,12 +147,12 @@ export class IdaProvider implements AnalysisProviderCandidate {
     if (!config.ok)
       return {
         execute: async () => err(config.error),
-        close: async () => undefined,
+        close: async () => ok(null),
       };
     return new IdaSessionClient(
       config.value,
       target,
-      this.connectionFactory(config.value),
+      this.connectionFactory(config.value, this.environment),
       profile,
     );
   }

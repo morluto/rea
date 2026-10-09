@@ -1,3 +1,4 @@
+import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { rm } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { createIdaTarget, RecordingIdaMcp } from "../../fixtures/idaMcp.js";
@@ -6,7 +7,9 @@ import { IDA_OPERATIONS } from "../../../src/ida/IdaProviderCapabilities.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
-import { toCallToolResult } from "../../../src/server/toolResult.js";
+import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+
+const delivery = new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -18,7 +21,7 @@ const parametersFor = (
 ): Readonly<Record<string, JsonValue>> => {
   if (operation.startsWith("search_")) return { pattern: "a.b" };
   if (operation === "xrefs") return { address: "0x1000" };
-  if (operation.startsWith("list_")) return { document: null };
+  if (operation.startsWith("list_")) return {};
   return { procedure: "main" };
 };
 
@@ -63,9 +66,10 @@ describe.each(["attached", "headless"] as const)(
             limitations: execution.value.limitations,
           });
           const contract = toolContract(operation);
-          const serialized = toCallToolResult(
-            { ok: true, value: evidence },
+          const serialized = delivery.toEvidenceToolResult(
+            evidence,
             contract,
+            undefined,
           );
           expect(
             contract.outputSchema.safeParse(serialized.structuredContent)

@@ -191,8 +191,8 @@ mcpTest.for(failedAdapters)(
     });
     expect(listed.isError).not.toBe(true);
     const evidenceId = z
-      .object({ evidence: z.object({ evidence_id: z.string() }) })
-      .parse(listed.structuredContent).evidence.evidence_id;
+      .object({ evidence_id: z.string() })
+      .parse(listed.structuredContent).evidence_id;
     expect(connected.session.evidenceById(evidenceId)?.operation).toBe(healthy);
     expect(calls).toEqual([
       port === "javascriptRuntimeObservation" ? "browser" : "runtime",
@@ -219,7 +219,7 @@ mcpTest.for(failedAdapters)(
       });
       expect(analyzed.isError).not.toBe(true);
       expect(analyzed.structuredContent).toMatchObject({
-        evidence: { operation: "analyze_javascript_application" },
+        operation: "analyze_javascript_application",
       });
     }
     const malformed = await client.callTool({

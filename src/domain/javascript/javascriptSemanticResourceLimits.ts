@@ -91,7 +91,7 @@ export const semanticResourceLimitsIn = (
     else if (value.status === "object")
       for (const property of value.properties) pending.push(property.value);
     else if (value.status === "array")
-      for (const item of value.items) pending.push(item);
+      for (const item of value.items) pending.push(item.value);
   }
   return [...found].sort();
 };

@@ -1,6 +1,6 @@
 import { z } from "incur";
 
-import { runDirectAnalysis } from "../composition/directAnalysis.js";
+import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "../logger.js";
@@ -15,8 +15,9 @@ import type { CliInstance } from "./types.js";
 export const registerCoreNativeCommands = (
   cli: CliInstance,
   logger: Logger,
+  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
 ): void => {
-  registerAnnotationCommand(cli, logger);
+  registerAnnotationCommand(cli, logger, runDirectAnalysis);
   cli.command(CLI_COMMANDS.inspectNativeLoadImage, {
     description:
       "Verify loaded native bytes, source mappings, relocations and entry",
@@ -251,14 +252,15 @@ export const registerCoreNativeCommands = (
         ),
     });
   }
-  registerNativeApiCommand(cli, logger);
-  registerNativeUiActionCommand(cli, logger);
-  registerNativeDispatchMetadataCommand(cli, logger);
+  registerNativeApiCommand(cli, logger, runDirectAnalysis);
+  registerNativeUiActionCommand(cli, logger, runDirectAnalysis);
+  registerNativeDispatchMetadataCommand(cli, logger, runDirectAnalysis);
 };
 
 const registerNativeDispatchMetadataCommand = (
   cli: CliInstance,
   logger: Logger,
+  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.inspectNativeDispatchMetadata, {
     description: "Inspect typed Objective-C and Swift dispatch metadata",
@@ -302,6 +304,7 @@ const registerNativeDispatchMetadataCommand = (
 const registerNativeUiActionCommand = (
   cli: CliInstance,
   logger: Logger,
+  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.traceNativeUiAction, {
     description:
@@ -367,7 +370,11 @@ const registerNativeUiActionCommand = (
   });
 };
 
-const registerNativeApiCommand = (cli: CliInstance, logger: Logger): void => {
+const registerNativeApiCommand = (
+  cli: CliInstance,
+  logger: Logger,
+  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
+): void => {
   cli.command(CLI_COMMANDS.inspectNativeApi, {
     description: "Reconstruct one native function API boundary with evidence",
     args: z.object({
@@ -400,7 +407,11 @@ const registerNativeApiCommand = (cli: CliInstance, logger: Logger): void => {
   });
 };
 
-const registerAnnotationCommand = (cli: CliInstance, logger: Logger): void => {
+const registerAnnotationCommand = (
+  cli: CliInstance,
+  logger: Logger,
+  runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
+): void => {
   cli.command(CLI_COMMANDS.annotateNativeFunction, {
     description: "Edit function annotations and return refreshed analysis",
     args: z.object({

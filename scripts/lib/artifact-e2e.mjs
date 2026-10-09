@@ -75,6 +75,9 @@ export async function withArtifactMcp(target, verify) {
 export async function artifactMcpResult(client, name, arguments_ = {}) {
   const result = await client.callTool({ name, arguments: arguments_ });
   assert.notEqual(result.isError, true, JSON.stringify(result));
-  assert.ok(result.structuredContent?.result, "MCP omitted structured result");
-  return result.structuredContent.result;
+  assert.ok(
+    result.structuredContent?.normalized_result,
+    "MCP omitted structured result",
+  );
+  return result.structuredContent.normalized_result;
 }

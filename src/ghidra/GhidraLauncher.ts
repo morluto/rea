@@ -1,3 +1,4 @@
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { mkdir } from "node:fs/promises";
 import { basename, dirname, join, win32 } from "node:path";
 
@@ -63,6 +64,7 @@ export class GhidraLaunchError extends Error {
 
 /** Static coordinates for an extracted Ghidra release and packaged script. */
 export interface GhidraHeadlessLauncherOptions {
+  readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly analyzeHeadlessPath: string;
   readonly javaHome?: string;
   readonly bridgeScriptPath: string;
@@ -76,7 +78,13 @@ export interface GhidraHeadlessLauncherOptions {
 
 /** Launch Ghidra without copying scripts into or modifying its installation. */
 export class GhidraHeadlessLauncher implements GhidraLauncher {
-  constructor(readonly options: GhidraHeadlessLauncherOptions) {}
+  readonly options: GhidraHeadlessLauncherOptions;
+  constructor(options: GhidraHeadlessLauncherOptions) {
+    this.options = {
+      ...options,
+      environment: snapshotEnvironment(options.environment, options.platform),
+    };
+  }
 
   async launch(
     session: GhidraLaunchSession,
@@ -126,6 +134,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           : { dosMz: this.options.dosMz }),
       });
       const scriptCommand = ghidraHeadlessCommand({
+        environment: this.options.environment,
         platform,
         analyzeHeadlessPath: this.options.analyzeHeadlessPath,
         arguments: headlessArguments,
@@ -138,6 +147,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         this.options.javaHome,
         platform,
         scriptCommand.command,
+        this.options.environment,
       );
       if (platform !== "win32" && this.options.javaHome === undefined)
         throw new GhidraLaunchError(
@@ -168,6 +178,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         windowsVerbatimArguments: platform === "win32",
         platform,
         env: command.environment,
+        hostEnvironment: {},
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
       await writeGhidraRuntimeFile(
@@ -236,6 +247,7 @@ export interface GhidraHeadlessCommand {
 
 /** Build a direct POSIX launch or a conservatively quoted Windows batch call. */
 export const ghidraHeadlessCommand = (options: {
+  readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly platform: NodeJS.Platform;
   readonly analyzeHeadlessPath: string;
   readonly arguments: readonly string[];
@@ -246,12 +258,17 @@ export const ghidraHeadlessCommand = (options: {
       command: options.analyzeHeadlessPath,
       arguments: [...options.arguments],
     };
+  const environment = snapshotEnvironment(
+    options.environment,
+    options.platform,
+  );
+  const systemRoot = environment.SYSTEMROOT;
   const comSpec =
     options.comSpec ??
-    process.env.ComSpec ??
-    (process.env.SystemRoot === undefined
+    environment.COMSPEC ??
+    (systemRoot === undefined
       ? "C:\\Windows\\System32\\cmd.exe"
-      : win32.join(process.env.SystemRoot, "System32", "cmd.exe"));
+      : win32.join(systemRoot, "System32", "cmd.exe"));
   if (
     !win32.isAbsolute(comSpec) ||
     win32.basename(comSpec).toLowerCase() !== "cmd.exe"
@@ -418,9 +435,10 @@ const ghidraLaunchEnvironment = (
   javaHome: string | undefined,
   platform: NodeJS.Platform,
   executable: string,
+  selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
 ): NodeJS.ProcessEnv => {
   return {
-    ...ghidraJavaEnvironment(javaHome, process.env, platform),
+    ...ghidraJavaEnvironment(javaHome, selectedEnvironment, platform),
     ...ghidraHeadlessJavaOptions(paths.homeRoot, paths.tempRoot, platform),
     HOME: paths.homeRoot,
     TMPDIR: paths.tempRoot,

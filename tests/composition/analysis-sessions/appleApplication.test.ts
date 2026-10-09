@@ -17,10 +17,12 @@ import {
 } from "../../support/applicationSessionFixture.js";
 
 import { projectAppleApplicationEvidence } from "../../../src/application/apple/AppleApplicationService.js";
-import { runProviderAnalysis } from "../../../src/composition/directAnalysis.js";
+import { createDirectAnalysis } from "../../../src/composition/directAnalysis.js";
 import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import { appleApplicationProjectionResultSchema } from "../../../src/domain/apple/appleApplication.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+
+const { runProviderAnalysis } = createDirectAnalysis({});
 
 // Real ZIP entries cross the former component and bridge-candidate limits.
 const FRAMEWORK_COUNT = 250;

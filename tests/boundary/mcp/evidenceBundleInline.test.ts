@@ -1,3 +1,4 @@
+import { ok as resultOk } from "../../../src/domain/result.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 
@@ -14,7 +15,7 @@ it("returns the complete session Evidence bundle in the tool result", async () =
   );
   const session = createTestBinarySession(() => ({
     execute: () => Promise.resolve(observed(null)),
-    close: () => Promise.resolve(),
+    close: () => Promise.resolve(resultOk(null)),
   }));
   expect(session.recordEvidence(evidence).ok).toBe(true);
   const server = createServer(session, session);

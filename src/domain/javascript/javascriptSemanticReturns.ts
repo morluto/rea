@@ -1,5 +1,10 @@
 import * as t from "@babel/types";
 
+import {
+  semanticContainer,
+  semanticPropertyPointer,
+} from "./javascriptSemanticSlots.js";
+
 import type {
   JavaScriptSemanticCallable,
   JavaScriptSemanticModuleLink,
@@ -244,54 +249,24 @@ const flattenValue = (
     });
     return;
   }
-  if (value.status === "object") {
-    coverage.push(
-      value.unknownProperties
-        ? { path, status: "partial", omitted: value.omittedProperties }
-        : { path, status: "complete", omitted: 0 },
-    );
-    for (const property of value.properties)
-      flattenValue(
-        property.value,
-        `${path}/${escapePointer(property.name)}`,
-        fields,
-        coverage,
-        property.presence ?? "present",
-      );
+  if ("reason" in value) {
+    fields.push({
+      path,
+      presence,
+      state: "unknown",
+      value: null,
+      reason: value.reason,
+    });
     return;
   }
-  if (value.status === "array") {
-    coverage.push(
-      value.unknownItems
-        ? { path, status: "partial", omitted: value.omittedItems }
-        : { path, status: "complete", omitted: 0 },
+  const container = semanticContainer(value);
+  coverage.push({ path, ...container.coverage });
+  for (const slot of container.slots)
+    flattenValue(
+      slot.value,
+      `${path}${semanticPropertyPointer([slot.name])}`,
+      fields,
+      coverage,
+      slot.presence,
     );
-    value.items.forEach((item, index) =>
-      flattenValue(
-        item,
-        `${path}/${String(index)}`,
-        fields,
-        coverage,
-        value.itemPresence?.[index] ?? "present",
-      ),
-    );
-    // Sparse mutation metadata retains uncertain slots without expanding arrays.
-    for (const [index, itemPresence] of Object.entries(
-      value.itemPresence ?? {},
-    )) {
-      if (Number(index) < value.items.length) continue;
-      flattenValue(value, `${path}/${index}`, fields, coverage, itemPresence);
-    }
-    return;
-  }
-  fields.push({
-    path,
-    presence,
-    state: "unknown",
-    value: null,
-    reason: value.reason,
-  });
 };
-
-const escapePointer = (value: string): string =>
-  value.replaceAll("~", "~0").replaceAll("/", "~1");

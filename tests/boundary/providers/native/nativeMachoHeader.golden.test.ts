@@ -16,7 +16,7 @@ it("collects the actual Mach header alongside the native load commands", async (
       "native-macho-header/otool-header-load.txt",
     ),
   });
-  const client = new NativeMacOSProvider(runner, "darwin").createClient(
+  const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
     nativeMachoTarget("/owned/fixture"),
   );
   const result = await client.execute("inspect_macho", {});

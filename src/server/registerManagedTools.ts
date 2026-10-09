@@ -1,5 +1,5 @@
+import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
-import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
 import type { BinarySessionPort } from "../application/binary/BinarySession.js";
@@ -14,7 +14,7 @@ import { isManagedToolName } from "../contracts/managed/managedToolContracts.js"
 
 /** Register execution-free managed PE/CLI inspection. */
 export const registerManagedTools = (
-  server: McpServer,
+  server: EvidenceMcpServer,
   analysis: AnalysisOperationPort,
   options: {
     readonly logger: Logger;

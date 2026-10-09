@@ -10,7 +10,6 @@ import {
 import type { WebMcpDiscovery } from "./webMcpDiscovery.js";
 
 export {
-  captureSnapshotSchema,
   compareWebCapturesInputSchema,
   webCaptureDiffSchema,
 } from "./webCaptureDiffSchemas.js";

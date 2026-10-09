@@ -21,6 +21,8 @@ const DETACH_TIMEOUT_MS = 120_000;
  * briefly, and a volume can report busy just after it was read.
  */
 const DETACH_SETTLE_DELAYS_MS = [250, 500, 1000] as const;
+const delay = (milliseconds: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, milliseconds));
 const attachOutputSchema = z.object({
   "system-entities": z.array(
     z.object({
@@ -53,15 +55,17 @@ export interface NativeDmgHost {
   delay?(milliseconds: number): Promise<void>;
 }
 
-const systemHost: NativeDmgHost = {
-  delay: (milliseconds) =>
-    new Promise((resolve) => setTimeout(resolve, milliseconds)),
+const createSystemHost = (
+  environment: Readonly<NodeJS.ProcessEnv>,
+): NativeDmgHost => ({
+  delay,
   async run(arguments_, signal, options) {
     try {
       const { stdout, stderr } = await execFileOutput(
         "/usr/bin/hdiutil",
         [...arguments_],
         {
+          env: environment,
           ...(options === undefined ? {} : { timeout: options.timeoutMs }),
           ...(signal === undefined ? {} : { signal }),
         },
@@ -85,7 +89,7 @@ const systemHost: NativeDmgHost = {
       );
     }
   },
-};
+});
 
 /** Read-only macOS DMG adapter that owns attachment and reverse-order detach. */
 export class NativeDmgArtifactReader implements ArtifactReader {
@@ -103,15 +107,19 @@ export class NativeDmgArtifactReader implements ArtifactReader {
   /** Verify and attach one image beneath an exclusively owned temporary root. */
   static async create(
     path: string,
+    environment: Readonly<NodeJS.ProcessEnv>,
     signal?: AbortSignal,
-    host: NativeDmgHost = systemHost,
+    host?: NativeDmgHost,
   ): Promise<NativeDmgArtifactReader> {
-    if (process.platform !== "darwin" && host === systemHost)
+    if (process.platform !== "darwin" && host === undefined)
       throw new ArtifactReaderFailure(
         "unavailable",
         "Native DMG traversal is available only on macOS",
       );
-    const reader = new NativeDmgArtifactReader(path, host);
+    const reader = new NativeDmgArtifactReader(
+      path,
+      host ?? createSystemHost(environment),
+    );
     await reader.attach(signal);
     return reader;
   }
@@ -152,7 +160,7 @@ export class NativeDmgArtifactReader implements ArtifactReader {
     // Only a device that stays attached through every recheck is a failure.
     for (const delayMs of DETACH_SETTLE_DELAYS_MS) {
       if (remainingDevices.length === 0) break;
-      await (this.host.delay ?? systemHost.delay)?.(delayMs);
+      await (this.host.delay ?? delay)(delayMs);
       const stillAttached: string[] = [];
       for (const device of remainingDevices) {
         if (!(await this.#isAttached(device))) continue;

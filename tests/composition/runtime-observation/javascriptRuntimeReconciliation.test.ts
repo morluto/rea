@@ -201,7 +201,7 @@ it("reconciles active Electron as a partial target-only runtime capture", async 
   );
 });
 
-it("keeps selected Electron arguments while omitting raw selectors", async () => {
+it("commits complete Electron actions independently from selected arguments", async () => {
   const fixture = await applicationFixture();
   const applicationPath = join(fixture, "main.js");
   const makeInput = (secret: string, selector: string) => ({
@@ -210,7 +210,16 @@ it("keeps selected Electron arguments while omitting raw selectors", async () =>
       application_path: applicationPath,
       application_root: fixture,
       args: ["--token", secret],
-      actions: [{ step_id: "click", kind: "click", selector }],
+      actions: [
+        { step_id: "click", kind: "click", selector },
+        { step_id: "settle", kind: "wait", duration_ms: 37 },
+        {
+          step_id: "open",
+          kind: "deep-link",
+          delivery: "second-instance",
+          url: "rea-fixture://open/item?token=selected",
+        },
+      ],
     }),
     application_root: fixture,
   });
@@ -225,7 +234,7 @@ it("keeps selected Electron arguments while omitting raw selectors", async () =>
     provider,
   );
   const second = createElectronActiveEvidence(
-    makeInput("second-secret", "#second-secret"),
+    makeInput("first-secret", "#second-secret"),
     createElectronActiveObservationFixtureResult(applicationPath),
     provider,
   );
@@ -234,7 +243,21 @@ it("keeps selected Electron arguments while omitting raw selectors", async () =>
     second.parameters.scenario_sha256,
   );
   expect(JSON.stringify(first)).toContain("first-secret");
-  expect(JSON.stringify(first)).not.toContain("#first-secret");
+  expect(first.parameters.actions).toEqual([
+    {
+      step_id: "click",
+      kind: "click",
+      selector: "#first-secret",
+      window_index: 0,
+    },
+    { step_id: "settle", kind: "wait", duration_ms: 37 },
+    {
+      step_id: "open",
+      kind: "deep-link",
+      delivery: "second-instance",
+      url: "rea-fixture://open/item?token=selected",
+    },
+  ]);
   expect(first.parameters.args).toEqual(["--token", "first-secret"]);
 });
 

@@ -63,15 +63,25 @@ for (const format of ["directory", "asar"] as const) {
           properties.json_parse_status === "included",
       ),
     ).toBe(true);
-    expect(
-      result.graph.nodes.some(
-        ({ kind, observations }) =>
-          kind === "source-module" &&
-          observations.some(
-            ({ properties }) => properties.source === "original.js",
-          ),
-      ),
-    ).toBe(true);
+    const original = result.graph.nodes.find(
+      ({ kind }) => kind === "source-module",
+    );
+    expect(original?.identity).toMatchObject({
+      strategy: "source-map-original",
+      original_source: "original.js",
+      source_root: null,
+    });
+    expect(original?.observations).toContainEqual(
+      expect.objectContaining({
+        source_map_reference: {
+          source_name: "original.js",
+          source_root: null,
+          map_path: "app.js.map",
+          resolution: { kind: "artifact-relative", path: "original.js" },
+        },
+        properties: { content_available: true },
+      }),
+    );
   });
 
   it(`${format} retains invalid UTF-8 as unavailable rather than replacing bytes`, async () => {

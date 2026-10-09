@@ -8,7 +8,7 @@ export async function verifyGhidraAddressBoundaries(client, entry, cli) {
       { timeout: 240000 },
     );
     assert.notEqual(reply.isError, true, JSON.stringify(reply));
-    return reply.structuredContent.result;
+    return reply.structuredContent.normalized_result;
   };
   const before = await query("analyze_function", { procedure: entry });
   // The segmented parser used to discard the high 32 bits and alias this entry.

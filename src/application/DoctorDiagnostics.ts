@@ -1,5 +1,3 @@
-import { homedir } from "node:os";
-
 import {
   SUPPORTED_NODE_VERSION_PROSE,
   supportsNodeVersion,
@@ -126,7 +124,7 @@ const findHopper = async (host: DoctorHost): Promise<string | undefined> => {
       ? [
           DEFAULT_HOPPER,
           SYSTEM_LINUX_HOPPER,
-          linuxHopperLauncherPath(host.homeDirectory ?? homedir()),
+          linuxHopperLauncherPath(host.homeDirectory),
           ...(await host.manualHopperPaths()),
         ]
       : [host.configuredHopperPath];

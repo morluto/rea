@@ -102,13 +102,12 @@ export interface AnalysisClient extends AnalysisOperationPort {
   requestActivitySnapshots?(): readonly ProviderRequestActivitySnapshot[];
   /** Current operational health for the active provider bridge. */
   operationHealthSnapshot?(): ProviderOperationHealth | undefined;
-  /** Close with a typed result when the provider can verify cleanup. */
-  closeWithOutcome?(
+  /** Close owned resources and retain failed cleanup for a later retry. */
+  close(
     options?: Pick<ExecutionOptions, "progress"> & {
       readonly retainDocument?: boolean;
     },
   ): Promise<Result<null, AnalysisError>>;
-  close(): Promise<void>;
 }
 
 /** Per-client identity allocated before any provider side effect starts. */
@@ -116,22 +115,15 @@ export interface AnalysisClientContext {
   readonly runId: string;
 }
 
-export type AnalysisClientFactory = (
-  target: BinaryTarget,
-  profile?: AnalysisProfileCommitment,
-  context?: AnalysisClientContext,
-) => AnalysisClient;
-
 export interface ProviderIdentity {
   readonly id: string;
   readonly name: string;
   readonly version: string | null;
 }
 
-/** Profile plus opaque compatibility output resolved before provider startup. */
+/** Typed analysis profile resolved before provider startup; null means unresolved. */
 export interface AnalysisProfileResolution {
   readonly profile: AnalysisProfileCommitment | null;
-  readonly compatibility: Readonly<Record<string, JsonValue>>;
 }
 
 /** Cancellation context for side-effect-free provider profile resolution. */

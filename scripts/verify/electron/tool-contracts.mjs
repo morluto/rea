@@ -108,10 +108,10 @@ window.loadFile("renderer.html");require("node:fs").writeFileSync(${JSON.stringi
     let targets;
     for (let attempt = 0; attempt < 30; attempt++) {
       targets = await call("list_electron_targets", { cdp_endpoint: endpoint });
-      if (targets.result.targets.length > 0) break;
+      if (targets.normalized_result.targets.length > 0) break;
       await pause(100);
     }
-    const target = targets.result.targets.find(
+    const target = targets.normalized_result.targets.find(
       (item) => item.file_path === join(root, "renderer.html"),
     );
     assert.ok(target, JSON.stringify(targets));
@@ -122,7 +122,7 @@ window.loadFile("renderer.html");require("node:fs").writeFileSync(${JSON.stringi
       observation_ms: 50,
     });
     assert.ok(
-      page.result.scripts.items.some(
+      page.normalized_result.scripts.items.some(
         (script) =>
           script.file_path === join(root, "renderer.js") &&
           script.source.included,
@@ -134,13 +134,13 @@ window.loadFile("renderer.html");require("node:fs").writeFileSync(${JSON.stringi
     const reconciled = await call("reconcile_javascript_runtime", {
       static_layers: [
         {
-          analysis: staticAnalysis.evidence,
+          analysis: staticAnalysis,
           runtime_mappings: [{ kind: "file-root", root }],
         },
       ],
-      runtime_observations: [page.evidence],
+      runtime_observations: [page],
     });
-    assert.ok(reconciled.result.runtime_captures.length > 0);
+    assert.ok(reconciled.normalized_result.runtime_captures.length > 0);
     const cli = await execute(
       process.execPath,
       [
@@ -173,7 +173,7 @@ window.loadFile("renderer.html");require("node:fs").writeFileSync(${JSON.stringi
     );
     const capture = active.isError
       ? active.structuredContent.error.details.partial_observation.capture
-      : active.structuredContent.result;
+      : active.structuredContent.normalized_result;
     if (active.isError) {
       assert.equal(
         active.structuredContent.error.code,

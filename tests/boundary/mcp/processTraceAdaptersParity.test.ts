@@ -1,3 +1,4 @@
+import { ok as resultOk } from "../../../src/domain/result.js";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -120,7 +121,7 @@ describe("declared trace adapter parity", () => {
       (_path) =>
         ({
           execute: () => Promise.resolve(ok(null)),
-          close: () => Promise.resolve(),
+          close: () => Promise.resolve(resultOk(null)),
         }) satisfies AnalysisClient,
     );
     expect(session.recordEvidence(left).ok).toBe(true);
@@ -145,13 +146,13 @@ describe("declared trace adapter parity", () => {
     });
     expect(response.isError).not.toBe(true);
     expect(response.structuredContent).toMatchObject({
-      result: { trace: { verdict: "equivalent" } },
+      normalized_result: { trace: { verdict: "equivalent" } },
       evidence_id: cliEvidence.evidence_id,
     });
     const structuredResult =
       typeof response.structuredContent === "object" &&
       response.structuredContent !== null
-        ? Reflect.get(response.structuredContent, "result")
+        ? Reflect.get(response.structuredContent, "normalized_result")
         : undefined;
     expect(structuredResult).toEqual(cliEvidence.normalized_result);
     expect(cliEvidence.locations).toEqual([

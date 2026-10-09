@@ -1,10 +1,34 @@
-import { electronActiveObservationResultSchema } from "./electronActiveObservation.js";
+import {
+  electronActiveObservationResultSchema,
+  type ElectronActiveObservationResult,
+} from "./electronActiveObservation.js";
 
 /** Create an active-capture result for MCP contract tests. */
 export const createElectronActiveObservationFixtureResult = (
   applicationPath: string,
-) =>
-  electronActiveObservationResultSchema.parse({
+): ElectronActiveObservationResult => {
+  const event: ElectronActiveObservationResult["timeline"]["events"][number] = {
+    sequence: 1,
+    correlation_id: null,
+    kind: "main-handler-invocation",
+    event: null,
+    phase: "observed",
+    channel: "readiness:echo",
+    direction: "renderer-to-main",
+    sender: null,
+    receiver: "main",
+    frame: null,
+    target: null,
+    argument_shapes: ["string"],
+    result_shape: "object",
+    process_type: "main",
+    source: "electron-active-hook",
+    capture_method: "api-wrapper",
+    artifact_path: null,
+    artifact_sha256: null,
+    error: false,
+  };
+  return electronActiveObservationResultSchema.parse({
     application: {
       executable_path: process.execPath,
       application_path: applicationPath,
@@ -37,17 +61,12 @@ export const createElectronActiveObservationFixtureResult = (
       items: [{ pid: 1234, type: "Browser", name: null, service_name: null }],
     },
     ipc: {
-      events: [
-        {
-          sequence: 1,
-          kind: "main-handler-invocation",
-          channel: "readiness:echo",
-          argument_shapes: ["string"],
-          result_shape: "object",
-          process_type: "main",
-          error: false,
-        },
-      ],
+      events: [event],
+      observed: 1,
+      dropped: 0,
+    },
+    timeline: {
+      events: [event],
       observed: 1,
       dropped: 0,
     },
@@ -64,7 +83,15 @@ export const createElectronActiveObservationFixtureResult = (
       observed_runtime: 0,
       dropped_runtime: 0,
     },
+    coverage: {
+      status: "partial_attach",
+      observed_event_families: ["ipc"],
+      unavailable_event_families: ["renderer-ipc", "preload"],
+      observed_roles: ["main"],
+      pre_capture_activity: "unavailable",
+    },
     limitations: [
       "IPC payloads are represented by value shapes; payload values are never retained.",
     ],
   });
+};

@@ -50,7 +50,9 @@ const input = electronActiveObservationInputSchema.parse({
   ],
 });
 const verifierRun = createVerifierRun();
-const result = await new PlaywrightElectronActiveProvider().capture(input);
+const result = await new PlaywrightElectronActiveProvider(process.env).capture(
+  input,
+);
 if (!result.ok) throw result.error;
 
 const output = {

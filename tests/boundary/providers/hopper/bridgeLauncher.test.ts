@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { access, chmod, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -9,10 +10,13 @@ import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 import {
+  HopperApplicationLauncher,
   type HopperApplicationLauncherOptions,
   linuxDemoLaunch,
   usesLinuxDemo,
 } from "../../../../src/hopper/BridgeLauncher.js";
+
+import { ProviderProcessSupervisor } from "../../../../src/process/ProviderProcess.js";
 
 const execFileAsync = promisify(execFile);
 const demoHelperPath = fileURLToPath(
@@ -20,6 +24,7 @@ const demoHelperPath = fileURLToPath(
 );
 
 const options = (launcherPath: string): HopperApplicationLauncherOptions => ({
+  environment: {},
   launcherPath,
   targetPath: "/target",
   targetKind: "executable",
@@ -44,6 +49,7 @@ describe("Hopper bridge launcher selection", () => {
   it("does not infer demo behavior from a native launcher's basename", () => {
     expect(
       usesLinuxDemo({
+        environment: {},
         launcherPath: "/opt/hopper/bin/Hopper",
         targetPath: "/target",
         targetKind: "executable",
@@ -155,4 +161,42 @@ describe("Hopper bridge launcher selection", () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+});
+
+it("launches Hopper helpers with the caller-selected environment without restoring ambient values", async () => {
+  const directory = await createTestTempDirectory("rea-hopper-selected-env-");
+  const launcher = new HopperApplicationLauncher({
+    environment: { REA_SELECTED_VALUE: "caller-value" },
+    launcherPath: process.execPath,
+    targetPath: join(directory, "target"),
+    targetKind: "executable",
+    loaderArgs: [
+      "-e",
+      "process.stdout.write(JSON.stringify({ selected: process.env.REA_SELECTED_VALUE ?? null, home: process.env.HOME ?? null }))",
+      "--",
+    ],
+    bridgeScriptPath: "/rea/unused-bridge.py",
+    launchMode: "native",
+  });
+  const launched = await launcher.launch({
+    directory,
+    socketPath: join(directory, "bridge.sock"),
+    token: "fixture-token",
+    runId: randomUUID(),
+  });
+  if (!launched.ok) throw launched.error;
+  const supervisor = new ProviderProcessSupervisor(launched.value);
+  try {
+    expect(await supervisor.waitForOutputClose(5_000)).toBe(true);
+    expect(JSON.parse(supervisor.snapshot().stdout.text)).toEqual({
+      selected: "caller-value",
+      home: null,
+    });
+    expect(await supervisor.stop()).toMatchObject({
+      status: "verified-cleanup",
+    });
+  } finally {
+    await supervisor.stop();
+    await launched.value.releaseLease?.();
+  }
 });

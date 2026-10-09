@@ -5,6 +5,7 @@ import { expect, it } from "vitest";
 import { analyzeJavaScriptApplication } from "../../../src/application/javascript/JavaScriptApplicationService.js";
 import { parseApplicationGraphEvidence } from "../../../src/application/javascript/JavaScriptApplicationEvidenceGraph.js";
 import { importReferenceSource } from "../../../src/application/ReferenceSourceImport.js";
+import { findApplicationFeatureSeeds } from "../../../src/domain/javascript/javascriptFeatureSeed.js";
 import { compareSourceToBundle } from "../../../src/domain/javascript/sourceToBundleComparison.js";
 import { resolveSourceMapSource } from "../../../src/javascript/sourceMaps/DecodedSourceMap.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -266,7 +267,25 @@ it("retains every map location when identical map artifacts merge", async () => 
       writeFile(join(current, prefix, "maps/main.js.map"), map),
     ]);
   }
-  const { comparison } = await compareTrees(previous, current);
+  const { comparison, application } = await compareTrees(previous, current);
+  const originals = application.graph.nodes.filter(
+    ({ kind }) => kind === "source-module",
+  );
+  expect(originals).toHaveLength(1);
+  expect(
+    originals[0]?.observations.map(
+      ({ source_map_reference }) => source_map_reference,
+    ),
+  ).toEqual(
+    expect.arrayContaining(
+      ["a", "b"].map((prefix) => ({
+        source_name: "../src/x.js",
+        source_root: null,
+        map_path: `${prefix}/maps/main.js.map`,
+        resolution: { kind: "artifact-relative", path: `${prefix}/src/x.js` },
+      })),
+    ),
+  );
   for (const prefix of ["a", "b"]) {
     const path = `${prefix}/src/x.js`;
     const item = comparison.items.find(
@@ -285,6 +304,87 @@ it("retains every map location when identical map artifacts merge", async () => 
       }),
     );
   }
+});
+
+it("keeps leaf source roots distinct after indexed maps are serialized", async () => {
+  const root = await createTestTempDirectory("rea-source-map-leaf-roots-");
+  const previous = join(root, "previous");
+  const current = join(root, "current");
+  await mkdir(join(current, "maps"), { recursive: true });
+  for (const prefix of ["one", "two"]) {
+    await mkdir(join(previous, prefix), { recursive: true });
+    await writeFile(join(previous, prefix, "same.js"), "export const old = 1;");
+  }
+  await writeFile(join(previous, "same.js"), "export const decoy = 3;");
+  await writeFile(
+    join(current, "maps/main.map"),
+    JSON.stringify({
+      version: 3,
+      sections: ["one", "two"].map((prefix, line) => ({
+        offset: { line, column: 0 },
+        map: {
+          version: 3,
+          sources: ["same.js"],
+          sourceRoot: `../${prefix}`,
+          sourcesContent: ["export const updated = 2;"],
+          mappings: "AAAA",
+          names: [],
+        },
+      })),
+    }),
+  );
+  const { comparison, application } = await compareTrees(previous, current);
+  const originals = application.graph.nodes.filter(
+    ({ kind }) => kind === "source-module",
+  );
+  expect(originals).toHaveLength(2);
+  for (const prefix of ["one", "two"]) {
+    expect(originals).toContainEqual(
+      expect.objectContaining({
+        identity: expect.objectContaining({
+          original_source: "same.js",
+          source_root: `../${prefix}`,
+        }),
+        observations: [
+          expect.objectContaining({
+            source_map_reference: {
+              source_name: "same.js",
+              source_root: `../${prefix}`,
+              map_path: "maps/main.map",
+              resolution: {
+                kind: "artifact-relative",
+                path: `${prefix}/same.js`,
+              },
+            },
+          }),
+        ],
+      }),
+    );
+    expect(
+      comparison.items.find(
+        ({ source_path }) => source_path === `${prefix}/same.js`,
+      ),
+    ).toMatchObject({
+      current_node_ids: [expect.any(String)],
+      candidates: expect.arrayContaining([
+        expect.objectContaining({ confidence: "high" }),
+      ]),
+    });
+  }
+  expect(
+    comparison.items.find(({ source_path }) => source_path === "same.js")
+      ?.current_node_ids,
+  ).toEqual([]);
+  for (const prefix of ["one", "two"])
+    for (const value of [`${prefix}/same.js`, `../${prefix}`])
+      expect(
+        findApplicationFeatureSeeds(originals, {
+          kind: "module",
+          value,
+          match: "exact",
+          case_sensitive: true,
+        }),
+      ).toHaveLength(1);
 });
 
 it.each([
@@ -490,7 +590,16 @@ it.each([
         }),
       ),
     ]);
-    const { comparison } = await compareTrees(previous, current);
+    const { comparison, application } = await compareTrees(previous, current);
+    const original = application.graph.nodes.find(
+      ({ kind }) => kind === "source-module",
+    );
+    expect(original?.observations[0]?.source_map_reference).toMatchObject({
+      source_name: source,
+      source_root: null,
+      map_path: "maps.js/main.js.map",
+      resolution: { kind: "unresolved", reason: expect.any(String) },
+    });
     expect(comparison.items[0]?.source_path).toBe(historicalPath);
     expect(comparison.items[0]?.candidates).toEqual([]);
   },
@@ -573,7 +682,9 @@ const compareTrees = async (previous: string, current: string) => {
   if (!reference.ok) throw new Error(reference.error.message);
   const analyzed = await analyzeJavaScriptApplication({ input_path: current });
   if (!analyzed.ok) throw analyzed.error;
-  const application = parseApplicationGraphEvidence(analyzed.value);
+  const application = parseApplicationGraphEvidence(
+    JSON.parse(JSON.stringify(analyzed.value)),
+  );
   const comparison = compareSourceToBundle({
     reference: reference.value,
     application: {

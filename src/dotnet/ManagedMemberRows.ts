@@ -22,6 +22,7 @@ import {
   readMetadataBlob,
   readMetadataString,
 } from "./ManagedMetadataHeaps.js";
+import { readManagedValue } from "./ManagedReaderFailure.js";
 import { methodBody } from "./ManagedMethodBodyReader.js";
 
 export const parseFields = (
@@ -31,40 +32,44 @@ export const parseFields = (
 ): {
   readonly fields: readonly ManagedField[];
   readonly core: ReadonlyMap<string, FieldCore>;
+  readonly issues: readonly ManagedParseIssue[];
 } => {
   const fields: ManagedField[] = [];
   const core = new Map<string, FieldCore>();
+  const issues: ManagedParseIssue[] = [];
   const table = layout.table(4);
   const declaringType = createDeclaringTypeLookup(ranges, "field");
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
-    const cursor = metadataRowCursor(bytes, layout, 4, row);
-    const flags = cursor.readUInt16();
-    const name = readMetadataString(
-      bytes,
-      layout,
-      cursor.readIndex(layout.stringIndexSize),
-      layout.strings.size,
-    );
-    const sig = readMetadataBlob(
-      bytes,
-      layout,
-      cursor.readIndex(layout.blobIndexSize),
-      layout.blob.size,
-    );
-    const declared = declaringType(row);
-    const token = metadataToken(4, row);
-    fields.push({
-      token,
-      row_offset: cursor.start,
-      declaring_type_token: declared?.token ?? null,
-      declaring_type: declared?.fullName ?? null,
-      name,
-      flags,
-      signature: signature(sig),
-    });
-    core.set(token, { token, name });
+    readManagedValue(() => {
+      const cursor = metadataRowCursor(bytes, layout, 4, row);
+      const flags = cursor.readUInt16();
+      const name = readMetadataString(
+        bytes,
+        layout,
+        cursor.readIndex(layout.stringIndexSize),
+        layout.strings.size,
+      );
+      const sig = readMetadataBlob(
+        bytes,
+        layout,
+        cursor.readIndex(layout.blobIndexSize),
+        layout.blob.size,
+      );
+      const declared = declaringType(row);
+      const token = metadataToken(4, row);
+      fields.push({
+        token,
+        row_offset: cursor.start,
+        declaring_type_token: declared?.token ?? null,
+        declaring_type: declared?.fullName ?? null,
+        name,
+        flags,
+        signature: signature(sig),
+      });
+      core.set(token, { token, name });
+    }, issues);
   }
-  return { fields, core };
+  return { fields, core, issues };
 };
 
 export const parseMemberRefs = (
@@ -80,52 +85,54 @@ export const parseMemberRefs = (
   const issues: ManagedParseIssue[] = [];
   const table = layout.table(10);
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
-    const cursor = metadataRowCursor(bytes, layout, 10, row);
-    const parentRaw = cursor.readIndex(
-      layout.codedIndexSize("MemberRefParent"),
-    );
-    const name = readMetadataString(
-      bytes,
-      layout,
-      cursor.readIndex(layout.stringIndexSize),
-      layout.strings.size,
-    );
-    const sig = readMetadataBlob(
-      bytes,
-      layout,
-      cursor.readIndex(layout.blobIndexSize),
-      layout.blob.size,
-    );
-    const token = metadataToken(10, row);
-    const parentReason = metadataCodedTokenInvalidReason(
-      parentRaw,
-      3,
-      [2, 1, 26, 6, 27],
-      layout.rowCounts,
-    );
-    if (parentReason !== null || parentRaw === 0)
-      issues.push({
-        code: "invalid-row",
-        scope: `metadata.MemberRef:${token}`,
-        offset: cursor.start,
-        detail:
-          parentReason === null
-            ? "MemberRef parent coded index 0x0 is null, but the Class column must reference a row"
-            : `MemberRef parent coded index 0x${parentRaw.toString(16)} is invalid: ${parentReason}`,
-      });
-    refs.push({
-      token,
-      row_offset: cursor.start,
-      parent_token: metadataCodedToken(
+    readManagedValue(() => {
+      const cursor = metadataRowCursor(bytes, layout, 10, row);
+      const parentRaw = cursor.readIndex(
+        layout.codedIndexSize("MemberRefParent"),
+      );
+      const name = readMetadataString(
+        bytes,
+        layout,
+        cursor.readIndex(layout.stringIndexSize),
+        layout.strings.size,
+      );
+      const sig = readMetadataBlob(
+        bytes,
+        layout,
+        cursor.readIndex(layout.blobIndexSize),
+        layout.blob.size,
+      );
+      const token = metadataToken(10, row);
+      const parentReason = metadataCodedTokenInvalidReason(
         parentRaw,
         3,
         [2, 1, 26, 6, 27],
         layout.rowCounts,
-      ),
-      name,
-      signature: signature(sig),
-    });
-    core.set(token, { token, name });
+      );
+      if (parentReason !== null || parentRaw === 0)
+        issues.push({
+          code: "invalid-row",
+          scope: `metadata.MemberRef:${token}`,
+          offset: cursor.start,
+          detail:
+            parentReason === null
+              ? "MemberRef parent coded index 0x0 is null, but the Class column must reference a row"
+              : `MemberRef parent coded index 0x${parentRaw.toString(16)} is invalid: ${parentReason}`,
+        });
+      refs.push({
+        token,
+        row_offset: cursor.start,
+        parent_token: metadataCodedToken(
+          parentRaw,
+          3,
+          [2, 1, 26, 6, 27],
+          layout.rowCounts,
+        ),
+        name,
+        signature: signature(sig),
+      });
+      core.set(token, { token, name });
+    }, issues);
   }
   return { refs, core, issues };
 };
@@ -145,46 +152,54 @@ export const parseMethods = ({
 }: ParseMethodsInput): {
   readonly methods: readonly ManagedMethod[];
   readonly core: ReadonlyMap<string, MethodCore>;
+  readonly issues: readonly ManagedParseIssue[];
 } => {
   const methods: ManagedMethod[] = [];
   const core = new Map<string, MethodCore>();
+  const issues: ManagedParseIssue[] = [];
   const table = layout.table(6);
   const declaringType = createDeclaringTypeLookup(ranges, "method");
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
-    const cursor = metadataRowCursor(bytes, layout, 6, row);
-    const rva = cursor.readUInt32();
-    const implFlags = cursor.readUInt16();
-    const flags = cursor.readUInt16();
-    const name = readMetadataString(
-      bytes,
-      layout,
-      cursor.readIndex(layout.stringIndexSize),
-      layout.strings.size,
-    );
-    const sig = readMetadataBlob(
-      bytes,
-      layout,
-      cursor.readIndex(layout.blobIndexSize),
-      layout.blob.size,
-    );
-    cursor.readIndex(layout.tableIndexSize(8));
-    const declared = declaringType(row);
-    const token = metadataToken(6, row);
-    methods.push({
-      token,
-      row_offset: cursor.start,
-      declaring_type_token: declared?.token ?? null,
-      declaring_type: declared?.fullName ?? null,
-      name,
-      rva,
-      impl_flags: implFlags,
-      flags,
-      signature: signature(sig),
-      body: methodBody(bytes, pe, rva, { implFlags, flags }),
-    });
-    core.set(token, { token, name, declaringType: declared?.fullName ?? null });
+    readManagedValue(() => {
+      const cursor = metadataRowCursor(bytes, layout, 6, row);
+      const rva = cursor.readUInt32();
+      const implFlags = cursor.readUInt16();
+      const flags = cursor.readUInt16();
+      const name = readMetadataString(
+        bytes,
+        layout,
+        cursor.readIndex(layout.stringIndexSize),
+        layout.strings.size,
+      );
+      const sig = readMetadataBlob(
+        bytes,
+        layout,
+        cursor.readIndex(layout.blobIndexSize),
+        layout.blob.size,
+      );
+      cursor.readIndex(layout.tableIndexSize(8));
+      const declared = declaringType(row);
+      const token = metadataToken(6, row);
+      methods.push({
+        token,
+        row_offset: cursor.start,
+        declaring_type_token: declared?.token ?? null,
+        declaring_type: declared?.fullName ?? null,
+        name,
+        rva,
+        impl_flags: implFlags,
+        flags,
+        signature: signature(sig),
+        body: methodBody(bytes, pe, rva, { implFlags, flags }),
+      });
+      core.set(token, {
+        token,
+        name,
+        declaringType: declared?.fullName ?? null,
+      });
+    }, issues);
   }
-  return { methods, core };
+  return { methods, core, issues };
 };
 
 const targetKind = (token: string): ManagedCallEdge["target_kind"] =>

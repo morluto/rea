@@ -2,72 +2,58 @@ import { z } from "zod";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { safeParseJson } from "../domain/safeJson.js";
 
+/** Decode explicitly selected reference-source exclusion patterns. */
 export const parseStringArray = (
   encoded: string,
   name: string,
 ): Result<readonly string[], ConfigurationError> => {
-  try {
-    const parsed = z.array(z.string().min(1)).safeParse(JSON.parse(encoded));
-    return parsed.success
-      ? ok(parsed.data)
-      : err(
-          new ConfigurationError(`${name} must encode an array of strings`, {
-            cause: parsed.error,
-            settings: [
-              {
-                setting: name,
-                constraint: `${name} must encode an array of strings`,
-              },
-            ],
-          }),
-        );
-  } catch (cause: unknown) {
-    return err(
-      new ConfigurationError(`${name} must be valid JSON`, {
-        cause,
-        settings: [{ setting: name, constraint: `${name} must be valid JSON` }],
-      }),
-    );
-  }
+  return parseConfiguredStringArray(encoded, name, z.string().min(1));
 };
 
+/** Decode Hopper arguments while preserving meaningful empty argv entries. */
 export const parseLoaderArgs = (
   encoded: string | undefined,
 ): Result<readonly string[], ConfigurationError> => {
   if (encoded === undefined) return ok([]);
-  let decoded: unknown;
-  try {
-    decoded = JSON.parse(encoded);
-  } catch (cause: unknown) {
+  return parseConfiguredStringArray(
+    encoded,
+    "HOPPER_LOADER_ARGS_JSON",
+    z.string(),
+  );
+};
+
+const parseConfiguredStringArray = (
+  encoded: string,
+  setting: string,
+  itemSchema: z.ZodString,
+): Result<readonly string[], ConfigurationError> => {
+  const decoded = safeParseJson(encoded);
+  if (!decoded.ok)
     return err(
-      new ConfigurationError("HOPPER_LOADER_ARGS_JSON must be valid JSON", {
-        cause,
-        settings: [
-          loaderArgsIssue("HOPPER_LOADER_ARGS_JSON must be valid JSON"),
-        ],
-      }),
+      configuredArrayError(setting, "must be valid JSON", decoded.cause),
     );
-  }
-  const parsed = z.array(z.string()).safeParse(decoded);
+  const parsed = z.array(itemSchema).safeParse(decoded.value);
   return parsed.success
     ? ok(parsed.data)
     : err(
-        new ConfigurationError(
-          "HOPPER_LOADER_ARGS_JSON must encode an array of strings",
-          {
-            cause: parsed.error,
-            settings: [
-              loaderArgsIssue(
-                "HOPPER_LOADER_ARGS_JSON must encode an array of strings",
-              ),
-            ],
-          },
+        configuredArrayError(
+          setting,
+          "must encode an array of strings",
+          parsed.error,
         ),
       );
 };
 
-const loaderArgsIssue = (constraint: string) => ({
-  setting: "HOPPER_LOADER_ARGS_JSON",
-  constraint,
-});
+const configuredArrayError = (
+  setting: string,
+  requirement: string,
+  cause: unknown,
+): ConfigurationError => {
+  const constraint = `${setting} ${requirement}`;
+  return new ConfigurationError(constraint, {
+    cause,
+    settings: [{ setting, constraint }],
+  });
+};

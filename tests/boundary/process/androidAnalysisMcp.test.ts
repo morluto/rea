@@ -1,4 +1,5 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it as test, onTestFinished } from "vitest";
 import { z } from "zod";
@@ -6,6 +7,7 @@ import { access } from "node:fs/promises";
 import { ANDROID_TOOL_CONTRACTS } from "../../../src/contracts/android/androidToolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { ToolResultDelivery } from "../../../src/server/toolResult.js";
 import { startMcpTransport } from "../../../src/main/transport.js";
 import type { RuntimeDependencies } from "../../../src/main/types.js";
 import type { AndroidAnalysisPort } from "../../../src/application/android/AndroidAnalysisPort.js";
@@ -45,6 +47,8 @@ it("keeps a replacement server usable after the SDK discards its discovery probe
   const transport = await startMcpTransport(runtime, session, {
     logger: silentLogger,
     serverLogger: silentLogger,
+    environment: runtime.env,
+    delivery: new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
     loadOptionalProviders: async () => ({}),
   });
   if (!transport.ok) throw new Error("Transport failed");
@@ -131,8 +135,8 @@ it("publishes and executes all APK contracts with inline Evidence and no active 
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
     expect(validateOutput(response.structuredContent)).toBe(true);
     const result = contract.outputSchema.parse(response.structuredContent);
-    const evidence = parseEvidence(result.evidence);
-    expect(result.result).toEqual(evidence.normalized_result);
+    const evidence = parseEvidence(result);
+    expect(result.normalized_result).toEqual(evidence.normalized_result);
     expect(result.evidence_id).toBe(evidence.evidence_id);
     expect(evidence.operation).toBe(contract.name);
     expect(evidence.raw_result).not.toBeNull();

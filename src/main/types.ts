@@ -4,7 +4,6 @@ export interface RuntimeDependencies {
   readonly writeStderr: (text: string) => void;
   readonly setExitCode: (code: number) => void;
   readonly registerShutdown: (handler: () => void) => () => void;
-  readonly registerReload?: (handler: () => void) => () => void;
   readonly createServer?: typeof import("../server/createServer.js").createServer;
   readonly loadOptionalProviders?: () => Promise<
     import("./transport.js").OptionalProviders

@@ -25,7 +25,7 @@ interface ActiveExecutionBinding {
 
 export interface PreparedSessionExecution {
   readonly active: ActiveExecutionBinding;
-  readonly capability: CapabilityDescriptor | undefined;
+  readonly capability: CapabilityDescriptor;
   readonly profile: AnalysisProfileCommitment | undefined;
   readonly cacheable: boolean;
   readonly cached: AnalysisExecution | undefined;
@@ -59,11 +59,8 @@ export const prepareSessionExecution = (
     lookupSnapshot,
   } = input;
   if (active === undefined) return err(new NoBinaryOpenError());
-  const capability = active.route.capabilities?.get(operation);
-  if (
-    active.route.capabilities !== undefined &&
-    capability?.available !== true
-  ) {
+  const capability = active.route.capabilities.get(operation);
+  if (capability?.available !== true) {
     const selectionError = unboundOperationError(operation, active.route);
     if (selectionError !== undefined) return err(selectionError);
     return err(
@@ -76,8 +73,7 @@ export const prepareSessionExecution = (
   }
   const profile =
     active.profile !== null &&
-    (capability === undefined ||
-      capability.provider.id === active.profile.provider.id)
+    capability.provider.id === active.profile.provider.id
       ? active.profile
       : undefined;
   const cacheable =

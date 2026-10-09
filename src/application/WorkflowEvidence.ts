@@ -76,7 +76,7 @@ export const workflowSnapshotRecord = (
   evidence: Evidence,
   operation: AnalysisOperation,
 ): WorkflowSnapshotRecordInput | undefined => {
-  if (!("analysis_profile" in evidence)) return undefined;
+  if (evidence.analysis_profile === null) return undefined;
   return {
     operation,
     parameters: evidence.parameters,

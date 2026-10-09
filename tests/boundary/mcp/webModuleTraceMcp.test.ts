@@ -13,8 +13,9 @@ import {
 } from "../../fixtures/webModuleTrace.js";
 
 it("publishes valid SDK schemas and records the named module trace without a binary target", async () => {
+  const artifacts = webModuleArtifactsFixture();
   const service = new WebModuleTraceService(
-    { load: () => Promise.resolve(ok(webModuleArtifactsFixture())) },
+    { load: () => Promise.resolve(ok(artifacts)) },
     webModuleResolverFixture,
   );
   const session = createTestBinarySession(() => {
@@ -53,8 +54,24 @@ it("publishes valid SDK schemas and records the named module trace without a bin
   const parsed = toolContract("trace_web_module_imports").outputSchema.parse(
     response.structuredContent,
   );
-  const evidence = parseEvidence(parsed.evidence);
-  expect(parsed.result).toEqual(evidence.normalized_result);
+  const evidence = parseEvidence(parsed);
+  expect(evidence.normalized_result).toMatchObject({
+    importer: {
+      url: artifacts.manifest.scripts[0]?.url,
+      basis: "reported-source-url",
+    },
+    imports: [
+      {
+        resolution: { state: "resolved", url: "https://app.test/dep.js" },
+        execution: "unknown",
+      },
+      {
+        resolution: { state: "unknown", reason: "computed-specifier" },
+        execution: "unknown",
+      },
+    ],
+  });
+  expect(parsed.normalized_result).toEqual(evidence.normalized_result);
   expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
   const invalid = await client.callTool({
     name: "trace_web_module_imports",

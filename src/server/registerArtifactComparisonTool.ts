@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/server";
+import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 
 import type { BinarySessionPort } from "../application/binary/BinarySession.js";
 import { toolContract } from "../contracts/toolContracts.js";
@@ -10,11 +10,10 @@ import { recordDerivedEvidence } from "./recordDerivedEvidence.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
 import { ARTIFACT_COMPARISON_PROVIDER } from "./sessionToolPolicies.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { toCallToolResult, toEvidenceToolResult } from "./toolResult.js";
 
 /** Register Evidence-backed deterministic artifact comparison. */
 export const registerArtifactComparisonTool = (
-  server: McpServer,
+  server: EvidenceMcpServer,
   session: BinarySessionPort,
   contract: ReturnType<typeof toolContract<"compare_artifacts">>,
 ): void => {
@@ -27,13 +26,14 @@ export const registerArtifactComparisonTool = (
         const right = parseEvidence(input.right);
         return { left, right, comparison: compareArtifacts(left, right) };
       });
-      if (!computed.ok) return toCallToolResult(computed, contract);
+      if (!computed.ok)
+        return server.delivery.toCallToolResult(computed, contract);
       const { left, right, comparison } = computed.value;
       const sources = [left, right];
       for (const source of sources) {
         const recordedSource = session.recordEvidence(source);
         if (!recordedSource.ok)
-          return toCallToolResult(recordedSource, contract);
+          return server.delivery.toCallToolResult(recordedSource, contract);
       }
       const leftEvidenceIds = [left.evidence_id];
       const rightEvidenceIds = [right.evidence_id];
@@ -50,7 +50,7 @@ export const registerArtifactComparisonTool = (
         limitations: comparison.limitations,
         evidenceLinks: [...leftEvidenceIds, ...rightEvidenceIds],
       });
-      return toEvidenceToolResult(
+      return server.delivery.toEvidenceToolResult(
         evidence,
         contract,
         recordDerivedEvidence(

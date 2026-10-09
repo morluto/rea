@@ -33,7 +33,9 @@ describe("HopperClient protocol", () => {
       runId: "11111111-1111-4111-8111-111111111111",
       startupTimeoutMs: 1_000,
     });
-    onTestFinished(() => client.close());
+    onTestFinished(async () => {
+      await client.close();
+    });
 
     expect((await client.start()).ok).toBe(true);
     expect(launcher.runIds).toEqual(["11111111-1111-4111-8111-111111111111"]);
@@ -42,7 +44,9 @@ describe("HopperClient protocol", () => {
   it("keeps the native socket path below macOS sockaddr_un limits", async () => {
     const launcher = new FixtureLauncher();
     const client = new HopperClient({ launcher, startupTimeoutMs: 1_000 });
-    onTestFinished(() => client.close());
+    onTestFinished(async () => {
+      await client.close();
+    });
     const started = await client.start();
     expect(started.ok).toBe(true);
     expect(Buffer.byteLength(launcher.socketPaths[0] ?? "")).toBeLessThan(104);
@@ -131,7 +135,9 @@ describe("HopperClient response lifecycle", () => {
       launcher: new FixtureLauncher("wrong-token"),
       startupTimeoutMs: 1_000,
     });
-    onTestFinished(() => client.close());
+    onTestFinished(async () => {
+      await client.close();
+    });
     const result = await client.start();
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error._tag).toBe("HopperRemoteError");
@@ -178,7 +184,9 @@ describe("HopperClient response lifecycle", () => {
       startupTimeoutMs: 1_000,
       onDiagnostic: (event) => diagnostics.push(event),
     });
-    onTestFinished(() => client.close());
+    onTestFinished(async () => {
+      await client.close();
+    });
     await expect(client.start()).resolves.toMatchObject({ ok: true });
     const result = await client.callTool("remote_error");
     expect(result.ok).toBe(false);

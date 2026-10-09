@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { snapshotEnvironment } from "./process/snapshotEnvironment.js";
 import { pathToFileURL } from "node:url";
 import { realpathSync } from "node:fs";
 
@@ -11,11 +12,13 @@ import { createLogger } from "./logger.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import type { RuntimeDependencies } from "./main/types.js";
 import { SERVER_START_FAILED } from "./main/messages.js";
-import { createRuntimeState } from "./main/state.js";
 import { openInitialTarget } from "./main/startup.js";
 import { startMcpTransport } from "./main/transport.js";
-import { loadOptionalObservationProviders } from "./composition/optionalObservationProviders.js";
-import { registerConfigReload } from "./main/reload.js";
+import {
+  createOptionalObservationFactories,
+  loadOptionalObservationProviders,
+} from "./composition/optionalObservationProviders.js";
+import { createToolResultDelivery } from "./server/toolResult.js";
 import { createShutdown } from "./main/shutdown.js";
 
 const runtimeDependencies = (): RuntimeDependencies => ({
@@ -37,10 +40,6 @@ const runtimeDependencies = (): RuntimeDependencies => ({
       process.stdin.off("close", handler);
     };
   },
-  registerReload: (handler) => {
-    process.on("SIGHUP", handler);
-    return () => process.off("SIGHUP", handler);
-  },
 });
 
 /**
@@ -51,14 +50,15 @@ const runtimeDependencies = (): RuntimeDependencies => ({
 export const run = async (
   dependencies: RuntimeDependencies = runtimeDependencies(),
 ): Promise<number> => {
-  const config = parseConfig(dependencies.env);
+  const environment = snapshotEnvironment(dependencies.env);
+  const config = parseConfig(environment);
   if (!config.ok) {
     dependencies.writeStderr(`${projectAnalysisError(config.error).message}\n`);
     return 1;
   }
   const logger = createLogger("mcp", config.value.logLevel);
   const serverLogger = logger.child({ layer: "server" });
-  const session = createBinarySession(config.value, logger);
+  const session = createBinarySession(config.value, logger, environment);
   const opened = await openInitialTarget(
     session,
     config.value,
@@ -66,24 +66,23 @@ export const run = async (
     dependencies.writeStderr,
   );
   if (!opened.ok) return opened.exitCode;
-  const runtimeState = createRuntimeState(config.value);
   const transport = await startMcpTransport(dependencies, session, {
     logger,
     serverLogger,
+    environment,
+    delivery: createToolResultDelivery(config.value.mcpMaxResponseBytes),
     loadOptionalProviders:
-      dependencies.loadOptionalProviders ?? loadOptionalObservationProviders,
+      dependencies.loadOptionalProviders ??
+      (() =>
+        loadOptionalObservationProviders(
+          createOptionalObservationFactories(environment),
+        )),
   });
   if (!transport.ok) return 1;
-  const unregisterReload = registerConfigReload({
-    dependencies,
-    runtimeState,
-    serverLogger,
-  });
   createShutdown({
     handle: transport.handle,
     closeAndroid: transport.closeAndroid,
     session,
-    unregisterReload,
     dependencies,
     serverLogger,
   });

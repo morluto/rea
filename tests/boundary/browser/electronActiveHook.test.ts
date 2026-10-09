@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 
 import { afterEach, expect, it } from "vitest";
 
+import { electronActiveTimelineEventSchema } from "../../../src/domain/javascript/electronActiveObservation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const temporary: string[] = [];
@@ -153,6 +154,9 @@ it("retains active hook evidence within its event-retention budget", async () =>
     };
   };
   const { snapshot } = result;
+  expect(
+    electronActiveTimelineEventSchema.array().parse(snapshot.events),
+  ).toHaveLength(snapshot.retained);
 
   expect(snapshot.hook_error).toBe(false);
   expect(snapshot.events).toHaveLength(snapshot.retained);

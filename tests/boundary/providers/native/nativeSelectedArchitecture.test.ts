@@ -18,6 +18,7 @@ it("does not attribute the first universal slice's UUID and segments to the sele
       "UUID: AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA (x86_64) fixture\nUUID: 01234567-89AB-CDEF-0123-456789ABCDEF (arm64) fixture\n",
   });
   const client = new NativeMacOSProvider(
+    {},
     {
       async run(tool, arguments_) {
         const isSelected =
@@ -71,6 +72,7 @@ it.each([
       dwarfdump: `UUID: 01234567-89AB-CDEF-0123-456789ABCDEF (${dyldArchitecture}) fixture\n`,
     });
     const client = new NativeMacOSProvider(
+      {},
       {
         run(tool, arguments_) {
           calls.push({ tool, arguments_ });
@@ -112,6 +114,7 @@ it.each([
 
 it("projects universal segment evidence into the selected slice's container offsets", async () => {
   const client = new NativeMacOSProvider(
+    {},
     new NativeFixtureRunner(),
     "darwin",
   ).createClient(nativeMachoTarget("/owned/universal"));
@@ -153,6 +156,7 @@ it.each([
       throw new Error("Expected executable fixture");
     const target = { ...base, availableArchitectures: ["arm64"] as const };
     const result = await new NativeMacOSProvider(
+      {},
       new NativeFixtureRunner({ lipo }),
       "darwin",
     )
@@ -189,6 +193,7 @@ it.each([
     if (base.kind !== "executable")
       throw new Error("Expected executable fixture");
     const result = await new NativeMacOSProvider(
+      {},
       new NativeFixtureRunner({ lipo }),
       "darwin",
     )

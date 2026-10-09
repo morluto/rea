@@ -421,6 +421,8 @@ export const applicationNodeIdentitySchema = z.discriminatedUnion("strategy", [
     source_map_sha256: digestSchema,
     // The exact `sources` entry; `""` is a legal relative reference.
     original_source: z.string(),
+    // Exact leaf-local root; null means omitted or explicitly null.
+    source_root: z.string().nullable(),
     source_sha256: digestSchema.nullable(),
   }),
   z.strictObject({

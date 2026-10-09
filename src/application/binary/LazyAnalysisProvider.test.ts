@@ -7,7 +7,7 @@ import type {
 } from "../AnalysisProvider.js";
 import { LazyAnalysisProvider } from "./LazyAnalysisProvider.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
-import { err } from "../../domain/result.js";
+import { err, ok as resultOk } from "../../domain/result.js";
 
 const identity: ProviderIdentity = {
   id: "test-provider",
@@ -24,7 +24,7 @@ const providerWithClient = (
     onCreate();
     return {
       execute: async (operation) => err(new AnalysisCancelledError(operation)),
-      close: async () => undefined,
+      close: async () => resultOk(null),
     };
   },
 });

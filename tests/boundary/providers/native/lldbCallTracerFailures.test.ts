@@ -62,6 +62,7 @@ const fixtureTracer = (
 ) => {
   let configPath: string | undefined;
   const tracer = new LldbCallTracer(
+    {},
     async (_executable, arguments_) => {
       const resolved = await configFromArguments(arguments_);
       const { config } = resolved;
@@ -109,6 +110,7 @@ const fixtureTracer = (
 describe("LLDB failure retention through the production tracer", () => {
   it("names the missing LLDB requirement instead of asking for another target", async () => {
     const tracer = new LldbCallTracer(
+      {},
       () => Promise.reject(new Error("LLDB must not launch")),
       async (tool) => err(new NativeCommandFailure(tool, "unavailable")),
     );

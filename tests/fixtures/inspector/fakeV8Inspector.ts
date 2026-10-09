@@ -16,6 +16,14 @@ interface FakeV8InspectorOptions {
   readonly scriptHashes?: readonly string[];
   readonly oversizedEventBytes?: number;
   readonly contextTransitionCount?: number;
+  readonly runtimeEvents?: readonly {
+    readonly method: string;
+    readonly params: unknown;
+  }[];
+  readonly scriptEvents?: readonly {
+    readonly method: string;
+    readonly params: unknown;
+  }[];
   readonly additionalTargetUrl?: string;
   readonly additionalTargetCount?: number;
   readonly closeOnMethod?: string;
@@ -155,6 +163,11 @@ const sendRuntimeEvents = (
   socket: WebSocket,
   options: FakeV8InspectorOptions,
 ): void => {
+  if (options.runtimeEvents !== undefined) {
+    for (const event of options.runtimeEvents)
+      socket.send(JSON.stringify(event));
+    return;
+  }
   socket.send(
     JSON.stringify({
       method: "Runtime.executionContextCreated",
@@ -181,6 +194,11 @@ const sendScriptEvents = (
   socket: WebSocket,
   options: FakeV8InspectorOptions,
 ): void => {
+  if (options.scriptEvents !== undefined) {
+    for (const event of options.scriptEvents)
+      socket.send(JSON.stringify(event));
+    return;
+  }
   for (const [index, url] of (
     options.scriptUrls ?? [options.targetUrl]
   ).entries())

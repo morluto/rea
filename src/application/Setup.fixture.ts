@@ -12,10 +12,13 @@ import type { LinuxDistribution } from "./LinuxHopper.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../identity.js";
 import { CATALOG_IDENTITY } from "../catalogIdentity.js";
 import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
+import { setupRegistrationCommand } from "./SetupHost.js";
 
 /** Recording setup host for service-level planning and recovery tests. */
 export class FakeSetupHost implements SetupHost {
   readonly platform: NodeJS.Platform;
+  readonly homeDirectory = "/fixture/home";
+  readonly registrationCommand: readonly string[];
   nodeVersion = "24.18.0";
   version: string | undefined = "14.5";
   distribution: LinuxDistribution | undefined;
@@ -45,26 +48,24 @@ export class FakeSetupHost implements SetupHost {
 
   constructor(platform: NodeJS.Platform = "darwin") {
     this.platform = platform;
+    this.registrationCommand = setupRegistrationCommand(platform, false);
   }
 
   macosVersion = (): Promise<string | undefined> =>
     Promise.resolve(this.version);
   linuxDistribution = (): Promise<LinuxDistribution | undefined> =>
     Promise.resolve(this.distribution);
-  hopperPath = (): Promise<string | undefined> => Promise.resolve(this.hopper);
   initialSetupState = async (scope?: DoctorScope) => ({
     ...(this.hopper === undefined ? {} : { hopperPath: this.hopper }),
-    providerEnvironment: await this.providerEnvironment(),
-    doctor: await this.doctor(scope),
-  });
-  providerEnvironment = (): Promise<SetupProviderEnvironment> =>
-    Promise.resolve({
+    providerEnvironment: {
       ...(this.hopper === undefined
         ? {}
         : { HOPPER_LAUNCHER_PATH: this.hopper }),
       ...(this.ghidra === undefined ? {} : { GHIDRA_INSTALL_DIR: this.ghidra }),
       ...(this.javaHome === undefined ? {} : { JAVA_HOME: this.javaHome }),
-    });
+    },
+    doctor: await this.doctor(scope),
+  });
   installHopper = (
     replaceExisting: boolean,
   ): Promise<SetupHopperInstallResult> => {

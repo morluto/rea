@@ -41,7 +41,7 @@ it("executes the advertised export presence example with matching analyzed Evide
   });
   expect(response.isError).not.toBe(true);
   expect(response.structuredContent).toMatchObject({
-    result: {
+    normalized_result: {
       left: { status: "selected" },
       right: { status: "selected" },
       summary: { added: 1, removed: 1, changed: 0, unknown: 0 },
@@ -102,7 +102,7 @@ it("traces example semantic modules with their parsed artifact digests", async (
     });
     expect(response.isError).not.toBe(true);
     expect(response.structuredContent).toMatchObject({
-      result: {
+      normalized_result: {
         nodes: expect.arrayContaining([
           expect.objectContaining({
             node_id: module.node_id,
@@ -161,10 +161,8 @@ describe("application workflow MCP parity", () => {
       expect(relativeApplication.isError).not.toBe(true);
       expect(relativeApplication.structuredContent).toMatchObject({
         evidence_id: left.value.evidence_id,
-        result: { input_path: leftAnalysis.input_path },
-        evidence: {
-          subject: { local_path: left.value.subject?.local_path },
-        },
+        normalized_result: { input_path: leftAnalysis.input_path },
+        subject: { local_path: left.value.subject?.local_path },
       });
       const full = await client.callTool({
         name: "compare_javascript_export_shapes",
@@ -172,7 +170,7 @@ describe("application workflow MCP parity", () => {
       });
       expect(full.isError).not.toBe(true);
       expect(full.structuredContent).toMatchObject({
-        result: {
+        normalized_result: {
           summary: { added: 1, removed: 0, changed: 0, unknown: 0 },
           property_inventories: expect.arrayContaining([
             expect.objectContaining({
@@ -231,7 +229,7 @@ describe("application workflow MCP parity", () => {
       });
       expect(semantic.isError).not.toBe(true);
       expect(semantic.structuredContent).toMatchObject({
-        result: {
+        normalized_result: {
           source_evidence_id: left.value.evidence_id,
           source_graph_id: analyzed.semantic_graph.graph_id,
           summary: { total_seed_matches: 1 },

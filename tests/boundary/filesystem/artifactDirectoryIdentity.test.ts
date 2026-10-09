@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { describe, expect, it } from "vitest";
 
+import { compareCodePoints } from "../../../src/domain/canonicalOrdering.js";
 import { canonicalDigest } from "../../../src/domain/comparisonSemantics.js";
 import { inventoryArtifact } from "../../../src/artifacts/inventory/ArtifactInventory.js";
 import { compareArtifacts } from "../../../src/domain/artifactComparison.js";
@@ -49,8 +50,7 @@ const occurrenceAt = (inventory: ArtifactInventoryResult, path: string) => {
   return occurrence;
 };
 
-// Preserve the pre-fix name-based hash for ordinary immediate children.
-const legacyDirectoryId = (
+const directoryIdForChildren = (
   inventory: ArtifactInventoryResult,
   paths: readonly string[],
 ) =>
@@ -69,7 +69,7 @@ const legacyDirectoryId = (
               };
             })
             .sort((left, right) =>
-              String(left.name).localeCompare(String(right.name)),
+              compareCodePoints(String(left.name), String(right.name)),
             ),
         },
         "Artifact",
@@ -145,7 +145,7 @@ describe("virtual directory relative-path identity", () => {
     },
   );
 
-  it("preserves exact legacy identities for immediate children and empty directories", async () => {
+  it("derives identities from immediate children and empty directories", async () => {
     const { inventory } = await observeZip([
       ["pkg/", ""],
       ["pkg/z.txt", "Z"],
@@ -153,10 +153,10 @@ describe("virtual directory relative-path identity", () => {
       ["empty/", ""],
     ]);
     expect(occurrenceAt(inventory, "pkg").artifact_id).toBe(
-      legacyDirectoryId(inventory, ["pkg/z.txt", "pkg/a.txt"]),
+      directoryIdForChildren(inventory, ["pkg/z.txt", "pkg/a.txt"]),
     );
     expect(occurrenceAt(inventory, "empty").artifact_id).toBe(
-      legacyDirectoryId(inventory, []),
+      directoryIdForChildren(inventory, []),
     );
   });
 
@@ -172,10 +172,10 @@ describe("virtual directory relative-path identity", () => {
       ["pkg/b/data.txt", "same bytes"],
     ]);
     expect(occurrenceAt(left.inventory, "pkg/a").artifact_id).toBe(
-      legacyDirectoryId(left.inventory, ["pkg/a/data.txt"]),
+      directoryIdForChildren(left.inventory, ["pkg/a/data.txt"]),
     );
     expect(occurrenceAt(left.inventory, "pkg").artifact_id).toBe(
-      legacyDirectoryId(left.inventory, ["pkg/a"]),
+      directoryIdForChildren(left.inventory, ["pkg/a"]),
     );
     expect(occurrenceAt(left.inventory, "pkg").artifact_id).not.toBe(
       occurrenceAt(right.inventory, "pkg").artifact_id,
@@ -242,7 +242,7 @@ describe("virtual directory collation ties", () => {
     },
   );
 
-  it("retains the legacy non-tied Unicode ordering and exact identity", async () => {
+  it("uses canonical Unicode ordering for exact directory identity", async () => {
     const { inventory } = await observeZip([
       ["pkg/", ""],
       ["pkg/z.txt", "Z"],
@@ -251,10 +251,10 @@ describe("virtual directory collation ties", () => {
     ]);
     expect("z.txt".localeCompare("ä.txt")).not.toBe(0);
     expect(occurrenceAt(inventory, "pkg").artifact_id).toBe(
-      legacyDirectoryId(inventory, ["pkg/z.txt", "pkg/ä.txt"]),
+      directoryIdForChildren(inventory, ["pkg/z.txt", "pkg/ä.txt"]),
     );
     expect(occurrenceAt(inventory, "empty").artifact_id).toBe(
-      legacyDirectoryId(inventory, []),
+      directoryIdForChildren(inventory, []),
     );
   });
 

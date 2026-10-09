@@ -5,9 +5,9 @@ export interface CapturedScript {
   readonly rawUrl: string;
   readonly url: string;
   readonly origin: string | null;
-  readonly hash: string;
-  readonly length: number;
-  readonly isModule: boolean;
+  readonly hash: string | null;
+  readonly length: number | null;
+  readonly isModule: boolean | null;
   readonly language: string | null;
   readonly sourceMapUrl: string | null;
   readonly sourceMapRawUrl: string | null;

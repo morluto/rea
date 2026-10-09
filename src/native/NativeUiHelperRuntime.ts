@@ -1,3 +1,4 @@
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,7 +10,10 @@ import type { NativeUiHelper } from "./NativeUiObservation.js";
 import { NATIVE_UI_HELPER_MAX_BUFFER } from "./NativeUiOutputBudget.js";
 
 /** Lazily compile one owned helper per observation/scenario and remove its compiler cache. */
-export const createNativeUiHelperRuntime = () => {
+export const createNativeUiHelperRuntime = (
+  environment: Readonly<NodeJS.ProcessEnv>,
+) => {
+  const selectedEnvironment = snapshotEnvironment(environment);
   let root: string | undefined;
   let executable: string | undefined;
   const invoke: NativeUiHelper = async (parameters, signal) => {
@@ -46,7 +50,7 @@ export const createNativeUiHelperRuntime = () => {
           timeout: 60_000,
           maxBuffer: 1024 * 1024,
           stopSignal: SWIFTC_INTERRUPT,
-          env: { ...process.env, TMPDIR: compilerTemporary },
+          env: { ...selectedEnvironment, TMPDIR: compilerTemporary },
           ...(signal === undefined ? {} : { signal }),
         },
       );
@@ -58,6 +62,7 @@ export const createNativeUiHelperRuntime = () => {
       {
         timeout: 30_000,
         maxBuffer: NATIVE_UI_HELPER_MAX_BUFFER,
+        env: selectedEnvironment,
         ...(signal === undefined ? {} : { signal }),
       },
     );

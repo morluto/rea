@@ -23,7 +23,7 @@ describe("Mach-O slice reader with system lipo", () => {
   it.skipIf(process.platform !== "darwin")(
     "checks real /bin/ls lipo CPU symbols and ptrauth capabilities against the FAT table",
     async () => {
-      const reader = new MachOSliceArtifactReader("/bin/ls");
+      const reader = new MachOSliceArtifactReader("/bin/ls", {});
       const entries = [];
       for await (const entry of reader.entries()) entries.push(entry);
       expect(entries.map(({ path }) => path)).toEqual([

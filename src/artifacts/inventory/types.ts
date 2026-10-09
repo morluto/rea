@@ -11,6 +11,7 @@ export const STRICT_INTEGRITY_POLICY: ArtifactIntegrityPolicy = {
 export interface ArtifactInventoryOptions {
   readonly signal?: AbortSignal | undefined;
   readonly integrity?: ArtifactIntegrityPolicy | undefined;
+  readonly environment?: Readonly<NodeJS.ProcessEnv> | undefined;
 }
 
 export type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";

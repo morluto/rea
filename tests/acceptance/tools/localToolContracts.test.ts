@@ -231,12 +231,12 @@ captureTest.each(["unknown", "truncated"] as const)(
     const capture = toolContract("capture_process_scenario").outputSchema.parse(
       captured.structuredContent,
     );
-    const source = capture.evidence;
+    const source = capture;
     if (status === "unknown")
       expect(
-        capture.result.frames.map((frame) => frame.data).join(""),
+        capture.normalized_result.frames.map((frame) => frame.data).join(""),
       ).toContain("value ordinary-evidence caller-value");
-    else expect(capture.result.truncated).toBe(true);
+    else expect(capture.normalized_result.truncated).toBe(true);
     const environment = await call("capture_process_scenario", {
       executable: "/usr/bin/printenv",
       arguments: ["1"],
@@ -245,15 +245,15 @@ captureTest.each(["unknown", "truncated"] as const)(
     const environmentEnvelope = toolContract(
       "capture_process_scenario",
     ).outputSchema.parse(environment.structuredContent);
-    const received = environmentEnvelope.result.frames
+    const received = environmentEnvelope.normalized_result.frames
       .map((frame) => frame.data)
       .join("");
     expect(received).toBe("numbered\r\n");
     expect(await readFile(join(root, "state"), "utf8")).toBe("selected");
-    expect(capture.result.filesystem_effects).toEqual(
+    expect(capture.normalized_result.filesystem_effects).toEqual(
       expect.arrayContaining([expect.objectContaining({ status: "created" })]),
     );
-    expect(capture.result.cleanup).toMatchObject({
+    expect(capture.normalized_result.cleanup).toMatchObject({
       owned_process_group: "verified",
       temporary_root: "removed",
     });
@@ -265,7 +265,7 @@ captureTest.each(["unknown", "truncated"] as const)(
     const comparison = toolContract(
       "compare_process_captures",
     ).outputSchema.parse(compared.structuredContent);
-    expect(comparison.result.status).toBe(status);
+    expect(comparison.normalized_result.status).toBe(status);
     const verification = await call("verify_reconstruction", {
       specification: {
         name: "Self comparison retains uncertainty",
@@ -282,7 +282,7 @@ captureTest.each(["unknown", "truncated"] as const)(
     });
     expect(verification.isError, JSON.stringify(verification)).not.toBe(true);
     expect(verification.structuredContent).toMatchObject({
-      result: {
+      normalized_result: {
         status: "unknown",
         claims: {
           items: [
@@ -299,11 +299,11 @@ captureTest.each(["unknown", "truncated"] as const)(
       },
     });
     const behavior = await call("find_changed_behavior", {
-      comparisons: [comparison.evidence],
+      comparisons: [comparison],
     });
     expect(behavior.isError, JSON.stringify(behavior)).not.toBe(true);
     expect(behavior.structuredContent).toMatchObject({
-      result: { behavior_status: status },
+      normalized_result: { behavior_status: status },
     });
     const unknowns = await call("list_unknowns", {
       domain: "process-comparison",
@@ -336,9 +336,7 @@ captureTest.each(["unknown", "truncated"] as const)(
       path,
       "--json",
     ]);
-    expect(parseEvidence(JSON.parse(cliComparison.stdout))).toEqual(
-      comparison.evidence,
-    );
+    expect(parseEvidence(JSON.parse(cliComparison.stdout))).toEqual(comparison);
   },
 );
 
@@ -358,15 +356,15 @@ captureTest(
     const capture = toolContract("capture_process_scenario").outputSchema.parse(
       response.structuredContent,
     );
-    expect(capture.result.frames.map((frame) => frame.data).join("")).toContain(
-      "stdin-byte:0",
-    );
-    expect(capture.result.manifest.scenario).toMatchObject({
+    expect(
+      capture.normalized_result.frames.map((frame) => frame.data).join(""),
+    ).toContain("stdin-byte:0");
+    expect(capture.normalized_result.manifest.scenario).toMatchObject({
       environment: {},
       filesystem_observation_paths: [],
       terminal: { columns: 80, rows: 24, scrollback: 1000 },
     });
-    expect(capture.result.interaction_events).toEqual(
+    expect(capture.normalized_result.interaction_events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           type: "input",

@@ -95,7 +95,7 @@ it("limits thread-state entrypoints instead of reporting none silently", async (
       "",
     ].join("\n"),
   });
-  const client = new NativeMacOSProvider(runner, "darwin").createClient(
+  const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
     nativeMachoTarget("/owned/legacy-fixture"),
   );
   const result = await client.execute("inspect_macho", {});

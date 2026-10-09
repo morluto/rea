@@ -226,7 +226,7 @@ export class IdaOperationRunner {
           max_lines: 100,
         }),
       );
-      if (page.code === null)
+      if (page.code === null || page.error !== undefined)
         throw new AnalysisProtocolError(
           `IDA decompilation failed: ${page.error ?? "missing code"}`,
         );
@@ -248,7 +248,7 @@ export class IdaOperationRunner {
     const page = modernXrefsSchema.parse(
       await this.call("xrefs_to", { addrs: [address], limit: 1000 }),
     )[0];
-    if (page?.xrefs == null)
+    if (page?.xrefs == null || page.error !== undefined)
       throw new AnalysisProtocolError(
         `IDA xrefs failed: ${page?.error ?? "missing references"}`,
       );
@@ -292,7 +292,7 @@ export class IdaOperationRunner {
       const page = modernCalleesSchema.parse(
         await this.call("callees", { addrs: [fn.address], limit: 500 }),
       )[0];
-      if (page?.callees == null)
+      if (page?.callees == null || page.error !== undefined)
         throw new AnalysisProtocolError(
           `IDA callees failed: ${page?.error ?? "missing callees"}`,
         );

@@ -1,6 +1,6 @@
 import { z } from "incur";
 
-import { runProviderAnalysis } from "../composition/directAnalysis.js";
+import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
 import { logCliCommand } from "../cliLogging.js";
@@ -17,6 +17,7 @@ const OPERATION = "observe_native_calls";
 export const registerNativeCallCommands = (
   cli: CliInstance,
   logger: Logger,
+  runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.observeNativeCalls, {
     description:

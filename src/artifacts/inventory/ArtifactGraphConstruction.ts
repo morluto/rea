@@ -1,3 +1,4 @@
+import { compareCodePoints } from "../../domain/canonicalOrdering.js";
 import { canonicalDigest } from "../../domain/comparisonSemantics.js";
 import {
   artifactEdgeId,
@@ -11,7 +12,10 @@ import type {
   ArtifactNode,
   ArtifactOccurrence,
 } from "../../domain/artifactGraph.js";
-import { zipPackageFormatForPath } from "../../domain/zipPackageFormat.js";
+import {
+  hasZipSignature,
+  zipPackageFormatForPath,
+} from "../../domain/zipPackageFormat.js";
 import { mzWindowsHeaderOffset, parseDosMzHeader } from "../../domain/dosMz.js";
 
 /** Mutable internal occurrence used until root-bound IDs are known. */
@@ -21,6 +25,8 @@ export interface MutableOccurrence {
   parent_occurrence_id: string | null;
   logical_path: string;
   entry_kind: ArtifactOccurrence["entry_kind"];
+  artifact_kind: ArtifactOccurrence["artifact_kind"];
+  artifact_format: ArtifactOccurrence["artifact_format"];
   declared_size: number | null;
   compressed_size: number | null;
   executable: boolean;
@@ -51,6 +57,16 @@ export const createOccurrence = (
   parent_occurrence_id: parent,
   logical_path: path,
   entry_kind: entry.kind,
+  artifact_kind:
+    entry.kind === "directory"
+      ? path.toLowerCase().endsWith(".framework")
+        ? "framework"
+        : "container"
+      : classifyArtifactPath(path).kind,
+  artifact_format:
+    entry.kind === "directory"
+      ? "directory"
+      : classifyArtifactPath(path).format,
   declared_size: entry.declaredSize,
   compressed_size: entry.compressedSize,
   executable: entry.executable,
@@ -63,16 +79,8 @@ export const createOccurrence = (
   limitations: [...entry.limitations],
 });
 
-/** Preserve collation order and break distinct-name ties by UTF-16 code units. */
-export const compareDirectoryChildNames = (
-  left: string,
-  right: string,
-): number => {
-  const collated = left.localeCompare(right);
-  if (collated !== 0) return collated;
-  if (left < right) return -1;
-  return left > right ? 1 : 0;
-};
+/** Compare exact child names independently of host locale and traversal order. */
+export const compareDirectoryChildNames = compareCodePoints;
 
 export const materializeDirectoryNodes = (
   occurrences: MutableOccurrence[],
@@ -103,28 +111,21 @@ export const materializeDirectoryNodes = (
     const node = createArtifactNode({
       sha256: canonicalDigest({ kind: "directory", children }, "Artifact"),
       size: 0,
-      kind: directory.logical_path.toLowerCase().endsWith(".framework")
-        ? "framework"
-        : "container",
       format: "directory",
-      executable: false,
       contentState: "virtual",
     });
-    const existing = nodes.get(node.artifact_id);
-    nodes.set(
-      node.artifact_id,
-      existing?.kind === "framework" ? existing : node,
-    );
+    nodes.set(node.artifact_id, node);
     directory.artifact_id = node.artifact_id;
     directory.hash_status = "verified";
   }
 };
 
 export const createRootNode = (input: {
-  readonly path: string;
-  readonly format: ArtifactNode["format"];
-  readonly directory: boolean;
-  readonly digest: { readonly sha256: string; readonly bytes: number } | null;
+  readonly digest: {
+    readonly sha256: string;
+    readonly bytes: number;
+    readonly prefix: Buffer;
+  } | null;
   readonly occurrences: readonly MutableOccurrence[];
 }): ArtifactNode =>
   createArtifactNode({
@@ -133,65 +134,70 @@ export const createRootNode = (input: {
       canonicalDigest(
         {
           kind: "directory-root",
-          children: input.occurrences.map(({ logical_path, artifact_id }) => ({
-            logical_path,
-            artifact_id,
-          })),
+          children: input.occurrences
+            .map(({ logical_path, artifact_id }) => ({
+              logical_path,
+              artifact_id,
+            }))
+            .sort((left, right) =>
+              compareDirectoryChildNames(left.logical_path, right.logical_path),
+            ),
         },
         "Artifact",
       ),
     size: input.digest?.bytes ?? 0,
-    kind:
-      input.directory ||
-      ["zip", "ipa", "apk", "msix", "appx", "asar", "dmg", "pkg"].includes(
-        input.format,
-      )
-        ? "container"
-        : input.format === "dos-mz"
-          ? "executable"
-          : classifyArtifactPath(input.path).kind,
-    format: input.format,
-    executable: false,
+    format:
+      input.digest === null
+        ? "directory"
+        : classifyArtifactBytes(input.digest.prefix, input.digest.bytes),
     contentState: "materialized",
   });
 
 export const createArtifactNode = (input: {
   readonly sha256: string;
   readonly size: number;
-  readonly kind: ArtifactNode["kind"];
   readonly format: ArtifactNode["format"];
-  readonly executable: boolean;
   readonly contentState: ArtifactNode["content_state"];
-  readonly limitations?: readonly string[];
 }): ArtifactNode => ({
   artifact_id: artifactIdForContent(input.sha256),
-  kind: input.kind,
   format: input.format,
   sha256: input.sha256,
   size: input.size,
   media_type: null,
   architecture: null,
-  executable: input.executable,
   content_state: input.contentState,
-  limitations: [...(input.limitations ?? [])],
+  limitations: [],
 });
 
 export const rootOccurrenceFor = (
   node: ArtifactNode,
-  declaredSize: number,
+  metadata: {
+    readonly size: number;
+    readonly executable: boolean;
+    readonly format: ArtifactOccurrence["artifact_format"];
+    readonly path: string;
+  },
 ): MutableOccurrence => ({
   occurrence_id: occurrenceIdForLocation({
     rootArtifactId: node.artifact_id,
     logicalPath: ".",
-    entryKind: node.format === "directory" ? "directory" : "file",
+    entryKind: metadata.format === "directory" ? "directory" : "file",
   }),
   artifact_id: node.artifact_id,
   parent_occurrence_id: null,
   logical_path: ".",
-  entry_kind: node.format === "directory" ? "directory" : "file",
-  declared_size: declaredSize,
+  entry_kind: metadata.format === "directory" ? "directory" : "file",
+  artifact_kind:
+    metadata.format === "directory" ||
+    ["zip", "ipa", "apk", "msix", "appx", "asar", "dmg", "pkg"].includes(
+      metadata.format,
+    )
+      ? "container"
+      : artifactRoleForFormat(metadata.path, metadata.format).kind,
+  artifact_format: metadata.format,
+  declared_size: metadata.size,
   compressed_size: null,
-  executable: node.executable,
+  executable: metadata.executable,
   encrypted: false,
   hash_status: "verified",
   source_location: null,
@@ -284,7 +290,10 @@ export const nearestParent = (
 
 export const classifyArtifactPath = (
   path: string,
-): Pick<ArtifactNode, "kind" | "format"> => {
+): {
+  readonly kind: ArtifactOccurrence["artifact_kind"];
+  readonly format: ArtifactOccurrence["artifact_format"];
+} => {
   const lower = path.toLowerCase();
   if (lower.endsWith(".map"))
     return { kind: "source-map", format: "source-map" };
@@ -312,29 +321,49 @@ export const classifyArtifactContent = (
   path: string,
   prefix: Buffer,
   fileSize = prefix.length,
-): Pick<ArtifactNode, "kind" | "format"> => {
+): {
+  readonly kind: ArtifactOccurrence["artifact_kind"];
+  readonly format: ArtifactOccurrence["artifact_format"];
+} => {
+  return artifactRoleForFormat(path, classifyArtifactBytes(prefix, fileSize));
+};
+
+const artifactRoleForFormat = (
+  path: string,
+  format: ArtifactOccurrence["artifact_format"],
+): ReturnType<typeof classifyArtifactPath> => {
   const byPath = classifyArtifactPath(path);
+  if (format === "file" || format === byPath.format) return byPath;
+  if (format === "unknown") return { kind: "unknown", format };
+  if (format === "zip")
+    return {
+      kind: "container",
+      format: zipPackageFormatForPath(path) ?? format,
+    };
+  if (format === "plist") return { kind: "plist", format };
+  return {
+    kind: ["native-addon", "dynamic-library"].includes(byPath.kind)
+      ? byPath.kind
+      : ("executable" as const),
+    format,
+  };
+};
+
+/** Classify storage bytes independently of path names, roles, and permissions. */
+export const classifyArtifactBytes = (
+  prefix: Buffer,
+  fileSize = prefix.length,
+): ArtifactNode["format"] => {
+  if (hasZipSignature(prefix)) return "zip";
+  if (prefix.subarray(0, 8).equals(Buffer.from("bplist00"))) return "plist";
   if (prefix.length >= 4) {
     const magic = prefix.readUInt32BE(0);
     if ([0xcafebabe, 0xbebafeca, 0xcafebabf, 0xbfbafeca].includes(magic))
-      return {
-        kind: byPath.kind === "native-addon" ? "native-addon" : "executable",
-        format: "mach-o-universal",
-      };
+      return "mach-o-universal";
     if ([0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe].includes(magic))
-      return {
-        kind: ["native-addon", "dynamic-library"].includes(byPath.kind)
-          ? byPath.kind
-          : "executable",
-        format: "mach-o",
-      };
+      return "mach-o";
     if (prefix.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])))
-      return {
-        kind: ["native-addon", "dynamic-library"].includes(byPath.kind)
-          ? byPath.kind
-          : "executable",
-        format: "elf",
-      };
+      return "elf";
   }
   if (prefix.length >= 2 && prefix[0] === 0x4d && prefix[1] === 0x5a) {
     if (
@@ -342,7 +371,7 @@ export const classifyArtifactContent = (
       fileSize < prefix.length ||
       prefix.length < Math.min(fileSize, 64)
     )
-      return { kind: "unknown", format: "unknown" };
+      return "unknown";
     const windowsOffset = mzWindowsHeaderOffset(prefix);
     if (windowsOffset !== null) {
       if (
@@ -352,17 +381,11 @@ export const classifyArtifactContent = (
           .subarray(windowsOffset, windowsOffset + 4)
           .equals(Buffer.from([0x50, 0x45, 0, 0]))
       )
-        return {
-          kind: byPath.kind === "native-addon" ? "native-addon" : "executable",
-          format: "pe",
-        };
-    } else if (parseDosMzHeader(prefix, fileSize).ok) {
-      return { kind: "executable", format: "dos-mz" };
-    }
-    // Missing bounded evidence and malformed MZ bytes both remain unclassified.
-    return { kind: "unknown", format: "unknown" };
+        return "pe";
+    } else if (parseDosMzHeader(prefix, fileSize).ok) return "dos-mz";
+    return "unknown";
   }
-  return byPath;
+  return "file";
 };
 
 const relationFor = (path: string): ArtifactEdge["relation"] => {

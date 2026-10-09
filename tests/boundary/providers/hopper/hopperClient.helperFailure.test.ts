@@ -2,14 +2,25 @@ import { spawn } from "node:child_process";
 
 import { expect, it, onTestFinished } from "vitest";
 
+import { AnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { ok } from "../../../../src/domain/result.js";
 import type { BridgeLauncher } from "../../../../src/hopper/BridgeLauncher.js";
 import { HopperApplicationLauncher } from "../../../../src/hopper/BridgeLauncher.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 
+const projectPrimaryStartupFailure = (error: AnalysisError) => {
+  if (!error.cleanupIncomplete) return projectAnalysisError(error);
+  expect(projectAnalysisError(error).code).toBe("cleanup_incomplete");
+  const primary = error.cause;
+  if (!(primary instanceof AnalysisError))
+    throw new Error("Cleanup failure lost its typed startup cause");
+  return projectAnalysisError(primary);
+};
+
 it("does not equate an owned native helper exit with an external GUI exit", async () => {
   const launcher = new HopperApplicationLauncher({
+    environment: {},
     launcherPath: process.execPath,
     targetPath: "/target",
     targetKind: "executable",
@@ -22,14 +33,16 @@ it("does not equate an owned native helper exit with an external GUI exit", asyn
     launchMode: "native",
   });
   const client = new HopperClient({ launcher, startupTimeoutMs: 10_000 });
-  onTestFinished(() => client.close());
+  onTestFinished(async () => {
+    await client.close();
+  });
   const result = await client.start();
   expect(result).toMatchObject({
     ok: false,
-    error: { _tag: "HopperStartError" },
+    error: { cleanupIncomplete: true, cause: { _tag: "HopperStartError" } },
   });
   if (result.ok) throw new Error("Expected the native helper to fail");
-  expect(projectAnalysisError(result.error)).toMatchObject({
+  expect(projectPrimaryStartupFailure(result.error)).toMatchObject({
     details: {
       provider_state: "unknown",
       launcher: { exit_code: 3 },
@@ -72,14 +85,16 @@ it.each(["exit", "signal", "exit75"] as const)(
       },
     };
     const client = new HopperClient({ launcher, startupTimeoutMs: 10_000 });
-    onTestFinished(() => client.close());
+    onTestFinished(async () => {
+      await client.close();
+    });
     const result = await client.start();
     expect(result).toMatchObject({
       ok: false,
-      error: { _tag: "HopperStartError" },
+      error: { cleanupIncomplete: true, cause: { _tag: "HopperStartError" } },
     });
     if (result.ok) throw new Error("Expected the launcher to fail");
-    const projected = projectAnalysisError(result.error);
+    const projected = projectPrimaryStartupFailure(result.error);
     expect(projected).toMatchObject({
       code: "provider_unavailable",
       details: {
@@ -122,7 +137,9 @@ it.each([0, 1])(
       },
     };
     const client = new HopperClient({ launcher, startupTimeoutMs: 10_000 });
-    onTestFinished(() => client.close());
+    onTestFinished(async () => {
+      await client.close();
+    });
     const result = await client.start();
     expect(result).toMatchObject({
       ok: false,
@@ -158,11 +175,13 @@ it("preserves a successful helper's diagnostics when bridge readiness is never o
     },
   };
   const client = new HopperClient({ launcher, startupTimeoutMs: 1500 });
-  onTestFinished(() => client.close());
+  onTestFinished(async () => {
+    await client.close();
+  });
   const result = await client.start();
   if (result.ok)
     throw new Error("Expected missing bridge readiness to time out");
-  const projected = projectAnalysisError(result.error);
+  const projected = projectPrimaryStartupFailure(result.error);
   expect(projected).toMatchObject({
     code: "provider_timeout",
     details: {

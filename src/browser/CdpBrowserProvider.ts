@@ -64,8 +64,6 @@ import { discoverWebMcp } from "./CdpWebMcpDiscovery.js";
 import { captureCdpScreenshot } from "./CdpScreenshot.js";
 import { comparePngScreenshots } from "./PngVisualDiff.js";
 
-/** Public identity committed by passive browser observations. */
-export { CDP_BROWSER_PROVIDER_IDENTITY } from "./providerIdentities.js";
 import { CDP_BROWSER_PROVIDER_IDENTITY } from "./providerIdentities.js";
 const IDENTITY = CDP_BROWSER_PROVIDER_IDENTITY;
 const CLEANUP_DOMAINS = ["Network", "Debugger", "Runtime", "Page"] as const;

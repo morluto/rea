@@ -241,7 +241,7 @@ describe("process trace constraints and evidence sufficiency", () => {
     expect(() =>
       parseProcessCapture({
         ...complete,
-        event_journal: (complete.event_journal ?? []).slice(1),
+        event_journal: complete.event_journal.slice(1),
       }),
     ).toThrow("event_journal");
   });

@@ -16,9 +16,11 @@ import {
 } from "../../support/applicationSessionFixture.js";
 
 import { projectAndroidApplicationEvidence } from "../../../src/application/android/AndroidApplicationService.js";
-import { runProviderAnalysis } from "../../../src/composition/directAnalysis.js";
+import { createDirectAnalysis } from "../../../src/composition/directAnalysis.js";
 import { androidApplicationProjectionResultSchema } from "../../../src/domain/android/androidApplication.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+
+const { runProviderAnalysis } = createDirectAnalysis({});
 
 describe("Android application projection", () => {
   it("projects deterministic APK components and explicit bridge hypotheses", async () => {

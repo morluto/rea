@@ -3,7 +3,7 @@ import { z } from "incur";
 import { compareManagedMemberPaths } from "../application/managed/ManagedMemberComparisonService.js";
 import { verifyManagedNativeBoundariesEvidence } from "../application/managed/ManagedNativeVerificationService.js";
 import { importManagedReconstructionEvidence } from "../application/managed/ManagedReconstructionService.js";
-import { runProviderAnalysis } from "../composition/directAnalysis.js";
+import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -15,10 +15,11 @@ import { registerProjectManagedApplicationGraph } from "./managedProjectGraphCom
 export const registerManagedCommands = (
   cli: CliInstance,
   logger: Logger,
+  runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
 ): void => {
-  registerInspectManagedArtifact(cli, logger);
-  registerInspectManagedMembers(cli, logger);
-  registerInspectManagedNativeBoundaries(cli, logger);
+  registerInspectManagedArtifact(cli, logger, runProviderAnalysis);
+  registerInspectManagedMembers(cli, logger, runProviderAnalysis);
+  registerInspectManagedNativeBoundaries(cli, logger, runProviderAnalysis);
   registerCompareManagedMembers(cli, logger);
   registerImportManagedReconstruction(cli, logger);
   registerVerifyManagedNativeBoundaries(cli, logger);
@@ -28,6 +29,7 @@ export const registerManagedCommands = (
 const registerInspectManagedArtifact = (
   cli: CliInstance,
   logger: Logger,
+  runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.inspectManagedArtifact, {
     description: "Inspect PE/CLI identity without loading target code",
@@ -44,6 +46,7 @@ const registerInspectManagedArtifact = (
 const registerInspectManagedMembers = (
   cli: CliInstance,
   logger: Logger,
+  runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.inspectManagedMembers, {
     description:
@@ -61,6 +64,7 @@ const registerInspectManagedMembers = (
 const registerInspectManagedNativeBoundaries = (
   cli: CliInstance,
   logger: Logger,
+  runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.inspectManagedNativeBoundaries, {
     description:

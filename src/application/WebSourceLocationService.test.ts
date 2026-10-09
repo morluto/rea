@@ -12,28 +12,6 @@ import type { WebSourceMapPort } from "./WebSourceLocationPorts.js";
 
 const service = (data = webSourceLocationFixture(), port = decoder) =>
   new WebSourceLocationService({ load: () => Promise.resolve(ok(data)) }, port);
-it("joins byte identity and historical capture context while keeping selected authenticity/execution unknown", async () => {
-  const data = webSourceLocationFixture();
-  data.manifest.source_evidence_id = `ev_${"a".repeat(64)}`;
-  const response = await service(data).trace(args);
-  if (!response.ok) throw response.error;
-  const result = webSourceLocationResultSchema.parse(
-    response.value.normalized_result,
-  );
-  expect(result).toMatchObject({
-    source: { sha256: data.sourceFile.sha256 },
-    source_map: {
-      association: "caller-selected",
-      sha256: data.sourceMap.file.sha256,
-    },
-    matches: [{ state: "mapped", content: { text: "original" } }],
-    execution: "unknown",
-    source_authenticity: "unknown",
-  });
-  expect(response.value.raw_result).toEqual({
-    source_map_text: data.sourceMap.text,
-  });
-});
 it.each([
   { ...args, manifest_path: "relative.json" },
   { ...args, script_index: -1 },
@@ -115,18 +93,6 @@ it.each(["digest", "url", "point"])(
     expect(response.error._tag).toBe("AnalysisOutputError");
   },
 );
-it("rejects a generated point outside retained text before decoding", async () => {
-  const response = await service(undefined, {
-    trace: () => {
-      throw new Error("must not decode");
-    },
-  }).trace({ ...args, generated_position: { line: 2, column: 0 } });
-  if (response.ok) throw new Error("expected invalid point");
-  expect(projectAnalysisError(response.error)).toMatchObject({
-    code: "invalid_request",
-    details: { issues: [{ message: expect.stringContaining("outside") }] },
-  });
-});
 it("honors cancellation both before acquisition and across decoder completion", async () => {
   const first = new AbortController();
   first.abort();

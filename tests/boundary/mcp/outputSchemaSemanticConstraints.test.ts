@@ -17,12 +17,30 @@ import {
 import { nativeUiResultSchema } from "../../../src/domain/native/nativeUiObservation.js";
 import { processCaptureSchema } from "../../../src/domain/process/processCapture.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
-import { inlineLocalJsonSchemaReferences } from "../../fixtures/localJsonSchemaReferences.js";
 
 const record = (value: unknown): Record<string, unknown> => {
   if (typeof value !== "object" || value === null || Array.isArray(value))
     throw new Error("Expected a schema object");
   return value as Record<string, unknown>;
+};
+
+const schemaNode = (
+  root: Record<string, unknown>,
+  value: unknown,
+): Record<string, unknown> => {
+  const schema = record(value);
+  if (typeof schema.$ref !== "string") return schema;
+  if (!schema.$ref.startsWith("#/"))
+    throw new Error("Expected a local advertised schema reference");
+  const referenced = schema.$ref
+    .slice(2)
+    .split("/")
+    .reduce<unknown>(
+      (parent, key) =>
+        record(parent)[key.replaceAll("~1", "/").replaceAll("~0", "~")],
+      root,
+    );
+  return { ...record(referenced), ...schema };
 };
 
 it("advertises semantic output invariants and keeps producers aligned with Zod", async () => {
@@ -56,7 +74,7 @@ it("advertises semantic output invariants and keeps producers aligned with Zod",
       if (tool?.outputSchema === undefined)
         throw new Error(`${name} output schema missing`);
       const outputSchema = record(tool.outputSchema);
-      const result = record(record(outputSchema.properties).result);
+      const result = record(record(outputSchema.properties).normalized_result);
       const standaloneResultSchema = z.record(z.string(), z.unknown()).parse({
         ...result,
         ...(typeof outputSchema.$schema === "string"
@@ -66,8 +84,11 @@ it("advertises semantic output invariants and keeps producers aligned with Zod",
           ? {}
           : { $defs: outputSchema.$defs }),
       });
+      const node = (value: unknown) =>
+        schemaNode(standaloneResultSchema, value);
       return {
-        result: record(inlineLocalJsonSchemaReferences(standaloneResultSchema)),
+        result: node(result),
+        node,
         validate: new Ajv2020({
           strict: false,
           validateFormats: false,
@@ -76,18 +97,18 @@ it("advertises semantic output invariants and keeps producers aligned with Zod",
     };
 
     const native = outputResultSchema("capture_native_ui_scenario");
-    const initial = record(record(native.result.properties).initial);
-    const screenshotUnion = record(record(initial.properties).screenshot);
+    const initial = native.node(record(native.result.properties).initial);
+    const screenshotUnion = native.node(record(initial.properties).screenshot);
     const screenshotVariants = screenshotUnion.anyOf;
     if (!Array.isArray(screenshotVariants))
       throw new Error("Expected nullable screenshot schema");
     const screenshotProperties = record(
-      record(screenshotVariants[0]).properties,
+      native.node(screenshotVariants[0]).properties,
     );
-    expect(record(screenshotProperties.base64).description).toContain(
+    expect(native.node(screenshotProperties.base64).description).toContain(
       "PNG signature",
     );
-    expect(record(screenshotProperties.sha256).description).toContain(
+    expect(native.node(screenshotProperties.sha256).description).toContain(
       "decoded PNG bytes",
     );
     const pngBytes = Buffer.from("not a PNG");
@@ -124,7 +145,7 @@ it("advertises semantic output invariants and keeps producers aligned with Zod",
     const process = outputResultSchema("capture_process_scenario");
     expect(process.result.description).toContain("canonical scenario");
     expect(process.result.description).toContain(
-      "older input without an event journal",
+      "The event journal is required",
     );
     const validCapture = processCaptureSchema.parse(
       EMPTY_PROCESS_CAPTURE_EXAMPLE,

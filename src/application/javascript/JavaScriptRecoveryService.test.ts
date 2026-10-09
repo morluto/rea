@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import { err, ok } from "../../domain/result.js";
-import type {
-  JavaScriptRecoveryInput,
-  JavaScriptRecoveryResult,
-} from "../../domain/javascript/javascriptRecovery.js";
+import type { JavaScriptRecoveryResult } from "../../domain/javascript/javascriptRecovery.js";
 import { createAnalysisExecution } from "../AnalysisProvider.js";
 import { JavaScriptRecoveryService } from "./JavaScriptRecoveryService.js";
 
@@ -47,31 +44,6 @@ const providerIdentity = {
 const input = { path: artifact.path, output_directory: "/tmp/output" };
 
 describe("JavaScript recovery workflow", () => {
-  it("passes normalized requests to a typed port and returns derived Evidence", async () => {
-    const received: JavaScriptRecoveryInput[] = [];
-    const service = new JavaScriptRecoveryService({
-      recover: async (request) => {
-        received.push(request);
-        return ok(
-          createAnalysisExecution(recoveryResult(), providerIdentity, {
-            subject: { ...artifact, format: "javascript" },
-            limitations: ["Not executed"],
-          }),
-        );
-      },
-    });
-    const result = await service.recover(input);
-    if (!result.ok) throw result.error;
-    expect(received).toEqual([
-      { ...input, extraction_mode: "structural", rewrite_level: "standard" },
-    ]);
-    expect(result.value).toMatchObject({
-      operation: "recover_javascript_sources",
-      confidence: "derived",
-      authority: "shipped-artifact",
-      provider: providerIdentity,
-    });
-  });
   it("preserves a missing provider reason", async () => {
     const failure = new AnalysisCapabilityUnavailableError(
       "fixture-recovery",

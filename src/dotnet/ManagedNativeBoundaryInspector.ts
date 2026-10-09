@@ -6,7 +6,7 @@ import {
 } from "../domain/managed/managedArtifact.js";
 import {
   readManagedMetadataInventory,
-  type ManagedResourceDirectory,
+  readManagedResourceDirectory,
 } from "./ManagedMetadataInventory.js";
 import {
   readManagedMetadataLayout,
@@ -20,7 +20,6 @@ import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
 import {
   buildNativeBoundaryInspection,
   cliNative,
-  NO_CLI_NATIVE,
   nativeBoundarySummary,
   nativeImplementations,
   parseFields,
@@ -48,7 +47,6 @@ const emptyInspection = (
     readonly issues?: readonly ManagedParseIssue[];
   } = {},
 ): ManagedNativeBoundaryInspection => {
-  const header = native ?? NO_CLI_NATIVE;
   return managedNativeBoundaryInspectionSchema.parse({
     artifact: {
       path: target.path,
@@ -67,11 +65,11 @@ const emptyInspection = (
       requires_artifact_sha256: target.sha256,
       requires_mvid: null,
     },
-    cli_native: header,
+    cli_native: native,
     module_refs: [],
     pinvoke_imports: [],
     native_implementations: [],
-    summary: nativeBoundarySummary(header, {
+    summary: nativeBoundarySummary(native, {
       module_ref_count: 0,
       pinvoke_import_count: 0,
       native_implementation_count: 0,
@@ -79,11 +77,6 @@ const emptyInspection = (
     coverage: { state: "unavailable", issues },
     limitations: [
       "No CLI metadata was admitted; native boundary declarations are unavailable.",
-      ...(native === null && classification === "malformed"
-        ? [
-            "The CLI header was not admitted, so cli_native and the summary's ready_to_run and mixed_mode_or_native_header values are defaults, not observations.",
-          ]
-        : []),
       "Static inspection does not load or execute target code, so native export resolution is not performed.",
     ],
   });
@@ -93,6 +86,7 @@ const readBoundaryInventory = (
   bytes: Buffer,
   pe: ManagedPeLayout,
   cli: NonNullable<ManagedPeLayout["cli"]>,
+  issues: ManagedParseIssue[],
 ): {
   readonly layout: ManagedMetadataLayout;
   readonly inventory: Inventory;
@@ -107,18 +101,10 @@ const readBoundaryInventory = (
     metadataOffset,
     cli.metadata.size,
   );
-  const resourceDirectory: ManagedResourceDirectory = {
-    offset: pe.rvaToOffset(
-      cli.resources.rva,
-      cli.resources.size,
-      "cli.resources",
-    ),
-    size: cli.resources.size,
-  };
   const inventory = readManagedMetadataInventory(
     bytes,
     layout,
-    resourceDirectory,
+    readManagedResourceDirectory(pe, issues),
   );
   return { layout, inventory };
 };
@@ -144,10 +130,11 @@ export const inspectManagedNativeBoundariesBytes = (
       pe.cliDirectoryPresent ? "malformed" : "not-managed",
       { issues: pe.cliIssue === null ? [] : [pe.cliIssue] },
     );
+  const issues: ManagedParseIssue[] = [];
   let layout: ManagedMetadataLayout;
   let inventory: Inventory;
   try {
-    ({ layout, inventory } = readBoundaryInventory(bytes, pe, pe.cli));
+    ({ layout, inventory } = readBoundaryInventory(bytes, pe, pe.cli, issues));
   } catch (cause: unknown) {
     if (!(cause instanceof ManagedReaderFailure)) throw cause;
     return emptyInspection(target, bytes, "malformed", {
@@ -156,11 +143,11 @@ export const inspectManagedNativeBoundariesBytes = (
     });
   }
   const heapExtent = Math.max(layout.strings.size, layout.blob.size);
-  const issues = [...inventory.issues];
-  const moduleRefs = parseModuleRefs(bytes, layout, heapExtent);
+  issues.push(...inventory.issues);
+  const moduleRefs = parseModuleRefs(bytes, layout, heapExtent, issues);
   const members = new Map([
-    ...parseFields(bytes, layout, heapExtent),
-    ...parseMethods(bytes, layout, heapExtent),
+    ...parseFields(bytes, layout, heapExtent, issues),
+    ...parseMethods(bytes, layout, heapExtent, issues),
   ]);
   const imports = parseImplMaps({
     bytes,

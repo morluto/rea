@@ -184,9 +184,7 @@ async function assertPublicPair(cli, client, oracle) {
     arguments: input,
   });
   assert.notEqual(response.isError, true, mcpTextValue(response));
-  const mcpEvidence = parseEvidence(
-    JSON.parse(mcpTextValue(response)).evidence,
-  );
+  const mcpEvidence = parseEvidence(JSON.parse(mcpTextValue(response)));
   assert.deepEqual(assertPoint(mcpEvidence, oracle), expected);
   assert.equal(evidence.parameters.source_map.url, input.source_map.url);
   return expected;

@@ -37,7 +37,7 @@ export const resolveHopperAnalysisProfile = async (
   options: HopperProfileOptions,
 ): Promise<Result<AnalysisProfileResolution, AnalysisError>> => {
   if (target.kind !== "executable" && target.kind !== "database")
-    return ok({ profile: null, compatibility: {} });
+    return ok({ profile: null });
   let machoContainer: "thin" | "fat32" | "fat64" | undefined;
   if (target.kind === "executable" && target.format === "mach-o") {
     const header = await readMachoMagic(target.path, options.signal);
@@ -67,11 +67,9 @@ export const resolveHopperAnalysisProfile = async (
     options.loaderArgsOverride.length === 0
       ? derived.value
       : [...options.loaderArgsOverride];
-  const compatibility = { loaderArgs: [...loaderArgs] };
   const launcherDigest = await sha256File(options.launcherPath, options.signal);
   if (!launcherDigest.ok) return launcherDigest;
-  if (launcherDigest.value === undefined)
-    return ok({ profile: null, compatibility });
+  if (launcherDigest.value === undefined) return ok({ profile: null });
   const provider = {
     id: options.provider.id,
     name: options.provider.name,
@@ -96,13 +94,9 @@ export const resolveHopperAnalysisProfile = async (
           options.loaderArgsOverride.length === 0
             ? "derived"
             : "configured_override",
-        argument_count: loaderArgs.length,
-        arguments_sha256: createHash("sha256")
-          .update(JSON.stringify(loaderArgs))
-          .digest("hex"),
+        arguments: [...loaderArgs],
       },
     }),
-    compatibility,
   });
 };
 

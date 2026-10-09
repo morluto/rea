@@ -1,3 +1,4 @@
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
   createAnalysisExecution,
   type AnalysisClient,
@@ -30,7 +31,7 @@ import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { interfaceBuilderLimitsSchema } from "../domain/apple/interfaceBuilderGraph.js";
-import { err, ok } from "../domain/result.js";
+import { err, ok, type Result } from "../domain/result.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import {
   ARTIFACT_PROVIDER_IDENTITY as IDENTITY,
@@ -44,8 +45,13 @@ import { resolveArtifactIntegrityPolicy } from "./inventory/policy.js";
 export class ArtifactProvider implements AnalysisProvider {
   readonly #capabilities: readonly CapabilityDescriptor[];
   readonly #platform: NodeJS.Platform;
+  private readonly environment: Readonly<NodeJS.ProcessEnv>;
 
-  constructor(platform: NodeJS.Platform = process.platform) {
+  constructor(
+    environment: Readonly<NodeJS.ProcessEnv>,
+    platform: NodeJS.Platform = process.platform,
+  ) {
+    this.environment = snapshotEnvironment(environment, platform);
     this.#capabilities = artifactCapabilities(platform);
     this.#platform = platform;
   }
@@ -59,13 +65,14 @@ export class ArtifactProvider implements AnalysisProvider {
   }
 
   createClient(target: BinaryTarget): AnalysisClient {
-    return new ArtifactClient(target, this.#platform);
+    return new ArtifactClient(target, this.environment, this.#platform);
   }
 }
 
 class ArtifactClient implements AnalysisClient {
   constructor(
     private readonly target: BinaryTarget,
+    private readonly environment: Readonly<NodeJS.ProcessEnv>,
     private readonly platform: NodeJS.Platform,
   ) {}
 
@@ -178,6 +185,7 @@ class ArtifactClient implements AnalysisClient {
             inputPath: this.target.sourcePath ?? this.target.path,
             inputFormat: this.target.format,
             outputRoot: parsed.output_root,
+            environment: this.environment,
           },
           options?.signal,
         );
@@ -217,8 +225,8 @@ class ArtifactClient implements AnalysisClient {
     }
   }
 
-  close(): Promise<void> {
-    return Promise.resolve();
+  close(): Promise<Result<null, AnalysisError>> {
+    return Promise.resolve(ok(null));
   }
 
   /** The active target's kind is outside this operation's supported targets. */
@@ -248,6 +256,7 @@ class ArtifactClient implements AnalysisClient {
         "inspect_asset_catalog requires an active .app bundle target",
       );
     const result = await analyzeAppleAssetCatalogs({
+      environment: this.environment,
       bundlePath,
       targetSha256: this.target.sha256,
       page: parameters,
@@ -353,6 +362,7 @@ class ArtifactClient implements AnalysisClient {
     options?: ExecutionOptions,
   ) {
     return inventoryArtifact(this.target.sourcePath ?? this.target.path, {
+      environment: this.environment,
       ...(options?.signal === undefined ? {} : { signal: options.signal }),
       integrity: resolveArtifactIntegrityPolicy({
         mode: parsed.integrity_policy,
@@ -393,7 +403,7 @@ const subjectFor = (
   path: string,
   manifest: {
     readonly root_sha256: string;
-    readonly root_format: import("../domain/artifactGraph.js").ArtifactNode["format"];
+    readonly root_format: import("../domain/artifactGraph.js").ArtifactInventoryResult["manifest"]["root_format"];
   },
 ) => ({
   path,

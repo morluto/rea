@@ -10,7 +10,7 @@ import type {
   CapabilityDescriptor,
 } from "../../../src/application/AnalysisProvider.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
-import { err } from "../../../src/domain/result.js";
+import { err, ok as resultOk } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
@@ -62,7 +62,7 @@ const providerWithCapabilities = (
     capabilities: () => capabilities,
     createClient: () => ({
       execute: () => Promise.resolve(ok(null)),
-      close: () => Promise.resolve(),
+      close: () => Promise.resolve(resultOk(null)),
     }),
   };
 };
@@ -134,7 +134,7 @@ it("records capture disagreement as a contradicted unknown", async () => {
     () =>
       ({
         execute: () => Promise.resolve(ok(null)),
-        close: () => Promise.resolve(),
+        close: () => Promise.resolve(resultOk(null)),
       }) satisfies AnalysisClient,
   );
   const left = processCaptureSchema.parse(EMPTY_PROCESS_CAPTURE_EXAMPLE);
@@ -195,7 +195,7 @@ it("records capture disagreement as a contradicted unknown", async () => {
     },
   });
   expect(compared.isError).not.toBe(true);
-  const firstEvidence = parseEvidence(structured(compared).evidence);
+  const firstEvidence = parseEvidence(structured(compared));
   expect(
     structured(await client.callTool({ name: "list_unknowns", arguments: {} })),
   ).toMatchObject({
@@ -227,7 +227,7 @@ it("records capture disagreement as a contradicted unknown", async () => {
   expect(secondComparison.isError, JSON.stringify(secondComparison)).not.toBe(
     true,
   );
-  const secondEvidence = parseEvidence(structured(secondComparison).evidence);
+  const secondEvidence = parseEvidence(structured(secondComparison));
   expect(secondEvidence.normalized_result).toMatchObject({
     status: "changed",
     interaction: "added",
@@ -250,9 +250,7 @@ it("records capture disagreement as a contradicted unknown", async () => {
     arguments: { left: leftEvidence, right: repeatedCapture },
   });
   expect(repeatedComparison.isError).not.toBe(true);
-  expect(parseEvidence(structured(repeatedComparison).evidence)).toEqual(
-    secondEvidence,
-  );
+  expect(parseEvidence(structured(repeatedComparison))).toEqual(secondEvidence);
   expect(
     parseEvidenceBundle(
       structured(await client.callTool({ name: "get_evidence_bundle" })).result,

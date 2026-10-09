@@ -13,6 +13,7 @@ import { AsarArtifactReader } from "../AsarArtifactReader.js";
 import type { ArtifactNode } from "../../domain/artifactGraph.js";
 import {
   classifyArtifactContent,
+  classifyArtifactBytes,
   createArtifactNode,
   createOccurrence,
   nearestParent,
@@ -130,7 +131,11 @@ const visitArtifactEntries = async (
       );
       const occurrence = createOccurrence(entry, logicalPath, null);
       let digested:
-        | { readonly node: ArtifactNode; readonly mismatched: boolean }
+        | {
+            readonly node: ArtifactNode;
+            readonly mismatched: boolean;
+            readonly classification: ReturnType<typeof classifyArtifactContent>;
+          }
         | undefined;
       try {
         digested = await digestArtifactEntry(
@@ -147,6 +152,8 @@ const visitArtifactEntries = async (
       if (digested !== undefined) {
         context.nodes.set(digested.node.artifact_id, digested.node);
         occurrence.artifact_id = digested.node.artifact_id;
+        occurrence.artifact_kind = digested.classification.kind;
+        occurrence.artifact_format = digested.classification.format;
         occurrence.hash_status = digested.mismatched
           ? "mismatched"
           : "verified";
@@ -187,7 +194,12 @@ const digestArtifactEntry = async (
   entry: ArtifactEntry,
   logicalPath: string,
 ): Promise<
-  { readonly node: ArtifactNode; readonly mismatched: boolean } | undefined
+  | {
+      readonly node: ArtifactNode;
+      readonly mismatched: boolean;
+      readonly classification: ReturnType<typeof classifyArtifactContent>;
+    }
+  | undefined
 > => {
   if ((entry.kind !== "file" && entry.kind !== "slice") || entry.encrypted)
     return undefined;
@@ -226,17 +238,11 @@ const digestArtifactEntry = async (
     node: createArtifactNode({
       sha256: digest.sha256,
       size: digest.bytes,
-      kind: classified.kind,
-      format: classified.format,
-      executable: entry.executable,
+      format: classifyArtifactBytes(digest.prefix, digest.bytes),
       contentState: "embedded",
-      limitations: mismatched
-        ? [
-            "Observed content contradicts declared integrity metadata and is untrusted.",
-          ]
-        : [],
     }),
     mismatched,
+    classification: classified,
   };
 };
 

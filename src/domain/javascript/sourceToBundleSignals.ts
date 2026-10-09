@@ -9,7 +9,6 @@ import {
   type SourceToBundleSignal,
 } from "./sourceToBundleComparisonSchemas.js";
 import { isDigest } from "../digests.js";
-import { resolveJavaScriptSourceMapPath } from "./javascriptSourceMapPaths.js";
 
 type SourceFile = Extract<
   HistoricalSourceGraph["entries"][number],
@@ -174,40 +173,24 @@ const projectCurrentNode = (node: ApplicationNode): CurrentProjection => {
   if (node.identity.strategy === "source-map-original") {
     if (node.identity.source_sha256 !== null)
       digests.add(node.identity.source_sha256);
-    const mapLocations = node.observations.flatMap(({ evidence }) =>
-      evidence.extractor.operation === "parse-local-source-map" &&
-      evidence.location.available &&
-      evidence.location.value.kind === "artifact-path"
-        ? [evidence.location.value.path]
-        : [],
-    );
-    if (mapLocations.length === 0)
-      addPath(paths, "source-map-original", node.identity.original_source);
-    for (const mapPath of mapLocations)
-      addPath(
-        paths,
-        "source-map-original",
-        node.identity.original_source,
-        mapPath,
-      );
   }
   if (node.identity.strategy === "canonical-path")
     addPath(paths, "canonical-path", node.identity.path);
   for (const observation of node.observations) {
-    const sourceDigest = observation.properties.source_sha256;
-    if (typeof sourceDigest === "string" && isDigest(sourceDigest))
-      digests.add(sourceDigest);
-    for (const key of PATH_PROPERTIES) {
-      const location = observation.evidence.location;
-      const mapPath =
-        node.identity.strategy === "source-map-original" &&
-        observation.evidence.extractor.operation === "parse-local-source-map" &&
-        (key === "source" || key === "original_source") &&
-        location.available &&
-        location.value.kind === "artifact-path"
-          ? location.value.path
-          : undefined;
-      addJsonPath(paths, observation.properties[key], mapPath);
+    if (node.identity.strategy === "source-map-original") {
+      const resolution = observation.source_map_reference?.resolution;
+      if (resolution !== undefined && resolution.kind !== "unresolved")
+        paths.push({
+          kind: "source-map-original",
+          value: resolution.path,
+          allowSuffix: resolution.kind === "suffix",
+        });
+    } else {
+      const sourceDigest = observation.properties.source_sha256;
+      if (typeof sourceDigest === "string" && isDigest(sourceDigest))
+        digests.add(sourceDigest);
+      for (const key of PATH_PROPERTIES)
+        addJsonPath(paths, observation.properties[key]);
     }
   }
   return {
@@ -298,31 +281,15 @@ const matchingPaths = (
     )
     .map(({ value }) => value);
 
-const addJsonPath = (
-  paths: CurrentPath[],
-  value: unknown,
-  mapPath?: string,
-): void => {
-  if (typeof value === "string")
-    addPath(paths, "observation-path", value, mapPath);
+const addJsonPath = (paths: CurrentPath[], value: unknown): void => {
+  if (typeof value === "string") addPath(paths, "observation-path", value);
 };
 
 const addPath = (
   paths: CurrentPath[],
   kind: CurrentPathKind,
   raw: string,
-  mapPath?: string,
 ): void => {
-  if (kind === "source-map-original" || mapPath !== undefined) {
-    const resolved = resolveJavaScriptSourceMapPath(raw, mapPath);
-    if (resolved !== null)
-      paths.push({
-        kind,
-        value: resolved.value,
-        allowSuffix: resolved.scope === "suffix",
-      });
-    return;
-  }
   const value = normalizeCurrentPath(raw);
   if (value !== null) paths.push({ kind, value, allowSuffix: true });
 };

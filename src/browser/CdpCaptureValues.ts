@@ -26,11 +26,44 @@ export const cdpStringValue = (value: unknown): string | undefined =>
 export const numberValue = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined;
 
+/** Preserve partial script declarations; omitted or invalid fields remain unknown. */
+export const scriptMetadataValues = (
+  value: UnknownRecord | undefined,
+): {
+  readonly hash: string | null;
+  readonly length: number | null;
+  readonly isModule: boolean | null;
+} => {
+  const length = numberValue(value?.length);
+  return {
+    hash: cdpStringValue(value?.hash) ?? null,
+    length:
+      length !== undefined && Number.isSafeInteger(length) && length >= 0
+        ? length
+        : null,
+    isModule: typeof value?.isModule === "boolean" ? value.isModule : null,
+  };
+};
+
 export const requiredRecord = (value: unknown): UnknownRecord => {
   const record = recordValue(value);
   if (record === undefined)
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
   return record;
+};
+
+/** Require producer source text; an absent source is distinct from an empty script. */
+export const requiredScriptSource = (
+  value: unknown,
+  operation: BrowserObservationOperation,
+): string => {
+  const source = cdpStringValue(recordValue(value)?.scriptSource);
+  if (source === undefined)
+    throw new BrowserObservationError(operation, "protocol_error", {
+      detail:
+        "Debugger.getScriptSource returned malformed source text: scriptSource must be a string.",
+    });
+  return source;
 };
 
 export const isHttpUrl = (value: string | undefined): boolean => {

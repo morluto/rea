@@ -5,6 +5,7 @@ import {
   type Transport,
 } from "@modelcontextprotocol/client";
 import { randomUUID } from "node:crypto";
+import { finished } from "node:stream/promises";
 import type {
   OwnedProviderProcessSpawnOptions,
   SpawnedOwnedProviderProcess,
@@ -19,7 +20,7 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 const MAX_FRAME_BYTES = 8 * 1024 * 1024;
 const MAX_OPERATION_BYTES = 32 * 1024 * 1024;
 
-/** Injectable process acquisition seam; the production launcher owns a POSIX group. */
+/** Injectable acquisition seam; production owns a POSIX group or Windows job. */
 export type JadxLauncher = (
   options: OwnedProviderProcessSpawnOptions,
 ) => Promise<SpawnedOwnedProviderProcess>;
@@ -100,7 +101,10 @@ export class JadxMcpTransport implements Transport {
 
   /** Verifies owned process exit before declaring the transport closed. */
   close(): Promise<void> {
-    this.#closePromise ??= this.#stop();
+    this.#closePromise ??= this.#stop().catch((cause: unknown) => {
+      this.#closePromise = undefined;
+      throw cause;
+    });
     return this.#closePromise;
   }
 
@@ -136,8 +140,19 @@ export class JadxMcpTransport implements Transport {
     process?.stderr?.off("data", this.#countStderr);
     process?.off("error", this.#error);
     process?.off("exit", this.#exit);
-    process?.stdin?.off("error", this.#error);
+    const input = process?.stdin;
+    // A job termination can complete an in-flight pipe write asynchronously.
+    // Observe its errors until the owned Writable has finished closing.
+    const inputClosed =
+      input === undefined || input === null
+        ? undefined
+        : finished(input, { readable: false, cleanup: true }).catch(
+            () => undefined,
+          );
     const stopped = await this.#supervisor?.stop();
+    input?.destroy();
+    await inputClosed;
+    input?.off("error", this.#error);
     this.onclose?.();
     if (stopped?.status === "incomplete")
       throw new ProviderCleanupError("jadx", [this.runId], {

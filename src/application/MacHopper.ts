@@ -9,11 +9,12 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { z } from "zod";
+import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 
 const execFileAsync = promisify(execFile);
 const RELEASES_URL =
@@ -77,7 +78,10 @@ export interface MacHopperInstallHost {
 /** Download, verify, and install Hopper into the current user's Applications directory. */
 export const installMacHopper = async (
   options: { readonly replaceExisting?: boolean } = {},
-  host: MacHopperInstallHost = systemMacHopperInstallHost(),
+  host: MacHopperInstallHost = systemMacHopperInstallHost(
+    homeDirectoryFromEnvironment(process.env, process.platform),
+    process.env,
+  ),
 ): Promise<MacHopperInstallResult> => {
   let temporary: string | undefined;
   let mounted = false;
@@ -133,23 +137,35 @@ export const installMacHopper = async (
   }
 };
 
-const systemMacHopperInstallHost = (): MacHopperInstallHost => ({
+/** Compose installer paths and subprocesses from one selected caller context. */
+export const systemMacHopperInstallHost = (
+  homeDirectory: string,
+  environment: Readonly<NodeJS.ProcessEnv>,
+): MacHopperInstallHost => ({
   download: downloadPackage,
   createTemporaryDirectory: () => mkdtemp(join(tmpdir(), "rea-hopper-mac-")),
   createMountDirectory: (path) => mkdir(path),
   writePackage: (path, bytes) => writeFile(path, bytes, { mode: 0o600 }),
   async mount(packagePath, mountPath) {
-    return commandSucceeds("hdiutil", [
-      "attach",
-      "-readonly",
-      "-nobrowse",
-      "-mountpoint",
-      mountPath,
-      packagePath,
-    ]);
+    return commandSucceeds(
+      "hdiutil",
+      [
+        "attach",
+        "-readonly",
+        "-nobrowse",
+        "-mountpoint",
+        mountPath,
+        packagePath,
+      ],
+      environment,
+    );
   },
   async unmount(mountPath) {
-    await commandSucceeds("hdiutil", ["detach", mountPath, "-force"]);
+    await commandSucceeds(
+      "hdiutil",
+      ["detach", mountPath, "-force"],
+      environment,
+    );
   },
   async appBundle(mountPath) {
     const entries = await readdir(mountPath, { withFileTypes: true });
@@ -160,21 +176,24 @@ const systemMacHopperInstallHost = (): MacHopperInstallHost => ({
   },
   async validBundle(appPath) {
     if (
-      !(await commandSucceeds("codesign", [
-        "--verify",
-        "--deep",
-        "--strict",
-        appPath,
-      ]))
+      !(await commandSucceeds(
+        "codesign",
+        ["--verify", "--deep", "--strict", appPath],
+        environment,
+      ))
     )
       return false;
     try {
       const identifier = (
-        await execFileAsync("/usr/libexec/PlistBuddy", [
-          "-c",
-          "Print :CFBundleIdentifier",
-          join(appPath, "Contents/Info.plist"),
-        ])
+        await execFileAsync(
+          "/usr/libexec/PlistBuddy",
+          [
+            "-c",
+            "Print :CFBundleIdentifier",
+            join(appPath, "Contents/Info.plist"),
+          ],
+          { env: environment },
+        )
       ).stdout.trim();
       return identifier === BUNDLE_IDENTIFIER;
     } catch (cause: unknown) {
@@ -196,10 +215,10 @@ const systemMacHopperInstallHost = (): MacHopperInstallHost => ({
   async installBundle(source, destination, stage, replaceExisting) {
     const previous = `${stage}-previous`;
     try {
-      await mkdir(join(homedir(), "Applications"), { recursive: true });
+      await mkdir(join(homeDirectory, "Applications"), { recursive: true });
       await rm(stage, { recursive: true, force: true });
       await rm(previous, { recursive: true, force: true });
-      await execFileAsync("ditto", [source, stage]);
+      await execFileAsync("ditto", [source, stage], { env: environment });
       await access(join(stage, "Contents/MacOS/hopper"));
       if (replaceExisting) await rename(destination, previous);
       await rename(stage, destination);
@@ -231,10 +250,11 @@ const systemMacHopperInstallHost = (): MacHopperInstallHost => ({
     }
   },
   async openApplication(path) {
-    await execFileAsync("open", [path]);
+    await execFileAsync("open", [path], { env: environment });
   },
   cleanup: (path) => rm(path, { recursive: true, force: true }),
-  destination: () => join(homedir(), "Applications/Hopper Disassembler.app"),
+  destination: () =>
+    join(homeDirectory, "Applications/Hopper Disassembler.app"),
 });
 
 const downloadPackage = async (url: string) => {
@@ -260,9 +280,10 @@ const integrityMatches = (
 const commandSucceeds = async (
   command: string,
   args: readonly string[],
+  environment: Readonly<NodeJS.ProcessEnv>,
 ): Promise<boolean> => {
   try {
-    await execFileAsync(command, args);
+    await execFileAsync(command, args, { env: environment });
     return true;
   } catch (cause: unknown) {
     // best-effort cleanup: optional command probing; failure means unavailable.

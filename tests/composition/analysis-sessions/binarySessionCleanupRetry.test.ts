@@ -1,12 +1,34 @@
-import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 
-import type { AnalysisClient } from "../../../src/application/AnalysisProvider.js";
+import {
+  createAnalysisExecution,
+  type AnalysisClient,
+} from "../../../src/application/AnalysisProvider.js";
 import { HopperStartError } from "../../../src/domain/hopperErrors.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
+import type {
+  BridgeLauncher,
+  BridgeSession,
+} from "../../../src/hopper/BridgeLauncher.js";
+import { HopperClient } from "../../../src/hopper/HopperClient.js";
+import {
+  acquireHopperTargetLease,
+  type HopperTargetLease,
+} from "../../../src/hopper/HopperTargetLease.js";
+import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
+import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
+import { hopperFixturePath } from "../../boundary/providers/hopper/hopperClient.fixture.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import {
   createBinarySessionTargets,
@@ -33,13 +55,9 @@ const retryFixture = async (
   });
   const client: AnalysisClient = {
     execute,
-    close: async () => {
-      if (!allowed) throw cleanupError;
-      await rm(runtime, { recursive: true, force: true });
-    },
-    closeWithOutcome: async (options) => {
+    close: async (options) => {
       if (!allowed) return err(cleanupError);
-      await client.close();
+      await rm(runtime, { recursive: true, force: true });
       if (options?.retainDocument !== true) await rm(document, { force: true });
       return resultOk(null);
     },
@@ -50,7 +68,7 @@ const retryFixture = async (
       ? client
       : {
           execute: () => Promise.resolve(ok(null)),
-          close: () => Promise.resolve(),
+          close: () => Promise.resolve(resultOk(null)),
         };
   });
   onTestFinished(async () => {
@@ -197,12 +215,13 @@ it("keeps failed restoration resources available for a close retry", async () =>
       execute: () =>
         Promise.resolve(index === 1 ? ok(null) : err(new HopperStartError())),
       close: async () => {
-        if (index !== 3) return;
+        if (index !== 3) return resultOk(null);
         if (!allowed)
           throw new ProviderCleanupError("fixture", [runtime], {
             reason: "restoration cleanup denied",
           });
         await rm(runtime, { recursive: true, force: true });
+        return resultOk(null);
       },
     };
   });
@@ -235,7 +254,7 @@ it("does not start a replacement cancelled while pending cleanup completes", asy
     const index = ++created;
     return {
       execute: () => Promise.resolve(ok(null)),
-      closeWithOutcome: async () => {
+      close: async () => {
         if (index !== 1) return resultOk(null);
         if (!allowed)
           return err(
@@ -248,7 +267,6 @@ it("does not start a replacement cancelled while pending cleanup completes", asy
         await rm(runtime, { recursive: true, force: true });
         return resultOk(null);
       },
-      close: () => Promise.resolve(),
     };
   });
   onTestFinished(async () => {
@@ -270,4 +288,148 @@ it("does not start a replacement cancelled while pending cleanup completes", asy
   });
   expect(created).toBe(1);
   await expect(access(runtime)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+class RetryingHopperLauncher implements BridgeLauncher {
+  cleanupAllowed = false;
+  cleanupAttempts = 0;
+  directory: string | undefined;
+  lease: HopperTargetLease | undefined;
+
+  constructor(
+    readonly leaseDirectory: string,
+    readonly targetPath: string,
+    readonly cleanupRequired = false,
+  ) {}
+
+  acquire(runId: string) {
+    return acquireHopperTargetLease({
+      targetPath: this.targetPath,
+      targetKind: "database",
+      loaderArgs: [],
+      runId,
+      directory: this.leaseDirectory,
+    });
+  }
+
+  async launch(session: BridgeSession) {
+    const lease = await this.acquire(session.runId);
+    if (!lease.acquired)
+      return err(
+        new HopperStartError({ userMessage: "fixture lease is held" }),
+      );
+    this.lease = lease.lease;
+    this.directory = session.directory;
+    const started = await spawnOwnedProviderProcess({
+      command: process.execPath,
+      arguments: [
+        hopperFixturePath,
+        session.socketPath,
+        session.token,
+        session.runId,
+        this.cleanupRequired ? "cleanup-required" : "acknowledge",
+      ],
+      runId: session.runId,
+      expectedCommand: null,
+    });
+    return resultOk({
+      ...started,
+      ownsProcessLifetime: true as const,
+      providerLifetime: "launcher-process" as const,
+      shutdownMode: "process-cleanup" as const,
+      cleanup: () => {
+        this.cleanupAttempts += 1;
+        return this.cleanupAllowed
+          ? cleanupOwnedProcessGroup(started.ownership)
+          : Promise.resolve({
+              cleaned: false as const,
+              reason: "fixture process cleanup not confirmed",
+            });
+      },
+      releaseLease: () => lease.lease.release(),
+    });
+  }
+}
+
+it("retains Hopper process handles, private files, and lease until an actual session cleanup retry succeeds", async () => {
+  const leaseDirectory = await mkdtemp("/tmp/rea-hl-");
+  onTestFinished(() => rm(leaseDirectory, { recursive: true, force: true }));
+  const [first, second] = await createBinarySessionTargets();
+  const launcher = new RetryingHopperLauncher(leaseDirectory, first);
+  const hopper = new HopperClient({ launcher, startupTimeoutMs: 10_000 });
+  let clientsCreated = 0;
+  const session = createTestBinarySession(() => {
+    clientsCreated += 1;
+    return {
+      execute: async () => {
+        const started = await hopper.start();
+        return started.ok
+          ? resultOk(
+              createAnalysisExecution(null, {
+                id: "hopper",
+                name: "fixture Hopper",
+                version: null,
+              }),
+            )
+          : started;
+      },
+      close: (options) => hopper.close(options),
+    };
+  });
+  onTestFinished(async () => {
+    launcher.cleanupAllowed = true;
+    await session.close();
+    await hopper.close();
+    await launcher.lease?.release();
+  });
+  expect(await session.open(first)).toMatchObject({ ok: true });
+  expect(await session.close()).toMatchObject({
+    ok: false,
+    error: { cleanupIncomplete: true },
+  });
+  const runtime = launcher.directory;
+  if (runtime === undefined)
+    throw new Error("Fixture did not capture its runtime");
+  await access(runtime);
+  expect(launcher.cleanupAttempts).toBe(1);
+  expect(await launcher.acquire("other-owner")).toMatchObject({
+    acquired: false,
+  });
+  expect(await session.open(second)).toMatchObject({
+    ok: false,
+    error: { cleanupIncomplete: true },
+  });
+  expect(clientsCreated).toBe(1);
+  expect(launcher.cleanupAttempts).toBe(2);
+  launcher.cleanupAllowed = true;
+  expect(await session.close()).toEqual(resultOk(null));
+  expect(launcher.cleanupAttempts).toBe(3);
+  await expect(access(runtime)).rejects.toMatchObject({ code: "ENOENT" });
+  const replacement = await launcher.acquire("replacement-owner");
+  expect(replacement.acquired).toBe(true);
+  if (replacement.acquired) await replacement.lease.release();
+  expect((await session.open(second)).ok).toBe(true);
+  expect(clientsCreated).toBe(2);
+});
+
+it("reports a direct Hopper close failure and retries the retained owned process", async () => {
+  const leaseDirectory = await mkdtemp("/tmp/rea-hl-");
+  onTestFinished(() => rm(leaseDirectory, { recursive: true, force: true }));
+  const [target] = await createBinarySessionTargets();
+  const launcher = new RetryingHopperLauncher(leaseDirectory, target, true);
+  const hopper = new HopperClient({ launcher, startupTimeoutMs: 10_000 });
+  onTestFinished(async () => {
+    launcher.cleanupAllowed = true;
+    await hopper.close();
+    await launcher.lease?.release();
+  });
+  expect(await hopper.start()).toMatchObject({ ok: true });
+  expect(await hopper.close()).toMatchObject({
+    ok: false,
+    error: { cleanupIncomplete: true },
+  });
+  expect(launcher.cleanupAttempts).toBe(1);
+  launcher.cleanupAllowed = true;
+  expect(await hopper.close()).toEqual(resultOk(null));
+  expect(launcher.cleanupAttempts).toBe(2);
 });

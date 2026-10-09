@@ -36,9 +36,7 @@ it("preserves queue failure diagnostics through the provider, CLI adapter and SD
   const previousExitCode = process.exitCode;
   try {
     const cli = await logCliCommand(silentLogger, "inspect", async () => {
-      const result = await harness.session.execute("list_procedures", {
-        document: null,
-      });
+      const result = await harness.session.execute("list_procedures", {});
       if (!result.ok) throw result.error;
       return result.value.result;
     });

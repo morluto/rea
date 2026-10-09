@@ -1,32 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  firstProcedureAddress,
-  requireDistinctTargetHashes,
   requireAddressArray,
   requireFunctionDossierOracle,
   requireFunctionDossier,
   requirePseudocode,
 } from "../../../../src/application/RealHopperAssertions.js";
 
-describe("real Hopper semantic assertions", () => {
-  it("rejects two target paths containing the same binary", () => {
-    expect(() => requireDistinctTargetHashes("same", "same")).toThrow(
-      /distinct binaries/u,
-    );
-    expect(() => requireDistinctTargetHashes("", "other")).toThrow();
-    expect(() => requireDistinctTargetHashes("first", "second")).not.toThrow();
-  });
-  it("extracts a real procedure address from the complete inventory", () => {
-    expect(firstProcedureAddress([{ address: "0x1000", name: "main" }])).toBe(
-      "0x1000",
-    );
-    expect(() => firstProcedureAddress({ address: "0x1000" })).toThrow();
-    expect(() =>
-      firstProcedureAddress({ items: [{ address: "items" }] }),
-    ).toThrow();
-  });
-
+describe("Hopper verifier semantic rejection", () => {
   it("rejects empty and embedded per-item decompilation failures", () => {
     expect(requirePseudocode("return 0;", "batch_decompile")).toBe("return 0;");
     for (const invalid of ["", "   ", "No output", "Error: invalid address"])
@@ -52,7 +33,7 @@ describe("real Hopper semantic assertions", () => {
   });
 });
 
-describe("real Hopper fixture assertions", () => {
+describe("Hopper verifier fixture assertions", () => {
   it("requires fixture-specific positive dossier evidence", () => {
     const entry = fixtureDossier({
       address: "0x1000",

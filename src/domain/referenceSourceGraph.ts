@@ -80,7 +80,6 @@ const symlinkTargetSchema = z
   .min(1)
   .refine(
     (target) =>
-      target === "<outside-root>" ||
       isPortableAbsoluteSymlinkTarget(target) ||
       (!target.startsWith("/") &&
         !target.includes("\\") &&
@@ -317,12 +316,8 @@ const checkSymlinks = (
     if (entry.kind !== "symlink") continue;
     const absolute = isPortableAbsoluteSymlinkTarget(entry.target);
     if (
-      (entry.target_state === "external" &&
-        entry.target !== "<outside-root>" &&
-        !absolute) ||
-      (entry.target_state === "internal" &&
-        (entry.target === "<outside-root>" || absolute)) ||
-      (entry.target_state === "missing" && entry.target === "<outside-root>")
+      (entry.target_state === "external" && !absolute) ||
+      (entry.target_state === "internal" && absolute)
     )
       context.addIssue({
         code: "custom",

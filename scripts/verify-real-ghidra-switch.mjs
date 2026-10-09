@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -74,6 +75,7 @@ if (!compilerOnly) {
     "Ghidra switch lane prerequisite missing: GHIDRA_INSTALL_DIR (bring your own)",
   );
   installation = inspectGhidraInstallation({
+    environment: process.env,
     installDir: process.env.GHIDRA_INSTALL_DIR,
     ...(process.env.JAVA_HOME === undefined
       ? {}
@@ -237,15 +239,21 @@ async function verifyTarget(path, sha256, fixtures, variant) {
       const observed = await toolResult(client, "inspect_native_api", {
         procedure: procedure.address,
       });
-      assertWorkflowIdentity(observed.evidence, sha256);
-      assert.equal(observed.result.procedure.address, procedure.address);
+      assertWorkflowIdentity(observed, sha256);
+      assert.equal(
+        observed.normalized_result.procedure.address,
+        procedure.address,
+      );
       const summary = assertSwitchBoundary(
-        observed.result.boundary,
+        observed.normalized_result.boundary,
         observationFixture,
       );
       assert.deepEqual(
-        [...observed.result.residual_unknowns].sort(),
-        expectedResidualUnknowns(observed.result.boundary, fixture).sort(),
+        [...observed.normalized_result.residual_unknowns].sort(),
+        expectedResidualUnknowns(
+          observed.normalized_result.boundary,
+          fixture,
+        ).sort(),
         "Residual unknowns must preserve unresolved ABI types and exactly the expected switch uncertainty",
       );
       const cli = await cliSwitchEvidence(
@@ -259,20 +267,20 @@ async function verifyTarget(path, sha256, fixtures, variant) {
       assertSwitchBoundary(cli.normalized_result.boundary, observationFixture);
       assert.deepEqual(
         cli.normalized_result.boundary.jump_tables,
-        observed.result.boundary.jump_tables,
+        observed.normalized_result.boundary.jump_tables,
         "CLI/MCP switch mappings/defaults/data-source evidence differ",
       );
       assert.deepEqual(
         cli.normalized_result.residual_unknowns,
-        observed.result.residual_unknowns,
+        observed.normalized_result.residual_unknowns,
       );
       observations.push({
         name: fixture.name,
         ...summary,
         cli_mcp_equal: true,
-        limitations: observed.result.boundary.limitations,
-        residual_unknowns: observed.result.residual_unknowns,
-        jump_tables: observed.result.boundary.jump_tables,
+        limitations: observed.normalized_result.boundary.limitations,
+        residual_unknowns: observed.normalized_result.residual_unknowns,
+        jump_tables: observed.normalized_result.boundary.jump_tables,
       });
     }
     return { observations, stderr };
@@ -319,14 +327,15 @@ async function toolResult(client, name, arguments_ = {}) {
     { timeout: 240000 },
   );
   assert.notEqual(result.isError, true, JSON.stringify(result));
-  assert.ok(
-    result.structuredContent && "result" in result.structuredContent,
-    `${name} omitted structured result`,
-  );
+  assert.ok(result.structuredContent, `${name} omitted structured result`);
   return result.structuredContent;
 }
 async function call(client, name, arguments_ = {}) {
-  return (await toolResult(client, name, arguments_)).result;
+  const result = await client.callTool(
+    { name, arguments: arguments_ },
+    { timeout: 240000 },
+  );
+  return requireMcpOperationResult(result, name);
 }
 
 async function cliSwitchEvidence(entrypoint, path, procedure, env) {

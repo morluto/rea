@@ -167,15 +167,13 @@ const procedureReferences = z
     procedure: procedureIdentity,
     direction: z.enum(["incoming", "outgoing"]),
     references: z.array(referenceEdge),
-    reference_kinds_available: z.boolean().default(true),
-    unresolved_calls: z
-      .array(
-        z.strictObject({
-          address: ghidraCanonicalAddressSchema,
-          reason: z.string(),
-        }),
-      )
-      .default([]),
+    reference_kinds_available: z.boolean(),
+    unresolved_calls: z.array(
+      z.strictObject({
+        address: ghidraCanonicalAddressSchema,
+        reason: z.string(),
+      }),
+    ),
   })
   .strict();
 const procedureInfo = z

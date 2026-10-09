@@ -463,7 +463,7 @@ describe("JavaScript export localized mutation uncertainty", () => {
 });
 
 describe("JavaScript export property presence boundaries", () => {
-  it("normalizes omitted legacy presence before comparing identical literals and unions", async () => {
+  it("rejects return-shape observations that omit required slot presence", async () => {
     const source =
       'export default () => ({ kind: "result", count: flag ? 1 : 2, nested: { enabled: true } });';
     const [left, right] = await analyzeSources({ left: source, right: source });
@@ -513,9 +513,14 @@ describe("JavaScript export property presence boundaries", () => {
       [right, { ...left, graph }],
     ] as const) {
       const result = compare(sides[0], sides[1]);
-      expect(result.coverage.paired_variants).toBe(1);
-      expect(result.changes).toEqual([]);
-      expect(result.coverage.status).toBe("complete-within-inputs");
+      expect(result.coverage.paired_variants).toBe(0);
+      expect([result.left.status, result.right.status]).toContain(
+        "unavailable",
+      );
+      expect(result.changes).toEqual([
+        expect.objectContaining({ status: "unknown", path: "" }),
+      ]);
+      expect(result.coverage.status).toBe("partial");
     }
   });
 

@@ -9,6 +9,7 @@ import {
 import { createEvidence, type Evidence } from "./evidence.js";
 import { functionDossierSchema } from "./hopperValues.js";
 import { canonicalDigest, canonicalJson } from "./comparisonSemantics.js";
+import { compareCodePoints } from "./canonicalOrdering.js";
 import { jsonValueSchema } from "./jsonValue.js";
 
 const dossier = (
@@ -219,17 +220,17 @@ describe("function collection collation ties", () => {
     expect(calls?.left_digest).not.toBe(calls?.right_digest);
   });
 
-  it("preserves existing digests when canonical records do not collate equally", () => {
+  it("uses canonical code-point ordering for collection digests", () => {
     const callees = ["zeta", "Alpha", "alpha", "_helper", "beta"].map(
       (name, index) => ({
         address: `0x${(0x2000 + index).toString(16)}`,
         name,
       }),
     );
-    const legacyProjection = callees
+    const canonicalProjection = callees
       .map(({ name }) => ({ direction: "out", name }))
       .sort((left, right) =>
-        canonicalJson(left).localeCompare(canonicalJson(right)),
+        compareCodePoints(canonicalJson(left), canonicalJson(right)),
       );
     const result = compareFunctions(
       observe("b", calling(callees)),
@@ -240,8 +241,8 @@ describe("function collection collation ties", () => {
     );
     expect(calls).toMatchObject({
       status: "unchanged",
-      left_digest: canonicalDigest(legacyProjection),
-      right_digest: canonicalDigest(legacyProjection),
+      left_digest: canonicalDigest(canonicalProjection),
+      right_digest: canonicalDigest(canonicalProjection),
     });
   });
 });
@@ -392,6 +393,28 @@ describe("function comparison CFG address normalization", () => {
         observe("e", duplicate),
       ).dimensions.find(({ dimension }) => dimension === "cfg"),
     ).toMatchObject({ status: "unknown" });
+  });
+});
+
+describe("function comparison unresolved text", () => {
+  it("counts Unicode text consistently for unresolved provider comparisons", () => {
+    const left = observe("b", dossier("return '😀';", "0x1000"), "provider-a");
+    const right = observe("c", dossier("return '😀';", "0x2000"), "provider-b");
+    const comparison = compareFunctions(left, right);
+    expect(
+      comparison.dimensions.find(({ dimension }) => dimension === "pseudocode"),
+    ).toMatchObject({ status: "unknown", left_count: 11, right_count: 11 });
+    expect(comparison.summary).toEqual({
+      unchanged: 6,
+      changed: 0,
+      unknown: 2,
+    });
+    expect(
+      functionComparisonResultSchema.safeParse({
+        ...comparison,
+        status: "truncated",
+      }).success,
+    ).toBe(false);
   });
 });
 

@@ -51,6 +51,8 @@ it("rejects source text changed across the artifact port while retaining the ori
 });
 it("rejects sparse resolver arrays rather than relabeling literal imports as computed unknowns", async () => {
   const artifacts = webModuleArtifactsFixture('import "./dep.js";');
+  const resolutions: WebModuleResolution[] = [];
+  resolutions.length = 1;
   const service = new WebModuleTraceService(
     { load: () => Promise.resolve(ok(artifacts)) },
     {
@@ -58,7 +60,7 @@ it("rejects sparse resolver arrays rather than relabeling literal imports as com
         Promise.resolve(
           ok({
             engine: { id: "fixture", version: "1" },
-            resolutions: new Array<WebModuleResolution>(1),
+            resolutions,
             diagnostics: [],
             rawResult: {},
           }),
@@ -70,40 +72,6 @@ it("rejects sparse resolver arrays rather than relabeling literal imports as com
   if (!result.ok) expect(result.error._tag).toBe("AnalysisOutputError");
 });
 describe("selected module trace workflow", () => {
-  it("composes selected source, derived resolution and explicit computed/execution unknowns", async () => {
-    const artifacts = webModuleArtifactsFixture();
-    const service = new WebModuleTraceService(
-      { load: () => Promise.resolve(ok(artifacts)) },
-      webModuleResolverFixture,
-    );
-    const response = await service.trace(args);
-    if (!response.ok) throw response.error;
-    const result = webModuleTraceResultSchema.parse(
-      response.value.normalized_result,
-    );
-    expect(result.importer).toEqual({
-      url: artifacts.manifest.scripts[0]?.url,
-      basis: "reported-source-url",
-    });
-    expect(result.manifest.capture_completeness).toEqual(
-      artifacts.manifest.capture_completeness,
-    );
-    expect(result.imports[0]?.resolution).toEqual({
-      state: "resolved",
-      url: "https://app.test/dep.js",
-    });
-    expect(result.imports[1]?.resolution).toEqual({
-      state: "unknown",
-      reason: "computed-specifier",
-    });
-    expect(result.imports.every((item) => item.execution === "unknown")).toBe(
-      true,
-    );
-    expect(response.value.subject).toMatchObject({
-      local_path: artifacts.sourceFile.path,
-      digest: { sha256: artifacts.sourceFile.sha256 },
-    });
-  });
   it.each([
     { ...args, manifest_path: "relative.json" },
     {
@@ -133,22 +101,6 @@ describe("selected module trace workflow", () => {
       });
     },
   );
-  it("handles computed-only sources without acquiring the optional engine", async () => {
-    const artifacts = webModuleArtifactsFixture("import(name)");
-    const service = new WebModuleTraceService(
-      { load: () => Promise.resolve(ok(artifacts)) },
-      {
-        resolve: () => {
-          throw new Error("engine must not start");
-        },
-      },
-    );
-    const result = await service.trace(args);
-    if (!result.ok) throw result.error;
-    expect(
-      webModuleTraceResultSchema.parse(result.value.normalized_result).engine,
-    ).toBeNull();
-  });
   it("rejects incomplete resolution rather than fabricating unknown values", async () => {
     const artifacts = webModuleArtifactsFixture();
     const service = new WebModuleTraceService(

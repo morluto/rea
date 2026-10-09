@@ -158,6 +158,7 @@ describe("Ghidra headless launcher", () => {
 
   it("wraps the Windows batch launcher without enabling a Node shell", () => {
     const command = ghidraHeadlessCommand({
+      environment: {},
       platform: "win32",
       analyzeHeadlessPath:
         "C:\\Program Files\\Ghidra 12.1.4\\support\\analyzeHeadless.bat",
@@ -190,6 +191,7 @@ describe("Ghidra headless launcher", () => {
   ])("rejects a Windows command-interpreter path: %s", (targetPath) => {
     expect(() =>
       ghidraHeadlessCommand({
+        environment: {},
         platform: "win32",
         analyzeHeadlessPath: "C:\\Ghidra\\support\\analyzeHeadless.bat",
         arguments: ["-import", targetPath],
@@ -212,6 +214,7 @@ describe("Ghidra headless launcher", () => {
       const token = "secret-token-that-must-not-leak";
       const javaHome = "C:\\Java\\jdk-21";
       const launcher = new GhidraHeadlessLauncher({
+        environment: {},
         analyzeHeadlessPath: fixturePath,
         // POSIX follows the real inspected-JVM route; Windows uses the official
         // batch script because its launcher contract differs.

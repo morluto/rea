@@ -39,7 +39,7 @@ describe("artifact Mach-O slices", () => {
           }),
         ),
     };
-    const reader = new MachOSliceArtifactReader(binary, runner);
+    const reader = new MachOSliceArtifactReader(binary, {}, runner);
     const enumerate = async (): Promise<void> => {
       for await (const _entry of reader.entries()) {
         // Enumeration must reject out-of-bounds lipo metadata before yielding.
@@ -77,7 +77,7 @@ describe("artifact Mach-O slices", () => {
           }),
         ),
     };
-    const reader = new MachOSliceArtifactReader(binary, runner);
+    const reader = new MachOSliceArtifactReader(binary, {}, runner);
     const entries = [];
     for await (const entry of reader.entries()) entries.push(entry);
     expect(entries).toHaveLength(2);
@@ -136,6 +136,7 @@ describe("artifact Mach-O slices", () => {
       details[index] = ` ${field}`;
       const reader = new MachOSliceArtifactReader(
         binary,
+        {},
         lipoRunner(`${details.join("\n")}\n`),
       );
       await expect(async () => {
@@ -155,6 +156,7 @@ describe("artifact Mach-O slices", () => {
     await writeFile(binary, image);
     const reader = new MachOSliceArtifactReader(
       binary,
+      {},
       lipoRunner(
         `architecture arm64\n cputype 16777228\n cpusubtype 0\n offset 4096\n size ${thin.length}\n align 2^12 (4096)\n`,
       ),
@@ -208,6 +210,7 @@ describe("artifact Mach-O arm64e variant slices", () => {
     );
     const reader = new MachOSliceArtifactReader(
       binary,
+      {},
       lipoRunner(
         `architecture x86_64\n cputype CPU_TYPE_X86_64\n cpusubtype CPU_SUBTYPE_X86_64_ALL\n offset 4096\n size ${String(x86.length)}\n align 2^12 (4096)\n${lipo(arm.length)}`,
       ),

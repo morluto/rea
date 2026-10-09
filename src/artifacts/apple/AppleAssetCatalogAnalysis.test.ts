@@ -54,6 +54,7 @@ describe("Apple asset catalog application workflow", () => {
     await mkdir(join(bundle, "Contents", "Resources"), { recursive: true });
     await writeFile(join(bundle, "Contents", "Resources", "icon.icns"), "");
     const result = await analyzeAppleAssetCatalogs({
+      environment: {},
       bundlePath: bundle,
       targetSha256: "a".repeat(64),
       runAssetUtil: () => {
@@ -80,6 +81,7 @@ describe("Apple asset catalog application workflow", () => {
     await writeFile(join(bundle, "outside.car"), "catalog");
     await symlink("../../outside.car", join(resources, "Assets.car"));
     const rejected = await analyzeAppleAssetCatalogs({
+      environment: {},
       bundlePath: bundle,
       targetSha256: "a".repeat(64),
       runAssetUtil: () => Promise.resolve("[]"),
@@ -100,6 +102,7 @@ describe("Apple asset catalog application workflow", () => {
     await writeFile(join(resources, "Assets.car"), "catalog");
     await symlink("../Assets.car", join(resources, "Nested", "Assets.car"));
     const result = await analyzeAppleAssetCatalogs({
+      environment: {},
       bundlePath: bundle,
       targetSha256: "a".repeat(64),
       runAssetUtil: () => Promise.resolve("[]"),

@@ -7,7 +7,7 @@ import {
   writeFile,
   symlink,
 } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
+import { dirname, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -161,6 +161,9 @@ const createBuildCacheFixture = async (): Promise<string> => {
     "tsconfig.json",
     "tsconfig.build.json",
     "scripts/check-dependency-install.mjs",
+    "scripts/run-exclusive.mjs",
+    "scripts/run-exclusive-command.mjs",
+    "scripts/generate-skill-metadata.mjs",
     "scripts/clean-build-output.mjs",
     "scripts/generate-package-metadata.mjs",
     "scripts/lib/generated-file.mjs",
@@ -180,13 +183,13 @@ const createBuildCacheFixture = async (): Promise<string> => {
       ...packageJson,
       scripts: {
         ...scripts,
-        build: "node scripts/cache-fixture-build.mjs",
+        compile: "node scripts/cache-fixture-build.mjs",
       },
     }),
   );
   await writeFile(
     join(root, "scripts/cache-fixture-build.mjs"),
-    'import { mkdir, writeFile } from "node:fs/promises"; await mkdir("dist", { recursive: true }); await writeFile("dist/cache-fixture.js", "built");\n',
+    'import { mkdir, writeFile } from "node:fs/promises"; await mkdir("dist", { recursive: true }); await writeFile("dist/cache-fixture.js", "built"); await writeFile("dist/catalogIdentity.js", "export const CATALOG_IDENTITY = { counts: { mcp_tools: 1 } };\\n");\n',
   );
   await createNodeModulesLinks(root);
   await writeFile(
@@ -231,7 +234,7 @@ const runTurbo = (cwd: string) =>
     [
       join(cwd, "node_modules", "turbo", "bin", "turbo"),
       "run",
-      "build",
+      "artifacts:skills",
       "--output-logs=full",
     ],
     cwd,

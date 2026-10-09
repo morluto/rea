@@ -268,9 +268,11 @@ const collectFixupCommand = (
       throw new RangeError("Fixup data exceeds the Mach-O slice");
     return { offset, size: length };
   };
-  if (kind === LC_DYLD_CHAINED_FIXUPS && size >= 16)
+  if (kind === LC_DYLD_CHAINED_FIXUPS) {
+    if (size < 16) throw new RangeError("Truncated chained-fixups command");
     state.chained = range(cursor + 8);
-  else if ((kind === LC_DYLD_INFO || kind === LC_DYLD_INFO_ONLY) && size >= 48)
+  } else if (kind === LC_DYLD_INFO || kind === LC_DYLD_INFO_ONLY) {
+    if (size < 48) throw new RangeError("Truncated dyld-info command");
     for (const [at, stream] of [
       [cursor + 16, "bind"],
       [cursor + 24, "weak"],
@@ -279,13 +281,14 @@ const collectFixupCommand = (
       const bound = range(at);
       if (bound.size > 0) state.binds.push({ ...bound, stream });
     }
-  else if (DYLIB_COMMANDS.includes(kind) && size >= 24) {
+  } else if (DYLIB_COMMANDS.includes(kind)) {
+    if (size < 24) throw new RangeError("Truncated dylib command");
     const nameOffset = bytes.readUInt32LE(cursor + 8);
+    if (nameOffset < 24 || nameOffset >= size)
+      throw new RangeError("Dylib install name is outside its load command");
     const end = bytes.indexOf(0, cursor + nameOffset);
-    state.dylibs.push(
-      nameOffset >= size || end < 0 || end > cursor + size
-        ? ""
-        : bytes.toString("utf8", cursor + nameOffset, end),
-    );
+    if (end < 0 || end >= cursor + size)
+      throw new RangeError("Unterminated dylib install name");
+    state.dylibs.push(bytes.toString("utf8", cursor + nameOffset, end));
   }
 };

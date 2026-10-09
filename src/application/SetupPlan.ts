@@ -1,4 +1,3 @@
-import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
@@ -15,7 +14,6 @@ import type {
   SetupProviderEnvironment,
 } from "./SetupTypes.js";
 import type { SetupClient } from "./SupportedClients.js";
-import type { DoctorScope } from "./Doctor.js";
 import type { DoctorReport } from "./Doctor.js";
 
 /** Read-only setup facts shared by client selection and preflight. */
@@ -36,11 +34,9 @@ export const discoverSetupState = async (input: {
   readonly providerEnvironment: SetupProviderEnvironment;
   readonly forceHopperInstall: boolean;
   readonly proposeHopper: boolean;
-  readonly doctorScope: DoctorScope | undefined;
-  readonly initialDoctor?: DoctorReport;
+  readonly initialDoctor: DoctorReport;
 }): Promise<SetupDiscovery> => {
-  const initialDoctor =
-    input.initialDoctor ?? (await input.host.doctor(input.doctorScope));
+  const { initialDoctor } = input;
   const linuxHopperRepairNeeded = initialDoctor.checks.some(
     ({ name, ok, detail }) =>
       !ok &&
@@ -62,7 +58,7 @@ export const discoverSetupState = async (input: {
       (Object.keys(input.providerEnvironment).length === 0 ||
         linuxHopperRepairNeeded));
   const [clients, detectedClients, skillNeedsInstall] = await Promise.all([
-    input.host.supportedClients?.() ?? input.host.detectedClients(),
+    input.host.supportedClients(),
     input.host.detectedClients(),
     input.host.skillNeedsInstall(),
   ]);
@@ -148,12 +144,11 @@ export const planSetupActions = async (input: {
   const inspections = await Promise.all(
     selectedClients.map(async (client) => ({
       client,
-      inspection:
-        (await input.host.inspectClientConfiguration?.(
-          client,
-          input.providerEnvironment,
-          input.command,
-        )) ?? ({ status: "update" } as const),
+      inspection: await input.host.inspectClientConfiguration(
+        client,
+        input.providerEnvironment,
+        input.command,
+      ),
     })),
   );
   const invalid = inspections.find(
@@ -191,6 +186,7 @@ export const planSetupActions = async (input: {
   return {
     plannedActions: setupPlan({
       platform: input.host.platform,
+      homeDirectory: input.host.homeDirectory,
       installHopper: input.discovery.installHopper,
       installSkill: input.installSkill,
       clients: clientPlans,
@@ -210,6 +206,7 @@ export const planSetupActions = async (input: {
 /** Describe every selected setup mutation before user approval. */
 const setupPlan = (input: {
   readonly platform: NodeJS.Platform;
+  readonly homeDirectory: string;
   readonly installHopper: boolean;
   readonly installSkill: boolean;
   readonly clients: readonly {
@@ -229,7 +226,10 @@ const setupPlan = (input: {
           label: "Hopper deep-analysis provider",
           target:
             input.platform === "darwin"
-              ? join(homedir(), "Applications/Hopper Disassembler.app")
+              ? join(
+                  input.homeDirectory,
+                  "Applications/Hopper Disassembler.app",
+                )
               : "system package manager",
           detail:
             input.platform === "linux"
@@ -271,7 +271,11 @@ const setupPlan = (input: {
           id: "install_skill",
           kind: "install_skill" as const,
           label: "REA reverse-engineering skill",
-          target: join(homedir(), ".agents/skills", PRODUCT_IDENTITY.skillName),
+          target: join(
+            input.homeDirectory,
+            ".agents/skills",
+            PRODUCT_IDENTITY.skillName,
+          ),
           detail:
             "Install or update the bundled REA reverse-engineering skill and on-demand references.",
           external: false,

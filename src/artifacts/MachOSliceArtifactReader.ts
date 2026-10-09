@@ -27,7 +27,10 @@ export class MachOSliceArtifactReader implements ArtifactReader {
 
   constructor(
     private readonly path: string,
-    private readonly runner: NativeCommandRunner = new XcrunCommandRunner(),
+    environment: Readonly<NodeJS.ProcessEnv>,
+    private readonly runner: NativeCommandRunner = new XcrunCommandRunner(
+      environment,
+    ),
   ) {}
 
   async *entries(signal?: AbortSignal): AsyncIterable<ArtifactEntry> {

@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { add, commit, init } from "isomorphic-git";
 import { describe, expect, it } from "vitest";
@@ -140,36 +140,48 @@ describe("reference source symlink import", () => {
 });
 
 describe("reference source manifest inventory", () => {
-  it("retains CMake build manifests in the imported inventory", async () => {
-    const root = await createTestTempDirectory("rea-reference-cmake-");
-    await mkdir(join(root, "src"));
-    await Promise.all([
-      writeFile(join(root, "CMakeLists.txt"), "project(example)\n"),
-      writeFile(
-        join(root, "src", "CMakeLists.txt"),
-        "add_library(example main.cpp)\n",
-      ),
-      writeFile(join(root, "notes.txt"), "Build notes.\n"),
-    ]);
+  it("retains manifest, test, generated and language classifications through import", async () => {
+    const root = await createTestTempDirectory("rea-reference-classification-");
+    const files = [
+      ["CMakeLists.txt", "Text", ["documentation", "manifest"]],
+      ["src/CMAKELISTS.TXT", "Text", ["documentation", "manifest", "source"]],
+      ["CMakeLists.txt.backup", null, ["unknown"]],
+      ["Dockerfile.dev.ts", "Dockerfile", ["source"]],
+      ["DockerfileGuide.d.mts", "TypeScript", ["generated", "source"]],
+      ["DockerfileHelper.py", "Python", ["source"]],
+      ["dockerfiles", null, ["unknown"]],
+      ["Widget_TeSt.TS", "TypeScript", ["source", "test"]],
+      ["parser_spec.rs", "Rust", ["source", "test"]],
+      ["main_test_helper.go", "Go", ["source"]],
+      ["main_spec.ts.bak", null, ["unknown"]],
+      ["tests/main.go", "Go", ["source", "test"]],
+      ["out/widget_spec.js", "JavaScript", ["generated", "source", "test"]],
+      ["vendor/widget_test.go", "Go", ["source", "test", "vendor"]],
+      ["settings_spec.json", "JSON", ["config", "test"]],
+    ] as const;
+    await Promise.all(
+      files.map(async ([path]) => {
+        const target = join(root, path);
+        await mkdir(dirname(target), { recursive: true });
+        await writeFile(target, "");
+      }),
+    );
 
     const result = await importTree(root);
     if (!result.ok) throw result.error;
     expect(result.value.manifests).toEqual([
       "CMakeLists.txt",
-      "src/CMakeLists.txt",
+      "src/CMAKELISTS.TXT",
     ]);
-    expect(result.value.entries).toContainEqual(
-      expect.objectContaining({
-        path: "CMakeLists.txt",
-        classifications: ["documentation", "manifest"],
-      }),
+    const entries = new Map(
+      result.value.entries.map((entry) => [entry.path, entry]),
     );
-    expect(result.value.entries).toContainEqual(
-      expect.objectContaining({
-        path: "src/CMakeLists.txt",
-        classifications: ["documentation", "manifest", "source"],
-      }),
-    );
+    for (const [path, language, classifications] of files)
+      expect(entries.get(path), path).toMatchObject({
+        kind: "file",
+        language,
+        classifications,
+      });
   });
 });
 
