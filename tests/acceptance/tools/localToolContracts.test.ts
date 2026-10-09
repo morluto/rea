@@ -206,16 +206,16 @@ captureTest(
   60_000,
 );
 
-captureTest.each(["unknown", "truncated"] as const)(
+captureTest.each(["untruncated", "truncated"] as const)(
   "captures real process choices and composes a %s self-comparison",
-  async (status) => {
+  async (captureState) => {
     const root = await createTestTempDirectory("rea-local-capture-");
     const { call } = await connectLocalToolsMcp();
     const captured = await call("capture_process_scenario", {
       executable: process.execPath,
       arguments: [
         "-e",
-        `require('node:fs').writeFileSync('state','selected');console.log(process.env['app.setting'],process.env.MY_PASSWORD,process.env['REA_PROCESS_RUN_ID'+String.fromCharCode(10)]);${status === "truncated" ? "console.log('x'.repeat(5000))" : ""}`,
+        `require('node:fs').writeFileSync('state','selected');console.log(process.env['app.setting'],process.env.MY_PASSWORD,process.env['REA_PROCESS_RUN_ID'+String.fromCharCode(10)]);${captureState === "truncated" ? "console.log('x'.repeat(5000))" : ""}`,
       ],
       working_directory: root,
       environment: {
@@ -225,14 +225,14 @@ captureTest.each(["unknown", "truncated"] as const)(
         "REA_PROCESS_RUN_ID\n": "caller-value",
       },
       filesystem_observation_paths: [root],
-      limits: status === "truncated" ? { output_bytes: 128 } : {},
+      limits: captureState === "truncated" ? { output_bytes: 128 } : {},
     });
     expect(captured.isError, JSON.stringify(captured)).not.toBe(true);
     const capture = toolContract("capture_process_scenario").outputSchema.parse(
       captured.structuredContent,
     );
     const source = capture;
-    if (status === "unknown")
+    if (captureState === "untruncated")
       expect(
         capture.normalized_result.frames.map((frame) => frame.data).join(""),
       ).toContain("value ordinary-evidence caller-value");
@@ -265,7 +265,13 @@ captureTest.each(["unknown", "truncated"] as const)(
     const comparison = toolContract(
       "compare_process_captures",
     ).outputSchema.parse(compared.structuredContent);
-    expect(comparison.normalized_result.status).toBe(status);
+    expect(comparison.normalized_result).toMatchObject({
+      status: "unknown",
+      terminal: captureState === "truncated" ? "unknown" : "unchanged",
+      interaction: "unchanged",
+      exit: "unchanged",
+      process: "unknown",
+    });
     const verification = await call("verify_reconstruction", {
       specification: {
         name: "Self comparison retains uncertainty",
@@ -303,7 +309,7 @@ captureTest.each(["unknown", "truncated"] as const)(
     });
     expect(behavior.isError, JSON.stringify(behavior)).not.toBe(true);
     expect(behavior.structuredContent).toMatchObject({
-      normalized_result: { behavior_status: status },
+      normalized_result: { behavior_status: "unknown" },
     });
     const unknowns = await call("list_unknowns", {
       domain: "process-comparison",
