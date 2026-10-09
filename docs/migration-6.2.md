@@ -40,6 +40,13 @@ Lifecycle and other non-Evidence tools still use their own advertised output
 contracts. Do not assume every successful tool returns Evidence. Consult
 [`tools/list` and the result guide](mcp-contracts.md#tool-results).
 
+A transport `resource_constraint` error can include a retained
+`details.reported_limits.evidence_reference`. Use `inspect_analysis_view` or
+`export_evidence_bundle` on the same connection to consume the complete retained
+Evidence. Response-budget settings are captured when the server starts; recreate
+the server to change them, and keep the client's receive budget aligned. Raising
+the server budget does not change the client's limit or analysis coverage.
+
 Every Evidence record now requires `analysis_profile`, either its observed
 profile object or `null`. The field participates in Evidence identity. Records
 that omitted it cannot be migrated by inserting `null` while retaining the old
