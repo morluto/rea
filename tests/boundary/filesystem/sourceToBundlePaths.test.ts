@@ -89,6 +89,93 @@ it("matches source-map originals named relative to the map", async () => {
   );
 });
 
+it.each([
+  {
+    mapPath: "pkg/dist/main.js.map",
+    source: "..\\src\\a.js",
+    expected: "pkg/src/a.js",
+  },
+  {
+    mapPath: "pkg/dist/main.js.map",
+    source: "../src/a.js",
+    expected: "pkg/src/a.js",
+  },
+  {
+    mapPath: "apps/pkg/dist/maps/main.js.map",
+    source: "../../src/a.js",
+    expected: "apps/pkg/src/a.js",
+  },
+  {
+    mapPath: "pkg/dist/main.js.map",
+    sourceRoot: "../src",
+    source: "a.js",
+    expected: "pkg/src/a.js",
+  },
+  {
+    mapPath: "pkg/maps/main.js.map",
+    source: "modules/a.js",
+    expected: "pkg/maps/modules/a.js",
+  },
+])(
+  "resolves $source against $mapPath without selecting a same-basename decoy",
+  async ({ mapPath, source, sourceRoot, expected }) => {
+    const root = await createTestTempDirectory("rea-nested-map-");
+    const previous = join(root, "previous");
+    const current = join(root, "current");
+    await Promise.all([
+      mkdir(join(previous, expected, ".."), { recursive: true }),
+      mkdir(join(previous, "src"), { recursive: true }),
+      mkdir(join(current, mapPath, ".."), { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(join(previous, expected), "export const value = 1;"),
+      writeFile(join(previous, "src/a.js"), "export const decoy = 99;"),
+      writeFile(
+        join(current, mapPath),
+        JSON.stringify({
+          version: 3,
+          sources: [source],
+          ...(sourceRoot === undefined ? {} : { sourceRoot }),
+          sourcesContent: ["export const value = 2;"],
+          names: [],
+          mappings: "AAAA",
+        }),
+      ),
+    ]);
+    const { comparison } = await compareTrees(previous, current);
+    const correct = comparison.items.find(
+      ({ source_path }) => source_path === expected,
+    );
+    expect(correct?.current_node_ids).toHaveLength(1);
+    expect(correct?.candidates).toContainEqual(
+      expect.objectContaining({
+        confidence: "high",
+        signals: expect.arrayContaining([
+          expect.objectContaining({
+            kind: "source-map-original-path",
+            current_values: [expected],
+          }),
+        ]),
+      }),
+    );
+    const decoy = comparison.items.find(
+      ({ source_path }) => source_path === "src/a.js",
+    );
+    expect(decoy?.current_node_ids).toEqual([]);
+    expect(
+      decoy?.candidates
+        .flatMap(({ signals }) => signals)
+        .some(({ kind }) => kind === "current-path-exact"),
+    ).toBe(false);
+    // A suffix alone must not claim a second map-relative original identity.
+    expect(
+      decoy?.candidates
+        .flatMap(({ signals }) => signals)
+        .some(({ kind }) => kind === "source-map-original-path"),
+    ).toBe(false);
+  },
+);
+
 it("resolves parent segments against a nested source map's directory", async () => {
   const root = await createTestTempDirectory("rea-source-map-nested-");
   const previous = join(root, "previous");

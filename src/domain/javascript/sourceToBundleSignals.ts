@@ -23,6 +23,8 @@ type CurrentPathKind =
 interface CurrentPath {
   readonly kind: CurrentPathKind;
   readonly value: string;
+  /** Artifact-relative map resolution identifies one path, not its suffixes. */
+  readonly allowSuffix: boolean;
 }
 
 interface CurrentProjection {
@@ -93,7 +95,9 @@ export const buildSourceToBundleCandidateIndex = (
     for (const digest of projection.digests)
       addIndexValue(byDigest, digest, projection.node.node_id);
     for (const path of projection.paths) {
-      for (const suffix of pathSuffixes(path.value))
+      for (const suffix of path.allowSuffix
+        ? pathSuffixes(path.value)
+        : [path.value])
         addIndexValue(byPathSuffix, suffix, projection.node.node_id);
       addIndexValue(
         byBasename,
@@ -160,15 +164,25 @@ const projectCurrentNode = (node: ApplicationNode): CurrentProjection => {
   const paths: CurrentPath[] = [];
   if (node.identity.strategy === "content-digest")
     digests.add(node.identity.sha256);
-  const mapPath = sourceMapPath(node);
   if (node.identity.strategy === "source-map-original") {
     if (node.identity.source_sha256 !== null)
       digests.add(node.identity.source_sha256);
-    addPath(
-      paths,
-      "source-map-original",
-      resolveFromMap(node.identity.original_source, mapPath),
+    const mapLocations = node.observations.flatMap(({ evidence }) =>
+      evidence.extractor.operation === "parse-local-source-map" &&
+      evidence.location.available &&
+      evidence.location.value.kind === "artifact-path"
+        ? [evidence.location.value.path]
+        : [],
     );
+    if (mapLocations.length === 0)
+      addPath(paths, "source-map-original", node.identity.original_source);
+    for (const mapPath of mapLocations)
+      addPath(
+        paths,
+        "source-map-original",
+        node.identity.original_source,
+        mapPath,
+      );
   }
   if (node.identity.strategy === "canonical-path")
     addPath(paths, "canonical-path", node.identity.path);
@@ -177,11 +191,16 @@ const projectCurrentNode = (node: ApplicationNode): CurrentProjection => {
     if (typeof sourceDigest === "string" && isDigest(sourceDigest))
       digests.add(sourceDigest);
     for (const key of PATH_PROPERTIES) {
-      const value = observation.properties[key];
-      addJsonPath(
-        paths,
-        typeof value === "string" ? resolveFromMap(value, mapPath) : value,
-      );
+      const location = observation.evidence.location;
+      const mapPath =
+        node.identity.strategy === "source-map-original" &&
+        observation.evidence.extractor.operation === "parse-local-source-map" &&
+        (key === "source" || key === "original_source") &&
+        location.available &&
+        location.value.kind === "artifact-path"
+          ? location.value.path
+          : undefined;
+      addJsonPath(paths, observation.properties[key], mapPath);
     }
   }
   return {
@@ -216,7 +235,10 @@ const candidateSignals = (
     signals.push(signal("current-path-exact", source.path, exactPaths));
   const suffixPaths = otherPaths
     .filter(
-      ({ value }) => value !== source.path && value.endsWith(`/${source.path}`),
+      ({ value, allowSuffix }) =>
+        allowSuffix &&
+        value !== source.path &&
+        value.endsWith(`/${source.path}`),
     )
     .map(({ value }) => value);
   if (suffixPaths.length > 0)
@@ -263,43 +285,43 @@ const matchingPaths = (
 ): string[] =>
   currentPaths
     .filter(
-      ({ value }) => value === sourcePath || value.endsWith(`/${sourcePath}`),
+      ({ value, allowSuffix }) =>
+        value === sourcePath ||
+        (allowSuffix && value.endsWith(`/${sourcePath}`)),
     )
     .map(({ value }) => value);
 
-/** The path of the source map a source-module node was parsed from. */
-const sourceMapPath = (node: ApplicationNode): string | null => {
-  for (const { evidence } of node.observations) {
-    if (
-      evidence.extractor.operation === "parse-local-source-map" &&
-      evidence.location.available &&
-      evidence.location.value.kind === "artifact-path"
-    )
-      return evidence.location.value.path;
-  }
-  return null;
-};
-
-/** Resolves a source-map entry that climbs out of the map's directory against that directory. */
-const resolveFromMap = (raw: string, mapPath: string | null): string => {
-  const path = raw.replaceAll("\\", "/");
-  if (mapPath === null || SCHEME_URL.test(path)) return raw;
-  return /^(\.\/)*\.\.\//u.test(path)
-    ? posix.join(posix.dirname(mapPath), path)
-    : raw;
-};
-
-const addJsonPath = (paths: CurrentPath[], value: unknown): void => {
-  if (typeof value === "string") addPath(paths, "observation-path", value);
+const addJsonPath = (
+  paths: CurrentPath[],
+  value: unknown,
+  mapPath?: string,
+): void => {
+  if (typeof value === "string")
+    addPath(paths, "observation-path", value, mapPath);
 };
 
 const addPath = (
   paths: CurrentPath[],
   kind: CurrentPathKind,
   raw: string,
+  mapPath?: string,
 ): void => {
-  const value = normalizeCurrentPath(raw);
-  if (value !== null) paths.push({ kind, value });
+  const portable = raw.replaceAll("\\", "/");
+  const relative =
+    !SCHEME_URL.test(portable) &&
+    !portable.startsWith("/") &&
+    !/^[a-z]:\//iu.test(portable);
+  const resolved =
+    mapPath !== undefined && relative
+      ? posix.join(posix.dirname(mapPath.replaceAll("\\", "/")), portable)
+      : raw;
+  const value = normalizeCurrentPath(resolved);
+  if (value !== null)
+    paths.push({
+      kind,
+      value,
+      allowSuffix: mapPath === undefined || !relative,
+    });
 };
 
 /** Matches a `scheme://...` URL prefix; bare filesystem paths keep `?`/`#`. */
@@ -315,9 +337,10 @@ const normalizeCurrentPath = (raw: string): string | null => {
   const parts: string[] = [];
   for (const part of withoutScheme.replaceAll("\\", "/").split("/")) {
     if (part === "" || part === ".") continue;
-    // Source maps name originals relative to the map, e.g. `../src/a.ts`.
-    if (part === "..") parts.pop();
-    else parts.push(part);
+    if (part === "..") {
+      if (parts.length === 0) return null;
+      parts.pop();
+    } else parts.push(part);
   }
   if (parts.length === 0) return null;
   return parts.join("/");
@@ -326,7 +349,10 @@ const normalizeCurrentPath = (raw: string): string | null => {
 const uniquePaths = (paths: readonly CurrentPath[]): CurrentPath[] =>
   [
     ...new Map(
-      paths.map((path) => [`${path.kind}\0${path.value}`, path]),
+      paths.map((path) => [
+        `${path.kind}\0${path.value}\0${String(path.allowSuffix)}`,
+        path,
+      ]),
     ).values(),
   ].sort((left, right) =>
     compareCodePoints(
