@@ -138,6 +138,31 @@ listed after the table because its connector is not one of these files:
 | VS Code            | `vscode`         |
 | Grok Build         | `grok_build`     |
 | OMP                | `omp`            |
+| Pi                 | `pi`             |
+
+For [Pi](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/mcp.md),
+setup writes a `type: "stdio"` entry under `mcpServers.rea` in the user-level
+`~/.pi/agent/mcp.json` and installs the bundled skill under `~/.agents/skills`.
+Use `rea setup --client pi --dry-run --json` to inspect the plan, then
+`rea setup --client pi --yes --json` to approve it. Check the registration with
+`rea doctor --client pi --json`.
+
+Setup follows Pi's `PI_CODING_AGENT_DIR`: unset or empty selects the default;
+`~` and `~/` expand to the home directory; absolute paths and file URLs select
+that directory; relative paths stay relative to the command's working directory.
+On Windows, native paths, `~\`, and Git Bash/MSYS, Cygwin, and WSL drive paths
+are normalized as Pi does. Run REA and Pi from the same working directory when
+using a relative override. Pi has no profiles: `OMP_PROFILE`, `PI_PROFILE`,
+`PI_CONFIG_DIR`, and OMP's `enabledServers`/`disabledServers` lists do not affect
+Pi registration. Doctor accepts an omitted `type` for stdio but reports a
+non-stdio type as invalid; `enabled: false` stays disabled.
+
+REA configures only the user scope. Pi also reads `.pi/mcp.json` in trusted
+projects; a same-name project entry can replace the user entry or override its
+enabled state and exposure. Check that file if the user registration is aligned
+but unavailable in a project. An extension that registers `/mcp` can replace
+Pi's built-in MCP support and use its own configuration instead. Run `/reload`
+in an existing Pi session after changing servers outside the session.
 
 For OMP, setup writes a `type: "stdio"` entry to the user-level
 `~/.omp/agent/mcp.json`. It follows `PI_CONFIG_DIR`, an absolute

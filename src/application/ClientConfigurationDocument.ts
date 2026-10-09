@@ -1331,6 +1331,7 @@ export const clientRegistrationEntry = (
       };
     case "vscode":
     case "omp":
+    case "pi":
       return {
         type: "stdio",
         command: executable,

@@ -181,9 +181,9 @@ const registrationAligned = (
   )
     return false;
   if (client.format === "vscode" && registration.type !== "stdio") return false;
-  // OMP infers stdio for a command entry without an explicit type.
+  // OMP and Pi infer stdio for a command entry without an explicit type.
   if (
-    client.format === "omp" &&
+    (client.format === "omp" || client.format === "pi") &&
     registration.type !== undefined &&
     registration.type !== "stdio"
   )
@@ -245,7 +245,7 @@ const parseRegistration = (
   if (client.format === "commandcode" && registration.transport !== "stdio")
     throw new TypeError("Expected an stdio registration");
   if (
-    client.format === "omp" &&
+    (client.format === "omp" || client.format === "pi") &&
     registration.type !== undefined &&
     registration.type !== "stdio"
   )
