@@ -347,6 +347,34 @@ describe("JavaScript export return-shape uncertain presence", () => {
   });
 });
 
+describe("JavaScript export matching uncertain projections", () => {
+  it.each(["delete result.count;", "result.count = query();"])(
+    "omits matching uncertain projections after %s",
+    async (mutation) => {
+      const source = `export default function make() {
+        const result = { kind: "result", count: 1 };
+        ${mutation}
+        return result;
+      }`;
+      const graphs = await analyzeSources({ left: source, right: source });
+      const result = compare(...graphs);
+      expect(result.changes).toEqual([]);
+      expect(result.summary).toEqual({
+        added: 0,
+        removed: 0,
+        changed: 0,
+        unknown: 0,
+      });
+      expect(result.coverage.status).toBe("partial");
+      expect(
+        result.property_inventories.every(
+          ({ properties }) => !properties.includes("/count"),
+        ),
+      ).toBe(true);
+    },
+  );
+});
+
 describe("JavaScript export property presence boundaries", () => {
   it("normalizes omitted legacy presence before comparing identical literals and unions", async () => {
     const source =

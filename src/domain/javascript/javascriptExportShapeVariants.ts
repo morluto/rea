@@ -6,13 +6,15 @@ import type {
   JavaScriptExportShapeComparisonChange,
   JavaScriptExportShapeComparisonResult,
   JavaScriptExportShapePropertyInventory,
-  ProjectedExportReturnShapes,
 } from "./javascriptExportShapeComparisonSchemas.js";
 import { compareCodePoints, uniqueSorted } from "../canonicalOrdering.js";
-import type { SelectedJavaScriptExport } from "./javascriptExportShapeSelection.js";
+import type {
+  SelectedJavaScriptExport,
+  RetainedJavaScriptExportShapes,
+} from "./javascriptExportShapeSelection.js";
 
 type Primitive = string | number | boolean | null;
-type Shape = ProjectedExportReturnShapes["static_return_shapes"][number];
+type Shape = RetainedJavaScriptExportShapes["shapes"][number];
 type Field = Shape["fields"][number];
 type SelectorResult = JavaScriptExportShapeComparisonResult["left"];
 type ValueAvailability = JavaScriptExportShapeComparisonChange["left"];
@@ -379,6 +381,13 @@ const fieldChangeStatus = ({
   | null => {
   const leftPresence = fieldPresence(leftShape, leftField, path);
   const rightPresence = fieldPresence(rightShape, rightField, path);
+  if (
+    leftField !== undefined &&
+    rightField !== undefined &&
+    canonicalExportShapeValue(leftField) ===
+      canonicalExportShapeValue(rightField)
+  )
+    return null;
   if (leftPresence === "absent" && rightPresence === "absent") return null;
   if (
     leftPresence === "unknown-coverage" ||
@@ -388,11 +397,6 @@ const fieldChangeStatus = ({
   if (leftPresence === "absent") return "added";
   if (rightPresence === "absent") return "removed";
   if (leftField !== undefined && rightField !== undefined) {
-    if (
-      canonicalExportShapeValue({ ...leftField, presence: leftPresence }) ===
-      canonicalExportShapeValue({ ...rightField, presence: rightPresence })
-    )
-      return null;
     return leftField.state === "unknown" || rightField.state === "unknown"
       ? "unknown"
       : "changed";
@@ -405,12 +409,7 @@ const fieldPresence = (
   field: Field | undefined,
   path: string,
 ): PropertyPresence => {
-  // Legacy unknown fields did not distinguish unresolved values from uncertain slots.
-  if (field !== undefined)
-    return (
-      field.presence ??
-      (field.state === "unknown" ? "unknown-coverage" : "present")
-    );
+  if (field !== undefined) return field.presence;
   return propertyCoverageComplete(shape, parentPointer(path))
     ? "absent"
     : "unknown-coverage";
