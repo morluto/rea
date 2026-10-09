@@ -279,7 +279,25 @@ export async function verifyGhidraBoundaries(
     await cli("inspect-native-instruction", address.toUpperCase()),
     baseline,
   );
-  const interior = `0x${(BigInt(address) + 1n).toString(16)}`;
+  // x86 function entries can begin with a one-byte PUSH. Locate an observed
+  // multi-byte instruction instead of assuming entry + 1 is an interior byte.
+  let multiByteInstruction;
+  for (const range of original.procedure.body.ranges) {
+    let cursor = BigInt(range.start);
+    while (cursor <= BigInt(range.end)) {
+      const instruction = await call("inspect_native_instruction", {
+        address: `0x${cursor.toString(16)}`,
+      });
+      if (instruction.status === "decoded" && instruction.length > 1) {
+        multiByteInstruction = instruction;
+        break;
+      }
+      cursor += BigInt(instruction.length ?? 1);
+    }
+    if (multiByteInstruction !== undefined) break;
+  }
+  assert.ok(multiByteInstruction, "Fixture lacks a multi-byte instruction");
+  const interior = `0x${(BigInt(multiByteInstruction.address) + 1n).toString(16)}`;
   assert.equal(
     (await call("inspect_native_instruction", { address: interior })).status,
     "not-instruction-boundary",
