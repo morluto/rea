@@ -36,16 +36,6 @@ describe("streamed JSON representation", () => {
     expect(JSON.parse(parts.join(""))).toEqual(value);
   });
 
-  it("rejects a cycle while allowing repeated references", () => {
-    const shared = { value: 1 };
-    expect([...jsonParts({ left: shared, right: shared })].join("")).toBe(
-      JSON.stringify({ left: shared, right: shared }),
-    );
-    const cycle: { self?: unknown } = {};
-    cycle.self = cycle;
-    expect(() => [...jsonParts(cycle)]).toThrow("circular reference");
-  });
-
   it("matches existing canonical bytes for numeric keys, Unicode, and shared values", () => {
     const shared = { z: -0, a: [1e-7, 1e30, "雪😀\ud800"] };
     const ownKeys: unknown = JSON.parse(

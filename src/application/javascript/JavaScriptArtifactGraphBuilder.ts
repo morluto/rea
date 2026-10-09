@@ -132,14 +132,19 @@ const graphCoverage = (context: JavaScriptArtifactGraphContext) => {
     sourceMapPolicyGap ||
     malformedStructuredData ||
     partialJavaScript;
-  if (context.analysis.truncated_scopes > 0)
-    return partialApplicationCoverage([], null);
   if (resourceLimits.length > 0)
     return partialApplicationCoverage(
       semanticResourceLimitCoverage(resourceLimits),
       null,
     );
   if (unknownGap) return partialApplicationCoverage([], null);
+  if (context.snapshot.integrity_contradictions.length > 0) {
+    const nestedArchiveWasOpaque =
+      context.snapshot.integrity_contradictions.some(({ logical_path }) =>
+        logical_path.toLowerCase().endsWith(".asar"),
+      );
+    return partialApplicationCoverage([], nestedArchiveWasOpaque ? null : 0);
+  }
   return completeApplicationCoverage();
 };
 
@@ -178,6 +183,10 @@ const graphLimitations = (
   );
   return [
     ...context.analysis.limitations,
+    ...context.snapshot.integrity_contradictions.map(
+      ({ logical_path: path }) =>
+        `Artifact integrity metadata contradicts observed bytes at ${path}; the observed bytes are untrusted.`,
+    ),
     ...selfReferenceOmissions(
       relationshipOmissions.selfImports,
       ["import specifier", "import specifiers"],

@@ -1,3 +1,4 @@
+import { primitiveByteExpansionSource } from "../../../tests/fixtures/javascriptPrimitiveExpansion.js";
 import * as t from "@babel/types";
 import { expect, it } from "vitest";
 
@@ -111,15 +112,7 @@ it("preserves primitive candidate budget unknowns in semantic graph coverage", (
 });
 
 it("preserves derived string-byte limit reasons in semantic graph unknowns", () => {
-  const declarations = ['const value0 = "x";'];
-  for (let index = 1; index <= 30; index += 1) {
-    const previous = `value${String(index - 1)}`;
-    declarations.push(
-      `const value${String(index)} = ${previous} + ${previous};`,
-    );
-  }
-  declarations.push("const answer = value30;");
-  const source = declarations.join("\n");
+  const source = primitiveByteExpansionSource();
   const ir = analyzeJavaScriptSemantics(source);
   const graph = graphFor(source, ir);
 
@@ -380,7 +373,6 @@ const graphFor = (source: string, ir = analyzeJavaScriptSemantics(source)) => {
     findings: 0,
     modules: 0,
     parse_failures: 0,
-    truncated_scopes: 0,
     limitations: [],
   };
   return buildJavaScriptSemanticGraph({

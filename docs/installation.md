@@ -192,6 +192,19 @@ default. Hopper is a separate optional choice: setup shows its proposed
 installation or connection and requires its own explicit approval. It can also
 save verified paths for an existing Ghidra installation.
 
+The bundled skill is installed where each selected client discovers personal
+skills: Claude Code uses `~/.claude/skills` (or
+`$CLAUDE_CONFIG_DIR/skills` when configured), while other supported clients
+use the shared `~/.agents/skills` directory. A mixed selection plans both
+paths. Selecting the skill without a client uses the shared directory. Setup
+leaves existing skill copies in other locations untouched.
+
+`doctor --skill --json` verifies the selected copies against the bundled
+instructions and references. Consumers should use `identity.skill.state`,
+`installed_version`, and `installed_tool_count` for skill readiness. The
+obsolete `installed_catalog_digest` field has been removed; current catalog
+identity remains available at `identity.catalog`.
+
 After selection, review the plan's exact paths and changes and approve before
 REA writes files or installs Hopper. You can cancel at any prompt.
 
@@ -199,7 +212,7 @@ Before applying changes, REA checks your current configuration. The plan lists:
 
 - an existing Hopper installation, a verified existing Ghidra installation, or the official Hopper package it proposes to install;
 - each detected agent configuration path;
-- the REA skill destination;
+- each selected REA skill destination;
 - external software, network origins, integrity evidence, and package-manager
   commands.
 
@@ -290,7 +303,7 @@ vendor-defined limits, and a paid license is optional. REA reuses any detected
 installation and preserves Hopper during uninstall.
 
 The supported native host baseline is macOS 12+, Ubuntu 24.04+, Fedora 41+,
-64-bit Arch Linux, or CachyOS. Ghidra and IDA have their own provider-specific
+Nobara 44+, 64-bit Arch Linux, or CachyOS. Ghidra and IDA have their own provider-specific
 host requirements; Windows Ghidra uses the [experimental P0 boundary](windows-ghidra-p0.md).
 
 On macOS, approved setup downloads the official DMG, checks its published size
@@ -658,7 +671,8 @@ and other MCP servers. Purging removes only REA's cache and state under
 `~/.rea`. A client configuration that is malformed, unreadable, or at an unsafe
 path stops the operation before anything is removed, and a client that fails
 while being updated stops the remaining removals. A purge path that is a
-symbolic link is retained and reported rather than followed. See the
+symbolic link is retained and reported rather than followed. Uninstall checks
+REA's managed shared and Claude Code personal skill locations. See the
 [CLI guide](cli.md#output-and-exit-status) for exit statuses.
 
 ## MCP Registry

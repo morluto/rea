@@ -604,11 +604,20 @@ const provenanceForExpression = (
       provenanceForExpression(left, nestedContext(context)),
       provenanceForExpression(right, nestedContext(context)),
     ];
-    const origins = candidates.flatMap((candidate) => candidate.origins);
+    const origins = uniqueSemanticOrigins(
+      candidates.flatMap((candidate) => candidate.origins),
+    );
+    const allModuleOrigins = candidates.every(
+      ({ status }) => status === "module",
+    );
+    if (allModuleOrigins && origins.length === 1)
+      return semanticOriginsProvenance(origins);
     return origins.length > 0
       ? semanticAmbiguousProvenance(
-          uniqueSemanticOrigins(origins),
-          "Multiple module origins.",
+          origins,
+          allModuleOrigins
+            ? "Multiple module origins."
+            : "Conditional provenance includes a non-module alternative.",
         )
       : semanticUnresolvedProvenance(
           "unknown",

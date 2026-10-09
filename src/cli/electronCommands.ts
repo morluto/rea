@@ -193,11 +193,16 @@ const registerJavaScriptApplicationCommand = (
       path: z.string().describe("ASAR or extracted application path"),
     }),
     options: javascriptApplicationOptions,
+    alias: { integrityPolicy: "integrity-policy" },
     run: ({ args, options, format }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.analyzeJavaScriptApplication, () =>
           runCliJavaScriptApplicationAnalysis(
-            { input_path: args.path, format: options.artifactFormat },
+            {
+              input_path: args.path,
+              format: options.artifactFormat,
+              integrity_policy: options.integrityPolicy,
+            },
             resultOutput === undefined
               ? undefined
               : {

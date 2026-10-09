@@ -118,7 +118,7 @@ export const buildJavaScriptSemanticGraph = ({
     if (analyzed.semantic !== null)
       projection.projectFile(analyzed.file, analyzed.semantic.ir);
   }
-  return projection.finish(rootArtifactSha256, applicationGraph, analysis);
+  return projection.finish(rootArtifactSha256, applicationGraph);
 };
 
 /** File-local semantic projection that does not retain consumed source IR. */
@@ -130,12 +130,10 @@ export interface JavaScriptSemanticGraphProjection {
   readonly finish: (
     rootArtifactSha256: string,
     applicationGraph: BuilderInput["applicationGraph"],
-    analysis: Pick<JavaScriptArtifactAnalysis, "truncated_scopes">,
   ) => JavaScriptSemanticGraph;
   readonly finishImmutableSteps: (
     rootArtifactSha256: string,
     applicationGraph: BuilderInput["applicationGraph"],
-    analysis: Pick<JavaScriptArtifactAnalysis, "truncated_scopes">,
   ) => Generator<void, JavaScriptSemanticGraph>;
 }
 
@@ -171,7 +169,6 @@ export const createJavaScriptSemanticGraphProjection =
       factory: (input: unknown) => Value,
       rootArtifactSha256: string,
       applicationGraph: BuilderInput["applicationGraph"],
-      analysis: Pick<JavaScriptArtifactAnalysis, "truncated_scopes">,
     ): Value => {
       bindSemanticGraphApplicationNodes(state, applicationGraph);
       if (state.roots.size === 0) addFallbackRoot(rootArtifactSha256, state);
@@ -202,7 +199,7 @@ export const createJavaScriptSemanticGraphProjection =
               : [],
           families: JAVASCRIPT_SEMANTIC_RELATION_FAMILIES.map((family) => ({
             family,
-            status: semanticFamilyStatus(family, analysis),
+            status: semanticFamilyStatus(family),
             retained_relations: [...state.relations.values()].filter(
               (relation) =>
                 JAVASCRIPT_SEMANTIC_RELATION_FAMILY[relation.relation] ===
@@ -237,19 +234,17 @@ export const createJavaScriptSemanticGraphProjection =
     };
     return {
       projectFile: projectSource,
-      finish: (rootArtifactSha256, applicationGraph, analysis) =>
+      finish: (rootArtifactSha256, applicationGraph) =>
         finishWith(
           createJavaScriptSemanticGraph,
           rootArtifactSha256,
           applicationGraph,
-          analysis,
         ),
-      finishImmutableSteps: (rootArtifactSha256, applicationGraph, analysis) =>
+      finishImmutableSteps: (rootArtifactSha256, applicationGraph) =>
         finishWith(
           createImmutableJavaScriptSemanticGraphSteps,
           rootArtifactSha256,
           applicationGraph,
-          analysis,
         ),
     };
   };

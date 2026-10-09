@@ -42,6 +42,7 @@ export type ClientConfigurationInspection =
 export interface SetupHost {
   readonly platform: NodeJS.Platform;
   readonly homeDirectory: string;
+  readonly claudeCodeSkillsDirectory: string;
   readonly registrationCommand: readonly string[];
   readonly nodeVersion: string;
   macosVersion(): Promise<string | undefined>;
@@ -65,8 +66,10 @@ export interface SetupHost {
     providerEnvironment: SetupProviderEnvironment,
     command: readonly string[],
   ): Promise<ClientConfigurationInspection>;
-  skillNeedsInstall(): Promise<boolean>;
-  installSkill(): Promise<"installed" | "unchanged" | "failed">;
+  skillNeedsInstall(clientIds: readonly string[]): Promise<boolean>;
+  installSkill(
+    clientIds: readonly string[],
+  ): Promise<"installed" | "unchanged" | "failed">;
   doctor(scope?: DoctorScope): Promise<Awaited<ReturnType<typeof runDoctor>>>;
 }
 /** Structured setup outcome carrying remediation instead of prompting. */

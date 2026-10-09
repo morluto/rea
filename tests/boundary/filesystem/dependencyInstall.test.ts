@@ -100,7 +100,7 @@ describe("dependency install freshness", () => {
   it("checks installed dependencies before restoring a cached build", async () => {
     const root = await createBuildCacheFixture();
     const seeded = await runNpm(root, ["run", "build:cached"]);
-    expect(seeded.status, seeded.stderr).toBe(0);
+    expect(seeded.status, `${seeded.stdout}${seeded.stderr}`).toBe(0);
 
     const rootLock = asRecord(
       JSON.parse(await readFile(join(root, "package-lock.json"), "utf8")),
@@ -189,7 +189,13 @@ const createBuildCacheFixture = async (): Promise<string> => {
   );
   await writeFile(
     join(root, "scripts/cache-fixture-build.mjs"),
-    'import { mkdir, writeFile } from "node:fs/promises"; await mkdir("dist", { recursive: true }); await writeFile("dist/cache-fixture.js", "built"); await writeFile("dist/catalogIdentity.js", "export const CATALOG_IDENTITY = { counts: { mcp_tools: 1 } };\\n");\n',
+    `import { mkdir, readFile, writeFile } from "node:fs/promises";
+const { name, version } = JSON.parse(await readFile("package.json", "utf8"));
+await mkdir("dist", { recursive: true });
+await writeFile("dist/cache-fixture.js", "built");
+await writeFile("dist/catalogIdentity.js", "export const CATALOG_IDENTITY = { counts: { mcp_tools: 1 } };\\n");
+await writeFile("dist/generatedPackageMetadata.js", "export const PACKAGE_METADATA = " + JSON.stringify({ name, version }) + ";\\n");
+`,
   );
   await createNodeModulesLinks(root);
   await writeFile(
