@@ -650,6 +650,39 @@ itWithCaptureCapability(
 );
 
 itWithCaptureCapability(
+  "cancels before any deadline without starting finalization",
+  async () => {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 1_500);
+    const started = Date.now();
+    const { result } = await captureFinalizationFixture(
+      "ignoring",
+      { timeout_ms: 20_000, finalization_ms: 20_000 },
+      controller.signal,
+    );
+
+    if (result.ok) throw new Error("expected cancellation");
+    if (!(result.error instanceof ProcessCaptureError)) throw result.error;
+    const partial = result.error.partialObservation;
+    if (partial === undefined || !("observations" in partial))
+      throw new Error("expected cancelled process observations");
+    expect(
+      partial.observations.exit,
+      "cancellation before any deadline is not a finalization",
+    ).toMatchObject({ state: "available", value: { reason: "cancelled" } });
+    expect(
+      partial.observations.exit,
+      "no SIGTERM interval ran, so no finalization record exists",
+    ).not.toHaveProperty("value.finalization");
+    expect(
+      Date.now() - started,
+      "cancellation does not wait for either deadline",
+    ).toBeLessThan(10_000);
+  },
+  15_000,
+);
+
+itWithCaptureCapability(
   "cancels immediately while a finalization interval is running",
   async () => {
     const controller = new AbortController();
