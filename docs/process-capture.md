@@ -182,7 +182,10 @@ if the target is still running after `finalization_ms`. `exit.reason` keeps the
 initiating deadline, so a target that exits during finalization is still
 reported as `timeout` or `idle_timeout`. `exit.finalization` then records
 `requested_ms`, `signal`, `outcome` (`target_exited` or `forced_kill`) and
-`elapsed_ms`; it is absent when no finalization was attempted. The wall-clock
+`elapsed_ms`; it is absent when no finalization was attempted. As for every
+deadline exit, `exit.code` stays `null`; `outcome` records that the target left
+by itself. `elapsed_ms` is timing data, measured from the `SIGTERM` to the exit
+for `target_exited` and to the `SIGKILL` for `forced_kill`. The wall-clock
 bound becomes `timeout_ms + finalization_ms + settle_ms`. Cancellation is not
 delayed: it sends `SIGKILL` immediately, also during finalization, and ends the
 run as cancelled. A scenario with the default `finalization_ms` of `0` keeps its
