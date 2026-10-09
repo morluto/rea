@@ -67,3 +67,15 @@ it("keeps module references attributed across many real factory ranges", () => {
     )?.module_key,
   ).toBe("module-0");
 });
+
+it("retains the chunk runtime through a TypeScript-only expression wrapper", () => {
+  const analysis = analyzeJavaScriptStaticSource(
+    '(globalThis.webpackChunkApp satisfies unknown).push([[1], { "entry": function () {} }]);',
+  );
+  expect(analysis.bundler_registrations).toEqual([
+    expect.objectContaining({
+      runtime: "webpackChunkApp",
+      modules: [expect.objectContaining({ module_key: "entry" })],
+    }),
+  ]);
+});

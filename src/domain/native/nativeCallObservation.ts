@@ -5,7 +5,7 @@ const hexSchema = z.string().regex(/^0x[0-9a-f]+$/u);
 const nativeString = z
   .string()
   .regex(
-    /^[^\u0000]*$/u,
+    /^[^\x00]*$/u,
     "Native launch and breakpoint strings cannot contain NUL",
   );
 /** Objective-C class names and selectors never contain spaces or brackets. */
@@ -61,10 +61,8 @@ export const nativeCallObservationInputSchema = z.strictObject({
       z
         .string()
         .min(1)
-        .regex(/^[^=\u0000]+$/u, "Environment names cannot contain '=' or NUL"),
-      z
-        .string()
-        .regex(/^[^\u0000]*$/u, "Environment values cannot contain NUL"),
+        .regex(/^[^=\x00]+$/u, "Environment names cannot contain '=' or NUL"),
+      z.string().regex(/^[^\x00]*$/u, "Environment values cannot contain NUL"),
     )
     .default({})
     .describe("Overrides on top of the environment REA runs with."),

@@ -12,6 +12,10 @@ For passive inspection, select `include_script_sources: true` (CLI:
 `capture.network.response_body: true`. Save either the complete Evidence record
 or its normalized result as UTF-8 JSON. MCP `structuredContent` contains the complete Evidence record.
 
+The capture must be a regular file. A symlink to a regular file is accepted;
+directories, named pipes and device files are rejected before reading capture
+bytes or creating output.
+
 ```sh
 rea export-web-scripts /analysis/capture.json /analysis/exported-scripts --json
 rea analyze-javascript-application /analysis/exported-scripts/files --json

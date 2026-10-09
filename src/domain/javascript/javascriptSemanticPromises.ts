@@ -5,7 +5,10 @@ import type {
   JavaScriptSemanticPromiseOperation,
 } from "./javascriptSemanticIr.js";
 import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
-import { semanticStaticPropertyName } from "./javascriptAstValues.js";
+import {
+  semanticStaticPropertyName,
+  unwrapJavaScriptExpression,
+} from "./javascriptAstValues.js";
 import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
@@ -173,7 +176,9 @@ const isUnshadowedGlobalPromise = (
 const isPromiseProducer = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): boolean => promiseCandidateDetails(unwrapExpression(node), state) !== null;
+): boolean =>
+  promiseCandidateDetails(unwrapJavaScriptExpression(node).node, state) !==
+  null;
 
 const semanticPromiseId = (kind: PromiseKind, node: t.Node): string =>
   `promise:${kind}:${String(node.start ?? -1)}:${String(node.end ?? -1)}`;
@@ -207,7 +212,7 @@ const ownershipAtAncestor = (
 ): PromiseOwnership | "boundary" | null => {
   const { candidate, candidateByNode, state, returnSiteIdFor } = context;
   if (t.isAwaitExpression(ancestor))
-    return unwrapExpression(ancestor.argument) === candidate.node
+    return unwrapJavaScriptExpression(ancestor.argument).node === candidate.node
       ? emptyOwnership("awaited")
       : "boundary";
   const outer = candidateByNode.get(ancestor);
@@ -230,7 +235,7 @@ const ownershipAtAncestor = (
   if (t.isReturnStatement(ancestor)) {
     if (
       ancestor.argument == null ||
-      unwrapExpression(ancestor.argument) !== candidate.node
+      unwrapJavaScriptExpression(ancestor.argument).node !== candidate.node
     )
       return "boundary";
     return returnedPromiseOwnership(
@@ -240,14 +245,15 @@ const ownershipAtAncestor = (
     );
   }
   if (t.isExpressionStatement(ancestor))
-    return unwrapExpression(ancestor.expression) === candidate.node
+    return unwrapJavaScriptExpression(ancestor.expression).node ===
+      candidate.node
       ? emptyOwnership("detached")
       : "boundary";
   const callableId = semanticCallableIdForNode(ancestor);
   if (callableId === null || callableId !== candidate.ownerCallableId)
     return null;
   return t.isArrowFunctionExpression(ancestor) &&
-    unwrapExpression(ancestor.body) === candidate.node
+    unwrapJavaScriptExpression(ancestor.body).node === candidate.node
     ? returnedPromiseOwnership(
         candidate.ownerCallableId,
         range(ancestor.body),
@@ -276,7 +282,7 @@ const assignedPromiseBinding = (
     ? ancestor.init
     : ancestor.right;
   if (source == null) return undefined;
-  if (unwrapExpression(source) !== candidate) return undefined;
+  if (unwrapJavaScriptExpression(source).node !== candidate) return undefined;
   return scalarAssignedResultBinding(
     assignedSemanticResultBindings(source, [ancestor], state),
   );
@@ -302,7 +308,8 @@ const outerConsumesCandidate = (
   ) {
     const member = dataEffectMemberCallee(outer.node);
     return (
-      member !== null && unwrapExpression(member.object) === candidate.node
+      member !== null &&
+      unwrapJavaScriptExpression(member.object).node === candidate.node
     );
   }
   if (
@@ -316,7 +323,7 @@ const outerConsumesCandidate = (
         (element) =>
           element !== null &&
           !t.isSpreadElement(element) &&
-          unwrapExpression(element) === candidate.node,
+          unwrapJavaScriptExpression(element).node === candidate.node,
       )
     );
   }
@@ -441,7 +448,7 @@ const resolvePromiseExpression = (
   context: PromiseExpressionResolutionContext,
 ): PromiseResolution => {
   const { current, candidateByNode, state, seenBindings } = context;
-  const node = unwrapExpression(rawNode);
+  const node = unwrapJavaScriptExpression(rawNode).node;
   const direct = candidateByNode.get(node);
   if (direct !== undefined && direct.promiseId !== current.promiseId)
     return { promiseIds: [direct.promiseId], status: "complete" };
@@ -475,18 +482,6 @@ const promiseResolutionContext = (
   state,
   seenBindings: new Set(),
 });
-
-const unwrapExpression = (node: t.Node): t.Node => {
-  if (
-    t.isParenthesizedExpression(node) ||
-    t.isTSAsExpression(node) ||
-    t.isTSSatisfiesExpression(node) ||
-    t.isTSNonNullExpression(node) ||
-    t.isTypeCastExpression(node)
-  )
-    return unwrapExpression(node.expression);
-  return node;
-};
 
 const combinePromiseResolutions = (
   resolutions: readonly PromiseResolution[],

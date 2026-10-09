@@ -25,7 +25,7 @@ import {
  * patterns avoid look-around, which RE2 and Rust validators reject.
  */
 const ROOT_RELATIVE_PATH =
-  /^(?:[^\x2f\\\u0000.][^\x2f\\\u0000]*|\.[^\x2f\\\u0000.][^\x2f\\\u0000]*|\.\.[^\x2f\\\u0000]+)(?:\x2f(?:[^\x2f\\\u0000.][^\x2f\\\u0000]*|\.[^\x2f\\\u0000.][^\x2f\\\u0000]*|\.\.[^\x2f\\\u0000]+))*$/u;
+  /^(?:[^\x2f\\\x00.][^\x2f\\\x00]*|\.[^\x2f\\\x00.][^\x2f\\\x00]*|\.\.[^\x2f\\\x00]+)(?:\x2f(?:[^\x2f\\\x00.][^\x2f\\\x00]*|\.[^\x2f\\\x00.][^\x2f\\\x00]*|\.\.[^\x2f\\\x00]+))*$/u;
 const rootRelativePathSchema = z
   .string()
   .min(1)

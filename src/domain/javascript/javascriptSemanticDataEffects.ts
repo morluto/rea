@@ -12,6 +12,7 @@ import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
   semanticStaticPropertyKey,
   semanticStaticPropertyName,
+  unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
   resolveSemanticBindingState,
@@ -178,16 +179,7 @@ const collectDefaults = (
       (node.operator !== "??" && node.operator !== "||")
     )
       return;
-    let source = node.left;
-    while (
-      t.isParenthesizedExpression(source) ||
-      t.isTSAsExpression(source) ||
-      t.isTSTypeAssertion(source) ||
-      t.isTypeCastExpression(source) ||
-      t.isTSSatisfiesExpression(source) ||
-      t.isTSNonNullExpression(source)
-    )
-      source = source.expression;
+    const source = unwrapJavaScriptExpression(node.left).node;
     const candidate = configurationsByNode.get(source);
     if (candidate === undefined) return;
     output.push({

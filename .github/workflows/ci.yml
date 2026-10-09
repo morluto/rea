@@ -8,7 +8,9 @@ on:
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # The latest main push verifies the full tree, including earlier changes.
+  # Publication uses its own release workflow and concurrency group.
+  cancel-in-progress: true
 
 env:
   HUSKY: "0"
@@ -47,15 +49,22 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          if [[ "${{ github.event_name }}" != "pull_request" ]]; then
+          if [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
             echo "required=true" >> "${GITHUB_OUTPUT}"
-          elif git diff --quiet "${BASE_SHA}" "${HEAD_SHA}" -- \
+          # Compare the PR's changes, excluding unrelated updates on its base.
+          elif git diff --quiet "${BASE_SHA}...${HEAD_SHA}" -- \
             . \
             ':(exclude)docs/**' \
+            ':(top,exclude,glob)README*.md' \
             ':(exclude)AGENTS.md' \
             ':(exclude)CONTRIBUTING.md'; then
             echo "required=false" >> "${GITHUB_OUTPUT}"
           else
+            diff_status=$?
+            # A failed comparison must fail classification, not report a scope.
+            if [[ "${diff_status}" -ne 1 ]]; then
+              exit "${diff_status}"
+            fi
             echo "required=true" >> "${GITHUB_OUTPUT}"
           fi
 
@@ -302,7 +311,7 @@ jobs:
       - run: npm run verify:windows-native:artifact
       - run: npm run verify:package
       - name: Verify real Node Inspector discovery and observation
-        if: matrix.platform == 'darwin'
+        timeout-minutes: 10
         run: npm run verify:inspector
 
   apple-artifacts:
@@ -365,48 +374,6 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  javascript-runtime-observation:
-    name: JavaScript runtime observation (${{ matrix.os }})
-    needs: changes
-    if: github.event_name == 'push' || needs.changes.outputs.code == 'true'
-    strategy:
-      fail-fast: false
-      max-parallel: 2
-      matrix:
-        include:
-          - os: ubuntu-latest
-            platform: linux
-            architecture: x64
-          - os: ubuntu-24.04-arm
-            platform: linux
-            architecture: arm64
-          - os: windows-latest
-            platform: win32
-            architecture: x64
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
-    env:
-      NODE_OPTIONS: "--max-old-space-size=1024"
-      UV_THREADPOOL_SIZE: "2"
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - name: Verify native runtime identity
-        env:
-          EXPECTED_CI_PLATFORM: ${{ matrix.platform }}
-          EXPECTED_CI_ARCHITECTURE: ${{ matrix.architecture }}
-        run: >-
-          node -e "const assert = require('node:assert/strict');
-          assert.equal(process.platform, process.env.EXPECTED_CI_PLATFORM);
-          assert.equal(process.arch, process.env.EXPECTED_CI_ARCHITECTURE);
-          console.log(JSON.stringify({ platform: process.platform, architecture: process.arch, node: process.version }));"
-      - run: npm ci
-      - name: Verify real Node Inspector discovery and observation
-        run: npm run verify:inspector
-
   windows-curated:
     name: Windows capability and package lane
     needs: [changes, windows-native-build]
@@ -463,6 +430,7 @@ jobs:
           tests/boundary/providers/ghidra/ghidraTransport.test.ts
           tests/boundary/providers/ghidra/ghidraTargetSnapshot.test.ts
           tests/boundary/providers/ghidra/ghidraLauncher.test.ts
+          tests/boundary/providers/hopper/hopperClient.cleanupRetry.test.ts
           src/windows/WindowsNativeLoader.test.ts
           src/windows/WindowsOwnedProcess.test.ts
           src/ghidra/GhidraLauncherEnvironment.test.ts
@@ -474,6 +442,12 @@ jobs:
           tests/process-global/updateMaintenance.test.ts
           tests/conformance/providers/ghidra/realGhidraWindowsWorkflow.test.ts
       - run: npm run verify:windows-native
+      - name: Verify real Node Inspector discovery and observation
+        timeout-minutes: 10
+        env:
+          NODE_OPTIONS: "--max-old-space-size=1024"
+          UV_THREADPOOL_SIZE: "2"
+        run: npm run verify:inspector
       - run: npm run verify:package:windows
       - name: Verify native directory identity on Node 24
         run: >-

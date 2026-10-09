@@ -269,7 +269,7 @@ const stopProcess = async (
   input.logger.info(diagnostic, "Owned Hopper launcher shutdown completed");
   if (stopped.status !== "incomplete") {
     if (
-      input.resources.launch?.shutdownMode === "process-cleanup" &&
+      input.resources.launch?.providerLifetime === "launcher-process" &&
       stopped.status !== "not-owned"
     )
       input.resources.shutdownConfirmed = true;

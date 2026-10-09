@@ -111,17 +111,23 @@ const projectValue = (input: ValueProjectionInput): void => {
           ),
         }),
       );
-  } else if (value.status === "unknown" && value.resourceLimit !== undefined) {
+  } else if (
+    value.status === "unknown" ||
+    value.status === "ambiguous" ||
+    value.status === "cycle"
+  ) {
     const location = binding.definitions[0]?.location ?? null;
     const evidence = observedSemanticEvidence(context.file, location);
-    const isPropertyValue = role.startsWith("property:");
     addSemanticGraphUnknown(
       context.state,
       createJavaScriptSemanticGraphUnknown({
         node_id: target.node_id,
-        family: isPropertyValue ? "object-flow" : "data-flow",
-        relation_kinds: [isPropertyValue ? "writes-property" : "defines"],
-        reason: "resource-limit",
+        family: "data-flow",
+        relation_kinds: ["defines"],
+        reason:
+          value.resourceLimit === undefined
+            ? "unknown-value"
+            : "resource-limit",
         detail: `${value.reason} Unknown value at ${role}.`,
         candidate_node_ids: [target.node_id],
         evidence: {

@@ -1,12 +1,38 @@
 import * as t from "@babel/types";
 import type { JavaScriptSemanticPrimitive } from "./javascriptSemanticValueTypes.js";
 
+/**
+ * Remove wrappers that affect TypeScript or Flow checking but not runtime
+ * expression identity. The returned depth lets bounded evaluators account for
+ * syntax that normalization would otherwise skip.
+ */
+export const unwrapJavaScriptExpression = (
+  node: t.Node,
+): { readonly node: t.Node; readonly depth: number } => {
+  let current = node;
+  let depth = 0;
+  while (
+    t.isParenthesizedExpression(current) ||
+    t.isTSAsExpression(current) ||
+    t.isTSTypeAssertion(current) ||
+    t.isTSNonNullExpression(current) ||
+    t.isTSSatisfiesExpression(current) ||
+    t.isTSInstantiationExpression(current) ||
+    t.isTypeCastExpression(current)
+  ) {
+    current = current.expression;
+    depth += 1;
+  }
+  return { node: current, depth };
+};
+
 /** Read one syntax-level primitive only when its value is exact. */
 export const readExactJavaScriptLiteral = (
   node: t.Node,
 ):
   | { readonly found: true; readonly value: JavaScriptSemanticPrimitive }
   | { readonly found: false } => {
+  node = unwrapJavaScriptExpression(node).node;
   if (t.isStringLiteral(node)) return { found: true, value: node.value };
   if (t.isNumericLiteral(node) && Number.isFinite(node.value))
     return { found: true, value: node.value };
@@ -44,6 +70,7 @@ export const semanticStaticPropertyKey = (
   property: t.Node,
   computed: boolean,
 ): string | null => {
+  property = unwrapJavaScriptExpression(property).node;
   if (t.isStringLiteral(property) || t.isNumericLiteral(property))
     return String(property.value);
   return !computed && t.isIdentifier(property) ? property.name : null;

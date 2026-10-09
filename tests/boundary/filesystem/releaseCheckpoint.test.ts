@@ -1,43 +1,18 @@
-import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { expect, it } from "vitest";
 import { z } from "zod";
 import { parse } from "yaml";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import {
+  executeWorkflowFixture as execFileAsync,
+  workflowGit as git,
+} from "../../support/workflowGit.js";
 
-const execFileAsync = promisify(execFile);
 const verifier = fileURLToPath(
   new URL("../../../scripts/verify-release-checkpoint.mjs", import.meta.url),
 );
-
-async function git(
-  directory: string,
-  args: string[],
-  date = "2026-01-04T00:00:00Z",
-) {
-  const result = await execFileAsync(
-    "git",
-    [
-      "-c",
-      "user.name=REA fixture",
-      "-c",
-      "user.email=fixture@example.invalid",
-      "-c",
-      "commit.gpgsign=false",
-      "-c",
-      `core.hooksPath=${join(directory, "no-hooks")}`,
-      ...args,
-    ],
-    {
-      cwd: directory,
-      env: { ...process.env, GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date },
-    },
-  );
-  return result.stdout.trim();
-}
 
 async function metadata(
   directory: string,

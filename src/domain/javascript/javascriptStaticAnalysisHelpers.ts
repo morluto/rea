@@ -14,6 +14,7 @@ import type {
 import {
   readExactJavaScriptLiteral,
   semanticStaticPropertyName,
+  unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 
@@ -100,8 +101,8 @@ const findChunkRuntime = (node: t.Node): string | undefined => {
       pending.push(current.right, current.left);
       continue;
     }
-    if (t.isParenthesizedExpression(current) || t.isTSAsExpression(current))
-      pending.push(current.expression);
+    const unwrapped = unwrapJavaScriptExpression(current).node;
+    if (unwrapped !== current) pending.push(unwrapped);
   }
   return undefined;
 };
