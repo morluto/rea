@@ -108,7 +108,9 @@ complete observation.
 ## Exact CLI selectors
 
 `function`, `instructions` and `decompile` accept `--procedure=<name-or-address>`;
-`xrefs` accepts `--address=<name-or-address>`. `search` accepts `--pattern=<text>`
+`xrefs` accepts `--address=<address>` — it selects an analyzed address, not a
+symbol name; resolve a name first (`rea function <name>` or `rea search`, or the
+`find_xrefs_to_name` tool over MCP). `search` accepts `--pattern=<text>`
 and `trace` accepts `--query=<text>`. These alternatives preserve names and text
 that begin with a dash, including Objective-C names such as
 `rea function ./app '--procedure=-[REAWidget delegate]' --provider hopper --format json`.

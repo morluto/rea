@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { functionDossierSchema } from "../domain/hopperValues.js";
 import {
+  parseGhidraFunctionInput,
   parseGhidraFunctionResult,
   type GhidraFunctionOperation,
 } from "./GhidraFunctionValues.js";
@@ -371,5 +372,37 @@ describe("complete Ghidra function body range evidence", () => {
         body: { ...body(), ...change },
       }).ok,
     ).toBe(false);
+  });
+});
+
+describe("Ghidra function-analysis input values", () => {
+  // #1186: the xrefs selector is an analyzed address. The CLI help and
+  // docs/native-investigation.md advertised "Address or symbol name", which
+  // this schema rejects; the name workflow is find_xrefs_to_name
+  // (list_names + xrefs), not a bare name on xrefs itself.
+  it("rejects a symbol name on xrefs, naming the accepted address spellings", () => {
+    const parsed = parseGhidraFunctionInput("xrefs", {
+      document: null,
+      address: "_table_only",
+    });
+    expect(parsed).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        issues: [{ path: ["address"], reason: "invalid_format" }],
+      },
+    });
+  });
+
+  it("accepts the address spellings the selector documents", () => {
+    for (const address of [
+      "0x100000598",
+      "0X100000598",
+      "100000598",
+      "EXTERNAL:0x1",
+    ])
+      expect(
+        parseGhidraFunctionInput("xrefs", { document: null, address }),
+      ).toMatchObject({ ok: true });
   });
 });

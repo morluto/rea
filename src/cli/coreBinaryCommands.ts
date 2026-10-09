@@ -192,7 +192,11 @@ const registerXrefsCommand = (cli: CliInstance, logger: Logger): void => {
     description: "List bounded references to an analyzed address",
     args: z.object({
       path: z.string().describe("App or program path"),
-      address: z.string().min(1).optional().describe("Address or symbol name"),
+      address: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Analyzed code or data address"),
     }),
     options: z.object({
       address: z
@@ -200,7 +204,7 @@ const registerXrefsCommand = (cli: CliInstance, logger: Logger): void => {
         .min(1)
         .optional()
         .describe(
-          "Address or symbol name; use --address=<value> for leading dashes",
+          "Analyzed code or data address; use --address=<value> for leading dashes",
         ),
       snapshot: z
         .string()
