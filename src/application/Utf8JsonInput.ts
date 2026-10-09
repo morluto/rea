@@ -3,6 +3,10 @@ import { constants } from "node:buffer";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { safeParseJson, type SafeJsonParseResult } from "../domain/safeJson.js";
 
+/** Recovery that preserves complete, authenticated Evidence workflow inputs. */
+export const JSON_INPUT_RESOURCE_REMEDIATION =
+  "Provide a smaller valid JSON value. For Evidence workflows, re-analyze a smaller selection of the original target and use its complete Evidence; splitting JSON text or trimming Evidence fields does not produce valid workflow input.";
+
 /** Decode JSON bytes without confusing a runtime string limit with malformed input. */
 export const parseUtf8Json = (
   bytes: Uint8Array,
@@ -29,8 +33,7 @@ export const parseUtf8Json = (
       },
       {
         ...(cause === undefined ? {} : { cause }),
-        remediationAction:
-          "Provide a smaller JSON document. For Evidence-based workflows, re-analyze a smaller selection of the original target and use its Evidence; splitting JSON text alone does not produce a valid workflow input.",
+        remediationAction: JSON_INPUT_RESOURCE_REMEDIATION,
       },
     );
   let text: string;

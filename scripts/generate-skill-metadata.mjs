@@ -20,8 +20,8 @@ const cacheBust = String(Date.now());
 const { CATALOG_IDENTITY } = await import(
   `${pathToFileURL(join(root, "dist/catalogIdentity.js")).href}?${cacheBust}`
 );
-const { PACKAGE_METADATA } = await import(
-  `${pathToFileURL(join(root, "dist/generatedPackageMetadata.js")).href}?${cacheBust}`
+const { PRODUCT_IDENTITY } = await import(
+  `${pathToFileURL(join(root, "dist/identity.js")).href}?${cacheBust}`
 );
 if (/^\s{2}(?:tool_count|catalog_digest):/mu.test(current))
   throw new Error(
@@ -31,8 +31,8 @@ const versionLine = /^ {2}version: "[^"\r\n]+"$/mu;
 if (!versionLine.test(current))
   throw new Error("Missing authored skill version");
 // A shipped skill must run the version it ships with, not whatever `@latest` resolves to.
-const latestSpecifier = `${PACKAGE_METADATA.name}@latest`;
-const pinnedSpecifier = `${PACKAGE_METADATA.name}@${PACKAGE_METADATA.version}`;
+const latestSpecifier = PRODUCT_IDENTITY.packageSpecifier;
+const pinnedSpecifier = PRODUCT_IDENTITY.registrationPackageSpecifier;
 const source = current
   .replace(
     versionLine,

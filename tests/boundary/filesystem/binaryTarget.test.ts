@@ -24,29 +24,6 @@ import {
 } from "../../../src/domain/binaryTarget.fixture.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { readWithoutFifoWriter } from "../../fixtures/fifoInput.js";
-
-it.skipIf(process.platform === "win32")(
-  "rejects a selected FIFO without waiting for a writer",
-  async () => {
-    const root = await createTestTempDirectory("rea-binary-target-fifo-");
-    const fifoPath = join(root, "input.bin");
-    await promisify(execFile)("mkfifo", [fifoPath]);
-    const outcome = await readWithoutFifoWriter(fifoPath, () =>
-      parseBinaryTarget(fifoPath),
-    );
-    expect(outcome.state).toBe("completed");
-    if (outcome.state !== "completed")
-      throw new Error("Binary target resolution waited for a FIFO writer");
-    expect(outcome.result).toMatchObject({
-      ok: false,
-      error: {
-        _tag: "BinaryTargetError",
-        reason: "target is not a regular file",
-      },
-    });
-  },
-);
 
 describe("binary target I/O: app plist permissions and decoding", () => {
   it.each([

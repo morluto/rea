@@ -1,21 +1,13 @@
 import { execFile } from "node:child_process";
-import { constants as bufferConstants } from "node:buffer";
-import {
-  appendFile,
-  chmod,
-  open,
-  symlink,
-  type FileHandle,
-  writeFile,
-} from "node:fs/promises";
+import { chmod, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { describe, expect, it, onTestFinished } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
-import { isCliOperationFailure } from "../../../src/cliLogging.js";
 import { parseCliJsonInput } from "../../../src/cliJsonInput.js";
+import { readCliJsonFile } from "../../../src/cliJsonFile.js";
 import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSchemas.js";
 import { readWithoutFifoWriter } from "../../fixtures/fifoInput.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -107,58 +99,106 @@ describe("CLI JSON file selection", () => {
   );
 });
 
-describe("CLI JSON input", () => {
-  it("reports a valid file beyond the runtime string limit as too large", async () => {
-    const root = await createTestTempDirectory("rea-json-input-too-large-");
+describe("CLI JSON streamed input", () => {
+  it("preserves native JSON meanings through chunked file parsing", async () => {
+    const root = await createTestTempDirectory("rea-json-input-chunks-");
     const path = join(root, "input.json");
-    const size = bufferConstants.MAX_STRING_LENGTH + 1;
-    await writeValidOversizedObject(path, size);
+    const documents = [
+      "null",
+      "false",
+      "-0",
+      "1e400",
+      '{"__proto__":{"observed":true},"constructor":2,"duplicate":1,"duplicate":3}',
+      JSON.stringify({
+        text: `${"x".repeat(65_524)}😀漢字`,
+        escaped: "\ud800",
+      }),
+      JSON.stringify({ [`${"x".repeat(70_000)}😀`]: "long key" }),
+      JSON.stringify(
+        Array.from({ length: 4_000 }, (_, id) => ({ id, text: "å" })),
+      ),
+    ];
+    for (const text of documents) {
+      await writeFile(path, `${" ".repeat(9 * 1024 * 1024)}${text}`);
+      const parsed = await parseCliJsonInput(path, "test-input");
+      if (!parsed.ok) throw new Error(JSON.stringify(parsed.error));
+      expect(parsed.value).toEqual(JSON.parse(text));
+      if (text.includes("__proto__")) {
+        if (typeof parsed.value !== "object" || parsed.value === null)
+          throw new Error("Expected the parsed object");
+        expect(Object.getPrototypeOf(parsed.value)).toBe(Object.prototype);
+        expect(Object.hasOwn(parsed.value, "__proto__")).toBe(true);
+      }
+    }
+  });
 
-    const result = await parseCliJsonInput(path, "test-input");
-    if (result.ok) throw new Error("Expected oversized JSON to be rejected");
-    expect(analysisCliErrorEnvelopeSchema.parse(result.error)).toEqual(
-      result.error,
-    );
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        code: "resource_constraint",
-        input_path: path,
-        input_reason: "too-large",
-        details: {
-          resource: "memory",
-          reported_limits: {
-            boundary: "cli-json-input",
-            max_string_code_units: bufferConstants.MAX_STRING_LENGTH,
-          },
+  it.each([
+    "",
+    "[1,]",
+    "{} {}",
+    '{"value":',
+    '"unterminated',
+    "\uFEFF{}",
+    "\u00a0{}",
+    "{\u000b}",
+    "01",
+    "NaN",
+    '"\u0001"',
+  ])("rejects strict JSON syntax violations in files (%j)", async (text) => {
+    const root = await createTestTempDirectory("rea-json-input-invalid-");
+    const path = join(root, "input.json");
+    for (const prefix of ["", " ".repeat(9 * 1024 * 1024)]) {
+      await writeFile(path, `${prefix}${text}`);
+      expect(await parseCliJsonInput(path, "test-input")).toMatchObject({
+        ok: false,
+        error: {
+          code: "invalid_request",
+          input_path: path,
+          input_reason: "invalid-json",
         },
-        remediation: {
-          action: expect.stringContaining("re-analyze a smaller selection"),
+      });
+    }
+  });
+
+  it.each([Buffer.from([0xf0, 0x28, 0x8c, 0xbc]), Buffer.from([0xe2, 0x82])])(
+    "rejects malformed and incomplete UTF-8 at a read boundary (%j)",
+    async (invalid) => {
+      const root = await createTestTempDirectory("rea-json-input-utf8-");
+      const path = join(root, "input.json");
+      await writeFile(
+        path,
+        Buffer.concat([
+          Buffer.from(`${" ".repeat(9 * 1024 * 1024)}"${"x".repeat(65_534)}`),
+          invalid,
+        ]),
+      );
+      expect(await parseCliJsonInput(path, "test-input")).toMatchObject({
+        ok: false,
+        error: {
+          input_reason: "invalid-json",
+          details: { issues: [{ message: "JSON input is not valid UTF-8" }] },
         },
-      },
+      });
+    },
+  );
+
+  it("cancels a file parse and allows a following read", async () => {
+    const root = await createTestTempDirectory("rea-json-input-cancel-");
+    const path = join(root, "input.json");
+    await writeFile(path, `${" ".repeat(9 * 1024 * 1024)}{"after":true}`);
+    const controller = new AbortController();
+    const cancelled = readCliJsonFile(path, "test-input", controller.signal);
+    setImmediate(() => controller.abort(new Error("cancel JSON file parse")));
+    await expect(cancelled).rejects.toThrow("cancel JSON file parse");
+    await writeFile(path, '{"after":true}');
+    expect(await readCliJsonFile(path, "test-input")).toEqual({
+      ok: true,
+      value: { after: true },
     });
+  });
+});
 
-    expect(isCliOperationFailure(result.error)).toBe(true);
-
-    const characterCount =
-      Math.floor(bufferConstants.MAX_STRING_LENGTH / 2) + 2;
-    await writeValidMultibyteString(path, characterCount);
-
-    const multibyteResult = await parseCliJsonInput(path, "test-input");
-    if (!multibyteResult.ok)
-      throw new Error("Expected large multibyte JSON to fit the string limit");
-    if (typeof multibyteResult.value !== "string")
-      throw new Error("Expected parsed JSON string");
-    expect(multibyteResult.value.length).toBe(characterCount);
-
-    // Large-input streaming must flush and reject an incomplete UTF-8 suffix.
-    await appendFile(path, Buffer.from([0xc3]));
-    expect(await parseCliJsonInput(path, "test-input")).toMatchObject({
-      ok: false,
-      error: { input_path: path, input_reason: "invalid-json" },
-    });
-  }, 20_000);
-
+describe("CLI JSON input", () => {
   it("distinguishes malformed inline text from files and preserves bracket-prefixed paths", async () => {
     expect(await parseCliJsonInput("[", "test-input")).toMatchObject({
       ok: false,
@@ -251,47 +291,3 @@ describe("CLI JSON input", () => {
     },
   );
 });
-
-const writeRepeatedBytes = async (
-  handle: FileHandle,
-  bytes: Buffer,
-  length: number,
-): Promise<void> => {
-  let remaining = length;
-  while (remaining > 0) {
-    const chunkLength = Math.min(bytes.length, remaining);
-    await handle.writeFile(bytes.subarray(0, chunkLength));
-    remaining -= chunkLength;
-  }
-};
-
-const writeValidOversizedObject = async (
-  path: string,
-  size: number,
-): Promise<void> => {
-  const handle = await open(path, "w");
-  const whitespace = Buffer.alloc(1024 * 1024, 0x20);
-  try {
-    await handle.writeFile("{");
-    await writeRepeatedBytes(handle, whitespace, size - 2);
-    await handle.writeFile("}");
-  } finally {
-    await handle.close();
-  }
-};
-
-const writeValidMultibyteString = async (
-  path: string,
-  characterCount: number,
-): Promise<void> => {
-  const encodedCharacters = Buffer.from("é".repeat(512 * 1024));
-  const byteLength = characterCount * 2 + 2;
-  const handle = await open(path, "w");
-  try {
-    await handle.writeFile('"');
-    await writeRepeatedBytes(handle, encodedCharacters, byteLength - 2);
-    await handle.writeFile('"');
-  } finally {
-    await handle.close();
-  }
-};

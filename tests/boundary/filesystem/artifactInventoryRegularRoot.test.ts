@@ -8,6 +8,7 @@ import { expect, it } from "vitest";
 import { inventoryArtifact } from "../../../src/artifacts/inventory/ArtifactInventory.js";
 import { classifyAndHashRoot } from "../../../src/artifacts/inventory/classify.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { readWithoutFifoWriter } from "../../fixtures/fifoInput.js";
 
 it.skipIf(process.platform === "win32")(
   "rejects a FIFO artifact root without waiting for a writer",
@@ -16,7 +17,16 @@ it.skipIf(process.platform === "win32")(
     const fifoPath = join(root, "input.asar");
     await promisify(execFile)("mkfifo", [fifoPath]);
 
-    await expect(inventoryArtifact(fifoPath)).rejects.toMatchObject({
+    const outcome = await readWithoutFifoWriter(fifoPath, () =>
+      inventoryArtifact(fifoPath).then(
+        () => undefined,
+        (cause: unknown) => cause,
+      ),
+    );
+    expect(outcome.state).toBe("completed");
+    if (outcome.state !== "completed")
+      throw new Error("Artifact inventory waited for a FIFO writer");
+    expect(outcome.result).toMatchObject({
       reason: "format",
       message: `Artifact root is not a regular file: ${fifoPath}`,
     });

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { elf, fat, thinMach } from "../domain/binaryTarget.fixture.js";
 import { projectGhidraDoctorInspection } from "./GhidraDoctor.js";
 import {
   ghidraJavaEnvironment,
@@ -508,5 +509,173 @@ describe("Ghidra configuration paths", () => {
     expect(result.checks).toContainEqual(
       expect.objectContaining({ name: "configuration", status: "passed" }),
     );
+  });
+});
+
+describe("Ghidra FAT native decompiler admission", () => {
+  it.each([
+    {
+      name: "foreign-only FAT",
+      bytes: fat([0x01000007]),
+      status: "unavailable",
+      detail: "requires mach-o arm64",
+    },
+    {
+      name: "matching universal FAT",
+      bytes: fat([0x01000007, 0x0100000c]),
+      status: "available",
+      detail: "matches darwin/arm64",
+    },
+    {
+      name: "truncated FAT table",
+      bytes: fat([0x01000007], 2),
+      status: "available",
+      detail: "could not be established",
+    },
+  ])("distinguishes $name", ({ bytes, status, detail }) => {
+    const result = inspectGhidraInstallation(
+      {
+        environment: {},
+        installDir: INSTALL,
+        platform: "darwin",
+        architecture: "arm64",
+      },
+      host({ executableHeader: () => ({ bytes, size: bytes.length }) }),
+    );
+    expect(result.status).toBe(status);
+    expect(
+      result.checks.find(({ name }) => name === "native_decompiler")?.detail,
+    ).toContain(detail);
+  });
+
+  it("keeps a truncated host slice unknown despite a readable foreign slice", () => {
+    const bytes = fat([0x01000007, 0x0100000c]);
+    bytes.writeUInt32BE(bytes.length + 1, 8 + 20 + 12);
+    const result = inspectGhidraInstallation(
+      {
+        environment: {},
+        installDir: INSTALL,
+        platform: "darwin",
+        architecture: "arm64",
+      },
+      host({ executableHeader: () => ({ bytes, size: bytes.length }) }),
+    );
+    expect(result.status).toBe("available");
+    expect(
+      result.checks.find(({ name }) => name === "native_decompiler")?.detail,
+    ).toContain("could not be established");
+  });
+});
+
+describe("Ghidra native decompiler admission", () => {
+  it.each([
+    {
+      name: "a Linux x86-64 decompiler at the macOS arm64 path",
+      options: {
+        environment: {},
+        installDir: INSTALL,
+        platform: "darwin" as const,
+        architecture: "arm64" as const,
+      },
+      executableHeader: (path: string) =>
+        path === MAC_DECOMPILER
+          ? { bytes: elf(2, 1, 62), size: 52 }
+          : undefined,
+    },
+    {
+      name: "a macOS arm64 decompiler at the Linux x64 path",
+      options: {
+        environment: {},
+        installDir: INSTALL,
+        platform: "linux" as const,
+        architecture: "x64" as const,
+      },
+      executableHeader: (path: string) =>
+        path === LINUX_DECOMPILER
+          ? { bytes: thinMach(0xcffaedfe, 0x0100000c), size: 32 }
+          : undefined,
+    },
+  ])("distinguishes $name", ({ options, executableHeader }) => {
+    const result = inspectGhidraInstallation(
+      options,
+      host({ executableHeader }),
+    );
+    expect(result.status).toBe("unavailable");
+    expect(
+      result.checks.find(({ status }) => status === "failed"),
+    ).toMatchObject({ name: "native_decompiler", code: "executable_missing" });
+  });
+
+  it("explains an accepted decompiler by its header, not only its path", () => {
+    const result = inspectGhidraInstallation(
+      {
+        environment: {},
+        installDir: INSTALL,
+        platform: "linux",
+        architecture: "x64",
+      },
+      host({
+        executableHeader: (path: string) =>
+          path === LINUX_DECOMPILER
+            ? { bytes: elf(2, 1, 62), size: 52 }
+            : undefined,
+      }),
+    );
+    expect(result.status).toBe("available");
+    if (result.status !== "available") return;
+    expect(
+      result.checks.find(({ name }) => name === "native_decompiler"),
+    ).toMatchObject({
+      status: "passed",
+      detail: `${LINUX_DECOMPILER} reports elf x86_64, which matches linux/x64`,
+    });
+  });
+
+  it("keeps an unreadable header unknown instead of failing the install", () => {
+    const result = inspectGhidraInstallation(
+      {
+        environment: {},
+        installDir: INSTALL,
+        platform: "linux",
+        architecture: "x64",
+      },
+      host({ executableHeader: () => undefined }),
+    );
+    expect(result.status).toBe("available");
+    if (result.status !== "available") return;
+    expect(
+      result.checks.find(({ name }) => name === "native_decompiler"),
+    ).toMatchObject({
+      status: "passed",
+      detail: expect.stringContaining("could not be established"),
+    });
+  });
+
+  it("names the observed and the required executable in the failure", () => {
+    const result = inspectGhidraInstallation(
+      {
+        environment: {},
+        installDir: INSTALL,
+        platform: "darwin",
+        architecture: "arm64",
+      },
+      host({
+        executableHeader: (path: string) =>
+          path === MAC_DECOMPILER
+            ? { bytes: elf(2, 1, 62), size: 52 }
+            : undefined,
+      }),
+    );
+    expect(result.status).toBe("unavailable");
+    if (result.status !== "unavailable") return;
+    expect(
+      result.checks.find(({ name }) => name === "native_decompiler"),
+    ).toMatchObject({
+      status: "failed",
+      detail: expect.stringMatching(
+        /reports elf x86_64, but darwin\/arm64 requires mach-o arm64/u,
+      ),
+      remediation: expect.stringContaining("os/mac_arm_64/decompile"),
+    });
   });
 });

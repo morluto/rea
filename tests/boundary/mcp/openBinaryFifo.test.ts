@@ -35,7 +35,10 @@ it.skipIf(process.platform === "win32")(
         throw new Error("MCP open_binary waited for a FIFO writer");
       expect(outcome.result.isError).toBe(true);
       expect(parseMcpToolError(outcome.result)).toMatchObject({
-        error: { message: expect.stringContaining("not a regular file") },
+        error: {
+          code: "target_unavailable",
+          message: expect.stringContaining("not a regular file"),
+        },
       });
     } finally {
       await Promise.allSettled([
