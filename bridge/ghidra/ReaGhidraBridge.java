@@ -1629,9 +1629,20 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 Function function = entry.function;
                 Symbol symbol = function.getSymbol();
                 String qualified = symbol == null ? function.getName() : symbol.getName(true);
-                if (function.getName().equals(value) || qualified.equals(value)) {
-                    matches.add(function);
+                boolean matchesName = function.getName().equals(value) || qualified.equals(value);
+                if (!matchesName) {
+                    // Imported labels (for example Mach-O _main) can share a
+                    // function entry without becoming its primary symbol. Only
+                    // exact entries qualify; an interior label is not a selector.
+                    for (Symbol entrySymbol : currentProgram.getSymbolTable().getSymbols(function.getEntryPoint())) {
+                        monitor.checkCancelled();
+                        if (entrySymbol.getName().equals(value) || entrySymbol.getName(true).equals(value)) {
+                            matchesName = true;
+                            break;
+                        }
+                    }
                 }
+                if (matchesName) matches.add(function);
             }
             if (matches.size() > 1)
                 throw new RequestFailure("ambiguous", "Ghidra procedure name is ambiguous: " + value +

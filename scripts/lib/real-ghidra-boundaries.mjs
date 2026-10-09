@@ -13,6 +13,7 @@ import { verifyLegacyGhidraReferenceSnapshot } from "./ghidra-reference-snapshot
 import { verifyGhidraSnapshotLifecycle } from "./real-ghidra-snapshot-lifecycle.mjs";
 import { verifyGhidraTargetAdmission } from "./real-ghidra-target-admission.mjs";
 import { verifyGhidraLargeResults } from "./real-ghidra-large-results.mjs";
+import { verifyGhidraEntryAliases } from "./real-ghidra-entry-aliases.mjs";
 import { verifyGhidraNamespaceAnnotations } from "./real-ghidra-namespace-annotations.mjs";
 
 /** Probe real Ghidra location, annotation and error contracts through public adapters. */
@@ -693,6 +694,13 @@ export async function verifyGhidraBoundaries(
     entrypoint,
     env,
   });
+  await verifyGhidraEntryAliases({
+    call,
+    reject: invalid,
+    target,
+    entrypoint,
+    env,
+  });
   await verifyGhidraLargeResults({
     call,
     reject: invalid,
@@ -741,6 +749,7 @@ export async function verifyGhidraBoundaries(
     imported_source_identity_retained: true,
     equivalent_instruction_address_spellings: true,
     qualified_annotation_name_roundtrip: true,
+    imported_entry_alias_selection: true,
     oversized_result_retention_and_complete_export: true,
     long_selector_rejection_and_provider_recovery: true,
     source_immutable: true,

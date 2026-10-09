@@ -7,6 +7,9 @@ binaries and Ghidra projects are never committed.
   It covers imports, an external `puts` function, linker thunks, source symbols,
   direct calls, a targetless callback call, two referenced strings, and a
   multi-block branch.
+- `entry-aliases.c` preserves secondary imported entry labels, a bare-hex
+  alias, and an interior label. The native CLI/MCP lane verifies entry selection,
+  annotation, interior-label rejection, and unchanged source bytes.
 - `cross-format.c` is freestanding so the verifier can produce AArch64 ELF,
   x86-64 PE, and x86-64 Mach-O targets from the same semantics. It preserves an
   exported entry, direct and indirect calls, a volatile string reference, and a
