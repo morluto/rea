@@ -208,7 +208,12 @@ export class SafeOutputTree {
   /** Remove only this operation's unsealed tree and verify absence. */
   async rollback(): Promise<SafeOutputCleanup> {
     if (this.#published) return structuredClone(this.#cleanup);
-    await rm(this.#outputRoot, { recursive: true, force: true });
+    let removalFailure: unknown;
+    try {
+      await rm(this.#outputRoot, { recursive: true, force: true });
+    } catch (cause: unknown) {
+      removalFailure = cause;
+    }
     const absent = await isAbsent(this.#outputRoot);
     this.#cleanup = absent
       ? { status: "complete", residualPaths: [] }
@@ -219,7 +224,17 @@ export class SafeOutputTree {
     if (!absent)
       throw new ArtifactReaderFailure(
         "integrity",
-        "Extraction output cleanup could not be verified",
+        `Extraction output cleanup could not be verified${removalFailure === undefined ? "" : `: ${removalFailure instanceof Error ? removalFailure.message : String(removalFailure)}`}`,
+        {
+          cause: removalFailure,
+          cleanup: {
+            reason:
+              removalFailure instanceof Error
+                ? removalFailure.message
+                : "Extraction output root remains after rollback",
+            resources: [this.#outputRoot],
+          },
+        },
       );
     return structuredClone(this.#cleanup);
   }

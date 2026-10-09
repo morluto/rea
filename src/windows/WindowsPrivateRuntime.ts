@@ -128,7 +128,10 @@ export class WindowsPrivateRuntime {
 
   /** Remove owned objects by handle, unlinking reparse entries without traversal. */
   close(): Promise<void> {
-    this.#closePromise ??= this.#remove();
+    this.#closePromise ??= this.#remove().catch((cause: unknown) => {
+      this.#closePromise = undefined;
+      throw cause;
+    });
     return this.#closePromise;
   }
 
@@ -137,12 +140,9 @@ export class WindowsPrivateRuntime {
     if (this.#pending !== undefined)
       this.authority.call("runtime_snapshot_cancel", [this.observation.handle]);
     await this.#pending?.catch(() => undefined);
-    try {
-      this.authority.call("runtime_close", [this.observation.handle]);
-    } finally {
-      this.#closed = true;
-      runtimes.delete(this.observation.path.toLowerCase());
-    }
+    this.authority.call("runtime_close", [this.observation.handle]);
+    this.#closed = true;
+    runtimes.delete(this.observation.path.toLowerCase());
   }
 }
 

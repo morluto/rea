@@ -86,6 +86,7 @@ struct Runtime : Resource {
   std::vector<Handle> parents;
   Handle directory;
   std::vector<Handle> immutableFiles;
+  bool closing = false;
   // Main-thread admission is single-flight; only the accepted copy owns the
   // atomic cancellation flag consumed by its async worker. ERROR_BUSY rejects
   // another copy before it can reset that flag or replace pending ownership.

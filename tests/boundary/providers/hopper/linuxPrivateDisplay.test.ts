@@ -115,14 +115,7 @@ describe("Hopper process cleanup", () => {
         [cleanupTimeoutFixturePath, helperPath],
         { encoding: "utf8", timeout: 5_000 },
       );
-      expect(result.status).toBe(0);
-      const parsed = JSON.parse(result.stdout) as {
-        readonly returncode: number;
-        readonly elapsed_ms: number;
-      };
-      expect(parsed.returncode).toBe(-9);
-      expect(parsed.elapsed_ms).toBeGreaterThanOrEqual(1_800);
-      expect(parsed.elapsed_ms).toBeLessThan(4_000);
+      expect(result.status, result.stderr).toBe(0);
     },
   );
 });

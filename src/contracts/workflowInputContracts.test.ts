@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { traceJavaScriptSemanticsRequestSchema } from "./javascript/applicationWorkflowInputContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "./artifactToolContracts.js";
-import { JAVASCRIPT_FEATURE_TRACE_FULL_EVIDENCE_EXAMPLE } from "./javascript/javascriptApplicationWorkflowExamples.js";
+import { JAVASCRIPT_FEATURE_TRACE_EXAMPLE } from "./javascript/javascriptApplicationWorkflowExamples.js";
 import {
   MANAGED_APPLICATION_GRAPH_EXAMPLE,
   MANAGED_MEMBER_COMPARISON_EXAMPLE,
@@ -24,7 +24,7 @@ describe("workflow input contracts", () => {
       traceJavaScriptSemanticsRequestSchema.safeParse({ query }).success,
     ).toBe(false);
 
-    const evidence = JAVASCRIPT_FEATURE_TRACE_FULL_EVIDENCE_EXAMPLE.application;
+    const evidence = JAVASCRIPT_FEATURE_TRACE_EXAMPLE.application;
     expect(
       traceJavaScriptSemanticsRequestSchema.safeParse({
         application: evidence,

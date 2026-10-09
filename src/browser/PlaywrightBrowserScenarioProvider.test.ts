@@ -1,10 +1,11 @@
 // Fake-backed composition coverage; real browser verification lives in
 // `npm run verify:browser`.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { BrowserScenarioSessionPort } from "./BrowserScenarioSessionPort.js";
 import { PlaywrightBrowserScenarioProvider } from "./PlaywrightBrowserScenarioProvider.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
+import { PlaywrightScenarioBrowserCleanupOwner } from "./PlaywrightScenarioBrowser.js";
 import {
   browserScenarioSchema,
   type BrowserScenario,
@@ -317,4 +318,57 @@ describe("PlaywrightBrowserScenarioProvider", () => {
     expect(result.value.steps[1]?.status).toBe("cancelled");
     expect(session.closeCalls).toBe(1);
   });
+});
+
+it("shares concurrent close and retries browser cleanup after failure", async () => {
+  const browserClose = vi
+    .fn<() => Promise<void>>()
+    .mockRejectedValueOnce(new Error("browser close failed"))
+    .mockResolvedValue(undefined);
+  const removeProfile = vi
+    .fn<() => Promise<void>>()
+    .mockResolvedValue(undefined);
+  const finishEvents = vi
+    .fn<() => Promise<void>>()
+    .mockResolvedValue(undefined);
+  const cleanup = new PlaywrightScenarioBrowserCleanupOwner({
+    closeBrowser: browserClose,
+    removeProfile,
+  });
+
+  const first = cleanup.close(finishEvents);
+  const concurrent = cleanup.close(finishEvents);
+  await expect(first).rejects.toMatchObject({ reason: "cleanup_failed" });
+  await expect(concurrent).rejects.toMatchObject({ reason: "cleanup_failed" });
+  expect(browserClose).toHaveBeenCalledTimes(1);
+  expect(removeProfile).not.toHaveBeenCalled();
+  expect(finishEvents).toHaveBeenCalledTimes(1);
+
+  await expect(cleanup.close(finishEvents)).resolves.toBeUndefined();
+  await expect(cleanup.close(finishEvents)).resolves.toBeUndefined();
+  expect(browserClose).toHaveBeenCalledTimes(2);
+  expect(removeProfile).toHaveBeenCalledTimes(1);
+  expect(finishEvents).toHaveBeenCalledTimes(1);
+});
+
+it("keeps failed event finalization failed across cleanup retries", async () => {
+  const finishEvents = vi
+    .fn<() => Promise<void>>()
+    .mockRejectedValue(new Error("event finalization failed"));
+  const closeBrowser = vi
+    .fn<() => Promise<void>>()
+    .mockResolvedValue(undefined);
+  const cleanup = new PlaywrightScenarioBrowserCleanupOwner({
+    closeBrowser,
+    removeProfile: undefined,
+  });
+
+  await expect(cleanup.close(finishEvents)).rejects.toMatchObject({
+    reason: "cleanup_failed",
+  });
+  await expect(cleanup.close(finishEvents)).rejects.toMatchObject({
+    reason: "cleanup_failed",
+  });
+  expect(finishEvents).toHaveBeenCalledTimes(1);
+  expect(closeBrowser).toHaveBeenCalledTimes(1);
 });

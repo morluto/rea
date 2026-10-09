@@ -92,18 +92,20 @@ const isPortableAbsoluteSymlinkTarget = (target: string): boolean =>
   /^[A-Za-z]:[\\/]/u.test(target) ||
   /^\\\\[^\\/]+[\\/][^\\/]+/u.test(target);
 
-const sourceSymlinkSchema = z.strictObject({
-  ...entryBaseShape,
-  kind: z.literal("symlink"),
-  target: symlinkTargetSchema,
-  target_state: z.enum([
-    "internal",
-    "external",
-    "missing",
-    "unreadable",
-    "unknown",
-  ]),
-});
+const sourceSymlinkSchema = z.union([
+  z.strictObject({
+    ...entryBaseShape,
+    kind: z.literal("symlink"),
+    target: symlinkTargetSchema,
+    target_state: z.enum(["internal", "external", "missing"]),
+  }),
+  z.strictObject({
+    ...entryBaseShape,
+    kind: z.literal("symlink"),
+    target: z.null(),
+    target_state: z.enum(["unreadable", "unknown"]),
+  }),
+]);
 
 const sourceEntrySchema = z.union([
   sourceFileSchema,
@@ -314,6 +316,7 @@ const checkSymlinks = (
 ): void => {
   for (const [index, entry] of graph.entries.entries()) {
     if (entry.kind !== "symlink") continue;
+    if (entry.target === null) continue;
     const absolute = isPortableAbsoluteSymlinkTarget(entry.target);
     if (
       (entry.target_state === "external" && !absolute) ||

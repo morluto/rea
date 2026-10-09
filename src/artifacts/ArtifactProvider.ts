@@ -221,7 +221,7 @@ class ArtifactClient implements AnalysisClient {
         }),
       );
     } catch (cause: unknown) {
-      return err(translateFailure(operation, cause));
+      return err(translateArtifactFailure(operation, cause));
     }
   }
 
@@ -378,7 +378,8 @@ const isArtifactOperation = (
     operation as (typeof ARTIFACT_ANALYSIS_OPERATIONS)[number],
   );
 
-const translateFailure = (
+/** Translate one artifact boundary failure while retaining cleanup evidence. */
+export const translateArtifactFailure = (
   operation: ArtifactAnalysisOperation,
   cause: unknown,
 ): AnalysisError => {
@@ -388,6 +389,12 @@ const translateFailure = (
       cause.reason,
       cause.details,
       cause.message,
+      {
+        ...(cause.cleanup === undefined ? {} : { cleanup: cause.cleanup }),
+        ...(cause.partialObservation === undefined
+          ? {}
+          : { partialObservation: cause.partialObservation }),
+      },
     );
   // Caller-selection and unsupported-target failures are already typed; keep
   // their correction details instead of reducing them to an I/O failure.

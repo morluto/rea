@@ -10,8 +10,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import {
-  JAVASCRIPT_FEATURE_TRACE_FULL_EVIDENCE_EXAMPLE,
-  JAVASCRIPT_VERSION_COMPARISON_FULL_EVIDENCE_EXAMPLE,
+  JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
+  JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
   SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE,
 } from "../../../src/contracts/javascript/javascriptApplicationWorkflowExamples.js";
 import { analyzeJavaScriptApplication } from "../../../src/application/javascript/JavaScriptApplicationService.js";
@@ -226,7 +226,7 @@ describe("application workflow CLI parity", () => {
   it("accepts inline trace JSON and file-backed comparison JSON", async () => {
     const traced = await runCli([
       "trace-application-feature",
-      JSON.stringify(JAVASCRIPT_FEATURE_TRACE_FULL_EVIDENCE_EXAMPLE),
+      JSON.stringify(JAVASCRIPT_FEATURE_TRACE_EXAMPLE),
       "--json",
     ]);
     expect(traced).toMatchObject({
@@ -258,7 +258,7 @@ describe("application workflow CLI parity", () => {
     const comparisonPath = join(root, "comparison.json");
     await writeFile(
       comparisonPath,
-      JSON.stringify(JAVASCRIPT_VERSION_COMPARISON_FULL_EVIDENCE_EXAMPLE),
+      JSON.stringify(JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE),
     );
     const compared = await runCli([
       "compare-application-versions",
@@ -289,7 +289,7 @@ describe("application workflow CLI parity", () => {
       "compare-source-to-bundle",
       JSON.stringify({
         reference: SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE.reference,
-        application: JAVASCRIPT_FEATURE_TRACE_FULL_EVIDENCE_EXAMPLE.application,
+        application: JAVASCRIPT_FEATURE_TRACE_EXAMPLE.application,
       }),
       "--json",
     ]);
@@ -445,10 +445,10 @@ describe("application workflow CLI input", () => {
     const result = await runCli([
       "compare-application-versions",
       JSON.stringify({
-        left: JAVASCRIPT_VERSION_COMPARISON_FULL_EVIDENCE_EXAMPLE.left
+        left: JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE.left
           .evidence_id,
         right:
-          JAVASCRIPT_VERSION_COMPARISON_FULL_EVIDENCE_EXAMPLE.right.evidence_id,
+          JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE.right.evidence_id,
       }),
       "--json",
     ]);

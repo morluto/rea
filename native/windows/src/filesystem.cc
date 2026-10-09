@@ -328,14 +328,11 @@ static void disposeSnapshot(Runtime& root, Handle& file, const std::wstring& pat
 
 void closeRuntime(Runtime& root) {
   if (root.closed) return;
+  root.closing = true;
   // Windows keeps the bearer descriptor and snapshot leases until this owner
   // cleanup. POSIX removes its consumed descriptor earlier. Abrupt owner death
   // closes process jobs but cannot run this walk, so private files can remain.
   root.immutableFiles.clear();
-  struct ReleaseRuntime {
-    Runtime& root;
-    ~ReleaseRuntime() { root.directory.reset(); root.parents.clear(); root.closed = true; }
-  } release{root};
   // Each traversed directory stays locked against replacement. Reparse entries
   // are unlinked as objects; their targets are never enumerated or deleted.
   struct Frame {
@@ -380,6 +377,10 @@ void closeRuntime(Runtime& root) {
       frames.push_back(std::make_unique<Frame>(std::move(child), path));
     else dispose(child.get(), path);
   }
+  // Failed walks retain the root's identity leases for a later cleanup retry.
+  root.directory.reset();
+  root.parents.clear();
+  root.closed = true;
 }
 
 struct SnapshotWork {
@@ -528,6 +529,7 @@ napi_value filesystemCall(napi_env env, const std::wstring& operation, const std
     return result;
   }
   auto& root = static_cast<Runtime&>(resource(env, args[0], Kind::Runtime));
+  require(!root.closing || operation == L"runtime_close", "Runtime cleanup is pending", root.path, ERROR_BUSY);
   if (operation == L"runtime_snapshot_cancel") { root.snapshotCancelled.store(true); return null(env); }
   require(!root.snapshotPending, "Runtime snapshot is still pending", root.path, ERROR_BUSY);
   // Reject overlapping operations before snapshot() resets cancellation. The

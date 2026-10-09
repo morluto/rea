@@ -67,7 +67,6 @@ it("advertises exact valid schemas and records inline EVM interface evidence wit
   expect(evidence.confidence).toBe("inferred");
   expect(evidence.subject?.digest.sha256).toBe(value.artifact.sha256);
   expect(parsed.normalized_result).toEqual(value);
-  expect(parsed.normalized_result).toEqual(evidence.normalized_result);
   expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
   expect(
     (

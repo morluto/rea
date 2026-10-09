@@ -13,6 +13,7 @@ import {
 } from "../domain/javascript/javascriptRuntimeObservation.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
+import type { AnalysisPartialObservation } from "../domain/analysisErrorBase.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { type BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -190,7 +191,18 @@ export class V8InspectorProvider implements JavaScriptRuntimeObservationPort {
         }
     }
     if (cleanupFailed) {
-      return err(inspectorCleanupError(primaryFailure, cleanupFailure, failed));
+      return err(
+        inspectorCleanupError(
+          primaryFailure,
+          cleanupFailure,
+          failed,
+          outcome?.ok === true
+            ? outcome.value
+            : outcome?.ok === false
+              ? outcome.error.partialObservation
+              : undefined,
+        ),
+      );
     }
     return (
       outcome ??
@@ -232,6 +244,7 @@ export const inspectorCleanupError = (
   primaryFailure: unknown,
   cleanupFailure: unknown,
   hasPrimaryFailure: boolean,
+  partialObservation?: AnalysisPartialObservation,
 ): BrowserObservationError => {
   const cause = hasPrimaryFailure
     ? new AggregateError(
@@ -239,10 +252,21 @@ export const inspectorCleanupError = (
         "Inspector observation and cleanup both failed",
       )
     : cleanupFailure;
+  const cleanupReason =
+    cleanupFailure instanceof Error
+      ? cleanupFailure.message
+      : String(cleanupFailure);
   return new BrowserObservationError(
     "observe_javascript_runtime",
     "cleanup_failed",
-    { cause },
+    {
+      cause,
+      cleanup: {
+        reason: cleanupReason,
+        resources: ["browser_transport"],
+      },
+      ...(partialObservation === undefined ? {} : { partialObservation }),
+    },
   );
 };
 

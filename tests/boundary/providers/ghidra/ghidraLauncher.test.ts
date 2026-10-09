@@ -214,9 +214,8 @@ describe("Ghidra headless launcher", () => {
       const token = "secret-token-that-must-not-leak";
       const javaHome = "C:\\Java\\jdk-21";
       const launcher = new GhidraHeadlessLauncher({
-        // The batch fixture invokes Node through PATH. Select this environment
-        // explicitly; an empty selection must not inherit the host's PATH.
-        environment: { ...process.env },
+        // Select the fixture's Node PATH and injected JVM options explicitly.
+        environment: process.env,
         analyzeHeadlessPath: fixturePath,
         // POSIX follows the real inspected-JVM route; Windows uses the official
         // batch script because its launcher contract differs.

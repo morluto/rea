@@ -215,7 +215,9 @@ describe("process trace constraints and evidence sufficiency", () => {
       compareProcessTraces(workerFirst, workerFirst, specification),
     ).toMatchObject({ verdict: "equivalent" });
   });
+});
 
+describe("unknown process trace evidence", () => {
   it("never proves equivalence from truncated, unknown, or journal-free evidence", () => {
     const complete = capture(values(["terminal", "process"]));
     const truncated = capture(values(["terminal", "process"]), {
@@ -230,6 +232,17 @@ describe("process trace constraints and evidence sufficiency", () => {
     expect(
       compareProcessTraces(complete, unknown, partialSpecification()).verdict,
     ).toBe("unknown");
+    expect(
+      compareProcessTraces(complete, unknown, partialSpecification()),
+    ).toMatchObject({
+      verdict: "unknown",
+      right: {
+        status: "unknown",
+        matched_variant: null,
+        satisfied_constraints: [],
+        raw_trace: [{ event_id: "ready" }, { event_id: "worker" }],
+      },
+    });
     const noJournal = parseProcessCapture({ ...complete, event_journal: [] });
     expect(
       compareProcessTraces(complete, noJournal, partialSpecification()),
