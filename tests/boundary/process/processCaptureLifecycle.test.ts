@@ -478,6 +478,142 @@ itWithCaptureCapability(
   },
 );
 
+const finalizationFixture = fileURLToPath(
+  new URL("../../fixtures/processFinalization.mjs", import.meta.url),
+);
+
+const captureFinalizationFixture = async (
+  mode: "cooperative" | "ignoring",
+  scenario: Readonly<Record<string, unknown>>,
+  signal?: AbortSignal,
+): Promise<{ readonly result: CaptureRun; readonly root: string }> => {
+  const root = await createTestTempDirectory("rea-finalization-");
+  const result = await captureProcessScenario(
+    parseProcessScenario({
+      executable: process.execPath,
+      arguments: [finalizationFixture, mode, root],
+      working_directory: root,
+      filesystem_observation_paths: [root],
+      idle_timeout_ms: 10_000,
+      ...scenario,
+    }),
+    signal,
+  );
+  return { result, root };
+};
+
+const observedFile = (
+  capture: ProcessCapture | PartialCapture,
+  name: string,
+): { readonly sha256: string | null } | undefined =>
+  capture.files_after.find((file) => file.path.endsWith(name));
+
+itWithCaptureCapability(
+  "lets a cooperative target write its final report within the finalization interval",
+  async () => {
+    const { result } = await captureFinalizationFixture("cooperative", {
+      timeout_ms: 500,
+      finalization_ms: 1_500,
+    });
+    const { capture } = captureObservations(result);
+
+    expect(capture.exit.reason, "initiating deadline stays the reason").toBe(
+      "timeout",
+    );
+    expect(capture.exit.finalization, "finalization is recorded").toMatchObject(
+      {
+        requested_ms: 1_500,
+        signal: "SIGTERM",
+        outcome: "target_exited",
+      },
+    );
+    expect(
+      observedFile(capture, "final.json")?.sha256,
+      "final report is retained with a digest",
+    ).toMatch(/^[0-9a-f]{64}$/u);
+  },
+  15_000,
+);
+
+itWithCaptureCapability(
+  "forces the kill when the target ignores the finalization signal",
+  async () => {
+    const { result } = await captureFinalizationFixture("ignoring", {
+      timeout_ms: 500,
+      finalization_ms: 1_500,
+    });
+    const { capture } = captureObservations(result);
+
+    expect(capture.exit.reason, "initiating deadline stays the reason").toBe(
+      "timeout",
+    );
+    expect(capture.exit.finalization, "forced kill is recorded").toMatchObject({
+      requested_ms: 1_500,
+      signal: "SIGTERM",
+      outcome: "forced_kill",
+    });
+    expect(
+      capture.exit.finalization?.elapsed_ms,
+      "the whole interval elapsed before the kill",
+    ).toBeGreaterThanOrEqual(1_500);
+    expect(
+      capture.exit.finalization?.elapsed_ms,
+      "the kill followed the interval promptly",
+    ).toBeLessThan(4_000);
+    expect(
+      observedFile(capture, "final.json"),
+      "an ignored signal writes no final report",
+    ).toBeUndefined();
+  },
+  15_000,
+);
+
+itWithCaptureCapability(
+  "keeps the immediate kill when no finalization interval is configured",
+  async () => {
+    const { result } = await captureFinalizationFixture("cooperative", {
+      timeout_ms: 500,
+    });
+    const { capture } = captureObservations(result);
+
+    expect(capture.exit.reason, "deadline reason is unchanged").toBe("timeout");
+    expect(
+      capture.exit,
+      "default captures carry no finalization record",
+    ).not.toHaveProperty("finalization");
+    expect(
+      observedFile(capture, "final.json"),
+      "SIGKILL leaves no final report",
+    ).toBeUndefined();
+  },
+  15_000,
+);
+
+itWithCaptureCapability(
+  "cancels immediately while a finalization interval is running",
+  async () => {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 1_000);
+    const started = Date.now();
+    const { result } = await captureFinalizationFixture(
+      "ignoring",
+      { timeout_ms: 300, finalization_ms: 20_000 },
+      controller.signal,
+    );
+
+    if (result.ok) throw new Error("expected cancellation");
+    expect(
+      result.error.message,
+      "cancellation wins over finalization",
+    ).toContain("cancelled");
+    expect(
+      Date.now() - started,
+      "cancellation does not wait for the finalization interval",
+    ).toBeLessThan(8_000);
+  },
+  15_000,
+);
+
 itWithCaptureCapability(
   "classifies cancellation raised by the initial filesystem snapshot",
   async () => {
