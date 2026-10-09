@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { expect } from "vitest";
@@ -122,5 +122,75 @@ cliTest(
     );
     expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
     await expect(readFile(skill)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+cliTest(
+  "malformed Pi overrides do not block selected Codex setup or doctor and never fall back for Pi",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-pi-invalid-cli-");
+    const run = (arguments_: readonly string[]) =>
+      cli.run({
+        arguments: arguments_,
+        cwd: home,
+        environment: {
+          HOME: home,
+          USERPROFILE: home,
+          PI_CODING_AGENT_DIR: "file:///agent%2fdir",
+        },
+        timeoutMs: 20_000,
+      });
+    const plan = await run([
+      "setup",
+      "--client",
+      "codex",
+      "--dry-run",
+      "--json",
+    ]);
+    expect(plan.exitCode).toBe(0);
+    expect(plan.json).toMatchObject({ status: "planned", appliedActions: [] });
+    expect(await readdir(home)).toEqual([]);
+
+    const rejected = await run(["setup", "--client", "pi", "--yes", "--json"]);
+    expect(rejected.exitCode).not.toBe(0);
+    expect(rejected.json).toMatchObject({
+      status: "needs_human",
+      plannedActions: [],
+      appliedActions: [],
+      remediation: expect.stringContaining("PI_CODING_AGENT_DIR"),
+    });
+    expect(await readdir(home)).toEqual([]);
+
+    const applied = await run([
+      "setup",
+      "--client",
+      "codex",
+      "--yes",
+      "--json",
+    ]);
+    expect(applied.exitCode).toBe(0);
+    expect(applied.json).toMatchObject({
+      status: "ready",
+      clients: { codex: { status: "configured" } },
+    });
+    const doctor = await run(["doctor", "--client", "codex", "--json"]);
+    expect(doctor.exitCode).toBe(0);
+    expect(doctor.json).toMatchObject({
+      healthy: true,
+      identity: {
+        registrations: [
+          { client: "codex", state: "aligned" },
+          {
+            client: "pi",
+            state: "invalid",
+            remediation: expect.stringContaining("PI_CODING_AGENT_DIR"),
+          },
+        ],
+      },
+    });
+    const piDoctor = await run(["doctor", "--client", "pi", "--json"]);
+    expect(piDoctor.exitCode).not.toBe(0);
+    expect(piDoctor.json).toMatchObject({ healthy: false });
+    expect((await readdir(home)).sort()).toEqual([".agents", ".codex"]);
   },
 );

@@ -95,6 +95,16 @@ export const readClientRegistrationStatuses = async (
           XDG_CONFIG_HOME: options.environment.XDG_CONFIG_HOME,
         },
   )) {
+    if (client.configPathError !== undefined) {
+      statuses.push({
+        client: client.name,
+        config_path: client.configPath,
+        command: [],
+        state: "invalid",
+        remediation: client.configPathError,
+      });
+      continue;
+    }
     if (
       !(await exists(client.markerPath)) &&
       !(await exists(client.configPath))

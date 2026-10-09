@@ -169,6 +169,7 @@ export const detectClients = async (
 ): Promise<readonly SetupClient[]> => {
   const detected: SetupClient[] = [];
   for (const candidate of supportedClients(home, platform, environment)) {
+    if (candidate.configPathError !== undefined) continue;
     const [hasConfig, hasMarker] = await Promise.all([
       exists(candidate.configPath),
       candidate.markerPath === undefined ? false : exists(candidate.markerPath),

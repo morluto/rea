@@ -7,6 +7,8 @@ export interface SetupClient {
   readonly name: string;
   readonly displayName?: string;
   readonly configPath: string;
+  /** Unresolved path evidence only; consumers must not perform I/O on it. */
+  readonly configPathError?: string;
   readonly markerPath?: string;
   readonly format?:
     | "json"
@@ -376,11 +378,24 @@ export const supportedClients = (
   },
 ): readonly SetupClient[] => {
   const context = { home, platform, env };
-  return SUPPORTED_CLIENT_DEFINITIONS.map((definition) => ({
-    name: definition.name,
-    displayName: definition.displayName,
-    configPath: resolvePath(definition.configPath, context),
-    markerPath: resolvePath(definition.markerPath, context),
-    format: definition.format,
-  }));
+  return SUPPORTED_CLIENT_DEFINITIONS.map((definition) => {
+    try {
+      return {
+        name: definition.name,
+        displayName: definition.displayName,
+        configPath: resolvePath(definition.configPath, context),
+        markerPath: resolvePath(definition.markerPath, context),
+        format: definition.format,
+      };
+    } catch (cause: unknown) {
+      if (definition.name !== "pi") throw cause;
+      return {
+        name: definition.name,
+        displayName: definition.displayName,
+        format: definition.format,
+        configPath: env.PI_CODING_AGENT_DIR ?? "",
+        configPathError: `Invalid PI_CODING_AGENT_DIR: ${cause instanceof Error ? cause.message : String(cause)}. Repair the override before configuring Pi.`,
+      };
+    }
+  });
 };

@@ -79,12 +79,29 @@ describe("Pi user configuration paths", () => {
     );
   });
 
-  it("rejects malformed file URLs instead of silently choosing the default", () => {
-    expect(() =>
-      piPath("/home/a", "linux", {
+  it("reports malformed file URLs instead of silently choosing the default", async () => {
+    const home = await createTestTempDirectory("rea-pi-invalid-path-");
+    const client = piPath(home, "linux", {
+      PI_CODING_AGENT_DIR: "file:///agent%2fdir",
+    });
+    expect(client).toMatchObject({
+      configPath: "file:///agent%2fdir",
+      configPathError: expect.stringContaining("PI_CODING_AGENT_DIR"),
+    });
+    if (client === undefined) throw new Error("missing Pi client");
+    expect(await configureClientConfiguration(client)).toEqual({
+      status: "failed",
+      reason: "path",
+    });
+    expect(await systemUninstallHost(home).removeClient(client)).toMatchObject({
+      status: "failed",
+      detail: expect.stringContaining("PI_CODING_AGENT_DIR"),
+    });
+    expect(
+      await detectClients(home, "linux", {
         PI_CODING_AGENT_DIR: "file:///agent%2fdir",
       }),
-    ).toThrow();
+    ).toEqual([]);
   });
 
   it("detects the normalized override marker without needing mcp.json", async () => {
