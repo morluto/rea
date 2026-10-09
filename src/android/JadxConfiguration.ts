@@ -14,6 +14,9 @@ import { JADX_JAR_CONFIGURATION_REMEDIATION } from "./JadxRelease.js";
 
 const JAVA_MODULE_LISTING_TIMEOUT_MS = 10_000;
 const JAVA_MODULE_LISTING_MAX_OUTPUT_BYTES = 1024 * 1024;
+// Bound ZIP metadata allocation during discovery. The audited 0.7.1 JAR's
+// central directory occupies 2,294,350 bytes; class bodies are not read here.
+const JAR_METADATA_READ_MAX_BYTES = 8 * 1024 * 1024;
 
 /** Caller-supplied tools, resolved only when an Android operation is selected. */
 export interface JadxConfiguration {
@@ -134,7 +137,7 @@ const requireEngineArchive = async (
     "com/google/gson/Gson.class",
     "io/modelcontextprotocol/kotlin/sdk/server/Server.class",
   ]);
-  const reader = new ZipArtifactReader(jar, "zip");
+  const reader = new ZipArtifactReader(jar, "zip", JAR_METADATA_READ_MAX_BYTES);
   try {
     for await (const entry of reader.entries(signal)) {
       if (entry.kind === "file" && !entry.encrypted) missing.delete(entry.path);
@@ -146,7 +149,12 @@ const requireEngineArchive = async (
     throw configurationFailure(
       "version_unresolved",
       `Cannot inspect REA_JADX_MCP_JAR ${jar} as a Java archive: ${reason}. ${JADX_JAR_CONFIGURATION_REMEDIATION}`,
-      { jar_path: jar, phase: "jar-inspection", archive_error: reason },
+      {
+        jar_path: jar,
+        phase: "jar-inspection",
+        archive_error: reason,
+        maximum_metadata_read_bytes: JAR_METADATA_READ_MAX_BYTES,
+      },
       cause,
     );
   } finally {

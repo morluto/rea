@@ -27,7 +27,9 @@ Readiness checks the selected JAR's ZIP directory for the classes consumed by
 REA's metadata bridge, as well as Java's compiler and version modules. It does
 not load an APK or execute engine code. Invalid archives and missing bridge
 classes report JAR-specific recovery; classpath inventory alone does not prove
-that every class or engine operation will load successfully.
+that every class or engine operation will load successfully. Discovery limits
+each ZIP metadata read to 8 MiB before allocation; a larger directory reports
+the exhausted read budget and the selected JAR path.
 
 The current metadata bridge is verified on macOS arm64 with OpenJDK 21 and the
 public Appium ApiDemos fixture. The POSIX adapter also supports Linux; the new
