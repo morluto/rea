@@ -43,6 +43,17 @@ const SWIFT_CATEGORIES = [
 ] as const;
 type SwiftTypeCategory = (typeof SWIFT_CATEGORIES)[number][0] | "other";
 
+/**
+ * Procedure names the classifier treats as Swift symbols: modern Swift 4.2+
+ * manglings (`$s`, spelled `_$s` at Mach-O boundaries) and the legacy `_Tt`
+ * manglings. The category prefixes above only describe legacy `_Tt`
+ * families, so modern manglings are counted under `other` rather than being
+ * silently dropped from the inventory. Mirrors the Swift-symbol recognition
+ * used by the native metadata classifier (`objcSwiftMetadata.ts`).
+ */
+const isSwiftSymbolName = (name: string): boolean =>
+  /^(?:_?\$s)/u.test(name) || name.includes("_Tt");
+
 /** Categorize deduplicated Swift mangled symbols. */
 export const categorizeSwiftTypes = (
   procedures: readonly AddressedName[],
@@ -59,7 +70,7 @@ export const categorizeSwiftTypes = (
   const seen = new Set<string>();
 
   for (const entry of procedures) {
-    if (!entry.name.includes("_Tt") || seen.has(entry.name)) continue;
+    if (!isSwiftSymbolName(entry.name) || seen.has(entry.name)) continue;
     const category =
       SWIFT_CATEGORIES.find(([, prefix]) =>
         entry.name.startsWith(prefix),

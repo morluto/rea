@@ -80,4 +80,39 @@ describe("symbol analysis", () => {
       },
     });
   });
+
+  it("classifies modern Swift manglings reported by current providers", () => {
+    const result = categorizeSwiftTypes([
+      { address: "0x1000009f8", name: "$s4main4PairVMa" },
+      { address: "0x100000ac4", name: "$s4main6ScorerVMa" },
+      { address: "0x100000ab4", name: "_$s4main4PairVMa" },
+      { address: "0x1", name: "_TtCClass" },
+      { address: "0x1000009f8", name: "$s4main4PairVMa" },
+    ]);
+
+    expect(result).toMatchObject({
+      total: 4,
+      categories: {
+        classes: { count: 1 },
+        other: {
+          count: 3,
+          items: [
+            { address: "0x1000009f8", name: "$s4main4PairVMa" },
+            { address: "0x100000ac4", name: "$s4main6ScorerVMa" },
+            { address: "0x100000ab4", name: "_$s4main4PairVMa" },
+          ],
+        },
+      },
+    });
+  });
+
+  it("keeps non-Swift procedure names out of the Swift inventory", () => {
+    const result = categorizeSwiftTypes([
+      { address: "0x1", name: "printf" },
+      { address: "0x2", name: "_OBJC_CLASS_$_App" },
+      { address: "0x3", name: "std::vector<int>::push_back" },
+    ]);
+
+    expect(result).toMatchObject({ total: 0 });
+  });
 });
