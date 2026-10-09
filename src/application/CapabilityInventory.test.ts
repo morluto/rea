@@ -404,5 +404,9 @@ describe("optional JavaScript recovery availability", () => {
     expect(entry("analyze_javascript_application", status())).toMatchObject({
       available: true,
     });
+    expect(entry("inspect_analysis_view", status())).toMatchObject({
+      available: true,
+      surface: "application",
+    });
   });
 });

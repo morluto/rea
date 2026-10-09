@@ -2,12 +2,15 @@
 
 REA derives a complete reachable feature trace from one authenticated JavaScript
 Application Graph and compares two authenticated graph versions. The MCP tools
-are `trace_application_feature`, `trace_javascript_semantics`,
-`compare_application_versions`, `compare_source_to_bundle`, and
-`compare_javascript_export_shapes`; their CLI equivalents use the same names
-with hyphens.
+are `inspect_analysis_view`, `trace_application_feature`,
+`trace_javascript_semantics`, `compare_application_versions`,
+`compare_source_to_bundle`, and `compare_javascript_export_shapes`; their CLI
+equivalents use the same names with hyphens. `inspect_analysis_view` projects a
+summary, module page, or one module from already completed application
+Evidence; it does not walk relationships.
 
-These workflows consume Evidence produced by
+`inspect_analysis_view` also projects retained `inspect_binary_layout`
+Evidence. The remaining workflows consume Evidence produced by
 `analyze_javascript_application` or `reconcile_javascript_runtime`. They do not
 read an artifact, execute application code, attach to a process, or open a
 native-analysis provider. Static artifact observations, passive runtime

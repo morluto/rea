@@ -7,6 +7,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 const JSON_COMMANDS = [
+  ["inspect-analysis-view", "inspect-analysis-view"],
   ["trace-application-feature", "trace-application-feature"],
   ["trace-javascript-semantics", "trace-javascript-semantics"],
   ["compare-application-versions", "compare-application-versions"],

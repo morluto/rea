@@ -10,6 +10,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { SUPPORTED_CLIENT_DEFINITIONS } from "../../../src/application/SupportedClients.js";
 import {
+  ANALYSIS_VIEW_PROVIDER,
   ANDROID_APPLICATION_PROVIDER,
   APPLE_APPLICATION_PROVIDER,
   ARTIFACT_GRAPH_PROVIDER,
@@ -132,6 +133,7 @@ describe("canonical product catalog", () => {
         JAVASCRIPT_APPLICATION_PROVIDER,
         JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
         JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER,
+        ANALYSIS_VIEW_PROVIDER,
         WEB_SCRIPT_EXPORT_PROVIDER,
       ]
         .map(({ id }) => id)
@@ -178,6 +180,10 @@ describe("canonical product catalog", () => {
       "trace_application_feature",
       "trace_javascript_semantics",
     ]);
+    expect(
+      catalog.providers.find(({ id }) => id === ANALYSIS_VIEW_PROVIDER.id)
+        ?.capabilities,
+    ).toEqual(["inspect_analysis_view"]);
     expect(
       catalog.providers.find(({ id }) => id === ANDROID_APPLICATION_PROVIDER.id)
         ?.capabilities,

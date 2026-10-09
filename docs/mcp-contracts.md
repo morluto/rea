@@ -186,8 +186,9 @@ room for the JSON-RPC envelope. If a result cannot fit, REA returns
 `resource_constraint` with `details.resource: "transport"` before constructing
 a document-sized string. Analysis Evidence remains complete in the current
 session. Its exact reference is reported in
-`details.reported_limits.evidence_reference`; use it with a focused application
-workflow, or call `export_evidence_bundle` with a destination path. Complete
+`details.reported_limits.evidence_reference`; call `inspect_analysis_view` with
+that reference for a summary, one section/module, or a stable page, or call
+`export_evidence_bundle` with a destination path. Complete
 bundle exports stream canonical JSON into an atomically published file. A broad
 follow-up or `get_evidence_bundle` can also exceed the response budget; exporting
 preserves the complete session without sending it through a single MCP frame.
@@ -201,6 +202,15 @@ It does not change the client's buffer, analysis coverage, or retained content.
 Ordinary responses keep their existing complete result contract.
 
 ## Retained application Evidence inputs
+
+`inspect_analysis_view` projects a caller-selected view of already completed
+`inspect_binary_layout` or `analyze_javascript_application` Evidence. Source is
+an exact same-session retained reference or portable inline Evidence. Views are
+a summary, a layout mitigations or linkage facet, one section/symbol/module, or
+a stable page. Page `limit` is required; the contract documents the measured
+maximum that stays inside the pinned 10 MiB stdio budget. The result includes
+the projected facts inline plus a view digest of those bytes. It does not
+re-run analysis or silently truncate a complete schema.
 
 `trace_application_feature`, `trace_javascript_semantics`,
 `compare_application_versions`, `compare_source_to_bundle`, and

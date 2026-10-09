@@ -1,4 +1,5 @@
 import { EVM_TOOL_CONTRACTS } from "./evm/evmToolContracts.js";
+import { ANALYSIS_VIEW_TOOL_CONTRACTS } from "./analysisViewToolContracts.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "./native/binaryDiagnosticsToolContracts.js";
 import { describe, expect, it } from "vitest";
 
@@ -26,6 +27,7 @@ const GROUPS = {
   enhanced: ENHANCED_TOOL_CONTRACTS,
   native: NATIVE_TOOL_CONTRACTS,
   binary_diagnostics: BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
+  analysis_view: ANALYSIS_VIEW_TOOL_CONTRACTS,
   artifact: ARTIFACT_TOOL_CONTRACTS,
   evm: EVM_TOOL_CONTRACTS,
   managed: MANAGED_TOOL_CONTRACTS,

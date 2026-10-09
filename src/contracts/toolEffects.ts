@@ -80,6 +80,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     writesFilesystem: true,
     launchesProcess: true,
   }),
+  inspect_analysis_view: evidence,
   inspect_firmware_regions: effects({
     mutatesSession: true,
     launchesProcess: true,

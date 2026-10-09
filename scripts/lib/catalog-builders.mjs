@@ -75,6 +75,7 @@ export const toolFamilyCatalog = (sources) => {
       surface: "application-workflow",
       contracts: [
         ...sources.applicationContracts.APPLICATION_TOOL_CONTRACTS,
+        ...sources.analysisViewContracts.ANALYSIS_VIEW_TOOL_CONTRACTS,
         ...sources.webScriptContracts.WEB_SCRIPT_TOOL_CONTRACTS,
         ...sources.javascriptRecoveryContracts
           .JAVASCRIPT_RECOVERY_TOOL_CONTRACTS,
@@ -245,6 +246,10 @@ export const providerCatalog = (sources) => {
           name !== "project_android_application_graph" &&
           name !== "project_apple_application_graph",
       ),
+    },
+    {
+      identity: sources.artifactProviders.ANALYSIS_VIEW_PROVIDER,
+      contracts: sources.analysisViewContracts.ANALYSIS_VIEW_TOOL_CONTRACTS,
     },
     {
       identity: sources.artifactProviders.ANDROID_APPLICATION_PROVIDER,

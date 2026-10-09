@@ -215,3 +215,25 @@ it("preserves validation for the referenced record's operation, predicate, and s
   });
   expect(response.isError).toBe(true);
 });
+
+it("projects a retained JavaScript summary without graph or semantic_graph", async () => {
+  const { client, session } = await connect();
+  expect(session.recordEvidence(application).ok).toBe(true);
+  const inline = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: {
+      source: { kind: "inline", evidence: application },
+      view: { kind: "summary" },
+    },
+  });
+  const referenced = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: {
+      source: retained(application.evidence_id),
+      view: { kind: "summary" },
+    },
+  });
+  expect(inline.isError).not.toBe(true);
+  expect(referenced.structuredContent).toEqual(inline.structuredContent);
+  expect(JSON.stringify(inline.structuredContent)).not.toMatch(/semantic_graph/);
+});

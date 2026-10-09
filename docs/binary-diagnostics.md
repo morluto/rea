@@ -84,6 +84,13 @@ uses isolated mode and an owned cache. Exact upstream profiles are recorded in
   stack can accompany an unknown (`null`) NX indicator. ET_DYN can be a shared
   library, and an absent canary symbol does not prove every function unprotected.
 
+When complete layout Evidence is already retained, `inspect_analysis_view` /
+`inspect-analysis-view` projects a summary, the mitigations or linkage facet,
+one section or symbol, or a stable page without re-running the decoder. CLI
+one-shot invocations pass portable inline Evidence JSON; an MCP session uses
+the retained `evidence_id`. Page `limit` is required and bounded by the
+measured MCP stdio budget documented on the tool contract.
+
 Complete results have a 32 MiB input, 64 MiB reply, 1 MiB combined diagnostics
 and 30-second owned command deadline. The reply budget applies to the decoder
 record; the CLI/MCP Evidence envelope adds copies and encoding overhead. The

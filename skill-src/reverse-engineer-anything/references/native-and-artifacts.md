@@ -16,6 +16,15 @@ Requested unavailable context fails with setup guidance. See
 [recorded crashes](https://github.com/morluto/rea/blob/main/docs/recorded-crashes.md)
 for exact upstream profiles, bounds and verification coverage.
 
+## Offline ELF layout
+
+Use `inspect_binary_layout` with an explicit local ELF path for file-backed
+sections, symbols, relocations, linkage names, and static mitigation inferences
+without opening a disassembler target. When that complete record is already
+retained, call `inspect_analysis_view` for a summary, mitigations or linkage
+facet, one section or symbol, or a stable page. Do not re-run the decoder to
+read a single object.
+
 ## Native targets
 
 After `open_binary`, use focused search, procedure, or function tools directly.

@@ -77,6 +77,13 @@ export const JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER = {
   version: "1",
 } as const;
 
+/** Provider identity for selected views of retained analysis Evidence. */
+export const ANALYSIS_VIEW_PROVIDER = {
+  id: "rea-analysis-view",
+  name: "REA analysis view projection",
+  version: "1",
+} as const;
+
 /** Provider identity for graph-native feature tracing and version comparison. */
 export const JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER = {
   id: "rea-javascript-application-workflows",

@@ -8,10 +8,12 @@ only when a specific question remains unanswered.
 
 An oversized response reports `resource_constraint` and
 `details.resource: "transport"`. Reuse
-`details.reported_limits.evidence_reference` with `trace_application_feature`
-for the module or feature under investigation. `export_evidence_bundle` writes
-the complete canonical session to a caller-selected file. Both workflows keep
-the original Evidence and coverage; a broad follow-up can also exceed framing.
+`details.reported_limits.evidence_reference` with `inspect_analysis_view` for a
+summary, one module, or a stable page of module identities. Use
+`trace_application_feature` once a module, route, or string seed is known.
+`export_evidence_bundle` writes the complete canonical session to a
+caller-selected file. These workflows keep the original Evidence and coverage;
+a broad follow-up can also exceed framing.
 
 BrowserWindow preferences, preload and contextBridge surfaces, IPC
 registrations, utility processes, and native binding requests are static syntax
@@ -50,7 +52,9 @@ through the available browser, Electron, or process workflows.
 When advertised by the connected server, application trace and compare tools
 accept complete inline Evidence or
 `{"kind":"retained-evidence","evidence_id":"ev_<64 lowercase hex characters>"}`
-for their application input (`application`, or `left`/`right`). This notation is
+for their application input (`application`, or `left`/`right`). `inspect_analysis_view`
+uses the same retained-reference form in `source`, or portable inline Evidence,
+to project a summary, module page, or one module without source text. This notation is
 a template: replace it with the actual returned ID. Versions before 4.1.0 accept only full
 inline Evidence. Use the exact ID
 returned by the producer on the same MCP connection. Resolution does not run

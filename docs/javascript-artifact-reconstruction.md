@@ -108,14 +108,15 @@ memory needed to construct the analysis graph itself.
 MCP prepares the complete repeated response incrementally against the pinned
 SDK's 10 MiB stdio receive-buffer budget. Oversized results return an actionable
 transport constraint and the exact same-session Evidence reference. Use
-`trace_application_feature` to inspect a selected module's relationships, or
-`export_evidence_bundle` to write the complete canonical bundle without a
-document-sized allocation. Same-session analysis reads reuse authenticated
-immutable snapshots; foreign inline Evidence is still parsed and authenticated.
+`inspect_analysis_view` with the retained Evidence ID for a summary, one
+module, or a stable page of module identities. Use `trace_application_feature`
+once a module, route, or string seed is known, or `export_evidence_bundle` to
+write the complete canonical bundle without a document-sized allocation.
+Same-session analysis reads reuse authenticated immutable snapshots; foreign
+inline Evidence is still parsed and authenticated.
 See [MCP tool results](mcp-contracts.md#tool-results) for larger client buffers
 and `REA_MCP_MAX_RESPONSE_BYTES`. Follow-up results remain complete and can also
-exceed the transport budget. Compact result views are tracked separately in
-[#1050](https://github.com/morluto/rea/issues/1050).
+exceed the transport budget.
 
 ## What is reconstructed
 

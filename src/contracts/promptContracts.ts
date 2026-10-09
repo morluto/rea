@@ -131,9 +131,9 @@ export const PROMPT_CONTRACTS = [
           "Search relevant strings or procedures and analyze the matching procedures; pass names or addresses directly when already known.",
       },
       {
-        tools: ["trace_application_feature"],
+        tools: ["inspect_analysis_view", "trace_application_feature"],
         instruction:
-          "When application-graph Evidence is relevant, trace a route, API, channel, module, string, or native export across layers.",
+          "When inspect_binary_layout or analyze_javascript_application Evidence is already retained, call inspect_analysis_view with that evidence_id for a summary, one section/symbol/module, or a stable page. Do not re-run the producer. Use trace_application_feature once a route, API, channel, module, string, or native export seed is known.",
       },
       {
         tools: [

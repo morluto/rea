@@ -4,6 +4,7 @@ import { registerEvmTools } from "./registerEvmTools.js";
 import { registerRecordedCrashTools } from "./registerRecordedCrashTools.js";
 import { createRecordedCrashService } from "../composition/binaryDiagnostics.js";
 import type { RecordedCrashService } from "../application/binaryDiagnostics/RecordedCrashService.js";
+import { registerAnalysisViewTool } from "./registerAnalysisViewTool.js";
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
 import { createBinaryLayoutService } from "../composition/binaryDiagnostics.js";
 import type { BinaryLayoutService } from "../application/binaryDiagnostics/BinaryLayoutService.js";
@@ -221,6 +222,7 @@ export const createServer = (
     toolLogger,
     recordEvidence,
   );
+  registerAnalysisViewTool(server, toolLogger, evidenceById, recordEvidence);
   registerEvmTools(
     server,
     options.evmInterface ?? createEvmInterfaceService(),
