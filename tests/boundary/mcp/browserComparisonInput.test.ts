@@ -23,6 +23,10 @@ const delivery = new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 
 const contract = toolContract("compare_web_captures");
 
+const comparisonCase =
+  (expected: boolean, advertised = expected) =>
+  (input: Record<string, unknown>) => ({ input, expected, advertised });
+
 describe("browser comparison input boundary", () => {
   it("advertises complete producer captures and agrees with SDK validation on both comparison families", async () => {
     const browser = await startFakeCdpBrowser({ sensitiveShapes: true });
@@ -102,28 +106,20 @@ describe("browser comparison input boundary", () => {
           },
         },
       ];
-      const cases = [
-        ...[passive, scenario, withoutNormalization].map((input) => ({
-          input,
-          expected: true,
-        })),
-        ...invalid.map((input) => ({ input, expected: false })),
-      ];
       // The object root cannot express group exclusion; the SDK's canonical
       // parser still rejects mixed groups before the handler runs.
-      const mixedGroups: readonly Record<string, unknown>[] = [
-        { ...passive, ...scenario },
-        { ...passive, normalization: { rules: [] } },
+      const cases = [
+        ...[passive, scenario, withoutNormalization].map(comparisonCase(true)),
+        ...invalid.map(comparisonCase(false)),
+        ...[
+          { ...passive, ...scenario },
+          { ...passive, normalization: { rules: [] } },
+        ].map(comparisonCase(false, true)),
       ];
-      for (const input of mixedGroups) expect(validate(input)).toBe(true);
-      for (const { input, expected } of [
-        ...cases,
-        ...mixedGroups.map((input) => ({ input, expected: false })),
-      ]) {
-        if (!mixedGroups.includes(input))
-          expect(validate(input), JSON.stringify(validate.errors)).toBe(
-            expected,
-          );
+      for (const { input, expected, advertised } of cases) {
+        expect(validate(input), JSON.stringify(validate.errors)).toBe(
+          advertised,
+        );
         expect(
           browserCaptureComparisonInputSchema.safeParse(input).success,
         ).toBe(expected);
