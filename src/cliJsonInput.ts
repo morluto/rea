@@ -4,7 +4,11 @@ import {
   NonRegularFileReadError,
   readRegularFile,
 } from "./application/RegularFileRead.js";
-import { AnalysisInputError } from "./domain/analysisErrorCore.js";
+import { parseUtf8Json } from "./application/Utf8JsonInput.js";
+import {
+  AnalysisInputError,
+  AnalysisResourceConstraintError,
+} from "./domain/analysisErrorCore.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 import { safeParseJson } from "./domain/safeJson.js";
@@ -17,16 +21,30 @@ export const parseCliJsonInput = async (
   | { readonly ok: true; readonly value: unknown }
   | { readonly ok: false; readonly error: JsonValue }
 > => {
-  const inline = parseJson(value);
-  if (inline !== undefined) return { ok: true, value: inline };
+  const inline = safeParseJson(value);
+  if (inline.ok) return { ok: true, value: inline.value };
   try {
-    // Read raw bytes so invalid UTF-8 is rejected by parseJson instead of
+    // Read raw bytes so invalid UTF-8 is rejected instead of
     // being silently replaced by lossy "utf8" decoding.
-    const parsed = parseJson(await readRegularFile(value));
-    return parsed === undefined
-      ? jsonFileError(value, operation, "invalid-json")
-      : { ok: true, value: parsed };
+    const parsed = parseUtf8Json(
+      await readRegularFile(value),
+      operation,
+      value,
+    );
+    return parsed.ok
+      ? { ok: true, value: parsed.value }
+      : jsonFileError(value, operation, "invalid-json");
   } catch (cause: unknown) {
+    if (cause instanceof AnalysisResourceConstraintError)
+      return {
+        ok: false,
+        error: {
+          error: "Application workflow failed",
+          ...projectAnalysisError(cause),
+          input_path: value,
+          input_reason: "too-large",
+        },
+      };
     if (
       ["{", "["].includes(value.trimStart()[0] ?? "") &&
       cannotBeAnExistingFile(cause) &&
@@ -86,26 +104,6 @@ const cannotBeAnExistingFile = (cause: unknown): boolean =>
 
 const hasExplicitJsonFileExtension = (value: string): boolean =>
   value.toLowerCase().endsWith(".json");
-
-const parseJson = (value: string | Uint8Array): unknown => {
-  let text: string;
-  if (typeof value === "string") {
-    text = value;
-  } else {
-    try {
-      text = new TextDecoder("utf-8", {
-        fatal: true,
-        ignoreBOM: true,
-      }).decode(value);
-    } catch (cause: unknown) {
-      // Decoding failure means the bytes are not valid UTF-8 JSON input.
-      void cause;
-      return undefined;
-    }
-  }
-  const parsed = safeParseJson(text);
-  return parsed.ok ? parsed.value : undefined;
-};
 
 const inputError = (operation: string): JsonValue => ({
   error: "Application workflow failed",

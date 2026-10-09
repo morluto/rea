@@ -18,6 +18,7 @@ describe("CLI JSON input failure recognition", () => {
     { input_reason: "invalid-json" },
     { input_path: "input.json", input_reason: "invalid-json" },
     { input_path: "missing.json", input_reason: "read-failed" },
+    { input_path: "large.json", input_reason: "too-large" },
     { input_path: "", input_reason: "read-failed" },
   ])("recognizes a complete envelope with metadata %j", (metadata) => {
     const value = { ...envelope, ...metadata };
