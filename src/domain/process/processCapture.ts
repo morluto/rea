@@ -42,6 +42,14 @@ export interface InteractionEvent {
   readonly outcome: "dispatched" | "target_exited" | "failed";
 }
 
+/** Outcome of the SIGTERM-then-SIGKILL interval granted after a deadline fired. */
+export interface ProcessCaptureFinalization {
+  readonly requested_ms: number;
+  readonly signal: "SIGTERM";
+  readonly outcome: "target_exited" | "forced_kill";
+  readonly elapsed_ms: number;
+}
+
 /** One filesystem state used for before/after comparison. */
 interface FileStateIdentity {
   readonly path: string;
@@ -209,6 +217,7 @@ export interface UnverifiedProcessCapture {
     readonly code: number | null;
     readonly signal: number | null;
     readonly reason: "exited" | "timeout" | "idle_timeout";
+    readonly finalization?: ProcessCaptureFinalization | undefined;
   };
   readonly settlement: VerifiedProcessSettlement;
   readonly process_samples: readonly ProcessSample[];
@@ -290,6 +299,7 @@ export interface IncompleteProcessCaptureObservations {
     readonly code: number | null;
     readonly signal: number | null;
     readonly reason: "exited" | "timeout" | "idle_timeout" | "cancelled";
+    readonly finalization?: ProcessCaptureFinalization | undefined;
   }>;
   readonly settlement: PartialProcessObservationField<{
     readonly state: "quiesced" | "alive_at_deadline" | "unverifiable";
@@ -385,6 +395,13 @@ const unverifiedCleanupProcessesSchema = z.array(
   z.strictObject({ pid: z.number().int().positive(), reason: z.string() }),
 );
 
+const processCaptureFinalizationSchema = z.strictObject({
+  requested_ms: z.number().int().safe().positive(),
+  signal: z.literal("SIGTERM"),
+  outcome: z.enum(["target_exited", "forced_kill"]),
+  elapsed_ms: z.number().int().nonnegative(),
+});
+
 const processCaptureShapeSchema = z.strictObject({
   manifest: z.strictObject({
     rea_version: z.string().min(1),
@@ -448,6 +465,7 @@ const processCaptureShapeSchema = z.strictObject({
     code: z.number().int().nullable(),
     signal: z.number().int().nullable(),
     reason: z.enum(["exited", "timeout", "idle_timeout"]),
+    finalization: processCaptureFinalizationSchema.optional(),
   }),
   settlement: z.discriminatedUnion("state", [
     z.object({
@@ -543,6 +561,7 @@ const incompleteProcessCaptureObservationsSchema = z.strictObject({
       code: z.number().int().nullable(),
       signal: z.number().int().nullable(),
       reason: z.enum(["exited", "timeout", "idle_timeout", "cancelled"]),
+      finalization: processCaptureFinalizationSchema.optional(),
     }),
   ),
   settlement: partialObservationFieldSchema(

@@ -609,6 +609,9 @@ const runProcessScenario = async (
           exit.reason === "exited" && exit.exitCode >= 0 ? exit.exitCode : null,
         signal: exit.signal ?? null,
         reason: exit.reason,
+        ...(exit.finalization === undefined
+          ? {}
+          : { finalization: exit.finalization }),
       },
     };
     capture = await completeCapture({

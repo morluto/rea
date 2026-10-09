@@ -52,6 +52,7 @@ import { scheduleProcessInterval, type ProcessTimer } from "./ProcessTimer.js";
 import type {
   FilesystemCheckpoint,
   InteractionEvent,
+  ProcessCaptureFinalization,
   UnverifiedProcessCapture,
   ProcessSample,
   ProcessSettlement,
@@ -84,6 +85,7 @@ interface CaptureResultOptions {
     readonly exitCode: number;
     readonly signal?: number;
     readonly reason: "exited" | "timeout" | "idle_timeout";
+    readonly finalization?: ProcessCaptureFinalization;
   };
   readonly samples: readonly ProcessSample[];
   readonly before: ProcessFilesystemSnapshot;
@@ -271,6 +273,9 @@ export const buildCaptureResult = (
           : null,
       signal: options.exit.signal ?? null,
       reason: options.exit.reason,
+      ...(options.exit.finalization === undefined
+        ? {}
+        : { finalization: options.exit.finalization }),
     },
     settlement: options.settlement,
     process_samples: normalizeProcessSamples(
@@ -660,6 +665,7 @@ export const awaitTerminalExit = async ({
   exitCode: number;
   signal?: number;
   reason: "exited" | "timeout" | "idle_timeout" | "cancelled";
+  finalization?: ProcessCaptureFinalization;
 }> =>
   new Promise((resolveExit) => {
     // The kill caused by a deadline is observed later as an ordinary PTY exit.
@@ -667,6 +673,24 @@ export const awaitTerminalExit = async ({
     // exit from harness-owned timeout, idle-timeout, and cancellation cleanup.
     let reason: "exited" | "timeout" | "idle_timeout" | "cancelled" = "exited";
     onLiveProgress?.();
+    // A deadline with a finalization interval sends SIGTERM first and keeps
+    // observing; SIGKILL follows only when the interval elapses or the request
+    // is cancelled.
+    let finalizationStartedAt: number | undefined;
+    let forcedKillAfterMs: number | undefined;
+    const forceKill = (): void => {
+      if (finalizationStartedAt !== undefined)
+        forcedKillAfterMs ??= Date.now() - finalizationStartedAt;
+      terminal.kill("SIGKILL");
+    };
+    const terminateAtDeadline = (): void => {
+      if (scenario.finalization_ms === 0) {
+        terminal.kill("SIGKILL");
+        return;
+      }
+      finalizationStartedAt = Date.now();
+      terminal.kill("SIGTERM");
+    };
     terminal.onExit((exit) => {
       recordEvent("lifecycle", 0);
       for (const [eventIndex, event] of scenario.events.entries()) {
@@ -691,19 +715,39 @@ export const awaitTerminalExit = async ({
         timer.cancel();
       }
       timers.clear();
-      resolveExit({ ...exit, reason });
+      resolveExit({
+        ...exit,
+        reason,
+        ...(finalizationStartedAt === undefined
+          ? {}
+          : {
+              finalization: {
+                requested_ms: scenario.finalization_ms,
+                signal: "SIGTERM" as const,
+                outcome:
+                  forcedKillAfterMs === undefined
+                    ? ("target_exited" as const)
+                    : ("forced_kill" as const),
+                elapsed_ms:
+                  forcedKillAfterMs ?? Date.now() - finalizationStartedAt,
+              },
+            }),
+      });
     });
     const timeout = scheduleProcessInterval(() => {
       onLiveProgress?.();
       if (signal?.aborted === true) {
         reason = "cancelled";
-        terminal.kill("SIGKILL");
+        forceKill();
+      } else if (finalizationStartedAt !== undefined) {
+        if (Date.now() - finalizationStartedAt >= scenario.finalization_ms)
+          forceKill();
       } else if (Date.now() - started >= scenario.timeout_ms) {
         reason = "timeout";
-        terminal.kill("SIGKILL");
+        terminateAtDeadline();
       } else if (Date.now() - lastOutput() >= scenario.idle_timeout_ms) {
         reason = "idle_timeout";
-        terminal.kill("SIGKILL");
+        terminateAtDeadline();
       }
     }, 20);
     timers.add(timeout);
