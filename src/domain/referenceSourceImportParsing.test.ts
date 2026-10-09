@@ -79,3 +79,15 @@ describe("historical source dynamic imports", () => {
     ]);
   });
 });
+
+it("retains dependencies beside a deeply nested generated member chain", () => {
+  const expression = `object${".property".repeat(20_000)}`;
+  const result = parse(
+    `const value = ${expression}; require("./first.cjs"); import("./last.js");`,
+  );
+  expect(result.parse_failures).toEqual([]);
+  expect(result.relationships.map(({ to, kind }) => ({ to, kind }))).toEqual([
+    { to: "./first.cjs", kind: "requires" },
+    { to: "./last.js", kind: "imports" },
+  ]);
+});
