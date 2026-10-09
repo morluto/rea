@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { ToolContract } from "./toolContractTypes.js";
+import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
 
 const PROPERTY_DESCRIPTIONS: Readonly<Record<string, string>> = {
   addresses: "Ordered provider-normalized procedure addresses to analyze.",
@@ -56,11 +57,25 @@ export const toolInputSchemaWithMetadata = <Contract extends ToolContract>(
   withAdvertisedJsonSchema(
     contract.inputSchema,
     "input",
-    (project) => (options) =>
-      flattenRootUnion({
-        ...describeProperties(project(options)),
+    (project) => (options) => {
+      const shared = project({
+        ...options,
+        libraryOptions: { reused: "ref", ...options.libraryOptions },
+      });
+      // Root-union flattening compares branch properties before widening them.
+      // Keep its inline representation: distinct references can name equal
+      // schemas and otherwise introduce redundant, deeper anyOf properties.
+      const compatible = Array.isArray(shared.anyOf)
+        ? project({
+            ...options,
+            libraryOptions: { ...options.libraryOptions, reused: "inline" },
+          })
+        : shared;
+      return {
+        ...presentInputJsonSchema(compatible, fallbackPropertyDescription),
         examples: contract.examples.map(({ input }) => input),
-      }),
+      };
+    },
   );
 
 /** Share repeated output definitions without changing canonical validation. */
@@ -122,89 +137,10 @@ const memoizeByTarget = (
   };
 };
 
-/** Keep MCP tool roots object-shaped for clients that reject root unions. */
-const flattenRootUnion = (
-  value: Record<string, unknown>,
-): Record<string, unknown> => {
-  if (!Array.isArray(value.anyOf)) return value;
-  const branches = value.anyOf.filter(isObject);
-  if (branches.length === 0 || branches.length !== value.anyOf.length)
-    return value;
-
-  const properties: Record<string, unknown> = {};
-  for (const branch of branches) {
-    if (!isObject(branch.properties)) return value;
-    for (const [name, schema] of Object.entries(branch.properties)) {
-      const previous = properties[name];
-      if (previous === undefined) properties[name] = schema;
-      else if (JSON.stringify(previous) !== JSON.stringify(schema))
-        properties[name] = {
-          anyOf: [previous, schema],
-          description: fallbackPropertyDescription(name),
-        };
-    }
-  }
-
-  // The canonical Zod parser still enforces branch validation at invocation.
-  const { anyOf: _anyOf, required: _required, ...root } = value;
-  const requiredByBranch = branches.map((branch) =>
-    Array.isArray(branch.required)
-      ? branch.required.filter(
-          (item): item is string => typeof item === "string",
-        )
-      : [],
-  );
-  const required = requiredByBranch.reduce((common, current) =>
-    common.filter((name) => current.includes(name)),
-  );
-  const minProperties = Math.max(
-    typeof root.minProperties === "number" ? root.minProperties : 0,
-    Math.min(...requiredByBranch.map((names) => names.length)),
-  );
-  return {
-    ...root,
-    type: "object",
-    properties,
-    ...(minProperties > 0 ? { minProperties } : {}),
-    ...(required.length > 0 ? { required } : {}),
-    ...(branches.every((branch) => branch.additionalProperties === false)
-      ? { additionalProperties: false }
-      : {}),
-  };
-};
-
-const describeProperties = (
-  value: Readonly<Record<string, unknown>>,
-): Record<string, unknown> =>
-  Object.fromEntries(
-    Object.entries(value).map(([key, child]) => {
-      if (key !== "properties" || !isObject(child))
-        return [key, describeValue(child)];
-      return [
-        key,
-        Object.fromEntries(
-          Object.entries(child).map(([property, propertySchema]) => [
-            property,
-            isObject(propertySchema) &&
-            typeof propertySchema.description !== "string"
-              ? {
-                  ...describeProperties(propertySchema),
-                  description: fallbackPropertyDescription(property),
-                }
-              : describeValue(propertySchema),
-          ]),
-        ),
-      ];
-    }),
-  );
-
-const describeValue = (value: unknown): unknown => {
-  if (Array.isArray(value)) return value.map(describeValue);
-  return isObject(value) ? describeProperties(value) : value;
-};
-
 const fallbackPropertyDescription = (property: string): string => {
-  const explicit = PROPERTY_DESCRIPTIONS[property];
+  const explicit = Object.hasOwn(PROPERTY_DESCRIPTIONS, property)
+    ? PROPERTY_DESCRIPTIONS[property]
+    : undefined;
   if (explicit !== undefined) return explicit;
   const words = property.replaceAll("_", " ");
   if (property.startsWith("max_"))
@@ -231,6 +167,3 @@ const fallbackPropertyDescription = (property: string): string => {
     return `Whether ${words}.`;
   return `Value for ${words}.`;
 };
-
-const isObject = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);

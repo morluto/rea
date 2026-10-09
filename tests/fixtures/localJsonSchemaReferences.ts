@@ -19,6 +19,16 @@ const schemaChildren = new Set([
 ]);
 const lowerBounds = new Set(["minimum", "exclusiveMinimum"]);
 const upperBounds = new Set(["maximum", "exclusiveMaximum"]);
+const annotations = new Set([
+  "title",
+  "description",
+  "$comment",
+  "default",
+  "examples",
+  "deprecated",
+  "readOnly",
+  "writeOnly",
+]);
 const scopedKeywords = new Set([
   "properties",
   "patternProperties",
@@ -33,6 +43,102 @@ const scopedKeywords = new Set([
 
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const compatibleSibling = (
+  key: string,
+  previous: unknown,
+  value: unknown,
+): boolean =>
+  previous === undefined ||
+  JSON.stringify(previous) === JSON.stringify(value) ||
+  annotations.has(key) ||
+  (typeof previous === "number" &&
+    typeof value === "number" &&
+    (lowerBounds.has(key) || upperBounds.has(key)));
+
+const mergeSiblings = (
+  schema: Record<string, unknown>,
+  siblings: Record<string, unknown>,
+): Record<string, unknown> => {
+  const merged = { ...schema, ...siblings };
+  for (const [key, value] of Object.entries(siblings)) {
+    const previous = schema[key];
+    if (!compatibleSibling(key, previous, value))
+      throw new Error(`Conflicting schema reference sibling: ${key}`);
+    if (typeof previous !== "number" || typeof value !== "number") continue;
+    if (lowerBounds.has(key)) merged[key] = Math.max(previous, value);
+    else if (upperBounds.has(key)) merged[key] = Math.min(previous, value);
+  }
+  return merged;
+};
+
+const normalizeStringIntersection = (
+  schema: Record<string, unknown>,
+): Record<string, unknown> => {
+  if (
+    (schema.type !== undefined && schema.type !== "string") ||
+    !Array.isArray(schema.allOf)
+  )
+    return schema;
+  let requiresString = schema.type === "string";
+  const validBounds = (value: Record<string, unknown>): boolean =>
+    ["minLength", "maxLength"].every(
+      (key) =>
+        !Object.hasOwn(value, key) ||
+        (typeof value[key] === "number" &&
+          Number.isInteger(value[key]) &&
+          value[key] >= 0),
+    ) &&
+    (!Object.hasOwn(value, "pattern") || typeof value.pattern === "string");
+  if (!validBounds(schema)) return schema;
+  const patterns = new Set<string>();
+  let minimum = typeof schema.minLength === "number" ? schema.minLength : 0;
+  let maximum =
+    typeof schema.maxLength === "number" ? schema.maxLength : Infinity;
+  if (typeof schema.pattern === "string") patterns.add(schema.pattern);
+  const collect = (child: unknown): boolean => {
+    if (!record(child) || (child.type !== undefined && child.type !== "string"))
+      return false;
+    if (
+      !validBounds(child) ||
+      (Object.hasOwn(child, "allOf") && !Array.isArray(child.allOf))
+    )
+      return false;
+    if (child.type === "string") requiresString = true;
+    if (
+      Object.keys(child).some(
+        (key) =>
+          !["type", "pattern", "minLength", "maxLength", "allOf"].includes(key),
+      )
+    )
+      return false;
+    if (typeof child.pattern === "string") patterns.add(child.pattern);
+    if (typeof child.minLength === "number")
+      minimum = Math.max(minimum, child.minLength);
+    if (typeof child.maxLength === "number")
+      maximum = Math.min(maximum, child.maxLength);
+    return !Array.isArray(child.allOf) || child.allOf.every(collect);
+  };
+  if (!schema.allOf.every(collect) || !requiresString) return schema;
+  const {
+    allOf: _allOf,
+    pattern: _pattern,
+    minLength: _min,
+    maxLength: _max,
+    ...root
+  } = schema;
+  const unique = [...patterns];
+  return {
+    ...root,
+    type: "string",
+    ...(minimum > 0 ? { minLength: minimum } : {}),
+    ...(maximum < Infinity ? { maxLength: maximum } : {}),
+    ...(unique.length === 1 ? { pattern: unique[0] } : {}),
+    ...(unique.length > 1
+      ? { allOf: unique.map((pattern) => ({ type: "string", pattern })) }
+      : {}),
+  };
+};
 
 /** Inline finite local references for representation-independent schema assertions. */
 export const inlineLocalJsonSchemaReferences = (
@@ -68,27 +174,10 @@ export const inlineLocalJsonSchemaReferences = (
             visit(siblings, active),
           ],
         };
-      const merged = { ...referenced, ...siblings };
-      for (const [key, entry] of Object.entries(siblings)) {
-        const previous = referenced[key];
-        if (
-          previous === undefined ||
-          JSON.stringify(previous) === JSON.stringify(entry)
-        )
-          continue;
-        if (typeof previous === "number" && typeof entry === "number") {
-          if (lowerBounds.has(key)) {
-            merged[key] = Math.max(previous, entry);
-            continue;
-          }
-          if (upperBounds.has(key)) {
-            merged[key] = Math.min(previous, entry);
-            continue;
-          }
-        }
-        throw new Error(`Conflicting schema reference sibling: ${key}`);
-      }
-      return visit(merged, new Set([...active, reference]));
+      return visit(
+        mergeSiblings(referenced, siblings),
+        new Set([...active, reference]),
+      );
     }
     if (Array.isArray(value.allOf) && value.allOf.length === 1) {
       const child = visit(value.allOf[0], active);
@@ -96,25 +185,11 @@ export const inlineLocalJsonSchemaReferences = (
       if (
         record(child) &&
         !Object.keys(siblings).some((key) => scopedKeywords.has(key)) &&
-        Object.entries(siblings).every(
-          ([key, entry]) =>
-            child[key] === undefined ||
-            JSON.stringify(child[key]) === JSON.stringify(entry) ||
-            (typeof child[key] === "number" &&
-              typeof entry === "number" &&
-              (lowerBounds.has(key) || upperBounds.has(key))),
+        Object.entries(siblings).every(([key, entry]) =>
+          compatibleSibling(key, child[key], entry),
         )
       ) {
-        const merged = { ...child, ...siblings };
-        for (const [key, entry] of Object.entries(siblings)) {
-          const previous = child[key];
-          if (typeof previous !== "number" || typeof entry !== "number")
-            continue;
-          if (lowerBounds.has(key)) merged[key] = Math.max(previous, entry);
-          else if (upperBounds.has(key))
-            merged[key] = Math.min(previous, entry);
-        }
-        return visit(merged, active);
+        return visit(mergeSiblings(child, siblings), active);
       }
     }
     const normalized = { ...value };
@@ -139,31 +214,33 @@ export const inlineLocalJsonSchemaReferences = (
       normalized.exclusiveMaximum <= normalized.maximum
     )
       delete normalized.maximum;
-    return Object.fromEntries(
-      Object.entries(normalized)
-        .filter(([key]) => key !== "$defs" && key !== "definitions")
-        .map(([key, child]) => {
-          if (schemaMaps.has(key) && record(child))
-            return [
-              key,
-              Object.fromEntries(
-                Object.entries(child).map(([name, schema]) => [
-                  name,
-                  visit(schema, active),
-                ]),
-              ),
-            ];
-          if (schemaArrays.has(key) && Array.isArray(child))
-            return [key, child.map((schema) => visit(schema, active))];
-          if (schemaChildren.has(key))
-            return [
-              key,
-              Array.isArray(child)
-                ? child.map((schema) => visit(schema, active))
-                : visit(child, active),
-            ];
-          return [key, child];
-        }),
+    return normalizeStringIntersection(
+      Object.fromEntries(
+        Object.entries(normalized)
+          .filter(([key]) => key !== "$defs" && key !== "definitions")
+          .map(([key, child]) => {
+            if (schemaMaps.has(key) && record(child))
+              return [
+                key,
+                Object.fromEntries(
+                  Object.entries(child).map(([name, schema]) => [
+                    name,
+                    visit(schema, active),
+                  ]),
+                ),
+              ];
+            if (schemaArrays.has(key) && Array.isArray(child))
+              return [key, child.map((schema) => visit(schema, active))];
+            if (schemaChildren.has(key))
+              return [
+                key,
+                Array.isArray(child)
+                  ? child.map((schema) => visit(schema, active))
+                  : visit(child, active),
+              ];
+            return [key, child];
+          }),
+      ),
     );
   };
   return visit(root, new Set());

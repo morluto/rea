@@ -103,25 +103,44 @@ function expectKnownAuthorityHints(tools: readonly ToolSchemas[]): void {
 function expectRecursivePropertyDescriptions(
   schema: unknown,
   path: string,
+  root: unknown = schema,
+  active: ReadonlySet<string> = new Set(),
 ): void {
   if (!isRecord(schema)) return;
+  if (typeof schema.$ref === "string" && !active.has(schema.$ref))
+    expectRecursivePropertyDescriptions(
+      resolveReference(root, schema.$ref),
+      `${path}.${schema.$ref}`,
+      root,
+      new Set([...active, schema.$ref]),
+    );
   if (isRecord(schema.properties)) {
     for (const [property, child] of Object.entries(schema.properties)) {
       expect(child, `${path}.${property}`).toMatchObject({
         description: expect.any(String),
       });
-      expectRecursivePropertyDescriptions(child, `${path}.${property}`);
+      expectRecursivePropertyDescriptions(
+        child,
+        `${path}.${property}`,
+        root,
+        active,
+      );
     }
   }
 
   for (const key of ["items", "additionalProperties"])
     if (schema[key] !== undefined)
-      expectRecursivePropertyDescriptions(schema[key], path);
+      expectRecursivePropertyDescriptions(schema[key], path, root, active);
   for (const key of ["allOf", "anyOf", "oneOf", "prefixItems"]) {
     const children = schema[key];
     if (Array.isArray(children))
       children.forEach((child: unknown, index: number) =>
-        expectRecursivePropertyDescriptions(child, `${path}.${key}[${index}]`),
+        expectRecursivePropertyDescriptions(
+          child,
+          `${path}.${key}[${index}]`,
+          root,
+          active,
+        ),
       );
   }
 }
