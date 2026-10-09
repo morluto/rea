@@ -34,14 +34,18 @@ it("returns a nonzero exit for a streamed JSON analysis failure", async () => {
   });
 });
 
-it.skipIf(process.platform === "win32")(
-  "returns a typed cancelled CLI result and exit 130 after SIGINT",
-  async () => {
+// `analyze` routes a JavaScript directory to the same workflow and must keep
+// its typed cancellation contract.
+it
+  .skipIf(process.platform === "win32")
+  .each(["analyze-javascript-application", "analyze"])(
+  "returns a typed cancelled CLI result and exit 130 after SIGINT through %s",
+  async (command) => {
     const root = await createTestTempDirectory("rea-cli-js-cancellation-");
     await writeFile(join(root, "main.js"), "export const observed = 1;\n");
     const child = spawn(
       process.execPath,
-      ["scripts/rea.mjs", "analyze-javascript-application", root, "--json"],
+      ["scripts/rea.mjs", command, root, "--json"],
       {
         stdio: ["ignore", "pipe", "pipe"],
       },

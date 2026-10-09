@@ -14,10 +14,8 @@ import {
 } from "./options.js";
 import type { CliInstance } from "./types.js";
 import { runCliJavaScriptApplicationAnalysis } from "./javascriptApplicationAnalysis.js";
-import type {
-  CliCommandOutput,
-  CliResultOutput,
-} from "./streamedJsonOutput.js";
+import { withCommandCancellation } from "./commandCancellation.js";
+import type { CliResultOutput } from "./streamedJsonOutput.js";
 
 /** Register provider-neutral binary overview and procedure CLI commands. */
 export const registerCoreBinaryCommands = (
@@ -54,17 +52,38 @@ const registerOverviewCommands = (
       path: z.string().describe("App, program, or analysis database path"),
     }),
     options: overviewOptions,
-    run: ({ args, options, format }) =>
-      logCliCommand(logger, "analyze", () =>
-        runRoutedOverview(
+    run: async ({ args, options, format }) => {
+      const output =
+        resultOutput === undefined
+          ? undefined
+          : { output: resultOutput, command: CLI_COMMANDS.analyze, format };
+      // Route JavaScript targets exactly like analyze-javascript-application,
+      // including typed cancellation; cancellation wraps logging so its exit
+      // code is not replaced by the logged failure status.
+      if (await routesToJavaScriptAnalysis(args.path, options))
+        return withCommandCancellation((signal) =>
+          logCliCommand(logger, "analyze", () =>
+            runCliJavaScriptApplicationAnalysis(
+              { input_path: resolve(args.path) },
+              output,
+              signal,
+            ),
+          ),
+        );
+      return logCliCommand(logger, "analyze", () =>
+        runDirectAnalysis(
           args.path,
-          options,
-          logger,
-          resultOutput === undefined
-            ? undefined
-            : { output: resultOutput, command: CLI_COMMANDS.analyze, format },
+          "binary_overview",
+          {},
+          directAnalysisOptions(
+            logger,
+            options.snapshot,
+            options.provider,
+            options["target-format"],
+          ),
         ),
-      ),
+      );
+    },
   });
   cli.command(CLI_COMMANDS.inspect, {
     description: "Inspect an app overview with evidence",
@@ -140,38 +159,19 @@ const registerDecompileCommand = (cli: CliInstance, logger: Logger): void => {
   });
 };
 
-const runRoutedOverview = async (
+/** Select static JavaScript analysis only when no binary-analysis option applies. */
+const routesToJavaScriptAnalysis = async (
   path: string,
   options: {
     readonly snapshot?: string | undefined;
     readonly "target-format"?: "dos-com" | undefined;
     readonly provider?: string | undefined;
   },
-  logger: Logger,
-  output?: CliCommandOutput,
-) => {
-  if (
-    options.provider === undefined &&
-    options.snapshot === undefined &&
-    options["target-format"] === undefined &&
-    (await isJavaScriptApplicationPath(path))
-  )
-    return runCliJavaScriptApplicationAnalysis(
-      { input_path: resolve(path) },
-      output,
-    );
-  return runDirectAnalysis(
-    path,
-    "binary_overview",
-    {},
-    directAnalysisOptions(
-      logger,
-      options.snapshot,
-      options.provider,
-      options["target-format"],
-    ),
-  );
-};
+): Promise<boolean> =>
+  options.provider === undefined &&
+  options.snapshot === undefined &&
+  options["target-format"] === undefined &&
+  (await isJavaScriptApplicationPath(path));
 
 const isJavaScriptApplicationPath = async (path: string): Promise<boolean> => {
   const lower = path.toLowerCase();
