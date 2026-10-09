@@ -11,6 +11,8 @@ import type { Stats } from "node:fs";
 export interface SnapshotResult {
   readonly files: readonly FileState[];
   readonly truncated: boolean;
+  /** Root aliases whose path enumeration was exhausted, regardless of hash coverage. */
+  readonly completeRoots: readonly string[];
 }
 
 const hasSameIdentity = (
@@ -92,6 +94,7 @@ export const snapshotRoots = async (
   signal?: AbortSignal,
 ): Promise<SnapshotResult> => {
   const entries: FileState[] = [];
+  const completeRoots: string[] = [];
   let remainingBytes = scenario.limits.file_bytes;
   let truncated = false;
   const visit = async (
@@ -99,24 +102,24 @@ export const snapshotRoots = async (
     rootAlias: string,
     path: string,
     depth: number,
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     signal?.throwIfAborted();
     if (
       entries.length >= scenario.limits.files ||
       depth > scenario.limits.filesystem_depth
     ) {
       truncated = true;
-      return;
+      return false;
     }
     const stats = await lstatIfPresent(path);
-    if (stats === undefined) return;
+    if (stats === undefined) return true;
     const relativePath = relative(root, path) || ".";
     if (stats.isSymbolicLink()) {
       const target = resolve(dirname(path), await readlink(path));
       const afterRead = await lstat(path);
       if (!hasSameIdentity(stats, afterRead, "symlink")) {
         truncated = true;
-        return;
+        return false;
       }
       entries.push({
         path: `${rootAlias}:${relativePath}`,
@@ -126,7 +129,7 @@ export const snapshotRoots = async (
         sha256: null,
         symlink_target: target,
       });
-      return;
+      return true;
     }
     if (stats.isFile()) {
       const sha256 =
@@ -143,7 +146,7 @@ export const snapshotRoots = async (
         sha256,
         symlink_target: null,
       });
-      return;
+      return true;
     }
     const type = stats.isDirectory() ? "directory" : "other";
     entries.push({
@@ -154,22 +157,27 @@ export const snapshotRoots = async (
       sha256: null,
       symlink_target: null,
     });
-    if (type !== "directory") return;
+    if (type !== "directory") return true;
     const children = await readdir(path);
     const afterRead = await lstat(path);
     if (!hasSameIdentity(stats, afterRead, "directory")) {
       truncated = true;
-      return;
+      return false;
     }
-    for (const child of children.sort())
-      await visit(root, rootAlias, join(path, child), depth + 1);
+    let complete = true;
+    for (const child of children.sort()) {
+      if (!(await visit(root, rootAlias, join(path, child), depth + 1)))
+        complete = false;
+    }
+    return complete;
   };
   for (const [index, root] of scenario.filesystem_observation_paths.entries()) {
+    const alias = `root_${String(index)}`;
     if ((await lstatIfPresent(root)) === undefined) {
-      truncated = true;
+      completeRoots.push(alias);
       continue;
     }
-    await visit(root, `root_${String(index)}`, root, 0);
+    if (await visit(root, alias, root, 0)) completeRoots.push(alias);
   }
-  return { files: entries, truncated };
+  return { files: entries, truncated, completeRoots };
 };

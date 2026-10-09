@@ -53,7 +53,7 @@ it("cleans the temporary root when cancellation arrives during identity capture"
         working_directory: "/tmp",
       }),
       controller.signal,
-      async () => ({ files: [], truncated: false }),
+      async () => ({ files: [], truncated: false, completeRoots: [] }),
       host,
     ),
   ).rejects.toThrow(/cancelled/u);

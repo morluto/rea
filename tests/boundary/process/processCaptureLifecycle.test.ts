@@ -226,7 +226,8 @@ itWithCaptureCapability(
     let snapshotCalls = 0;
     const captureSnapshot: typeof snapshotRoots = async () => {
       snapshotCalls += 1;
-      if (snapshotCalls === 1) return { files: [], truncated: false };
+      if (snapshotCalls === 1)
+        return { files: [], truncated: false, completeRoots: [] };
       throw new Error("fixture final snapshot failure");
     };
     const cleanupHost: ProcessCaptureCleanupHost = {

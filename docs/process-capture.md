@@ -94,6 +94,14 @@ deleted, modified, or unchanged. These are bounded snapshots, not a syscall
 trace; short-lived changes between snapshots may be missed. With no selected
 paths, filesystem effects remain unknown.
 
+A missing entry proves creation or deletion only when the corresponding
+observation root's path enumeration was exhausted. Otherwise its effect has
+`status: "unknown"`, the available before/after state, and a reason; a null
+state in this variant means unobserved. Paths below symlinks that REA did not
+follow also remain unknown. Partial enumeration of one root does not erase
+known effects in another, and unavailable content hashes do not by themselves
+make path absence unknown.
+
 Terminal frame `data` is the comparison text after the selected normalization.
 New captures also preserve `raw_data` when normalization changes a PTY chunk;
 otherwise `data` is already the original text. Older captures may lack the

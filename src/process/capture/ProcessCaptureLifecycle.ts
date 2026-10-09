@@ -243,6 +243,15 @@ export const buildCaptureResult = (
     "No filesystem observation paths were selected; filesystem effects remain unknown.";
   const hasFilesystemObservations =
     options.scenario.filesystem_observation_paths.length > 0;
+  const filesystemEffects = classifyFilesystemEffects(
+    options.before,
+    options.after,
+  );
+  const hasUnknownFilesystemEffects = filesystemEffects.some(
+    ({ status }) => status === "unknown",
+  );
+  const incompleteFilesystemUnknown =
+    "Path absence in incomplete enumeration or below an unfollowed symbolic link remains unknown.";
   return {
     manifest: options.manifest,
     normalization: options.scenario.normalization,
@@ -267,10 +276,7 @@ export const buildCaptureResult = (
     event_journal: options.eventJournal,
     files_before: options.before.files,
     files_after: options.after.files,
-    filesystem_effects: classifyFilesystemEffects(
-      options.before.files,
-      options.after.files,
-    ),
+    filesystem_effects: filesystemEffects,
     truncated: options.truncated,
     limitations: [
       "The executable digest is a prelaunch file sample; matching path metadata immediately after spawn does not prove an atomic operating-system image binding.",
@@ -281,6 +287,7 @@ export const buildCaptureResult = (
       "Filesystem observations are before/after snapshots, not syscall traces.",
       "Inherited host environment variables are not recorded and may affect results.",
       ...(!hasFilesystemObservations ? [filesystemObservationUnknown] : []),
+      ...(hasUnknownFilesystemEffects ? [incompleteFilesystemUnknown] : []),
       ...(hasSensitiveScriptedInput ? [sensitiveInputUnknown] : []),
     ],
     residual_unknowns: [
@@ -307,6 +314,14 @@ export const buildCaptureResult = (
             {
               scope: "filesystem" as const,
               reason: filesystemObservationUnknown,
+            },
+          ]
+        : []),
+      ...(hasUnknownFilesystemEffects
+        ? [
+            {
+              scope: "filesystem" as const,
+              reason: incompleteFilesystemUnknown,
             },
           ]
         : []),

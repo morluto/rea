@@ -433,7 +433,7 @@ const completeCapture = async (options: {
       name: "after_settlement",
       at_ms: Math.max(0, Date.now() - runtime.started),
       files: after.files,
-      effects: classifyFilesystemEffects(options.before.files, after.files),
+      effects: classifyFilesystemEffects(options.before, after),
       truncated: after.truncated,
     },
   ];

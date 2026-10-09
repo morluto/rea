@@ -85,6 +85,12 @@ type FileEffect = FileEffectIdentity &
         readonly before: FileState;
         readonly after: FileState;
       }
+    | {
+        readonly status: "unknown";
+        readonly before: FileState | null;
+        readonly after: FileState | null;
+        readonly reason: string;
+      }
   );
 
 /** A sampled owned-process observation; sampling cannot prove syscall completeness. */
@@ -347,6 +353,13 @@ const fileEffectSchema = z.discriminatedUnion("status", [
     status: z.enum(["modified", "unchanged"]),
     before: fileStateSchema,
     after: fileStateSchema,
+  }),
+  z.object({
+    path: z.string(),
+    status: z.literal("unknown"),
+    before: fileStateSchema.nullable(),
+    after: fileStateSchema.nullable(),
+    reason: z.string().min(1),
   }),
 ]);
 /** Exact serialized shape of a process capture. */
