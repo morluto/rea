@@ -41,7 +41,12 @@ export const readCliJsonFile = (
             ? await readPrefix(handle, stats.size + 1, signal)
             : undefined;
         if (prefix?.complete === true) {
-          const parsed = parseUtf8Json(prefix.bytes, operation, path);
+          const parsed = parseUtf8Json(
+            prefix.bytes,
+            operation,
+            path,
+            "cli-json-input",
+          );
           return parsed.ok
             ? ok(parsed.value)
             : err(invalidJson(operation, parsed.error, parsed.cause));
