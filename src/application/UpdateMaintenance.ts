@@ -7,6 +7,7 @@ import { isOwnedClientRegistrationCommand } from "./ClientRegistrationIdentity.j
 import { readClientRegistrationStatuses } from "./ClientRegistrationStatus.js";
 import {
   effectiveClientServer,
+  grokServerListedDisabled,
   parseClientConfiguration,
 } from "./ClientConfigurationDocument.js";
 import { supportedClients } from "./SupportedClients.js";
@@ -76,7 +77,14 @@ export const existingMaintenanceScope = async (
         disabled: z.boolean().optional(),
       })
       .parse(effectiveClientServer(parsed, PRODUCT_IDENTITY.mcpServerKey));
-    if (enabled.enabled !== false && enabled.disabled !== true)
+    if (
+      enabled.enabled !== false &&
+      enabled.disabled !== true &&
+      !(
+        parsed.dialect === "grok" &&
+        grokServerListedDisabled(parsed.document, PRODUCT_IDENTITY.mcpServerKey)
+      )
+    )
       clients.push(client.name);
   }
   let skill = false;

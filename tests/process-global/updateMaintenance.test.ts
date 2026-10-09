@@ -220,6 +220,35 @@ describe("existing REA integration maintenance", () => {
 });
 
 describe("updated executable maintenance planning", () => {
+  it("preserves Grok Build's disabled server list during real maintenance planning", async () => {
+    const registration =
+      '[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "rea-agents@0.1.0", "mcp"]\nstartup_timeout_sec = 30\n';
+    const disabled = `disabled_mcp_servers = ["rea", "other"]\n${registration}`;
+    const configPath = await writeClient("grok_build", disabled);
+    vi.stubEnv("npm_command", "exec");
+    const plan = () =>
+      planIntegrationMaintenance(home, entryPoint, process.env, (command) =>
+        runUpdateCommand(command, process.env),
+      );
+
+    expect(await plan()).toEqual({ status: "current", plannedActions: [] });
+    expect(await readFile(configPath, "utf8")).toBe(disabled);
+
+    const enabled = `disabled_mcp_servers = ["other"]\n${registration}`;
+    await writeFile(configPath, enabled);
+    expect(await plan()).toMatchObject({
+      status: "planned",
+      scope: { clients: ["grok_build"], skill: false },
+      plannedActions: [
+        { id: "configure_client:grok_build", kind: "configure_client" },
+      ],
+    });
+    expect(await readFile(configPath, "utf8")).toBe(enabled);
+    await expect(access(`${configPath}.rea.backup`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("runs real setup as a noninteractive dry run and creates no new integrations or backups", async () => {
     const configPath = await writeClient("codex", staleCodex);
     const untouched = await writeClient("claude_code", '{"mcpServers":{}}');
