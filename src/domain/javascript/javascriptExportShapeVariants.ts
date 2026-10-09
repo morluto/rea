@@ -5,6 +5,7 @@ import {
 import type {
   JavaScriptExportShapeComparisonChange,
   JavaScriptExportShapeComparisonResult,
+  JavaScriptExportShapePropertyInventory,
   ProjectedExportReturnShapes,
 } from "./javascriptExportShapeComparisonSchemas.js";
 import { compareCodePoints, uniqueSorted } from "../canonicalOrdering.js";
@@ -15,9 +16,15 @@ type Shape = ProjectedExportReturnShapes["static_return_shapes"][number];
 type Field = Shape["fields"][number];
 type SelectorResult = JavaScriptExportShapeComparisonResult["left"];
 type ValueAvailability = JavaScriptExportShapeComparisonChange["left"];
+type PropertyPresence =
+  JavaScriptExportShapeComparisonChange["presence"]["left"];
 type Discriminant = NonNullable<
   JavaScriptExportShapeComparisonChange["discriminant"]
 >;
+const UNKNOWN_COVERAGE_PRESENCE = {
+  left: "unknown-coverage",
+  right: "unknown-coverage",
+} as const satisfies JavaScriptExportShapeComparisonChange["presence"];
 
 interface VariantPair {
   readonly leftIndex: number;
@@ -112,6 +119,48 @@ export const buildJavaScriptExportShapeChanges = (
   return [...paired, ...unpairedLeft, ...unpairedRight];
 };
 
+/** List observed property names per retained variant, including unknown values. */
+export const buildJavaScriptExportShapeInventories = (input: {
+  readonly pairing: JavaScriptExportShapePairing;
+  readonly leftShapes: readonly Shape[];
+  readonly rightShapes: readonly Shape[];
+}): JavaScriptExportShapePropertyInventory[] => {
+  const leftPairs = new Map(
+    input.pairing.pairs.map((pair) => [pair.leftIndex, pair]),
+  );
+  const rightPairs = new Map(
+    input.pairing.pairs.map((pair) => [pair.rightIndex, pair]),
+  );
+  return [
+    ...input.leftShapes.map((shape, index) =>
+      inventoryFor("left", index, shape, leftPairs.get(index)),
+    ),
+    ...input.rightShapes.map((shape, index) =>
+      inventoryFor("right", index, shape, rightPairs.get(index)),
+    ),
+  ];
+};
+
+const inventoryFor = (
+  side: JavaScriptExportShapePropertyInventory["side"],
+  variantIndex: number,
+  shape: Shape,
+  pair: VariantPair | undefined,
+): JavaScriptExportShapePropertyInventory => ({
+  side,
+  variant_index: variantIndex,
+  discriminant: pair?.discriminant ?? null,
+  paired: pair !== undefined,
+  properties: uniqueSorted([
+    ...shape.fields.map(({ path }) => path),
+    ...shape.property_coverage.map(({ path }) => path),
+  ]),
+  property_coverage: shape.property_coverage.map(({ path, status }) => ({
+    path,
+    status,
+  })),
+});
+
 /** Report whether any retained shape lacks complete property coverage. */
 export const hasPartialJavaScriptExportPropertyCoverage = (
   shapes: readonly Shape[],
@@ -204,6 +253,7 @@ const selectionUnknownChange = (
     status: "unknown",
     path: "",
     discriminant: null,
+    presence: UNKNOWN_COVERAGE_PRESENCE,
     left: selectionAvailability(input.leftSelection.selection, "left"),
     right: selectionAvailability(input.rightSelection.selection, "right"),
     left_source_range: null,
@@ -221,6 +271,7 @@ const emptyShapeUnknownChange = (
     status: "unknown",
     path: "",
     discriminant: null,
+    presence: UNKNOWN_COVERAGE_PRESENCE,
     left: emptyShapeAvailability(input.leftShapes, "left"),
     right: emptyShapeAvailability(input.rightShapes, "right"),
     left_source_range: null,
@@ -261,6 +312,10 @@ const diffPair = (
         status,
         path,
         discriminant,
+        presence: {
+          left: fieldPresence(left, leftField, path),
+          right: fieldPresence(right, rightField, path),
+        },
         left: fieldAvailability(leftField),
         right: fieldAvailability(rightField),
         left_source_range: left.source_range,
@@ -328,8 +383,19 @@ const fieldChangeStatus = ({
   const parentsComplete =
     propertyCoverageComplete(leftShape, parent) &&
     propertyCoverageComplete(rightShape, parent);
-  if (present.state === "unknown" || !parentsComplete) return "unknown";
+  if (!parentsComplete) return "unknown";
   return leftField === undefined ? "added" : "removed";
+};
+
+const fieldPresence = (
+  shape: Shape,
+  field: Field | undefined,
+  path: string,
+): PropertyPresence => {
+  if (field !== undefined) return "present";
+  return propertyCoverageComplete(shape, parentPointer(path))
+    ? "absent"
+    : "unknown-coverage";
 };
 
 const propertyCoverageComplete = (shape: Shape, path: string | null): boolean =>
@@ -390,6 +456,7 @@ const unpairedChange = (
     status: "unknown",
     path: "",
     discriminant: null,
+    presence: UNKNOWN_COVERAGE_PRESENCE,
     left: {
       availability: "unknown",
       reason:

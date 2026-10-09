@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -68,15 +70,35 @@ describe("application workflow MCP parity", () => {
       expect(full.structuredContent).toMatchObject({
         result: {
           summary: { added: 1, removed: 0, changed: 0, unknown: 0 },
+          property_inventories: expect.arrayContaining([
+            expect.objectContaining({
+              side: "right",
+              paired: true,
+              properties: expect.arrayContaining(["/depth"]),
+            }),
+          ]),
           changes: [
             {
               status: "added",
               path: "/depth",
+              presence: { left: "absent", right: "present" },
               right: { availability: "literal", value: 1 },
             },
           ],
         },
       });
+      const advertised = (await client.listTools()).tools.find(
+        ({ name }) => name === "compare_javascript_export_shapes",
+      );
+      if (advertised?.outputSchema === undefined)
+        throw new Error("Missing advertised export-shape output schema");
+      const validate = new Ajv2020({
+        strict: false,
+        validateFormats: false,
+      }).compile(
+        z.record(z.string(), z.unknown()).parse(advertised.outputSchema),
+      );
+      expect(validate(full.structuredContent)).toBe(true);
       expect(session.exportEvidenceBundle().records).toEqual(
         expect.arrayContaining([
           expect.objectContaining({

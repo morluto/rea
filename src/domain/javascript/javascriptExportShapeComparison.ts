@@ -17,6 +17,7 @@ import {
 } from "./javascriptExportShapeSelection.js";
 import {
   buildJavaScriptExportShapeChanges,
+  buildJavaScriptExportShapeInventories,
   hasPartialJavaScriptExportPropertyCoverage,
   pairJavaScriptExportShapeVariants,
   type JavaScriptExportShapePairing,
@@ -56,6 +57,11 @@ export const compareJavaScriptExportShapes = (
   );
   const changes = allChanges;
   const omittedChanges = 0;
+  const propertyInventories = buildJavaScriptExportShapeInventories({
+    pairing,
+    leftShapes: leftRetained.shapes,
+    rightShapes: rightRetained.shapes,
+  });
   const coverage = comparisonCoverage({
     input,
     left,
@@ -70,6 +76,7 @@ export const compareJavaScriptExportShapes = (
   const semantic = {
     left: left.selection,
     right: right.selection,
+    property_inventories: propertyInventories,
     summary: summarize(allChanges),
     changes,
     coverage,

@@ -155,7 +155,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     name: "compare_javascript_export_shapes",
     ...toolContractMetadata("compare_javascript_export_shapes"),
     description:
-      "Compare static return shapes for one exact module/export selector on each authenticated JavaScript Application Graph supplied as inline Evidence or exact same-session retained references. Variants pair only by reciprocal unique literal discriminants; dynamic values, incomplete properties, and ambiguous variants remain unknown. Reports JSON Pointer changes without executing JavaScript; runtime behavior requires a separate agent-run probe.",
+      "Compare static return shapes for one exact module/export selector on each authenticated JavaScript Application Graph supplied as inline Evidence or exact same-session retained references. Variants pair only by reciprocal unique literal discriminants. Each retained variant lists observed return-property names even when values stay unknown. Presence (present, absent, or unknown-coverage) is separate from value resolution: a name present on only one paired shape is added or removed when parent-property coverage is complete on both sides, including when the static value is unresolved. Dynamic values, incomplete parent coverage, and unpaired variants remain unknown. Reports JSON Pointer changes without executing JavaScript; runtime behavior requires a separate agent-run probe.",
     kind: "application",
     inputSchema: compareJavaScriptExportShapesRequestSchema,
     outputSchema: exportShapeComparisonOutputSchema,
@@ -175,6 +175,11 @@ export const APPLICATION_TOOL_CONTRACTS = [
             JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE.right.evidence_id,
           ),
         },
+      },
+      {
+        title:
+          "Report observed return-property presence when static values stay unknown",
+        input: JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE,
       },
     ],
   },

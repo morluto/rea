@@ -229,11 +229,21 @@ const discriminantSchema = z.strictObject({
   value: semanticPrimitiveSchema,
 });
 
+const propertyPresenceSchema = z.enum([
+  "present",
+  "absent",
+  "unknown-coverage",
+]);
+
 const comparisonChangeSchema = z.strictObject({
   change_id: prefixedDigestSchema("jesc_change"),
   status: z.enum(["added", "removed", "changed", "unknown"]),
   path: jsonPointerSchema,
   discriminant: discriminantSchema.nullable(),
+  presence: z.strictObject({
+    left: propertyPresenceSchema,
+    right: propertyPresenceSchema,
+  }),
   left: valueAvailabilitySchema,
   right: valueAvailabilitySchema,
   left_source_range: sourceRangeSchema.nullable(),
@@ -242,11 +252,30 @@ const comparisonChangeSchema = z.strictObject({
   limitations: z.array(textSchema),
 });
 
+/** One change row; presence is required even when values stay unknown. */
+export const javaScriptExportShapeComparisonChangeSchema =
+  comparisonChangeSchema;
+
+const inventoryPropertyCoverageSchema = z.strictObject({
+  path: jsonPointerSchema,
+  status: z.enum(["complete", "partial"]),
+});
+
+const propertyInventorySchema = z.strictObject({
+  side: z.enum(["left", "right"]),
+  variant_index: z.number().int().nonnegative(),
+  discriminant: discriminantSchema.nullable(),
+  paired: z.boolean(),
+  properties: z.array(jsonPointerSchema),
+  property_coverage: z.array(inventoryPropertyCoverageSchema),
+});
+
 /** Static export-return comparison with explicit unknown semantics. */
 export const javaScriptExportShapeComparisonResultSchema = z.strictObject({
   comparison_id: prefixedDigestSchema("jesc"),
   left: selectorResultSchema,
   right: selectorResultSchema,
+  property_inventories: z.array(propertyInventorySchema),
   summary: z.strictObject({
     added: z.number().int().min(0),
     removed: z.number().int().min(0),
@@ -294,4 +323,7 @@ export type JavaScriptExportShapeComparisonResult = z.output<
 >;
 export type JavaScriptExportShapeComparisonChange = z.output<
   typeof comparisonChangeSchema
+>;
+export type JavaScriptExportShapePropertyInventory = z.output<
+  typeof propertyInventorySchema
 >;

@@ -2,7 +2,12 @@ import { createHash } from "node:crypto";
 
 import canonicalize from "canonicalize";
 
-/** Canonically encode one export-shape comparison value. */
+/**
+ * Canonically encode one export-shape comparison value.
+ *
+ * Comparison identifiers hash the full result semantics, including each
+ * change's presence object and the per-variant property inventories.
+ */
 export const canonicalExportShapeValue = (value: unknown): string => {
   const encoded = canonicalize(value);
   if (encoded === undefined)

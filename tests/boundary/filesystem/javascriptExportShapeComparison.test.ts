@@ -53,6 +53,7 @@ describe("JavaScript export return-shape comparison", () => {
         status: "added",
         path: "/depth",
         discriminant: { path: "/type", value: "heading" },
+        presence: { left: "absent", right: "present" },
         left: { availability: "absent" },
         right: { availability: "literal", value: 1 },
       }),
@@ -83,7 +84,11 @@ describe("JavaScript export return-shape comparison", () => {
     const result = compare(left, right);
 
     expect(result.changes).toEqual([
-      expect.objectContaining({ status: "unknown", path: "/depth" }),
+      expect.objectContaining({
+        status: "unknown",
+        path: "/depth",
+        presence: { left: "unknown-coverage", right: "present" },
+      }),
     ]);
     expect(result.coverage.status).toBe("partial");
   });
@@ -102,7 +107,9 @@ describe("JavaScript export return-shape comparison", () => {
     expect(first.changes).toEqual(second.changes);
     expect(first.comparison_id).toBe(second.comparison_id);
   });
+});
 
+describe("JavaScript export return-shape pairing limits", () => {
   it("does not pair discriminants that an unknown trailing spread can overwrite", async () => {
     const [left, right] = await analyzeSources({
       left: `
@@ -169,6 +176,122 @@ describe("JavaScript export return-shape comparison", () => {
     expect(unknown.changes).toEqual([
       expect.objectContaining({ status: "unknown", path: "" }),
     ]);
+  });
+});
+
+describe("JavaScript export return-shape property presence", () => {
+  it("lists observed names without pairing untagged search variants", async () => {
+    const graphs = await analyzeSources(
+      {
+        left: untaggedSearchSource("count"),
+        right: untaggedSearchSource("total"),
+      },
+      "search.js",
+    );
+    const first = compare(...graphs, {
+      modulePath: "search.js",
+      leftExportName: "search",
+      rightExportName: "search",
+    });
+    const second = compare(...graphs, {
+      modulePath: "search.js",
+      leftExportName: "search",
+      rightExportName: "search",
+    });
+
+    expect(first.comparison_id).toBe(second.comparison_id);
+    expect(first.coverage).toMatchObject({
+      paired_variants: 0,
+      unpaired_left_variants: 1,
+      unpaired_right_variants: 1,
+    });
+    expect(first.summary).toEqual({
+      added: 0,
+      removed: 0,
+      changed: 0,
+      unknown: 2,
+    });
+    expect(
+      first.changes.every(({ discriminant }) => discriminant === null),
+    ).toBe(true);
+    expect(inventoryProperties(first, "left", 0)).toEqual(
+      expect.arrayContaining(["/count", "/matches"]),
+    );
+    expect(inventoryProperties(first, "right", 0)).toEqual(
+      expect.arrayContaining(["/matches", "/query", "/total"]),
+    );
+    expect(inventoryProperties(first, "left", 0)).not.toEqual(
+      inventoryProperties(first, "right", 0),
+    );
+  });
+
+  it("reports presence-only added and removed names for tagged search variants", async () => {
+    const graphs = await analyzeSources(
+      {
+        left: taggedSearchSource({ count: true }),
+        right: taggedSearchSource({ total: true, query: true }),
+      },
+      "search.js",
+    );
+    const first = compare(...graphs, {
+      modulePath: "search.js",
+      leftExportName: "search",
+      rightExportName: "search",
+    });
+    const second = compare(...graphs, {
+      modulePath: "search.js",
+      leftExportName: "search",
+      rightExportName: "search",
+    });
+
+    expect(first.comparison_id).toBe(second.comparison_id);
+    expect(() =>
+      javaScriptExportShapeComparisonResultSchema.parse(first),
+    ).not.toThrow();
+    expect(first.coverage.paired_variants).toBe(1);
+    expect(first.summary.added).toBe(2);
+    expect(first.summary.removed).toBe(1);
+    expect(
+      first.changes.filter(({ path }) =>
+        ["/count", "/total", "/query"].includes(path),
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "removed",
+          path: "/count",
+          presence: { left: "present", right: "absent" },
+          left: { availability: "unknown" },
+          right: { availability: "absent" },
+        }),
+        expect.objectContaining({
+          status: "added",
+          path: "/total",
+          presence: { left: "absent", right: "present" },
+          left: { availability: "absent" },
+          right: { availability: "unknown" },
+        }),
+        expect.objectContaining({
+          status: "added",
+          path: "/query",
+          presence: { left: "absent", right: "present" },
+          left: { availability: "absent" },
+          right: { availability: "unknown" },
+        }),
+      ]),
+    );
+    expect(
+      first.changes.some(
+        ({ path, status }) =>
+          ["/count", "/total", "/query"].includes(path) && status === "unknown",
+      ),
+    ).toBe(false);
+    expect(inventoryProperties(first, "left", 0)).toEqual(
+      expect.arrayContaining(["/count", "/kind", "/matches"]),
+    );
+    expect(inventoryProperties(first, "right", 0)).toEqual(
+      expect.arrayContaining(["/kind", "/matches", "/query", "/total"]),
+    );
   });
 });
 
@@ -399,6 +522,7 @@ const compare = (
   left: GraphSource,
   right: GraphSource,
   options: {
+    readonly modulePath?: string;
     readonly leftExportName?: string;
     readonly rightExportName?: string;
   } = {},
@@ -407,13 +531,13 @@ const compare = (
     left: {
       evidenceId: left.evidence.evidence_id,
       graph: left.graph,
-      modulePath: "parser.mjs",
+      modulePath: options.modulePath ?? "parser.mjs",
       exportName: options.leftExportName ?? "default",
     },
     right: {
       evidenceId: right.evidence.evidence_id,
       graph: right.graph,
-      modulePath: "parser.mjs",
+      modulePath: options.modulePath ?? "parser.mjs",
       exportName: options.rightExportName ?? "default",
     },
   });
@@ -426,19 +550,72 @@ const analyzeGraph = async (root: string) => {
   return parseApplicationGraphEvidence(result.value);
 };
 
-const analyzeSources = async (sources: {
-  readonly left: string;
-  readonly right: string;
-}): Promise<[GraphSource, GraphSource]> => {
+const analyzeSources = async (
+  sources: {
+    readonly left: string;
+    readonly right: string;
+  },
+  fileName = "parser.mjs",
+): Promise<[GraphSource, GraphSource]> => {
   const root = await temporaryRoot();
   const leftRoot = join(root, "left");
   const rightRoot = join(root, "right");
   await Promise.all([mkdir(leftRoot), mkdir(rightRoot)]);
   await Promise.all([
-    writeFile(join(leftRoot, "parser.mjs"), sources.left),
-    writeFile(join(rightRoot, "parser.mjs"), sources.right),
+    writeFile(join(leftRoot, fileName), sources.left),
+    writeFile(join(rightRoot, fileName), sources.right),
   ]);
   return Promise.all([analyzeGraph(leftRoot), analyzeGraph(rightRoot)]);
+};
+
+const inventoryProperties = (
+  result: ReturnType<typeof compareJavaScriptExportShapes>,
+  side: "left" | "right",
+  variantIndex: number,
+): string[] => {
+  const inventory = result.property_inventories.find(
+    (entry) => entry.side === side && entry.variant_index === variantIndex,
+  );
+  if (inventory === undefined)
+    throw new Error(
+      `Missing ${side} property inventory ${String(variantIndex)}`,
+    );
+  return inventory.properties;
+};
+
+const untaggedSearchSource = (countKey: "count" | "total"): string =>
+  countKey === "count"
+    ? `
+        export function search(items, q) {
+          const matches = items.filter((item) => item.includes(q));
+          return { matches, count: matches.length };
+        }
+      `
+    : `
+        export function search(items, q) {
+          const matches = items.filter((item) => item.includes(q));
+          return { matches, total: matches.length, query: String(q) };
+        }
+      `;
+
+const taggedSearchSource = (fields: {
+  readonly count?: boolean;
+  readonly total?: boolean;
+  readonly query?: boolean;
+}): string => {
+  const extra = [
+    fields.count === true ? "count: matches.length" : null,
+    fields.total === true ? "total: matches.length" : null,
+    fields.query === true ? "query: String(q)" : null,
+  ]
+    .filter((field): field is string => field !== null)
+    .join(", ");
+  return `
+    export function search(items, q) {
+      const matches = items.filter((item) => item.includes(q));
+      return { kind: "results", matches${extra.length > 0 ? `, ${extra}` : ""} };
+    }
+  `;
 };
 
 const sourceOwnedParsers = async (): Promise<[GraphSource, GraphSource]> => {

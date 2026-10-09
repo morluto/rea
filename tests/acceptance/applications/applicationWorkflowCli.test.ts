@@ -509,9 +509,107 @@ describe("application workflow CLI export Evidence", () => {
           {
             status: "added",
             path: "/depth",
+            presence: { left: "absent", right: "present" },
             right: { availability: "literal", value: 1 },
           },
         ],
+      },
+    });
+  }, 20_000);
+});
+
+describe("application workflow CLI export property presence", () => {
+  it("reports tagged search property presence through compare-javascript-export-shapes", async () => {
+    const root = await createTestTempDirectory(
+      "rea-export-shape-presence-cli-",
+    );
+    temporary.push(root);
+    const leftRoot = join(root, "left");
+    const rightRoot = join(root, "right");
+    await Promise.all([mkdir(leftRoot), mkdir(rightRoot)]);
+    await Promise.all([
+      writeFile(
+        join(leftRoot, "search.js"),
+        [
+          "export function search(items, q) {",
+          "  const matches = items.filter((item) => item.includes(q));",
+          '  return { kind: "results", matches, count: matches.length };',
+          "}",
+          "",
+        ].join("\n"),
+      ),
+      writeFile(
+        join(rightRoot, "search.js"),
+        [
+          "export function search(items, q) {",
+          "  const matches = items.filter((item) => item.includes(q));",
+          '  return { kind: "results", matches, total: matches.length, query: String(q) };',
+          "}",
+          "",
+        ].join("\n"),
+      ),
+    ]);
+    const [left, right] = await Promise.all([
+      analyzeJavaScriptApplication({ input_path: leftRoot }),
+      analyzeJavaScriptApplication({ input_path: rightRoot }),
+    ]);
+    if (!left.ok) throw left.error;
+    if (!right.ok) throw right.error;
+    const inputPath = join(root, "comparison.json");
+    await writeFile(
+      inputPath,
+      JSON.stringify({
+        left: left.value,
+        right: right.value,
+        left_module_path: "search.js",
+        left_export_name: "search",
+        right_module_path: "search.js",
+        right_export_name: "search",
+      }),
+    );
+    const compared = await runCli([
+      "compare-javascript-export-shapes",
+      inputPath,
+      "--json",
+    ]);
+    expect(compared).toMatchObject({
+      operation: "compare_javascript_export_shapes",
+      normalized_result: {
+        summary: { added: 2, removed: 1 },
+        property_inventories: expect.arrayContaining([
+          expect.objectContaining({
+            side: "left",
+            paired: true,
+            properties: expect.arrayContaining(["/count", "/kind", "/matches"]),
+          }),
+          expect.objectContaining({
+            side: "right",
+            paired: true,
+            properties: expect.arrayContaining([
+              "/kind",
+              "/matches",
+              "/query",
+              "/total",
+            ]),
+          }),
+        ]),
+        changes: expect.arrayContaining([
+          expect.objectContaining({
+            status: "removed",
+            path: "/count",
+            presence: { left: "present", right: "absent" },
+          }),
+          expect.objectContaining({
+            status: "added",
+            path: "/total",
+            presence: { left: "absent", right: "present" },
+          }),
+          expect.objectContaining({
+            status: "added",
+            path: "/query",
+            presence: { left: "absent", right: "present" },
+          }),
+        ]),
       },
     });
   }, 20_000);
