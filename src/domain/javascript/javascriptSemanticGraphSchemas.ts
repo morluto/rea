@@ -251,6 +251,7 @@ export const JAVASCRIPT_SEMANTIC_UNKNOWN_REASONS = [
   "incomplete-module",
   "missing-source",
   "resource-limit",
+  "unknown-value",
   "unsupported-syntax",
 ] as const;
 

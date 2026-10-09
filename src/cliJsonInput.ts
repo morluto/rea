@@ -1,6 +1,9 @@
-import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
+import {
+  NonRegularFileReadError,
+  readRegularFile,
+} from "./application/RegularFileRead.js";
 import { AnalysisInputError } from "./domain/analysisErrorCore.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import type { JsonValue } from "./domain/jsonValue.js";
@@ -19,7 +22,7 @@ export const parseCliJsonInput = async (
   try {
     // Read raw bytes so invalid UTF-8 is rejected by parseJson instead of
     // being silently replaced by lossy "utf8" decoding.
-    const parsed = parseJson(await readFile(value));
+    const parsed = parseJson(await readRegularFile(value));
     return parsed === undefined
       ? jsonFileError(value, operation, "invalid-json")
       : { ok: true, value: parsed };
@@ -136,7 +139,7 @@ const jsonFileError = (
   },
 });
 
-/** Name the system error so the caller can tell a typo from a permission denial. */
+/** Preserve file-selection and system failures alongside the requested path. */
 const readFailureIssue = (path: string | undefined, cause: unknown) => {
   const code =
     typeof cause === "object" &&
@@ -148,6 +151,9 @@ const readFailureIssue = (path: string | undefined, cause: unknown) => {
   return {
     path: [],
     reason: "invalid_value" as const,
-    message: `The JSON input file could not be read${code}: ${path ?? ""}`,
+    message:
+      cause instanceof NonRegularFileReadError && cause.code === "ENOTFILE"
+        ? `The JSON input must be a regular file${code}: ${path ?? ""}`
+        : `The JSON input file could not be read${code}: ${path ?? ""}`,
   };
 };

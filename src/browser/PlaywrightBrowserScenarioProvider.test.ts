@@ -529,9 +529,11 @@ it("shares concurrent close and retries browser cleanup after failure", async ()
   const finishEvents = vi
     .fn<() => Promise<void>>()
     .mockResolvedValue(undefined);
+  const cleanupSettlements: boolean[] = [];
   const cleanup = new PlaywrightScenarioBrowserCleanupOwner({
     closeBrowser: browserClose,
     removeProfile,
+    onSettled: (browserClosed) => cleanupSettlements.push(browserClosed),
   });
 
   const first = cleanup.close(finishEvents);
@@ -541,12 +543,14 @@ it("shares concurrent close and retries browser cleanup after failure", async ()
   expect(browserClose).toHaveBeenCalledTimes(1);
   expect(removeProfile).not.toHaveBeenCalled();
   expect(finishEvents).toHaveBeenCalledTimes(1);
+  expect(cleanupSettlements).toEqual([false]);
 
   await expect(cleanup.close(finishEvents)).resolves.toBeUndefined();
   await expect(cleanup.close(finishEvents)).resolves.toBeUndefined();
   expect(browserClose).toHaveBeenCalledTimes(2);
   expect(removeProfile).toHaveBeenCalledTimes(1);
   expect(finishEvents).toHaveBeenCalledTimes(1);
+  expect(cleanupSettlements).toEqual([false, true]);
 });
 
 it("keeps failed event finalization failed across cleanup retries", async () => {

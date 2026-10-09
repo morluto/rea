@@ -1,10 +1,88 @@
-import { chmod, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { chmod, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { promisify } from "node:util";
 
 import { describe, expect, it, onTestFinished } from "vitest";
 
 import { parseCliJsonInput } from "../../../src/cliJsonInput.js";
+import { readWithoutFifoWriter } from "../../fixtures/fifoInput.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+describe("CLI JSON file selection", () => {
+  it("accepts a symlink to a regular JSON file", async () => {
+    const root = await createTestTempDirectory("rea-json-input-symlink-");
+    const path = join(root, "input.json");
+    const selected = join(root, "selected.json");
+    await writeFile(path, '{"value":1}');
+    await symlink(path, selected, "file");
+    expect(await parseCliJsonInput(selected, "test-input")).toEqual({
+      ok: true,
+      value: { value: 1 },
+    });
+  });
+
+  it
+    .skipIf(process.platform === "win32")
+    .each(["a named pipe", "a symlink to a named pipe"])(
+    "rejects %s without waiting for a writer",
+    async (kind) => {
+      const root = await createTestTempDirectory("rea-json-input-fifo-");
+      const fifoPath = join(root, "input.pipe");
+      await promisify(execFile)("mkfifo", [fifoPath]);
+      const selected =
+        kind === "a named pipe" ? fifoPath : join(root, "selected.json");
+      if (selected !== fifoPath) await symlink(fifoPath, selected, "file");
+
+      const outcome = await readWithoutFifoWriter(fifoPath, () =>
+        parseCliJsonInput(selected, "test-input"),
+      );
+      expect(outcome.state).toBe("completed");
+      if (outcome.state !== "completed")
+        throw new Error("JSON read waited for a FIFO writer");
+      expect(outcome.result).toMatchObject({
+        ok: false,
+        error: {
+          code: "invalid_request",
+          input_path: selected,
+          input_reason: "read-failed",
+          details: {
+            issues: [
+              {
+                path: [],
+                reason: "invalid_value",
+                message: expect.stringContaining("(ENOTFILE)"),
+              },
+            ],
+          },
+        },
+      });
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "rejects a character device before parsing JSON bytes",
+    async () => {
+      expect(await parseCliJsonInput("/dev/null", "test-input")).toMatchObject({
+        ok: false,
+        error: {
+          code: "invalid_request",
+          input_path: "/dev/null",
+          input_reason: "read-failed",
+          details: {
+            issues: [
+              {
+                path: [],
+                reason: "invalid_value",
+                message: expect.stringContaining("(ENOTFILE)"),
+              },
+            ],
+          },
+        },
+      });
+    },
+  );
+});
 
 describe("CLI JSON input", () => {
   it("distinguishes malformed inline text from files and preserves bracket-prefixed paths", async () => {

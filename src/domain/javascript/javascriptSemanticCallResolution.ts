@@ -6,6 +6,7 @@ import type {
 } from "./javascriptSemanticIr.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
+import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
@@ -51,6 +52,8 @@ const resolveCallables = (
   node: t.Node,
   context: CallResolutionContext,
 ): LocalCallableResolution => {
+  const unwrapped = unwrapJavaScriptExpression(node).node;
+  if (unwrapped !== node) return resolveCallables(unwrapped, context);
   const direct = semanticCallableIdForNode(node);
   if (direct !== null && context.callableById.has(direct))
     return {
@@ -59,12 +62,6 @@ const resolveCallables = (
       reason: "Direct local callable.",
     };
   if (t.isIdentifier(node)) return resolveIdentifier(node, context);
-  if (
-    t.isTSAsExpression(node) ||
-    t.isTSTypeAssertion(node) ||
-    t.isTSNonNullExpression(node)
-  )
-    return resolveCallables(node.expression, context);
   if (t.isConditionalExpression(node) || t.isLogicalExpression(node))
     return resolveAlternatives(
       t.isConditionalExpression(node) ? node.consequent : node.left,

@@ -145,7 +145,8 @@ it("retains resource-limit reasons at nested object property slots", () => {
   ]);
   expect(graph.unknowns).toContainEqual(
     expect.objectContaining({
-      family: "object-flow",
+      family: "data-flow",
+      relation_kinds: ["defines"],
       reason: "resource-limit",
       detail: expect.stringMatching(
         /Unknown value at property:\/nested\/value/u,

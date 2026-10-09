@@ -175,6 +175,10 @@ All five CLI commands accept inline JSON or a path to a JSON file. The CLI
 returns an Evidence record directly. Put the full records in a later CLI input;
 a separate CLI process has no retained MCP connection state.
 
+File inputs must be regular files; symlinks to regular files are accepted.
+Directories, named pipes and device files produce an input error before JSON
+parsing.
+
 For a literal string trace, analyze your supplied tree once, then build the
 input from the saved Evidence (replace the target and seed):
 

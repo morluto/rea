@@ -258,7 +258,7 @@ npx rea-agents@latest setup
 
 ## Star 历史
 
-🎉 **GitHub Star 达到 30,000 个，感谢大家！**
+🎉 **GitHub Star 达到 40,000 个，感谢大家！**
 
 感谢每一位使用 REA、报告错误、提出功能需求、测试构建和贡献修复的朋友。
 

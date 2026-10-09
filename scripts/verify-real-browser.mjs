@@ -44,6 +44,7 @@ import { verifyBrowserModules } from "./lib/browser-module-e2e.mjs";
 import { verifyBrowserDomDestinations } from "./lib/browser-dom-destinations-e2e.mjs";
 import { verifyBrowserCaptureMetadataBudget } from "./lib/browser-capture-metadata-budget-e2e.mjs";
 import { artifactCliEvidence, artifactMcpResult } from "./lib/artifact-e2e.mjs";
+import { verifyScenarioEnvironment } from "./lib/browser-scenario-environment-e2e.mjs";
 
 const REAL_BROWSER_STARTUP_TIMEOUT_MS = 60_000;
 const SCENARIO_SECRET_VALUE = "rea-browser-verifier-secret";
@@ -274,6 +275,11 @@ try {
     throw new Error("Scenario attachment terminated its external browser");
 
   const profilesBefore = await scenarioProfiles();
+  const scenarioEnvironment = await verifyScenarioEnvironment(
+    endpoint,
+    target,
+    site.origin,
+  );
   const launchedScenario = await createBrowserScenarioProvider(
     process.env,
   ).captureScenario(
@@ -366,6 +372,7 @@ try {
     browserScenarioAttachCleanup: "disconnected-external",
     browserScenarioLaunchCleanup: "terminated-owned-process",
     scenarioFailure,
+    scenarioEnvironment,
     verified: true,
   };
 } finally {

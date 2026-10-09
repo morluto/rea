@@ -135,7 +135,9 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
     if (secrets === undefined)
       throw new BrowserObservationError(OPERATION, "secret_unavailable");
     const startedAt = Date.now();
-    const opening = openPlaywrightScenarioBrowser(scenario, environment);
+    const opening = openPlaywrightScenarioBrowser(scenario, environment, {
+      signal: options.signal,
+    });
     let opened: OpenedScenarioBrowser;
     let events: PlaywrightScenarioEvents | undefined;
     try {

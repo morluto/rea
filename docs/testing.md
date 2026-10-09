@@ -281,6 +281,11 @@ regressions until a real fixture establishes equivalent coverage.
 decoding. Its SDK client explicitly permits the larger inline JSON response;
 this lane does not establish large image-comparison request transport coverage.
 
+The scenario checks read locale, timezone, device scale and viewport dimensions
+from actual page JavaScript through CLI and stdio MCP DOM captures. They also
+verify that attached-page emulation is released after success, initialization
+failure, action failure and cancellation while the external target stays open.
+
 `verify:browser:network` is a focused real-browser lane for transaction identity,
 selected request/response bytes, binary and compressed responses, duplicate
 headers, credential and declared-secret redaction, redirects, streaming cutoff,

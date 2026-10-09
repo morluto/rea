@@ -27,6 +27,72 @@ const filesFor = (paths: readonly string[]) =>
     ]),
   );
 
+describe("prefix-only Node builtins", () => {
+  it.each(["import", "require"] as const)(
+    "resolves ordinary packages named test, sqlite and sea for %s",
+    async (moduleKind) => {
+      const root = await createTestTempDirectory("rea-prefix-only-builtins-");
+      const names = ["test", "sqlite", "sea"];
+      for (const name of [...names, "fs"]) {
+        const directory = join(root, "node_modules", name);
+        await mkdir(directory, { recursive: true });
+        await writeFile(
+          join(directory, "index.js"),
+          `module.exports = ${JSON.stringify(name)};`,
+        );
+      }
+      const main = join(
+        root,
+        moduleKind === "import" ? "main.mjs" : "main.cjs",
+      );
+      await writeFile(
+        main,
+        names
+          .map((name, index) =>
+            moduleKind === "import"
+              ? `import value${index} from ${JSON.stringify(name)}; console.log(value${index});`
+              : `console.log(require(${JSON.stringify(name)}));`,
+          )
+          .join("\n") +
+          (moduleKind === "import"
+            ? '\nimport "fs"; import "node:test";'
+            : '\nrequire("fs"); require("node:test");'),
+      );
+      const native = await promisify(execFile)(process.execPath, [main], {
+        timeout: 5_000,
+      });
+      expect(native.stdout.trim().split("\n").slice(0, 3)).toEqual(names);
+      const result = await analyzeJavaScriptApplication({
+        input_path: root,
+        format: "directory",
+      });
+      if (!result.ok) throw result.error;
+      const { graph } = javascriptApplicationAnalysisResultSchema.parse(
+        result.value.normalized_result,
+      );
+      const imports = graph.edges.filter((edge) => edge.relation === "imports");
+      for (const name of names) {
+        const matches = imports.filter(
+          (edge) => edge.properties.specifier === name,
+        );
+        expect(matches.length).toBeGreaterThan(0);
+        for (const edge of matches)
+          expect(edge.properties.resolved_path).toBe(
+            `node_modules/${name}/index.js`,
+          );
+      }
+      for (const name of ["fs", "node:test"]) {
+        const matches = imports.filter(
+          (edge) => edge.properties.specifier === name,
+        );
+        expect(matches.length).toBeGreaterThan(0);
+        for (const edge of matches)
+          expect(edge.properties.resolved_path).toBeNull();
+      }
+    },
+  );
+});
+
 describe("module specifier punctuation", () => {
   it.each(["#", "?"])(
     "keeps CommonJS punctuation and strips URL suffixes for ESM (%s)",

@@ -7,7 +7,10 @@ import {
 } from "./javascriptSemanticState.js";
 import { evaluateSemanticBinding } from "./javascriptSemanticValues.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
-import { semanticStaticPropertyKey } from "./javascriptAstValues.js";
+import {
+  semanticStaticPropertyKey,
+  unwrapJavaScriptExpression,
+} from "./javascriptAstValues.js";
 
 type PropertyPath = readonly (string | number | null)[];
 
@@ -28,6 +31,11 @@ export const collectSemanticMemberMutations = (
     bindings: ReadonlySet<string>,
     mutation: t.Node,
   ): void => {
+    const unwrapped = unwrapJavaScriptExpression(node).node;
+    if (unwrapped !== node) {
+      markValue(unwrapped, path, bindings, mutation);
+      return;
+    }
     if (t.isIdentifier(node)) {
       const binding = resolveSemanticBindingState(state, node, node.name);
       if (binding === undefined || bindings.has(binding.bindingId)) return;
@@ -224,13 +232,6 @@ const referencedValues = (
         : [];
     });
   }
-  if (
-    t.isTSAsExpression(node) ||
-    t.isTSTypeAssertion(node) ||
-    t.isTSSatisfiesExpression(node) ||
-    t.isTSNonNullExpression(node)
-  )
-    return [{ node: node.expression, path }];
   if (t.isConditionalExpression(node))
     return [
       { node: node.consequent, path },
