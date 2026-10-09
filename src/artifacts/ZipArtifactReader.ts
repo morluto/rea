@@ -42,8 +42,18 @@ class NodeFileReader extends Reader<string> {
         `ZIP metadata read requires ${readBytes} bytes, exceeding the ${this.maximumReadBytes}-byte read budget`,
       );
     const bytes = Buffer.alloc(readBytes);
-    const read = await handle.read(bytes, 0, bytes.length, index);
-    return bytes.subarray(0, read.bytesRead);
+    let bytesRead = 0;
+    while (bytesRead < bytes.length) {
+      const read = await handle.read(
+        bytes,
+        bytesRead,
+        bytes.length - bytesRead,
+        index + bytesRead,
+      );
+      if (read.bytesRead === 0) break;
+      bytesRead += read.bytesRead;
+    }
+    return bytes.subarray(0, bytesRead);
   }
 
   async closeHandle(): Promise<void> {

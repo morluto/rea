@@ -25,7 +25,8 @@ def inspect(request):
         gdb.execute(command, to_string=True)
     entry = request["gdbinit"]
     try:
-        exec(compile(Path(entry).read_bytes(), entry, "exec"), {"__name__": "__main__", "__file__": entry})
+        # Executes only the caller's explicitly configured BYO GDB init plugin.
+        exec(compile(Path(entry).read_bytes(), entry, "exec"), {"__name__": "__main__", "__file__": entry})  # nosemgrep: python.lang.security.audit.exec-detected.exec-detected
         import pwndbg.aglib.vmmap
         import pwndbg.lib.version
     except (ImportError, OSError) as error:

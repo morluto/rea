@@ -73,6 +73,15 @@ import {
   type ServerAnalysisSource,
 } from "./analysisAdmission.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
+import { createReverseEngineeringService } from "../composition/reverseEngineering.js";
+import { registerReverseEngineeringTools } from "./registerReverseEngineeringTools.js";
+import { GdbSessionManager } from "../gdb/GdbSessionManager.js";
+import { registerGdbTools } from "./registerGdbTools.js";
+import { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
+import { registerRizinDebugTools } from "./registerRizinDebugTools.js";
+import { CutterBridgeService } from "../cutter/CutterBridgeService.js";
+import { CutterBridgeClient } from "../cutter/CutterBridgeClient.js";
+import { registerCutterTools } from "./registerCutterTools.js";
 
 const TARGET_FREE_INSTRUCTIONS =
   "REA provides reverse-engineering tools for local artifacts, native binaries, managed code, browser pages, and runtimes. Use the tool that directly answers the question; discover targets or inspect inventory only when needed. Tool results include inline Evidence and report their coverage and limitations.";
@@ -83,6 +92,7 @@ const ACTIVE_TARGET_INSTRUCTIONS =
 export interface CreateServerOptions {
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
   readonly delivery?: ToolResultDelivery;
+  readonly providerEnvironment?: Readonly<NodeJS.ProcessEnv>;
   readonly evmInterface?: EvmInterfaceService;
   readonly logger?: Logger;
   readonly binaryLayout?: BinaryLayoutService;
@@ -211,9 +221,67 @@ export const createServer = (
     withAdmittedAnalysis: withAdmittedAnalysis(source),
   };
   registerBinaryAnalysisTools(toolContext);
+  registerReverseEngineeringTools(
+    server,
+    createReverseEngineeringService(options.providerEnvironment),
+    toolLogger,
+    delivery,
+    session === undefined
+      ? undefined
+      : (evidence) => session.recordEvidence(evidence),
+  );
+  const gdbSessions = new GdbSessionManager(
+    options.providerEnvironment === undefined
+      ? {}
+      : { environment: options.providerEnvironment },
+  );
+  const rizinDebugSessions = new RizinDebugSessionManager(
+    options.providerEnvironment,
+  );
+  registerGdbTools(
+    server,
+    gdbSessions,
+    toolLogger,
+    delivery,
+    session === undefined
+      ? undefined
+      : (evidence) => session.recordEvidence(evidence),
+  );
+  registerRizinDebugTools(
+    server,
+    rizinDebugSessions,
+    toolLogger,
+    delivery,
+    session === undefined
+      ? undefined
+      : (evidence) => session.recordEvidence(evidence),
+  );
+  registerCutterTools(
+    server,
+    new CutterBridgeService(
+      new CutterBridgeClient(options.providerEnvironment),
+    ),
+    toolLogger,
+    delivery,
+    session === undefined
+      ? undefined
+      : (evidence) => session.recordEvidence(evidence),
+  );
   const previousOnclose = server.server.onclose;
   server.server.onclose = () => {
     previousOnclose?.();
+    void gdbSessions.closeAll().catch((cause: unknown) => {
+      logger.error(
+        { error: cause instanceof Error ? cause.message : String(cause) },
+        "GDB cleanup after MCP close failed",
+      );
+    });
+    void rizinDebugSessions.closeAll().catch((cause: unknown) => {
+      logger.error(
+        { error: cause instanceof Error ? cause.message : String(cause) },
+        "Rizin cleanup after MCP close failed",
+      );
+    });
     void android.close().catch((cause: unknown) => {
       logger.error(
         { error: cause instanceof Error ? cause.message : String(cause) },
@@ -223,7 +291,12 @@ export const createServer = (
   };
   const closeServer = server.close.bind(server);
   server.close = async () => {
-    const results = await Promise.allSettled([closeServer(), android.close()]);
+    const results = await Promise.allSettled([
+      closeServer(),
+      android.close(),
+      gdbSessions.closeAll(),
+      rizinDebugSessions.closeAll(),
+    ]);
     for (const result of results)
       if (result.status === "rejected") throw result.reason;
   };

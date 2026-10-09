@@ -41,6 +41,12 @@ export const CLI_COMMANDS = Object.freeze({
   inspectManagedArtifact: "inspect-managed-artifact",
   inspectRecordedCrash: "inspect-recorded-crash",
   inspectBinaryLayout: "inspect-binary-layout",
+  inspectWithObjdump: "inspect-with-objdump",
+  executeRizinCommand: "execute-rizin-command",
+  debugWithGdb: "debug-with-gdb",
+  debugWithRizin: "debug-with-rizin",
+  listCutterSessions: "list-cutter-sessions",
+  cutterCommand: "cutter-command",
   inspectAnalysisView: "inspect-analysis-view",
   inspectFirmwareRegions: "inspect-firmware-regions",
   extractFirmware: "extract-firmware",
@@ -114,6 +120,12 @@ export const CLI_COMMAND_TOOL_ALIASES = Object.freeze({
   search: ["search_strings", "search_procedures"],
   "capture-process": ["capture_process_scenario"],
   "compare-bundles": ["compare_bundles"],
+  "inspect-with-objdump": ["inspect_with_objdump"],
+  "execute-rizin-command": ["execute_rizin_command"],
+  "debug-with-gdb": ["gdb_console"],
+  "debug-with-rizin": ["rizin_debug_command"],
+  "list-cutter-sessions": ["list_cutter_sessions"],
+  "cutter-command": ["cutter_command"],
 });
 
 /** MCP operations without a dedicated CLI command or direct command alias. */
@@ -171,4 +183,10 @@ export const MCP_TOOLS_WITHOUT_DEDICATED_CLI = Object.freeze([
   "get_evidence_bundle",
   "get_navigation_context",
   "inspect_address_context",
+  "start_gdb_session",
+  "gdb_session_status",
+  "close_gdb_session",
+  "start_rizin_debug_session",
+  "rizin_debug_session_status",
+  "close_rizin_debug_session",
 ]);

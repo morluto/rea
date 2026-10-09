@@ -37,7 +37,7 @@ Current development priorities are:
 - Extend process, protocol, filesystem, reconnect and build-comparison
   coverage, plus browser and Electron scenario actions.
 - Evaluate native runtime observation through LLDB, Frida, system logs and
-  API tracing, and additional tools and targets such as Binary Ninja, Rizin,
+  API tracing, and additional tools and targets such as Binary Ninja,
   LIEF, Windows-native workflows, mobile applications and firmware.
 
 Provider additions and platform support require the corresponding real

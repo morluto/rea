@@ -6,7 +6,8 @@ import sys
 
 runtime_path = Path(__file__).parent.parent / "pwntools" / "decoder_runtime.py"
 runtime = {"__file__": str(runtime_path), "__name__": "rea_decoder_runtime"}
-exec(compile(runtime_path.read_bytes(), str(runtime_path), "exec"), runtime)
+# Executes a fixed package-owned helper; no request value determines the path or source.
+exec(compile(runtime_path.read_bytes(), str(runtime_path), "exec"), runtime)  # nosemgrep: python.lang.security.audit.exec-detected.exec-detected
 
 
 class LaunchFailure(Exception):

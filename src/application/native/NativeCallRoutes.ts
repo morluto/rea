@@ -85,7 +85,11 @@ export const readNativeCallRoutes = async (
     options,
   );
   if (!callees.ok) return callees;
-  const parsed = parseRelatedAddresses(callees.value.result, "callees");
+  const parsed = parseRelatedAddresses(
+    callees.value.result,
+    "callees",
+    "procedure_callees",
+  );
   return parsed.ok
     ? ok({
         provider: callees.value.provider,

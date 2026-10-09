@@ -123,7 +123,7 @@ const expandAddress = async (
     state.residual.add(`Call relationships were unavailable for ${address}.`);
     return false;
   }
-  const related = parseRelatedAddresses(result.value, relation);
+  const related = parseRelatedAddresses(result.value, relation, tool);
   if (!related.ok) {
     state.failures.push({
       address,

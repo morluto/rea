@@ -22,7 +22,8 @@ try:
     implementation = os.path.join(os.path.dirname(__file__), "recorded_crash_impl.py")
     with open(implementation, "rb") as handle:
         source = handle.read()
-    exec(compile(source, implementation, "exec"), {
+    # Executes this fixed package sibling; caller inputs are passed as JSON data.
+    exec(compile(source, implementation, "exec"), {  # nosemgrep: python.lang.security.audit.exec-detected.exec-detected
         "__file__": implementation,
         "__name__": "__main__",
     })

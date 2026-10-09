@@ -2,6 +2,8 @@ import { createServer } from "node:net";
 
 const [socketPath, token, runId, shutdownMode = "acknowledge"] =
   process.argv.slice(2);
+// Keep the large-response regression viable while bounding fixture memory.
+const MAX_REQUEST_BUFFER_LENGTH = 16 * 1024 * 1024;
 const heldReplies = new Map();
 if (process.send !== undefined)
   process.on("message", (message) => {
@@ -160,6 +162,10 @@ const server = createServer((socket) => {
     setTimeout(() => socket.write(bytes.subarray(midpoint)), 2);
   };
   socket.on("data", (chunk) => {
+    if (buffer.length + chunk.length > MAX_REQUEST_BUFFER_LENGTH) {
+      socket.destroy();
+      return;
+    }
     buffer += chunk;
     let newline = buffer.indexOf("\n");
     while (newline >= 0) {

@@ -43,4 +43,7 @@ npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --
 
 See [installation and setup](./installation.md) for requirements and configuration.
 
+See the [reverse-engineering tool integrations](./reverse-engineering-tools.md)
+for objdump, GDB, Rizin, and Cutter support and configuration.
+
 ![REA inspecting a native binary in Hopper](./assets/rea-hopper-analysis.png)

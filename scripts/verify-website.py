@@ -6,8 +6,13 @@ import re
 import struct
 import sys
 from urllib.parse import quote, unquote, urlsplit
-import xml.etree.ElementTree as ET
+# nosemgrep: python.lang.security.use-defused-xml.use-defused-xml -- Expat 2.7.2+ is required before parsing; SVG input is capped at 8 MiB.
+import xml.etree.ElementTree as ET  # nosemgrep: python.lang.security.use-defused-xml.use-defused-xml
+from xml.parsers import expat  # nosemgrep: python.lang.security.use-defused-xml.use-defused-xml
 from zipfile import BadZipFile, ZipFile
+
+SVG_XML_MAX_BYTES = 8 * 1024 * 1024
+MINIMUM_EXPAT_VERSION = (2, 7, 2)
 
 
 SITE_ORIGIN = "https://rea.tools"
@@ -256,9 +261,23 @@ def check_site(site):
             ):
                 errors.append(f"{label}: missing HTML fragment: {reference}")
 
+    if expat.version_info < MINIMUM_EXPAT_VERSION:
+        errors.append(
+            "SVG XML validation requires Expat 2.7.2 or newer; "
+            f"found {expat.EXPAT_VERSION}. Use Python 3.14 or a patched Python build."
+        )
+
     for path in sorted(site.rglob("*.svg")):
+        if expat.version_info < MINIMUM_EXPAT_VERSION:
+            break
+        if path.stat().st_size > SVG_XML_MAX_BYTES:
+            errors.append(
+                f"{path.relative_to(site)}: SVG exceeds the {SVG_XML_MAX_BYTES}-byte XML parsing limit"
+            )
+            continue
         try:
-            ET.parse(path)
+            # Expat version is checked above; repository and pull-request SVGs are still untrusted input.
+            ET.parse(path)  # nosemgrep: python.lang.security.use-defused-xml.use-defused-xml
         except ET.ParseError as error:
             errors.append(f"{path.relative_to(site)}: invalid SVG XML: {error}")
     indexable, metadata_errors = check_search_metadata(site, pages)

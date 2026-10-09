@@ -27,7 +27,8 @@ advertise retained references.
 
 When tools are absent or registration is stale:
 
-1. Diagnose without changing files. For Codex, run
+1. Diagnose without changing REA or client configuration. `npx` may download
+   the package and write to npm's cache. For Codex, run
    `npx -y rea-agents@latest doctor --client codex --json`. Substitute the current
    supported client: `claude_code`, `claude_desktop`, `codex`, `cursor`,
    `gemini_cli`, `windsurf`, `devin`, `opencode`, `antigravity`, `copilot_cli`,

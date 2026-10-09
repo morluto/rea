@@ -29,6 +29,51 @@ const expectInvalidIncludedSourceMaps = (result: WebSourceMaps): void => {
 };
 
 describe("source-map redirect URL resolution", () => {
+  it("connects to the checked DNS address for a privately approved hostname", async () => {
+    const server = createServer((_incoming, response) => {
+      response.setHeader("content-type", "application/json");
+      response.end(
+        JSON.stringify({
+          version: 3,
+          names: [],
+          sources: ["main.ts"],
+          sourcesContent: ["export const value = 1;"],
+          mappings: "AAAA",
+        }),
+      );
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      const address = server.address();
+      if (address === null || typeof address === "string")
+        throw new TypeError("Expected a TCP listener address");
+      const localOrigin = `http://source-map.example.test:${String(address.port)}`;
+      const mapUrl = `${localOrigin}/app.js.map`;
+      const result = await fetchWebSourceMaps(
+        [{ ...request, fetchUrl: mapUrl, declaredUrl: mapUrl }],
+        input({ allowed_origins: [localOrigin] }),
+        undefined,
+        {
+          resolve: async () => [{ address: "127.0.0.1", family: 4 }],
+          explicitAllowedOrigins: [localOrigin],
+        },
+      );
+
+      expect(result.items[0]?.status).toBe("included");
+    } finally {
+      server.closeAllConnections();
+      if (server.listening)
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) =>
+            error === undefined ? resolve() : reject(error),
+          );
+        });
+    }
+  });
+
   it.each(["/maps/current", "/assets/v2/app.js.map"])(
     "resolves relative sources against the delivered map at %s",
     async (initialPath) => {
@@ -101,6 +146,62 @@ describe("source-map redirect URL resolution", () => {
 });
 
 describe("web source-map fetching and validation: fetching maps and following redirects", () => {
+  it.each(["10.0.0.8", "169.254.1.2", "::ffff:10.0.0.8", "fc00::8"])(
+    "blocks DNS answer %s before network contact unless explicitly approved",
+    async (address) => {
+      const calls: string[] = [];
+      const privateDnsOrigin = "https://cdn.example.test";
+      const hostFetch = {
+        fetch: async (url: string | URL | Request) => {
+          calls.push(String(url));
+          return new Response("{}", { status: 200 });
+        },
+        resolve: async () => [
+          {
+            address,
+            family: address.includes(":") ? (6 as const) : (4 as const),
+          },
+        ],
+        explicitAllowedOrigins: [],
+      };
+      const result = await fetchWebSourceMaps(
+        [{ ...request, fetchUrl: `${privateDnsOrigin}/app.js.map` }],
+        input({ allowed_origins: [privateDnsOrigin] }),
+        undefined,
+        hostFetch,
+      );
+
+      expect(calls).toEqual([]);
+      expect(result.items[0]).toMatchObject({
+        status: "policy_filtered",
+        limitation: expect.stringContaining("private"),
+      });
+    },
+  );
+
+  it("permits a privately resolving host when its exact origin was explicit", async () => {
+    const calls: string[] = [];
+    const privateDnsOrigin = "https://cdn.example.test";
+    const result = await fetchWebSourceMaps(
+      [{ ...request, fetchUrl: `${privateDnsOrigin}/app.js.map` }],
+      input({ allowed_origins: [privateDnsOrigin] }),
+      undefined,
+      {
+        fetch: async (url) => {
+          calls.push(String(url));
+          return validMapResponse();
+        },
+        resolve: async () => [{ address: "10.0.0.8", family: 4 }],
+        explicitAllowedOrigins: [privateDnsOrigin],
+      },
+    );
+
+    expect(calls).toEqual([`${privateDnsOrigin}/app.js.map`]);
+    expect(result.items[0]?.status).toBe("included");
+  });
+});
+
+describe("web source-map fetching: map contents and approved redirects", () => {
   it("fetches without credentials and derives mappings and original modules", async () => {
     const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
     const map = JSON.stringify({
@@ -192,7 +293,9 @@ describe("web source-map fetching and validation: fetching maps and following re
       items: [{ ...result.items[0], limitation: null }],
     });
   });
+});
 
+describe("web source-map fetching: URL validation and redirect chains", () => {
   it.each([
     ["embedded credentials", "https://user:secret@app.example.test/a.map"],
     ["a different scheme on the same host", "http://app.example.test/a.map"],

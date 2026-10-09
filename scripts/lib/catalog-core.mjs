@@ -43,6 +43,16 @@ const SOURCE_PATHS = {
   sessionContracts: "dist/contracts/sessionToolContracts.js",
   binaryDiagnosticsContracts:
     "dist/contracts/native/binaryDiagnosticsToolContracts.js",
+  reverseEngineeringContracts:
+    "dist/contracts/reverseEngineeringToolContracts.js",
+  gdbContracts: "dist/contracts/gdbToolContracts.js",
+  rizinDebugContracts: "dist/contracts/rizinDebugToolContracts.js",
+  cutterContracts: "dist/contracts/cutterToolContracts.js",
+  objdumpProvider: "dist/objdump/ObjdumpCommand.js",
+  rizinProvider: "dist/rizin/RizinCommand.js",
+  gdbProvider: "dist/gdb/GdbSessionManager.js",
+  rizinDebugProvider: "dist/rizin/RizinDebugSessionManager.js",
+  cutterProvider: "dist/cutter/CutterBridgeClient.js",
   pwntoolsProvider: "dist/native/pwntools/PwntoolsRelease.js",
   nativeContracts: "dist/contracts/native/nativeToolContracts.js",
   evmContracts: "dist/contracts/evm/evmToolContracts.js",

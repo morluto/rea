@@ -1063,12 +1063,6 @@ pre code {
   margin-left: 0.4em;
   vertical-align: -0.12em;
   background: #9bbfe5;
-  animation: terminal-blink 1s step-end infinite;
-}
-@keyframes terminal-blink {
-  50% {
-    opacity: 0;
-  }
 }
 .workflow-figure {
   margin: 1.7rem 0;
@@ -2245,12 +2239,6 @@ pre code {
   .code-inline {
     align-items: flex-start;
     padding: 0.9rem;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .terminal-cursor {
-    animation: none;
   }
 }
 

@@ -324,6 +324,36 @@ commands. Check prerequisites before starting expensive work and name the
 missing command, target, and lane in any failure message. A lane must not imply
 that a host or target is covered when it was skipped.
 
+### Cutter upstream bridge
+
+`npm run verify:cutter` builds REA and exercises a real upstream Cutter GUI
+through the REA Python plugin. Start Cutter with the plugin loaded and a
+disposable local binary open; both Cutter and REA must see the same bridge
+directory. The smoke checks session discovery, observed Cutter version,
+`ij`-command CLI/MCP Evidence parity, Rizin project save/reopen of an analysis
+comment, and an unchanged executable digest. It does not automate document
+switching/stale-generation rejection or clean Cutter shutdown; those remain
+manual acceptance checks. A local simulated bridge does not prove plugin API,
+GUI-thread, persistence, or OS behavior.
+
+The [`real-cutter.yml`](../.github/workflows/real-cutter.yml) workflow is
+dispatch-only (`workflow_dispatch` or the `real-cutter-upstream` repository
+event), not a regular pull-request gate. It requires dedicated self-hosted
+Linux, macOS, and Windows runners labelled `cutter-upstream`, each with the
+matching upstream Cutter build, REA plugin loaded, and a disposable binary
+already open. Configure `REA_CUTTER_EXPECTED_VERSION` on a runner to pin its
+expected build. The Windows job first downloads the cross-built native addon,
+then verifies and uses it on Windows. Each successful host job uploads
+`cutter-smoke.json`; the existence of the workflow or an unrun runner is not
+evidence of platform support. Only successful real results establish coverage
+for the specific OS and Cutter build.
+
+Objdump, GDB, and Rizin currently have no dedicated real-provider workflow
+lane. Run their documented CLI commands against host-installed tools and
+representative local fixtures for each claimed host. The Cutter lane does not
+verify them; mocked session tests and package startup checks are narrower
+evidence.
+
 Provider admission accepts Ghidra 12.1.x and the JDK range declared by that
 installation (`application.java.min` through `application.java.max`). Current
 12.1 releases require JDK 21 or newer and set no maximum. The lanes below still

@@ -25,6 +25,12 @@ import {
   type SourceMapLeaf,
 } from "../javascript/sourceMaps/SourceMapFormat.js";
 import { WEB_SOURCE_MAP_LIMITS } from "../domain/webSourceLocation.js";
+import {
+  fetchSourceMapSafely,
+  resolveSourceMapAddresses,
+  SourceMapAddressPolicyError,
+  type SourceMapResolver,
+} from "./SourceMapSafeFetch.js";
 
 export interface WebSourceMapRequest {
   readonly scriptKey: string;
@@ -33,7 +39,11 @@ export interface WebSourceMapRequest {
 }
 
 interface SourceMapFetchHost {
-  readonly fetch: typeof fetch;
+  readonly fetch?: typeof fetch;
+  /** Resolver seam for proving address policy without making a network call. */
+  readonly resolve?: SourceMapResolver;
+  /** Origins explicitly approved by the caller before provider-added defaults. */
+  readonly explicitAllowedOrigins?: readonly string[];
   /** Fetch-operation deadline; injectable so boundary regressions stay fast. */
   readonly timeoutMs?: number;
   /** Maximum response bytes retained across this operation. */
@@ -71,7 +81,7 @@ export const fetchWebSourceMaps = async (
   requests: readonly WebSourceMapRequest[],
   input: AnalyzeWebBundleInput,
   signal?: AbortSignal,
-  host: SourceMapFetchHost = { fetch: globalThis.fetch },
+  host: SourceMapFetchHost = {},
 ): Promise<SourceMaps> => {
   const items: SourceMapItem[] = [];
   const operationController = new AbortController();
@@ -122,7 +132,11 @@ export const fetchWebSourceMaps = async (
         request,
         input,
         operationSignal,
-        host,
+        {
+          ...host,
+          explicitAllowedOrigins:
+            host.explicitAllowedOrigins ?? input.allowed_origins,
+        },
         budget,
       );
       if (item.artifact === null)
@@ -214,31 +228,35 @@ const fetchOne = async (
         "policy_filtered",
         "A source-map redirect left the approved exact origins.",
       );
-    const { response, fetchedUrl } = fetched;
-    if (!response.ok) {
-      await response.body?.cancel();
-      return emptySourceMapItem(
+    try {
+      const { response, fetchedUrl } = fetched;
+      if (!response.ok) {
+        await response.body?.cancel();
+        return emptySourceMapItem(
+          request,
+          "fetch_failed",
+          `Source-map server returned HTTP ${String(response.status)}.`,
+        );
+      }
+      checkOperation(undefined, signal, budget.deadlineAt);
+      return normalizeSourceMap(
         request,
-        "fetch_failed",
-        `Source-map server returned HTTP ${String(response.status)}.`,
+        await readBoundedText(
+          response,
+          budget,
+          host.maxResponseBytes ?? SOURCE_MAP_RESPONSE_BYTES,
+          signal,
+        ),
+        fetchedUrl,
+        {
+          signal,
+          deadlineAt: budget.deadlineAt,
+          budget: budget.decodedRecords,
+        },
       );
+    } finally {
+      await fetched.close().catch(() => undefined);
     }
-    checkOperation(undefined, signal, budget.deadlineAt);
-    return normalizeSourceMap(
-      request,
-      await readBoundedText(
-        response,
-        budget,
-        host.maxResponseBytes ?? SOURCE_MAP_RESPONSE_BYTES,
-        signal,
-      ),
-      fetchedUrl,
-      {
-        signal,
-        deadlineAt: budget.deadlineAt,
-        budget: budget.decodedRecords,
-      },
-    );
   } catch (cause: unknown) {
     if (
       signal?.aborted === true &&
@@ -247,6 +265,8 @@ const fetchOne = async (
       throw cause;
     if (cause instanceof SourceMapEncodingError)
       return emptySourceMapItem(request, "invalid", cause.message);
+    if (cause instanceof SourceMapAddressPolicyError)
+      return emptySourceMapItem(request, "policy_filtered", cause.message);
     return emptySourceMapItem(
       request,
       "fetch_failed",
@@ -264,7 +284,14 @@ const fetchFollowingApprovedRedirects = async (
   allowedOrigins: readonly string[],
   signal: AbortSignal | undefined,
   host: SourceMapFetchHost,
-): Promise<{ response: Response; fetchedUrl: string } | undefined> => {
+): Promise<
+  | {
+      response: Response;
+      fetchedUrl: string;
+      close: () => Promise<void>;
+    }
+  | undefined
+> => {
   let current = initialUrl;
   const visited = new Set<string>();
   for (;;) {
@@ -272,30 +299,57 @@ const fetchFollowingApprovedRedirects = async (
     if (!approvedUrl(current, allowedOrigins)) return undefined;
     if (visited.has(current)) throw new Error("source_map_redirect_loop");
     visited.add(current);
-    const response = await promiseWithAbort(
-      host.fetch(current, {
-        method: "GET",
-        headers: {
-          Accept: "application/json, application/source-map+json;q=0.9",
+    const init: RequestInit = {
+      method: "GET",
+      headers: {
+        Accept: "application/json, application/source-map+json;q=0.9",
+      },
+      redirect: "manual",
+      credentials: "omit",
+      referrerPolicy: "no-referrer",
+      ...(signal === undefined ? {} : { signal }),
+    };
+    let response: Response;
+    let close: () => Promise<void> = async () => undefined;
+    if (host.fetch === undefined) {
+      const safe = await promiseWithAbort(
+        fetchSourceMapSafely(current, init, {
+          ...(host.resolve === undefined ? {} : { resolve: host.resolve }),
+          explicitAllowedOrigins: host.explicitAllowedOrigins ?? allowedOrigins,
+        }),
+        signal,
+        ({ response, close }) => {
+          void response.body?.cancel(signal?.reason).catch(() => undefined);
+          void close().catch(() => undefined);
         },
-        redirect: "manual",
-        credentials: "omit",
-        referrerPolicy: "no-referrer",
-        ...(signal === undefined ? {} : { signal }),
-      }),
-      signal,
-    );
+      );
+      response = safe.response;
+      close = safe.close;
+    } else {
+      if (host.resolve !== undefined)
+        await promiseWithAbort(
+          resolveSourceMapAddresses(current, {
+            resolve: host.resolve,
+            explicitAllowedOrigins:
+              host.explicitAllowedOrigins ?? allowedOrigins,
+          }),
+          signal,
+        );
+      response = await promiseWithAbort(host.fetch(current, init), signal);
+    }
     if (signal !== undefined && signalIsAborted(signal)) {
       await response.body?.cancel(signal.reason).catch(() => undefined);
+      await close().catch(() => undefined);
       throw signal.reason;
     }
     // Location is a redirect target only for the Fetch redirect statuses.
     // A 304 or another 3xx response must retain its own HTTP failure.
     if (![301, 302, 303, 307, 308].includes(response.status))
-      return { response, fetchedUrl: current };
+      return { response, fetchedUrl: current, close };
     const location = response.headers.get("location");
-    if (location === null) return { response, fetchedUrl: current };
+    if (location === null) return { response, fetchedUrl: current, close };
     await response.body?.cancel();
+    await close();
     current = new URL(location, current).href;
   }
 };
@@ -380,10 +434,11 @@ const readWithAbort = <T>(
 const signalIsAborted = (signal: AbortSignal | undefined): boolean =>
   signal?.aborted === true;
 
-const promiseWithAbort = (
-  promise: Promise<Response>,
+const promiseWithAbort = <T>(
+  promise: Promise<T>,
   signal: AbortSignal | undefined,
-): Promise<Response> => {
+  onLateValue?: (value: T) => void,
+): Promise<T> => {
   if (signal === undefined) return promise;
   if (signal.aborted) return Promise.reject(signal.reason);
   return new Promise((resolve, reject) => {
@@ -399,7 +454,7 @@ const promiseWithAbort = (
     void promise.then(
       (response) => {
         if (settled || signal.aborted) {
-          void response.body?.cancel(signal.reason).catch(() => undefined);
+          onLateValue?.(response);
           if (!settled) {
             settled = true;
             cleanup();

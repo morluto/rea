@@ -75,6 +75,7 @@ export const startMcpTransport = async (
           { kind: "session", session },
           {
             logger: serverContext.logger,
+            providerEnvironment: dependencies.env,
             environment: serverContext.environment,
             delivery: serverContext.delivery,
             ...optionalProviders,

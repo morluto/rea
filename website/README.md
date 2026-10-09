@@ -146,9 +146,8 @@ one changed input. This formatter check needs only Node.js. The separate
 browser Notes example has a different implementation.
 
 Agent terminals show example prompts, not transcripts of previous
-investigations. All cursors blink continuously with the same CSS animation,
-respecting reduced-motion preferences. Both the prompt and animation work
-without JavaScript. The homepage and agent setup section share a copyable
+investigations. Their cursors remain visible as static blocks. Both the prompt
+and cursor work without JavaScript. The homepage and agent setup section share a copyable
 installation prompt; setup still presents its plan for approval.
 
 Reading pages share a small `↑ Top` link at the bottom right. It appears after

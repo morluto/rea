@@ -22,8 +22,10 @@ additional permission flag or degraded mode is required.
 
 Loaded memory reads and file offsets preserve Ghidra's observed source mappings.
 PE load-image inspection returns measurements with an explicit unsupported
-attestation status; independent format-specific verification currently supports
-DOS MZ only.
+attestation status. Independent DOS verification supports DOS MZ and explicitly
+selected DOS COM targets on Linux x64 and macOS arm64, outside this Windows P0
+boundary. macOS x64 remains unverified. See [DOS analysis](ghidra-dos.md) for
+the COM workflow.
 
 This boundary does not establish general Windows feature parity. Ghidra GUI
 state, annotations, other target architectures and formats, and Hopper-only

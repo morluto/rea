@@ -36,6 +36,14 @@ const environmentSchema = z.object({
     .min(1)
     .refine(isAbsolute, "REA_ILSPY_CMD_PATH must be absolute")
     .optional(),
+  REA_OBJDUMP_COMMAND: z.string().min(1).optional(),
+  REA_RIZIN_COMMAND: z.string().min(1).optional(),
+  REA_GDB_COMMAND: z.string().min(1).optional(),
+  REA_CUTTER_BRIDGE_DIR: z
+    .string()
+    .min(1)
+    .refine(isAbsolute, "REA_CUTTER_BRIDGE_DIR must be absolute")
+    .optional(),
   HOPPER_LAUNCHER_PATH: z.string().min(1).optional(),
   HOPPER_TARGET_PATH: z.string().min(1).optional(),
   HOPPER_TARGET_KIND: z.enum(["executable", "database"]).default("executable"),

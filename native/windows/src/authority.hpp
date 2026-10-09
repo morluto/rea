@@ -117,7 +117,8 @@ napi_value wrap(napi_env env, std::unique_ptr<Resource> resource);
 Resource& resource(napi_env env, napi_value value, Kind kind);
 
 std::unique_ptr<File> openFile(const std::wstring& path, DWORD access = GENERIC_READ,
-                             bool directory = false);
+                             bool directory = false,
+                             DWORD finalSharing = FILE_SHARE_READ);
 napi_value identity(napi_env env, HANDLE handle, const std::wstring& path);
 std::unique_ptr<Runtime> createRuntime(const std::wstring& parent, const std::wstring& prefix);
 void closeRuntime(Runtime& runtime);

@@ -162,7 +162,7 @@ export const BROWSER_TOOL_CONTRACTS = [
     name: "analyze_web_bundle",
     ...toolContractMetadata("analyze_web_bundle"),
     description:
-      "Capture JavaScript source from one selected CDP page and statically derive a chunk graph, route and endpoint candidates, vendor fingerprints, page-declared WebMCP metadata, and optionally fetch source maps from the selected target origin or explicitly requested origins. JavaScript is parsed but never executed.",
+      "Capture JavaScript source from one selected CDP page and statically derive a chunk graph, route and endpoint candidates, vendor fingerprints, page-declared WebMCP metadata, and optionally fetch source maps from the selected target origin or explicitly requested origins. REA fetches maps through its own network stack without browser credentials; DNS hostnames resolving to private or special-use addresses require the exact origin in allowed_origins. Selected localhost and literal-IP origins remain available. JavaScript is parsed but never executed.",
     kind: "browser-provider",
     inputSchema: analyzeWebBundleInputSchema,
     outputSchema: bundleOutputSchema,

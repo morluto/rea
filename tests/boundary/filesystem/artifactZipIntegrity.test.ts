@@ -1,4 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
+import * as fsPromises from "node:fs/promises";
 import { join } from "node:path";
 
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
@@ -32,6 +33,44 @@ it("bounds a requested metadata read without rejecting the underlying valid ZIP"
     await expect(collect(control)).resolves.toEqual([name]);
   } finally {
     await Promise.all([bounded.close(), control.close()]);
+  }
+});
+
+it("completes ZIP metadata reads when the filesystem returns partial reads", async () => {
+  const root = await createTestTempDirectory("rea-zip-partial-read-");
+  const path = join(root, "partial-read.zip");
+  await writeOrderedZip(path, ["member.txt"]);
+
+  const handle = await fsPromises.open(path, "r");
+  const handlePrototype = Object.getPrototypeOf(handle) as {
+    read: (
+      this: fsPromises.FileHandle,
+      buffer: NodeJS.ArrayBufferView,
+      offset: number,
+      length: number,
+      position: number | null,
+    ) => Promise<{ bytesRead: number }>;
+  };
+  await handle.close();
+  const originalRead = handlePrototype.read;
+  handlePrototype.read = async function (buffer, offset, length, position) {
+    return await originalRead.call(
+      this,
+      buffer,
+      offset,
+      Math.min(length, 1),
+      position,
+    );
+  };
+
+  const reader = new ZipArtifactReader(path, "zip");
+  try {
+    const entries: string[] = [];
+    for await (const entry of reader.entries()) entries.push(entry.path);
+    expect(entries).toEqual(["member.txt"]);
+  } finally {
+    handlePrototype.read = originalRead;
+    await reader.close();
   }
 });
 

@@ -75,4 +75,33 @@ export const TOOL_EXAMPLE_OVERRIDES: Readonly<
     left_bundle_path: "/tmp/left-evidence.json",
     right_bundle_path: "/tmp/right-evidence.json",
   },
+  inspect_with_objdump: {
+    path: "/tmp/program",
+    operation: "disassemble",
+  },
+  execute_rizin_command: { path: "/tmp/program", command: "iI" },
+  start_gdb_session: {},
+  gdb_console: {
+    session_id: "00000000-0000-4000-8000-000000000001",
+    command: "info functions",
+  },
+  gdb_session_status: { session_id: "00000000-0000-4000-8000-000000000001" },
+  close_gdb_session: { session_id: "00000000-0000-4000-8000-000000000001" },
+  start_rizin_debug_session: { path: "/tmp/program" },
+  rizin_debug_command: {
+    session_id: "00000000-0000-4000-8000-000000000001",
+    command: "dr",
+  },
+  rizin_debug_session_status: {
+    session_id: "00000000-0000-4000-8000-000000000001",
+  },
+  close_rizin_debug_session: {
+    session_id: "00000000-0000-4000-8000-000000000001",
+  },
+  list_cutter_sessions: {},
+  cutter_command: {
+    session_id: "00000000-0000-4000-8000-000000000001",
+    expected_generation: 0,
+    command: "iI",
+  },
 };

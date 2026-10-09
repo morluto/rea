@@ -18,6 +18,11 @@ import {
   GHIDRA_PROVIDER_IDENTITY,
   GHIDRA_OPERATIONS,
 } from "../../../src/ghidra/GhidraProviderCapabilities.js";
+import { OBJDUMP_PROVIDER_IDENTITY } from "../../../src/objdump/ObjdumpCommand.js";
+import { RIZIN_PROVIDER_IDENTITY } from "../../../src/rizin/RizinCommand.js";
+import { GDB_PROVIDER_IDENTITY } from "../../../src/gdb/GdbSessionManager.js";
+import { RIZIN_DEBUGGER_PROVIDER_IDENTITY } from "../../../src/rizin/RizinDebugSessionManager.js";
+import { CUTTER_PROVIDER_IDENTITY } from "../../../src/cutter/CutterBridgeClient.js";
 import {
   documentationFactIssues,
   skillReferenceIssues,
@@ -69,6 +74,18 @@ describe("canonical product catalog", () => {
     const catalog = await createProductCatalog(root);
     expect(catalog.setup_clients.map(({ id }) => id)).toEqual(
       SUPPORTED_CLIENT_DEFINITIONS.map(({ name }) => name),
+    );
+    expect(catalog.cli.commands).toHaveLength(CLI_COMMAND_NAMES.length);
+    expect(catalog.providers.map(({ id }) => id)).toEqual(
+      expect.arrayContaining(
+        [
+          OBJDUMP_PROVIDER_IDENTITY,
+          RIZIN_PROVIDER_IDENTITY,
+          GDB_PROVIDER_IDENTITY,
+          RIZIN_DEBUGGER_PROVIDER_IDENTITY,
+          CUTTER_PROVIDER_IDENTITY,
+        ].map(({ id }) => id),
+      ),
     );
     expect(
       catalog.providers.find(({ id }) => id === HOPPER_PROVIDER_IDENTITY.id)

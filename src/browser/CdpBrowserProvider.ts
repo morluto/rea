@@ -146,6 +146,7 @@ export class CdpBrowserProvider implements BrowserObservationPort {
                   : [captured.inspection.target.origin],
             },
             options.signal,
+            { explicitAllowedOrigins: input.allowed_origins },
           )
         : undefined;
       return ok(

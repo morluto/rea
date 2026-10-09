@@ -49,6 +49,7 @@ const fixture = (protocolStdin?: boolean) => {
           architecture: "x64",
           filesystem: identity,
           privateDacl: true,
+          privateBridgeDescriptorAccess: true,
           atomicJobAssignment: true,
           killOnOwnerClose: true,
           ...(protocolStdin === undefined ? {} : { protocolStdin }),
@@ -163,5 +164,36 @@ describe("packaged Windows native admission", () => {
         loadArtifact: () => ({ call: () => ({ privateDacl: true }) }),
       }).available,
     ).toBe(false);
+  });
+
+  it("rejects Windows controls without handle-bound Cutter descriptor access", () => {
+    const value = fixture();
+    expect(
+      loadWindowsNativeAuthority({
+        ...value.host,
+        loadArtifact: () => ({
+          call: () => ({
+            abiVersion: 1,
+            nodeApiVersion: 8,
+            architecture: "x64",
+            filesystem: {
+              requestedPath: "D:\\fixture\\runtime",
+              finalPath: "\\\\?\\D:\\fixture\\runtime",
+              filesystem: "NTFS",
+              volumeSerial: "0123456789abcdef",
+              fileId: "0123456789abcdef0123456789abcdef",
+              size: 0,
+              directory: true,
+            },
+            privateDacl: true,
+            atomicJobAssignment: true,
+            killOnOwnerClose: true,
+          }),
+        }),
+      }),
+    ).toMatchObject({
+      available: false,
+      reason: expect.stringContaining("privateBridgeDescriptorAccess"),
+    });
   });
 });

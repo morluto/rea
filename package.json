@@ -42,6 +42,7 @@
     "dist",
     "install.sh",
     "bridge/hopper_bridge.py",
+    "bridge/cutter/rea_bridge.py",
     "bridge/native/NativeUIChildren.swift",
     "bridge/native/ReaNativeUI.swift",
     "bridge/native/rea_lldb_tracer.py",
@@ -201,6 +202,7 @@
     "verify:windows-native:artifact": "node scripts/verify-windows-native-artifact.mjs",
     "prepublishOnly": "npm run verify:windows-native:artifact",
     "verify:windows-native": "node scripts/verify-windows-native.mjs",
+    "verify:cutter": "npm run build:cached && node scripts/verify-real-cutter.mjs",
     "verify:ghidra:windows:package": "node scripts/verify-packaged-ghidra-windows.mjs",
     "build:ghidra:nativeaot": "node scripts/build-ghidra-nativeaot.mjs",
     "build:fixtures:nativeaot": "node scripts/generate-nativeaot-fixtures.mjs",
@@ -251,9 +253,11 @@
     "canonicalize": "3.0.0",
     "cross-spawn": "7.0.6",
     "diff": "9.0.0",
+    "evmole": "0.9.3",
     "har-schema": "2.0.0",
     "ignore": "7.0.6",
     "incur": "0.6.1",
+    "ipaddr.js": "2.5.0",
     "isomorphic-git": "1.38.7",
     "jsonc-parser": "3.3.1",
     "lossless-json": "4.3.1",
@@ -263,10 +267,10 @@
     "plist": "5.0.0",
     "semver": "7.8.5",
     "smol-toml": "1.9.0",
+    "undici": "8.11.2",
     "write-file-atomic": "7.0.0",
     "ws": "8.21.0",
-    "zod": "4.4.3",
-    "evmole": "0.9.3"
+    "zod": "4.4.3"
   },
   "overrides": {
     "vitepress": {

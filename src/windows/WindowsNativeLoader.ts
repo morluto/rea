@@ -41,6 +41,7 @@ const inspectionSchema = z.strictObject({
   architecture: z.literal("x64"),
   filesystem: windowsFileIdentitySchema,
   privateDacl: z.literal(true),
+  privateBridgeDescriptorAccess: z.literal(true),
   atomicJobAssignment: z.literal(true),
   killOnOwnerClose: z.literal(true),
   protocolStdin: z.boolean().optional(),
