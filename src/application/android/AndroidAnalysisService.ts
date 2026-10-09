@@ -29,7 +29,10 @@ export class AndroidAnalysisService {
     const request = androidRequestSchema.safeParse({ operation, input });
     if (!request.success)
       return err(new AnalysisInputError(operation, { cause: request.error }));
-    const target = await parseBinaryTarget(request.data.input.path, (options?.signal === undefined ? {} : { signal: options.signal }));
+    const target = await parseBinaryTarget(
+      request.data.input.path,
+      options?.signal === undefined ? {} : { signal: options.signal },
+    );
     if (!target.ok) return target;
     const executed = await this.provider.execute(
       target.value,
