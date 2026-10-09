@@ -130,7 +130,7 @@ describe("function comparison normalized identity", () => {
     },
   );
 
-  it.each(["sub_deadbeef", "fcn.00401000"])(
+  it.each(["sub_deadbeef", "fcn.00401000", "FUN_00401000", "FUN_deadBEEF"])(
     "keeps %s as an address-derived name",
     (name) => {
       const generated = (base: "0x1000" | "0x2000") =>
@@ -156,6 +156,8 @@ describe("function comparison normalized identity", () => {
   it.each([
     { name: "sub_deallocate", status: "unchanged" },
     { name: "sub_deadbeef", status: "unknown" },
+    { name: "FUN_00401000", status: "unknown" },
+    { name: "FUN_initialize", status: "unchanged" },
   ])("preserves the calls dimension for callee $name", ({ name, status }) => {
     const calling = (base: "0x1000" | "0x2000") =>
       functionDossierSchema.parse({
