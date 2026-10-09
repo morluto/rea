@@ -143,8 +143,10 @@ Every capture requires `truncation_details`, with separate accounting for:
 - `filesystem_before` and `filesystem_after`: file-count/depth limits,
   enumeration failures, whole-file hash budget and bytes successfully hashed.
   Each retained regular file without a digest has an aliased path, size,
-  remaining budget and reason: `file_bytes_budget` or
-  `file_changed_or_short_read`. A file too large for the remaining budget is
+  remaining budget and reason: `file_bytes_budget`,
+  `file_changed_or_short_read`, or `file_unavailable`. Its `system_code` is
+  null unless an OS file operation failed, in which case it preserves the
+  reported error code. A file too large for the remaining budget is
   skipped; a later smaller file can still be hashed. Hash omissions do not
   imply incomplete path enumeration.
 - `process`: sampling limit and whether sampling ended partially. Coverage

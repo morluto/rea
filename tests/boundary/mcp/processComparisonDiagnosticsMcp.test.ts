@@ -175,7 +175,7 @@ it("names the side and constraint when Evidence is not a usable capture", async 
     error: {
       code: "evidence_integrity_mismatch",
       message: expect.stringContaining(
-        "The right Evidence failed validation (Evidence semantic identifier does not match its record)",
+        "The right Evidence failed validation (at evidence_id: Evidence semantic identifier does not match its record)",
       ),
     },
   });

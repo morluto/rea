@@ -33,6 +33,28 @@ const resolve = (declaredPath: string, htmlBaseHref: string) =>
   });
 const documentUrl = "https://artifact.test/renderer/index.html";
 describe("HTML base href URL components", () => {
+  it.each(["?base=1", "#base-fragment"])(
+    "keeps the document pathname for suffix-only base href %s",
+    (base) => {
+      const resolvedBase = new URL(base, documentUrl);
+      expect(new URL("app.js", resolvedBase).pathname).toBe("/renderer/app.js");
+      expect(resolve("app.js", base)).toMatchObject({
+        resolved_path: "renderer/app.js",
+        resolution_status: "resolved",
+      });
+
+      const emptyPathReference = "?script=1#fragment";
+      expect(new URL(emptyPathReference, resolvedBase).pathname).toBe(
+        "/renderer/index.html",
+      );
+      expect(resolve(emptyPathReference, base)).toMatchObject({
+        declared_path: emptyPathReference,
+        resolved_path: "renderer/index.html",
+        resolution_status: "resolved",
+      });
+    },
+  );
+
   it.each([
     "/assets/?cache=/wrong/",
     "/assets/#/wrong/",

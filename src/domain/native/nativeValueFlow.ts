@@ -18,9 +18,7 @@ export const nativePcodeOperationSchema = z.strictObject({
   sequence: z.number().int().nonnegative(),
   opcode: z.string().min(1),
   is_dead: z.boolean(),
-  block_membership: z
-    .enum(["member", "detached", "unavailable"])
-    .default("unavailable"),
+  block_membership: z.enum(["member", "detached", "unavailable"]),
   inputs: z.array(nativeVarnodeSchema),
   output: nativeVarnodeSchema.nullable(),
 });
@@ -55,24 +53,20 @@ export const nativeValueFlowSchema = z.discriminatedUnion("available", [
     operations: z.array(nativePcodeOperationSchema),
     def_use: z.array(nativePcodeDefUseSchema),
     effects: z.array(nativePcodeEffectSchema),
-    parameters: z
-      .array(
-        z.strictObject({
-          ordinal: z.number().int().nonnegative(),
-          name: z.string(),
-          data_type: z.string(),
-        }),
-      )
-      .default([]),
-    parameter_uses: z
-      .array(
-        z.strictObject({
-          ordinal: z.number().int().nonnegative(),
-          use: z.string(),
-          input_index: z.number().int().nonnegative(),
-        }),
-      )
-      .default([]),
+    parameters: z.array(
+      z.strictObject({
+        ordinal: z.number().int().nonnegative(),
+        name: z.string(),
+        data_type: z.string(),
+      }),
+    ),
+    parameter_uses: z.array(
+      z.strictObject({
+        ordinal: z.number().int().nonnegative(),
+        use: z.string(),
+        input_index: z.number().int().nonnegative(),
+      }),
+    ),
     truncated: z.boolean(),
     omitted_operations_lower_bound: z.number().int().nonnegative(),
     known_omitted_inputs: z.number().int().nonnegative(),

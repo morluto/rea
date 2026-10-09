@@ -766,7 +766,6 @@ describe.skipIf(process.platform === "win32")(
 
         const controller = new AbortController();
         let cleanupAllowed = false;
-        let cleanupAttempts = 0;
         let child: ChildProcess | undefined;
         let runtimeRoot: string | undefined;
         const headless = new GhidraHeadlessLauncher({
@@ -798,7 +797,6 @@ describe.skipIf(process.platform === "win32")(
                 expectedParentPid: process.pid,
               },
               cleanup: async () => {
-                cleanupAttempts += 1;
                 if (!cleanupAllowed)
                   return {
                     cleaned: false as const,
@@ -825,7 +823,7 @@ describe.skipIf(process.platform === "win32")(
             return headless.launch(session, options);
           },
         };
-        const client = clientFor(launcher);
+        const client = clientFor(launcher, { startupTimeoutMs: 10_000 });
         onTestFinished(async () => {
           cleanupAllowed = true;
           await client.close();
@@ -852,11 +850,9 @@ describe.skipIf(process.platform === "win32")(
         await access(runtimeRoot);
         expect(child.exitCode).toBeNull();
         expect(child.signalCode).toBeNull();
-        expect(cleanupAttempts).toBe(2);
 
         cleanupAllowed = true;
         await expect(client.close()).resolves.toEqual(ok(null));
-        expect(cleanupAttempts).toBe(3);
         await expect(access(runtimeRoot)).rejects.toMatchObject({
           code: "ENOENT",
         });

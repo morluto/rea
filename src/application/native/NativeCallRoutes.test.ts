@@ -101,4 +101,30 @@ describe("typed native call routes", () => {
       error: { _tag: "AnalysisOutputError" },
     });
   });
+  it("rejects omitted unresolved-call observations instead of claiming none", async () => {
+    let calls = 0;
+    const result = await readNativeCallRoutes(
+      {
+        execute: async () => {
+          calls++;
+          return ok(
+            createAnalysisExecution(
+              {
+                reference_kinds_available: false,
+                references: [],
+              },
+              provider,
+            ),
+          );
+        },
+      },
+      "0x1000",
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisOutputError" },
+    });
+    expect(calls).toBe(1);
+  });
 });

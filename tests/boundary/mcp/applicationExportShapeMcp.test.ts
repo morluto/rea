@@ -88,7 +88,10 @@ it("traces example semantic modules with their parsed artifact digests", async (
     const module = analysis.semantic_graph.nodes.find(
       ({ kind }) => kind === "module",
     );
-    if (module === undefined || !module.evidence.artifact.available)
+    const evidenceContext = analysis.semantic_graph.evidence_contexts.find(
+      ({ context_id }) => context_id === module?.evidence.context_id,
+    );
+    if (module === undefined || !evidenceContext?.artifact.available)
       throw new Error("Example must retain an artifact-backed semantic module");
     const response = await client.callTool({
       name: "trace_javascript_semantics",
@@ -103,11 +106,19 @@ it("traces example semantic modules with their parsed artifact digests", async (
     expect(response.isError).not.toBe(true);
     expect(response.structuredContent).toMatchObject({
       normalized_result: {
+        evidence_contexts: expect.arrayContaining([
+          expect.objectContaining({
+            context_id: module.evidence.context_id,
+            artifact: expect.objectContaining({
+              sha256: evidenceContext.artifact.sha256,
+            }),
+          }),
+        ]),
         nodes: expect.arrayContaining([
           expect.objectContaining({
             node_id: module.node_id,
             identity: expect.objectContaining({
-              artifact_sha256: module.evidence.artifact.sha256,
+              artifact_sha256: evidenceContext.artifact.sha256,
             }),
           }),
         ]),

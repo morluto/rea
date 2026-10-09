@@ -5,11 +5,13 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, test } from "vitest";
 
 import { createJavaScriptRuntimeObservationEvidence } from "../../../src/application/javascript/JavaScriptRuntimeObservationEvidence.js";
+import { createBrowserEvidence } from "../../../src/application/BrowserEvidence.js";
 import {
   listJavaScriptRuntimeTargets,
   observeJavaScriptRuntime,
 } from "../../../src/application/javascript/JavaScriptRuntimeObservationService.js";
 import { reconcileJavaScriptRuntimeEvidence } from "../../../src/application/javascript/JavaScriptRuntimeReconciliationService.js";
+import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { V8_INSPECTOR_PROVIDER_IDENTITY } from "../../../src/inspector/providerIdentity.js";
 import { V8InspectorProvider } from "../../../src/inspector/V8InspectorProvider.js";
 import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "../../../src/contracts/javascript/javascriptRuntimeReconciliationExample.js";
@@ -18,9 +20,101 @@ import type {
   ObserveJavaScriptRuntimeInput,
 } from "../../../src/domain/javascript/javascriptRuntimeObservation.js";
 import { observeJavaScriptRuntimeInputSchema } from "../../../src/domain/javascript/javascriptRuntimeObservation.js";
+import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
+import { createEvidence } from "../../../src/domain/evidence.js";
 import { javascriptRuntimeReconciliationResultSchema } from "../../../src/domain/javascript/javascriptRuntimeReconciliationSchemas.js";
 import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
+import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+test("reports static-layer Evidence digest failure at its caller path", () => {
+  const layer = JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE.static_layers[0];
+  if (layer === undefined) throw new Error("Expected a static layer example");
+  const runtime = createJavaScriptRuntimeObservationEvidence(
+    "observe_javascript_runtime",
+    {
+      inspector_endpoint: "http://127.0.0.1:9229",
+      target_id: "example-v8-target",
+      runtime_kind: "electron-main",
+      observation_ms: 100,
+    },
+    runtimeObservation("/tmp/index.html", "/tmp/main.js"),
+    V8_INSPECTOR_PROVIDER_IDENTITY,
+  );
+  const result = reconcileJavaScriptRuntimeEvidence({
+    static_layers: [
+      {
+        ...layer,
+        analysis: { ...layer.analysis, evidence_id: `ev_${"0".repeat(64)}` },
+      },
+    ],
+    runtime_observations: [runtime],
+  });
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisInputError",
+      issues: [
+        {
+          path: ["static_layers", 0, "analysis", "evidence_id"],
+          reason: "invalid_value",
+          message: "Evidence semantic identifier does not match its record",
+        },
+      ],
+    },
+  });
+});
+
+test("reports browser origin scope mismatch at the caller parameter path", async () => {
+  const browser = await startFakeCdpBrowser();
+  try {
+    const provider = new CdpBrowserProvider();
+    const input = inspectWebPageInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      target_id: "allowed-page",
+      observation_ms: 0,
+    });
+    const observed = await provider.inspectPage(input);
+    if (!observed.ok) throw observed.error;
+    const evidence = createBrowserEvidence(
+      "inspect_web_page",
+      input,
+      observed.value,
+      provider.identity(),
+    );
+    const invalidEvidence = createEvidence(undefined, evidence.provider, {
+      predicateType: evidence.predicate_type,
+      operation: evidence.operation,
+      parameters: { ...evidence.parameters, allowed_origins: [] },
+      result: evidence.normalized_result,
+      confidence: evidence.confidence,
+      authority: evidence.authority,
+      environment: evidence.environment,
+      limitations: evidence.limitations,
+    });
+    const result = reconcileJavaScriptRuntimeEvidence({
+      static_layers: JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE.static_layers,
+      runtime_observations: [invalidEvidence],
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        issues: [
+          {
+            path: ["runtime_observations", 0, "parameters", "allowed_origins"],
+            reason: "invalid_value",
+            message:
+              "Browser Evidence target is outside its recorded origin scope",
+          },
+        ],
+      },
+    });
+  } finally {
+    await browser.close();
+  }
+});
 
 describe("Inspector execution-context lifecycle metadata", () => {
   test.each([

@@ -2,7 +2,10 @@ import { resolve } from "node:path";
 
 import { NonRegularFileReadError } from "./application/RegularFileRead.js";
 import { readCliJsonFile } from "./cliJsonFile.js";
-import { AnalysisInputError } from "./domain/analysisErrorCore.js";
+import {
+  AnalysisAccessDeniedError,
+  AnalysisInputError,
+} from "./domain/analysisErrorCore.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 import { safeParseJson } from "./domain/safeJson.js";
@@ -34,6 +37,9 @@ export const parseCliJsonInput = async (
           },
         };
   } catch (cause: unknown) {
+    const systemCode = accessDeniedSystemCode(cause);
+    if (systemCode !== undefined)
+      return jsonAccessDeniedError(value, operation, systemCode, cause);
     if (
       ["{", "["].includes(value.trimStart()[0] ?? "") &&
       cannotBeAnExistingFile(cause) &&
@@ -48,6 +54,15 @@ export const parseCliJsonInput = async (
       throw cause;
     return jsonFileError(value, operation, "read-failed", cause);
   }
+};
+
+const accessDeniedSystemCode = (
+  cause: unknown,
+): "EACCES" | "EPERM" | undefined => {
+  if (!(cause instanceof Error) || !("code" in cause)) return undefined;
+  return cause.code === "EACCES" || cause.code === "EPERM"
+    ? cause.code
+    : undefined;
 };
 
 /**
@@ -129,6 +144,23 @@ const jsonFileError = (
     ),
     ...(path === undefined ? {} : { input_path: path }),
     input_reason: reason,
+  },
+});
+
+const jsonAccessDeniedError = (
+  path: string,
+  operation: string,
+  systemCode: "EACCES" | "EPERM",
+  cause: unknown,
+) => ({
+  ok: false as const,
+  error: {
+    error: "Application workflow failed",
+    ...projectAnalysisError(
+      new AnalysisAccessDeniedError(operation, path, systemCode, { cause }),
+    ),
+    input_path: path,
+    input_reason: "read-failed" as const,
   },
 });
 

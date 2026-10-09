@@ -3,6 +3,10 @@ import { isAbsolute } from "node:path";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { isPathWithinRoot } from "../localPath.js";
 import { z } from "zod";
+import {
+  invalidInput,
+  parseAtPath,
+} from "./javascriptRuntimeReconciliationInputValidation.js";
 
 import {
   classifyBrowserCompleteness,
@@ -13,23 +17,30 @@ import {
   type ElectronActiveObservationResult,
 } from "./electronActiveObservation.js";
 import type { Evidence } from "../evidence.js";
-import type { ParsedRuntimeCapture } from "./javascriptRuntimeReconciliationParsing.js";
+import type { ParsedRuntimeCapture } from "./javascriptRuntimeReconciliationCaptureParsing.js";
 
 /** Parse active Electron Evidence as a bounded, target-only runtime capture. */
 export const parseActiveElectronCapture = (
   evidence: Evidence,
 ): ParsedRuntimeCapture => {
   assertIdentity(evidence);
-  const result = electronActiveObservationResultSchema.parse(
+  const result = parseAtPath(
+    (value) => electronActiveObservationResultSchema.parse(value),
     evidence.normalized_result,
+    ["normalized_result"],
   );
-  const parameters = z
-    .object({
-      application_path: absolutePathSchema,
-      application_root: absolutePathSchema,
-    })
-    .passthrough()
-    .parse(evidence.parameters);
+  const parameters = parseAtPath(
+    (value) =>
+      z
+        .object({
+          application_path: absolutePathSchema,
+          application_root: absolutePathSchema,
+        })
+        .passthrough()
+        .parse(value),
+    evidence.parameters,
+    ["parameters"],
+  );
   if (
     result.application.application_path !== parameters.application_path ||
     !isPathWithinRoot(
@@ -37,7 +48,8 @@ export const parseActiveElectronCapture = (
       result.application.application_path,
     )
   )
-    throw new TypeError(
+    throw invalidInput(
+      ["normalized_result", "application", "application_path"],
       "Active Electron Evidence application path disagrees with its configured root",
     );
   return {
@@ -62,11 +74,11 @@ const assertIdentity = (evidence: Evidence): void => {
     evidence.authority !== "controlled-replay" ||
     evidence.confidence !== "observed"
   )
-    throw new TypeError(
+    throw invalidInput(
+      [],
       "Evidence does not match the supported capture_electron_scenario contract",
     );
 };
-
 const normalizeInspection = (
   result: ElectronActiveObservationResult,
 ): {

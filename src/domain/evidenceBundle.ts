@@ -243,7 +243,20 @@ export const parseEvidenceBundle = (input: unknown): EvidenceBundle => {
     throw new TypeError("Evidence bundle contains duplicate record IDs");
   validateUnknownGraph(parsed.unknowns, parsed.records);
   const canonical = createEvidenceBundle(
-    parsed.records.map(parseEvidence),
+    parsed.records.map((record, index) => {
+      try {
+        return parseEvidence(record);
+      } catch (cause: unknown) {
+        if (cause instanceof z.ZodError)
+          throw new z.ZodError(
+            cause.issues.map((issue) => ({
+              ...issue,
+              path: ["records", index, ...issue.path],
+            })),
+          );
+        throw cause;
+      }
+    }),
     parsed.unknowns,
   );
   if (JSON.stringify(parsed) !== JSON.stringify(canonical))

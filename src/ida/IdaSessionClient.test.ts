@@ -95,6 +95,17 @@ describe("headless IDA producer pagination", () => {
     const dossier = functionDossierSchema.parse(result.value.result);
     expect(dossier.pseudocode).toBe("first line\nsecond line");
     expect(dossier.assembly).toEqual(["0x1000: push rbp", "0x1001: ret"]);
+    expect(dossier).toMatchObject({
+      procedure: {
+        classification: null,
+        body: {
+          available: false,
+          reason: "IDA MCP does not report complete function body ranges.",
+        },
+      },
+      native_api: null,
+      native_value_flow: null,
+    });
     await client.close();
   });
 });

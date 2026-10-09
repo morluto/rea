@@ -5,10 +5,24 @@ import { promisify } from "node:util";
 
 import { describe, expect, it, onTestFinished } from "vitest";
 
+import { createCli } from "../../../src/cli.js";
 import { parseCliJsonInput } from "../../../src/cliJsonInput.js";
 import { readCliJsonFile } from "../../../src/cliJsonFile.js";
+import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSchemas.js";
 import { readWithoutFifoWriter } from "../../fixtures/fifoInput.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+const runCli = async (arguments_: readonly string[]): Promise<unknown> => {
+  let stdout = "";
+  await createCli({}).serve([...arguments_, "--json"], {
+    env: {},
+    stdout: (chunk) => {
+      stdout += chunk;
+    },
+    exit: () => undefined,
+  });
+  return JSON.parse(stdout) as unknown;
+};
 
 describe("CLI JSON file selection", () => {
   it("accepts a symlink to a regular JSON file", async () => {
@@ -252,21 +266,27 @@ describe("CLI JSON input", () => {
   );
 
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
-    "lists a permission denial as the cause of an unreadable file",
+    "projects a real permission denial as access_denied",
     async () => {
       const root = await createTestTempDirectory("rea-json-input-denied-");
       const path = join(root, "input.json");
       await writeFile(path, "{}");
       await chmod(path, 0o000);
       onTestFinished(() => chmod(path, 0o600));
-      expect(await parseCliJsonInput(path, "test-input")).toMatchObject({
-        ok: false,
-        error: {
-          input_reason: "read-failed",
-          details: {
-            issues: [{ message: expect.stringContaining("(EACCES)") }],
-          },
+      const result = await runCli(["inspect-analysis-view", path]);
+      expect(analysisCliErrorEnvelopeSchema.parse(result)).toMatchObject({
+        error: "Application workflow failed",
+        code: "access_denied",
+        category: "unavailable",
+        details: {
+          operation: "inspect-analysis-view",
+          path,
+          system_code: "EACCES",
+          boundary: "filesystem-read",
         },
+        input_path: path,
+        input_reason: "read-failed",
+        remediation: { action: expect.stringContaining("read access") },
       });
     },
   );

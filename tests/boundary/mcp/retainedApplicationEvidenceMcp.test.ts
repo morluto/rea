@@ -37,6 +37,34 @@ async function connect() {
   return { client, session };
 }
 
+it("advertises the primitive literal seeds accepted by semantic tracing", async () => {
+  const { client } = await connect();
+  const { tools } = await client.listTools();
+  const tool = tools.find(({ name }) => name === "trace_javascript_semantics");
+  if (tool === undefined) throw new Error("Semantic trace tool is missing");
+  const validate = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+  }).compile(tool.inputSchema);
+  for (const value of ["literal", 42, true, null, {}, []]) {
+    const primitive = value === null || typeof value !== "object";
+    const arguments_ = {
+      application,
+      query: {
+        seed: { kind: "literal", value },
+        direction: "backward-provenance",
+      },
+    };
+    expect(validate(arguments_), JSON.stringify(value)).toBe(primitive);
+    const result = await client.callTool({
+      name: tool.name,
+      arguments: arguments_,
+    });
+    if (primitive) expect(result.isError).not.toBe(true);
+    else expect(result.isError).toBe(true);
+  }
+});
+
 it("runs the same trace/compare workflows with inline and retained application Evidence", async () => {
   const { client, session } = await connect();
   expect(session.recordEvidence(pair.left).ok).toBe(true);

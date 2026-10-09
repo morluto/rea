@@ -3,7 +3,10 @@ import {
   createImmutableJavaScriptSemanticGraphSteps,
   type JavaScriptSemanticGraph,
 } from "../../domain/javascript/javascriptSemanticGraph.js";
-import type { JavaScriptSemanticGraphNode } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
+import type {
+  JavaScriptSemanticFingerprint,
+  JavaScriptSemanticGraphNode,
+} from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 import {
   JAVASCRIPT_SEMANTIC_RELATION_FAMILIES,
   JAVASCRIPT_SEMANTIC_RELATION_FAMILY,
@@ -141,7 +144,7 @@ export interface JavaScriptSemanticGraphProjection {
 export const createJavaScriptSemanticGraphProjection =
   (): JavaScriptSemanticGraphProjection => {
     const state = emptyState({ nodes: [] });
-    const fingerprints: JavaScriptSemanticGraph["fingerprints"][number][] = [];
+    const fingerprints: JavaScriptSemanticFingerprint[] = [];
     let truncatedFiles = 0;
     const projectSource = (
       file: JavaScriptArtifactFile,
@@ -178,6 +181,7 @@ export const createJavaScriptSemanticGraphProjection =
         root_artifact_sha256: rootArtifactSha256,
         application_graph_id: applicationGraph.graph_id,
         root_node_ids: [...state.roots],
+        evidence_contexts: state.evidenceContexts.contexts,
         nodes: [...state.nodes.values()],
         relations: [...state.relations.values()],
         fingerprints,
@@ -229,6 +233,7 @@ export const createJavaScriptSemanticGraphProjection =
       state.relations.clear();
       state.unknowns.clear();
       state.roots.clear();
+      state.evidenceContexts.clear();
       fingerprints.length = 0;
       return graph;
     };
@@ -253,7 +258,7 @@ const projectFile = (
   file: JavaScriptArtifactFile,
   ir: JavaScriptSemanticIr,
   state: BuilderState,
-): JavaScriptSemanticGraph["fingerprints"][number][] => {
+): JavaScriptSemanticFingerprint[] => {
   const moduleNode = retainNode(state, file, {
     kind: "module",
     roleKey: "module",
@@ -335,7 +340,12 @@ const projectFile = (
   projectSemanticResources(context);
   projectSemanticClosureCaptures(context);
   projectSemanticFrontiers(context);
-  return projectSemanticFunctionFingerprints(file, ir, callableNodes);
+  return projectSemanticFunctionFingerprints(
+    file,
+    ir,
+    callableNodes,
+    state.evidenceContexts,
+  );
 };
 
 const createReturnSiteNodes = (

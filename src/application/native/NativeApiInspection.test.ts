@@ -100,11 +100,7 @@ describe("native API inspection", () => {
     const value = ghidraFunctionDossier();
     if (typeof value !== "object" || value === null || Array.isArray(value))
       throw new TypeError("Ghidra dossier fixture is invalid");
-    const dossier = functionDossierSchema.parse(
-      Object.fromEntries(
-        Object.entries(value).filter(([key]) => key !== "native_api"),
-      ),
-    );
+    const dossier = functionDossierSchema.parse({ ...value, native_api: null });
 
     expect(projectNativeApiInspection(dossier)).toMatchObject({
       boundary: { available: false },

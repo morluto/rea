@@ -179,18 +179,21 @@ const addPromiseUnknown = (
   const relation = operation.kind === "aggregate" ? "aggregates" : "chains";
   addSemanticGraphUnknown(
     context.state,
-    createJavaScriptSemanticGraphUnknown({
-      node_id: promise.node_id,
-      family: "promise-ownership",
-      relation_kinds: [relation],
-      reason: "ambiguous-target",
-      detail: `Static ${operation.method} source resolution was ${operation.sourceResolution}.`,
-      candidate_node_ids: operation.sourcePromiseIds.flatMap((identifier) => {
-        const candidate = promiseNodes.get(identifier);
-        return candidate === undefined ? [] : [candidate.node_id];
-      }),
-      evidence: unknownSemanticEvidence(context.file, operation.location),
-    }),
+    createJavaScriptSemanticGraphUnknown(
+      {
+        node_id: promise.node_id,
+        family: "promise-ownership",
+        relation_kinds: [relation],
+        reason: "ambiguous-target",
+        detail: `Static ${operation.method} source resolution was ${operation.sourceResolution}.`,
+        candidate_node_ids: operation.sourcePromiseIds.flatMap((identifier) => {
+          const candidate = promiseNodes.get(identifier);
+          return candidate === undefined ? [] : [candidate.node_id];
+        }),
+        evidence: unknownSemanticEvidence(context.file, operation.location),
+      },
+      context.state.evidenceContexts,
+    ),
   );
 };
 
@@ -254,19 +257,22 @@ export const projectSemanticFrontiers = (
         : frontier.kind === "dynamic-scope"
           ? (["reads", "writes"] as const)
           : (["reads-property", "writes-property"] as const);
-    const unknown = createJavaScriptSemanticGraphUnknown({
-      node_id:
-        frontier.callableId === null
-          ? context.moduleNode.node_id
-          : (context.callableNodes.get(frontier.callableId)?.node_id ??
-            context.moduleNode.node_id),
-      family,
-      relation_kinds: [...relationKinds],
-      reason: frontier.kind,
-      detail: frontier.reason,
-      candidate_node_ids: [],
-      evidence: unknownSemanticEvidence(context.file, frontier.location),
-    });
+    const unknown = createJavaScriptSemanticGraphUnknown(
+      {
+        node_id:
+          frontier.callableId === null
+            ? context.moduleNode.node_id
+            : (context.callableNodes.get(frontier.callableId)?.node_id ??
+              context.moduleNode.node_id),
+        family,
+        relation_kinds: [...relationKinds],
+        reason: frontier.kind,
+        detail: frontier.reason,
+        candidate_node_ids: [],
+        evidence: unknownSemanticEvidence(context.file, frontier.location),
+      },
+      context.state.evidenceContexts,
+    );
     addSemanticGraphUnknown(context.state, unknown);
   }
 };

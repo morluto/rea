@@ -46,8 +46,22 @@ describe("enhanced MCP tools", () => {
           case "list_segments":
             return Promise.resolve(
               ok([
-                { name: "__TEXT", start: "0x1000", end: "0x1800" },
-                { name: "__DATA", start: "0x1800", end: "0x2000" },
+                {
+                  name: "__TEXT",
+                  start: "0x1000",
+                  end: "0x1800",
+                  readable: null,
+                  writable: null,
+                  executable: null,
+                },
+                {
+                  name: "__DATA",
+                  start: "0x1800",
+                  end: "0x2000",
+                  readable: null,
+                  writable: null,
+                  executable: null,
+                },
               ]),
             );
           case "current_document":
@@ -113,6 +127,35 @@ describe("enhanced MCP tools", () => {
       JSON.stringify(parseMcpToolError(result)),
     );
   });
+
+  it("rejects a segment with omitted coordinates instead of reporting zero length", async () => {
+    const client = await connect({
+      execute: (name) =>
+        Promise.resolve(
+          name === "list_segments"
+            ? ok([
+                {
+                  name: "__TEXT",
+                  end: "0x2000",
+                  readable: null,
+                  writable: null,
+                  executable: null,
+                },
+              ])
+            : ok(name === "current_document" ? "fixture" : []),
+        ),
+    });
+    const result = await client.callTool({
+      name: "binary_overview",
+      arguments: {},
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content).toContainEqual({
+      type: "text",
+      text: JSON.stringify(parseMcpToolError(result)),
+    });
+  });
 });
 
 const overviewPort = (
@@ -127,7 +170,16 @@ const overviewPort = (
         return Promise.resolve(ok([...documents]));
       case "list_segments":
         return Promise.resolve(
-          ok([{ name: "text", start: "0x1000", end: "0x2000" }]),
+          ok([
+            {
+              name: "text",
+              start: "0x1000",
+              end: "0x2000",
+              readable: null,
+              writable: null,
+              executable: null,
+            },
+          ]),
         );
       default:
         return Promise.resolve(ok([]));

@@ -18,6 +18,13 @@ execFileSync("mkfifo", [path]);
 // This invokes the production lstat-to-open hashing seam with a known captured
 // regular-file identity. The owner test bounds this child so an O_RDONLY FIFO
 // regression cannot hang Vitest.
-const digest = await hashFile(path, expected, 1_000);
-if (digest !== null) throw new Error("Expected the FIFO to be rejected");
+const outcome = await hashFile(path, expected, 1_000);
+if (
+  outcome.state !== "omitted" ||
+  outcome.reason !== "file_changed_or_short_read" ||
+  outcome.system_code !== null
+)
+  throw new Error(
+    `Expected the FIFO to be omitted as a changed file: ${JSON.stringify(outcome)}`,
+  );
 process.stdout.write("rejected\n");

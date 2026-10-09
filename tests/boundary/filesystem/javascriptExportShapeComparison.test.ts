@@ -938,7 +938,9 @@ const analyzeGraph = async (root: string) => {
     input_path: root,
   });
   if (!result.ok) throw result.error;
-  return parseApplicationGraphEvidence(result.value);
+  const parsed = parseApplicationGraphEvidence(result.value);
+  if (!parsed.ok) throw new Error("Analysis Evidence must parse");
+  return parsed.value;
 };
 
 const analyzeSources = async (

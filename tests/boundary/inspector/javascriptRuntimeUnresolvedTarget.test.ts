@@ -7,9 +7,20 @@ import { expect, test } from "vitest";
 import { analyzeJavaScriptApplication } from "../../../src/application/javascript/JavaScriptApplicationService.js";
 import { createJavaScriptRuntimeObservationEvidence } from "../../../src/application/javascript/JavaScriptRuntimeObservationEvidence.js";
 import { V8InspectorProvider } from "../../../src/inspector/V8InspectorProvider.js";
-import { reconcileJavaScriptRuntime } from "../../../src/domain/javascript/javascriptRuntimeReconciliation.js";
+import {
+  parseRuntimeReconciliationInput,
+  reconcileJavaScriptRuntime,
+} from "../../../src/domain/javascript/javascriptRuntimeReconciliation.js";
+import { reconcileJavaScriptRuntimeInputSchema } from "../../../src/domain/javascript/javascriptRuntimeReconciliationSchemas.js";
 import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+const reconcileInput = (input: unknown) =>
+  reconcileJavaScriptRuntime(
+    parseRuntimeReconciliationInput(
+      reconcileJavaScriptRuntimeInputSchema.parse(input),
+    ),
+  );
 
 test("keeps unresolved target identity unknown while matching verified loaded scripts", async () => {
   const root = await createTestTempDirectory("rea-unresolved-runtime-");
@@ -37,7 +48,7 @@ test("keeps unresolved target identity unknown while matching verified loaded sc
       observed.value,
       provider.identity(),
     );
-    const result = reconcileJavaScriptRuntime({
+    const result = reconcileInput({
       static_layers: [{ role: "application", analysis: analysis.value }],
       runtime_observations: [evidence],
     });
