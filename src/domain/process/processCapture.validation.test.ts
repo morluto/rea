@@ -83,6 +83,41 @@ it("rejects settlement and cleanup combinations that cannot occur", () => {
   ).toThrow("cleanup_outcome");
 });
 
+it("rejects finalization evidence that no deadline could have produced", () => {
+  const capture = emptyCapture();
+  const finalization = {
+    requested_ms: 500,
+    signal: "SIGTERM" as const,
+    outcome: "target_exited" as const,
+    elapsed_ms: 10,
+  };
+  expect(
+    () =>
+      parseProcessCapture({
+        ...capture,
+        exit: { code: 0, signal: null, reason: "exited", finalization },
+      }),
+    "an exit without a deadline cannot carry a finalization record",
+  ).toThrow("finalization");
+  expect(
+    () =>
+      parseProcessCapture({
+        ...capture,
+        exit: {
+          code: null,
+          signal: null,
+          reason: "timeout",
+          finalization: {
+            ...finalization,
+            outcome: "forced_kill",
+            elapsed_ms: 499,
+          },
+        },
+      }),
+    "a forced kill cannot precede the requested interval",
+  ).toThrow("finalization");
+});
+
 it("requires an explicit journal and validates complete journals", () => {
   const capture = emptyCapture();
   const { event_journal: _eventJournal, ...oldCapture } = capture;

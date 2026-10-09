@@ -24,6 +24,13 @@ it("defaults the finalization interval to zero without changing committed identi
   ).toBe(false);
 });
 
+it("accepts an explicit zero finalization interval", () => {
+  expect(
+    parseProcessScenario({ ...baseScenario, finalization_ms: 0 }),
+    "zero is the immediate-kill default, not an invalid budget",
+  ).toMatchObject({ finalization_ms: 0 });
+});
+
 it("commits a positive finalization interval in both identity projections", () => {
   const scenario = parseProcessScenario({
     ...baseScenario,

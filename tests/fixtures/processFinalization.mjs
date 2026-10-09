@@ -1,9 +1,12 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Writes a periodic report, then stays alive until a signal arrives. In
-// "cooperative" mode SIGTERM produces a final report and a clean exit; in
-// "ignoring" mode SIGTERM is swallowed so only SIGKILL ends the process.
+// Writes a periodic report, then behaves by mode:
+// - "cooperative": stays alive; SIGTERM prints a line, writes a final report
+//   and exits cleanly.
+// - "ignoring": stays alive and swallows SIGTERM and SIGINT, so only SIGKILL
+//   ends the process.
+// - "exits": exits on its own at once.
 const [mode, directory] = process.argv.slice(2);
 
 writeFileSync(
@@ -11,13 +14,20 @@ writeFileSync(
   JSON.stringify({ phase: "periodic" }),
 );
 
-process.on("SIGTERM", () => {
-  if (mode !== "cooperative") return;
-  writeFileSync(
-    join(directory, "final.json"),
-    JSON.stringify({ phase: "final" }),
-  );
-  process.exit(0);
-});
+if (mode === "exits") process.exit(0);
+
+if (mode === "ignoring") {
+  process.on("SIGTERM", () => undefined);
+  process.on("SIGINT", () => undefined);
+} else {
+  process.on("SIGTERM", () => {
+    process.stdout.write("finalized\n");
+    writeFileSync(
+      join(directory, "final.json"),
+      JSON.stringify({ phase: "final" }),
+    );
+    process.exit(0);
+  });
+}
 
 setInterval(() => undefined, 1_000);

@@ -483,7 +483,7 @@ const finalizationFixture = fileURLToPath(
 );
 
 const captureFinalizationFixture = async (
-  mode: "cooperative" | "ignoring",
+  mode: "cooperative" | "ignoring" | "exits",
   scenario: Readonly<Record<string, unknown>>,
   signal?: AbortSignal,
 ): Promise<{ readonly result: CaptureRun; readonly root: string }> => {
@@ -533,9 +533,35 @@ itWithCaptureCapability(
       },
     );
     expect(
+      capture.exit.finalization?.elapsed_ms,
+      "a cooperative exit ends before the interval does",
+    ).toBeLessThan(1_500);
+    expect(
       observedFile(capture, "final.json")?.sha256,
       "final report is retained with a digest",
     ).toMatch(/^[0-9a-f]{64}$/u);
+    expect(
+      capture.frames.map(({ data }) => data).join(""),
+      "output written during finalization is captured",
+    ).toContain("finalized");
+  },
+  15_000,
+);
+
+itWithCaptureCapability(
+  "records no finalization when the target exits before any deadline",
+  async () => {
+    const { result } = await captureFinalizationFixture("exits", {
+      finalization_ms: 1_500,
+    });
+    const { capture } = captureObservations(result);
+
+    expect(capture.exit.reason, "the target exited on its own").toBe("exited");
+    expect(capture.exit.code, "its exit code is kept").toBe(0);
+    expect(
+      capture.exit,
+      "no deadline fired, so nothing was finalized",
+    ).not.toHaveProperty("finalization");
   },
   15_000,
 );
@@ -546,7 +572,7 @@ itWithCaptureCapability(
     const { result } = await captureFinalizationFixture("cooperative", {
       timeout_ms: 10_000,
       idle_timeout_ms: 1_500,
-      finalization_ms: 1_500,
+      finalization_ms: 1_200,
     });
     const { capture } = captureObservations(result);
 
@@ -556,7 +582,7 @@ itWithCaptureCapability(
     expect(
       capture.exit.finalization,
       "idle finalization is recorded",
-    ).toMatchObject({ requested_ms: 1_500, outcome: "target_exited" });
+    ).toMatchObject({ requested_ms: 1_200, outcome: "target_exited" });
     expect(
       observedFile(capture, "final.json")?.sha256,
       "final report is retained with a digest",
@@ -623,7 +649,8 @@ itWithCaptureCapability(
   "cancels immediately while a finalization interval is running",
   async () => {
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 1_000);
+    // Abort well after the 300 ms deadline so finalization is already running.
+    setTimeout(() => controller.abort(), 2_000);
     const started = Date.now();
     const { result } = await captureFinalizationFixture(
       "ignoring",
@@ -632,6 +659,20 @@ itWithCaptureCapability(
     );
 
     if (result.ok) throw new Error("expected cancellation");
+    if (!(result.error instanceof ProcessCaptureError)) throw result.error;
+    const partial = result.error.partialObservation;
+    if (partial === undefined || !("observations" in partial))
+      throw new Error("expected cancelled process observations");
+    expect(
+      partial.observations.exit,
+      "cancellation is the exit reason and the forced kill is recorded",
+    ).toMatchObject({
+      state: "available",
+      value: {
+        reason: "cancelled",
+        finalization: { requested_ms: 20_000, outcome: "forced_kill" },
+      },
+    });
     expect(
       result.error.message,
       "cancellation wins over finalization",
