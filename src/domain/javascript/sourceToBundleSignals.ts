@@ -160,10 +160,15 @@ const projectCurrentNode = (node: ApplicationNode): CurrentProjection => {
   const paths: CurrentPath[] = [];
   if (node.identity.strategy === "content-digest")
     digests.add(node.identity.sha256);
+  const mapPath = sourceMapPath(node);
   if (node.identity.strategy === "source-map-original") {
     if (node.identity.source_sha256 !== null)
       digests.add(node.identity.source_sha256);
-    addPath(paths, "source-map-original", node.identity.original_source);
+    addPath(
+      paths,
+      "source-map-original",
+      resolveFromMap(node.identity.original_source, mapPath),
+    );
   }
   if (node.identity.strategy === "canonical-path")
     addPath(paths, "canonical-path", node.identity.path);
@@ -171,8 +176,13 @@ const projectCurrentNode = (node: ApplicationNode): CurrentProjection => {
     const sourceDigest = observation.properties.source_sha256;
     if (typeof sourceDigest === "string" && isDigest(sourceDigest))
       digests.add(sourceDigest);
-    for (const key of PATH_PROPERTIES)
-      addJsonPath(paths, observation.properties[key]);
+    for (const key of PATH_PROPERTIES) {
+      const value = observation.properties[key];
+      addJsonPath(
+        paths,
+        typeof value === "string" ? resolveFromMap(value, mapPath) : value,
+      );
+    }
   }
   return {
     node,
@@ -256,6 +266,28 @@ const matchingPaths = (
       ({ value }) => value === sourcePath || value.endsWith(`/${sourcePath}`),
     )
     .map(({ value }) => value);
+
+/** The path of the source map a source-module node was parsed from. */
+const sourceMapPath = (node: ApplicationNode): string | null => {
+  for (const { evidence } of node.observations) {
+    if (
+      evidence.extractor.operation === "parse-local-source-map" &&
+      evidence.location.available &&
+      evidence.location.value.kind === "artifact-path"
+    )
+      return evidence.location.value.path;
+  }
+  return null;
+};
+
+/** Resolves a source-map entry that climbs out of the map's directory against that directory. */
+const resolveFromMap = (raw: string, mapPath: string | null): string => {
+  const path = raw.replaceAll("\\", "/");
+  if (mapPath === null || SCHEME_URL.test(path)) return raw;
+  return /^(\.\/)*\.\.\//u.test(path)
+    ? posix.join(posix.dirname(mapPath), path)
+    : raw;
+};
 
 const addJsonPath = (paths: CurrentPath[], value: unknown): void => {
   if (typeof value === "string") addPath(paths, "observation-path", value);

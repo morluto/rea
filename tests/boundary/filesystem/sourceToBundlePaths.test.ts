@@ -89,6 +89,55 @@ it("matches source-map originals named relative to the map", async () => {
   );
 });
 
+it("resolves parent segments against a nested source map's directory", async () => {
+  const root = await createTestTempDirectory("rea-source-map-nested-");
+  const previous = join(root, "previous");
+  const current = join(root, "current");
+  await Promise.all([
+    mkdir(join(previous, "web", "src"), { recursive: true }),
+    mkdir(join(current, "web", "maps"), { recursive: true }),
+  ]);
+  await Promise.all([
+    writeFile(
+      join(previous, "web", "src", "a.js"),
+      "export const value = 1;\n",
+    ),
+    writeFile(
+      join(current, "web", "main.js"),
+      "var value = 2;\n//# sourceMappingURL=maps/main.js.map\n",
+    ),
+    writeFile(
+      join(current, "web", "maps", "main.js.map"),
+      JSON.stringify({
+        version: 3,
+        file: "../main.js",
+        sources: ["../src/a.js"],
+        sourcesContent: ["export const value = 2;\n"],
+        names: [],
+        mappings: "AAAA",
+      }),
+    ),
+  ]);
+  const { comparison } = await compareTrees(previous, current);
+
+  expect(comparison.items).toContainEqual(
+    expect.objectContaining({
+      source_path: "web/src/a.js",
+      candidates: expect.arrayContaining([
+        expect.objectContaining({
+          current_node_kind: "source-module",
+          signals: expect.arrayContaining([
+            expect.objectContaining({
+              kind: "source-map-original-path",
+              current_values: ["web/src/a.js"],
+            }),
+          ]),
+        }),
+      ]),
+    }),
+  );
+});
+
 it("rejects static application Evidence whose subject path disagrees with its result", async () => {
   const root = await createTestTempDirectory("rea-application-subject-path-");
   const analyzed = await analyzeJavaScriptApplication({ input_path: root });
