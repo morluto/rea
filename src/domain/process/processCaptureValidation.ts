@@ -120,6 +120,14 @@ const validateLifecycle = (
   require(capture.exit.reason === "exited" ||
     capture.exit.code ===
       null, "exit", "deadline termination cannot declare a normal exit code");
+  const { finalization } = capture.exit;
+  require(finalization === undefined ||
+    capture.exit.reason !==
+      "exited", "exit", "finalization requires a deadline exit reason");
+  require(finalization === undefined ||
+    finalization.outcome !== "forced_kill" ||
+    finalization.elapsed_ms >=
+      finalization.requested_ms, "exit", "forced finalization cannot precede the requested interval");
 };
 
 const validateCoverage = (
