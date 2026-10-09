@@ -609,6 +609,10 @@ itWithCaptureCapability(
       outcome: "forced_kill",
     });
     expect(
+      capture.exit.signal,
+      "the target that ignores SIGTERM and SIGINT ends on SIGKILL",
+    ).toBe(9);
+    expect(
       capture.exit.finalization?.elapsed_ms,
       "the whole interval elapsed before the kill",
     ).toBeGreaterThanOrEqual(1_500);
