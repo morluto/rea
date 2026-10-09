@@ -7,7 +7,10 @@ import {
 import type { JavaScriptModuleArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
 import type { JavaScriptArtifactFileSet } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { JavaScriptArtifactGraphAccumulator } from "./JavaScriptArtifactGraphAccumulator.js";
-import type { JavaScriptArtifactGraphContext } from "./JavaScriptArtifactGraphContext.js";
+import {
+  selfReferenceOmissions,
+  type JavaScriptArtifactGraphContext,
+} from "./JavaScriptArtifactGraphContext.js";
 import {
   addJavaScriptHtmlRoles,
   addJavaScriptSourceMapOriginals,
@@ -195,11 +198,11 @@ const graphLimitations = (
   );
   return [
     ...context.analysis.limitations,
-    ...(relationshipOmissions.selfImports > 0
-      ? [
-          `${String(relationshipOmissions.selfImports)} import ${relationshipOmissions.selfImports === 1 ? "specifier" : "specifiers"} resolved back to the importing module itself and ${relationshipOmissions.selfImports === 1 ? "was" : "were"} omitted; application graph edges cannot be self-referential.`,
-        ]
-      : []),
+    ...selfReferenceOmissions(
+      relationshipOmissions.selfImports,
+      ["import specifier", "import specifiers"],
+      "the importing module",
+    ),
     "CommonJS and ESM binding relationships were recovered from inert syntax and resolved only within the inventoried artifact container.",
     "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code.",
     "Static imports, entrypoints, workers, endpoints, and storage relationships do not prove runtime execution.",

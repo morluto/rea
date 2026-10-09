@@ -10,6 +10,7 @@ import {
   linkElectronRoleToAsset,
   moduleLookupKey,
   resolveArtifactPath,
+  selfReferenceOmissions,
   sourceNodeFor,
   type JavaScriptArtifactGraphContext,
   type JavaScriptArtifactGraphCoverage,
@@ -60,12 +61,11 @@ export const addJavaScriptStaticFindings = (
     for (const value of javascript.source_map_urls)
       addSourceMapEdge(context, { file, asset, value, coverage });
   }
-  const count = omissions.selfReferences;
-  return count === 0
-    ? []
-    : [
-        `${String(count)} static ${count === 1 ? "reference" : "references"} resolved back to the referencing module itself and ${count === 1 ? "was" : "were"} omitted; application graph edges cannot be self-referential.`,
-      ];
+  return selfReferenceOmissions(
+    omissions.selfReferences,
+    ["static reference", "static references"],
+    "the referencing module",
+  );
 };
 
 const addReference = (

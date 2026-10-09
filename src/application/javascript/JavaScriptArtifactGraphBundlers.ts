@@ -7,6 +7,7 @@ import {
   chunkLookupKey,
   javascriptAnalysisCoverage,
   moduleLookupKey,
+  selfReferenceOmissions,
   type JavaScriptArtifactGraphContext,
   type JavaScriptArtifactGraphCoverage,
 } from "./JavaScriptArtifactGraphContext.js";
@@ -53,11 +54,11 @@ export const addJavaScriptBundlerNodes = (
     for (const record of records)
       selfAsyncChunks += addBundlerRuntimeEdges(context, record);
   }
-  return selfAsyncChunks === 0
-    ? []
-    : [
-        `${String(selfAsyncChunks)} bundler async-chunk ${selfAsyncChunks === 1 ? "reference" : "references"} resolved back to the requesting chunk itself and ${selfAsyncChunks === 1 ? "was" : "were"} omitted; application graph edges cannot be self-referential.`,
-      ];
+  return selfReferenceOmissions(
+    selfAsyncChunks,
+    ["bundler async-chunk reference", "bundler async-chunk references"],
+    "the requesting chunk",
+  );
 };
 
 interface BundlerProjectionInput {
