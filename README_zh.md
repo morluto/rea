@@ -16,10 +16,6 @@
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 [![Discord](https://img.shields.io/discord/1556595354999332884?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/GkcryMnJDM)
 
-🎉 **GitHub Star 突破 30,000，感谢大家！**
-
-感谢每一位使用 REA、反馈问题、提出功能需求、测试构建和贡献修复的朋友。
-
 <a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
 
 **[网站](https://rea.tools/) · [指南](https://rea.tools/guides/) · [案例](https://rea.tools/showcase/)**
@@ -270,9 +266,9 @@ npx rea-agents@latest setup
 
 ## Star 历史
 
-🎉 **GitHub Star 达到 20,000 个，感谢大家！**
+🎉 **GitHub Star 达到 30,000 个，感谢大家！**
 
-感谢每一位使用 REA、报告错误、测试构建和贡献修复的朋友。
+感谢每一位使用 REA、报告错误、提出功能需求、测试构建和贡献修复的朋友。
 
 <a href="https://www.star-history.com/?repos=morluto%2Frea&amp;type=date">
   <picture>

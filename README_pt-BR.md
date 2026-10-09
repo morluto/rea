@@ -16,10 +16,6 @@
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 [![Discord](https://img.shields.io/discord/1556595354999332884?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/GkcryMnJDM)
 
-🎉 **30.000 estrelas no GitHub — obrigado!**
-
-Obrigado a todos que usam o REA, relatam bugs, sugerem funcionalidades, testam builds e contribuem com correções.
-
 <a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
 
 **[Site](https://rea.tools/) · [Guias](https://rea.tools/guides/) · [Casos de uso](https://rea.tools/showcase/)**
@@ -268,9 +264,9 @@ Consulte [CONTRIBUTING.md](CONTRIBUTING.md) para configurar o ambiente de desenv
 
 ## Histórico de estrelas
 
-🎉 **20.000 estrelas no GitHub — muito obrigado!**
+🎉 **30.000 estrelas no GitHub — muito obrigado!**
 
-Obrigado a todos que usam o REA, relatam bugs, testam builds e contribuem com correções.
+Obrigado a todos que usam o REA, relatam bugs, sugerem funcionalidades, testam builds e contribuem com correções.
 
 <a href="https://www.star-history.com/?repos=morluto%2Frea&amp;type=date">
   <picture>

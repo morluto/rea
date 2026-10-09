@@ -16,10 +16,6 @@
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 [![Discord](https://img.shields.io/discord/1556595354999332884?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/GkcryMnJDM)
 
-🎉 **30,000 ดาวบน GitHub — ขอบคุณทุกคน!**
-
-ขอบคุณทุกคนที่ใช้ REA รายงานบั๊ก เสนอฟีเจอร์ ทดสอบบิลด์ และร่วมแก้ไขปัญหา
-
 <a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
 
 **[เว็บไซต์](https://rea.tools/) · [คู่มือ](https://rea.tools/guides/) · [ตัวอย่างการใช้งาน](https://rea.tools/showcase/)**
@@ -268,9 +264,9 @@ npx rea-agents@latest setup
 
 ## ประวัติดาว
 
-🎉 **20,000 ดาวบน GitHub — ขอบคุณทุกคน!**
+🎉 **30,000 ดาวบน GitHub — ขอบคุณทุกคน!**
 
-ขอบคุณทุกคนที่ใช้ REA รายงานบั๊ก ทดสอบบิลด์ และช่วยแก้ไข
+ขอบคุณทุกคนที่ใช้ REA รายงานบั๊ก เสนอฟีเจอร์ ทดสอบบิลด์ และช่วยแก้ไข
 
 <a href="https://www.star-history.com/?repos=morluto%2Frea&amp;type=date">
   <picture>

@@ -16,10 +16,6 @@
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 [![Discord](https://img.shields.io/discord/1556595354999332884?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/GkcryMnJDM)
 
-🎉 **30.000 sao trên GitHub — cảm ơn các bạn!**
-
-Cảm ơn tất cả những ai sử dụng REA, báo lỗi, đề xuất tính năng, thử nghiệm các bản dựng và đóng góp bản sửa lỗi.
-
 <a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
 
 **[Trang web](https://rea.tools/) · [Hướng dẫn](https://rea.tools/guides/) · [Các nghiên cứu điển hình](https://rea.tools/showcase/)**
@@ -268,9 +264,9 @@ Xem [CONTRIBUTING.md](CONTRIBUTING.md) về thiết lập môi trường phát t
 
 ## Lịch sử sao
 
-🎉 **20.000 sao trên GitHub — xin cảm ơn!**
+🎉 **30.000 sao trên GitHub — xin cảm ơn!**
 
-Cảm ơn mọi người đã sử dụng REA, báo lỗi, kiểm thử bản dựng và đóng góp bản sửa lỗi.
+Cảm ơn mọi người đã sử dụng REA, báo lỗi, đề xuất tính năng, kiểm thử bản dựng và đóng góp bản sửa lỗi.
 
 <a href="https://www.star-history.com/?repos=morluto%2Frea&amp;type=date">
   <picture>

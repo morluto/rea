@@ -16,10 +16,6 @@
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 [![Discord](https://img.shields.io/discord/1556595354999332884?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/GkcryMnJDM)
 
-🎉 **۳۰٬۰۰۰ ستاره در GitHub — سپاسگزاریم!**
-
-از همهٔ کسانی که از REA استفاده می‌کنند، خطاها را گزارش می‌دهند، قابلیت‌های جدید پیشنهاد می‌کنند، نسخه‌ها را آزمایش می‌کنند و در رفع مشکلات مشارکت دارند، سپاسگزاریم.
-
 <a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55" /></a>
 
 **[وب‌سایت](https://rea.tools/) · [راهنماها](https://rea.tools/guides/) · [نمونه‌های عملی](https://rea.tools/showcase/)**
@@ -253,9 +249,9 @@ npx rea-agents@latest setup
 
 ## تاریخچهٔ ستاره‌ها
 
-🎉 **۲۰٬۰۰۰ ستارهٔ GitHub — سپاسگزاریم!**
+🎉 **۳۰٬۰۰۰ ستارهٔ GitHub — سپاسگزاریم!**
 
-از همهٔ کسانی که از REA استفاده می‌کنند، خطاها را گزارش می‌دهند، buildها را آزمایش می‌کنند و در بهبود پروژه مشارکت دارند سپاسگزاریم.
+از همهٔ کسانی که از REA استفاده می‌کنند، خطاها را گزارش می‌دهند، قابلیت‌های جدید پیشنهاد می‌کنند، buildها را آزمایش می‌کنند و در بهبود پروژه مشارکت دارند سپاسگزاریم.
 
 <a href="https://www.star-history.com/?repos=morluto%2Frea&amp;type=date"><picture><source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=morluto/rea&amp;type=date&amp;theme=dark&amp;legend=top-left" /><source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=morluto/rea&amp;type=date" /><img alt="تاریخچهٔ ستاره‌های GitHub پروژهٔ REA" src="https://api.star-history.com/chart?repos=morluto/rea&amp;type=date" /></picture></a>
 

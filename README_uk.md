@@ -16,10 +16,6 @@
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 [![Discord](https://img.shields.io/discord/1556595354999332884?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/GkcryMnJDM)
 
-🎉 **30 000 зірок на GitHub — дякуємо!**
-
-Дякуємо всім, хто користується REA, повідомляє про помилки, пропонує нові функції, тестує збірки та допомагає з виправленнями.
-
 <a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
 
 **[Сайт](https://rea.tools/) · [Посібники](https://rea.tools/guides/) · [Приклади](https://rea.tools/showcase/)**
@@ -268,9 +264,9 @@ npx rea-agents@latest setup
 
 ## Історія зірок
 
-🎉 **20 000 зірок на GitHub — дякуємо!**
+🎉 **30 000 зірок на GitHub — дякуємо!**
 
-Дякуємо всім, хто використовує REA, повідомляє про помилки, тестує збірки й допомагає з виправленнями.
+Дякуємо всім, хто використовує REA, повідомляє про помилки, пропонує нові функції, тестує збірки й допомагає з виправленнями.
 
 <a href="https://www.star-history.com/?repos=morluto%2Frea&amp;type=date">
   <picture>

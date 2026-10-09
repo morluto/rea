@@ -16,10 +16,6 @@
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 [![Discord](https://img.shields.io/discord/1556595354999332884?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/GkcryMnJDM)
 
-🎉 **GitHub 스타 30,000개, 감사합니다!**
-
-REA를 사용하고, 버그를 제보하고, 기능을 요청하고, 빌드를 테스트하고, 수정에 기여해 주신 모든 분께 감사드립니다.
-
 <a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
 
 **[웹사이트](https://rea.tools/) · [가이드](https://rea.tools/guides/) · [사례](https://rea.tools/showcase/)**
@@ -270,9 +266,9 @@ REA에 도움을 보태 주세요! [issue를 등록](https://github.com/morluto/
 
 ## 스타 기록
 
-🎉 **GitHub 스타 20,000개, 감사합니다!**
+🎉 **GitHub 스타 30,000개, 감사합니다!**
 
-REA를 사용하고, 버그를 보고하고, 빌드를 테스트하고, 수정에 기여해 주신 모든 분께 감사드립니다.
+REA를 사용하고, 버그를 보고하고, 기능을 요청하고, 빌드를 테스트하고, 수정에 기여해 주신 모든 분께 감사드립니다.
 
 <a href="https://www.star-history.com/?repos=morluto%2Frea&amp;type=date">
   <picture>
