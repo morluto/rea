@@ -9,14 +9,40 @@ import {
 } from "../../../src/android/JadxConfiguration.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { writeOrderedZip } from "../../fixtures/artifactEntryOrder.js";
+import { writeJadxJarInventory } from "../../fixtures/android/jadxJar.js";
 
 const it = test.skipIf(process.platform === "win32");
+
+it("rejects malformed or unrelated engine archives with JAR-specific recovery", async () => {
+  const root = await createTestTempDirectory("rea-jadx-invalid-jar-");
+  const javaHome = await createFakeJdk(root);
+  const jar = join(root, "engine.jar");
+  for (const malformed of [true, false]) {
+    if (malformed) await writeFile(jar, "not a Java archive");
+    else await writeOrderedZip(jar, ["unrelated/Library.class"]);
+    const environment = { REA_JADX_MCP_JAR: jar, JAVA_HOME: javaHome };
+    const availability = await inspectJadxAvailability(environment);
+    expect(availability).toMatchObject({
+      status: "unavailable",
+      reason: expect.stringContaining("REA_JADX_MCP_JAR"),
+      diagnostics: { jar_path: await realpath(jar), phase: "jar-inspection" },
+    });
+    await expect(
+      resolveJadxConfiguration(environment, "inspect_android_package"),
+    ).rejects.toMatchObject({
+      _tag: "AnalysisCapabilityUnavailableError",
+      reason: expect.stringContaining("REA_JADX_MCP_JAR"),
+    });
+    expect(availability.reason).not.toContain("Select a full JDK");
+  }
+});
 
 it("rejects an explicit JAVA_HOME without an executable java binary", async () => {
   const root = await createTestTempDirectory("rea-jadx-config-");
   const jar = join(root, "jadx-headless-mcp.jar");
   const javaHome = join(root, "missing-jdk");
-  await writeFile(jar, "fixture jar");
+  await writeJadxJarInventory(jar);
 
   await expect(
     resolveJadxConfiguration(
@@ -33,7 +59,7 @@ it("accepts a full JDK and canonicalizes the selected JAR", async () => {
   const root = await createTestTempDirectory("rea-jadx-config-");
   const jar = join(root, "jadx-headless-mcp.jar");
   const javaHome = await createFakeJdk(root);
-  await writeFile(jar, "fixture jar");
+  await writeJadxJarInventory(jar);
 
   await expect(
     resolveJadxConfiguration(
@@ -51,7 +77,7 @@ it("configures heap and visible processors independently without forcing either"
   const root = await createTestTempDirectory("rea-jadx-config-");
   const jar = join(root, "engine.jar");
   const javaHome = await createFakeJdk(root);
-  await writeFile(jar, "fixture jar");
+  await writeJadxJarInventory(jar);
   const configuration = await resolveJadxConfiguration(
     {
       REA_JADX_MCP_JAR: jar,
@@ -98,7 +124,7 @@ it("configures heap and visible processors independently without forcing either"
 it("distinguishes a runnable JRE from a missing Java executable", async () => {
   const root = await createTestTempDirectory("rea-jadx-runtime-");
   const jar = join(root, "jadx-headless-mcp.jar");
-  await writeFile(jar, "fixture jar");
+  await writeJadxJarInventory(jar);
   const jreHome = await createFakeJdk(root, false);
   await expect(
     resolveJadxConfiguration(
@@ -142,7 +168,7 @@ it("preserves exact Java probe output and marks max-buffer capture as truncated"
   const bin = join(javaHome, "bin");
   const java = join(bin, "java");
   await mkdir(bin, { recursive: true });
-  await writeFile(jar, "fixture jar");
+  await writeJadxJarInventory(jar);
   await writeFile(
     java,
     `#!/bin/sh\nexec ${process.execPath} -e 'process.stdout.write("x".repeat(2 * 1024 * 1024))'\n`,
@@ -186,7 +212,7 @@ it("preserves exact Java probe output and marks max-buffer capture as truncated"
 it("distinguishes an unreported Java version from an unsupported old version", async () => {
   const root = await createTestTempDirectory("rea-jadx-version-listing-");
   const jar = join(root, "jadx-headless-mcp.jar");
-  await writeFile(jar, "fixture jar");
+  await writeJadxJarInventory(jar);
 
   const unresolvedHome = await createFakeJdk(root);
   await writeFile(
@@ -233,7 +259,7 @@ it("cancels an in-flight Java readiness probe", async () => {
   const java = join(bin, "java");
   const marker = join(root, "java-probe-started");
   await mkdir(bin, { recursive: true });
-  await writeFile(jar, "fixture jar");
+  await writeJadxJarInventory(jar);
   await writeFile(
     java,
     `#!/bin/sh\nexec ${process.execPath} -e 'require("node:fs").writeFileSync(process.argv[1], "ready"); setTimeout(() => {}, 30_000)' '${marker}'\n`,
@@ -269,7 +295,7 @@ it("reports a killed Java probe as unresolved instead of missing runtime", async
   const java = join(bin, "java");
   const marker = join(root, "java-probe-started");
   await mkdir(bin, { recursive: true });
-  await writeFile(jar, "fixture jar");
+  await writeJadxJarInventory(jar);
   await writeFile(
     java,
     `#!/bin/sh\nexec ${process.execPath} -e 'require("node:fs").writeFileSync(process.argv[1], "ready"); setTimeout(() => {}, 30_000)' '${marker}'\n`,

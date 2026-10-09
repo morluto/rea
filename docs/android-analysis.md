@@ -23,6 +23,12 @@ export REA_JADX_MCP_JAR=/absolute/path/jadx-headless-mcp-0.7.1-all.jar
 export JAVA_HOME=/absolute/path/existing-jdk
 ```
 
+Readiness checks the selected JAR's ZIP directory for the classes consumed by
+REA's metadata bridge, as well as Java's compiler and version modules. It does
+not load an APK or execute engine code. Invalid archives and missing bridge
+classes report JAR-specific recovery; classpath inventory alone does not prove
+that every class or engine operation will load successfully.
+
 The current metadata bridge is verified on macOS arm64 with OpenJDK 21 and the
 public Appium ApiDemos fixture. The POSIX adapter also supports Linux; the new
 bridge has not yet undergone real verification on Linux/JDK 25.
