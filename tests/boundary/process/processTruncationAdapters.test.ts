@@ -187,6 +187,7 @@ itWithCaptureCapability.each(["cli", "mcp"] as const)(
           size_bytes: 8,
           remaining_budget_bytes: 1,
           reason: "file_bytes_budget",
+          system_code: null,
         },
       ],
     });
@@ -229,6 +230,7 @@ itWithCaptureCapability.each(["cli", "mcp"] as const)(
           path: "root_0:b.txt",
           reason: "file_bytes_budget",
           remaining_budget_bytes: 1,
+          system_code: null,
         },
       ],
     });

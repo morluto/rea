@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { artifactComparisonResultSchema } from "./artifactComparison.js";
 import { uniqueSorted } from "./canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import { comparisonSourceEvidenceIds } from "./comparisonSourceEvidence.js";
 import { evidenceSchema, parseEvidence, type Evidence } from "./evidence.js";
 import { functionComparisonResultSchema } from "./functionComparisonSchemas.js";
@@ -175,7 +176,7 @@ export const correlateStaticAndRuntime = (
   const correlations = parsed.mappings
     .map((mapping) => correlate(mapping, staticById, runtimeById))
     .sort((left, right) =>
-      left.correlation_id.localeCompare(right.correlation_id, "en"),
+      compareUnicodeCodePoints(left.correlation_id, right.correlation_id),
     );
   if (
     new Set(correlations.map(({ correlation_id: id }) => id)).size !==

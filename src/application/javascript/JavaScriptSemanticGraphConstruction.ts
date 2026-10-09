@@ -4,6 +4,7 @@ import { javascriptDisplayText } from "../../domain/javascript/javascriptAstValu
 import {
   createJavaScriptSemanticGraphNode,
   createJavaScriptSemanticGraphRelation,
+  JavaScriptSemanticEvidenceContextRegistry,
   javaScriptSemanticNodeId,
 } from "../../domain/javascript/javascriptSemanticGraph.js";
 import type { JavaScriptSemanticGraphNode } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
@@ -25,6 +26,7 @@ export interface SemanticGraphProjectionState {
   readonly nodes: Map<string, JavaScriptSemanticGraphNode>;
   readonly relations: Map<string, JavaScriptSemanticGraphRelation>;
   readonly unknowns: Map<string, JavaScriptSemanticGraphUnknown>;
+  readonly evidenceContexts: JavaScriptSemanticEvidenceContextRegistry;
   readonly roots: Set<string>;
   readonly applicationNodeIdsByLocation: ReadonlyMap<string, readonly string[]>;
   /**
@@ -76,6 +78,7 @@ export const createSemanticGraphProjectionState = (
     nodes: new Map(),
     relations: new Map(),
     unknowns: new Map(),
+    evidenceContexts: new JavaScriptSemanticEvidenceContextRegistry(),
     roots: new Set(),
     applicationNodeIdsByLocation: index.identifiers,
   };
@@ -109,20 +112,23 @@ export const constructSemanticGraphNode = (
   input: SemanticNodeConstructionInput,
   state: SemanticGraphProjectionState,
 ): JavaScriptSemanticGraphNode =>
-  createJavaScriptSemanticGraphNode({
-    kind: input.kind,
-    identity: {
-      artifact_sha256: file.sha256,
-      module_path: file.path,
-      source_range: input.location,
-      role_key: input.roleKey,
+  createJavaScriptSemanticGraphNode(
+    {
+      kind: input.kind,
+      identity: {
+        artifact_sha256: file.sha256,
+        module_path: file.path,
+        source_range: input.location,
+        role_key: input.roleKey,
+      },
+      function_node_id: input.functionNodeId,
+      application_node_ids: matchingApplicationNodeIds(file, input, state),
+      label: input.label === null ? null : javascriptDisplayText(input.label),
+      properties: input.properties ?? {},
+      evidence: observedSemanticEvidence(file, input.location),
     },
-    function_node_id: input.functionNodeId,
-    application_node_ids: matchingApplicationNodeIds(file, input, state),
-    label: input.label === null ? null : javascriptDisplayText(input.label),
-    properties: input.properties ?? {},
-    evidence: observedSemanticEvidence(file, input.location),
-  });
+    state.evidenceContexts,
+  );
 
 /** Reuse retained identities and reject exhausted budgets before allocation. */
 export const retainSemanticGraphNode = (
@@ -183,14 +189,21 @@ export const addSemanticGraphRelation = (
     input.source.node_id === input.target.node_id
   )
     return;
-  const value = createJavaScriptSemanticGraphRelation({
-    source_node_id: input.source.node_id,
-    target_node_id: input.target.node_id,
-    relation: input.relation,
-    resolution: input.resolution ?? "candidate",
-    properties: input.properties ?? {},
-    evidence: input.evidence ?? inferredSemanticEvidence(input.source),
-  });
+  const value = createJavaScriptSemanticGraphRelation(
+    {
+      source_node_id: input.source.node_id,
+      target_node_id: input.target.node_id,
+      relation: input.relation,
+      resolution: input.resolution ?? "candidate",
+      properties: input.properties ?? {},
+      evidence:
+        input.evidence ??
+        inferredSemanticEvidence(
+          state.evidenceContexts.resolve(input.source.evidence),
+        ),
+    },
+    state.evidenceContexts,
+  );
   if (state.relations.has(value.relation_id)) return;
   state.relations.set(value.relation_id, value);
 };
@@ -211,20 +224,23 @@ export const addSemanticFallbackRoot = (
 ): void => {
   const node = addSemanticGraphNode(
     state,
-    createJavaScriptSemanticGraphNode({
-      kind: "module",
-      identity: {
-        artifact_sha256: rootArtifactSha256,
-        module_path: "unknown-semantic-root",
-        source_range: null,
-        role_key: "artifact-root",
+    createJavaScriptSemanticGraphNode(
+      {
+        kind: "module",
+        identity: {
+          artifact_sha256: rootArtifactSha256,
+          module_path: "unknown-semantic-root",
+          source_range: null,
+          role_key: "artifact-root",
+        },
+        function_node_id: null,
+        application_node_ids: [],
+        label: "unavailable semantic root",
+        properties: {},
+        evidence: unavailableSemanticRootEvidence(rootArtifactSha256),
       },
-      function_node_id: null,
-      application_node_ids: [],
-      label: "unavailable semantic root",
-      properties: {},
-      evidence: unavailableSemanticRootEvidence(rootArtifactSha256),
-    }),
+      state.evidenceContexts,
+    ),
   );
   if (node !== null) state.roots.add(node.node_id);
 };

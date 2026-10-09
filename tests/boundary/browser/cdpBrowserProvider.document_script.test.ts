@@ -1,3 +1,8 @@
+import { digestCanonicalValue } from "../../../src/domain/canonicalDigest.js";
+import type { JsonValue } from "../../../src/domain/jsonValue.js";
+import { compareWebCaptures } from "../../../src/domain/webCaptureDiff.js";
+import { compareWebCapturesInputSchema } from "../../../src/domain/webCaptureDiffSchemas.js";
+
 import { describe, expect, it } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
@@ -143,6 +148,7 @@ describe("CdpBrowserProvider: approved accessibility and source capture", () => 
       items: [
         {
           status: "included",
+          declared_url: `${browser.allowedOrigin}/app.js.map?token=map-secret`,
           original_sources: [
             expect.objectContaining({
               source: `${browser.allowedOrigin}/src/main.ts`,
@@ -291,8 +297,8 @@ describe("CdpBrowserProvider: WebMCP discovery and completeness", () => {
     const serialized = JSON.stringify(result.value);
     expect(serialized).toContain("tool-secret");
     expect(serialized).toContain("tool-source-secret");
-    for (const secret of ["schema-secret", "private-tool-secret"])
-      expect(serialized).not.toContain(secret);
+    expect(serialized).toContain("schema-secret");
+    expect(serialized).not.toContain("private-tool-secret");
     const methods = browser.commands.map(({ method }) => method);
     expect(methods).toContain("WebMCP.enable");
     expect(methods).not.toContain("WebMCP.invokeTool");
@@ -405,6 +411,85 @@ describe("CdpBrowserProvider: WebMCP discovery and completeness", () => {
 });
 
 describe("CdpBrowserProvider WebMCP inventory completeness", () => {
+  it("compares full untrusted declarations independently of object-key order", async () => {
+    const declaration: JsonValue = {
+      type: "object",
+      properties: { value: { type: "string", enum: ["one", "two"] } },
+      required: ["value"],
+      $ref: "https://untrusted.invalid/schema.json",
+      examples: [{ token: "caller-schema-value" }],
+    };
+    const options: { webMcpTools: boolean; webMcpInputSchema: JsonValue } = {
+      webMcpTools: true,
+      webMcpInputSchema: declaration,
+    };
+    const browser = await startFakeCdpBrowser(options);
+    trackBrowser(browser);
+    const provider = new CdpBrowserProvider();
+    const input = {
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      target_id: "allowed-page",
+      observation_ms: 0,
+    };
+    const inspection = await provider.inspectPage(
+      inspectWebPageInputSchema.parse(input),
+    );
+    if (!inspection.ok) throw inspection.error;
+    const discover = async () => {
+      const result = await provider.discoverWebMcpTools(
+        discoverWebMcpToolsInputSchema.parse(input),
+      );
+      if (!result.ok) throw result.error;
+      return result.value;
+    };
+    const before = await discover();
+    expect(before.tools.items[0]).toMatchObject({
+      input_schema: declaration,
+      input_schema_sha256: digestCanonicalValue(declaration),
+      trust: "page-declared-untrusted",
+    });
+    const compare = async (schema: JsonValue) => {
+      options.webMcpInputSchema = schema;
+      const after = await discover();
+      const diff = compareWebCaptures(
+        compareWebCapturesInputSchema.parse({
+          before: { inspection: inspection.value, webmcp: before },
+          after: { inspection: inspection.value, webmcp: after },
+        }),
+      );
+      return { after, dimension: diff.dimensions.webmcp };
+    };
+    const reordered = Object.fromEntries(Object.entries(declaration).reverse());
+    const equivalent = await compare(reordered);
+    expect(equivalent.dimension).toMatchObject({
+      status: "unknown",
+      total_changes: 0,
+    });
+    expect(equivalent.after.tools.items[0]?.input_schema_sha256).toBe(
+      before.tools.items[0]?.input_schema_sha256,
+    );
+    for (const changed of [
+      {
+        ...declaration,
+        properties: { value: { type: "number", enum: ["one", "two"] } },
+      },
+      { ...declaration, required: [] },
+      {
+        ...declaration,
+        properties: { value: { type: "string", enum: ["two", "three"] } },
+      },
+      false,
+    ]) {
+      const result = await compare(changed);
+      expect(result.dimension).toMatchObject({
+        status: "changed",
+        total_changes: 1,
+        changes: [expect.objectContaining({ change: "modified" })],
+      });
+    }
+  });
+
   it("retains every field in a large declared WebMCP input schema", async () => {
     const propertyCount = 5_001;
     const browser = await startFakeCdpBrowser({
@@ -422,17 +507,21 @@ describe("CdpBrowserProvider WebMCP inventory completeness", () => {
     );
 
     if (!result.ok) throw result.error;
-    const shape = result.value.tools.items[0]?.input_schema_shape;
-    expect(
-      shape?.properties.filter(({ path }) =>
-        path.startsWith("/properties/field_"),
-      ),
-    ).toHaveLength(propertyCount * 2);
-    expect(shape?.properties).toContainEqual({
-      path: "/properties/field_5000/type",
-      types: ["string"],
-      observations: 1,
+    const tool = result.value.tools.items[0];
+    expect(tool?.input_schema).toMatchObject({
+      type: "object",
+      properties: { field_5000: { type: "string" } },
     });
+    if (
+      tool?.input_schema === null ||
+      typeof tool?.input_schema !== "object" ||
+      Array.isArray(tool.input_schema)
+    )
+      throw new Error("Expected an observed schema object");
+    expect(Object.keys(tool.input_schema.properties ?? {})).toHaveLength(
+      propertyCount,
+    );
+    expect(tool.input_schema_sha256).toMatch(/^[a-f0-9]{64}$/u);
   });
 });
 

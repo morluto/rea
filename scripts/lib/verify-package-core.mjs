@@ -69,32 +69,3 @@ export const pathExists = async (path) => {
     throw cause;
   }
 };
-
-/** Synthetic function dossier for managed/native verification fixtures. */
-export const functionDossier = (name) => {
-  return {
-    procedure: {
-      address: "0x401000",
-      name,
-      classification: {
-        external: false,
-        thunk: false,
-        thunk_target: null,
-        provenance: "synthetic-provider",
-      },
-      signature: null,
-      locals: [],
-    },
-    pseudocode: "",
-    assembly: [],
-    comments: [],
-    callers: [],
-    callees: [],
-    incoming_references: [],
-    outgoing_references: [],
-    referenced_strings: [],
-    referenced_names: [],
-    basic_blocks: [],
-    limitations: [],
-  };
-};

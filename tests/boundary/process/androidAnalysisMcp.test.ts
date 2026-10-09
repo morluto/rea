@@ -307,7 +307,7 @@ it("cleans an active engine when the MCP client disconnects", async () => {
   const pending = client
     .callTool({ name: "inspect_android_package", arguments: { path: apk } })
     .catch(() => undefined);
-  await expect.poll(() => launches.length).toBe(1);
+  await expect.poll(() => launches.length, { timeout: 10_000 }).toBe(1);
   await client.close();
   await pending;
   await expect

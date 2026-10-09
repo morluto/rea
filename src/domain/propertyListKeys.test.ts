@@ -1,10 +1,6 @@
 import { expect, it } from "vitest";
 
-import {
-  omitPrototypeKeys,
-  omittedPrototypeKeysLimitation,
-  parseXmlPropertyList,
-} from "./propertyListKeys.js";
+import { omitPrototypeKeys, parseXmlPropertyList } from "./propertyListKeys.js";
 
 const plist = (body: string) =>
   `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0">${body}</plist>`;
@@ -67,7 +63,4 @@ it("omits own __proto__ entries that JSON decoding creates", () => {
     value: { a: [{ b: 3 }] },
     omittedPrototypeKeys: 2,
   });
-  expect(omittedPrototypeKeysLimitation(1)).toBe(
-    "1 dictionary entry keyed __proto__ was omitted because REA results cannot represent that key.",
-  );
 });

@@ -472,8 +472,11 @@ and JDK 21. Each installation must include the native decompiler for the host
 architecture in `Ghidra/Features/Decompiler/os/<platform>/` or the corresponding
 `build/os/<platform>/` directory. Linux ARM64 uses `linux_arm_64`; official
 release archives may require you to build that native component separately.
-REA checks the executable prerequisite and does not build or install native
-tools, or change Gatekeeper quarantine settings.
+REA checks the executable prerequisite by inspecting the file's own executable
+header, so a native component built for another platform or architecture is
+reported as incompatible instead of being admitted from its directory name, and
+a header that cannot be read or recognized is reported as unknown. REA does not
+build or install native tools, or change Gatekeeper quarantine settings.
 
 The adapter exposes 25 read-only operations: thirteen inventory/name/search
 operations and twelve function-analysis operations. These cover metadata,

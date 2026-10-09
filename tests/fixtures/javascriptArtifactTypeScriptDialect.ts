@@ -43,6 +43,11 @@ export const typeScriptDialectCases = [
     source: 'const element = <section />;\nimport "./dep.js";',
   },
   {
+    path: "component.d.tsx",
+    kind: "static-import",
+    source: 'const element = <section />;\nimport "./dep.js";',
+  },
+  {
     path: "component.jsx",
     kind: "static-import",
     source: 'const element = <section />;\nimport "./dep.js";',

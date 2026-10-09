@@ -53,6 +53,32 @@ const sourceRangeSchema = z
       });
   });
 
+/** Check that export-shape comparisons bind distinct source Evidence. */
+const validateJavaScriptExportShapeIdentities = (
+  input: {
+    readonly left: { readonly evidence_id: string };
+    readonly right: { readonly evidence_id: string };
+  },
+  context: z.RefinementCtx,
+): void => {
+  if (input.left.evidence_id === input.right.evidence_id)
+    context.addIssue({
+      code: "custom",
+      path: ["right"],
+      message: "JavaScript export shape Evidence must be distinct",
+    });
+};
+
+const evidenceIdentitySchema = z.object({ evidence_id: evidenceIdSchema });
+
+/** Validate export-shape identities without capturing complete source graphs. */
+export const javaScriptExportShapeIdentitiesSchema = z
+  .object({
+    left: evidenceIdentitySchema,
+    right: evidenceIdentitySchema,
+  })
+  .superRefine(validateJavaScriptExportShapeIdentities);
+
 /** Two authenticated application graphs and exact export selectors. */
 export const compareJavaScriptExportShapesInputSchema = z
   .strictObject({
@@ -63,14 +89,7 @@ export const compareJavaScriptExportShapesInputSchema = z
     right_module_path: textSchema,
     right_export_name: textSchema,
   })
-  .superRefine((input, context) => {
-    if (input.left.evidence_id === input.right.evidence_id)
-      context.addIssue({
-        code: "custom",
-        path: ["right"],
-        message: "JavaScript export shape Evidence must be distinct",
-      });
-  });
+  .superRefine(validateJavaScriptExportShapeIdentities);
 
 const projectedReturnFieldShape = {
   path: jsonPointerSchema,

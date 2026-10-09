@@ -35,6 +35,7 @@ import { hasTypedSwitchEvidence } from "./verify-real-ghidra-switch-assertions.m
 
 import {
   verifyDenseDefaultReturn,
+  verifyJumpTableDenseSwitch,
   verifyNativeTypeLayout,
   verifyRelativeSwitch,
   verifyNativeValueTrace,
@@ -80,6 +81,7 @@ const crossFormatSourcePath = fileURLToPath(
 const debugPath = join(fixtureRoot, "rea-ghidra-inventory-debug");
 const layoutPath = join(fixtureRoot, "rea-ghidra-layout.o");
 const strippedPath = join(fixtureRoot, "rea-ghidra-inventory-stripped");
+const jumpTablePath = join(fixtureRoot, "rea-ghidra-inventory-jump");
 const arm64ElfPath = join(fixtureRoot, "rea-ghidra-cross-arm64");
 const peObjectPath = join(fixtureRoot, "rea-ghidra-cross-x86_64.obj");
 const pePath = join(fixtureRoot, "rea-ghidra-cross-x86_64.exe");
@@ -134,6 +136,14 @@ try {
   if (expectedNativeTarget.format === "mach-o")
     strippedFlags.push("-fvisibility=hidden");
   await exec(compiler, [...strippedFlags, sourcePath, "-o", strippedPath]);
+  // The dense jump-table oracle needs the switch lowered to a table: GCC 16 and
+  // later expand dense switches as compare chains at -O0, so the CLI oracle
+  // runs against an optimized build while the debug fixture keeps its -O0
+  // stack-local and DWARF shape.
+  const jumpTableFlags = ["-O2", "-g", "-fno-inline"];
+  if (expectedNativeTarget.format === "elf")
+    jumpTableFlags.push("-fno-pie", "-no-pie");
+  await exec(compiler, [...jumpTableFlags, sourcePath, "-o", jumpTablePath]);
   const crossTargets = [];
   if (aarch64JumpTableOnly) {
     const relativeSource = fileURLToPath(
@@ -253,6 +263,11 @@ try {
     expectedNativeTarget,
   );
   assertStrippedFixture(stripped);
+  const jumpTable = await verifyTarget(
+    jumpTablePath,
+    "jump-table",
+    expectedNativeTarget,
+  );
   const crossResults = [];
   for (const [targetPath, variant, expectedTarget] of crossTargets) {
     const result = await verifyTarget(targetPath, variant, expectedTarget);
@@ -277,11 +292,13 @@ try {
       crossFormat || aarch64JumpTableOnly
         ? [sourcePath, crossFormatSourcePath]
         : [sourcePath],
-    fixtures: [debug, stripped, layout, ...crossResults].map(summary),
+    fixtures: [debug, stripped, layout, jumpTable, ...crossResults].map(
+      summary,
+    ),
     malformed_target: "rejected-before-provider-start",
     native_api_cli: aarch64JumpTableOnly
       ? (crossResults[0]?.native_api_cli ?? null)
-      : debug.native_api_cli,
+      : jumpTable.native_api_cli,
     native_value_e2e: debug.native_values,
     custom_target: custom === null ? null : summary(custom),
     cleanup: "complete",
@@ -493,7 +510,7 @@ async function verifyTarget(targetPath, variant, expectedTarget = null) {
     const crossArm64Elf =
       variant === "cross-arm64-elf" || variant === "aarch64-jump-table";
     const nativeApiCli =
-      variant === "debug" || crossArm64Elf
+      variant === "jump-table" || crossArm64Elf
         ? await verifyNativeApiCli(parsedTarget.value.path, procedures, {
             requireDenseJumpTable:
               crossArm64Elf ||
@@ -513,15 +530,17 @@ async function verifyTarget(targetPath, variant, expectedTarget = null) {
         )
       : variant === "type-layout"
         ? await verifyNativeTypeLayout(client, names)
-        : variant === "custom" || variant === "aarch64-jump-table"
-          ? null
-          : await verifyInventoryOperations({
-              client,
-              variant,
-              procedures,
-              names,
-              strings,
-            });
+        : variant === "jump-table"
+          ? await verifyJumpTableDenseSwitch(client, procedures)
+          : variant === "custom" || variant === "aarch64-jump-table"
+            ? null
+            : await verifyInventoryOperations({
+                client,
+                variant,
+                procedures,
+                names,
+                strings,
+              });
     const nativeValues =
       variant === "debug"
         ? await verifyNativeValueTrace(client, procedures, parsedTarget.value)

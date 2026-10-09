@@ -270,7 +270,9 @@ const htmlCandidate = (
     ]);
   if (declaredPath.startsWith("/")) return declaredPath.slice(1);
   if (base === undefined || base === null || base === "")
-    return posix.join(posix.dirname(input.sourcePath), declaredPath);
+    return declaredPath === ""
+      ? input.sourcePath
+      : posix.join(posix.dirname(input.sourcePath), declaredPath);
   // A local base href is a second untrusted path input; apply the same
   // admission rules a declared path gets so it cannot smuggle traversal or
   // separator syntax past canonicalization.
@@ -286,7 +288,22 @@ const htmlCandidate = (
   const basePath = decodedBase.startsWith("/")
     ? decodedBase.slice(1)
     : posix.join(posix.dirname(input.sourcePath), decodedBase);
+  if (declaredPath === "")
+    return emptyHtmlReference(input, decodedBase, basePath);
   return posix.join(htmlBaseDirectory(decodedBase, basePath), declaredPath);
+};
+
+const emptyHtmlReference = (
+  input: ResolveArtifactPathInput,
+  base: string,
+  basePath: string,
+): string | ArtifactPathResolution => {
+  if (!htmlBaseIsDirectory(base)) return basePath;
+  const confined = confineCandidate(input, basePath);
+  if (typeof confined !== "string") return confined;
+  return unresolvedOutcome(input, "not-found", [
+    `The HTML reference resolves to directory ${confined || "."}, not an exact selected application file.`,
+  ]);
 };
 
 /**
@@ -295,14 +312,15 @@ const htmlCandidate = (
  * relative reference resolves against the base URL's directory and those
  * segments are dropped rather than stepped through.
  */
-const htmlBaseDirectory = (base: string, basePath: string): string =>
+const htmlBaseIsDirectory = (base: string): boolean =>
   base.endsWith("/") ||
   base.endsWith("/.") ||
   base.endsWith("/..") ||
   base === "." ||
-  base === ".."
-    ? basePath
-    : posix.dirname(basePath);
+  base === "..";
+
+const htmlBaseDirectory = (base: string, basePath: string): string =>
+  htmlBaseIsDirectory(base) ? basePath : posix.dirname(basePath);
 
 const confineCandidate = (
   input: ResolveArtifactPathInput,
@@ -622,7 +640,8 @@ const exportTargets = (
  * Node selects an exports target by walking the declared keys in order and
  * taking the first whose condition is active for the calling resolver.
  * "default" is always active, and "node" plus "node-addons" are active for the
- * built-in resolver that owns installed-package imports and requires.
+ * built-in resolver that owns installed-package imports and requires. The
+ * supported Node runtimes also activate "module-sync" for both loaders.
  */
 const packageExportConditions = (
   moduleKind: ResolveArtifactPathInput["moduleKind"],
@@ -630,6 +649,7 @@ const packageExportConditions = (
   new Set([
     "node",
     "node-addons",
+    "module-sync",
     ...(moduleKind === undefined ? [] : [moduleKind]),
     "default",
   ]);

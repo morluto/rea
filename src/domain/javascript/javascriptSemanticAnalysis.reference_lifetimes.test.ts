@@ -1,0 +1,313 @@
+import { describe, expect, it } from "vitest";
+
+import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+import { onlyCallable } from "./javascriptSemanticAnalysis.fixture.js";
+
+const resultValue = (body: string) =>
+  onlyCallable(
+    analyzeJavaScriptSemantics(`export function result() { ${body} }`),
+    "result",
+  ).returnSites[0]?.value;
+
+describe("reference lifetimes across calls and shallow copies", () => {
+  it("bounds dynamic destructuring across shared alias branches", () => {
+    const declarations = Array.from(
+      { length: 9 },
+      (_, index) =>
+        `const alias${index + 1} = { left: alias${index}, right: alias${index} };`,
+    ).join("\n");
+    const pattern = "{ [key]: ".repeat(9) + "[copy]" + " }".repeat(9);
+    const start = performance.now();
+    resultValue(
+      `const alias0 = [1]; ${declarations} const ${pattern} = alias9; return alias0[0];`,
+    );
+    expect(performance.now() - start).toBeLessThan(2000);
+  }, 30000);
+
+  it("bounds conditional shallow-copy traversal while retaining shared children", () => {
+    const declarations = Array.from(
+      { length: 20 },
+      (_, i) =>
+        `const alias${i + 1} = flag ? {...alias${i}, a${i}:{}} : {...alias${i}, b${i}:{}};`,
+    ).join("\n");
+    const start = performance.now();
+    expect(
+      resultValue(
+        `const alias0 = { value: { token: 1 } }; ${declarations} consume(alias20); return alias0.value.token;`,
+      )?.status,
+    ).toBe("unknown");
+    expect(performance.now() - start).toBeLessThan(2000);
+  }, 30000);
+
+  it.each([
+    ["child: {}", "child: {}", "literal"],
+    ["child: {}", "other: {}", "unknown"],
+  ])(
+    "retains exclusions common to both branches: %s / %s",
+    (left, right, status) => {
+      expect(
+        resultValue(
+          `const source = {child:{value:1}}; const copy = flag ? {...source, ${left}} : {...source, ${right}}; consume(copy); return source.child.value;`,
+        )?.status,
+      ).toBe(status);
+    },
+  );
+
+  it.each([
+    "mutate(alias)",
+    "alias.method()",
+    "new Factory(alias)",
+    "tag`${alias}`",
+    "alias.tag``",
+    "mutate((0, alias))",
+  ])("drops replaced call origins for %s", (call) => {
+    expect(
+      resultValue(
+        `const source={value:1}; let alias=source; alias={}; ${call}; return source.value;`,
+      ),
+    ).toEqual({ status: "literal", value: 1 });
+  });
+
+  it.each([
+    "mutate(alias); alias={};",
+    "if(flag) alias={}; mutate(alias);",
+    "alias={}; if(flag) mutate(alias);",
+    "function invoke(){mutate(alias);} alias={}; invoke();",
+    "alias={}; mutate(alias); alias=source;",
+  ])("retains uncertain call ordering: %s", (body) => {
+    expect(
+      resultValue(
+        `const source={value:1}; let alias=source; ${body} return source.value;`,
+      )?.status,
+    ).toBe("unknown");
+  });
+
+  it.each([
+    ["let {...copy}={child};", "copy={child:{}};", "copy.child.value=2;"],
+    ["let [...copy]=[child];", "copy=[{}];", "copy[0].value=2;"],
+    ["let {copy=child}={};", "copy={};", "copy.value=2;"],
+    ["let [copy=child]=[];", "copy={};", "mutate(copy);"],
+  ])(
+    "drops replaced rest/default origins: %s",
+    (declaration, rebind, mutation) => {
+      expect(
+        resultValue(
+          `const child={value:1}; ${declaration} ${rebind} ${mutation} return child.value;`,
+        ),
+      ).toEqual({ status: "literal", value: 1 });
+      expect(
+        resultValue(
+          `const child={value:1}; ${declaration} if(flag) ${rebind} ${mutation} return child.value;`,
+        )?.status,
+      ).toBe("unknown");
+    },
+  );
+});
+
+describe("primitive snapshots across calls", () => {
+  it.each([
+    "const [copy] = source;",
+    "const copy = [...source];",
+    "for (const copy of source) {}",
+  ])("preserves snapshots taken before custom iteration: %s", (iteration) => {
+    expect(
+      resultValue(`
+        const source = { *[Symbol.iterator]() { yield this; }, value: 1 };
+        const snapshot = source.value;
+        ${iteration}
+        return snapshot;
+      `),
+    ).toEqual({ status: "literal", value: 1 });
+  });
+
+  it.each([
+    "const [copy] = alias;",
+    "const copy = [...alias];",
+    "for (const copy of alias) {}",
+  ])("ignores iterable aliases replaced before %s", (iteration) => {
+    expect(
+      resultValue(`
+        const source = { *[Symbol.iterator]() { yield this; }, value: 1 };
+        let alias = source;
+        alias = [];
+        ${iteration}
+        return source.value;
+      `),
+    ).toEqual({ status: "literal", value: 1 });
+  });
+
+  it.each([
+    ["const snapshot=source.value;", "snapshot"],
+    ["const {value:snapshot}=source;", "snapshot"],
+    ["const copy={value:source.value};", "copy.value"],
+    ['const copy={["snapshot"]:source.value};', "copy.snapshot"],
+    ['const copy={[""]:source.value};', 'copy[""]'],
+    ["const copy={[0]:source.value};", "copy[0]"],
+    ['const copy={[("snapshot" as string)]:source.value};', "copy.snapshot"],
+    ["const copy=[source.value];", "copy[0]"],
+  ])("preserves primitive capture before escape: %s", (capture, result) => {
+    expect(
+      resultValue(
+        `const source={value:1}; ${capture} mutate(source); return ${result};`,
+      ),
+    ).toEqual({ status: "literal", value: 1 });
+    expect(
+      resultValue(
+        `const source={value:1}; mutate(source); ${capture} return ${result};`,
+      )?.status,
+    ).toBe("unknown");
+  });
+
+  it.each([
+    ["const copy={value:source.value};", "copy.value"],
+    ["const copy=[source.value];", "copy[0]"],
+  ])(
+    "retains a literal field's earlier primitive capture: %s",
+    (copy, read) => {
+      expect(
+        resultValue(
+          `const source={value:1}; ${copy} mutate(source); const snapshot=${read}; mutate(copy); return snapshot;`,
+        ),
+      ).toEqual({ status: "literal", value: 1 });
+      expect(
+        resultValue(
+          `const source={value:1}; mutate(source); ${copy} const snapshot=${read}; mutate(copy); return snapshot;`,
+        )?.status,
+      ).toBe("unknown");
+    },
+  );
+
+  it.each([
+    ["const copy={child:source.child};", "copy.child"],
+    ["const copy=[source.child];", "copy[0]"],
+  ])(
+    "keeps a shared child uncertain across both capture points: %s",
+    (copy, read) => {
+      expect(
+        resultValue(
+          `const source={child:{value:1}}; ${copy} mutate(source); const snapshot=${read}; mutate(copy); return snapshot.value;`,
+        )?.status,
+      ).toBe("unknown");
+    },
+  );
+
+  it.each([
+    "const alias=source; const snapshot=alias.value; mutate(alias); return snapshot;",
+    "const alias=source.child; const snapshot=alias.value; mutate(alias); return snapshot;",
+  ])("captures through an earlier intermediate reference: %s", (body) => {
+    expect(
+      resultValue(`const source={value:1,child:{value:1}}; ${body}`),
+    ).toEqual({ status: "literal", value: 1 });
+  });
+
+  it("does not read a later alias initializer at an earlier capture point", () => {
+    expect(
+      resultValue(
+        "const source={value:1}; var alias; const snapshot=alias?.value; mutate(source); alias=source; return snapshot;",
+      )?.status,
+    ).toBe("unknown");
+  });
+
+  it("does not treat a persistent child as freshly allocated with its wrapper", () => {
+    const ir = analyzeJavaScriptSemantics(
+      "const child={value:1}; export function result(){const source={child}; const alias=source.child; const snapshot=alias.value; mutate(alias); return snapshot;}",
+    );
+    expect(onlyCallable(ir, "result").returnSites[0]?.value.status).toBe(
+      "unknown",
+    );
+  });
+
+  it("keeps persistent sources uncertain across function activations", () => {
+    const ir = analyzeJavaScriptSemantics(
+      "const source={value:1}; export function result(){const snapshot=source.value; mutate(source); return snapshot;}",
+    );
+    expect(onlyCallable(ir, "result").returnSites[0]?.value.status).toBe(
+      "unknown",
+    );
+  });
+
+  it("keeps reads from earlier loop iterations uncertain", () => {
+    expect(
+      resultValue(
+        "const source={value:1}; for(let i=0;i<2;i++){const snapshot=source.value; mutate(source); if(i===1)return snapshot;}",
+      )?.status,
+    ).toBe("unknown");
+  });
+
+  it.each([
+    "const copy={child:source.child}; return copy.child.value;",
+    "const copy=source.child; return copy.value;",
+    "const copy=[source.child]; return copy[0].value;",
+  ])("keeps shared children live: %s", (body) => {
+    expect(
+      resultValue(
+        `const source={child:{value:1}}; ${body.replace("return", "mutate(source); return")}`,
+      )?.status,
+    ).toBe("unknown");
+  });
+});
+
+describe("references captured before an intermediate rebind", () => {
+  it.each([
+    ["const saved=alias;", "alias=saved;", "mutate(alias);"],
+    ["const saved=alias;", "alias=saved;", "alias.value=9;"],
+    ["const saved={child:alias};", "alias=saved.child;", "mutate(alias);"],
+    ["const {...saved}={child:alias};", "alias=saved.child;", "mutate(alias);"],
+    ["const [...saved]=[alias];", "alias=saved[0];", "mutate(alias);"],
+    ["const {saved=alias}={};", "alias=saved;", "mutate(alias);"],
+  ])("follows an alias restored from %s", (capture, restore, effect) => {
+    expect(
+      resultValue(
+        `const source={value:1}; let alias=source; ${capture} ${restore} ${effect} return source.value;`,
+      )?.status,
+    ).toBe("unknown");
+  });
+
+  it.each([
+    ["const saved=alias;", "mutate(saved);"],
+    ["const saved={child:alias};", "mutate(saved.child);"],
+    ["const {...saved}={child:alias};", "mutate(saved.child);"],
+    ["const [...saved]=[alias];", "mutate(saved[0]);"],
+    ["const {saved=alias}={};", "mutate(saved);"],
+    ["const [saved=alias]=[];", "mutate(saved);"],
+    ["const saved=alias;", "saved.method();"],
+    ["const saved=alias;", "mutate(alias,saved);"],
+    ["const saved=alias;", "mutate(saved,alias);"],
+  ])("preserves the original reference captured by %s", (capture, effect) => {
+    expect(
+      resultValue(
+        `const source={value:1}; let alias=source; ${capture} alias={}; ${effect} return source.value;`,
+      )?.status,
+    ).toBe("unknown");
+    expect(
+      resultValue(
+        `const source={value:1}; let alias=source; alias={}; ${capture} ${effect} return source.value;`,
+      ),
+    ).toEqual({ status: "literal", value: 1 });
+  });
+
+  it.each([
+    [
+      "let {...alias}={child:source};",
+      "alias={child:{}};",
+      "saved.child.value=9;",
+    ],
+    ["let [...alias]=[source];", "alias=[{}];", "saved[0].value=9;"],
+    ["let {alias=source}={};", "alias={};", "saved.value=9;"],
+    ["let [alias=source]=[];", "alias={};", "saved.value=9;"],
+  ])(
+    "preserves a saved rest/default reference from %s",
+    (declaration, rebind, effect) => {
+      expect(
+        resultValue(
+          `const source={value:1}; ${declaration} const saved=alias; ${rebind} ${effect} return source.value;`,
+        )?.status,
+      ).toBe("unknown");
+      expect(
+        resultValue(
+          `const source={value:1}; ${declaration} ${rebind} const saved=alias; ${effect} return source.value;`,
+        ),
+      ).toEqual({ status: "literal", value: 1 });
+    },
+  );
+});

@@ -24,7 +24,6 @@ import {
   javascriptApplicationOptions,
 } from "../cliObservationOptions.js";
 import { runCliJavaScriptApplicationAnalysis } from "./javascriptApplicationAnalysis.js";
-import type { CliResultOutput } from "./streamedJsonOutput.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 
 /** Register CLI equivalents of the Electron MCP tools. */
@@ -32,11 +31,10 @@ export const registerElectronCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
-  resultOutput?: CliResultOutput,
 ): void => {
   registerElectronObservationCommands(cli, logger);
   registerElectronActiveCommand(cli, logger, environment);
-  registerJavaScriptApplicationCommand(cli, logger, resultOutput);
+  registerJavaScriptApplicationCommand(cli, logger);
   registerJavaScriptRuntimeReconciliationCommand(cli, logger);
 };
 
@@ -184,7 +182,6 @@ const registerElectronPageInspection = (
 const registerJavaScriptApplicationCommand = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
-  resultOutput?: CliResultOutput,
 ): void => {
   cli.command(CLI_COMMANDS.analyzeJavaScriptApplication, {
     description:
@@ -194,7 +191,7 @@ const registerJavaScriptApplicationCommand = (
     }),
     options: javascriptApplicationOptions,
     alias: { integrityPolicy: "integrity-policy" },
-    run: ({ args, options, format }) =>
+    run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.analyzeJavaScriptApplication, () =>
           runCliJavaScriptApplicationAnalysis(
@@ -203,13 +200,6 @@ const registerJavaScriptApplicationCommand = (
               format: options.artifactFormat,
               integrity_policy: options.integrityPolicy,
             },
-            resultOutput === undefined
-              ? undefined
-              : {
-                  output: resultOutput,
-                  command: CLI_COMMANDS.analyzeJavaScriptApplication,
-                  format,
-                },
             signal,
           ),
         ),

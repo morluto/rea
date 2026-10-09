@@ -9,7 +9,10 @@ import {
   EvidenceIntegrityError,
 } from "../domain/evidenceErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  type AnalysisResourceConstraintError,
+} from "../domain/analysisErrorCore.js";
 import { parseProcessCapture } from "../domain/process/processCaptureParsing.js";
 import {
   bufferedJsonParts,
@@ -17,7 +20,10 @@ import {
 } from "../domain/jsonSerialization.js";
 import { readJsonFile, writeTextParts } from "./JsonFiles.js";
 
-type EvidenceReadFailure = EvidenceFileError | EvidenceIntegrityError;
+type EvidenceReadFailure =
+  | EvidenceFileError
+  | EvidenceIntegrityError
+  | AnalysisResourceConstraintError;
 type EvidenceWriteFailure =
   | EvidenceFileError
   | EvidenceIntegrityError

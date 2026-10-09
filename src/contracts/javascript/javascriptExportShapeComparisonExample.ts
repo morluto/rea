@@ -13,6 +13,7 @@ import {
 import {
   createJavaScriptSemanticGraph,
   createJavaScriptSemanticGraphNode,
+  JavaScriptSemanticEvidenceContextRegistry,
 } from "../../domain/javascript/javascriptSemanticGraph.js";
 import { JAVASCRIPT_SEMANTIC_RELATION_FAMILIES } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../domain/javascript/javascriptApplicationAnalysis.js";
@@ -184,30 +185,35 @@ const exampleEvidence = (property: "count" | "total") => {
     coverage: partialApplicationCoverage([], null),
     limitations,
   });
-  const module = createJavaScriptSemanticGraphNode({
-    kind: "module",
-    identity: {
-      artifact_sha256: artifact.sha256,
-      module_path: modulePath,
-      source_range: null,
-      role_key: "example-module",
+  const evidenceContexts = new JavaScriptSemanticEvidenceContextRegistry();
+  const module = createJavaScriptSemanticGraphNode(
+    {
+      kind: "module",
+      identity: {
+        artifact_sha256: artifact.sha256,
+        module_path: modulePath,
+        source_range: null,
+        role_key: "example-module",
+      },
+      function_node_id: null,
+      application_node_ids: [exported.node_id],
+      label: modulePath,
+      properties: {},
+      evidence: {
+        ...evidence,
+        authority: "ast-static-analysis",
+        state: "observed",
+        confidence: "exact",
+      },
     },
-    function_node_id: null,
-    application_node_ids: [exported.node_id],
-    label: modulePath,
-    properties: {},
-    evidence: {
-      ...evidence,
-      authority: "ast-static-analysis",
-      state: "observed",
-      confidence: "exact",
-    },
-  });
+    evidenceContexts,
+  );
   const semanticGraph = createJavaScriptSemanticGraph({
     schema: "JavaScriptSemanticRelationGraph",
     root_artifact_sha256: metadata.root_artifact_sha256,
     application_graph_id: graph.graph_id,
     root_node_ids: [module.node_id],
+    evidence_contexts: evidenceContexts.contexts,
     nodes: [module],
     relations: [],
     fingerprints: [],

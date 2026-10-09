@@ -68,6 +68,11 @@ export const queryJavaScriptSemanticGraph = (
     result.retainedRelations,
     input,
   );
+  const retainedContextIds = new Set([
+    ...result.retainedNodes.map(({ evidence }) => evidence.context_id),
+    ...result.retainedRelations.map(({ evidence }) => evidence.context_id),
+    ...relevantUnknowns.map(({ evidence }) => evidence.context_id),
+  ]);
   const assessment = assessJavaScriptSemanticQuery({
     graph,
     totalSeeds: seeds.length,
@@ -83,6 +88,9 @@ export const queryJavaScriptSemanticGraph = (
     direction: input.direction,
     status: assessment.status,
     seed_node_ids: retainedSeeds,
+    evidence_contexts: graph.evidence_contexts.filter(({ context_id }) =>
+      retainedContextIds.has(context_id),
+    ),
     nodes: result.retainedNodes,
     relations: result.retainedRelations,
     unknowns: relevantUnknowns,

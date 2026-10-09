@@ -484,11 +484,8 @@ export const procedureInfoOutput = evidenceResultOf(
     length: z.number().min(0),
     signature: nullableText,
     locals: z.array(localVariableSchema),
-    classification: procedureClassificationSchema.nullable().default(null),
-    body: functionBodySchema.default({
-      available: false,
-      reason: "The provider did not report complete function body ranges.",
-    }),
+    classification: procedureClassificationSchema.nullable(),
+    body: functionBodySchema,
   }),
 );
 

@@ -27,8 +27,8 @@ async function fixture(eol = "\n") {
   await mkdir(join(root, "dist"));
   await writeFile(join(root, "package.json"), '{"type":"module"}\n');
   await writeFile(
-    join(root, "dist/generatedPackageMetadata.js"),
-    'export const PACKAGE_METADATA = { name: "rea-agents", version: "6.2.0" };\n',
+    join(root, "dist/identity.js"),
+    'export const PRODUCT_IDENTITY = { packageSpecifier: "rea-agents@latest", registrationPackageSpecifier: "rea-agents@6.2.0" };\n',
   );
   await writeFile(join(sourceRoot, "SKILL.md"), authored.replaceAll("\n", eol));
   await writeFile(

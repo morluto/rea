@@ -85,3 +85,41 @@ it.each([
     }
   },
 );
+
+it("keeps the declared URL and reports malformed redirect Location evidence", async () => {
+  const declaredUrl = "https://app.example.test/declared.map";
+  const input = analyzeWebBundleInputSchema.parse({
+    cdp_endpoint: "http://127.0.0.1:9222",
+    target_id: "selected-page",
+    allowed_origins: ["https://app.example.test"],
+    fetch_source_maps: true,
+  });
+  const result = await fetchWebSourceMaps(
+    [
+      {
+        scriptKey: `scr_${"1".repeat(64)}`,
+        declaredUrl,
+        fetchUrl: declaredUrl,
+      },
+    ],
+    input,
+    undefined,
+    {
+      fetch: () =>
+        Promise.resolve(
+          new Response(null, {
+            status: 302,
+            headers: { location: "http://[invalid" },
+          }),
+        ),
+    },
+  );
+
+  expect(result.items[0]).toMatchObject({
+    status: "fetch_failed",
+    declared_url: declaredUrl,
+    limitation: expect.stringContaining("invalid Location URL"),
+  });
+  expect(result.items[0]?.limitation).toContain(declaredUrl);
+  expect(result.items[0]?.limitation).toContain("http://[invalid");
+});

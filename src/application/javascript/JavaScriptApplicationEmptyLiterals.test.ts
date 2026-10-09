@@ -31,28 +31,49 @@ const analyzeSource = async (
   );
 };
 
-it.each([
-  "fetch('');",
-  "new WebSocket('');",
-  "navigator.serviceWorker.register('');",
-  "new Worker('');",
-  "const x = require('');",
-  "import y from ''; y();",
-  "import('');",
-  "localStorage.getItem('');",
-  "localStorage.setItem('', 1);",
-  "indexedDB.open('');",
-  "win.loadFile('');",
-  "win.loadURL('');",
-  "app.get('', handler);",
-  "process.on('', () => 1);",
-  "const { EventEmitter } = require('events'); new EventEmitter().on('', () => 1);",
-  "const { spawn } = require('child_process'); spawn('/bin/x').on('', () => 1);",
-  "const { ipcMain } = require('electron'); ipcMain.handle('', () => 1);",
-  "const { ipcRenderer } = require('electron'); ipcRenderer.invoke('');",
-  "const { contextBridge } = require('electron'); contextBridge.exposeInMainWorld('', {});",
-])("analyzes the legal empty string literal in %s", async (source) => {
-  await expect(analyzeSource(source)).resolves.toBeDefined();
+it("retains empty literal evidence across the application boundary surfaces", async () => {
+  const sources = [
+    "fetch('');",
+    "new WebSocket('');",
+    "navigator.serviceWorker.register('');",
+    "new Worker('');",
+    "const x = require('');",
+    "import y from ''; y();",
+    "import('');",
+    "localStorage.getItem('');",
+    "localStorage.setItem('', 1);",
+    "indexedDB.open('');",
+    "win.loadFile('');",
+    "win.loadURL('');",
+    "app.get('', handler);",
+    "process.on('', () => 1);",
+    "const { EventEmitter } = require('events'); new EventEmitter().on('', () => 1);",
+    "const { spawn } = require('child_process'); spawn('/bin/x').on('', () => 1);",
+    "const { ipcMain } = require('electron'); ipcMain.handle('', () => 1);",
+    "const { ipcRenderer } = require('electron'); ipcRenderer.invoke('');",
+    "const { contextBridge } = require('electron'); contextBridge.exposeInMainWorld('', {});",
+  ];
+  const output = await analyzeSource(sources.join("\n"));
+  expect(output.graph.nodes).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ kind: "endpoint" }),
+      expect.objectContaining({ kind: "worker" }),
+      expect.objectContaining({ kind: "ipc-channel" }),
+      expect.objectContaining({ kind: "context-bridge-api" }),
+    ]),
+  );
+  expect(output.semantic_graph?.nodes).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "request",
+        properties: expect.objectContaining({ endpoint: "" }),
+      }),
+      expect.objectContaining({
+        kind: "event",
+        properties: expect.objectContaining({ event_name: "" }),
+      }),
+    ]),
+  );
 });
 
 it("analyzes a plain long-line loader without package metadata", async () => {

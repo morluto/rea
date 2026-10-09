@@ -25,6 +25,7 @@ import {
 } from "../../domain/apple/keyedArchive.js";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import type { ArtifactEntry } from "../ArtifactReader.js";
 
 import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
 
@@ -47,7 +48,10 @@ export const decodeKeyedArchiveBytes = (
   const parsed = binary
     ? { value: parseBinary(bytes), omittedPrototypeKeys: 0 }
     : parseXmlPropertyList(xmlText ?? "");
-  const graph = projectKeyedArchive(normalizePlist(parsed.value), selection);
+  const { value: plistValue, unknownRealCount } = projectPlistValue(
+    parsed.value,
+  );
+  const graph = projectKeyedArchive(plistValue, selection);
   const numbers = createPlistNumberProjection(
     binary
       ? binaryPlistNumberLiterals(bytes)
@@ -76,15 +80,13 @@ export const decodeKeyedArchiveBytes = (
       ...(parsed.omittedPrototypeKeys === 0
         ? []
         : [omittedPrototypeKeysLimitation(parsed.omittedPrototypeKeys)]),
+      ...(unknownRealCount === 0
+        ? []
+        : [
+            `${String(unknownRealCount)} non-finite real value(s) are reported as { "$plist_type": "real", "value": null } because JSON evidence cannot preserve NaN vs infinity.`,
+          ]),
     ],
   };
-};
-
-const normalizePlist = (value: unknown): JsonValue => {
-  const projected = projectPlistValue(value);
-  if (projected.unknownRealCount > 0)
-    throw new RangeError("Keyed archive contains a non-finite real");
-  return projected.value;
 };
 
 /**
@@ -126,75 +128,83 @@ export const inspectBundleKeyedArchive = async (input: {
     );
   const reader = new DirectoryArtifactReader(input.bundlePath);
   try {
+    // Match inventory spelling while retaining the raw path for I/O and evidence.
+    const wanted = selected.path.normalize("NFC");
+    const matches: ArtifactEntry[] = [];
     for await (const entry of reader.entries(input.signal)) {
-      if (entry.path !== selected.path) continue;
-      if (entry.kind !== "file")
-        throw archivePathError(
-          "invalid_value",
-          `Archive path selects a ${entry.kind}, not a regular file: ${selected.path}`,
+      if (entry.path.normalize("NFC") !== wanted) continue;
+      matches.push(entry);
+    }
+    if (matches.length > 1)
+      throw archivePathError(
+        "invalid_value",
+        `Archive path matches ${String(matches.length)} Unicode-equivalent bundle entries; selection is ambiguous: ${selected.path}`,
+      );
+    const entry = matches[0];
+    if (entry === undefined)
+      throw archivePathError(
+        "invalid_value",
+        `No regular file exists at ${selected.path} in the active app bundle.`,
+      );
+    if (entry.kind !== "file")
+      throw archivePathError(
+        "invalid_value",
+        `Archive path selects a ${entry.kind}, not a regular file: ${selected.path}`,
+      );
+    if ((entry.declaredSize ?? 0) > MAX_BYTES)
+      throw new ArtifactReaderFailure("limit", "Keyed archive exceeds 64 MiB");
+    const stream = await reader.open(entry, input.signal);
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of stream) {
+      if (input.signal?.aborted) {
+        stream.destroy();
+        throw new ArtifactReaderFailure(
+          "cancelled",
+          "Archive inspection cancelled",
         );
-      if ((entry.declaredSize ?? 0) > MAX_BYTES)
+      }
+      const bytes = z.instanceof(Buffer).parse(chunk);
+      size += bytes.length;
+      if (size > MAX_BYTES) {
+        stream.destroy();
         throw new ArtifactReaderFailure(
           "limit",
           "Keyed archive exceeds 64 MiB",
         );
-      const stream = await reader.open(entry, input.signal);
-      const chunks: Buffer[] = [];
-      let size = 0;
-      for await (const chunk of stream) {
-        if (input.signal?.aborted) {
-          stream.destroy();
-          throw new ArtifactReaderFailure(
-            "cancelled",
-            "Archive inspection cancelled",
-          );
-        }
-        const bytes = z.instanceof(Buffer).parse(chunk);
-        size += bytes.length;
-        if (size > MAX_BYTES) {
-          stream.destroy();
-          throw new ArtifactReaderFailure(
-            "limit",
-            "Keyed archive exceeds 64 MiB",
-          );
-        }
-        chunks.push(bytes);
       }
-      const bytes = Buffer.concat(chunks, size);
-      try {
-        return keyedArchiveResultSchema.parse({
-          target_sha256: input.targetSha256,
-          archive_path: entry.path,
-          archive_sha256: createHash("sha256").update(bytes).digest("hex"),
-          ...decodeKeyedArchiveBytes(bytes, selected),
-        });
-      } catch (cause) {
-        if (cause instanceof AnalysisInputError) throw cause;
-        // An intact file of another kind is not a damaged archive.
-        if (cause instanceof KeyedArchiveKindError)
-          throw new AnalysisUnsupportedTargetError(
-            "inspect_keyed_archive",
-            join(input.bundlePath, entry.path),
-            cause.message,
-            {
-              cause,
-              remediationAction: keyedArchiveKindRemediation(
-                cause.kind,
-                input.platform ?? process.platform,
-              ),
-            },
-          );
-        throw new ArtifactReaderFailure(
-          cause instanceof RangeError ? "limit" : "format",
-          `Cannot decode selected Foundation keyed archive: ${cause instanceof Error ? cause.message : String(cause)}`,
-          { cause },
-        );
-      }
+      chunks.push(bytes);
     }
-    throw archivePathError(
-      "invalid_value",
-      `No regular file exists at ${selected.path} in the active app bundle.`,
-    );
+    const bytes = Buffer.concat(chunks, size);
+    try {
+      return keyedArchiveResultSchema.parse({
+        target_sha256: input.targetSha256,
+        archive_path: entry.path,
+        archive_sha256: createHash("sha256").update(bytes).digest("hex"),
+        ...decodeKeyedArchiveBytes(bytes, selected),
+      });
+    } catch (cause) {
+      if (cause instanceof AnalysisInputError) throw cause;
+      // An intact file of another kind is not a damaged archive.
+      if (cause instanceof KeyedArchiveKindError)
+        throw new AnalysisUnsupportedTargetError(
+          "inspect_keyed_archive",
+          join(input.bundlePath, entry.path),
+          cause.message,
+          {
+            cause,
+            remediationAction: keyedArchiveKindRemediation(
+              cause.kind,
+              input.platform ?? process.platform,
+            ),
+          },
+        );
+      throw new ArtifactReaderFailure(
+        cause instanceof RangeError ? "limit" : "format",
+        `Cannot decode selected Foundation keyed archive: ${cause instanceof Error ? cause.message : String(cause)}`,
+        { cause },
+      );
+    }
   } finally {
     await reader.close();
   }

@@ -15,7 +15,6 @@ import {
 import type { CliInstance } from "./types.js";
 import { runCliJavaScriptApplicationAnalysis } from "./javascriptApplicationAnalysis.js";
 import { withCommandCancellation } from "./commandCancellation.js";
-import type { CliResultOutput } from "./streamedJsonOutput.js";
 import { javascriptApplicationOptions } from "../cliObservationOptions.js";
 
 /** Register provider-neutral binary overview and procedure CLI commands. */
@@ -23,9 +22,8 @@ export const registerCoreBinaryCommands = (
   cli: CliInstance,
   logger: Logger,
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
-  resultOutput?: CliResultOutput,
 ): void => {
-  registerOverviewCommands(cli, logger, runDirectAnalysis, resultOutput);
+  registerOverviewCommands(cli, logger, runDirectAnalysis);
   registerDecompileCommand(cli, logger, runDirectAnalysis);
   registerFunctionCommand(cli, logger, runDirectAnalysis);
   registerInstructionsCommand(cli, logger, runDirectAnalysis);
@@ -38,7 +36,6 @@ const registerOverviewCommands = (
   cli: CliInstance,
   logger: Logger,
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
-  resultOutput?: CliResultOutput,
 ): void => {
   const overviewOptions = z.object({
     snapshot: z
@@ -58,11 +55,7 @@ const registerOverviewCommands = (
       integrityPolicy: javascriptApplicationOptions.shape.integrityPolicy,
     }),
     alias: { integrityPolicy: "integrity-policy" },
-    run: async ({ args, options, format }) => {
-      const output =
-        resultOutput === undefined
-          ? undefined
-          : { output: resultOutput, command: CLI_COMMANDS.analyze, format };
+    run: async ({ args, options }) => {
       // Route JavaScript targets exactly like analyze-javascript-application,
       // including typed cancellation; cancellation wraps logging so its exit
       // code is not replaced by the logged failure status.
@@ -74,7 +67,6 @@ const registerOverviewCommands = (
                 input_path: resolve(args.path),
                 integrity_policy: options.integrityPolicy,
               },
-              output,
               signal,
             ),
           ),

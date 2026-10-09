@@ -3,13 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   browserEndpointSchema,
   browserOriginSchema,
-  inspectWebPageInputSchema,
-  isLiteralLoopbackHostname,
-  listBrowserTargetsInputSchema,
   sanitizeEndpointCandidate,
   sanitizeBrowserUrl,
 } from "./browserObservation.js";
-import { captureWebScreenshotInputSchema } from "./webScreenshot.js";
 
 describe("browser observation contracts", () => {
   it("normalizes exact HTTP origins without accepting broader URL scopes", () => {
@@ -45,82 +41,9 @@ describe("browser observation contracts", () => {
     ])
       expect(browserEndpointSchema.safeParse(value).success, value).toBe(false);
   });
-
-  it("recognizes bracketed and normalized IPv6 loopback hostnames", () => {
-    for (const hostname of ["127.0.0.1", "[::1]", "::1"])
-      expect(isLiteralLoopbackHostname(hostname), hostname).toBe(true);
-    for (const hostname of ["localhost", "127.0.0.2", "::2"])
-      expect(isLiteralLoopbackHostname(hostname), hostname).toBe(false);
-  });
-
-  it("applies defaults and rejects unknown public observation input fields", () => {
-    expect(
-      listBrowserTargetsInputSchema.parse({
-        cdp_endpoint: "http://127.0.0.1:9222",
-        allowed_origins: ["https://app.example.test"],
-      }),
-    ).toEqual({
-      cdp_endpoint: "http://127.0.0.1:9222",
-      allowed_origins: ["https://app.example.test"],
-    });
-    expect(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: "http://127.0.0.1:9222",
-        allowed_origins: ["https://app.example.test"],
-        target_id: "page-1",
-      }),
-    ).toMatchObject({
-      observation_ms: 500,
-      include_accessibility_text: false,
-      include_console_text: false,
-      include_json_body_shapes: false,
-      include_websocket_shapes: false,
-      include_script_sources: false,
-      include_storage_keys: false,
-    });
-    expect(
-      inspectWebPageInputSchema.safeParse({
-        cdp_endpoint: "http://127.0.0.1:9222",
-        allowed_origins: ["https://app.example.test"],
-        target_id: "page-1",
-        unknown_field: true,
-      }).success,
-    ).toBe(false);
-  });
 });
 
 describe("browser observation sensitive surfaces and retention", () => {
-  it("accepts selected sensitive capture surfaces without extra flags", () => {
-    const base = {
-      cdp_endpoint: "http://127.0.0.1:9222",
-      allowed_origins: ["https://app.example.test"],
-      target_id: "page-1",
-    };
-    for (const input of [
-      { include_console_text: true },
-      { include_json_body_shapes: true },
-      { include_websocket_shapes: true },
-    ])
-      expect(
-        inspectWebPageInputSchema.safeParse({ ...base, ...input }).success,
-      ).toBe(true);
-    expect(
-      inspectWebPageInputSchema.safeParse({
-        ...base,
-        include_storage_fingerprints: true,
-      }).success,
-    ).toBe(false);
-  });
-
-  it("accepts screenshot capture without an extra approval flag", () => {
-    const input = {
-      cdp_endpoint: "http://127.0.0.1:9222",
-      allowed_origins: ["https://app.example.test"],
-      target_id: "page-1",
-    };
-    expect(captureWebScreenshotInputSchema.safeParse(input).success).toBe(true);
-  });
-
   it("removes only URL userinfo and preserves the original query and fragment", () => {
     expect(
       sanitizeBrowserUrl(

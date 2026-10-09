@@ -71,6 +71,11 @@ const functionDossier = {
   procedure: {
     address: "0x1000",
     name: "fixture",
+    classification: null,
+    body: {
+      available: false,
+      reason: "The provider did not report complete function body ranges.",
+    },
     signature: null,
     locals: [],
   },
@@ -171,7 +176,16 @@ const makeProvider = (
           trace.calls.push(operation);
           const results: Readonly<Record<string, unknown>> = {
             health: null,
-            list_segments: [{ name: "__TEXT", start: "0x1000", end: "0x2000" }],
+            list_segments: [
+              {
+                name: "__TEXT",
+                start: "0x1000",
+                end: "0x2000",
+                readable: null,
+                writable: null,
+                executable: null,
+              },
+            ],
             list_documents: ["fixture"],
             list_procedures: ["0x1000"],
             list_strings: { "0x1000": "fixture" },

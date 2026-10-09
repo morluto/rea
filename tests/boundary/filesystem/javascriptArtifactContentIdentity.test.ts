@@ -122,7 +122,7 @@ describe("JavaScript artifact ingestion content identities", () => {
     }
   });
 
-  it("retains native filesystem errors for outer IO classification", async () => {
+  it("retains filesystem error context in typed IO failures", async () => {
     const { archive } = await fixture();
     const snapshot = await scanArtifactInventory(archive);
     await rm(archive);
@@ -130,7 +130,7 @@ describe("JavaScript artifact ingestion content identities", () => {
     try {
       await expect(
         readJavaScriptArtifactFiles(reader, snapshot),
-      ).rejects.toMatchObject({ code: "ENOENT" });
+      ).rejects.toMatchObject({ reason: "io", cause: { code: "ENOENT" } });
     } finally {
       await reader.close();
     }

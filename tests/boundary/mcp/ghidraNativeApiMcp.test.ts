@@ -16,10 +16,14 @@ describe("Ghidra MCP native API evidence", () => {
         ).structuredContent,
       );
       expect(inspection.normalized_result).toMatchObject({
+        procedure: { address: "0x401000", name: "fixture_main" },
         boundary: {
           available: true,
+          return_type: { data_type: "int", confidence: "medium" },
           jump_tables: [
             {
+              dispatch_address: "0x401010",
+              data_sources: [{ address: "0x403000" }],
               mappings: [{ case_value: 0, target_address: "0x401020" }],
               default_targets: [
                 { target_address: "0x401030", confidence: "high" },
@@ -27,6 +31,7 @@ describe("Ghidra MCP native API evidence", () => {
             },
           ],
         },
+        unsupported_branches: [],
         residual_unknowns: [],
       });
       expect(

@@ -7,6 +7,7 @@ import { createWebTextArtifact } from "../../domain/webContentArtifact.js";
 import {
   createJavaScriptSemanticGraph,
   createJavaScriptSemanticGraphNode,
+  JavaScriptSemanticEvidenceContextRegistry,
 } from "../../domain/javascript/javascriptSemanticGraph.js";
 import { JAVASCRIPT_SEMANTIC_RELATION_FAMILIES } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 
@@ -70,25 +71,30 @@ const graph = createJavaScriptApplicationGraph({
   coverage: completeCoverage,
   limitations: [],
 });
-const semanticNode = createJavaScriptSemanticGraphNode({
-  kind: "module",
-  identity: {
-    artifact_sha256: applicationSha256,
-    module_path: "renderer.js",
-    source_range: null,
-    role_key: "example-module",
+const evidenceContexts = new JavaScriptSemanticEvidenceContextRegistry();
+const semanticNode = createJavaScriptSemanticGraphNode(
+  {
+    kind: "module",
+    identity: {
+      artifact_sha256: applicationSha256,
+      module_path: "renderer.js",
+      source_range: null,
+      role_key: "example-module",
+    },
+    function_node_id: null,
+    application_node_ids: [asset.node_id],
+    label: "renderer.js",
+    properties: {},
+    evidence: graphEvidence,
   },
-  function_node_id: null,
-  application_node_ids: [asset.node_id],
-  label: "renderer.js",
-  properties: {},
-  evidence: graphEvidence,
-});
+  evidenceContexts,
+);
 const semanticGraph = createJavaScriptSemanticGraph({
   schema: "JavaScriptSemanticRelationGraph",
   root_artifact_sha256: applicationSha256,
   application_graph_id: graph.graph_id,
   root_node_ids: [semanticNode.node_id],
+  evidence_contexts: evidenceContexts.contexts,
   nodes: [semanticNode],
   relations: [],
   fingerprints: [],

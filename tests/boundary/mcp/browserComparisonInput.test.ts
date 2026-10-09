@@ -31,15 +31,27 @@ async function capturePassivePair(
     inspectWebPageInputSchema.parse({
       cdp_endpoint: browser.endpoint,
       target_id: "allowed-page",
+      allowed_origins: [browser.allowedOrigin, "https://private.example.test"],
       observation_ms: 0,
       include_json_body_shapes: true,
       include_websocket_shapes: true,
     }),
   );
   if (!produced.ok) throw produced.error;
+  // Capture order must not turn identical frame identities into a DOM change.
+  produced.value.frames = [null, browser.allowedOrigin, ""].map(
+    (origin, index) => ({
+      frame_id: String(index),
+      parent_frame_id: null,
+      url: "about:blank",
+      origin,
+    }),
+  );
+  const reordered = structuredClone(produced.value);
+  reordered.frames.reverse();
   return {
     before: { inspection: produced.value },
-    after: { inspection: produced.value },
+    after: { inspection: reordered },
   };
 }
 
@@ -162,6 +174,9 @@ describe("browser comparison input boundary", () => {
       expect(parsedPassive).toEqual({
         before: { ...passive.before, webmcp: null },
         after: { ...passive.after, webmcp: null },
+      });
+      expect(compareBrowserCaptures(parsedPassive)).toMatchObject({
+        dimensions: { dom_structure: { status: "unchanged" } },
       });
       expect(compareBrowserCaptures(parsedPassive).overall_status).toBe(
         "unknown",

@@ -26,7 +26,8 @@ import {
 import { WebScriptExportError } from "../domain/webScriptExportError.js";
 import type { ExecutionOptions } from "./AnalysisProvider.js";
 import { WEB_SCRIPT_EXPORT_PROVIDER as PROVIDER } from "./InvestigationProviders.js";
-import { NonRegularFileReadError, readRegularFile } from "./RegularFileRead.js";
+import { readRegularFile } from "./RegularFileRead.js";
+import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
 
 const OPERATION = "export_web_scripts";
 

@@ -29,7 +29,7 @@ const unobservedAbsenceReason = (
   return undefined;
 };
 
-/** Classify effects only when a snapshot establishes the missing path's absence. */
+/** Classify effects only from observed path absence, metadata, and content hashes. */
 export const classifyFilesystemEffects = (
   before: ProcessFilesystemSnapshot,
   after: ProcessFilesystemSnapshot,
@@ -84,12 +84,31 @@ export const classifyFilesystemEffects = (
           before: beforeFile,
           after: null,
         } as const;
+      const metadataChanged =
+        beforeFile.type !== afterFile.type ||
+        beforeFile.mode !== afterFile.mode ||
+        beforeFile.size !== afterFile.size ||
+        beforeFile.symlink_target !== afterFile.symlink_target;
+      if (
+        !metadataChanged &&
+        beforeFile.type === "file" &&
+        afterFile.type === "file" &&
+        (beforeFile.sha256 === null || afterFile.sha256 === null)
+      )
+        return {
+          path,
+          status: "unknown",
+          before: beforeFile,
+          after: afterFile,
+          reason:
+            "A file content hash is unavailable in at least one snapshot; matching metadata does not establish unchanged contents.",
+        } as const;
       return {
         path,
         status:
-          JSON.stringify(beforeFile) === JSON.stringify(afterFile)
-            ? "unchanged"
-            : "modified",
+          metadataChanged || beforeFile.sha256 !== afterFile.sha256
+            ? "modified"
+            : "unchanged",
         before: beforeFile,
         after: afterFile,
       } as const;

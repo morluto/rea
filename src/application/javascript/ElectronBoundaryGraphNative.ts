@@ -7,6 +7,7 @@ import {
   type JavaScriptArtifactGraphCoverage,
 } from "./JavaScriptArtifactGraphContext.js";
 import { astObservationEvidence } from "./JavaScriptArtifactGraphEvidence.js";
+import { compositeKey } from "../../domain/unicodeCodePointOrder.js";
 import {
   addElectronInferenceEdge,
   electronFindingSourceNode,
@@ -50,7 +51,9 @@ const addNativeBinding = (input: NativeBindingInput): void => {
     identity: electronObservationIdentity(
       context,
       "javascript-requested-native-export",
-      `${file.path}:${value.specifier}:${value.binding_kind}:${value.members.join("\0")}:${electronRangeKey(value.location)}`,
+      // Members are a variable-length source-derived list: compositeKey keeps
+      // ["a\0b"] distinct from ["a", "b"] inside the digested identity.
+      `${file.path}:${value.specifier}:${value.binding_kind}:${compositeKey(value.members)}:${electronRangeKey(value.location)}`,
     ),
     observations: [
       {

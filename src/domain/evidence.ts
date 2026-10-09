@@ -140,6 +140,18 @@ export const evidenceSchema = evidenceBaseSchema.superRefine(
   validateAnalysisProfileProvider,
 );
 
+const authenticatedEvidenceSchema = evidenceSchema.superRefine(
+  (evidence, context) => {
+    const { evidence_id: evidenceId, ...withoutId } = evidence;
+    if (computeEvidenceId(withoutId) !== evidenceId)
+      context.addIssue({
+        code: "custom",
+        path: ["evidence_id"],
+        message: "Evidence semantic identifier does not match its record",
+      });
+  },
+);
+
 /** Complete observation whose normalized payload retains its operation-specific type. */
 export type Evidence<Result extends JsonValue = JsonValue> = z.infer<
   typeof evidenceSchema
@@ -224,13 +236,7 @@ export const parseEvidence = (input: unknown): Evidence => {
       ? immutableEvidenceSnapshots.get(input)
       : undefined;
   if (immutable !== undefined) return immutable;
-  const evidence = evidenceSchema.parse(input);
-  const { evidence_id: evidenceId, ...withoutId } = evidence;
-  if (computeEvidenceId(withoutId) !== evidenceId)
-    throw new TypeError(
-      "Evidence semantic identifier does not match its record",
-    );
-  return evidence;
+  return authenticatedEvidenceSchema.parse(input);
 };
 
 /** Authenticate and seal a ledger-owned snapshot; external mutable values are copied first. */

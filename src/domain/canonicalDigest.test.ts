@@ -25,6 +25,7 @@ describe("incremental canonical digest", () => {
     const sparse: unknown[] = [undefined, Symbol("omit"), () => undefined];
     sparse.length = 6;
     const fixtures: unknown[] = [
+      { "\uE000": "BMP", "\u{10000}": "supplementary" },
       {
         "€": "\ud800",
         "😀": "\udc00",
@@ -55,17 +56,14 @@ describe("incremental canonical digest", () => {
       expect(() => digestCanonicalValue(value)).toThrow();
   });
 
-  it("hashes repeated large leaves with the same byte sequence", () => {
-    const value = {
-      payload: Array.from({ length: 64 }, () => "x".repeat(16_384)),
-    };
-    expect(digestCanonicalValue(value)).toBe(legacyDigest(value));
-  });
-
-  it("keeps digests identical when buffered parts cross flush boundaries", () => {
+  it("preserves canonical bytes across large keys, repeated leaves and buffer flushes", () => {
     const manyKeys: Record<string, unknown> = {};
     for (let i = 0; i < 2000; i += 1) manyKeys[`k${i}`] = i;
-    const value = { keys: manyKeys, tail: ["€", "😀", "x".repeat(9000)] };
+    const value = {
+      keys: manyKeys,
+      payload: Array.from({ length: 64 }, () => "x".repeat(16_384)),
+      tail: ["€", "😀", "x".repeat(9000)],
+    };
     expect(digestCanonicalValue(value)).toBe(legacyDigest(value));
   });
 

@@ -11,6 +11,16 @@ import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import { jsonValueSchema } from "./jsonValue.js";
 
 import { compareFunctions } from "./functionComparison.js";
+const procedure = (address: string, name: string) => ({
+  address,
+  name,
+  classification: null,
+  body: {
+    available: false as const,
+    reason:
+      "Hopper's public Python API does not expose complete function body ranges",
+  },
+});
 const dossier = (
   text: string,
   base: "0x1000" | "0x2000",
@@ -18,8 +28,7 @@ const dossier = (
 ) =>
   functionDossierSchema.parse({
     procedure: {
-      address: base,
-      name: "main",
+      ...procedure(base, "main"),
       signature: "int main(void)",
       locals: [],
     },
@@ -32,6 +41,8 @@ const dossier = (
     outgoing_references: [],
     referenced_strings: [],
     referenced_names: [],
+    native_api: null,
+    native_value_flow: null,
     basic_blocks: [
       {
         start: base,
@@ -39,6 +50,7 @@ const dossier = (
         successors,
       },
     ],
+    limitations: [],
   });
 
 const dossierWithReference = (
@@ -52,8 +64,8 @@ const dossierWithReference = (
       {
         source_address: base,
         target_address: target,
-        source_procedure: { address: base, name: "main" },
-        target_procedure: { address: target, name: "helper" },
+        source_procedure: procedure(base, "main"),
+        target_procedure: procedure(target, "helper"),
         kind:
           kind === "unavailable"
             ? { available: false, reason: "provider has no kind authority" }
@@ -111,7 +123,7 @@ describe("function comparison normalized identity", () => {
         functionDossierSchema.parse({
           ...dossier("return 0;", base),
           procedure: {
-            address: base,
+            ...procedure(base, name),
             name,
             signature: "int helper(void)",
             locals: [],
@@ -131,14 +143,14 @@ describe("function comparison normalized identity", () => {
     },
   );
 
-  it.each(["sub_deadbeef", "fcn.00401000"])(
+  it.each(["sub_deadbeef", "fcn.00401000", "FUN_deadBEEF"])(
     "keeps %s as an address-derived name",
     (name) => {
       const generated = (base: "0x1000" | "0x2000") =>
         functionDossierSchema.parse({
           ...dossier("return 0;", base),
           procedure: {
-            address: base,
+            ...procedure(base, name),
             name,
             signature: "int helper(void)",
             locals: [],
@@ -157,11 +169,13 @@ describe("function comparison normalized identity", () => {
   it.each([
     { name: "sub_deallocate", status: "unchanged" },
     { name: "sub_deadbeef", status: "unknown" },
+    { name: "FUN_00401000", status: "unknown" },
+    { name: "FUN_initialize", status: "unchanged" },
   ])("preserves the calls dimension for callee $name", ({ name, status }) => {
     const calling = (base: "0x1000" | "0x2000") =>
       functionDossierSchema.parse({
         ...dossier("return helper();", base),
-        callees: [{ address: base === "0x1000" ? "0x1010" : "0x2010", name }],
+        callees: [procedure(base === "0x1000" ? "0x1010" : "0x2010", name)],
       });
     const result = compareFunctions(
       observe("6", calling("0x1000")),
@@ -174,11 +188,9 @@ describe("function comparison normalized identity", () => {
 });
 
 describe("function collection collation ties", () => {
-  const composed = { address: "0x2000", name: "caf\u00e9" };
-  const decomposed = { address: "0x3000", name: "cafe\u0301" };
-  const calling = (
-    callees: readonly { readonly address: string; readonly name: string }[],
-  ) =>
+  const composed = procedure("0x2000", "caf\u00e9");
+  const decomposed = procedure("0x3000", "cafe\u0301");
+  const calling = (callees: readonly ReturnType<typeof procedure>[]) =>
     functionDossierSchema.parse({
       ...dossier("return 0;", "0x1000"),
       callees,
@@ -221,10 +233,7 @@ describe("function collection collation ties", () => {
 
   it("uses canonical code-point ordering for collection digests", () => {
     const callees = ["zeta", "Alpha", "alpha", "_helper", "beta"].map(
-      (name, index) => ({
-        address: `0x${(0x2000 + index).toString(16)}`,
-        name,
-      }),
+      (name, index) => procedure(`0x${(0x2000 + index).toString(16)}`, name),
     );
     const canonicalProjection = callees
       .map(({ name }) => ({ direction: "out", name }))
@@ -247,8 +256,8 @@ describe("function collection collation ties", () => {
 });
 
 describe("function comparison ordering controls", () => {
-  const composed = { address: "0x2000", name: "caf\u00e9" };
-  const decomposed = { address: "0x3000", name: "cafe\u0301" };
+  const composed = procedure("0x2000", "caf\u00e9");
+  const decomposed = procedure("0x3000", "cafe\u0301");
 
   it("preserves duplicate Unicode collections and nullable endpoints", () => {
     const controlled = (base: "0x1000" | "0x2000", reverse: boolean) => {
@@ -258,7 +267,7 @@ describe("function comparison ordering controls", () => {
           source_address: base,
           target_address: endpoint,
           source_procedure: null,
-          target_procedure: { address: endpoint, name: "caf\u00e9" },
+          target_procedure: procedure(endpoint, "caf\u00e9"),
           kind: {
             available: true,
             provenance: "provider-reference-manager",
@@ -281,7 +290,7 @@ describe("function comparison ordering controls", () => {
         {
           source_address: base,
           target_address: endpoint,
-          source_procedure: { address: base, name: "dispatch" },
+          source_procedure: procedure(base, "dispatch"),
           target_procedure: null,
           kind: {
             available: true,
@@ -337,7 +346,7 @@ describe("function comparison ordering controls", () => {
       );
     const left = controlled("0x1000", false);
     const right = controlled("0x2000", true);
-    const { native_api: _nativeApi, ...rightWithoutNativeApi } = right;
+    const rightWithoutNativeApi = { ...right, native_api: null };
 
     const comparison = compareFunctions(
       makeEvidence("d", left),
@@ -522,7 +531,7 @@ describe("function comparison", () => {
       functionDossierSchema.parse({
         ...dossier("return 0;", base),
         procedure: {
-          address: base,
+          ...procedure(base, "sub_1000"),
           name: "sub_1000",
           signature: "int helper(void)",
           locals: [],

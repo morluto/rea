@@ -52,6 +52,8 @@ const resolveCallables = (
   node: t.Node,
   context: CallResolutionContext,
 ): LocalCallableResolution => {
+  // `unwrapJavaScriptExpression` strips all transparent layers iteratively,
+  // so a single recursion step suffices (no per-layer stack growth).
   const unwrapped = unwrapJavaScriptExpression(node).node;
   if (unwrapped !== node) return resolveCallables(unwrapped, context);
   const direct = semanticCallableIdForNode(node);

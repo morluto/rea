@@ -71,7 +71,7 @@ export const readJavaScriptArtifactFiles = async (
         "Root artifact node is missing",
       );
     await verifyEntryBytes(
-      reader.openContainer(signal),
+      await reader.openContainer(signal),
       { path: ".", sha256: root.sha256, bytes: root.size },
       signal,
     );
@@ -114,16 +114,16 @@ const visitReader = async (
     readonly prefix: string;
     readonly containerSha256: string;
     readonly iterator: AsyncIterator<ArtifactEntry>;
-    readonly owned: boolean;
   }> = [
     {
       reader,
       prefix,
       containerSha256,
       iterator: reader.entries(context.signal)[Symbol.asyncIterator](),
-      owned: false,
     },
   ];
+  const ownedReaders: ArtifactReader[] = [];
+  let failure: { readonly cause: unknown } | undefined;
   try {
     while (stack.length > 0) {
       const frame = stack.at(-1);
@@ -131,7 +131,6 @@ const visitReader = async (
       const next = await frame.iterator.next();
       if (next.done) {
         stack.pop();
-        if (frame.owned) await frame.reader.close();
         continue;
       }
       const entry = next.value;
@@ -175,13 +174,14 @@ const visitReader = async (
         );
         context.containers.push(inventory);
         const nested = new AsarArtifactReader(entry.adapterKey);
+        ownedReaders.push(nested);
         stack.push({
           reader: nested,
           prefix: path,
           containerSha256: inventory.sha256,
           iterator: nested.entries(context.signal)[Symbol.asyncIterator](),
-          owned: true,
         });
+        await nested.prepareContainer(inventory.sha256, context.signal);
         continue;
       }
       const expected = context.expected.get(path);
@@ -202,16 +202,33 @@ const visitReader = async (
         text,
       });
     }
+  } catch (cause: unknown) {
+    failure = { cause };
   } finally {
-    await Promise.allSettled(
-      stack
-        .filter(({ owned }) => owned)
-        .map(async ({ reader, iterator }) => {
-          await iterator.return?.();
-          await reader.close();
-        }),
-    );
+    for (const { iterator } of stack) {
+      try {
+        await iterator.return?.();
+      } catch (cause: unknown) {
+        failure ??= { cause };
+      }
+    }
+    for (const owned of ownedReaders.reverse()) {
+      try {
+        await owned.close();
+      } catch (cause: unknown) {
+        failure = {
+          cause: ArtifactReaderFailure.withCleanup(
+            failure?.cause ?? cause,
+            ArtifactReaderFailure.cleanupObservation(
+              cause,
+              `nested ASAR reader for ${prefix}`,
+            ),
+          ),
+        };
+      }
+    }
   }
+  if (failure !== undefined) throw failure.cause;
 };
 
 const readText = async (

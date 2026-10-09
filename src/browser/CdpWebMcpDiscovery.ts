@@ -5,7 +5,9 @@ import type {
   DiscoverWebMcpToolsInput,
   WebMcpDiscovery,
 } from "../domain/webMcpDiscovery.js";
-import { inferJsonShape } from "../domain/jsonShape.js";
+import { jsonValueSchema } from "../domain/jsonValue.js";
+import { digestCanonicalValue } from "../domain/canonicalDigest.js";
+import { compositeKey } from "../domain/unicodeCodePointOrder.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import type { CdpConnection, CdpEvent } from "./CdpConnection.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
@@ -412,6 +414,10 @@ const normalizeTool = (
   }
   const description = cdpStringValue(value.description) ?? "";
   const annotations = recordValue(value.annotations);
+  const declaration = jsonValueSchema.safeParse(value.inputSchema);
+  if (!declaration.success)
+    completeness.exclude("webmcp_tools", "invalid_protocol_value");
+  const schema = declaration.success ? declaration.data : null;
   return {
     tool_key: toolKey(frame.url, frameId, name),
     name,
@@ -423,7 +429,10 @@ const normalizeTool = (
       numberValue(value.backendNodeId) === undefined
         ? "imperative"
         : "declarative",
-    input_schema_shape: schemaShape(value.inputSchema),
+    input_schema: schema,
+    input_schema_sha256: declaration.success
+      ? digestCanonicalValue(schema)
+      : null,
     annotations: {
       read_only: booleanOrNull(annotations?.readOnly),
       untrusted_content: booleanOrNull(annotations?.untrustedContent),
@@ -435,15 +444,6 @@ const normalizeTool = (
     ),
     trust: "page-declared-untrusted",
   };
-};
-
-const schemaShape = (value: unknown) => {
-  if (recordValue(value) === undefined) return null;
-  const encoded = JSON.stringify(value);
-  const shape = inferJsonShape(encoded);
-  if (shape === null)
-    throw new BrowserObservationError("inspect_web_page", "protocol_error");
-  return shape;
 };
 
 const registrationSource = (
@@ -502,8 +502,11 @@ const buildWebMcpResult = (options: WebMcpResultOptions): WebMcpDiscovery => {
 
 const toolKey = (frameUrl: string, frameId: string, name: string): string =>
   // Registrations without a known admitted frame are excluded above, so the
-  // frame ID here always distinguishes owners and keys cannot collapse.
-  `webmcp_${createHash("sha256").update(`${frameUrl}\0${frameId}\0${name}`).digest("hex")}`;
+  // frame ID here always distinguishes owners. Composite tuple keeps a NUL
+  // inside one field from collapsing two registrations before hashing.
+  `webmcp_${createHash("sha256")
+    .update(compositeKey([frameUrl, frameId, name]))
+    .digest("hex")}`;
 
 const booleanOrNull = (value: unknown): boolean | null =>
   typeof value === "boolean" ? value : null;

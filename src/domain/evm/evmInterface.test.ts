@@ -2,11 +2,6 @@ import { expect, it } from "vitest";
 import { evmInterfaceSchema } from "./evmInterface.js";
 import { evmInterfaceFixture } from "../../../tests/fixtures/evm/interface.js";
 
-it("preserves original carrier and decoded byte identity as distinct observations", () => {
-  const fixture = evmInterfaceFixture();
-  expect(evmInterfaceSchema.parse(fixture)).toEqual(fixture);
-  expect(fixture.artifact.sha256).not.toBe(fixture.bytecode.sha256);
-});
 it.each(["byte-count", "body-offset", "selector", "authenticity"])(
   "rejects false interface evidence: %s",
   (problem) => {

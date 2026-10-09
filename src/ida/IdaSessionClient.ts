@@ -165,8 +165,10 @@ export class IdaSessionClient implements AnalysisClient {
     const document = parameters.document;
     if (
       document !== undefined &&
-      document !== this.target.path &&
-      document !== this.target.sourcePath
+      (typeof document !== "string" ||
+        (!sameIdaHostPath(document, this.target.path) &&
+          (this.target.sourcePath === undefined ||
+            !sameIdaHostPath(document, this.target.sourcePath))))
     )
       return err(
         new AnalysisInputError(operation, undefined, [

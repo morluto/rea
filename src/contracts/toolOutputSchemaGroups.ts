@@ -165,8 +165,8 @@ export const officialOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
     z.object({
       procedure: procedureIdentitySchema,
       direction: z.enum(["incoming", "outgoing"]),
-      reference_kinds_available: z.boolean().optional(),
-      unresolved_calls: z.array(unresolvedCallSchema).default([]),
+      reference_kinds_available: z.boolean(),
+      unresolved_calls: z.array(unresolvedCallSchema),
       references: z.array(referenceEdgeSchema),
     }),
   ),

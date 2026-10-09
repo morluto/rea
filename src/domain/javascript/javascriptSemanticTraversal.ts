@@ -50,7 +50,12 @@ interface TraversalFrame {
   nextIndex: number;
 }
 
-const childNodes = (node: t.Node): t.Node[] => {
+/**
+ * Child Babel nodes in `VISITOR_KEYS` order. Single owner for AST child
+ * expansion; bespoke `Object.values` / duplicated `childNodes` walkers must
+ * not be reintroduced (they diverge on loc/comment fields and ordering).
+ */
+export const childNodes = (node: t.Node): t.Node[] => {
   const keys = t.VISITOR_KEYS[node.type];
   if (keys === undefined) return [];
   const children: t.Node[] = [];

@@ -202,6 +202,36 @@ it.each([
       exports: { import: "./exported.mjs", require: "./actual.cjs" },
     },
   },
+  {
+    name: "import selects module-sync before default",
+    kind: "import",
+    metadata: {
+      exports: { "module-sync": "./sync.mjs", default: "./actual.cjs" },
+    },
+  },
+  {
+    name: "require selects nested module-sync before default",
+    kind: "require",
+    metadata: {
+      exports: {
+        ".": { node: { "module-sync": "./sync.mjs", default: "./actual.cjs" } },
+      },
+    },
+  },
+  {
+    name: "an earlier import condition precedes module-sync",
+    kind: "import",
+    metadata: {
+      exports: { import: "./exported.mjs", "module-sync": "./sync.mjs" },
+    },
+  },
+  {
+    name: "an earlier default condition precedes module-sync",
+    kind: "require",
+    metadata: {
+      exports: { default: "./actual.cjs", "module-sync": "./sync.mjs" },
+    },
+  },
 ] as const)(
   "matches the native Node loader when $name",
   async ({ kind, metadata }) => {
@@ -210,7 +240,7 @@ it.each([
     const source =
       kind === "import"
         ? `import value from "fixture"; console.log(JSON.stringify({value, resolved: import.meta.resolve("fixture")}));`
-        : `const value = require("fixture"); console.log(JSON.stringify({value, resolved: require.resolve("fixture")}));`;
+        : `const value = require("fixture"); console.log(JSON.stringify({value: typeof value === "string" ? value : value.default, resolved: require.resolve("fixture")}));`;
     const files = {
       "package.json": JSON.stringify({
         name: "app",
@@ -226,6 +256,7 @@ it.each([
       "node_modules/fixture/index.js": "module.exports = 'index.js';",
       "node_modules/fixture/bundler.mjs": "export default 'bundler.mjs';",
       "node_modules/fixture/exported.mjs": "export default 'exported.mjs';",
+      "node_modules/fixture/sync.mjs": "export default 'sync.mjs';",
     };
     await Promise.all(
       Object.entries(files).map(async ([path, text]) => {

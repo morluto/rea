@@ -55,7 +55,7 @@ export default defineConfig({
           { text: "Ghidra on Windows", link: "/windows-ghidra-p0" },
           { text: "Ghidra DOS analysis", link: "/ghidra-dos" },
           { text: "Ghidra NativeAOT", link: "/ghidra-nativeaot" },
-          { text: "Provider evaluation", link: "/provider-evaluation" },
+          { text: "Ghidra semantics", link: "/ghidra-provider" },
         ],
       },
       {
@@ -66,7 +66,6 @@ export default defineConfig({
           { text: "Tool design", link: "/tool-design" },
           { text: "Testing", link: "/testing" },
           { text: "Releasing", link: "/releasing" },
-          { text: "Architecture decisions", link: "/adr/README" },
         ],
       },
     ],

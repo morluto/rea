@@ -43,6 +43,24 @@ describe("DOS COM admission", () => {
       }),
     ).toMatchObject({ ok: false, error: { _tag: "BinaryTargetError" } });
   });
+  it.each([1, 0xff00])("admits the actual file extent %i", async (length) => {
+    const directory = await createTestTempDirectory("rea-com-target-");
+    const path = join(directory, "fixture.com");
+    const bytes = Buffer.alloc(length, 0xc3);
+    await writeFile(path, bytes);
+    const target = await parseBinaryTarget(path, {
+      cwd: directory,
+      hostArchitecture: "x64",
+      formatHint: "dos-com",
+    });
+    if (!target.ok) throw target.error;
+    expect(target.value).toMatchObject({
+      format: "dos-com",
+      architecture: "x86",
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    });
+    expect(await readFile(path)).toEqual(bytes);
+  });
   it("rejects contradictory target kind", async () => {
     const directory = await createTestTempDirectory("rea-com-target-");
     const path = join(directory, "fixture.com");

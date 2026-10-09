@@ -330,6 +330,8 @@ jobs:
       - run: npm run verify:keyed-archive
       - run: npm run verify:asset-catalog
       - run: npm run verify:macos-bundle
+      - name: Legacy simulator platform verification
+        run: npm run verify:legacy-simulator
       - name: Native installer and compiled NIB hierarchy regressions
         run: npm run test:focused -- tests/boundary/filesystem/installScript.test.ts tests/boundary/filesystem/nibNativeHierarchy.test.ts tests/boundary/filesystem/interfaceBuilderBundle.test.ts
       - name: Real binary metadata and Interface Builder integration
@@ -423,7 +425,6 @@ jobs:
           tests/acceptance/webModuleCli.test.ts
           tests/acceptance/webSourceLocationCli.test.ts
           tests/boundary/cli/referenceSourceImportStatus.test.ts
-          src/cliReferenceSourceImportStatus.test.ts
           tests/boundary/filesystem/asarInventoryFreshness.test.ts
           tests/composition/javascript-applications/javascriptArtifactReconstruction.test.ts
           tests/conformance/providers/ghidra/windowsCapabilities.test.ts
@@ -459,12 +460,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22.19.0
-      - name: Verify native directory identity on Node 22
+      - name: Verify native path boundaries on Node 22
         run: >-
           npx vitest run --coverage.enabled=false
           tests/boundary/filesystem/directoryArtifactReaderOpen.test.ts
           tests/boundary/filesystem/javascriptPackagePrecedence.test.ts
           tests/boundary/filesystem/javascriptArtifactContentIdentity.test.ts
+          tests/boundary/process/sourceMapUncHosts.test.ts
       - uses: actions/upload-artifact@v4
         if: always()
         with:

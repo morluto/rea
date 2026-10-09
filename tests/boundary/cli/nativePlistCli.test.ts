@@ -84,6 +84,11 @@ describe.skipIf(process.platform !== "darwin")(
             "<key>Blob</key><data>AAEC</data>",
             "<key>Built</key><date>2020-01-01T00:00:00Z</date>",
             "<key>Ratio</key><real>nan</real>",
+            "<key>Nested</key><array><dict>",
+            "<key>Ratio</key><real>0.5</real>",
+            "<key>Unbounded</key><real>-infinity</real>",
+            "<key></key><string>empty key</string>",
+            "</dict></array>",
             "</dict></plist>",
           ].join(""),
         );
@@ -113,6 +118,13 @@ describe.skipIf(process.platform !== "darwin")(
                 iso8601: "2020-01-01T00:00:00.000Z",
               },
               Ratio: { $plist_type: "real", value: null },
+              Nested: [
+                {
+                  Ratio: 0.5,
+                  Unbounded: { $plist_type: "real", value: null },
+                  "": "empty key",
+                },
+              ],
             },
             bundle: { identifier: "com.example.types", executable: "App" },
             provenance: [
@@ -122,7 +134,7 @@ describe.skipIf(process.platform !== "darwin")(
             ],
             limitations: [
               expect.stringContaining("XML conversion"),
-              expect.stringContaining("1 non-finite real"),
+              expect.stringContaining("2 non-finite real"),
             ],
           },
         });

@@ -100,6 +100,29 @@ describe("OMP integration maintenance", () => {
       existingMaintenanceScope(home, entryPoint, process.env),
     ).resolves.toMatchObject({ clients: ["omp"] });
   });
+
+  it("preserves Grok Build disabled_mcp_servers during maintenance planning", async () => {
+    // Strict identity: a user-disabled integration must never be selected
+    // for maintenance, even with a healthy owned entry underneath.
+    const registration = `[mcp_servers.rea]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(entryPoint)}, "mcp"]\nstartup_timeout_sec = 30\n`;
+    const configPath = await writeClient(
+      "grok_build",
+      `disabled_mcp_servers = ["rea", "other"]\n${registration}`,
+    );
+    await expect(
+      existingMaintenanceScope(home, entryPoint, process.env),
+    ).resolves.toMatchObject({ clients: [] });
+    expect(await readFile(configPath, "utf8")).toContain(
+      'disabled_mcp_servers = ["rea", "other"]',
+    );
+    await writeFile(
+      configPath,
+      `disabled_mcp_servers = ["other"]\n${registration}`,
+    );
+    await expect(
+      existingMaintenanceScope(home, entryPoint, process.env),
+    ).resolves.toMatchObject({ clients: ["grok_build"] });
+  });
 });
 
 describe("existing REA integration maintenance", () => {

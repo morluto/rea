@@ -58,6 +58,12 @@ async function verifyNavigation(
     procedure: address,
   });
   const info = await call("procedure_info", { procedure: address });
+  assert.equal(info.classification, null);
+  assert.equal(info.body.available, false);
+  assert.match(
+    info.body.reason,
+    /public Python API does not expose complete function body ranges/u,
+  );
   assert.ok(info.locals.length > 0, "fixture omitted real stack locals");
   for (const local of info.locals) {
     assert.equal(typeof local.name, "string");
@@ -68,19 +74,46 @@ async function verifyNavigation(
   }
   const dossier = await call("analyze_function", { procedure: address });
   assert.deepEqual(dossier.procedure.locals, info.locals);
+  assert.equal(dossier.procedure.classification, null);
+  assert.equal(dossier.procedure.body.available, false);
+  assert.match(
+    dossier.procedure.body.reason,
+    /public Python API does not expose complete function body ranges/u,
+  );
+  assert.equal(dossier.native_api, null);
+  assert.equal(dossier.native_value_flow, null);
+  assert.ok(
+    Array.isArray(dossier.limitations) && dossier.limitations.length > 0,
+    "function dossier omitted Hopper's unsupported-facet limitations",
+  );
   const coordinates = instructions.instructions.map(
     (line) => /^0x[0-9a-f]+/u.exec(line)?.[0],
   );
   assert.equal(coordinates[0], address);
   assert.ok(coordinates[1], "fixture omitted a second instruction");
-  const interior = `0x${(BigInt(address) + 1n).toString(16)}`;
-  assert.equal(await call("goto_address", { address: interior }), address);
-  assert.equal(await call("current_address"), address);
+  // The host toolchain controls the prologue encoding: without endbr64-style
+  // padding the first instruction is one byte, so address + 1 is itself an
+  // instruction boundary. Probe from inside the first multi-byte instruction
+  // so the interior coordinate is never an analyzed-object boundary.
+  let anchor = 0;
+  while (anchor + 1 < coordinates.length) {
+    if (BigInt(coordinates[anchor + 1]) - BigInt(coordinates[anchor]) > 1n)
+      break;
+    anchor += 1;
+  }
+  assert.ok(
+    anchor + 1 < coordinates.length,
+    "fixture omitted a multi-byte instruction for interior navigation",
+  );
+  const containing = coordinates[anchor];
+  const interior = `0x${(BigInt(containing) + 1n).toString(16)}`;
+  assert.equal(await call("goto_address", { address: interior }), containing);
+  assert.equal(await call("current_address"), containing);
   assert.equal(
     await call("next_address", { address: interior }),
-    coordinates[1],
+    coordinates[anchor + 1],
   );
-  assert.equal(await call("prev_address", { address: interior }), address);
+  assert.equal(await call("prev_address", { address: interior }), containing);
   for (const unmapped of ["0x0", "0xfffffffffffffffe"]) {
     for (const operation of ["goto_address", "next_address", "prev_address"])
       await invalid(
@@ -88,7 +121,7 @@ async function verifyNavigation(
         { address: unmapped },
         /Address is outside every segment/u,
       );
-    assert.equal(await call("current_address"), address);
+    assert.equal(await call("current_address"), containing);
     for (const operation of [
       "set_address_name",
       "set_bookmark",

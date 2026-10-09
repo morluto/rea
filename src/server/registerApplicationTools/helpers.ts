@@ -31,12 +31,14 @@ const unknownRegistration = (
     | "javascript-export-shape"
     | "source-to-bundle-comparison",
 ) => ({
-  question:
+  // Scope unknown identity to the comparison while keeping exact replays stable.
+  question: `${
     kind === "application-version-comparison"
       ? "Which application entities remain unmatched or ambiguous across these versions?"
       : kind === "source-to-bundle-comparison"
         ? "Which historical source files remain unmatched or ambiguously mapped to the shipped bundle?"
-        : "Which selected JavaScript export return shapes remain dynamic, incomplete, or ambiguously paired?",
+        : "Which selected JavaScript export return shapes remain dynamic, incomplete, or ambiguously paired?"
+  } (comparison ${evidence.evidence_id})`,
   severity: "medium" as const,
   domain: kind,
   supporting_evidence_ids: [evidence.evidence_id],

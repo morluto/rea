@@ -182,8 +182,9 @@ export const sorted = (values: readonly unknown[]): readonly unknown[] =>
     .sort((left, right) => compareUnicodeCodePoints(left.json, right.json))
     .map(({ value }) => value);
 
+/** Recognize address-derived procedure names without excluding named FUN_ symbols. */
 export const isAutoName = (name: string): boolean =>
-  /^(?:sub_[0-9a-f]+|fcn\.[0-9a-f]+)$/iu.test(name);
+  /^(?:sub_[0-9a-f]+|fcn\.[0-9a-f]+|FUN_[0-9a-f]+)$/iu.test(name);
 
 const parseAddress = (value: string): bigint | null =>
   /^0x[0-9a-f]+$/iu.test(value) ? BigInt(value) : null;

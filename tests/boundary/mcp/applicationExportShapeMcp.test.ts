@@ -12,6 +12,7 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { javaScriptExportShapeComparisonResultSchema } from "../../../src/domain/javascript/javascriptExportShapeComparisonSchemas.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { APPLICATION_TOOL_CONTRACTS } from "../../../src/contracts/applicationToolContracts.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
 import { JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE } from "../../../src/contracts/javascript/javascriptExportShapeComparisonExample.js";
 
 it("executes the advertised export presence example with matching analyzed Evidence", async () => {
@@ -88,7 +89,10 @@ it("traces example semantic modules with their parsed artifact digests", async (
     const module = analysis.semantic_graph.nodes.find(
       ({ kind }) => kind === "module",
     );
-    if (module === undefined || !module.evidence.artifact.available)
+    const evidenceContext = analysis.semantic_graph.evidence_contexts.find(
+      ({ context_id }) => context_id === module?.evidence.context_id,
+    );
+    if (module === undefined || !evidenceContext?.artifact.available)
       throw new Error("Example must retain an artifact-backed semantic module");
     const response = await client.callTool({
       name: "trace_javascript_semantics",
@@ -103,11 +107,19 @@ it("traces example semantic modules with their parsed artifact digests", async (
     expect(response.isError).not.toBe(true);
     expect(response.structuredContent).toMatchObject({
       normalized_result: {
+        evidence_contexts: expect.arrayContaining([
+          expect.objectContaining({
+            context_id: module.evidence.context_id,
+            artifact: expect.objectContaining({
+              sha256: evidenceContext.artifact.sha256,
+            }),
+          }),
+        ]),
         nodes: expect.arrayContaining([
           expect.objectContaining({
             node_id: module.node_id,
             identity: expect.objectContaining({
-              artifact_sha256: module.evidence.artifact.sha256,
+              artifact_sha256: evidenceContext.artifact.sha256,
             }),
           }),
         ]),
@@ -242,7 +254,161 @@ describe("application workflow MCP parity", () => {
   });
 });
 
+describe("repeated partial export comparisons", () => {
+  it.each(["inline", "retained"] as const)(
+    "retains distinct partial comparisons and idempotent concurrent repeats with %s Evidence",
+    async (mode) => {
+      const pairs = await Promise.all(
+        Array.from({ length: 4 }, async (_, index) => {
+          const source = `export default function make() {
+            const result = { kind: "record-${index}", count: 1 };
+            delete result.count;
+            return result;
+          }
+          export { make as named };`;
+          const [left, right] = await Promise.all([
+            analyzeSourceEvidence(source),
+            analyzeSourceEvidence(source),
+          ]);
+          return { left, right };
+        }),
+      );
+      const { client, session, close } = await createApplicationMcpHarness();
+      onTestFinished(close);
+      if (mode === "retained")
+        for (const { left, right } of pairs)
+          for (const evidence of [left, right])
+            expect(session.recordEvidence(evidence).ok).toBe(true);
+      const compare = async (
+        pair: (typeof pairs)[number],
+        exportName = "default",
+      ) => {
+        const response = await client.callTool({
+          name: "compare_javascript_export_shapes",
+          arguments: {
+            left:
+              mode === "inline"
+                ? pair.left
+                : {
+                    kind: "retained-evidence",
+                    evidence_id: pair.left.evidence_id,
+                  },
+            right:
+              mode === "inline"
+                ? pair.right
+                : {
+                    kind: "retained-evidence",
+                    evidence_id: pair.right.evidence_id,
+                  },
+            left_module_path: "parser.mjs",
+            left_export_name: exportName,
+            right_module_path: "parser.mjs",
+            right_export_name: exportName,
+          },
+        });
+        expect(response.isError, JSON.stringify(response)).not.toBe(true);
+        const evidence = parseEvidence(response.structuredContent);
+        expect(evidence.normalized_result).toMatchObject({
+          changes: [],
+          coverage: { status: "partial" },
+        });
+        return evidence.evidence_id;
+      };
+      const [firstPair, secondPair, ...remaining] = pairs;
+      if (firstPair === undefined || secondPair === undefined)
+        throw new Error("Expected distinct comparison fixtures");
+      const firstId = await compare(firstPair);
+      const firstUnknowns = session.listUnknowns({
+        domain: "javascript-export-shape",
+      });
+      expect(firstUnknowns).toHaveLength(1);
+      const secondId = await compare(secondPair);
+      expect(secondId).not.toBe(firstId);
+      const selectedId = await compare(firstPair, "named");
+      expect(selectedId).not.toBe(firstId);
+      const concurrentIds = await Promise.all(
+        [firstPair, secondPair, ...remaining, ...remaining].map((pair) =>
+          compare(pair),
+        ),
+      );
+      expect(concurrentIds.slice(0, 2)).toEqual([firstId, secondId]);
+      const evidenceIds = new Set([
+        firstId,
+        secondId,
+        selectedId,
+        ...concurrentIds,
+      ]);
+      expect(evidenceIds.size).toBe(pairs.length + 1);
+      const unknowns = session.listUnknowns({
+        domain: "javascript-export-shape",
+      });
+      expect(unknowns).toHaveLength(pairs.length + 1);
+      expect(unknowns).toEqual(expect.arrayContaining(firstUnknowns));
+      expect(
+        new Set(
+          unknowns.flatMap(
+            ({ supporting_evidence_ids }) => supporting_evidence_ids,
+          ),
+        ),
+      ).toEqual(evidenceIds);
+      expect(unknowns.every(({ revision }) => revision === 1)).toBe(true);
+      const records = session.exportEvidenceBundle().records;
+      for (const id of evidenceIds)
+        expect(records.some(({ evidence_id }) => evidence_id === id)).toBe(
+          true,
+        );
+      const retained = session.exportEvidenceBundle();
+      await Promise.all(pairs.map((pair) => compare(pair)));
+      expect(session.exportEvidenceBundle()).toEqual(retained);
+    },
+  );
+});
+
 describe("source-produced export comparison inventories", () => {
+  it("records partial comparison coverage even when matching unknown projections produce no changes", async () => {
+    const source = `export default function make() {
+      const result = { kind: "record", count: 1 };
+      delete result.count;
+      return result;
+    }`;
+    const [left, right] = await Promise.all([
+      analyzeSourceEvidence(source),
+      analyzeSourceEvidence(source),
+    ]);
+    const { client, session, close } = await createApplicationMcpHarness();
+    onTestFinished(close);
+    const response = await client.callTool({
+      name: "compare_javascript_export_shapes",
+      arguments: {
+        left,
+        right,
+        left_module_path: "parser.mjs",
+        left_export_name: "default",
+        right_module_path: "parser.mjs",
+        right_export_name: "default",
+      },
+    });
+    expect(response.isError).not.toBe(true);
+    expect(response.structuredContent).toMatchObject({
+      normalized_result: {
+        changes: [],
+        summary: { added: 0, removed: 0, changed: 0, unknown: 0 },
+        coverage: { status: "partial" },
+      },
+    });
+    const { evidence_id: evidenceId } = z
+      .object({ evidence_id: z.string() })
+      .parse(response.structuredContent);
+    expect(session.exportEvidenceBundle().unknowns).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          domain: "javascript-export-shape",
+          supporting_evidence_ids: [evidenceId],
+        }),
+      ]),
+    );
+  });
+
   it("retains large source-produced export inventories through comparison schemas", async () => {
     const fields = Array.from(
       { length: 64 },

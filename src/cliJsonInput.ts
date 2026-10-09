@@ -1,13 +1,10 @@
-import { constants as bufferConstants } from "node:buffer";
 import { resolve } from "node:path";
 
+import { readCliJsonFile } from "./cliJsonFile.js";
+import { NonRegularFileReadError } from "./filesystem/RegularFile.js";
 import {
-  NonRegularFileReadError,
-  readRegularFile,
-} from "./application/RegularFileRead.js";
-import {
+  AnalysisAccessDeniedError,
   AnalysisInputError,
-  AnalysisResourceConstraintError,
 } from "./domain/analysisErrorCore.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import type { JsonValue } from "./domain/jsonValue.js";
@@ -21,26 +18,51 @@ export const parseCliJsonInput = async (
   | { readonly ok: true; readonly value: unknown }
   | { readonly ok: false; readonly error: JsonValue }
 > => {
-  const inline = parseJson(value);
-  if (inline.kind === "valid") return { ok: true, value: inline.value };
-  if (inline.kind === "too-large")
-    return jsonTooLargeError(undefined, operation);
+  const inline = safeParseJson(value);
+  if (inline.ok) return { ok: true, value: inline.value };
   try {
-    // Read raw bytes so invalid UTF-8 is rejected by parseJson instead of
-    // being silently replaced by lossy "utf8" decoding.
-    const parsed = parseJson(await readRegularFile(value));
-    if (parsed.kind === "valid") return { ok: true, value: parsed.value };
-    if (parsed.kind === "too-large") return jsonTooLargeError(value, operation);
-    return jsonFileError(value, operation, "invalid-json");
+    const parsed = await readCliJsonFile(value, operation);
+    return parsed.ok
+      ? { ok: true, value: parsed.value }
+      : {
+          ok: false,
+          error: {
+            error: "Application workflow failed",
+            ...projectAnalysisError(parsed.error),
+            input_path: value,
+            input_reason:
+              parsed.error._tag === "AnalysisInputError"
+                ? "invalid-json"
+                : "too-large",
+          },
+        };
   } catch (cause: unknown) {
+    const systemCode = accessDeniedSystemCode(cause);
+    if (systemCode !== undefined)
+      return jsonAccessDeniedError(value, operation, systemCode, cause);
     if (
       ["{", "["].includes(value.trimStart()[0] ?? "") &&
       cannotBeAnExistingFile(cause) &&
       !hasExplicitJsonFileExtension(value)
     )
       return { ok: false, error: inputError(operation) };
+    if (
+      !(cause instanceof Error) ||
+      !("code" in cause) ||
+      typeof cause.code !== "string"
+    )
+      throw cause;
     return jsonFileError(value, operation, "read-failed", cause);
   }
+};
+
+const accessDeniedSystemCode = (
+  cause: unknown,
+): "EACCES" | "EPERM" | undefined => {
+  if (!(cause instanceof Error) || !("code" in cause)) return undefined;
+  return cause.code === "EACCES" || cause.code === "EPERM"
+    ? cause.code
+    : undefined;
 };
 
 /**
@@ -93,40 +115,6 @@ const cannotBeAnExistingFile = (cause: unknown): boolean =>
 const hasExplicitJsonFileExtension = (value: string): boolean =>
   value.toLowerCase().endsWith(".json");
 
-type JsonParseResult =
-  | { readonly kind: "valid"; readonly value: unknown }
-  | { readonly kind: "invalid" }
-  | { readonly kind: "too-large" };
-
-const parseJson = (value: string | Uint8Array): JsonParseResult => {
-  let text: string;
-  if (typeof value === "string") {
-    text = value;
-  } else {
-    try {
-      text = new TextDecoder("utf-8", {
-        fatal: true,
-        ignoreBOM: true,
-      }).decode(value);
-    } catch (cause: unknown) {
-      return isStringLengthLimit(cause)
-        ? { kind: "too-large" }
-        : { kind: "invalid" };
-    }
-  }
-  const parsed = safeParseJson(text);
-  if (parsed.ok) return { kind: "valid", value: parsed.value };
-  return isStringLengthLimit(parsed.cause)
-    ? { kind: "too-large" }
-    : { kind: "invalid" };
-};
-
-const isStringLengthLimit = (cause: unknown): boolean =>
-  cause instanceof Error &&
-  /cannot create a string longer than|invalid string length/i.test(
-    cause.message,
-  );
-
 const inputError = (operation: string): JsonValue => ({
   error: "Application workflow failed",
   ...projectAnalysisError(
@@ -159,6 +147,23 @@ const jsonFileError = (
   },
 });
 
+const jsonAccessDeniedError = (
+  path: string,
+  operation: string,
+  systemCode: "EACCES" | "EPERM",
+  cause: unknown,
+) => ({
+  ok: false as const,
+  error: {
+    error: "Application workflow failed",
+    ...projectAnalysisError(
+      new AnalysisAccessDeniedError(operation, path, systemCode, { cause }),
+    ),
+    input_path: path,
+    input_reason: "read-failed" as const,
+  },
+});
+
 /** Preserve file-selection and system failures alongside the requested path. */
 const readFailureIssue = (path: string | undefined, cause: unknown) => {
   const code =
@@ -175,35 +180,5 @@ const readFailureIssue = (path: string | undefined, cause: unknown) => {
       cause instanceof NonRegularFileReadError && cause.code === "ENOTFILE"
         ? `The JSON input must be a regular file${code}: ${path ?? ""}`
         : `The JSON input file could not be read${code}: ${path ?? ""}`,
-  };
-};
-
-const jsonTooLargeError = (
-  path: string | undefined,
-  operation: string,
-): { readonly ok: false; readonly error: JsonValue } => {
-  const projection = projectAnalysisError(
-    new AnalysisResourceConstraintError(
-      operation,
-      "memory",
-      `The JSON input exceeds this Node.js runtime's maximum string length (${bufferConstants.MAX_STRING_LENGTH} UTF-16 code units) and cannot be parsed as one value.`,
-      {
-        boundary: "cli-json-input",
-        max_string_code_units: bufferConstants.MAX_STRING_LENGTH,
-      },
-      {
-        remediationAction:
-          "Split the JSON into smaller inputs or rerun its producer on a smaller subset, then retry.",
-      },
-    ),
-  );
-  return {
-    ok: false,
-    error: {
-      error: "Application workflow failed",
-      ...projection,
-      ...(path === undefined ? {} : { input_path: path }),
-      input_reason: "too-large",
-    },
   };
 };

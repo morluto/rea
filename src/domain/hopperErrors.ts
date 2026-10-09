@@ -5,7 +5,6 @@ import type {
 } from "./providerOperationHealth.js";
 import {
   hopperStartupFailure,
-  type HopperStartupDiagnostic,
   type HopperStartupFailureCode,
   type HopperStartupFailureDiagnostic,
 } from "./hopperStartupFailure.js";

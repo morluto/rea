@@ -1,6 +1,6 @@
 import {
   createJavaScriptApplicationEdge,
-  createJavaScriptApplicationGraph,
+  createImmutableJavaScriptApplicationGraphSteps,
   createJavaScriptApplicationNode,
   type JavaScriptApplicationGraph,
 } from "./javascriptApplicationGraph.js";
@@ -59,7 +59,7 @@ export const buildJavaScriptApplicationChangeGraph = (
   const candidateEdges = uniqueEdges([...sourceEdges, ...comparisonEdges]);
   const rootNodeIds = preferredRoots.filter((nodeId) => retained.has(nodeId));
   const fallbackRoot = mergedNodes[0]?.node_id;
-  const graph = createJavaScriptApplicationGraph({
+  const steps = createImmutableJavaScriptApplicationGraphSteps({
     schema: "JavaScriptApplicationGraph",
     root_node_ids:
       rootNodeIds.length > 0
@@ -77,7 +77,9 @@ export const buildJavaScriptApplicationChangeGraph = (
       "The change graph contains compared entities and their retained relationships; it is not an executable application.",
     ]),
   });
-  return { graph };
+  let next = steps.next();
+  while (!next.done) next = steps.next();
+  return { graph: next.value };
 };
 
 const nodeCandidates = (

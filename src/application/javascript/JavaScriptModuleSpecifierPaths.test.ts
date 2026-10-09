@@ -159,21 +159,26 @@ describe("module specifier punctuation", () => {
 });
 
 describe("ESM module URL decoding", () => {
-  it.each([
-    ["./plain.mjs", "plain.mjs"],
-    ["./space%20name.mjs", "space name.mjs"],
-    ["./pr%C3%A9load.mjs", "préload.mjs"],
-    ["./name%3F%23.mjs", "name?#.mjs"],
-    ["./percent%2520.mjs?cache=1#v2", "percent%20.mjs"],
-  ])(
-    "points %s imports to the file loaded by Node",
-    async (specifier, target) => {
-      const root = await createTestTempDirectory("rea-module-url-");
-      const main = join(root, "main.mjs");
-      await writeFile(
-        main,
-        `import value from ${JSON.stringify(specifier)}; console.log(value);`,
-      );
+  it("resolves URL-encoded imports to the files loaded by Node", async () => {
+    const cases = [
+      ["./plain.mjs", "plain.mjs"],
+      ["./space%20name.mjs", "space name.mjs"],
+      ["./pr%C3%A9load.mjs", "préload.mjs"],
+      ["./name%3F%23.mjs", "name?#.mjs"],
+      ["./percent%2520.mjs?cache=1#v2", "percent%20.mjs"],
+    ] as const;
+    const root = await createTestTempDirectory("rea-module-url-");
+    const main = join(root, "main.mjs");
+    await writeFile(
+      main,
+      cases
+        .map(
+          ([specifier], index) =>
+            `import value${index} from ${JSON.stringify(specifier)}; console.log(value${index});`,
+        )
+        .join("\n"),
+    );
+    for (const [specifier, target] of cases) {
       await writeFile(
         join(root, target),
         `export default ${JSON.stringify(target)};`,
@@ -181,19 +186,23 @@ describe("ESM module URL decoding", () => {
       const encoded = specifier.slice(2).split("?", 1)[0]?.split("#", 1)[0];
       if (encoded !== undefined && encoded !== target)
         await writeFile(join(root, encoded), 'export default "encoded decoy";');
-      const native = await promisify(execFile)(process.execPath, [main], {
-        timeout: 5_000,
-      });
-      expect(native.stdout.trim()).toBe(target);
+    }
+    const native = await promisify(execFile)(process.execPath, [main], {
+      timeout: 5_000,
+    });
+    expect(native.stdout.trim().split("\n")).toEqual(
+      cases.map(([, target]) => target),
+    );
 
-      const result = await analyzeJavaScriptApplication({
-        input_path: root,
-        format: "directory",
-      });
-      if (!result.ok) throw result.error;
-      const { graph } = javascriptApplicationAnalysisResultSchema.parse(
-        result.value.normalized_result,
-      );
+    const result = await analyzeJavaScriptApplication({
+      input_path: root,
+      format: "directory",
+    });
+    if (!result.ok) throw result.error;
+    const { graph } = javascriptApplicationAnalysisResultSchema.parse(
+      result.value.normalized_result,
+    );
+    for (const [specifier, target] of cases) {
       const imports = graph.edges.filter(
         (edge) =>
           edge.relation === "imports" &&
@@ -202,8 +211,8 @@ describe("ESM module URL decoding", () => {
       expect(imports.length).toBeGreaterThan(0);
       for (const edge of imports)
         expect(edge.properties.resolved_path).toBe(target);
-    },
-  );
+    }
+  });
 
   it("preserves CommonJS literal percent names", () => {
     expect(
@@ -249,26 +258,21 @@ const packageEntryUrlCases = [
   ["main", "./actual#file.cjs", "actual#file.cjs"],
 ] as const;
 
-describe("package exports URL paths", () => {
-  it.each(
-    (["import", "require"] as const).flatMap((moduleKind) =>
-      packageEntryUrlCases.map(([field, declaredPath, target]) => ({
-        moduleKind,
-        field,
-        declaredPath,
-        target,
-      })),
-    ),
-  )(
-    "matches Node $moduleKind for $field $declaredPath",
-    async ({ moduleKind, field, declaredPath, target }) => {
-      const root = await createTestTempDirectory("rea-package-export-url-");
-      const packageRoot = join(root, "node_modules", "fixture");
+it.each(["import", "require"] as const)(
+  "matches Node %s across package exports and main path representations",
+  async (moduleKind) => {
+    const root = await createTestTempDirectory("rea-package-export-url-");
+    for (const [
+      index,
+      [field, declaredPath, target],
+    ] of packageEntryUrlCases.entries()) {
+      const name = `fixture-${index}`;
+      const packageRoot = join(root, "node_modules", name);
       await mkdir(packageRoot, { recursive: true });
       await writeFile(
         join(packageRoot, "package.json"),
         JSON.stringify({
-          name: "fixture",
+          name,
           [field]: declaredPath,
         }),
       );
@@ -282,41 +286,54 @@ describe("package exports URL paths", () => {
           join(packageRoot, literal),
           'module.exports="literal decoy";',
         );
-      const main = join(
-        root,
-        moduleKind === "import" ? "main.mjs" : "main.cjs",
-      );
-      await writeFile(
-        main,
-        moduleKind === "import"
-          ? 'import value from "fixture"; console.log(value);'
-          : 'console.log(require("fixture"));',
-      );
-      const native = await promisify(execFile)(process.execPath, [main], {
-        timeout: 5_000,
-      });
-      expect(native.stdout.trim()).toBe(target);
-      const result = await analyzeJavaScriptApplication({
-        input_path: root,
-        format: "directory",
-      });
-      if (!result.ok) throw result.error;
-      const { graph } = javascriptApplicationAnalysisResultSchema.parse(
-        result.value.normalized_result,
-      );
+    }
+    const main = join(root, moduleKind === "import" ? "main.mjs" : "main.cjs");
+    await writeFile(
+      main,
+      packageEntryUrlCases
+        .map((_, index) =>
+          moduleKind === "import"
+            ? `import value${index} from "fixture-${index}"; console.log(value${index});`
+            : `console.log(require("fixture-${index}"));`,
+        )
+        .join("\n"),
+    );
+    const native = await promisify(execFile)(process.execPath, [main], {
+      timeout: 5_000,
+    });
+    expect(native.stdout.trim().split("\n")).toEqual(
+      packageEntryUrlCases.map(([, , target]) => target),
+    );
+    const result = await analyzeJavaScriptApplication({
+      input_path: root,
+      format: "directory",
+    });
+    if (!result.ok) throw result.error;
+    const { graph } = javascriptApplicationAnalysisResultSchema.parse(
+      result.value.normalized_result,
+    );
+    for (const [
+      index,
+      [field, declaredPath, target],
+    ] of packageEntryUrlCases.entries()) {
       const imports = graph.edges.filter(
         (edge) =>
           edge.relation === "imports" &&
-          edge.properties.specifier === "fixture",
+          edge.properties.specifier === `fixture-${index}`,
       );
-      expect(imports.length).toBeGreaterThan(0);
+      expect(
+        imports.length,
+        `${moduleKind}: ${field} ${declaredPath}`,
+      ).toBeGreaterThan(0);
       for (const edge of imports)
         expect(edge.properties.resolved_path).toBe(
-          `node_modules/fixture/${target}`,
+          `node_modules/fixture-${index}/${target}`,
         );
-    },
-  );
+    }
+  },
+);
 
+describe("package exports URL path rejections", () => {
   it.each(
     (["import", "require"] as const).flatMap((moduleKind) =>
       [

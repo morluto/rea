@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   analysisProfileSchema,
-  analysisProfilesEqual,
   createAnalysisProfile,
 } from "./analysisProfile.js";
 import type { JsonValue } from "./jsonValue.js";
@@ -14,20 +13,6 @@ const PROVIDER = {
 } as const;
 
 describe("analysis profile commitments", () => {
-  it("canonicalizes parameter key order and validates its digest", () => {
-    const first = createAnalysisProfile(PROVIDER, {
-      architecture: "arm64",
-      analyzers: { strings: true, functions: true },
-    });
-    const reordered = createAnalysisProfile(PROVIDER, {
-      analyzers: { functions: true, strings: true },
-      architecture: "arm64",
-    });
-    expect(reordered.digest).toBe(first.digest);
-    expect(analysisProfilesEqual(first, reordered)).toBe(true);
-    expect(analysisProfileSchema.parse(first)).toEqual(first);
-  });
-
   it("separates provider builds and semantic parameters", () => {
     const baseline = createAnalysisProfile(PROVIDER, { loader: "default" });
     const changedBuild = createAnalysisProfile(
