@@ -188,6 +188,9 @@ increasing a client deadline alone does not fix those failures.
 
 ## Tool results
 
+Custom clients upgrading from 6.1 should follow the
+[6.2 migration guide](migration-6.2.md#mcp-results-and-evidence).
+
 Evidence-producing tools return the complete canonical Evidence record in both
 text and structured content. Read `structuredContent.normalized_result` for the
 operation result and `structuredContent.evidence_id` for its identity. The same

@@ -35,6 +35,9 @@ registry metadata or changelog disagrees with that version before creating a tag
 
 ### Compatibility and version selection
 
+For the 6.2 candidate, review the [6.1 to 6.2 migration guide](migration-6.2.md)
+alongside the changelog before publication.
+
 REA uses Release Please's `always-bump-minor` strategy: every release increments
 minor and resets patch, including releases with breaking changes. For example,
 the next release after 6.0.0 is 6.1.0. Version numbers use the SemVer format,
