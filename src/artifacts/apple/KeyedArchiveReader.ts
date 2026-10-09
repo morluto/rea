@@ -134,11 +134,6 @@ export const inspectBundleKeyedArchive = async (input: {
       selected.path,
       input.signal,
     );
-    if (entry.kind !== "file")
-      throw archivePathError(
-        "invalid_value",
-        `Archive path selects a ${entry.kind}, not a regular file: ${selected.path}`,
-      );
     if ((entry.declaredSize ?? 0) > MAX_BYTES)
       throw new ArtifactReaderFailure("limit", "Keyed archive exceeds 64 MiB");
     const stream = await reader.open(entry, input.signal);
@@ -213,6 +208,11 @@ const selectBundleArchiveEntry = async (
       throw archivePathError(
         "invalid_value",
         `Archive path matches multiple Unicode-equivalent bundle entries: ${path}`,
+      );
+    if (entry.kind !== "file")
+      throw archivePathError(
+        "invalid_value",
+        `Archive path selects a ${entry.kind}, not a regular file: ${path}`,
       );
     selected = entry;
   }

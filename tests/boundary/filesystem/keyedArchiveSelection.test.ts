@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { build } from "plist";
@@ -116,6 +116,31 @@ it.each([
         },
       ],
     });
+  },
+);
+
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "rejects a selected unreadable directory before descending into it",
+  async () => {
+    const root = await bundle();
+    const selected = join(root, "Contents", "Resources");
+    await chmod(selected, 0);
+    try {
+      await expect(readdir(selected)).rejects.toMatchObject({ code: "EACCES" });
+      await expect(
+        inspect(root, { path: "Contents/Resources" }),
+      ).rejects.toMatchObject({
+        issues: [
+          {
+            path: ["path"],
+            reason: "invalid_value",
+            message: expect.stringContaining("selects a directory"),
+          },
+        ],
+      });
+    } finally {
+      await chmod(selected, 0o700);
+    }
   },
 );
 
