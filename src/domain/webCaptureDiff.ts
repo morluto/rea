@@ -1,4 +1,5 @@
-import { canonicalDigest } from "./comparisonSemantics.js";
+import { canonicalDigest, canonicalJson } from "./comparisonSemantics.js";
+import { compareCodePoints } from "./canonicalOrdering.js";
 import type { WebPageInspection } from "./browserObservationSchemas.js";
 import {
   webCaptureDiffSchema,
@@ -298,7 +299,12 @@ const incompleteSections = (completeness: {
 const domProjection = (inspection: WebPageInspection) => ({
   frames: inspection.frames
     .map(({ url, origin }) => ({ url, origin }))
-    .sort((left, right) => left.url.localeCompare(right.url)),
+    .sort((left, right) =>
+      compareCodePoints(
+        canonicalJson(left, "Frame comparison"),
+        canonicalJson(right, "Frame comparison"),
+      ),
+    ),
   nodes: inspection.dom.nodes.map(({ index: _index, ...node }) => node),
 });
 

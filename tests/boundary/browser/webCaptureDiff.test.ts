@@ -499,3 +499,39 @@ const markSectionsComplete = (
       (section) => !completed.has(section),
     );
 };
+
+it("ignores frame enumeration order when equal URLs have different origins", async () => {
+  const browser = await startFakeCdpBrowser();
+  browsers.push(browser);
+  const captured = await new CdpBrowserProvider().inspectPage(
+    inspectWebPageInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      target_id: "allowed-page",
+      observation_ms: 0,
+    }),
+  );
+  if (!captured.ok) throw captured.error;
+  const before = structuredClone(captured.value);
+  const frame = before.frames[0];
+  if (frame === undefined) throw new Error("Expected a captured frame");
+  before.frames = [
+    { ...frame, frame_id: "opaque-a", url: "about:blank", origin: null },
+    {
+      ...frame,
+      frame_id: "inherited-b",
+      url: "about:blank",
+      origin: browser.allowedOrigin,
+    },
+  ];
+  markSectionsComplete(before, ["frames", "dom"]);
+  const after = structuredClone(before);
+  after.frames.reverse();
+  const result = compareWebCaptures(
+    compareWebCapturesInputSchema.parse({
+      before: { inspection: before },
+      after: { inspection: after },
+    }),
+  );
+  expect(result.dimensions.dom_structure.status).toBe("unchanged");
+});
