@@ -69,7 +69,10 @@ const projectValue = (input: ValueProjectionInput): void => {
         source: target,
         target: slot,
         relation: "writes-property",
-        resolution: value.unknownProperties ? "candidate" : "resolved",
+        resolution:
+          value.unknownProperties || property.presence === "unknown-coverage"
+            ? "candidate"
+            : "resolved",
       });
       projectValue({
         context,
