@@ -12,6 +12,7 @@ import { jsonObjectSchema, jsonValueSchema } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { binaryLayoutSchema } from "../native/binaryLayout.js";
+import { functionDossierSchema } from "../hopperValues.js";
 import {
   parseOwnedJavaScriptApplicationAnalysisSteps,
   type JavaScriptApplicationAnalysisResult,
@@ -19,6 +20,7 @@ import {
 import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
 import { projectBinaryLayoutView } from "./binaryLayoutView.js";
 import { projectJavaScriptApplicationView } from "./javascriptApplicationView.js";
+import { projectNativeFunctionView } from "./nativeFunctionView.js";
 
 /** Public name of the selected-view workflow. */
 export const INSPECT_ANALYSIS_VIEW_OPERATION = "inspect_analysis_view" as const;
@@ -73,12 +75,35 @@ const pageViewSchema = z.strictObject({
   limit: z.number().int().positive(),
 });
 
+/** Bounded native function facets of already authenticated analyze_function Evidence. */
+const nativeViewSchema = z.strictObject({
+  kind: z.literal("native"),
+  facet: z.enum([
+    "procedure",
+    "pseudocode",
+    "assembly",
+    "callers",
+    "callees",
+    "incoming_references",
+    "outgoing_references",
+    "value_flow_summary",
+    "value_flow_operations",
+    "value_flow_def_use",
+    "value_flow_effects",
+    "value_flow_parameters",
+    "value_flow_parameter_uses",
+  ]),
+  offset: z.number().int().nonnegative().default(0),
+  limit: z.number().int().positive().max(256).default(64),
+});
+
 /** Caller-selected projection of already completed analysis Evidence. */
 export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   summaryViewSchema,
   facetViewSchema,
   itemViewSchema,
   pageViewSchema,
+  nativeViewSchema,
 ]);
 
 /** Inline Evidence or an exact same-session retained reference. */
@@ -150,6 +175,7 @@ const viewResultBase = {
   parent_operation: z.enum([
     "inspect_binary_layout",
     "analyze_javascript_application",
+    "analyze_function",
   ]),
   parent_digest: digestSchema,
   view_digest: digestSchema,
@@ -185,6 +211,13 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     items: z.array(jsonValueSchema),
     ...viewResultBase,
   }),
+  z.strictObject({
+    kind: z.literal("native"),
+    view: nativeViewSchema,
+    procedure_address: z.string().nullable(),
+    item: jsonValueSchema,
+    ...viewResultBase,
+  }),
 ]);
 
 export type AnalysisViewRequest = z.output<typeof analysisViewRequestSchema>;
@@ -200,6 +233,7 @@ export interface AnalysisViewParent {
   readonly operation: string;
   readonly normalizedResult: unknown;
   readonly limitations: readonly string[];
+  readonly artifact?: { readonly path: string; readonly sha256: string } | null;
 }
 
 /** Construct a typed input failure for one selected-view constraint. */
@@ -216,7 +250,11 @@ export type UnsignedAnalysisView =
     >
   | Omit<Extract<AnalysisViewResult, { readonly kind: "facet" }>, "view_digest">
   | Omit<Extract<AnalysisViewResult, { readonly kind: "item" }>, "view_digest">
-  | Omit<Extract<AnalysisViewResult, { readonly kind: "page" }>, "view_digest">;
+  | Omit<Extract<AnalysisViewResult, { readonly kind: "page" }>, "view_digest">
+  | Omit<
+      Extract<AnalysisViewResult, { readonly kind: "native" }>,
+      "view_digest"
+    >;
 
 /** Attach the content digest that must change when projected bytes change. */
 export const sealAnalysisView = (
@@ -261,7 +299,7 @@ const unsupportedParent = (
   new AnalysisUnsupportedTargetError(
     INSPECT_ANALYSIS_VIEW_OPERATION,
     parentArtifactPath(parent),
-    `Parent Evidence operation ${JSON.stringify(parent.operation)} is not inspect_binary_layout or analyze_javascript_application.`,
+    `Parent Evidence operation ${JSON.stringify(parent.operation)} is not inspect_binary_layout, analyze_javascript_application or analyze_function.`,
   );
 
 const parentArtifactPath = (parent: AnalysisViewParent): string => {
@@ -325,6 +363,21 @@ export const projectAnalysisView = (
       analysis.value,
       view,
     );
+    return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
+  }
+  if (parent.operation === "analyze_function") {
+    const native = functionDossierSchema.safeParse(parent.normalizedResult);
+    if (!native.success)
+      return err(
+        analysisViewInputError([
+          {
+            path: ["source", "normalized_result"],
+            reason: "invalid_value",
+            message: "Parent Evidence result does not match analyze_function.",
+          },
+        ]),
+      );
+    const projected = projectNativeFunctionView(parent, native.data, view);
     return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
   }
   return err(unsupportedParent(parent));

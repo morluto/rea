@@ -53,6 +53,13 @@ export const inspectAnalysisViewValidated = (
       operation: parent.operation,
       normalizedResult: parent.normalized_result,
       limitations: parent.limitations,
+      artifact:
+        parent.subject === null
+          ? null
+          : {
+              path: parent.subject.local_path,
+              sha256: parent.subject.digest.sha256,
+            },
     },
     input.view,
   );
@@ -126,7 +133,12 @@ const createAnalysisViewEvidence = (
     confidence: "derived",
     authority: parent.authority,
     limitations: result.limitations,
-    locations: [{ kind: "artifact-path", path: result.artifact.path }],
+    locations: [
+      { kind: "artifact-path" as const, path: result.artifact.path },
+      ...(result.kind === "native" && result.procedure_address !== null
+        ? [{ kind: "address" as const, address: result.procedure_address }]
+        : []),
+    ],
     evidenceLinks: [parent.evidence_id],
   });
 };

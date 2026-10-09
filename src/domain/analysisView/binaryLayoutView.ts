@@ -152,6 +152,10 @@ export const projectBinaryLayoutView = (
   view: AnalysisViewRequest,
 ): Result<UnsignedAnalysisView, AnalysisError> => {
   const shared = parentFields(parent, layout);
+  if (view.kind === "native")
+    return err(
+      layoutIncompatible("Native views require analyze_function Evidence."),
+    );
   if (view.kind === "summary")
     return ok({
       kind: "summary",

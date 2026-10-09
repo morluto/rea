@@ -2,12 +2,62 @@ import { expect, it } from "vitest";
 
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../../contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import { createEvidence, parseEvidence } from "../../domain/evidence.js";
+import { ghidraFunctionDossier } from "../../domain/ghidraValues.fixture.js";
 import {
   analysisViewJavaScriptAnalysisWithSource,
   analysisViewJavaScriptEvidence,
   analysisViewLayoutEvidence,
 } from "../../../tests/fixtures/analysisView.js";
 import { inspectAnalysisView } from "./AnalysisViewService.js";
+
+it("projects a small native view from an authenticated >10 MiB retained dossier", () => {
+  const original = ghidraFunctionDossier() as Record<string, unknown>;
+  const parent = createEvidence(
+    { path: "/fixtures/large.exe", format: "pe", sha256: "c".repeat(64) },
+    { id: "ghidra", name: "Ghidra", version: "12.1.4" },
+    {
+      operation: "analyze_function",
+      parameters: { address: "0x401000" },
+      result: { ...original, pseudocode: "X".repeat(11 * 1024 * 1024) },
+      limitations: ["Synthetic fixture"],
+    },
+  );
+  const input = {
+    source: {
+      kind: "retained-evidence" as const,
+      evidence_id: parent.evidence_id,
+    },
+    view: {
+      kind: "native" as const,
+      facet: "pseudocode" as const,
+      offset: 0,
+      limit: 128,
+    },
+  };
+  const view = inspectAnalysisView(input, (id) =>
+    id === parent.evidence_id ? parent : undefined,
+  );
+  if (!view.ok) throw view.error;
+  expect(view.value.evidence_links).toEqual([parent.evidence_id]);
+  expect(view.value.normalized_result).toMatchObject({
+    kind: "native",
+    parent_operation: "analyze_function",
+    parent_evidence_id: parent.evidence_id,
+    procedure_address: "0x401000",
+    artifact: { path: "/fixtures/large.exe", sha256: "c".repeat(64) },
+    coverage: { total: 11 * 1024 * 1024, examined: 128, next_offset: 128 },
+  });
+  expect(view.value.locations).toEqual([
+    { kind: "artifact-path", path: "/fixtures/large.exe" },
+    { kind: "address", address: "0x401000" },
+  ]);
+  expect(JSON.stringify(view.value).length).toBeLessThan(12000);
+  expect(JSON.stringify(parent).length).toBeGreaterThan(10 * 1024 * 1024);
+  expect(inspectAnalysisView(input, () => undefined)).toMatchObject({
+    ok: false,
+    error: { _tag: "EvidenceIntegrityError" },
+  });
+});
 
 it("projects inline layout Evidence and retains a derived view record", () => {
   const parent = analysisViewLayoutEvidence();

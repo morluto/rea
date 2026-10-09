@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 
 import { resolveJavaScriptSourceMapReference } from "../javascript/javascriptSourceMapPaths.js";
+import { ghidraFunctionDossier } from "../ghidraValues.fixture.js";
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../../contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import {
   analysisViewBindJavaScriptGraphs,
@@ -46,6 +47,121 @@ const javascriptParent = (
   operation: "analyze_javascript_application",
   normalizedResult: analysis,
   limitations: JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE.limitations,
+});
+
+const nativeParent = (
+  result: unknown = ghidraFunctionDossier(),
+): AnalysisViewParent => ({
+  evidenceId: "ev_" + "b".repeat(64),
+  operation: "analyze_function",
+  normalizedResult: result,
+  limitations: ["Retained provider limitation"],
+  artifact: { path: "/fixtures/example.exe", sha256: "a".repeat(64) },
+});
+
+it("projects native procedure and bounded assembly and high-pcode with exact parent identity", () => {
+  const parent = nativeParent();
+  const procedure = projectAnalysisView(parent, {
+    kind: "native",
+    facet: "procedure",
+    offset: 0,
+    limit: 64,
+  });
+  if (!procedure.ok) throw procedure.error;
+  expect(procedure.value).toMatchObject({
+    kind: "native",
+    parent_operation: "analyze_function",
+    artifact: parent.artifact,
+    item: { address: "0x401000" },
+  });
+  expect(procedure.value.view_digest).not.toBe(parent.evidenceId.slice(3));
+  const assembly = projectAnalysisView(parent, {
+    kind: "native",
+    facet: "assembly",
+    offset: 0,
+    limit: 1,
+  });
+  if (!assembly.ok) throw assembly.error;
+  expect(assembly.value).toMatchObject({
+    coverage: { examined: 1, total: 2, next_offset: 1 },
+    item: ["0x401000: CALL 0x401020"],
+  });
+  const flow = projectAnalysisView(parent, {
+    kind: "native",
+    facet: "value_flow_operations",
+    offset: 0,
+    limit: 1,
+  });
+  if (!flow.ok) throw flow.error;
+  expect(flow.value).toMatchObject({ item: [{ opcode: "COPY" }] });
+});
+
+it("rejects invalid native parents, unsupported source operations and page sizes", () => {
+  const view = {
+    kind: "native",
+    facet: "assembly",
+    offset: 0,
+    limit: 4,
+  } as const;
+  expect(projectAnalysisView(nativeParent({}), view)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisInputError" },
+  });
+  expect(
+    projectAnalysisView({ ...nativeParent(), artifact: null }, view),
+  ).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisInputError" },
+  });
+  expect(projectAnalysisView(layoutParent(), view)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisInputError" },
+  });
+  expect(projectAnalysisView(javascriptParent(), view)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisInputError" },
+  });
+  expect(
+    projectAnalysisView(nativeParent(), {
+      kind: "native",
+      facet: "procedure",
+      offset: 1,
+      limit: 2,
+    }),
+  ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
+  expect(
+    inspectAnalysisViewInputSchema.safeParse({
+      source: {
+        kind: "retained-evidence",
+        evidence_id: nativeParent().evidenceId,
+      },
+      view: { kind: "native", facet: "assembly", offset: 0, limit: 257 },
+    }).success,
+  ).toBe(false);
+});
+
+it("native pseudocode pages do not split surrogate pairs", () => {
+  const original = ghidraFunctionDossier() as Record<string, unknown>;
+  const parent = nativeParent({ ...original, pseudocode: "ab😀cd" });
+  expect(
+    projectAnalysisView(parent, {
+      kind: "native",
+      facet: "pseudocode",
+      offset: 3,
+      limit: 2,
+    }),
+  ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
+  const safe = projectAnalysisView(parent, {
+    kind: "native",
+    facet: "pseudocode",
+    offset: 2,
+    limit: 3,
+  });
+  if (!safe.ok) throw safe.error;
+  expect(safe.value).toMatchObject({
+    item: { text: "😀c", unit: "utf16-code-units" },
+    coverage: { examined: 3, next_offset: 5 },
+  });
 });
 
 it("accepts caller-selected page sizes and rejects malformed bounds", () => {
