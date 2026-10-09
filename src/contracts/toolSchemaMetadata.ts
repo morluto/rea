@@ -63,11 +63,19 @@ export const toolInputSchemaWithMetadata = <Contract extends ToolContract>(
       }),
   );
 
-/** Advertise a canonical output schema without reconverting it per listing. */
+/** Share repeated output definitions without changing canonical validation. */
 export const toolOutputSchemaWithMetadata = <Contract extends ToolContract>(
   contract: Contract,
 ): Contract["outputSchema"] =>
-  withAdvertisedJsonSchema(contract.outputSchema, "output");
+  withAdvertisedJsonSchema(
+    contract.outputSchema,
+    "output",
+    (project) => (options) =>
+      project({
+        ...options,
+        libraryOptions: { reused: "ref", ...options.libraryOptions },
+      }),
+  );
 
 const withAdvertisedJsonSchema = <Schema extends z.ZodType>(
   canonical: Schema,

@@ -31,6 +31,10 @@ check the complete catalog after SDK conversion and its generated counterpart.
 This is REA's local compatibility profile; individual model APIs can impose
 additional limits.
 
+Output schemas share repeated definitions through local references while
+preserving their complete fields and validation rules. Canonical Zod validation
+and the input compatibility profile continue to apply.
+
 For passive `compare_web_captures` inputs, pass each complete
 `inspect_web_page` result in `before.inspection` or `after.inspection`, with an
 optional complete `discover_webmcp_tools` result in the matching `webmcp` field.
