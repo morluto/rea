@@ -54,8 +54,8 @@ it("resolves same-session retained JavaScript Evidence without re-running analys
     parent_evidence_id: parent.evidence_id,
     parent_operation: "analyze_javascript_application",
   });
-  expect(JSON.stringify(summary.value.normalized_result)).not.toMatch(
-    /semantic_graph/,
+  expect(summary.value.normalized_result).not.toHaveProperty(
+    "summary.semantic_graph",
   );
   const item = inspectAnalysisView(
     {
@@ -72,7 +72,9 @@ it("resolves same-session retained JavaScript Evidence without re-running analys
     lookup,
   );
   if (!item.ok) throw item.error;
-  expect(JSON.stringify(item.value.normalized_result)).not.toMatch(/secret/);
+  expect(JSON.stringify(item.value.normalized_result)).toContain(
+    "export const secret = 1;",
+  );
 });
 
 it("rejects stale retained IDs and unsupported parent operations", () => {
@@ -118,5 +120,57 @@ it("rejects stale retained IDs and unsupported parent operations", () => {
   ).toMatchObject({
     ok: false,
     error: { _tag: "AnalysisInputError" },
+  });
+});
+
+it("preserves an absent parent subject instead of guessing its format", () => {
+  const analysis = analysisViewJavaScriptAnalysisWithSource();
+  const original = analysisViewJavaScriptEvidence(analysis);
+  const parent = createEvidence(undefined, original.provider, {
+    operation: original.operation,
+    parameters: {},
+    result: original.normalized_result,
+    limitations: original.limitations,
+  });
+  const result = inspectAnalysisView(
+    {
+      source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
+      view: { kind: "summary" },
+    },
+    () => parent,
+  );
+  if (!result.ok) throw result.error;
+  expect(result.value.subject).toBeNull();
+  expect(result.value.locations).toEqual([
+    { kind: "artifact-path", path: analysis.input_path },
+  ]);
+});
+
+it("rejects contradictory subject and analysis artifact digests", () => {
+  const analysis = analysisViewJavaScriptAnalysisWithSource();
+  const original = analysisViewJavaScriptEvidence(analysis);
+  const parent = createEvidence(
+    {
+      path: analysis.input_path,
+      format: analysis.format,
+      sha256: "d".repeat(64),
+    },
+    original.provider,
+    {
+      operation: original.operation,
+      parameters: {},
+      result: original.normalized_result,
+    },
+  );
+  const result = inspectAnalysisView(
+    {
+      source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
+      view: { kind: "summary" },
+    },
+    () => parent,
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: { _tag: "EvidenceIntegrityError" },
   });
 });

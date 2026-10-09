@@ -54,7 +54,7 @@ accept complete inline Evidence or
 `{"kind":"retained-evidence","evidence_id":"ev_<64 lowercase hex characters>"}`
 for their application input (`application`, or `left`/`right`). `inspect_analysis_view`
 uses the same retained-reference form in `source`, or portable inline Evidence,
-to project a summary, module page, or one module without source text. This notation is
+to project a summary, module page, or one module with its recorded observations. This notation is
 a template: replace it with the actual returned ID. Versions before 4.1.0 accept only full
 inline Evidence. Use the exact ID
 returned by the producer on the same MCP connection. Resolution does not run

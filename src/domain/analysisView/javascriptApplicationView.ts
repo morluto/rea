@@ -8,52 +8,21 @@ import { jsonObjectSchema, type JsonValue } from "../jsonValue.js";
 import type { JavaScriptApplicationAnalysisResult } from "../javascript/javascriptApplicationAnalysis.js";
 import type { ApplicationNode } from "../javascript/javascriptApplicationGraphSchemas.js";
 import { err, ok, type Result } from "../result.js";
+import {
+  completeWithinViewCoverage as completeCoverage,
+  pageViewCoverage as pageCoverage,
+} from "./analysisViewCoverage.js";
 import type {
-  AnalysisViewCoverage,
   AnalysisViewParent,
   AnalysisViewRequest,
   UnsignedAnalysisView,
 } from "./analysisView.js";
 
 const OPERATION = "inspect_analysis_view";
-const SOURCE_TEXT_KEYS = new Set([
-  "source",
-  "text",
-  "source_text",
-  "sourceText",
-  "contents",
-  "code",
-]);
 
 const inputError = (
   issues: readonly AnalysisInputIssue[],
 ): AnalysisInputError => new AnalysisInputError(OPERATION, undefined, issues);
-
-const completeCoverage = (
-  examined: number,
-  total: number,
-): AnalysisViewCoverage => ({
-  status: "complete-within-view",
-  examined,
-  total,
-  next_offset: null,
-  exhausted: true,
-});
-
-const pageCoverage = (
-  offset: number,
-  examined: number,
-  total: number,
-): AnalysisViewCoverage => {
-  const exhausted = offset >= total || offset + examined >= total;
-  return {
-    status: examined === 0 ? "empty" : "page",
-    examined,
-    total,
-    next_offset: exhausted ? null : offset + examined,
-    exhausted,
-  };
-};
 
 const jsIncompatible = (detail: string): AnalysisError =>
   inputError([
@@ -67,35 +36,40 @@ const jsIncompatible = (detail: string): AnalysisError =>
 /** Artifact-relative path used to select a module when one exists. */
 export const javascriptModulePath = (node: ApplicationNode): string | null => {
   if (node.identity.strategy === "canonical-path") return node.identity.path;
+  if (node.identity.strategy === "source-map-original")
+    return node.identity.original_source;
   for (const observation of node.observations) {
     const path = observation.properties.path;
-    if (typeof path === "string" && path.length > 0) return path;
+    if (typeof path === "string") return path;
     const location = observation.evidence.location;
     if (location.available && location.value.kind === "artifact-path")
       return location.value.path;
+    if (location.available && location.value.kind === "source-range")
+      return location.value.source;
   }
   return null;
 };
 
 const moduleEntries = (
   nodes: readonly ApplicationNode[],
-): readonly { readonly node: ApplicationNode; readonly path: string }[] =>
-  nodes.flatMap((node) => {
-    const path = javascriptModulePath(node);
-    return path === null ? [] : [{ node, path }];
-  });
-
-const stripSourceText = (
-  properties: Readonly<Record<string, JsonValue>>,
-): Record<string, JsonValue> =>
-  Object.fromEntries(
-    Object.entries(properties).filter(([key]) => !SOURCE_TEXT_KEYS.has(key)),
-  );
+): readonly {
+  readonly node: ApplicationNode;
+  readonly path: string | null;
+}[] =>
+  nodes
+    .filter(
+      (node) =>
+        node.kind === "javascript-asset" ||
+        node.kind === "javascript-module" ||
+        node.kind === "source-module",
+    )
+    .map((node) => ({ node, path: javascriptModulePath(node) }));
 
 const exportNames = (node: ApplicationNode): readonly string[] => {
   const names = new Set<string>();
   for (const observation of node.observations) {
-    const value = observation.properties.export_names;
+    const value =
+      observation.properties.export_names ?? observation.properties.exports;
     if (!Array.isArray(value)) continue;
     for (const entry of value) if (typeof entry === "string") names.add(entry);
   }
@@ -113,7 +87,12 @@ const nodeHashes = (node: ApplicationNode): readonly string[] => {
     if (identity.source_sha256 !== null) hashes.add(identity.source_sha256);
   }
   for (const observation of node.observations) {
-    for (const key of ["sha256", "container_sha256", "entry_sha256"] as const) {
+    for (const key of [
+      "sha256",
+      "container_sha256",
+      "entry_sha256",
+      "source_sha256",
+    ] as const) {
       const value = observation.properties[key];
       if (typeof value === "string" && /^[a-f0-9]{64}$/u.test(value))
         hashes.add(value);
@@ -141,7 +120,7 @@ const moduleItem = (node: ApplicationNode): JsonValue => ({
   observations: node.observations.map((observation) => ({
     observation_id: observation.observation_id,
     label: observation.label,
-    properties: stripSourceText(observation.properties),
+    properties: observation.properties,
     evidence: {
       ...observation.evidence,
       location: observation.evidence.location,
@@ -149,12 +128,36 @@ const moduleItem = (node: ApplicationNode): JsonValue => ({
   })),
 });
 
+const applicationUnknownCount = (
+  analysis: JavaScriptApplicationAnalysisResult,
+): number =>
+  analysis.graph.nodes.reduce(
+    (count, node) => count + Number(node.kind === "unknown"),
+    0,
+  );
+
 const javascriptUnknowns = (
   analysis: JavaScriptApplicationAnalysisResult,
 ): readonly string[] => {
-  const unknowns = [...analysis.limitations, ...analysis.graph.limitations];
+  const unknowns = [
+    ...analysis.limitations,
+    ...analysis.graph.limitations,
+    ...analysis.semantic_graph.limitations,
+  ];
   if (analysis.graph.coverage.status !== "complete")
     unknowns.push(`graph.coverage.status is ${analysis.graph.coverage.status}`);
+  if (analysis.semantic_graph.coverage.status !== "complete")
+    unknowns.push(
+      `semantic_graph.coverage.status is ${analysis.semantic_graph.coverage.status}`,
+    );
+  if (applicationUnknownCount(analysis) > 0)
+    unknowns.push(
+      `${String(applicationUnknownCount(analysis))} application graph unknowns remain in the parent Evidence.`,
+    );
+  if (analysis.semantic_graph.unknowns.length > 0)
+    unknowns.push(
+      `${String(analysis.semantic_graph.unknowns.length)} semantic graph unknowns remain in the parent Evidence.`,
+    );
   return unknowns;
 };
 
@@ -173,35 +176,35 @@ const parentFields = (
     ...parent.limitations,
     ...analysis.limitations,
     ...analysis.graph.limitations,
+    ...analysis.semantic_graph.limitations,
   ]),
   unknowns: uniqueSorted([...javascriptUnknowns(analysis)]),
 });
 
 const selectModule = (
-  nodes: readonly ApplicationNode[],
+  modules: ReturnType<typeof moduleEntries>,
   selector: Extract<AnalysisViewRequest, { readonly kind: "item" }>["selector"],
 ): Result<ApplicationNode, AnalysisError> => {
   if ("node_id" in selector) {
-    const matches = nodes.filter((node) => node.node_id === selector.node_id);
+    const matches = modules.filter(
+      ({ node }) => node.node_id === selector.node_id,
+    );
     if (matches.length === 1) {
       const selected = matches[0];
-      if (selected !== undefined) return ok(selected);
+      if (selected !== undefined) return ok(selected.node);
     }
     return err(
       inputError([
         {
           path: ["view", "selector", "node_id"],
           reason: "invalid_value",
-          message: `No module has node_id ${JSON.stringify(selector.node_id)}.`,
-          expected: nodes.map((node) => node.node_id).slice(0, 32),
+          message: `No module has node_id ${JSON.stringify(selector.node_id)}. Page the modules collection to inspect available identities.`,
         },
       ]),
     );
   }
   if ("path" in selector) {
-    const matches = moduleEntries(nodes).filter(
-      (entry) => entry.path === selector.path,
-    );
+    const matches = modules.filter((entry) => entry.path === selector.path);
     if (matches.length === 1) {
       const selected = matches[0];
       if (selected !== undefined) return ok(selected.node);
@@ -212,10 +215,7 @@ const selectModule = (
           {
             path: ["view", "selector", "path"],
             reason: "invalid_value",
-            message: `No module has path ${JSON.stringify(selector.path)}.`,
-            expected: [
-              ...new Set(moduleEntries(nodes).map((entry) => entry.path)),
-            ].slice(0, 32),
+            message: `No module has path ${JSON.stringify(selector.path)}. Page the modules collection to inspect exact paths and node_id values.`,
           },
         ]),
       );
@@ -253,6 +253,20 @@ export const projectJavaScriptApplicationView = (
         root_artifact_sha256: analysis.root_artifact_sha256,
         statistics: jsonObjectSchema.parse(analysis.statistics),
         electron: jsonObjectSchema.parse(analysis.summary),
+        coverage: jsonObjectSchema.parse({
+          application: analysis.graph.coverage,
+          semantic: {
+            ...analysis.semantic_graph.coverage,
+            families: analysis.semantic_graph.coverage.families.map(
+              ({ unknown_ids, ...family }) => ({
+                ...family,
+                unknown_count: unknown_ids.length,
+              }),
+            ),
+          },
+          application_unknowns: applicationUnknownCount(analysis),
+          semantic_unknowns: analysis.semantic_graph.unknowns.length,
+        }),
         limitation_count: analysis.limitations.length,
       },
       coverage: completeCoverage(modules.length, analysis.graph.nodes.length),
@@ -271,7 +285,7 @@ export const projectJavaScriptApplicationView = (
           "Section and symbol collections apply to inspect_binary_layout Evidence.",
         ),
       );
-    const selected = selectModule(analysis.graph.nodes, view.selector);
+    const selected = selectModule(modules, view.selector);
     if (!selected.ok) return selected;
     return ok({
       kind: "item",

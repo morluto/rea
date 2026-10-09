@@ -57,6 +57,15 @@ export const inspectAnalysisViewValidated = (
     input.view,
   );
   if (!projected.ok) return projected;
+  if (
+    parent.subject !== null &&
+    parent.subject.digest.sha256 !== projected.value.artifact.sha256
+  )
+    return err(
+      new EvidenceIntegrityError(
+        `Parent subject SHA-256 ${parent.subject.digest.sha256} differs from analysis artifact SHA-256 ${projected.value.artifact.sha256}.`,
+      ),
+    );
   return ok(createAnalysisViewEvidence(input, parent, projected.value));
 };
 
@@ -96,14 +105,7 @@ const createAnalysisViewEvidence = (
 ): Evidence => {
   const target =
     parent.subject === null
-      ? {
-          path: result.artifact.path,
-          sha256: result.artifact.sha256,
-          format:
-            parent.operation === "inspect_binary_layout"
-              ? ("elf" as const)
-              : ("directory" as const),
-        }
+      ? undefined
       : {
           path: parent.subject.local_path,
           sha256: parent.subject.digest.sha256,
@@ -124,7 +126,7 @@ const createAnalysisViewEvidence = (
     confidence: "derived",
     authority: parent.authority,
     limitations: result.limitations,
-    locations: parent.locations,
+    locations: [{ kind: "artifact-path", path: result.artifact.path }],
     evidenceLinks: [parent.evidence_id],
   });
 };

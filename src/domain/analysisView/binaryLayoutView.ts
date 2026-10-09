@@ -7,11 +7,14 @@ import { uniqueSorted } from "../canonicalOrdering.js";
 import type { BinaryLayout } from "../native/binaryLayout.js";
 import { err, ok, type Result } from "../result.js";
 import type {
-  AnalysisViewCoverage,
   AnalysisViewParent,
   AnalysisViewRequest,
   UnsignedAnalysisView,
 } from "./analysisView.js";
+import {
+  completeWithinViewCoverage as completeCoverage,
+  pageViewCoverage as pageCoverage,
+} from "./analysisViewCoverage.js";
 
 const OPERATION = "inspect_analysis_view";
 
@@ -20,32 +23,6 @@ type LayoutName = BinaryLayout["sections"][number]["name"];
 const inputError = (
   issues: readonly AnalysisInputIssue[],
 ): AnalysisInputError => new AnalysisInputError(OPERATION, undefined, issues);
-
-const completeCoverage = (
-  examined: number,
-  total: number,
-): AnalysisViewCoverage => ({
-  status: "complete-within-view",
-  examined,
-  total,
-  next_offset: null,
-  exhausted: true,
-});
-
-const pageCoverage = (
-  offset: number,
-  examined: number,
-  total: number,
-): AnalysisViewCoverage => {
-  const exhausted = offset >= total || offset + examined >= total;
-  return {
-    status: examined === 0 ? "empty" : "page",
-    examined,
-    total,
-    next_offset: exhausted ? null : offset + examined,
-    exhausted,
-  };
-};
 
 const layoutUnknowns = (layout: BinaryLayout): readonly string[] => {
   const unknowns = [
@@ -69,7 +46,9 @@ const namedMatches = <Row extends { readonly name: LayoutName }>(
   name: string,
 ): readonly { readonly index: number; readonly row: Row }[] =>
   rows.flatMap((row, index) =>
-    displayName(row.name) === name ? [{ index, row }] : [],
+    row.name.unknown_reason === null && displayName(row.name) === name
+      ? [{ index, row }]
+      : [],
   );
 
 const selectNamed = <Row extends { readonly name: LayoutName }>(
@@ -88,10 +67,7 @@ const selectNamed = <Row extends { readonly name: LayoutName }>(
         {
           path: ["view", "selector", "name"],
           reason: "invalid_value",
-          message: `No ${collection} named ${JSON.stringify(name)}. Collection has ${String(rows.length)} entries.`,
-          expected: [
-            ...new Set(rows.map((row) => displayName(row.name))),
-          ].slice(0, 32),
+          message: `No ${collection} named ${JSON.stringify(name)}. Collection has ${String(rows.length)} entries; page it to inspect exact indexes and names.`,
         },
       ]),
     );

@@ -1,5 +1,4 @@
 import {
-  MEASURED_PAGE_LIMIT,
   analysisViewResultSchema,
   inspectAnalysisViewInputSchema,
 } from "../domain/analysisView/analysisView.js";
@@ -16,9 +15,7 @@ export const ANALYSIS_VIEW_TOOL_CONTRACTS = [
     ...toolContractMetadata("inspect_analysis_view"),
     kind: "application",
     description:
-      "Project a caller-selected view of already completed inspect_binary_layout or analyze_javascript_application Evidence without re-running analysis. Source is an exact same-session retained reference or portable inline Evidence. Views are a summary, a layout mitigations or linkage facet, one section/symbol/module, or a stable page. Page limit is required and at most " +
-      String(MEASURED_PAGE_LIMIT) +
-      ", the largest page that keeps a worst-case identity row inside the pinned 10 MiB MCP stdio budget after Evidence wrapping, four-fold MCP encoding, and 25% headroom. Returns the projected facts inline with artifact identity, parent Evidence ID, a view digest of the projected bytes, coverage, limitations, and unknowns. Does not silently truncate a complete schema. Unsupported parent operations, ambiguous names, and malformed views fail with typed recovery.",
+      "Inspect a selected view of completed binary-layout or JavaScript application Evidence without repeating analysis. Use an exact same-session retained evidence_id or portable inline Evidence. Select a summary, layout mitigations/linkage facet, one section/symbol/module, or a stable page with a positive limit. Module pages contain JavaScript assets, bundled modules and source modules; use node_id when paths are ambiguous or unavailable. Returns selected facts inline with artifact identity, parent Evidence ID, a distinct view digest, coverage, limitations and unknowns. Actual serialized size determines MCP transport admission; choose a smaller page or export the retained Evidence when needed.",
     inputSchema: inspectAnalysisViewInputSchema,
     outputSchema: evidenceResultOf(analysisViewResultSchema),
     examples: [

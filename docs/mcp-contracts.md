@@ -215,10 +215,13 @@ Ordinary responses keep their existing complete result contract.
 `inspect_binary_layout` or `analyze_javascript_application` Evidence. Source is
 an exact same-session retained reference or portable inline Evidence. Views are
 a summary, a layout mitigations or linkage facet, one section/symbol/module, or
-a stable page. Page `limit` is required; the contract documents the measured
-maximum that stays inside the pinned 10 MiB stdio budget. The result includes
-the projected facts inline plus a view digest of those bytes. It does not
-re-run analysis or silently truncate a complete schema.
+a stable page with a caller-selected positive `limit`. Module pages include
+JavaScript assets, bundled modules, and source modules. Select an exact
+`node_id` when a path is ambiguous or unavailable. Module items retain their
+recorded property values and source locations; summaries include parent
+application and semantic coverage. The result carries a digest of the selected
+facts. Actual serialized size determines MCP transport admission: reduce the
+page size or export retained Evidence if the view is too large.
 
 `trace_application_feature`, `trace_javascript_semantics`,
 `compare_application_versions`, `compare_source_to_bundle`, and

@@ -12,40 +12,13 @@ import { jsonObjectSchema, jsonValueSchema } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { binaryLayoutSchema } from "../native/binaryLayout.js";
-import { javascriptApplicationAnalysisResultSchema } from "../javascript/javascriptApplicationAnalysis.js";
+import {
+  parseOwnedJavaScriptApplicationAnalysisSteps,
+  type JavaScriptApplicationAnalysisResult,
+} from "../javascript/javascriptApplicationAnalysis.js";
+import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
 import { projectBinaryLayoutView } from "./binaryLayoutView.js";
 import { projectJavaScriptApplicationView } from "./javascriptApplicationView.js";
-
-/** Pinned MCP SDK stdio receive-buffer size that oversized complete results already hit. */
-const MCP_STDIO_RECEIVE_BUFFER_BYTES = 10_485_760;
-/** Bytes reserved for the JSON-RPC envelope, matching MCP result encoding. */
-const MCP_JSONRPC_ENVELOPE_RESERVE_BYTES = 1_024;
-/**
- * evidenceResultOf duplicates the view inside Evidence, and MCP then encodes
- * structured JSON plus escaped text.
- */
-const MCP_VIEW_REPRESENTATION_EXPANSION = 4;
-/** PATH_MAX-sized identity row plus ELF section/symbol scalar fields. */
-const WORST_CASE_PAGE_ITEM_BYTES = 6_144;
-const VIEW_ENVELOPE_BYTES = 8_192;
-const HEADROOM_NUMERATOR = 3;
-const HEADROOM_DENOMINATOR = 4;
-
-/**
- * Largest caller `limit` that keeps a worst-case page inside the pinned 10 MiB
- * stdio budget after Evidence wrapping and repeated MCP encodings, with 25%
- * headroom. Not an arbitrary row cap: it is derived from measured identity-row
- * and envelope sizes against the SDK buffer and Node string limit.
- */
-export const MEASURED_PAGE_LIMIT = Math.floor(
-  ((MCP_STDIO_RECEIVE_BUFFER_BYTES -
-    MCP_JSONRPC_ENVELOPE_RESERVE_BYTES -
-    MCP_VIEW_REPRESENTATION_EXPANSION * VIEW_ENVELOPE_BYTES) *
-    HEADROOM_NUMERATOR) /
-    (HEADROOM_DENOMINATOR *
-      MCP_VIEW_REPRESENTATION_EXPANSION *
-      WORST_CASE_PAGE_ITEM_BYTES),
-);
 
 /** Public name of the selected-view workflow. */
 export const INSPECT_ANALYSIS_VIEW_OPERATION = "inspect_analysis_view" as const;
@@ -57,9 +30,9 @@ const facetViewSchema = z.strictObject({
 });
 const itemSelectorSchema = z.union([
   z.strictObject({ index: z.number().int().nonnegative() }),
-  z.strictObject({ name: z.string().min(1) }),
-  z.strictObject({ path: z.string().min(1) }),
-  z.strictObject({ node_id: z.string().min(1) }),
+  z.strictObject({ name: z.string() }),
+  z.strictObject({ path: z.string() }),
+  z.strictObject({ node_id: prefixedDigestSchema("jag_node") }),
 ]);
 const itemViewSchema = z
   .strictObject({
@@ -91,7 +64,7 @@ const pageViewSchema = z.strictObject({
   kind: z.literal("page"),
   collection: z.enum(["sections", "symbols", "modules"]),
   offset: z.number().int().nonnegative(),
-  limit: z.number().int().positive().max(MEASURED_PAGE_LIMIT),
+  limit: z.number().int().positive(),
 });
 
 /** Caller-selected projection of already completed analysis Evidence. */
@@ -162,6 +135,7 @@ const javascriptSummarySchema = z.strictObject({
   root_artifact_sha256: digestSchema,
   statistics: jsonObjectSchema,
   electron: jsonObjectSchema,
+  coverage: jsonObjectSchema,
   limitation_count: z.number().int().nonnegative(),
 });
 
@@ -222,33 +196,10 @@ export interface AnalysisViewParent {
   readonly limitations: readonly string[];
 }
 
-/** Coverage for a summary, facet, or single selected object. */
-export const completeWithinViewCoverage = (
-  examined: number,
-  total: number,
-): AnalysisViewCoverage => ({
-  status: "complete-within-view",
-  examined,
-  total,
-  next_offset: null,
-  exhausted: true,
-});
-
-/** Coverage for a stable page, including an offset past the collection. */
-export const pageViewCoverage = (
-  offset: number,
-  examined: number,
-  total: number,
-): AnalysisViewCoverage => {
-  const exhausted = offset >= total || offset + examined >= total;
-  return {
-    status: examined === 0 ? "empty" : "page",
-    examined,
-    total,
-    next_offset: exhausted ? null : offset + examined,
-    exhausted,
-  };
-};
+export {
+  completeWithinViewCoverage,
+  pageViewCoverage,
+} from "./analysisViewCoverage.js";
 
 /** Construct a typed input failure for one selected-view constraint. */
 export const analysisViewInputError = (
@@ -281,6 +232,32 @@ export const sealAnalysisView = (
   });
 
 const parentDigest = (evidenceId: string): string => evidenceId.slice(3);
+
+const parseJavaScriptParent = (
+  input: unknown,
+): Result<JavaScriptApplicationAnalysisResult, AnalysisError> => {
+  try {
+    // Only the existing realm-private graph proofs permit reuse. Imported or
+    // merely frozen graphs still receive full canonical validation.
+    const steps = parseOwnedJavaScriptApplicationAnalysisSteps(input);
+    let step = steps.next();
+    while (!step.done) step = steps.next();
+    return ok(step.value);
+  } catch (cause: unknown) {
+    if (!(cause instanceof z.ZodError)) throw cause;
+    return err(
+      analysisInputErrorFromIssues(
+        INSPECT_ANALYSIS_VIEW_OPERATION,
+        cause.issues.map((issue) => ({
+          ...issue,
+          path: ["source", "normalized_result", ...issue.path],
+        })),
+        { source: { normalized_result: input } },
+        { cause },
+      ),
+    );
+  }
+};
 
 const unsupportedParent = (
   parent: AnalysisViewParent,
@@ -345,23 +322,11 @@ export const projectAnalysisView = (
     return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
   }
   if (parent.operation === "analyze_javascript_application") {
-    const analysis = javascriptApplicationAnalysisResultSchema.safeParse(
-      parent.normalizedResult,
-    );
-    if (!analysis.success)
-      return err(
-        analysisViewInputError([
-          {
-            path: ["source"],
-            reason: "invalid_value",
-            message:
-              "Parent Evidence result does not match analyze_javascript_application.",
-          },
-        ]),
-      );
+    const analysis = parseJavaScriptParent(parent.normalizedResult);
+    if (!analysis.ok) return analysis;
     const projected = projectJavaScriptApplicationView(
       parent,
-      analysis.data,
+      analysis.value,
       view,
     );
     return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
