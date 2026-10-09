@@ -34,6 +34,112 @@ const bundle = (result = true) =>
     ),
   ]);
 
+describe("evidence bundle export cancellation", () => {
+  it("does not inspect the path or advance a source cancelled before writing", async () => {
+    const root = await createTestTempDirectory("rea-export-pre-cancel-");
+    const controller = new AbortController();
+    controller.abort();
+    let advanced = false;
+    function* parts() {
+      advanced = true;
+      yield "unused";
+    }
+    expect(
+      await writeTextParts(
+        parts(),
+        join(root, "missing", "bundle.json"),
+        false,
+        {
+          signal: controller.signal,
+          operation: "export_evidence_bundle",
+        },
+      ),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        operation: "export_evidence_bundle",
+      },
+    });
+    expect(advanced).toBe(false);
+    expect(await readdir(root)).toEqual([]);
+    expect(
+      await writeEvidenceBundle(
+        bundle(),
+        join(root, "bundle.json"),
+        false,
+        controller.signal,
+      ),
+    ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  it.each([false, true])(
+    "closes a cancelled source and preserves the destination (overwrite: %s)",
+    async (overwrite) => {
+      const root = await createTestTempDirectory("rea-export-cancel-");
+      const path = join(root, "bundle.json");
+      if (overwrite) await writeFile(path, "original");
+      const controller = new AbortController();
+      let closed = false;
+      let continued = false;
+      function* parts() {
+        try {
+          yield "staged partial data";
+          controller.abort();
+          yield "cancelled data";
+          continued = true;
+          yield "unreachable";
+        } finally {
+          closed = true;
+        }
+      }
+      expect(
+        await writeTextParts(parts(), path, overwrite, {
+          signal: controller.signal,
+          operation: "export_evidence_bundle",
+        }),
+      ).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisCancelledError",
+          operation: "export_evidence_bundle",
+        },
+      });
+      expect(closed).toBe(true);
+      expect(continued).toBe(false);
+      expect(await readdir(root)).toEqual(overwrite ? ["bundle.json"] : []);
+      if (overwrite) expect(await readFile(path, "utf8")).toBe("original");
+      expect(
+        await writeEvidenceBundle(bundle(), path, overwrite),
+      ).toMatchObject({ ok: true });
+      expect(await readEvidenceBundle(path)).toEqual({
+        ok: true,
+        value: bundle(),
+      });
+    },
+  );
+
+  it("does not publish when cancellation arrives at source exhaustion", async () => {
+    const root = await createTestTempDirectory("rea-export-final-cancel-");
+    const path = join(root, "bundle.json");
+    await writeFile(path, "original");
+    const controller = new AbortController();
+    function* parts() {
+      yield "complete replacement";
+      controller.abort();
+    }
+    expect(
+      await writeTextParts(parts(), path, true, {
+        signal: controller.signal,
+        operation: "export_evidence_bundle",
+      }),
+    ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
+    expect(await readFile(path, "utf8")).toBe("original");
+    expect(await readdir(root)).toEqual(["bundle.json"]);
+  });
+});
+
 describe("evidence bundle publication", () => {
   it.each([false, true])(
     "never publishes a partial streamed file (overwrite: %s)",
