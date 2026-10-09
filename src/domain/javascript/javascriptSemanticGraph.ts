@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { canonicalDigest, canonicalJson } from "../comparisonSemantics.js";
 import { compareCodePoints, uniqueSorted } from "../canonicalOrdering.js";
+import { canonicalJsonDigestSteps } from "../canonicalJsonDigestSteps.js";
 import { freezeOwnedJsonSnapshotSteps } from "../immutableJson.js";
 import type { ApplicationGraphEvidence } from "./javascriptApplicationEvidenceSchemas.js";
 import {
@@ -159,10 +160,10 @@ const sortedUniqueIssue = (
   }
 };
 
-const checkCoverage = (
+function* checkCoverageSteps(
   graph: GraphRecord,
   context: GraphIssueReporter,
-): void => {
+): Generator<void> {
   const families = graph.coverage.families.map(({ family }) => family);
   if (
     canonicalJson(families, "JavaScript semantic graph") !==
@@ -198,13 +199,16 @@ const checkCoverage = (
   const relationsByFamily = new Map(
     JAVASCRIPT_SEMANTIC_RELATION_FAMILIES.map((family) => [family, 0]),
   );
-  for (const relation of graph.relations) {
+  for (const [index, relation] of graph.relations.entries()) {
+    if (index % 256 === 0) yield;
     const family = JAVASCRIPT_SEMANTIC_RELATION_FAMILY[relation.relation];
     relationsByFamily.set(family, (relationsByFamily.get(family) ?? 0) + 1);
   }
-  const unknownsById = new Map(
-    graph.unknowns.map((unknown) => [unknown.unknown_id, unknown]),
-  );
+  const unknownsById = new Map<string, GraphRecord["unknowns"][number]>();
+  for (const [index, unknown] of graph.unknowns.entries()) {
+    if (index % 256 === 0) yield;
+    unknownsById.set(unknown.unknown_id, unknown);
+  }
   for (const [index, family] of graph.coverage.families.entries()) {
     if (family.retained_relations !== relationsByFamily.get(family.family))
       context.addIssue({
@@ -232,7 +236,7 @@ const checkCoverage = (
         message: "Complete family coverage cannot omit or retain unknown facts",
       });
   }
-};
+}
 
 const checkCanonicalOrder = (
   graph: GraphRecord,
@@ -271,12 +275,13 @@ const checkCanonicalOrder = (
   sortedUniqueIssue(graph.limitations, ["limitations"], "Limitations", context);
 };
 
-const checkNodes = (
+function* checkNodesSteps(
   graph: GraphRecord,
   nodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>,
   context: GraphIssueReporter,
-): void => {
+): Generator<void> {
   for (const [index, node] of graph.nodes.entries()) {
+    if (index % 256 === 0) yield;
     if (node.node_id !== javaScriptSemanticNodeId(node))
       context.addIssue({
         code: "custom",
@@ -293,28 +298,31 @@ const checkNodes = (
         message: "Function owner must name a function node",
       });
   }
-};
+}
 
-const checkRoots = (
+function* checkRootsSteps(
   graph: GraphRecord,
   nodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>,
   context: GraphIssueReporter,
-): void => {
-  for (const root of graph.root_node_ids)
+): Generator<void> {
+  for (const [index, root] of graph.root_node_ids.entries()) {
+    if (index % 256 === 0) yield;
     if (!nodes.has(root))
       context.addIssue({
         code: "custom",
         path: ["root_node_ids"],
         message: "Root identifier must name a semantic node",
       });
-};
+  }
+}
 
-const checkRelations = (
+function* checkRelationsSteps(
   graph: GraphRecord,
   nodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>,
   context: GraphIssueReporter,
-): void => {
+): Generator<void> {
   for (const [index, relation] of graph.relations.entries()) {
+    if (index % 256 === 0) yield;
     const { relation_id: identifier, ...semantic } = relation;
     if (
       identifier !==
@@ -350,14 +358,15 @@ const checkRelations = (
         message: "Candidate relations cannot claim observed resolution",
       });
   }
-};
+}
 
-const checkUnknowns = (
+function* checkUnknownsSteps(
   graph: GraphRecord,
   nodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>,
   context: GraphIssueReporter,
-): void => {
+): Generator<void> {
   for (const [index, unknown] of graph.unknowns.entries()) {
+    if (index % 256 === 0) yield;
     const { unknown_id: identifier, ...semantic } = unknown;
     if (
       identifier !==
@@ -397,7 +406,7 @@ const checkUnknowns = (
         message: "Unknown frontiers require unknown or unavailable evidence",
       });
   }
-};
+}
 
 const checkUnknownReferences = (
   graph: GraphRecord,
@@ -415,12 +424,13 @@ const checkUnknownReferences = (
       });
 };
 
-const checkFingerprints = (
+function* checkFingerprintsSteps(
   graph: GraphRecord,
   nodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>,
   context: GraphIssueReporter,
-): void => {
+): Generator<void> {
   for (const [index, fingerprint] of graph.fingerprints.entries()) {
+    if (index % 256 === 0) yield;
     if (nodes.get(fingerprint.function_node_id)?.kind !== "function")
       context.addIssue({
         code: "custom",
@@ -462,27 +472,41 @@ const checkFingerprints = (
         message: "Incomplete fingerprints require a limitation",
       });
   }
-};
+}
 
-const checkGraphContent = (
+function* checkGraphContentSteps(
   graph: GraphRecord,
   context: GraphIssueReporter,
-): void => {
+): Generator<void> {
   checkCanonicalOrder(graph, context);
-  const nodes = new Map(graph.nodes.map((node) => [node.node_id, node]));
-  checkNodes(graph, nodes, context);
-  checkRoots(graph, nodes, context);
-  checkRelations(graph, nodes, context);
-  checkUnknowns(graph, nodes, context);
+  const nodes = new Map<string, JavaScriptSemanticGraphNode>();
+  for (const [index, node] of graph.nodes.entries()) {
+    if (index % 256 === 0) yield;
+    nodes.set(node.node_id, node);
+  }
+  yield* checkNodesSteps(graph, nodes, context);
+  yield* checkRootsSteps(graph, nodes, context);
+  yield* checkRelationsSteps(graph, nodes, context);
+  yield* checkUnknownsSteps(graph, nodes, context);
   checkUnknownReferences(graph, context);
-  checkFingerprints(graph, nodes, context);
-  checkCoverage(graph, context);
+  yield* checkFingerprintsSteps(graph, nodes, context);
+  yield* checkCoverageSteps(graph, context);
   if (graph.coverage.status !== "complete" && graph.limitations.length === 0)
     context.addIssue({
       code: "custom",
       path: ["limitations"],
       message: "Non-complete graph coverage requires a limitation",
     });
+}
+
+const checkGraphContent = (
+  graph: GraphRecord,
+  context: GraphIssueReporter,
+): void => {
+  const steps = checkGraphContentSteps(graph, context);
+  while (!steps.next().done) {
+    // Synchronous callers apply the same integrity checks without scheduling.
+  }
 };
 
 const checkGraph = (graph: GraphRecord, context: GraphIssueReporter): void => {
@@ -508,43 +532,48 @@ export type JavaScriptSemanticGraph = z.infer<
   typeof javaScriptSemanticGraphSchema
 >;
 
+const normalizeGraphInput = (
+  parsed: JavaScriptSemanticGraphInput,
+): JavaScriptSemanticGraphInput => ({
+  ...parsed,
+  root_node_ids: uniqueSorted(parsed.root_node_ids),
+  nodes: [...parsed.nodes].sort((left, right) =>
+    compareCodePoints(left.node_id, right.node_id),
+  ),
+  relations: [...parsed.relations].sort((left, right) =>
+    compareCodePoints(left.relation_id, right.relation_id),
+  ),
+  fingerprints: [...parsed.fingerprints].sort((left, right) =>
+    compareCodePoints(left.fingerprint_id, right.fingerprint_id),
+  ),
+  unknowns: [...parsed.unknowns].sort((left, right) =>
+    compareCodePoints(left.unknown_id, right.unknown_id),
+  ),
+  coverage: {
+    ...parsed.coverage,
+    limits: [...parsed.coverage.limits].sort((left, right) =>
+      compareCodePoints(
+        canonicalJson(left, "JavaScript semantic graph"),
+        canonicalJson(right, "JavaScript semantic graph"),
+      ),
+    ),
+    families: [...parsed.coverage.families]
+      .map((family) => ({
+        ...family,
+        unknown_ids: uniqueSorted(family.unknown_ids),
+      }))
+      .sort((left, right) => compareCodePoints(left.family, right.family)),
+  },
+  limitations: uniqueSorted(parsed.limitations),
+});
+
 /** Normalize a complete companion graph and derive its graph ID. */
 export const createJavaScriptSemanticGraph = (
   input: unknown,
 ): JavaScriptSemanticGraph => {
-  const parsed = javaScriptSemanticGraphInputSchema.parse(input);
-  const semantic: JavaScriptSemanticGraphInput = {
-    ...parsed,
-    root_node_ids: uniqueSorted(parsed.root_node_ids),
-    nodes: [...parsed.nodes].sort((left, right) =>
-      compareCodePoints(left.node_id, right.node_id),
-    ),
-    relations: [...parsed.relations].sort((left, right) =>
-      compareCodePoints(left.relation_id, right.relation_id),
-    ),
-    fingerprints: [...parsed.fingerprints].sort((left, right) =>
-      compareCodePoints(left.fingerprint_id, right.fingerprint_id),
-    ),
-    unknowns: [...parsed.unknowns].sort((left, right) =>
-      compareCodePoints(left.unknown_id, right.unknown_id),
-    ),
-    coverage: {
-      ...parsed.coverage,
-      limits: [...parsed.coverage.limits].sort((left, right) =>
-        compareCodePoints(
-          canonicalJson(left, "JavaScript semantic graph"),
-          canonicalJson(right, "JavaScript semantic graph"),
-        ),
-      ),
-      families: [...parsed.coverage.families]
-        .map((family) => ({
-          ...family,
-          unknown_ids: uniqueSorted(family.unknown_ids),
-        }))
-        .sort((left, right) => compareCodePoints(left.family, right.family)),
-    },
-    limitations: uniqueSorted(parsed.limitations),
-  };
+  const semantic = normalizeGraphInput(
+    javaScriptSemanticGraphInputSchema.parse(input),
+  );
   // The input schema already cloned and validated every field. Validate the
   // normalized relationships in place, then derive the only added field. The
   // public schema still verifies arbitrary records and their commitments.
@@ -564,15 +593,28 @@ export const createJavaScriptSemanticGraph = (
 
 const validatedImmutableSemanticGraphs = new WeakSet<object>();
 
-/** Clone and validate synchronously, then return steps to seal the owned graph. */
+/** Clone input synchronously; commit, check and seal the owned graph in steps. */
 export const createImmutableJavaScriptSemanticGraphSteps = (
   input: unknown,
 ): Generator<void, JavaScriptSemanticGraph> =>
-  sealValidatedSemanticGraphSteps(createJavaScriptSemanticGraph(input));
+  validateAndSealSemanticGraphSteps(
+    normalizeGraphInput(javaScriptSemanticGraphInputSchema.parse(input)),
+  );
 
-function* sealValidatedSemanticGraphSteps(
-  graph: JavaScriptSemanticGraph,
+function* validateAndSealSemanticGraphSteps(
+  semantic: JavaScriptSemanticGraphInput,
 ): Generator<void, JavaScriptSemanticGraph> {
+  const graph: GraphRecord = {
+    ...semantic,
+    graph_id: `jsrg_${yield* canonicalJsonDigestSteps(semantic)}`,
+  };
+  const issues: SemanticGraphIssue[] = [];
+  yield* checkGraphContentSteps(graph, {
+    addIssue: (issue) => {
+      issues.push(issue);
+    },
+  });
+  if (issues.length > 0) throw new z.ZodError(issues);
   yield* freezeOwnedJsonSnapshotSteps(graph);
   validatedImmutableSemanticGraphs.add(graph);
   return graph;

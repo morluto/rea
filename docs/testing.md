@@ -46,6 +46,15 @@ claim, even if a directory name calls it acceptance.
 Emit a verifier's final success report only after awaited cleanup. Observe final
 process lineage after closing its owned resources.
 
+Owned JavaScript semantic graphs capture and schema-parse caller input before
+returning an iterator. Whole-graph hashing, batched integrity checks and sealing
+run through the application cancellation driver; only full completion grants
+the private immutable-graph proof. Regression coverage checks canonical IDs,
+validation diagnostics, nested caller mutations across yields, cancellation
+before result validation and subsequent SDK requests. Single-file parsing,
+schema cloning and canonical sorting remain synchronous phases; measure them
+separately when assessing cancellation latency on real applications.
+
 The Vitest runner releases cached native process inspectors during awaited
 worker teardown. Fork termination does not run Node's normal exit hooks; a
 per-file teardown would instead retire shared inspectors before later files

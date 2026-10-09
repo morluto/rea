@@ -7,6 +7,41 @@ import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { analyzeJavaScriptApplication } from "./JavaScriptApplicationService.js";
 
 describe("JavaScript analysis cancellation before publication", () => {
+  it("interrupts semantic graph commitment before result validation", async () => {
+    const root = await createTestTempDirectory("rea-js-cancel-semantic-");
+    await writeFile(
+      join(root, "main.js"),
+      Array.from(
+        { length: 500 },
+        (_, index) =>
+          `export function inspect${index}(value) { return JSON.stringify(value); }`,
+      ).join("\n"),
+    );
+    const controller = new AbortController();
+    const phases: string[] = [];
+    const result = await analyzeJavaScriptApplication(
+      { input_path: root, format: "directory" },
+      {
+        signal: controller.signal,
+        progress: {
+          async report(event) {
+            phases.push(event.phase);
+            if (event.phase === "seal_javascript_semantic_graph")
+              setImmediate(() => controller.abort());
+          },
+        },
+      },
+    );
+    if (result.ok)
+      throw new Error("Cancelled commitment must not publish Evidence");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "cancelled",
+      details: { reason: "cancelled" },
+    });
+    expect(phases).toContain("seal_javascript_semantic_graph");
+    expect(phases).not.toContain("validate_javascript_application_result");
+  });
+
   it.each([
     "parse_javascript_source",
     "build_javascript_application_graph",

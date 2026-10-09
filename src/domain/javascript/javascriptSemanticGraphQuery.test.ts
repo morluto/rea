@@ -1,10 +1,12 @@
 import { expect, it } from "vitest";
+import { z } from "zod";
 
 import type { ApplicationGraphEvidence } from "./javascriptApplicationEvidenceSchemas.js";
 import {
   JAVASCRIPT_SEMANTIC_NODE_KINDS,
   JAVASCRIPT_SEMANTIC_RELATION_FAMILIES,
   JAVASCRIPT_SEMANTIC_RELATIONS,
+  type JavaScriptSemanticGraphInput,
 } from "./javascriptSemanticGraphSchemas.js";
 import {
   createJavaScriptSemanticFingerprint,
@@ -12,6 +14,8 @@ import {
   createJavaScriptSemanticGraphNode,
   createJavaScriptSemanticGraphRelation,
   createJavaScriptSemanticGraphUnknown,
+  createImmutableJavaScriptSemanticGraphSteps,
+  isValidatedImmutableJavaScriptSemanticGraph,
   type JavaScriptSemanticGraph,
   type JavaScriptSemanticGraphNode,
 } from "./javascriptSemanticGraph.js";
@@ -285,3 +289,130 @@ it("rejects stale identities, dangling endpoints, and incomplete coverage claims
     }),
   ).toThrow(/candidate node is absent/u);
 });
+
+const complete = <Value>(steps: Iterator<void, Value>): Value => {
+  for (;;) {
+    const next = steps.next();
+    if (next.done) return next.value;
+  }
+};
+
+it("captures nested input before yielding and preserves the synchronous graph commitment", () => {
+  const { graph_id: _graphId, ...input } = fixtureGraph(true);
+  const node = input.nodes[0];
+  if (node === undefined) throw new Error("Expected fixture node");
+  const nested = { text: 'Unicode: \u{1f600} \ud800 " \\ ', rows: [1, 2, 3] };
+  node.properties = { nested, padding: "x".repeat(64_000) };
+  input.nodes.reverse();
+  input.relations.reverse();
+  input.coverage.families.reverse();
+  const expected = createJavaScriptSemanticGraph(input);
+  const steps = createImmutableJavaScriptSemanticGraphSteps(input);
+  expect(steps.next().done).toBe(false);
+  nested.text = "Changed while the owned graph is being hashed.";
+  nested.rows.push(4);
+  input.relations.length = 0;
+  input.coverage.families.length = 0;
+  const graph = complete(steps);
+  expect(graph).toEqual(expected);
+  expect(
+    parseJavaScriptSemanticGraph(
+      JSON.parse(serializeJavaScriptSemanticGraph(graph)),
+    ),
+  ).toEqual(expected);
+  expect(isValidatedImmutableJavaScriptSemanticGraph(graph)).toBe(true);
+  expect(isValidatedImmutableJavaScriptSemanticGraph(expected)).toBe(false);
+  expect(Object.isFrozen(nested)).toBe(false);
+});
+
+const invalidGraphCases: {
+  readonly label: string;
+  readonly change: (input: JavaScriptSemanticGraphInput) => void;
+  readonly message: string;
+}[] = [
+  {
+    label: "node identity and ownership",
+    change: (input) => {
+      input.nodes = input.nodes.map((node, index) =>
+        index === 0
+          ? {
+              ...node,
+              node_id: `jsrg_node_${"f".repeat(64)}`,
+              function_node_id: `jsrg_node_${"e".repeat(64)}`,
+            }
+          : node,
+      );
+    },
+    message: "Node identifier is stale",
+  },
+  {
+    label: "relation identity, endpoints and authority",
+    change: (input) => {
+      input.relations = input.relations.map((relation) => ({
+        ...relation,
+        source_node_id: `jsrg_node_${"f".repeat(64)}`,
+        target_node_id: `jsrg_node_${"f".repeat(64)}`,
+        resolution: "candidate",
+        evidence: evidence(),
+      }));
+    },
+    message: "Relation identifier is stale",
+  },
+  {
+    label: "unknown identity and candidates",
+    change: (input) => {
+      input.unknowns = input.unknowns.map((unknown) => ({
+        ...unknown,
+        candidate_node_ids: [`jsrg_node_${"f".repeat(64)}`],
+        evidence: evidence(),
+      }));
+    },
+    message: "Unknown frontier candidate node is absent",
+  },
+  {
+    label: "fingerprint identity and components",
+    change: (input) => {
+      input.fingerprints = input.fingerprints.map((fingerprint) => ({
+        ...fingerprint,
+        function_node_id: `jsrg_node_${"f".repeat(64)}`,
+        fingerprint_sha256: "f".repeat(64),
+        components: { ...fingerprint.components, parameter_arity: 42 },
+      }));
+    },
+    message: "Fingerprint component commitment is stale",
+  },
+  {
+    label: "coverage completeness and references",
+    change: (input) => {
+      input.coverage.status = "complete";
+      input.coverage.families = input.coverage.families.map((family) => ({
+        ...family,
+        retained_relations: family.retained_relations + 1,
+        unknown_ids: [`jsrg_unknown_${"f".repeat(64)}`],
+      }));
+    },
+    message: "Family retained relation count does not match graph content",
+  },
+];
+
+it.each(invalidGraphCases)(
+  "retains full validation diagnostics for $label in owned steps",
+  ({ change, message }) => {
+    const { graph_id: _graphId, ...input } = fixtureGraph(true);
+    change(input);
+    const issues = (action: () => unknown) => {
+      try {
+        action();
+      } catch (error: unknown) {
+        if (error instanceof z.ZodError) return error.issues;
+        throw error;
+      }
+      throw new Error("Expected invalid graph to fail validation");
+    };
+    const expected = issues(() => createJavaScriptSemanticGraph(input));
+    expect(expected.map(({ message }) => message)).toContain(message);
+    const steps = createImmutableJavaScriptSemanticGraphSteps(input);
+    expect(steps.next().done).toBe(false);
+    expect(issues(() => complete(steps))).toEqual(expected);
+  },
+);

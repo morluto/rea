@@ -122,7 +122,7 @@ export const reconstructJavaScriptArtifact = async (
     );
     await reportPhase(
       "seal_javascript_semantic_graph",
-      "Sealing the validated semantic graph",
+      "Validating and sealing the semantic graph",
     );
     const semanticGraph = await completeJavaScriptAnalysisSteps(
       semanticGraphSteps,
