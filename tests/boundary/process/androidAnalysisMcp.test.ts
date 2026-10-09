@@ -5,7 +5,9 @@ import { expect, it as test, onTestFinished } from "vitest";
 import { z } from "zod";
 import { access } from "node:fs/promises";
 import { ANDROID_TOOL_CONTRACTS } from "../../../src/contracts/android/androidToolContracts.js";
+import { androidPartialObservationSchema } from "../../../src/domain/android/androidPartialObservation.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { ToolResultDelivery } from "../../../src/server/toolResult.js";
 import { startMcpTransport } from "../../../src/main/transport.js";
@@ -14,6 +16,7 @@ import type { AndroidAnalysisPort } from "../../../src/application/android/Andro
 import { silentLogger } from "../../../src/logger.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   createJadxProtocolFixture,
   verifyJadxFixtureCleanup,
@@ -34,11 +37,11 @@ it("keeps a replacement server usable after the SDK discards its discovery probe
       factories.push(factory);
       return { close: async () => undefined };
     },
-    createServer: (analysis, binary, options) => {
+    createServer: (source, options) => {
       if (options?.androidAnalysis === undefined)
         throw new Error("Expected owned Android provider");
       providers.push(options.androidAnalysis);
-      return createServer(analysis, binary, options);
+      return createServer(source, options);
     },
     writeStderr: () => undefined,
     setExitCode: () => undefined,
@@ -83,7 +86,10 @@ it("publishes and executes all APK contracts with inline Evidence and no active 
   const session = createTestBinarySession(() => {
     throw new Error("APK analysis must not acquire a deep binary provider");
   });
-  const server = createServer(session, session, { androidAnalysis: provider });
+  const server = createServer(
+    { kind: "session", session },
+    { androidAnalysis: provider },
+  );
   const client = new Client({
     name: "android-contract-regression",
     version: "1",
@@ -145,12 +151,146 @@ it("publishes and executes all APK contracts with inline Evidence and no active 
   await verifyJadxFixtureCleanup(launches);
 });
 
+test.each([
+  {
+    scenario: "failed upstream reply",
+    mode: "tool-error",
+    errorCode: "execution_failure",
+    serverName: "rea-jadx-bridge",
+    serverVersion: "1",
+    engineVersion: "0.7.1",
+    calls: [
+      { operation: "rea_jvm_status" },
+      { operation: "load_apk" },
+      { operation: "get_app_info" },
+      {
+        operation: "get_android_manifest",
+        response: { isError: true },
+      },
+    ],
+    containsAmbientEnvironment: false,
+  },
+  {
+    scenario: "transport error after successful replies",
+    mode: "rpc-disconnect",
+    errorCode: "execution_failure",
+    serverName: "rea-jadx-bridge",
+    serverVersion: "1",
+    engineVersion: "0.7.1",
+    calls: [{ operation: "rea_jvm_status" }, { operation: "load_apk" }],
+    containsAmbientEnvironment: true,
+  },
+  {
+    scenario: "empty handshake identity mismatch",
+    mode: "empty-server-identity",
+    errorCode: "capability_unavailable",
+    serverName: "",
+    serverVersion: "",
+    engineVersion: null,
+    calls: [],
+    containsAmbientEnvironment: true,
+  },
+])(
+  "retains Android partial observations for $scenario through MCP",
+  async ({
+    mode,
+    errorCode,
+    serverName,
+    serverVersion,
+    engineVersion,
+    calls,
+    containsAmbientEnvironment,
+  }) => {
+    const { provider, apk, launches } = await createJadxProtocolFixture(mode);
+    const session = createTestBinarySession(() => {
+      throw new Error("Unexpected native provider acquisition");
+    });
+    const server = createServer(
+      { kind: "session", session },
+      { androidAnalysis: provider },
+    );
+    const client = new Client({
+      name: "android-partial-observation-regression",
+      version: "1",
+    });
+    onTestFinished(async () => {
+      await client.close();
+      await server.close();
+      await session.close();
+    });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    const response = await client.callTool({
+      name: "inspect_android_package",
+      arguments: { path: apk },
+    });
+    const projected = parseMcpToolError(response).error;
+    expect(projected.code).toBe(errorCode);
+    const details = z.record(z.string(), z.unknown()).parse(projected.details);
+    const partial = androidPartialObservationSchema.parse(
+      details.partial_observation,
+    );
+    expect(partial).toMatchObject({
+      provider_id: "jadx",
+      operation: "inspect_android_package",
+      target: { selected_path: apk, path: apk, format: "apk" },
+      provider_facts: {
+        bridge_name: "rea-jadx-bridge",
+        bridge_version: "1",
+        server_name: serverName,
+        server_version: serverVersion,
+        engine_version: engineVersion,
+      },
+      calls,
+    });
+    if (!containsAmbientEnvironment)
+      expect(JSON.stringify(partial)).not.toContain("JAVA_HOME");
+    await client.close();
+    await server.close();
+    await verifyJadxFixtureCleanup(launches);
+  },
+);
+
+it("retains partial JADX replies when owned cleanup also fails", async () => {
+  const { service, apk } = await createJadxProtocolFixture("cleanup-failure");
+  const result = await service.execute("inspect_android_package", {
+    path: apk,
+  });
+  if (result.ok) throw new Error("Expected the fixture tool to fail");
+
+  const projected = projectAnalysisError(result.error);
+  expect(projected.code).toBe("cleanup_incomplete");
+  expect(projected.details).toMatchObject({
+    cleanup: "incomplete",
+    execution_failure: "execution_failure",
+    partial_observation: {
+      provider_id: "jadx",
+      operation: "inspect_android_package",
+      calls: [
+        { operation: "rea_jvm_status" },
+        { operation: "load_apk" },
+        { operation: "get_app_info" },
+        {
+          operation: "get_android_manifest",
+          response: { isError: true },
+        },
+      ],
+    },
+  });
+});
+
 it("cleans an active engine when the MCP client disconnects", async () => {
   const { provider, apk, launches } = await createJadxProtocolFixture("stall");
   const session = createTestBinarySession(() => {
     throw new Error("Unexpected native provider acquisition");
   });
-  const server = createServer(session, session, { androidAnalysis: provider });
+  const server = createServer(
+    { kind: "session", session },
+    { androidAnalysis: provider },
+  );
   const client = new Client({
     name: "android-disconnect-regression",
     version: "1",
@@ -167,7 +307,7 @@ it("cleans an active engine when the MCP client disconnects", async () => {
   const pending = client
     .callTool({ name: "inspect_android_package", arguments: { path: apk } })
     .catch(() => undefined);
-  await expect.poll(() => launches.length).toBe(1);
+  await expect.poll(() => launches.length, { timeout: 10_000 }).toBe(1);
   await client.close();
   await pending;
   await expect

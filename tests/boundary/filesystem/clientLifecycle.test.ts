@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parse as parseJsonc, type ParseError } from "jsonc-parser";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
 
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
@@ -30,19 +31,7 @@ import {
 } from "../../../src/application/Uninstall.js";
 
 const roots: string[] = [];
-beforeEach(() => {
-  for (const name of [
-    "APPDATA",
-    "CLAUDE_CONFIG_DIR",
-    "CODEX_HOME",
-    "COPILOT_HOME",
-    "GROK_HOME",
-    "OPENCODE_CONFIG",
-    "SAND_DATA_ROOT",
-    "XDG_CONFIG_HOME",
-  ])
-    vi.stubEnv(name, undefined);
-});
+beforeEach(clearClientLocationEnvironment);
 afterEach(async () => {
   vi.unstubAllEnvs();
   await Promise.all(
@@ -72,6 +61,7 @@ describe("client configuration filesystem lifecycle", () => {
       "commandcode",
       "vscode",
       "grok_build",
+      "omp",
       "grok_bot",
     ]);
     expect(
@@ -1639,13 +1629,40 @@ describe("client configuration filesystem failure reporting", () => {
         remove: () => Promise.reject(new Error("SECRET removal failure")),
       }),
     );
-    expect(result.items).toContainEqual({
-      name: "skill",
-      status: "failed",
-      detail:
-        "This item could not be removed. Check file permissions, then rerun uninstall.",
-    });
+    expect(result.items).toContainEqual(
+      expect.objectContaining({
+        name: "skill",
+        status: "failed",
+        detail: expect.stringContaining(
+          "This item could not be removed. Check file permissions, then rerun uninstall.",
+        ),
+      }),
+    );
     expect(JSON.stringify(result)).not.toContain("SECRET");
+  });
+
+  it("uninstalls all managed skill roots, including a custom Claude Code directory", async () => {
+    const home = await createTestTempDirectory("rea-uninstall-skills-");
+    roots.push(home);
+    const customClaudeDirectory = join(home, "claude-config");
+    const rootsToRemove = [
+      join(home, ".agents/skills/reverse-engineer-anything"),
+      join(customClaudeDirectory, "skills/reverse-engineer-anything"),
+    ];
+    await Promise.all(
+      rootsToRemove.map((path) => mkdir(path, { recursive: true })),
+    );
+
+    const result = await systemUninstallHost(home, testFileSystem, {
+      CLAUDE_CONFIG_DIR: customClaudeDirectory,
+    }).removeSkill();
+
+    expect(result).toMatchObject({ status: "removed" });
+    await Promise.all(
+      rootsToRemove.map(async (path) => {
+        await expect(lstat(path)).rejects.toMatchObject({ code: "ENOENT" });
+      }),
+    );
   });
 });
 

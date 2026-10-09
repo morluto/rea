@@ -236,12 +236,13 @@ network metadata observation; listing `network` in `events` is then optional.
 Each observed request object receives a capture-scoped `transaction_id`.
 Requests sharing a URL remain distinct. Redirects link to the preceding
 transaction only when it was observed; a null predecessor does not establish
-that no earlier hop existed. Older captures without IDs remain readable and
-their transaction association is unknown.
+that no earlier hop existed. Request events require both transaction fields;
+an absent ID is malformed capture data, while a null redirect predecessor is
+an explicit unknown.
 
 `scenario.network_content` records the resolved content selection. Comparing
-captures with different selection, or legacy captures without that coverage
-information, reports network evidence as unknown with a recovery instruction.
+captures with different selections reports network evidence as unknown with a
+recovery instruction.
 Capturing more data alone does not establish a website change.
 
 `network-content` events reference the exact request or response event through

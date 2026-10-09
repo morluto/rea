@@ -1,7 +1,41 @@
-import { parse } from "@babel/parser";
+import { parse, type ParserPlugin } from "@babel/parser";
 
 /** Babel AST produced by REA's inert JavaScript parser boundary. */
 export type ParsedJavaScriptSource = ReturnType<typeof parse>;
+
+/**
+ * Babel plugins for one source path. Single owner for TypeScript/JSX
+ * mode selection (tsc + Babel `typescript` plugin semantics).
+ *
+ * - `dts:true` only for `.d.ts/.d.mts/.d.cts` ambient declarations;
+ *   ordinary `.ts` keeps the missing-initializer diagnostic.
+ * - JSX enabled for `.tsx`, `.jsx`, `.js`, and unknown paths; disabled for
+ *   plain `.ts/.cts/.mts` (angle-bracket assertions, not JSX) and for all
+ *   declaration files. `.mts` (including `.d.mts`) sets
+ *   `disallowAmbiguousJSXLike`, matching tsc's `.mts` mode.
+ * - `decorators-legacy` always present: without it decorated sources fail
+ *   hard instead of reporting recovered syntax, losing every derived fact.
+ * - Unknown paths retain the existing JSX-capable contract (best-effort
+ *   parse; failures surface via `errorRecovery`, never silent misparse).
+ */
+export const parserPluginsForPath = (sourcePath?: string): ParserPlugin[] => {
+  const path = sourcePath ?? "";
+  const dts = /\.d\.(?:ts|mts|cts)$/iu.test(path);
+  const isTsLike = /\.(?:ts|cts|mts)$/iu.test(path);
+  const isTsx = /\.tsx$/iu.test(path);
+  const isMts = /\.mts$/iu.test(path);
+  const typescript: ParserPlugin = [
+    "typescript",
+    {
+      dts,
+      ...(isMts ? { disallowAmbiguousJSXLike: true } : {}),
+    },
+  ];
+  const jsxCapable = !dts && (isTsx || !isTsLike);
+  return jsxCapable
+    ? ["decorators-legacy", "jsx", typescript]
+    : ["decorators-legacy", typescript];
+};
 
 /** Parse JavaScript or TypeScript once without attaching comments to AST nodes. */
 export const parseJavaScriptSource = (
@@ -13,16 +47,7 @@ export const parseJavaScriptSource = (
       sourceType: "unambiguous",
       errorRecovery: true,
       attachComment: false,
-      // "decorators-legacy" admits both the standard and the legacy decorator
-      // forms, including parameter decorators. Without it a decorated
-      // TypeScript source fails to parse at all rather than reporting
-      // recovered syntax, which loses every fact derived from that source.
-      // Plain .ts artifacts admit angle-bracket type assertions instead of JSX.
-      // Unknown paths retain the existing JSX-capable parser contract.
-      plugins:
-        sourcePath?.toLowerCase().endsWith(".ts") === true
-          ? ["decorators-legacy", "typescript"]
-          : ["decorators-legacy", "jsx", "typescript"],
+      plugins: parserPluginsForPath(sourcePath),
     });
   } catch (cause: unknown) {
     // Unparseable source is represented by the null return.

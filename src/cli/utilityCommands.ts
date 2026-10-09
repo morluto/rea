@@ -22,10 +22,7 @@ export const registerUtilityCommands = (
   cli: CliInstance,
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
-  analysis: Pick<
-    DirectAnalysis,
-    "runProviderAnalysis" | "runProviderStatus" | "runCapabilityStatus"
-  >,
+  analysis: Pick<DirectAnalysis, "runProviderAnalysis" | "runSessionStatus">,
 ): void => {
   const { runProviderAnalysis } = analysis;
   registerCapabilityCommands(cli, logger, analysis);
@@ -129,10 +126,7 @@ const invalidNativeUiScenarioInput = (
 const registerCapabilityCommands = (
   cli: CliInstance,
   logger: Logger,
-  {
-    runProviderStatus,
-    runCapabilityStatus,
-  }: Pick<DirectAnalysis, "runProviderStatus" | "runCapabilityStatus">,
+  { runSessionStatus }: Pick<DirectAnalysis, "runSessionStatus">,
 ): void => {
   for (const command of [
     CLI_COMMANDS.capabilities,
@@ -143,12 +137,7 @@ const registerCapabilityCommands = (
         command === "capabilities"
           ? "List provider capabilities and side effects"
           : "List configured analysis providers",
-      run: () =>
-        logCliCommand(logger, command, () =>
-          command === CLI_COMMANDS.providers
-            ? runProviderStatus(logger)
-            : runCapabilityStatus(logger),
-        ),
+      run: () => logCliCommand(logger, command, () => runSessionStatus(logger)),
     });
   }
 };

@@ -26,7 +26,7 @@ it("inspects a standalone keyed archive through MCP with original object identit
     ),
   );
   const session = createTestBinarySession(new ArtifactProvider(process.env));
-  const server = createServer(session, session);
+  const server = createServer({ kind: "session", session });
   const client = new Client({ name: "keyed-mcp-test", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -119,7 +119,7 @@ it("returns all 520 ZIP file occurrences in one inspect_artifact MCP result", as
   await writeFile(archive, await writer.close());
 
   const session = createTestBinarySession(new ArtifactProvider(process.env));
-  const server = createServer(session, session);
+  const server = createServer({ kind: "session", session });
   const client = new Client({ name: "artifact-inline-test", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();

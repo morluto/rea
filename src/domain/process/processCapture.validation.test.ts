@@ -9,35 +9,20 @@ import {
 } from "./processCapture.fixture.js";
 
 it("never considers truncated captures equivalent", () => {
+  const complete = emptyCapture();
   const capture = {
-    manifest: emptyCapture().manifest,
-    settlement: emptyCapture().settlement,
-    normalization: {
-      paths: true,
-      pids: true,
-      ports: true,
-      time_bucket_ms: 10,
-      patterns: [],
-    },
-    frames: [],
-    rendered_frames: [],
-    interaction_events: [],
-    exit: { code: 0, signal: null, reason: "exited" as const },
-    process_samples: [],
-    filesystem_checkpoints: emptyCapture().filesystem_checkpoints,
-    event_journal: [],
-    files_before: [],
-    files_after: [],
-    filesystem_effects: [],
+    ...complete,
     truncated: true,
-    limitations: [],
-    residual_unknowns: [],
-    cleanup: {
-      owned_process_group: "verified" as const,
-      temporary_root: "removed" as const,
+    truncation_details: {
+      ...complete.truncation_details,
+      raw_terminal: {
+        ...complete.truncation_details.raw_terminal,
+        observed_bytes: 1,
+        observed_frames: 1,
+      },
     },
   };
-  expect(compareProcessCaptures(capture, capture).status).toBe("truncated");
+  expect(compareProcessCaptures(capture, capture).status).toBe("unknown");
 });
 
 it("rejects altered v4 commitments and accepts canonical key reordering", () => {
@@ -64,6 +49,14 @@ it("rejects altered v4 commitments and accepts canonical key reordering", () => 
       },
     }),
   ).toThrow("executable_identity");
+});
+
+it("requires producer coverage accounting in every parsed capture", () => {
+  const capture = emptyCapture();
+  const { truncation_details: _details, ...missingCoverage } = capture;
+  expect(() => parseProcessCapture(missingCoverage)).toThrow(
+    "truncation_details",
+  );
 });
 
 it("rejects settlement and cleanup combinations that cannot occur", () => {

@@ -81,6 +81,7 @@ const tracer: NativeCallTracer & { calls: number } = {
       }),
     );
   },
+  close: () => Promise.resolve(ok(null)),
 };
 
 it("routes observe_native_calls through MCP with schema-checked input and output", async () => {
@@ -88,9 +89,14 @@ it("routes observe_native_calls through MCP with schema-checked input and output
   const path = join(directory, "Tool");
   await writeFile(path, machoHeader());
   const session = createTestBinarySession(
-    new NativeMacOSProvider({}, new NativeFixtureRunner(), "darwin", tracer),
+    new NativeMacOSProvider(
+      {},
+      new NativeFixtureRunner(),
+      "darwin",
+      () => tracer,
+    ),
   );
-  const server = createServer(session, session);
+  const server = createServer({ kind: "session", session });
   const client = new Client({ name: "native-calls-mcp-test", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -138,6 +144,62 @@ it("routes observe_native_calls through MCP with schema-checked input and output
   }
 });
 
+const partialObservationFor = (options: {
+  readonly path: string;
+  readonly sha256: string;
+  readonly arguments: string[];
+  readonly environment: Record<string, string>;
+  readonly workingDirectory: string;
+  readonly reason: "cancelled" | "cleanup-failure";
+}) =>
+  nativeCallPartialObservationSchema.parse({
+    kind: "native-call-observation",
+    target: {
+      path: options.path,
+      sha256: options.sha256,
+      architecture: "arm64",
+      arguments: options.arguments,
+      environment: options.environment,
+      working_directory: options.workingDirectory,
+    },
+    process: {
+      pid: 4242,
+      stdout: {
+        text: "partial target output",
+        bytes: 21,
+        truncated: true,
+        complete: false,
+      },
+      stderr: {
+        text: "debugger diagnostic",
+        bytes: 19,
+        truncated: false,
+        complete: false,
+      },
+      other_stops: ["signal SIGSTOP"],
+    },
+    debugger: { version: "lldb-fixture" },
+    events: [
+      {
+        sequence: 0,
+        elapsed_ms: 4,
+        thread_id: 3,
+        breakpoint_index: 0,
+        load_address: "0x1000",
+        file_address: "0x1000",
+        module: "Tool",
+        module_path: options.path,
+        symbol: "open",
+        receiver_class: null,
+        selector: null,
+        registers: [{ name: "x0", value: "0x2" }],
+        backtrace: [],
+      },
+    ],
+    coverage: { status: "partial", reason: options.reason },
+    limitations: ["Observation ended before the requested window completed."],
+  });
+
 it.each([
   ["cancelled", "cancelled", undefined],
   [
@@ -161,57 +223,16 @@ it.each([
     const launchArguments = ["--fixture", "selected argument"];
     const launchEnvironment = { REA_NATIVE_FIXTURE: "selected value" };
     const workingDirectory = directory;
-    const partialObservation = nativeCallPartialObservationSchema.parse({
-      kind: "native-call-observation",
-      target: {
-        path,
-        sha256,
-        architecture: "arm64",
-        arguments: launchArguments,
-        environment: launchEnvironment,
-        working_directory: workingDirectory,
-      },
-      process: {
-        pid: 4242,
-        stdout: {
-          text: "partial target output",
-          bytes: 21,
-          truncated: true,
-          complete: false,
-        },
-        stderr: {
-          text: "debugger diagnostic",
-          bytes: 19,
-          truncated: false,
-          complete: false,
-        },
-        other_stops: ["signal SIGSTOP"],
-      },
-      debugger: { version: "lldb-fixture" },
-      events: [
-        {
-          sequence: 0,
-          elapsed_ms: 4,
-          thread_id: 3,
-          breakpoint_index: 0,
-          load_address: "0x1000",
-          file_address: "0x1000",
-          module: "Tool",
-          module_path: path,
-          symbol: "open",
-          receiver_class: null,
-          selector: null,
-          registers: [{ name: "x0", value: "0x2" }],
-          backtrace: [],
-        },
-      ],
-      coverage: {
-        status: "partial",
-        reason: cleanup === undefined ? "cancelled" : "cleanup-failure",
-      },
-      limitations: ["Observation ended before the requested window completed."],
+    const partialObservation = partialObservationFor({
+      path,
+      sha256,
+      arguments: launchArguments,
+      environment: launchEnvironment,
+      workingDirectory,
+      reason: cleanup === undefined ? "cancelled" : "cleanup-failure",
     });
     const tracer: NativeCallTracer = {
+      close: () => Promise.resolve(ok(null)),
       trace: () =>
         Promise.resolve(
           err(
@@ -231,9 +252,14 @@ it.each([
         ),
     };
     const session = createTestBinarySession(
-      new NativeMacOSProvider({}, new NativeFixtureRunner(), "darwin", tracer),
+      new NativeMacOSProvider(
+        {},
+        new NativeFixtureRunner(),
+        "darwin",
+        () => tracer,
+      ),
     );
-    const server = createServer(session, session);
+    const server = createServer({ kind: "session", session });
     const client = new Client({
       name: "native-calls-partial-mcp-test",
       version: "1",

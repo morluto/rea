@@ -1,15 +1,6 @@
-import type {
-  CapabilityDescriptor,
-  ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+import type { CapabilityDescriptor } from "../application/AnalysisProvider.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../application/InvestigationProviders.js";
 import { ARTIFACT_ANALYSIS_OPERATIONS } from "../contracts/artifactToolContracts.js";
-
-/** Identity of artifact inventory and owned extraction observations. */
-export const ARTIFACT_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze(
-  ARTIFACT_GRAPH_PROVIDER,
-);
-const IDENTITY = ARTIFACT_PROVIDER_IDENTITY;
 
 /** Declare artifact coverage without constructing readers or acquiring resources. */
 export const artifactCapabilities = (
@@ -18,7 +9,7 @@ export const artifactCapabilities = (
   Object.freeze(
     ARTIFACT_ANALYSIS_OPERATIONS.map((operation) => {
       const common = {
-        provider: IDENTITY,
+        provider: ARTIFACT_GRAPH_PROVIDER,
         operation,
         effects: Object.freeze({
           mutatesArtifact: false,

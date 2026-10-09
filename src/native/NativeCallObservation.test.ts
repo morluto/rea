@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { err, type Result } from "../domain/result.js";
+import { ok, type Result } from "../domain/result.js";
 import type { NativeCallTrace, NativeCallTracer } from "./LldbCallTracer.js";
 import { observeNativeCalls } from "./NativeCallObservation.js";
 import { nativeMachoTarget } from "../../tests/fixtures/nativeCommands.js";
@@ -19,6 +19,10 @@ class NeverStartedTracer implements NativeCallTracer {
   trace(): Promise<Result<NativeCallTrace, AnalysisError>> {
     this.calls += 1;
     throw new Error("tracer must not run after hash cancellation");
+  }
+
+  close(): Promise<Result<null, AnalysisError>> {
+    return Promise.resolve(ok(null));
   }
 }
 

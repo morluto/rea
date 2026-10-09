@@ -348,6 +348,64 @@ describe("JavaScript export return-shape uncertain presence", () => {
 });
 
 describe("JavaScript export matching uncertain projections", () => {
+  it.each([
+    ["Object.assign", "Object.assign(result, { extra: 1 });"],
+    ["local helper", "mutate(result);"],
+    ["alias", "const alias = result; mutate(alias);"],
+    ["destructuring", "const { value } = { value: result }; mutate(value);"],
+    ["shared wrapper", "mutate({ value: result });"],
+    ["spread arguments", "mutate(...[result]);"],
+    ["optional call", "mutate?.(result);"],
+    ["constructor", "new Mutator(result);"],
+    ["tagged template", "tag`${result}`;"],
+  ])(
+    "does not infer an addition after %s can mutate the return value",
+    async (_description, invocation) => {
+      const graphs = await analyzeSources({
+        left: `
+        function mutate(value) { (value.value ?? value).extra = 1; }
+        function Mutator(value) { value.extra = 1; }
+        function tag(_strings, value) { value.extra = 1; }
+        export default function make() {
+          const result = { kind: "record" };
+          ${invocation}
+          return result;
+        }
+      `,
+        right: 'export default () => ({ kind: "record", extra: 1 });',
+      });
+      const result = compare(...graphs);
+      expect(result.summary).toMatchObject({
+        added: 0,
+        removed: 0,
+        changed: 0,
+      });
+      expect(result.coverage.status).toBe("partial");
+      expect(result.changes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ status: "unknown" }),
+        ]),
+      );
+    },
+  );
+
+  it("keeps sibling properties known when a method can mutate its receiver", async () => {
+    const graphs = await analyzeSources({
+      left: `export default function make() {
+        const result = { kind: "record", tokens: [] };
+        result.tokens.push({ extra: 1 });
+        return result;
+      }`,
+      right:
+        'export default () => ({ kind: "record", tokens: [{ extra: 1 }] });',
+    });
+    const result = compare(...graphs);
+    expect(result.summary).toMatchObject({ added: 0, removed: 0, changed: 0 });
+    expect(result.coverage.status).toBe("partial");
+    for (const inventory of result.property_inventories)
+      expect(inventory.properties).toContain("/kind");
+  });
+
   it.each(["delete result.count;", "result.count = query();"])(
     "omits matching uncertain projections after %s",
     async (mutation) => {
@@ -938,7 +996,9 @@ const analyzeGraph = async (root: string) => {
     input_path: root,
   });
   if (!result.ok) throw result.error;
-  return parseApplicationGraphEvidence(result.value);
+  const parsed = parseApplicationGraphEvidence(result.value);
+  if (!parsed.ok) throw new Error("Analysis Evidence must parse");
+  return parsed.value;
 };
 
 const analyzeSources = async (

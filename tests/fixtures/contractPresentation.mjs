@@ -24,7 +24,7 @@ const { createServer } = await import("../../dist/server/createServer.js");
 const config = parseConfig({});
 if (!config.ok) throw config.error;
 const session = createBinarySession(config.value, silentLogger, {});
-const server = createServer(session, session);
+const server = createServer({ kind: "session", session });
 const client = new Client({ name: "contract-presentation", version: "1" });
 const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 try {

@@ -11,7 +11,7 @@
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
 [![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](docs/mcp-contracts.md#generated-catalog)
-[![Node.js 22+](https://img.shields.io/badge/Node.js-22.19%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#current-status)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 [![Discord](https://img.shields.io/discord/1556595354999332884?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/GkcryMnJDM)
@@ -28,7 +28,7 @@
 
 <img src="docs/assets/rea-hopper-analysis.png" alt="REA запускает мост анализа внутри Hopper при исследовании нативного бинарного файла" width="1200" />
 
-<br />
+<br /><br />
 
 <table aria-label="Сообщество REA">
 <tr>
@@ -154,6 +154,8 @@ REA требует Node.js 22.x (>=22.19), 24.x (>=24.11) или 26+, а так�
 
 ## Примеры
 
+[![Иллюстрации примеров панорамирования звука в DX-Ball, моста буфера обмена Notion и кольца пуль в TH04](docs/assets/rea-showcases.png)](https://rea.tools/showcase/)
+
 ### DX-Ball: восстановление расчёта звуковой панорамы
 
 Проследите звуковой вызов до функции, преобразующей координату в значение панорамы, изучите инструкции и превратите неполный псевдокод в C. Восстановленная реализация проходит 3 205 тестов с исходным x86-кодом и воспроизводит все 63 байта скомпилированной функции.
@@ -200,7 +202,7 @@ REA запускает Hopper, когда он нужен для операци�
 <details>
 <summary><strong>Что даёт установка skill с skills.sh?</strong></summary>
 
-Skill предоставляет агенту инструкции по исследованию. Используйте `rea setup`, чтобы зарегистрировать MCP-сервер REA и установить соответствующие инструкции, затем перезапустите агента. См. [установку только skill](docs/installation.md#skill-only-installation).
+Skill предоставляет агенту инструкции по исследованию. Используйте `npx rea-agents setup`, чтобы зарегистрировать MCP-сервер REA и установить соответствующие инструкции, затем перезапустите агента. См. [установку только skill](docs/installation.md#skill-only-installation).
 
 </details>
 
@@ -252,19 +254,9 @@ npx rea-agents@latest setup
 
 Сообщайте об уязвимостях согласно [SECURITY.md](SECURITY.md).
 
-## Участие в проекте
-
-Будем рады вашей помощи с REA! [Откройте issue](https://github.com/morluto/rea/issues), чтобы сообщить об ошибке или предложить функцию, либо [отправьте pull request](https://github.com/morluto/rea/pulls) с улучшениями кода или документации.
-
-Настройка среды разработки и проверки описаны в [CONTRIBUTING.md](CONTRIBUTING.md), направления проверки — в [руководстве по тестированию](docs/testing.md), а структура проекта — на [схеме архитектуры](docs/architecture.mermaid).
-
-## Ссылки проекта
-
-[Сайт](https://rea.tools/) · [npm](https://www.npmjs.com/package/rea-agents) · [skills.sh](https://skills.sh/morluto/rea/reverse-engineer-anything) · [Issues](https://github.com/morluto/rea/issues) · [Безопасность](SECURITY.md)
-
 ## История звёзд
 
-🎉 **30 000 звёзд на GitHub — спасибо!**
+🎉 **40 000 звёзд на GitHub — спасибо!**
 
 Спасибо всем, кто использует REA, сообщает об ошибках, предлагает новые функции, тестирует сборки и помогает с исправлениями.
 
@@ -279,6 +271,12 @@ npx rea-agents@latest setup
 ## Отказ от ответственности
 
 REA предоставляет инструменты для законных исследований, анализа и реконструкции с помощью реверс-инжиниринга. Вы отвечаете за получение необходимых разрешений и соблюдение применимых законов. Проект не поддерживает незаконное или несанкционированное использование.
+
+## Участие в проекте
+
+Будем рады вашей помощи с REA! [Откройте issue](https://github.com/morluto/rea/issues), чтобы сообщить об ошибке или предложить функцию, либо [отправьте pull request](https://github.com/morluto/rea/pulls) с улучшениями кода или документации.
+
+Настройка среды разработки и проверки описаны в [CONTRIBUTING.md](CONTRIBUTING.md), направления проверки — в [руководстве по тестированию](docs/testing.md), а структура проекта — на [схеме архитектуры](docs/architecture.mermaid).
 
 ## Лицензия
 

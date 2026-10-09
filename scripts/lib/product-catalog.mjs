@@ -1,21 +1,8 @@
 import { formatGeneratedFile } from "./format-generated-file.mjs";
 
 import { assertSameNames, digest, loadSources } from "./catalog-core.mjs";
-import {
-  createCliInventory,
-  cliCommandDescriptionIssues,
-  cliCommandOptionNames,
-} from "./catalog-cli.mjs";
+import { createCliInventory } from "./catalog-cli.mjs";
 import { providerCatalog, toolFamilyCatalog } from "./catalog-builders.mjs";
-
-export {
-  createCliInventory,
-  cliCommandDescriptionIssues,
-  cliCommandOptionNames,
-};
-
-/** Return the stable digest for the source-derived provider projection. */
-export const providerCatalogDigest = (providers) => digest(providers);
 
 /** Project current runtime contracts into deterministic, machine-readable facts. */
 export const createProductCatalog = async (root) => {
@@ -59,7 +46,7 @@ export const createProductCatalog = async (root) => {
       counts: sources.catalogIdentity.CATALOG_IDENTITY.counts,
       digests: {
         // Full runtime schema digests belong to server identity, not this facts projection.
-        providers_sha256: providerCatalogDigest(providers),
+        providers_sha256: digest(providers),
       },
     },
   };

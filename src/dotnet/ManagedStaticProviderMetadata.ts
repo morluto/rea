@@ -1,25 +1,16 @@
-import type {
-  CapabilityDescriptor,
-  ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+import type { CapabilityDescriptor } from "../application/AnalysisProvider.js";
 import { MANAGED_STATIC_PROVIDER } from "../application/InvestigationProviders.js";
 import {
   MANAGED_TOOL_CONTRACTS,
   type ManagedToolName,
 } from "../contracts/managed/managedToolContracts.js";
 
-/** Identity of execution-free managed metadata observations. */
-export const MANAGED_STATIC_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze(
-  MANAGED_STATIC_PROVIDER,
-);
-const IDENTITY = MANAGED_STATIC_PROVIDER_IDENTITY;
-
 /** Declare managed metadata coverage without opening or loading an assembly. */
 export const managedStaticCapabilities = (): readonly CapabilityDescriptor[] =>
   Object.freeze(
     MANAGED_TOOL_CONTRACTS.map((contract) =>
       Object.freeze({
-        provider: IDENTITY,
+        provider: MANAGED_STATIC_PROVIDER,
         operation: contract.name,
         available: true as const,
         reason: null,

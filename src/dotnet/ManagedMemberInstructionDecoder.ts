@@ -4,11 +4,6 @@ import type {
   ParsedInstruction,
 } from "./ManagedMemberInspectorCore.js";
 
-const opcode = (
-  code: number,
-): { readonly name: string; readonly operand: string } | undefined =>
-  OPCODES.get(code);
-
 const PREFIX_OPCODES = new Set([
   "unaligned.",
   "volatile.",
@@ -403,7 +398,7 @@ export const decodeInstructions = (
       const first = il.readUInt8(offset);
       offset += 1;
       const code = first === 0xfe ? 0xfe00 + il.readUInt8(offset++) : first;
-      const descriptor = opcode(code);
+      const descriptor = OPCODES.get(code);
       if (descriptor === undefined) {
         issue = `Unsupported CIL opcode 0x${code.toString(16)} at IL offset ${String(start)}`;
         break;

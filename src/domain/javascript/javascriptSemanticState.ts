@@ -1,5 +1,7 @@
 import * as t from "@babel/types";
 
+import type { JavaScriptSemanticPropertyPath } from "./javascriptSemanticPropertyPaths.js";
+
 import type {
   JavaScriptModuleOrigin,
   JavaScriptSemanticDefinition,
@@ -12,6 +14,17 @@ import type {
 interface JavaScriptSemanticInitializer {
   readonly node: t.Node;
   readonly projection: readonly (string | number | null)[];
+  readonly entryBody?: t.BlockStatement;
+}
+
+/** Additional references from destructuring copies and possible defaults. */
+interface JavaScriptSemanticReferenceInitializer extends JavaScriptSemanticInitializer {
+  readonly copyKind?: "object-rest" | "array-rest";
+  readonly copyProjectionOffset?: number;
+  readonly copyExcludedKeys?: readonly string[];
+  readonly copyStartIndex?: number;
+  readonly fallbackSources?: readonly JavaScriptSemanticInitializer[];
+  readonly requiredSources?: readonly JavaScriptSemanticInitializer[];
 }
 
 /** Mutable binding state used only while constructing the immutable IR. */
@@ -21,9 +34,14 @@ export interface JavaScriptSemanticBindingState {
   readonly name: string;
   kind: JavaScriptSemanticDefinition["kind"];
   mutable: boolean;
-  readonly mutatedPaths: (readonly (string | number | null)[])[];
+  readonly mutatedPaths: JavaScriptSemanticPropertyPath[];
+  readonly escapedPaths: {
+    readonly path: JavaScriptSemanticPropertyPath;
+    readonly node: t.Node | undefined;
+  }[];
   readonly definitions: JavaScriptSemanticDefinition[];
   readonly initializers: JavaScriptSemanticInitializer[];
+  readonly referenceInitializers: JavaScriptSemanticReferenceInitializer[];
   readonly directOrigins: JavaScriptModuleOrigin[];
 }
 
@@ -39,6 +57,7 @@ export interface JavaScriptSemanticScopeState {
 
 /** Shared state for semantic collection and evaluation. */
 export interface JavaScriptSemanticAnalysisState {
+  readonly parentsByNode: WeakMap<t.Node, t.Node>;
   readonly scopes: JavaScriptSemanticScopeState[];
   readonly scopesById: Map<string, JavaScriptSemanticScopeState>;
   readonly scopeByNode: WeakMap<t.Node, JavaScriptSemanticScopeState>;
@@ -46,6 +65,11 @@ export interface JavaScriptSemanticAnalysisState {
   readonly callables: JavaScriptSemanticCallable[];
   readonly callableNodesById: Map<string, t.Node>;
   readonly moduleLinks: JavaScriptSemanticModuleLink[];
+  readonly moduleLinkBindings: WeakMap<
+    JavaScriptSemanticModuleLink,
+    JavaScriptSemanticBindingState
+  >;
+  readonly conditionalInitializers: WeakSet<t.Node>;
 }
 
 /** Return the active scope from a non-empty construction stack. */

@@ -12,10 +12,9 @@ import {
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
-import type {
-  AnalysisCleanupObservation,
-  AnalysisError,
-} from "../domain/analysisErrorBase.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import type { NativeCallPartialObservation } from "../domain/native/nativeCallPartialObservation.js";
 import {
   nativeCallEventSchema,
@@ -23,6 +22,7 @@ import {
   type NativeCallObservationInput,
 } from "../domain/native/nativeCallObservation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import {
@@ -32,7 +32,6 @@ import {
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import {
   observeProcessStartIdentity,
-  prepareProcessOwnershipInspection,
   signalProcessWithStartIdentity,
 } from "../process/ProcessOwnershipObservation.js";
 import type { ProcessIdentityObservation } from "../process/ProcessOwnership.js";
@@ -158,6 +157,8 @@ export interface NativeCallTracer {
     },
     signal?: AbortSignal,
   ): Promise<Result<NativeCallTrace, AnalysisError>>;
+  /** Retry cleanup retained after a trace could not verify process exit. */
+  close(): Promise<Result<null, AnalysisError>>;
 }
 
 /** Remediation for a target LLDB may not debug. */
@@ -167,6 +168,8 @@ const ATTACH_REMEDIATION =
 /** Production tracer: `lldb --batch` running the REA LLDB bridge. */
 export class LldbCallTracer implements NativeCallTracer {
   private readonly environment: NodeJS.ProcessEnv;
+  #tail: Promise<void> = Promise.resolve();
+  #pendingCleanup: RetainedLldbResources | undefined;
   constructor(
     environment: Readonly<NodeJS.ProcessEnv>,
     private readonly launch: typeof runLldb = runLldb,
@@ -183,6 +186,15 @@ export class LldbCallTracer implements NativeCallTracer {
     request: Parameters<NativeCallTracer["trace"]>[0],
     signal?: AbortSignal,
   ): Promise<Result<NativeCallTrace, AnalysisError>> {
+    return this.#serialize(() => this.#trace(request, signal));
+  }
+
+  async #trace(
+    request: Parameters<NativeCallTracer["trace"]>[0],
+    signal?: AbortSignal,
+  ): Promise<Result<NativeCallTrace, AnalysisError>> {
+    const pendingCleanup = await this.#retryPendingCleanup();
+    if (pendingCleanup !== undefined) return err(pendingCleanup);
     const lldb = await this.resolveTool("lldb", signal);
     if (!lldb.ok)
       return err(
@@ -196,30 +208,155 @@ export class LldbCallTracer implements NativeCallTracer {
             ),
       );
     const root = await PrivateRuntimeRoot.create({ prefix: "rea-lldb-" });
+    const paths = lldbRuntimePaths(root.path);
+    let result: Result<NativeCallTrace, AnalysisError>;
     try {
-      return await this.#run(lldb.value, root.path, request, signal);
-    } finally {
-      await root.close();
+      result = await this.#run(lldb.value, root, request, signal);
+    } catch (cause: unknown) {
+      const partialObservation = await partialNativeObservation({
+        request,
+        pidPath: paths.pid,
+        stdoutPath: paths.stdoutCapture,
+        stderrPath: paths.stderrCapture,
+        observationPath: paths.observations,
+        version: null,
+        reason: "tracer-failure",
+      });
+      const retained = this.#pendingCleanup;
+      const resources =
+        retained === undefined ? [] : await lldbCleanupResources(retained);
+      result = err(
+        new ProviderAdapterError(PROVIDER, OPERATION, {
+          cause,
+          diagnostics: {
+            reason: cause instanceof Error ? cause.message : String(cause),
+          },
+          partialObservation,
+          ...(retained === undefined
+            ? {}
+            : {
+                cleanup: {
+                  reason: "LLDB trace failed while owned resources remain",
+                  resources,
+                },
+              }),
+        }),
+      );
     }
+    if (this.#pendingCleanup?.root === root) return result;
+    try {
+      await root.close();
+    } catch (cause: unknown) {
+      this.#pendingCleanup = {
+        root,
+        supervisor: undefined,
+        pidPath: paths.pid,
+        targetIdentity: undefined,
+        processStopped: true,
+        targetStopped: true,
+      };
+      const partialObservation = result.ok
+        ? partialObservationFromTrace(request, result.value)
+        : result.error.partialObservation;
+      return err(
+        new ProviderCleanupError(
+          PROVIDER,
+          [root.path],
+          {
+            reason: cause instanceof Error ? cause.message : String(cause),
+            ...(result.ok
+              ? {}
+              : {
+                  execution_failure: projectAnalysisError(result.error).code,
+                  primary_failure: result.error.message,
+                }),
+          },
+          {
+            operation: OPERATION,
+            cause: result.ok
+              ? cause
+              : new AggregateError(
+                  [result.error, cause],
+                  "LLDB trace and runtime cleanup both failed",
+                ),
+            ...(partialObservation === undefined ? {} : { partialObservation }),
+          },
+        ),
+      );
+    }
+    return result;
+  }
+
+  /** Retry retained LLDB cleanup without abandoning its process or runtime owner. */
+  async close(): Promise<Result<null, AnalysisError>> {
+    return this.#serialize(() => this.#close());
+  }
+
+  async #close(): Promise<Result<null, AnalysisError>> {
+    const failure = await this.#retryPendingCleanup();
+    return failure === undefined ? ok(null) : err(failure);
+  }
+
+  #serialize<T>(operation: () => Promise<T>): Promise<T> {
+    const call = this.#tail.then(operation, operation);
+    this.#tail = call.then(
+      () => undefined,
+      () => undefined,
+    );
+    return call;
+  }
+
+  async #retryPendingCleanup(): Promise<ProviderCleanupError | undefined> {
+    const owner = this.#pendingCleanup;
+    if (owner === undefined) return undefined;
+    let firstFailure: string | undefined;
+    if (!owner.processStopped) {
+      const stopped = await owner.supervisor?.stop();
+      if (stopped?.status === "incomplete") firstFailure = stopped.reason;
+      else {
+        owner.supervisor?.dispose();
+        owner.processStopped = true;
+      }
+    }
+    if (firstFailure === undefined && !owner.targetStopped) {
+      const targetTermination = await ensureTerminated(
+        owner.pidPath,
+        owner.targetIdentity,
+        true,
+      );
+      if (targetTermination !== "terminated")
+        firstFailure = targetTerminationReason(targetTermination);
+      else owner.targetStopped = true;
+    }
+    if (firstFailure === undefined) {
+      try {
+        await owner.root.close();
+        this.#pendingCleanup = undefined;
+        return undefined;
+      } catch (cause: unknown) {
+        firstFailure = cause instanceof Error ? cause.message : String(cause);
+      }
+    }
+    const resources = await lldbCleanupResources(owner);
+    return new ProviderCleanupError(
+      PROVIDER,
+      resources,
+      {
+        reason: firstFailure ?? "LLDB cleanup remains incomplete",
+        resources,
+      },
+      { operation: OPERATION },
+    );
   }
 
   async #run(
     lldb: ResolvedTool,
-    directory: string,
+    root: PrivateRuntimeRoot,
     request: Parameters<NativeCallTracer["trace"]>[0],
     signal?: AbortSignal,
   ): Promise<Result<NativeCallTrace, AnalysisError>> {
-    const paths = {
-      config: join(directory, "config.json"),
-      result: join(directory, "result.json"),
-      pid: join(directory, "pid"),
-      identityAck: join(directory, "identity.ack"),
-      stdout: join(directory, "stdout"),
-      stderr: join(directory, "stderr"),
-      stdoutCapture: join(directory, "stdout.capture"),
-      stderrCapture: join(directory, "stderr.capture"),
-      observations: join(directory, "observations.jsonl"),
-    };
+    const directory = root.path;
+    const paths = lldbRuntimePaths(directory);
     const { input } = request;
     await writeFile(
       paths.config,
@@ -251,7 +388,6 @@ export class LldbCallTracer implements NativeCallTracer {
       }),
       { mode: 0o600 },
     );
-    await prepareProcessOwnershipInspection(signal);
     const exited = await this.launch(
       lldb.path,
       [
@@ -271,15 +407,22 @@ export class LldbCallTracer implements NativeCallTracer {
         ...(signal === undefined ? {} : { signal }),
       },
     );
+    const retained: RetainedLldbResources = {
+      root,
+      supervisor: exited.cleanupOwner,
+      pidPath: paths.pid,
+      targetIdentity: exited.targetIdentity,
+      processStopped: exited.cleanupOwner === undefined,
+      targetStopped: !exited.targetLaunched,
+    };
+    this.#pendingCleanup = retained;
     const output =
       exited.kind === "exited"
         ? await readTracerOutput(paths.result)
         : undefined;
-    let targetTermination = await ensureTerminated(
-      paths.pid,
-      exited.targetIdentity,
-      true,
-    );
+    let targetTermination: TargetTermination = exited.targetLaunched
+      ? await ensureTerminated(paths.pid, exited.targetIdentity, true)
+      : "terminated";
     // These two bridge outcomes are emitted before a target process exists.
     // Other missing-PID cases, including a missing result, remain unknown.
     if (
@@ -288,6 +431,9 @@ export class LldbCallTracer implements NativeCallTracer {
       (await readTargetPid(paths.pid)) === undefined
     )
       targetTermination = "terminated";
+    retained.targetStopped = targetTermination === "terminated";
+    if (retained.processStopped && retained.targetStopped)
+      this.#pendingCleanup = undefined;
     const terminated = targetTermination === "terminated";
     const cleanupDetails = [
       exited.cleanupFailure,
@@ -298,16 +444,7 @@ export class LldbCallTracer implements NativeCallTracer {
         ? undefined
         : {
             reason: cleanupDetails.join("; "),
-            resources: [
-              ...(exited.cleanupFailure === undefined
-                ? []
-                : ["lldb-process-group"]),
-              ...(terminated
-                ? []
-                : [
-                    `native-target:${String((await readTargetPid(paths.pid)) ?? "unknown")}`,
-                  ]),
-            ],
+            resources: await lldbCleanupResources(retained),
           };
     const partialReason =
       exited.kind === "cancelled"
@@ -357,20 +494,38 @@ export class LldbCallTracer implements NativeCallTracer {
       );
     if (exited.cleanupFailure !== undefined)
       return err(
-        new ProviderAdapterError(PROVIDER, OPERATION, {
-          cleanup: lifecycleCleanup ?? {
-            reason: exited.cleanupFailure,
-            resources: ["lldb-process-group"],
-          },
-          diagnostics: {
+        new ProviderCleanupError(
+          PROVIDER,
+          await lldbCleanupResources(retained),
+          {
             reason: "LLDB process-group cleanup could not be verified",
             cleanup_failure: exited.cleanupFailure,
             ...(lifecycleCleanup === undefined
               ? {}
               : { target_cleanup: lifecycleCleanup }),
           },
-          partialObservation: await getPartialObservation(),
-        }),
+          {
+            operation: OPERATION,
+            partialObservation: await getPartialObservation(),
+          },
+        ),
+      );
+    if (!terminated)
+      return err(
+        new ProviderCleanupError(
+          PROVIDER,
+          await lldbCleanupResources(retained),
+          {
+            reason: "LLDB target process termination could not be verified",
+            ...(lifecycleCleanup === undefined
+              ? {}
+              : { target_cleanup: lifecycleCleanup }),
+          },
+          {
+            operation: OPERATION,
+            partialObservation: await getPartialObservation(),
+          },
+        ),
       );
     if (output === undefined)
       return err(
@@ -532,6 +687,43 @@ const partialNativeObservation = async (options: {
   });
 };
 
+const partialObservationFromTrace = (
+  request: Parameters<NativeCallTracer["trace"]>[0],
+  trace: NativeCallTrace,
+): NativeCallPartialObservation =>
+  projectLldbPartialObservation({
+    target: {
+      path: request.executable,
+      sha256: request.expectedSha256,
+      architecture: request.architecture,
+      arguments: request.input.arguments,
+      environment: request.input.environment,
+      working_directory: request.input.working_directory ?? null,
+    },
+    pid: trace.run.pid,
+    stdout: trace.stdout,
+    stderr: trace.stderr,
+    version: trace.run.version,
+    journal: {
+      events: trace.run.events,
+      otherStops: trace.run.other_stops,
+      limitations: [],
+    },
+    reason: "cleanup-failure",
+  });
+
+const lldbRuntimePaths = (directory: string) => ({
+  config: join(directory, "config.json"),
+  result: join(directory, "result.json"),
+  pid: join(directory, "pid"),
+  identityAck: join(directory, "identity.ack"),
+  stdout: join(directory, "stdout"),
+  stderr: join(directory, "stderr"),
+  stdoutCapture: join(directory, "stdout.capture"),
+  stderrCapture: join(directory, "stderr.capture"),
+  observations: join(directory, "observations.jsonl"),
+});
+
 const readTracerOutput = async (
   path: string,
 ): Promise<z.infer<typeof tracerOutputSchema> | undefined> => {
@@ -588,24 +780,43 @@ const capturedOutput = async (
   }
 };
 
-type LldbExit =
+interface RetainedLldbResources {
+  readonly root: PrivateRuntimeRoot;
+  readonly supervisor: ProviderProcessSupervisor | undefined;
+  readonly pidPath: string;
+  readonly targetIdentity: string | undefined;
+  processStopped: boolean;
+  targetStopped: boolean;
+}
+
+type LldbOutcome =
   | {
       readonly kind: "exited";
       readonly exitCode: number | null;
       readonly output: string;
-      readonly targetIdentity: string | undefined;
-      readonly cleanupFailure: string | undefined;
     }
-  | {
-      readonly kind: "cancelled";
-      readonly targetIdentity: string | undefined;
-      readonly cleanupFailure: string | undefined;
-    }
-  | {
-      readonly kind: "timeout";
-      readonly targetIdentity: string | undefined;
-      readonly cleanupFailure: string | undefined;
-    };
+  | { readonly kind: "cancelled" }
+  | { readonly kind: "timeout" };
+
+type LldbExit = LldbOutcome & {
+  /** False proves LLDB never started and could not have created a target. */
+  readonly targetLaunched: boolean;
+  readonly targetIdentity: string | undefined;
+  readonly cleanupFailure: string | undefined;
+  readonly cleanupOwner?: ProviderProcessSupervisor;
+};
+
+const lldbCleanupResources = async (
+  owner: RetainedLldbResources,
+): Promise<string[]> => [
+  ...(owner.processStopped ? [] : ["lldb-process-group"]),
+  ...(owner.targetStopped
+    ? []
+    : [
+        `native-target:${String((await readTargetPid(owner.pidPath)) ?? "unknown")}`,
+      ]),
+  owner.root.path,
+];
 
 /** Supervise LLDB as an owned process group while observing its target PID identity. */
 const runLldb = async (
@@ -622,6 +833,7 @@ const runLldb = async (
   if (options.signal?.aborted === true)
     return {
       kind: "cancelled",
+      targetLaunched: false,
       targetIdentity: undefined,
       cleanupFailure: undefined,
     };
@@ -631,6 +843,23 @@ const runLldb = async (
   );
   let targetIdentity: string | undefined;
   let supervisor: ProviderProcessSupervisor | undefined;
+  let retained = false;
+  const finish = async (outcome: LldbOutcome): Promise<LldbExit> => {
+    const stopped = await supervisor?.stop();
+    retained = stopped?.status === "incomplete";
+    return {
+      ...(deadline.interruption === undefined
+        ? outcome
+        : { kind: deadline.interruption }),
+      targetLaunched: supervisor !== undefined,
+      targetIdentity,
+      cleanupFailure:
+        stopped?.status === "incomplete" ? stopped.reason : undefined,
+      ...(retained && supervisor !== undefined
+        ? { cleanupOwner: supervisor }
+        : {}),
+    };
+  };
   try {
     const launched = await spawnOwnedProviderProcess({
       command: executable,
@@ -668,52 +897,36 @@ const runLldb = async (
         identityAckWritten = true;
       }
       const interruption = deadline.interruption;
-      if (interruption !== undefined) {
-        const stopped = await supervisor.stop();
-        const cleanupFailure =
-          stopped.status === "incomplete" ? stopped.reason : undefined;
-        return interruption === "cancelled"
-          ? { kind: "cancelled", targetIdentity, cleanupFailure }
-          : { kind: "timeout", targetIdentity, cleanupFailure };
-      }
+      if (interruption !== undefined)
+        return await finish({ kind: interruption });
       await waitForAbortableDelay(20, deadline.signal);
     }
     const snapshot = supervisor.snapshot();
-    const stopped = await supervisor.stop();
-    const cleanupFailure =
-      stopped.status === "incomplete" ? stopped.reason : undefined;
     const interruption = deadline.interruption;
-    if (interruption === "cancelled")
-      return { kind: "cancelled", targetIdentity, cleanupFailure };
-    if (interruption === "timeout")
-      return { kind: "timeout", targetIdentity, cleanupFailure };
-    return {
-      kind: "exited",
-      exitCode: snapshot.exitCode ?? null,
-      output: `${snapshot.stdout.text}${snapshot.stderr.text}`.slice(
-        -DIAGNOSTIC_BYTES,
-      ),
-      targetIdentity,
-      cleanupFailure,
-    };
+    return await finish(
+      interruption === undefined
+        ? {
+            kind: "exited",
+            exitCode: snapshot.exitCode ?? null,
+            output: `${snapshot.stdout.text}${snapshot.stderr.text}`.slice(
+              -DIAGNOSTIC_BYTES,
+            ),
+          }
+        : { kind: interruption },
+    );
   } catch (cause: unknown) {
     const interruption = deadline.interruption;
-    const stopped = await supervisor?.stop();
-    const cleanupFailure =
-      stopped?.status === "incomplete" ? stopped.reason : undefined;
-    return interruption === "timeout"
-      ? { kind: "timeout", targetIdentity, cleanupFailure }
-      : interruption === "cancelled"
-        ? { kind: "cancelled", targetIdentity, cleanupFailure }
-        : {
+    return await finish(
+      interruption === undefined
+        ? {
             kind: "exited",
             exitCode: null,
             output: cause instanceof Error ? cause.message : String(cause),
-            targetIdentity,
-            cleanupFailure,
-          };
+          }
+        : { kind: interruption },
+    );
   } finally {
-    supervisor?.dispose();
+    if (!retained) supervisor?.dispose();
     deadline.dispose();
   }
 };
@@ -724,8 +937,10 @@ const runLldb = async (
  */
 const readTargetPid = async (pidPath: string): Promise<number | undefined> => {
   try {
-    const pid = Number.parseInt(await readFile(pidPath, "utf8"), 10);
-    return Number.isSafeInteger(pid) && pid > 0 ? pid : undefined;
+    const contents = (await readFile(pidPath, "utf8")).trim();
+    if (!/^[1-9]\d*$/u.test(contents)) return undefined;
+    const pid = Number(contents);
+    return Number.isSafeInteger(pid) ? pid : undefined;
   } catch {
     return undefined;
   }

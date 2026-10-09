@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { finalizeInspectorCapture } from "./V8InspectorCaptureProjection.js";
@@ -157,6 +157,108 @@ it("authorizes each unique script location through a bounded worker pool", async
     unsupported_location: 1,
     invalid_protocol_value: 0,
   });
+});
+
+it("preserves raw script facts without authorizing locations in partial projection", async () => {
+  const state = stateFor([
+    {
+      rawUrl: "file:///slow-or-unavailable.js?token=retained",
+      executionContextKey: "1",
+      cdpHash: "observed",
+      length: 7,
+      isModule: false,
+    },
+    {
+      rawUrl: "https://example.test/script.js?caller-value=kept",
+      executionContextKey: "1",
+      cdpHash: "remote",
+      length: 12,
+      isModule: true,
+    },
+    {
+      rawUrl: "",
+      executionContextKey: "1",
+      cdpHash: "anonymous",
+      length: 0,
+      isModule: false,
+    },
+  ]);
+  state.eventsObserved += 1;
+  state.eventsRetained += 1;
+  state.contexts.set("1", {
+    contextKey: "1",
+    state: "created",
+    name: "main",
+    origin: "file:///slow-or-unavailable.js?token=retained",
+  });
+  const authorizeLocation = vi.fn(async () => {
+    throw new Error("must not run after cancellation");
+  });
+
+  const result = await finalizeInspectorCapture({
+    input: {
+      inspector_endpoint: "http://127.0.0.1:9222",
+      target_id: target.id,
+      observation_ms: 100,
+    },
+    runtime: {
+      product: "Node.js/v24.18.0",
+      protocol_version: "1.3",
+      v8_version: null,
+    },
+    target,
+    state,
+    locationMode: "reported",
+    authorizeLocation,
+  });
+
+  expect(authorizeLocation).not.toHaveBeenCalled();
+  expect(result.capture.events_observed).toBe(4);
+  expect(result.capture.events_retained).toBe(4);
+  expect(result.scripts.items).toHaveLength(3);
+  expect(
+    result.scripts.items.find(({ cdp_hash }) => cdp_hash === "observed"),
+  ).toMatchObject({
+    location: {
+      kind: "unresolved",
+      reported_url: "file:///slow-or-unavailable.js?token=retained",
+      reason: "location-authorization-not-attempted",
+    },
+    length: 7,
+  });
+  expect(
+    result.scripts.items.find(({ cdp_hash }) => cdp_hash === "remote"),
+  ).toMatchObject({
+    location: {
+      kind: "url",
+      origin: "https://example.test",
+      sanitized_url: "https://example.test/script.js?caller-value=kept",
+    },
+    length: 12,
+    is_module: true,
+  });
+  expect(
+    result.scripts.items.find(({ cdp_hash }) => cdp_hash === "anonymous"),
+  ).toMatchObject({
+    location: {
+      kind: "unresolved",
+      reported_url: "",
+      reason: "location-authorization-not-attempted",
+    },
+    length: 0,
+  });
+  expect(result.scripts.observed_total).toBe(3);
+  expect(result.execution_contexts).toEqual([
+    {
+      context_key: "1",
+      state: "created",
+      name: "main",
+      origin: "file:///slow-or-unavailable.js?token=retained",
+    },
+  ]);
+  expect(result.unknowns).toContain(
+    "2 observed script locations remain unverified; raw URLs and script metadata are retained.",
+  );
 });
 
 it("waits for active authorization workers to settle before returning a failure", async () => {

@@ -57,15 +57,13 @@ export interface ReferenceSourceReaderError {
   readonly message: string;
 }
 
-export type BigStats = BigIntStats;
-
 export type PendingDirectory = {
   readonly path: string;
 };
 
 export type TraversalState = {
   readonly root: string;
-  readonly rootIdentity: BigStats;
+  readonly rootIdentity: BigIntStats;
   readonly signal?: AbortSignal;
   readonly shouldExclude?: (path: string) => boolean;
   readonly entries: ReferenceSourceEntry[];
@@ -75,10 +73,10 @@ export type TraversalState = {
 
 export type StableFileRequest = {
   readonly root: string;
-  readonly rootIdentity: BigStats;
+  readonly rootIdentity: BigIntStats;
   readonly absolute: string;
   readonly path: string;
-  readonly expected: BigStats;
+  readonly expected: BigIntStats;
   readonly signal?: AbortSignal;
 };
 

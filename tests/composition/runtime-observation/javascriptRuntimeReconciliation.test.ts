@@ -8,20 +8,71 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createElectronEvidence } from "../../../src/application/javascript/ElectronEvidence.js";
 import { createElectronActiveEvidence } from "../../../src/application/javascript/ElectronActiveEvidence.js";
 import { analyzeJavaScriptApplication } from "../../../src/application/javascript/JavaScriptApplicationService.js";
-import { reconcileJavaScriptRuntime } from "../../../src/domain/javascript/javascriptRuntimeReconciliation.js";
+import { reconcileJavaScriptRuntimeEvidence } from "../../../src/application/javascript/JavaScriptRuntimeReconciliationService.js";
+import { createEvidence } from "../../../src/domain/evidence.js";
+import {
+  parseRuntimeReconciliationInput,
+  reconcileJavaScriptRuntime,
+} from "../../../src/domain/javascript/javascriptRuntimeReconciliation.js";
+import { reconcileJavaScriptRuntimeInputSchema } from "../../../src/domain/javascript/javascriptRuntimeReconciliationSchemas.js";
 import { javascriptRuntimeReconciliationResultSchema } from "../../../src/domain/javascript/javascriptRuntimeReconciliationSchemas.js";
 import { electronActiveObservationInputSchema } from "../../../src/domain/javascript/electronActiveObservation.js";
 import { inspectElectronPageInputSchema } from "../../../src/domain/javascript/electronObservation.js";
 import { createWebTextArtifact } from "../../../src/domain/webContentArtifact.js";
 import { createElectronActiveObservationFixtureResult } from "../../../src/domain/javascript/electronActiveObservation.fixture.js";
 
+const reconcileInput = (input: unknown) =>
+  reconcileJavaScriptRuntime(
+    parseRuntimeReconciliationInput(
+      reconcileJavaScriptRuntimeInputSchema.parse(input),
+    ),
+  );
+
 const SOURCE = `const worker = new Worker("./worker.js");\nexport const observed = worker;\n`;
+
+it("preserves source-capture input paths for runtime Evidence", async () => {
+  const root = await applicationFixture();
+  const application = await analyzeFixture(root);
+  const runtime = electronRuntimeEvidence(root, SOURCE);
+  const invalidRuntime = createEvidence(undefined, runtime.provider, {
+    predicateType: runtime.predicate_type,
+    operation: runtime.operation,
+    parameters: { ...runtime.parameters, include_script_sources: false },
+    result: runtime.normalized_result,
+    confidence: runtime.confidence,
+    authority: runtime.authority,
+  });
+
+  const result = reconcileJavaScriptRuntimeEvidence({
+    static_layers: [{ role: "application", analysis: application }],
+    runtime_observations: [invalidRuntime],
+  });
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisInputError",
+      issues: [
+        {
+          path: [
+            "runtime_observations",
+            0,
+            "parameters",
+            "include_script_sources",
+          ],
+          reason: "invalid_value",
+          message:
+            "Runtime Evidence contains source without source-capture selection",
+        },
+      ],
+    },
+  });
+});
 
 it("reconciles runtime scripts inside dot-prefixed child directories", async () => {
   const root = await applicationFixture();
   await mkdir(join(root, "..cache"));
   await writeFile(join(root, "..cache", "app.js"), SOURCE);
-  const result = reconcileJavaScriptRuntime({
+  const result = reconcileInput({
     static_layers: [
       { role: "application", analysis: await analyzeFixture(root) },
     ],
@@ -48,7 +99,7 @@ it("matches renderer, frame, script bytes, and worker without claiming execution
   const staticEvidence = await analyzeFixture(fixture);
   const runtimeEvidence = electronRuntimeEvidence(fixture, SOURCE);
 
-  const result = reconcileJavaScriptRuntime({
+  const result = reconcileInput({
     static_layers: [{ role: "application", analysis: staticEvidence }],
     runtime_observations: [runtimeEvidence],
   });
@@ -143,7 +194,7 @@ it("reports a captured digest disagreement instead of accepting a path match", a
     "export const observed = 'different';\n",
   );
 
-  const result = reconcileJavaScriptRuntime({
+  const result = reconcileInput({
     static_layers: [{ role: "application", analysis: staticEvidence }],
     runtime_observations: [runtimeEvidence],
   });
@@ -181,7 +232,7 @@ it("reconciles active Electron as a partial target-only runtime capture", async 
     },
   );
 
-  const result = reconcileJavaScriptRuntime({
+  const result = reconcileInput({
     static_layers: [{ role: "application", analysis: staticEvidence }],
     runtime_observations: [runtimeEvidence],
   });
@@ -280,7 +331,7 @@ it("imports an operator-provided cache layer through an explicit file mapping", 
     includeWorker: false,
   });
 
-  const result = reconcileJavaScriptRuntime({
+  const result = reconcileInput({
     static_layers: [
       { role: "application", analysis: applicationEvidence },
       {

@@ -1,106 +1,87 @@
 # MCP tool design
 
-Design tools around analyst tasks. A provider API is an implementation detail;
-expose it directly when it gives agents a useful, reusable capability that
-cannot be expressed through an existing contract. Do not impose caller-facing
-limits merely to make work fit an assumed agent budget. Keep real input-format,
-protocol, authority, and resource-safety constraints, and report their effects.
+## Decide whether to add a tool
+
+Design around the analyst question. Inspect the current canonical contracts,
+provider capabilities, and nearest existing tool before changing the surface.
+Extend a tool when intent and result contract match; add one for a distinct
+outcome or materially different authority. Public names and semantics remain
+provider-neutral, with exact coverage reported per provider.
+
+Keep the catalog complete; report capability/session availability instead of
+truncating schemas. Serialized bytes alone do not establish agent usability.
 
 ## Choose the tool shape
 
-| Shape                 | Use it for                                                           | Contract should return                                                                                         |
-| --------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `inspect`             | Facts about one explicit target, address, object, or resource        | Relevant fields, source locations, and facet-level availability                                                |
-| `search` / `list`     | Finding candidate targets or entities                                | Stable ordering and useful result context; expose pagination when the result format or caller's query needs it |
-| `trace`               | Relationships across code, metadata, UI resources, or observations   | Typed edges, supporting evidence, and unresolved paths; identify any genuine traversal boundary                |
-| `compare`             | Two explicitly identified artifacts, versions, or evidence sets      | Paired identity, comparable coverage, and deltas with evidence                                                 |
-| `workflow`            | A distinct analyst outcome that benefits from composition inside REA | A useful inline result, contributing evidence, and partial/unavailable facets                                  |
-| `observe` / `capture` | A question that requires runtime behavior                            | Required authority, launch/attach behavior, real operational constraints, lifecycle, and cleanup status        |
+| Shape                 | Use it for                                  | Result                                                                    |
+| --------------------- | ------------------------------------------- | ------------------------------------------------------------------------- |
+| `inspect`             | Facts about one target, object, or resource | Relevant fields, locations, and facet availability                        |
+| `search` / `list`     | Candidate discovery                         | Stable ordering and context; pagination when the query or format needs it |
+| `trace`               | Relationships across evidence               | Typed edges, supporting facts, and unresolved paths                       |
+| `compare`             | Explicitly paired artifacts or observations | Identity, comparable coverage, and supported deltas                       |
+| `workflow`            | A recurring outcome needing composition     | Inline answer, contributing evidence, and partial facets                  |
+| `observe` / `capture` | Runtime behavior                            | Authority, launch/attach effects, lifecycle, and cleanup status           |
 
-These are task shapes, not required prefixes. Name a tool for the action and
-object agents reason about; keep the name distinct from nearby alternatives.
+These are task shapes, not mandatory prefixes. Name tools for the action and
+object callers reason about. Avoid unrelated discovery/execution/mutation modes
+inside one tool.
 
 ## Prefer primitives; compose workflows
 
-Start with a primitive when one call can report a reusable fact about one
-identified object or relationship, such as an instruction decode, a type
-layout, a reference, a dispatch target, or a resource graph. The same primitive
-should be useful across different applications or analyst questions. A
-format-specific decoder can still be a primitive when it describes a reusable
-format rather than one application's product behavior.
+A primitive reports a reusable fact about an identified object or relationship.
+A format-specific decoder qualifies; one application's business interpretation
+belongs outside the general contract. Expose provider APIs when they add a
+useful capability that existing tools cannot express.
 
-Add a workflow when repeated analysis shows that callers need the same
-multi-source result and REA can join the evidence without hiding important
-choices or uncertainty. A useful check is whether the workflow remains
-meaningful for different applications that share the relevant evidence types.
-If its purpose depends on one application's business rules or product concepts,
-keep that interpretation outside the general tool contract and expose the
-underlying evidence through reusable primitives.
+Compose a workflow when repeated use demonstrates a multi-source outcome REA
+can join without hiding caller choices or uncertainty. Batch homogeneous reads
+when that removes repeated work while preserving per-item outcomes. Keep prompts
+optional and avoid prescribing call sequences that a direct tool can replace.
 
-## Decide whether to add a tool
-
-1. State the user intent and the smallest result that answers it.
-2. Inspect the canonical tool contracts, current provider capabilities, and
-   representative CLI/MCP traces. Record the nearest competing tool.
-3. Extend an existing contract when the intent and result are the same. Add a
-   batch or composed workflow when it materially improves a demonstrated task;
-   do not force agents through extra calls or collapse distinct tasks into one
-   tool. Add a tool when it answers a distinct analyst question or has a
-   materially different authority or result contract.
-4. Keep public tool names and result semantics provider-neutral. Put engine-
-   specific parsing and protocol handling in adapters. Advertise exact support
-   per provider; do not create parallel tools just because engines differ.
-5. Keep prompts optional and concise. They may point out useful tools, but must
-   not prescribe a call sequence when the task can be answered directly.
-
-Avoid opaque mode flags and mega-tools that combine unrelated discovery,
-execution, and mutation. Prefer a useful direct tool call over a tool sequence
-or model-authored loop when one call can answer the question.
+Agents can compose experiments with ordinary commands, scripts, and local
+fixture servers. Custom orchestration languages, replay engines, or separate
+prepare/execute plans need an observed requirement those primitives cannot
+satisfy. A plan without execution does not establish runtime behavior.
 
 ## Define the contract
 
-- Use strict object inputs with explicit required fields and enums. Add numeric
-  bounds only when the format, protocol, authority, or a measured resource
-  constraint requires them.
-- Return complete results by default. Make real pagination, truncation, partial
-  failure, cancellation, and unavailable states explicit. Missing evidence is
-  unknown, not empty or false.
-- Return task-oriented results inline with artifact identity, provider/version,
-  addresses or resource paths, Evidence references, confidence, and relevant
-  limitations. Do not require agents to fetch a resource or dereference an
-  opaque Evidence link to understand a tool result.
-- Separate observed facts from derived and inferred edges. Cite the evidence
-  supporting every important relationship; preserve unresolved edges.
-- Declare read-only, mutation, process, filesystem, network, and UI effects
-  truthfully in the contract and enforce the target and lifecycle named in the
-  request.
-- Keep provider-specific types out of provider-neutral domain and application
-  layers. Normalize supported provider results without implying equal coverage.
+- Use strict inputs with explicit target identity and required fields. Preserve
+  meaningful target, action, capture, and output choices; remove ignored options
+  and repeated permission declarations.
+- Return complete evidence inline, with artifact/provider identity, source
+  locations, Evidence references, and relevant confidence and limitations.
+  Missing coverage is unknown, not absence. Avoid extra lookups solely to
+  understand the answer or its provenance.
+- Keep observed, derived, and inferred relationships distinct. Preserve
+  unresolved edges and partial provider facts instead of requiring every
+  provider to supply the same metadata.
+- Declare process, filesystem, network, UI, and mutation effects truthfully;
+  enforce the requested target and lifecycle.
+- Add limits only for real format, protocol, authority, or measured resource
+  constraints. Report pagination, truncation, cancellation, and partial failure.
+  An assumed agent budget is insufficient justification for a limit.
 
 ## Implement and evaluate
 
-- Put shared user workflows in the application layer; keep MCP translation in
-  the server adapter and CLI behavior aligned with the same workflow. Share
-  Evidence provenance, unknown projection, and eligible snapshot binding through
-  application/session owners. Matching result payloads alone do not establish
-  equivalent retention or replay behavior.
-- Derive each facet's coverage from examined records, unsupported representations,
-  and exhaustiveness. Keep issues structured until presentation; do not select a
-  facet by matching diagnostic prose or infer completeness from an empty failure
-  list. Preserve available observations independently of cleanup success.
-- Measure the resource consumed before choosing a limit. Value alternatives,
-  retained records, trace-frame products, output bytes, and temporary-file growth
-  need different accounting. Enforce a justified budget before the costly step
-  and report its effect; an input-byte or graph-node cap does not bound every stage.
-- Update the canonical contract inventory, output schemas, examples, generated
-  catalog, and relevant docs together.
-- Verify valid, malformed, boundary, unavailable, cancellation, and partial
-  results at the owning boundaries. Use real-provider checks for claims that
-  depend on external analysis engines.
-- Evaluate representative broad and direct task prompts on the intended MCP
-  host when tool selection is the question. Record the host, model-facing tool
-  catalog, selected tool, arguments, errors, retries, and task outcome.
-  Schema validity or word-overlap heuristics do not prove discoverability.
+Put provider protocols/parsing in adapters and shared CLI/MCP workflows in the
+application layer. Share Evidence provenance, unknown projection, and session
+retention semantics; matching payloads alone do not establish parity.
 
-See [mcp-contracts.md](mcp-contracts.md) for shipped runtime behavior and
-[testing.md](testing.md) for test boundaries and verification lanes.
+Measure the resource before choosing a budget and enforce it before the costly
+step. Account for value alternatives, trace-frame products, retained records,
+serialization expansion, and temporary-file growth separately. Derive facet
+completeness from examined records and exhaustiveness, rather than diagnostic
+prose or an empty failure list. Preserve observations independently of cleanup
+success.
+
+Update canonical contracts, output schemas, examples, generated artifacts, and
+relevant docs together. Verify converted advertised schemas and success,
+malformed, unavailable, cancellation, and partial outcomes through affected
+consumers. Real-engine claims require the matching provider lane; see
+[testing.md](testing.md).
+
+When discoverability changes, evaluate representative broad, direct, and negative
+tasks on the intended host. Record host/model/catalog, selected tools, arguments,
+errors, retries, and task outcomes. Schema validity and keyword heuristics do not
+establish successful tool selection. See [mcp-contracts.md](mcp-contracts.md) for
+shipped runtime behavior.

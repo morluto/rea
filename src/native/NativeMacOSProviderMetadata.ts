@@ -10,8 +10,6 @@ export const NATIVE_MACOS_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({
   name: "macOS native inspection utilities",
   version: null,
 });
-const IDENTITY = NATIVE_MACOS_PROVIDER_IDENTITY;
-
 /** Operations whose target process can show UI, use the network and write files. */
 const OWNED_PROCESS_OPERATIONS: ReadonlySet<string> = new Set([
   "capture_native_ui_scenario",
@@ -36,7 +34,7 @@ export const nativeMacOSCapabilities = (
             reason: "Native macOS utilities require macOS.",
           } as const);
       return Object.freeze({
-        provider: IDENTITY,
+        provider: NATIVE_MACOS_PROVIDER_IDENTITY,
         operation: contract.name,
         ...availability,
         effects: Object.freeze({

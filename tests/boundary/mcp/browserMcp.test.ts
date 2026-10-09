@@ -291,13 +291,16 @@ const connectBrowser = async () => {
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(resultOk(null)),
   }));
-  const server = createServer(session, session, {
-    browserObservation: new CdpBrowserProvider(),
-    availabilityPolicy: () => ({
-      processCaptureEnabled: false,
-      investigationInputRoots: 0,
-    }),
-  });
+  const server = createServer(
+    { kind: "session", session },
+    {
+      browserObservation: new CdpBrowserProvider(),
+      availabilityPolicy: () => ({
+        processCaptureEnabled: false,
+        investigationInputRoots: 0,
+      }),
+    },
+  );
   const client = new Client({ name: "browser-mcp-test", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();

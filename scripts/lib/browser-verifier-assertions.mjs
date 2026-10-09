@@ -209,10 +209,16 @@ export function assertSensitiveShapes(result) {
     (item) =>
       item.url.includes("/api") &&
       item.body_shapes.request?.properties.some(
-        ({ path }) => path === "/token",
+        ({ path }) =>
+          path.length === 1 &&
+          path[0].kind === "property" &&
+          path[0].name === "token",
       ) &&
       item.body_shapes.response?.properties.some(
-        ({ path }) => path === "/secret",
+        ({ path }) =>
+          path.length === 1 &&
+          path[0].kind === "property" &&
+          path[0].name === "secret",
       ),
   );
   if (request === undefined)
@@ -244,7 +250,10 @@ export function assertSensitiveShapes(result) {
       (event) =>
         event.payload_shape?.format === "json" &&
         event.payload_shape.json_shape?.properties.some(
-          ({ path }) => path === "/token",
+          ({ path }) =>
+            path.length === 1 &&
+            path[0].kind === "property" &&
+            path[0].name === "token",
         ),
     )
   )

@@ -11,10 +11,8 @@ import {
   type ExecutionOptions,
   type ProviderIdentity,
 } from "../application/AnalysisProvider.js";
-import {
-  MANAGED_STATIC_PROVIDER_IDENTITY as IDENTITY,
-  managedStaticCapabilities,
-} from "./ManagedStaticProviderMetadata.js";
+import { managedStaticCapabilities } from "./ManagedStaticProviderMetadata.js";
+import { MANAGED_STATIC_PROVIDER } from "../application/InvestigationProviders.js";
 import {
   MANAGED_TOOL_CONTRACTS,
   managedTargetInputSchema,
@@ -46,7 +44,7 @@ export class ManagedStaticProvider implements AnalysisProvider {
     managedStaticCapabilities();
 
   identity(): ProviderIdentity {
-    return IDENTITY;
+    return MANAGED_STATIC_PROVIDER;
   }
 
   capabilities(): readonly CapabilityDescriptor[] {
@@ -69,11 +67,11 @@ class ManagedStaticClient implements AnalysisClient {
     options?: ExecutionOptions,
   ) {
     if (operation === "health")
-      return ok(createAnalysisExecution(null, IDENTITY));
+      return ok(createAnalysisExecution(null, MANAGED_STATIC_PROVIDER));
     if (!isManagedOperation(operation))
       return err(
         new AnalysisCapabilityUnavailableError(
-          IDENTITY.id,
+          MANAGED_STATIC_PROVIDER.id,
           operation,
           "Operation is not implemented by the managed static provider.",
         ),
@@ -81,7 +79,7 @@ class ManagedStaticClient implements AnalysisClient {
     if (this.target.format !== "pe")
       return err(
         new AnalysisCapabilityUnavailableError(
-          IDENTITY.id,
+          MANAGED_STATIC_PROVIDER.id,
           operation,
           `Managed static triage requires a PE target; observed ${this.target.format}.`,
         ),
@@ -111,7 +109,7 @@ class ManagedStaticClient implements AnalysisClient {
         this.target,
       );
       return ok(
-        createAnalysisExecution(result, IDENTITY, {
+        createAnalysisExecution(result, MANAGED_STATIC_PROVIDER, {
           rawResult: null,
           limitations: result.limitations,
           subject: this.target,
@@ -121,7 +119,11 @@ class ManagedStaticClient implements AnalysisClient {
     } catch (cause: unknown) {
       if (options?.signal?.aborted === true)
         return err(new AnalysisCancelledError(operation));
-      return err(new ProviderAdapterError(IDENTITY.id, operation, { cause }));
+      return err(
+        new ProviderAdapterError(MANAGED_STATIC_PROVIDER.id, operation, {
+          cause,
+        }),
+      );
     }
   }
 

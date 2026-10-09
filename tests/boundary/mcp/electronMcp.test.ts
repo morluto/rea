@@ -9,6 +9,7 @@ import { afterEach, expect, it } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createStrippedAsarAddon } from "../../fixtures/strippedAsarAddon.js";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type { ElectronActiveObservationPort } from "../../../src/application/javascript/ElectronActiveObservationPort.js";
@@ -22,6 +23,7 @@ import {
 } from "../../fixtures/fakeCdpBrowser.js";
 import { writeElectronBoundaryFixture } from "../../fixtures/electronBoundaryApplication.js";
 import { createElectronActiveObservationFixtureResult } from "../../../src/domain/javascript/electronActiveObservation.fixture.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
 const browsers: FakeCdpBrowser[] = [];
 const resources: Array<{ close(): Promise<unknown> }> = [];
@@ -35,6 +37,52 @@ afterEach(async () => {
       .splice(0)
       .map(async (path) => rm(path, { recursive: true, force: true })),
   );
+});
+
+it("lets MCP JavaScript analysis continue only with recorded untrusted ASAR bytes", async () => {
+  const { archive, addon } = await createStrippedAsarAddon();
+  const session = createTestBinarySession(() => ({
+    execute: () => Promise.resolve(observed(null)),
+    close: () => Promise.resolve(resultOk(null)),
+  }));
+  const server = createServer({ kind: "session", session });
+  const client = new Client({ name: "asar-integrity-policy", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(client, server, session);
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  const rejected = await client.callTool({
+    name: "analyze_javascript_application",
+    arguments: { input_path: archive },
+  });
+  expect(parseMcpToolError(rejected)).toMatchObject({
+    error: {
+      code: "artifact_integrity_mismatch",
+      remediation: {
+        action: expect.stringContaining("integrity_policy=record-and-continue"),
+      },
+    },
+  });
+
+  const continued = await client.callTool({
+    name: "analyze_javascript_application",
+    arguments: {
+      input_path: archive,
+      integrity_policy: "record-and-continue",
+    },
+  });
+  expect(continued.isError).not.toBe(true);
+  expect(continued.structuredContent).toMatchObject({
+    parameters: { integrity_policy: "record-and-continue" },
+    normalized_result: {
+      integrity_contradictions: [
+        { logical_path: addon, trust: "observed-untrusted" },
+      ],
+      graph: { coverage: { status: "partial" } },
+    },
+  });
 });
 
 it("exposes endpoint-scoped Electron discovery and inspection as Evidence", async () => {
@@ -72,13 +120,16 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(resultOk(null)),
   }));
-  const server = createServer(session, session, {
-    electronObservation: new CdpElectronProvider(),
-    availabilityPolicy: () => ({
-      processCaptureEnabled: false,
-      investigationInputRoots: 1,
-    }),
-  });
+  const server = createServer(
+    { kind: "session", session },
+    {
+      electronObservation: new CdpElectronProvider(),
+      availabilityPolicy: () => ({
+        processCaptureEnabled: false,
+        investigationInputRoots: 1,
+      }),
+    },
+  );
   const client = new Client({ name: "electron-mcp-test", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -197,13 +248,16 @@ it("runs active Electron scenarios with selected paths and inferred working dire
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(resultOk(null)),
   }));
-  const server = createServer(session, session, {
-    electronActiveObservation: provider,
-    availabilityPolicy: () => ({
-      processCaptureEnabled: false,
-      investigationInputRoots: 0,
-    }),
-  });
+  const server = createServer(
+    { kind: "session", session },
+    {
+      electronActiveObservation: provider,
+      availabilityPolicy: () => ({
+        processCaptureEnabled: false,
+        investigationInputRoots: 0,
+      }),
+    },
+  );
   const client = new Client({ name: "electron-active-mcp-test", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -279,12 +333,15 @@ it("exposes the target-free static JavaScript application workflow", async () =>
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(resultOk(null)),
   }));
-  const server = createServer(session, session, {
-    availabilityPolicy: () => ({
-      processCaptureEnabled: false,
-      investigationInputRoots: 1,
-    }),
-  });
+  const server = createServer(
+    { kind: "session", session },
+    {
+      availabilityPolicy: () => ({
+        processCaptureEnabled: false,
+        investigationInputRoots: 1,
+      }),
+    },
+  );
   const client = new Client({
     name: "electron-static-mcp-test",
     version: "1",

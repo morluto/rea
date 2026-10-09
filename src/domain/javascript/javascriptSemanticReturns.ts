@@ -15,8 +15,9 @@ import type {
   ProjectedPropertyCoverage,
   ProjectedReturnField,
 } from "./javascriptExportShapeComparisonSchemas.js";
-import { compareCodePoints } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
+import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
@@ -25,7 +26,10 @@ import {
 import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import { semanticReturnCoverage } from "./javascriptSemanticCoverage.js";
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import {
+  childNodes,
+  traverseJavaScriptAst,
+} from "./javascriptSemanticTraversal.js";
 
 interface ReturnExpression {
   readonly node: t.Node | null;
@@ -89,19 +93,14 @@ export const resolveSemanticModuleCallables = (
   callables: readonly JavaScriptSemanticCallable[],
 ): JavaScriptSemanticModuleLink[] => {
   const callableIds = new Set(callables.map(({ callableId }) => callableId));
-  const root = state.scopes.find(({ kind }) => kind === "program");
   return state.moduleLinks.map((link) => {
-    if (link.callableId !== null && callableIds.has(link.callableId))
-      return link;
-    if (link.localName === null || root === undefined)
-      return { ...link, callableId: null };
-    const named = callables.filter(
-      ({ name, containerScopeId }) =>
-        name === link.localName && containerScopeId === root.scopeId,
-    );
-    if (named.length === 1)
-      return { ...link, callableId: named[0]?.callableId ?? null };
-    const binding = root.bindings.get(link.localName);
+    // Named exports follow their lexical binding, including every assignment.
+    // A declaration's ID or a callable's display name cannot prove that link.
+    if (link.localName === null)
+      return link.callableId !== null && callableIds.has(link.callableId)
+        ? link
+        : { ...link, callableId: null };
+    const binding = state.moduleLinkBindings.get(link);
     const resolved =
       binding === undefined
         ? []
@@ -144,25 +143,30 @@ const directReturnExpressions = (callable: t.Node): ReturnExpression[] => {
   return output;
 };
 
-const childNodes = (node: t.Node): t.Node[] =>
-  (t.VISITOR_KEYS[node.type] ?? []).flatMap((key) => {
-    const value: unknown = Reflect.get(node, key);
-    if (t.isNode(value)) return [value];
-    return Array.isArray(value)
-      ? value.filter((item): item is t.Node => t.isNode(item))
-      : [];
-  });
-
 const callableIdsForBinding = (
   binding: JavaScriptSemanticBindingState,
   state: JavaScriptSemanticAnalysisState,
   admitted: ReadonlySet<string>,
   seen: ReadonlySet<string>,
 ): string[] => {
-  if (seen.has(binding.bindingId) || binding.initializers.length !== 1)
+  // A single initializer does not prove an assignment executes or replace
+  // the unknown incoming value of a parameter/catch binding.
+  if (
+    seen.has(binding.bindingId) ||
+    binding.initializers.length !== 1 ||
+    binding.definitions.some(
+      ({ kind }) =>
+        kind === "assignment" || kind === "parameter" || kind === "catch",
+    )
+  )
     return [];
   const initializer = binding.initializers[0];
-  if (initializer === undefined || initializer.projection.length > 0) return [];
+  if (
+    initializer === undefined ||
+    initializer.projection.length > 0 ||
+    state.conditionalInitializers.has(initializer.node)
+  )
+    return [];
   return callableIdsForNode(
     initializer.node,
     state,
@@ -177,6 +181,9 @@ const callableIdsForNode = (
   admitted: ReadonlySet<string>,
   seen: ReadonlySet<string>,
 ): string[] => {
+  const unwrapped = unwrapJavaScriptExpression(node).node;
+  if (unwrapped !== node)
+    return callableIdsForNode(unwrapped, state, admitted, seen);
   const direct = semanticCallableIdForNode(node);
   if (direct !== null && admitted.has(direct)) return [direct];
   if (t.isIdentifier(node)) {
@@ -185,12 +192,6 @@ const callableIdsForNode = (
       ? []
       : callableIdsForBinding(binding, state, admitted, seen);
   }
-  if (
-    t.isTSAsExpression(node) ||
-    t.isTSTypeAssertion(node) ||
-    t.isTSNonNullExpression(node)
-  )
-    return callableIdsForNode(node.expression, state, admitted, seen);
   return [];
 };
 
@@ -204,9 +205,9 @@ export const flattenSemanticReturnValue = (
   const fields: ProjectedReturnField[] = [];
   const propertyCoverage: ProjectedPropertyCoverage[] = [];
   flattenValue(value, "", fields, propertyCoverage);
-  fields.sort((left, right) => compareCodePoints(left.path, right.path));
+  fields.sort((left, right) => compareUnicodeCodePoints(left.path, right.path));
   propertyCoverage.sort((left, right) =>
-    compareCodePoints(left.path, right.path),
+    compareUnicodeCodePoints(left.path, right.path),
   );
   return { fields, propertyCoverage };
 };

@@ -1,4 +1,4 @@
-import { canonicalDigest } from "./comparisonSemantics.js";
+import { digestCanonicalValue } from "./canonicalDigest.js";
 import type {
   ArtifactEdge,
   ArtifactNode,
@@ -8,7 +8,7 @@ import type {
 
 /** Content-address an artifact independently of where it was observed. */
 export const artifactIdForContent = (sha256: string): string =>
-  `art_${canonicalDigest({ sha256 }, "Artifact")}`;
+  `art_${digestCanonicalValue({ sha256 }, "Artifact")}`;
 
 /** Identify an occurrence by its root and exact logical location. */
 export const occurrenceIdForLocation = (input: {
@@ -17,8 +17,8 @@ export const occurrenceIdForLocation = (input: {
   readonly entryKind: ArtifactOccurrence["entry_kind"];
 }): string =>
   input.logicalPath === "."
-    ? `occ_${canonicalDigest({ root: input.rootArtifactId }, "Artifact")}`
-    : `occ_${canonicalDigest(
+    ? `occ_${digestCanonicalValue({ root: input.rootArtifactId }, "Artifact")}`
+    : `occ_${digestCanonicalValue(
         {
           root_artifact_id: input.rootArtifactId,
           logical_path: input.logicalPath,
@@ -34,7 +34,7 @@ export const artifactGraphDigest = (input: {
   readonly edges: readonly ArtifactEdge[];
   readonly contradictions: readonly IntegrityContradiction[];
 }): string =>
-  canonicalDigest(
+  digestCanonicalValue(
     {
       nodes: input.nodes,
       occurrences: input.occurrences,
@@ -49,7 +49,7 @@ export const artifactManifestId = (
   rootArtifactId: string,
   graphSha256: string,
 ): string =>
-  `agm_${canonicalDigest(
+  `agm_${digestCanonicalValue(
     { root_artifact_id: rootArtifactId, graph_sha256: graphSha256 },
     "Artifact",
   )}`;
@@ -61,7 +61,7 @@ export const artifactContradictionId = (input: {
   readonly declaredSha256: string;
   readonly observedSha256: string;
 }): string =>
-  `ic_${canonicalDigest(
+  `ic_${digestCanonicalValue(
     {
       root_artifact_id: input.rootArtifactId,
       logical_path: input.logicalPath,
@@ -81,4 +81,4 @@ export const artifactEdgeId = (
     | "occurrence_id"
     | "logical_path"
   >,
-): string => `edge_${canonicalDigest(semantic, "Artifact")}`;
+): string => `edge_${digestCanonicalValue(semantic, "Artifact")}`;

@@ -148,8 +148,27 @@ try {
         target,
         status,
       })),
-      [{ source: null, path: ["UID"], target: 1, status: "resolved" }],
+      [
+        { source: null, path: ["CF$UID"], target: 1, status: "resolved" },
+        { source: null, path: ["UID"], target: 1, status: "resolved" },
+      ],
     );
+    const selected = await artifactCli("inspect-keyed-archive", path, [
+      "--root",
+      "UID",
+    ]);
+    assert.deepEqual(
+      selected.references,
+      uidGraph.references.filter(({ path }) => path[0] === "UID"),
+    );
+    await withArtifactMcp(path, async (client) => {
+      assert.deepEqual(
+        await artifactMcpResult(client, "inspect_keyed_archive", {
+          root: "UID",
+        }),
+        selected,
+      );
+    });
   }
   const numericTests = spawnSync(
     "npm",

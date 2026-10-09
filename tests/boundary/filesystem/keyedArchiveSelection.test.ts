@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -165,6 +166,52 @@ it("keeps a damaged NSKeyedArchiver archive a format failure", async () => {
     reason: "format",
     message: expect.stringContaining("$objects array"),
   });
+});
+
+it("selects a decomposed bundle path by its normalized spelling and reports the raw identity", async () => {
+  const root = await bundle();
+  const rawPath = `Contents/Resources/Caf\u0065\u0301.plist`;
+  const bytes = Buffer.from(archive);
+  await writeFile(join(root, rawPath), bytes);
+
+  const result = await inspect(root, {
+    path: rawPath.normalize("NFC"),
+  });
+
+  expect(result.archive_path).toBe(rawPath);
+  expect(result.archive_sha256).toBe(
+    createHash("sha256").update(bytes).digest("hex"),
+  );
+});
+
+it("keeps an archive readable when a non-finite real is an explicit unknown", async () => {
+  const root = await bundle();
+  const bytes = Buffer.from(
+    build({
+      $archiver: "NSKeyedArchiver",
+      $version: 100000,
+      $objects: ["$null", Number.NaN],
+      $top: { root: { CF$UID: 1 } },
+    }),
+  );
+  await writeFile(
+    join(root, "Contents", "Resources", "NonFinite.plist"),
+    bytes,
+  );
+
+  const result = await inspect(root, {
+    path: "Contents/Resources/NonFinite.plist",
+  });
+
+  expect(result.objects).toContainEqual(
+    expect.objectContaining({
+      id: 1,
+      value: { $plist_type: "real", value: null },
+    }),
+  );
+  expect(result.limitations).toContain(
+    '1 non-finite real value(s) are reported as { "$plist_type": "real", "value": null } because JSON evidence cannot preserve NaN vs infinity.',
+  );
 });
 
 const asAnalysisError = (value: unknown): AnalysisError => {

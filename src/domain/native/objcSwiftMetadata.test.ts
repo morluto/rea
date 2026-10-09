@@ -14,6 +14,15 @@ describe("ObjC/Swift metadata", () => {
     );
     expect(result.objc_classes).toHaveLength(1);
     expect(result.objc_dispatch_implementations).toHaveLength(1);
+    expect(result.objc_classes[0]).toMatchObject({
+      is_meta_class: null,
+      is_root_class: null,
+      ivar_count: null,
+    });
+    expect(result.objc_classes[0]?.methods[0]).toMatchObject({
+      is_required: null,
+      is_optional: null,
+    });
     expect(result.swift_symbols).toHaveLength(0);
     expect(result.coverage).toContainEqual(
       expect.objectContaining({

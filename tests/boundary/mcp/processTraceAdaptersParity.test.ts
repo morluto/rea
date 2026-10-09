@@ -126,10 +126,7 @@ describe("declared trace adapter parity", () => {
     );
     expect(session.recordEvidence(left).ok).toBe(true);
     expect(session.recordEvidence(right).ok).toBe(true);
-    const server = createServer(
-      { execute: () => Promise.resolve(ok(null)) },
-      session,
-    );
+    const server = createServer({ kind: "session", session });
     const client = new Client({ name: "trace-parity", version: "1" });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();

@@ -6,11 +6,57 @@ import { isInitializedPtyRoot, readLinuxChildren } from "./ProcessSampling.js";
 import { TerminalRenderer } from "./TerminalRenderer.js";
 import { parseProcessScenario } from "../../domain/process/processScenario.js";
 import { type ProcessCapture } from "../../domain/process/processCaptureParsing.js";
+import type { ProcessCaptureTruncationDetails } from "../../domain/process/processCaptureCoverage.js";
 import { emptyProcessCapture as emptyCapture } from "../../domain/process/processCapture.fixture.js";
 
 const base = {
   executable: "/bin/sh",
   working_directory: "/tmp",
+};
+
+const emptyFilesystemCoverage = () =>
+  emptyCapture().truncation_details.filesystem_before;
+
+const truncationDetails = (
+  frames: readonly ProcessCapture["frames"][number][],
+  renderedFrames: readonly ProcessCapture["rendered_frames"][number][],
+  samples: readonly ProcessCapture["process_samples"][number][],
+): ProcessCaptureTruncationDetails => {
+  const emptyDetails = emptyCapture().truncation_details;
+  const rawBytes = frames.reduce(
+    (total, frame) => total + Buffer.byteLength(frame.raw_data ?? frame.data),
+    0,
+  );
+  const renderedBytes = renderedFrames.reduce(
+    (total, frame) =>
+      frame.lines.reduce(
+        (sum, line) => sum + Buffer.byteLength(line),
+        total + Buffer.byteLength(frame.serialized_state),
+      ),
+    0,
+  );
+  return {
+    raw_terminal: {
+      ...emptyDetails.raw_terminal,
+      observed_bytes: rawBytes,
+      retained_bytes: rawBytes,
+      observed_frames: frames.length,
+      retained_frames: frames.length,
+    },
+    rendered_terminal: {
+      ...emptyDetails.rendered_terminal,
+      observed_bytes: renderedBytes,
+      retained_bytes: renderedBytes,
+      observed_frames: renderedFrames.length,
+      retained_frames: renderedFrames.length,
+    },
+    filesystem_before: emptyDetails.filesystem_before,
+    filesystem_after: emptyDetails.filesystem_after,
+    process: {
+      ...emptyDetails.process,
+      retained_samples: samples.length,
+    },
+  };
 };
 
 it("returns detached terminal observations", async () => {
@@ -72,9 +118,19 @@ it("preserves rendered observation order instead of timestamp sorting", () => {
     frames: [],
     exit: { exitCode: 0, reason: "exited" },
     samples: [],
-    before: { files: [], truncated: false, completeRoots: [] },
-    after: { files: [], truncated: false, completeRoots: [] },
-    truncated: false,
+    before: {
+      files: [],
+      truncated: false,
+      completeRoots: [],
+      coverage: emptyFilesystemCoverage(),
+    },
+    after: {
+      files: [],
+      truncated: false,
+      completeRoots: [],
+      coverage: emptyFilesystemCoverage(),
+    },
+    truncationDetails: truncationDetails([], renderedFrames, []),
     scenario: parseProcessScenario(base),
     rootPid: 1,
     samplingPartial: false,
@@ -98,9 +154,19 @@ it("marks redacted scripted input as an interaction unknown", () => {
     frames: [],
     exit: { exitCode: 0, reason: "exited" },
     samples: [],
-    before: { files: [], truncated: false, completeRoots: [] },
-    after: { files: [], truncated: false, completeRoots: [] },
-    truncated: false,
+    before: {
+      files: [],
+      truncated: false,
+      completeRoots: [],
+      coverage: emptyFilesystemCoverage(),
+    },
+    after: {
+      files: [],
+      truncated: false,
+      completeRoots: [],
+      coverage: emptyFilesystemCoverage(),
+    },
+    truncationDetails: truncationDetails([], [], []),
     scenario: parseProcessScenario({
       ...base,
       events: [{ type: "input", at_ms: 0, data: "secret", sensitive: true }],

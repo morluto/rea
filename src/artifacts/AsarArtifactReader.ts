@@ -1,7 +1,23 @@
-import { constants, createReadStream, type Stats } from "node:fs";
-import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
+import {
+  constants,
+  createReadStream,
+  createWriteStream,
+  type ReadStream,
+  type Stats,
+} from "node:fs";
+import {
+  lstat,
+  mkdtemp,
+  open,
+  realpath,
+  rm,
+  type FileHandle,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
 import { isAbsolute, join, relative, sep } from "node:path";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 
 import { getRawHeader, listPackage, statFile, uncache } from "@electron/asar";
 
@@ -24,24 +40,28 @@ export class AsarArtifactReader implements ArtifactReader {
   #archiveSize: number | undefined;
   #headerSize: number | undefined;
   readonly #entries = new Map<string, AsarEntryState>();
+  #snapshot: { readonly path: string; readonly sha256: string } | undefined;
+  #snapshotRoot: string | undefined;
 
   constructor(
     private readonly path: string,
     private readonly openUnpackedFile: OpenAsarUnpackedFile = open,
+    private readonly removeSnapshot: (path: string) => Promise<void> = (path) =>
+      rm(path, { recursive: true, force: true }),
   ) {}
 
   async *entries(signal?: AbortSignal): AsyncIterable<ArtifactEntry> {
     let paths: string[];
     try {
-      // ASAR caches headers by path even after the archive has been replaced.
+      await this.prepareContainer(undefined, signal);
+      const snapshotPath = this.#snapshotPath();
       this.#resetArchiveState();
       this.#entries.clear();
-      uncache(this.path);
-      paths = listPackage(this.path, { isPack: false }).sort((left, right) =>
+      paths = listPackage(snapshotPath, { isPack: false }).sort((left, right) =>
         left.localeCompare(right, "en"),
       );
-      this.#headerSize = getRawHeader(this.path).headerSize;
-      const archiveMetadata = await lstat(this.path);
+      this.#headerSize = getRawHeader(snapshotPath).headerSize;
+      const archiveMetadata = await lstat(snapshotPath);
       if (!archiveMetadata.isFile() || archiveMetadata.isSymbolicLink())
         throw new ArtifactReaderFailure(
           "format",
@@ -64,7 +84,7 @@ export class AsarArtifactReader implements ArtifactReader {
         : listed;
       let metadata: ReturnType<typeof statFile>;
       try {
-        metadata = statFile(this.path, providerPath, false);
+        metadata = statFile(this.#snapshotPath(), providerPath, false);
       } catch (cause: unknown) {
         throw asarFailure(this.path, `stat ${path}`, cause);
       }
@@ -176,7 +196,7 @@ export class AsarArtifactReader implements ArtifactReader {
     let handle: FileHandle | undefined;
     try {
       const openedHandle = await open(
-        this.path,
+        this.#snapshotPath(),
         constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
       );
       handle = openedHandle;
@@ -210,17 +230,104 @@ export class AsarArtifactReader implements ArtifactReader {
     }
   }
 
-  /** Open raw container bytes to verify the inventory identity before analysis. */
-  openContainer(signal?: AbortSignal): Readable {
+  /** Capture once per reader lifetime; bind all interpretation to these exact bytes. */
+  async prepareContainer(
+    expectedSha256?: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
     abortIfNeeded(signal);
-    return createReadStream(this.path, signal === undefined ? {} : { signal });
+    if (this.#snapshot === undefined && this.#snapshotRoot !== undefined)
+      await this.close();
+    if (this.#snapshot === undefined) {
+      try {
+        this.#snapshotRoot = await mkdtemp(
+          join(tmpdir(), "rea-asar-snapshot-"),
+        );
+        const snapshotPath = join(this.#snapshotRoot, "container.asar");
+        const hash = createHash("sha256");
+        const handle = await open(
+          this.path,
+          constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+        );
+        const source = handle.createReadStream();
+        const digesting = new Transform({
+          transform(chunk: Buffer, _encoding, callback) {
+            hash.update(chunk);
+            callback(null, chunk);
+          },
+        });
+        await pipeline(
+          source,
+          digesting,
+          createWriteStream(snapshotPath, { flags: "wx", mode: 0o600 }),
+          signal === undefined ? {} : { signal },
+        );
+        this.#snapshot = { path: snapshotPath, sha256: hash.digest("hex") };
+      } catch (cause: unknown) {
+        const primary =
+          signal?.aborted === true
+            ? new ArtifactReaderFailure(
+                "cancelled",
+                "ASAR operation cancelled",
+                { cause },
+              )
+            : asarFailure(this.path, "snapshot", cause);
+        try {
+          await this.close();
+        } catch (cleanupCause: unknown) {
+          throw ArtifactReaderFailure.withCleanup(
+            primary,
+            ArtifactReaderFailure.cleanupObservation(cleanupCause, this.path),
+          );
+        }
+        throw primary;
+      }
+    }
+    if (
+      expectedSha256 !== undefined &&
+      this.#snapshot.sha256 !== expectedSha256
+    )
+      throw new ArtifactReaderFailure(
+        "integrity",
+        `ASAR container changed before interpretation: ${this.path}`,
+      );
   }
 
-  close(): Promise<void> {
-    uncache(this.path);
+  /** Read the same captured container that supplies headers and packed members. */
+  async openContainer(signal?: AbortSignal): Promise<ReadStream> {
+    await this.prepareContainer(undefined, signal);
+    return createReadStream(
+      this.#snapshotPath(),
+      signal === undefined ? {} : { signal },
+    );
+  }
+
+  async close(): Promise<void> {
+    const root = this.#snapshotRoot;
+    if (root !== undefined) {
+      try {
+        await this.removeSnapshot(root);
+      } catch (cause: unknown) {
+        throw ArtifactReaderFailure.withCleanup(cause, {
+          reason: `Could not remove ASAR snapshot: ${root}`,
+          resources: [root],
+        });
+      }
+      this.#snapshotRoot = undefined;
+    }
+    if (this.#snapshot !== undefined) uncache(this.#snapshot.path);
+    this.#snapshot = undefined;
     this.#resetArchiveState();
     this.#entries.clear();
-    return Promise.resolve();
+  }
+
+  #snapshotPath(): string {
+    if (this.#snapshot === undefined)
+      throw new ArtifactReaderFailure(
+        "integrity",
+        "ASAR snapshot is not available",
+      );
+    return this.#snapshot.path;
   }
 
   provenance(): readonly [] {

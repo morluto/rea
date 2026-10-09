@@ -1,11 +1,11 @@
 import { join } from "node:path";
 
-import { PRODUCT_IDENTITY } from "../identity.js";
 import { isOwnedClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import {
   linuxHopperInstallDisclosure,
   type LinuxPackageFamily,
 } from "./LinuxHopper.js";
+import { skillDestinations } from "./SetupSkill.js";
 import { macHopperInstallDisclosure } from "./MacHopper.js";
 import type {
   SetupAction,
@@ -20,7 +20,6 @@ import type { DoctorReport } from "./Doctor.js";
 export interface SetupDiscovery {
   readonly initialDoctor: Awaited<ReturnType<SetupHost["doctor"]>>;
   readonly installHopper: boolean;
-  readonly skillNeedsInstall: boolean;
   readonly clients: readonly SetupClient[];
   readonly detectedClientIds: readonly string[];
   readonly defaultClientIds: readonly string[];
@@ -57,10 +56,9 @@ export const discoverSetupState = async (input: {
       input.proposeHopper &&
       (Object.keys(input.providerEnvironment).length === 0 ||
         linuxHopperRepairNeeded));
-  const [clients, detectedClients, skillNeedsInstall] = await Promise.all([
+  const [clients, detectedClients] = await Promise.all([
     input.host.supportedClients(),
     input.host.detectedClients(),
-    input.host.skillNeedsInstall(),
   ]);
   const detectedIds = new Set(detectedClients.map(({ name }) => name));
   const registrations = initialDoctor.identity?.registrations ?? [];
@@ -100,7 +98,6 @@ export const discoverSetupState = async (input: {
   return {
     initialDoctor,
     installHopper,
-    skillNeedsInstall,
     clients,
     detectedClientIds: [...detectedIds],
     defaultClientIds,
@@ -118,6 +115,7 @@ export const planSetupActions = async (input: {
   readonly providerEnvironment: SetupProviderEnvironment;
   readonly command: readonly string[];
   readonly clientIds: readonly string[];
+  readonly skillClientIds: readonly string[];
   readonly installSkill: boolean;
 }): Promise<{
   readonly plannedActions: readonly SetupAction[];
@@ -189,6 +187,8 @@ export const planSetupActions = async (input: {
       homeDirectory: input.host.homeDirectory,
       installHopper: input.discovery.installHopper,
       installSkill: input.installSkill,
+      skillClientIds: input.skillClientIds,
+      claudeCodeSkillsDirectory: input.host.claudeCodeSkillsDirectory,
       clients: clientPlans,
       providerEnvironment: input.providerEnvironment,
       ...(input.discovery.linuxPackageFamily === undefined
@@ -209,6 +209,8 @@ const setupPlan = (input: {
   readonly homeDirectory: string;
   readonly installHopper: boolean;
   readonly installSkill: boolean;
+  readonly skillClientIds: readonly string[];
+  readonly claudeCodeSkillsDirectory: string;
   readonly clients: readonly {
     readonly client: SetupClient;
     readonly operation: "create" | "update";
@@ -266,22 +268,28 @@ const setupPlan = (input: {
       ...(backupPath === undefined ? {} : { backupPath }),
     })),
   ...(input.installSkill
-    ? [
-        {
-          id: "install_skill",
-          kind: "install_skill" as const,
-          label: "REA reverse-engineering skill",
-          target: join(
-            input.homeDirectory,
-            ".agents/skills",
-            PRODUCT_IDENTITY.skillName,
-          ),
-          detail:
-            "Install or update the bundled REA reverse-engineering skill and on-demand references.",
-          external: false,
-          operation: "install" as const,
-        },
-      ]
+    ? skillDestinations(
+        input.homeDirectory,
+        input.skillClientIds,
+        input.claudeCodeSkillsDirectory,
+      ).map(({ client, path }): SetupAction => ({
+        id:
+          client === "claude_code"
+            ? "install_skill:claude_code"
+            : "install_skill",
+        kind: "install_skill",
+        label:
+          client === "claude_code"
+            ? "REA skill for Claude Code"
+            : "REA reverse-engineering skill",
+        target: path,
+        detail:
+          client === "claude_code"
+            ? "Install or update the REA skill in Claude Code's personal skill directory."
+            : "Install or update the bundled REA reverse-engineering skill and on-demand references.",
+        external: false,
+        operation: "install",
+      }))
     : []),
 ];
 

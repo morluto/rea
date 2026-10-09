@@ -5,7 +5,7 @@ import {
   type JavaScriptExportShapeComparisonResult,
   type ProjectedExportReturnShapes,
 } from "./javascriptExportShapeComparisonSchemas.js";
-import { compareCodePoints } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 
 type Shape = ProjectedExportReturnShapes["static_return_shapes"][number];
 type SelectorResult = JavaScriptExportShapeComparisonResult["left"];
@@ -196,7 +196,7 @@ const exportCandidates = (
     }
   }
   return [...candidates.values()].sort((left, right) =>
-    compareCodePoints(candidateKey(left), candidateKey(right)),
+    compareUnicodeCodePoints(candidateKey(left), candidateKey(right)),
   );
 };
 

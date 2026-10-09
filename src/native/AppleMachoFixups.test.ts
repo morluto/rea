@@ -275,28 +275,27 @@ describe("Objective-C property attributes", () => {
     ).toEqual({
       name: "title",
       type_encoding: '@"NSString<NSCopying, NSSecureCoding>"',
+      atomicity: "nonatomic",
       attributes: [
-        expect.objectContaining({
-          name: "T",
-          value: '@"NSString<NSCopying, NSSecureCoding>"',
-        }),
-        expect.objectContaining({ name: "C", is_copy: true }),
-        expect.objectContaining({ name: "N" }),
-        expect.objectContaining({ name: "G", value: "customTitle" }),
-        expect.objectContaining({ name: "V", value: "_title" }),
+        { name: "T", value: '@"NSString<NSCopying, NSSecureCoding>"' },
+        { name: "C", value: "" },
+        { name: "N", value: "" },
+        { name: "G", value: "customTitle" },
+        { name: "V", value: "_title" },
       ],
       is_readonly: false,
       getter: "customTitle",
       setter: null,
     });
-    expect(parsePropertyAttributes("count", "Tq,R,N")).toMatchObject({
+    expect(parsePropertyAttributes("count", "Tq,R")).toMatchObject({
       type_encoding: "q",
       is_readonly: true,
+      atomicity: "atomic",
     });
-    expect(
-      parsePropertyAttributes("delegate", "T@,W,N,V_delegate").attributes[1],
-    ).toMatchObject({
-      is_weak: true,
-    });
+    expect(parsePropertyAttributes("count", "Tq,R,N").atomicity).toBe(
+      "nonatomic",
+    );
+    expect(parsePropertyAttributes("count", "").atomicity).toBeNull();
+    expect(parsePropertyAttributes("count", "R").atomicity).toBeNull();
   });
 });

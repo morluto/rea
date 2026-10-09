@@ -36,7 +36,18 @@ describe("Swift classification through MCP", () => {
       arguments: test.arguments,
     });
     expect(result.isError).not.toBe(true);
-    expect(jsonResult(result)).toMatchObject({ total: test.total });
+    const inventory = jsonResult(result);
+    expect(inventory).toMatchObject({ total: test.total });
+    if (test.arguments.pattern === undefined)
+      expect(inventory).toMatchObject({
+        categories: {
+          structs: {
+            items: expect.not.arrayContaining([
+              expect.objectContaining({ address: "0x100000c0c" }),
+            ]),
+          },
+        },
+      });
     if (test.arguments.pattern === undefined)
       expect(jsonResult(result)).toMatchObject({
         unclassified: [

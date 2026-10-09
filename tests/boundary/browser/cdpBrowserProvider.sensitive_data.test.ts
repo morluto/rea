@@ -254,9 +254,15 @@ describe("CdpBrowserProvider: explicitly requested text and payload shapes", () 
       request: {
         root_type: "object",
         properties: expect.arrayContaining([
-          expect.objectContaining({ path: "/token", types: ["string"] }),
           expect.objectContaining({
-            path: "/filters/active",
+            path: [{ kind: "property", name: "token" }],
+            types: ["string"],
+          }),
+          expect.objectContaining({
+            path: [
+              { kind: "property", name: "filters" },
+              { kind: "property", name: "active" },
+            ],
             types: ["boolean"],
           }),
         ]),
@@ -265,10 +271,20 @@ describe("CdpBrowserProvider: explicitly requested text and payload shapes", () 
         root_type: "object",
         properties: expect.arrayContaining([
           expect.objectContaining({
-            path: "/result/token",
+            path: [
+              { kind: "property", name: "result" },
+              { kind: "property", name: "token" },
+            ],
             types: ["string"],
           }),
-          expect.objectContaining({ path: "/items/*/id", types: ["number"] }),
+          expect.objectContaining({
+            path: [
+              { kind: "property", name: "items" },
+              { kind: "array-element" },
+              { kind: "property", name: "id" },
+            ],
+            types: ["number"],
+          }),
         ]),
       },
     });
@@ -279,7 +295,10 @@ describe("CdpBrowserProvider: explicitly requested text and payload shapes", () 
           format: "json",
           json_shape: expect.objectContaining({
             properties: expect.arrayContaining([
-              expect.objectContaining({ path: "/token", types: ["string"] }),
+              expect.objectContaining({
+                path: [{ kind: "property", name: "token" }],
+                types: ["string"],
+              }),
             ]),
           }),
         }),

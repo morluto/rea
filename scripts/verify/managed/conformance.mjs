@@ -13,6 +13,7 @@ import { projectManagedApplicationGraphEvidence } from "../../../dist/applicatio
 import { traceApplicationFeatureEvidence } from "../../../dist/application/javascript/JavaScriptApplicationWorkflowService.js";
 import { MANAGED_STATIC_PROVIDER } from "../../../dist/application/InvestigationProviders.js";
 import { createEvidence } from "../../../dist/domain/evidence.js";
+import { functionDossier } from "../../fixtures/managed/function-dossier.mjs";
 import {
   alternateMvid,
   buildNativePeFixture,
@@ -21,7 +22,6 @@ import { createManagedConformanceSupport } from "./support.mjs";
 import {
   comparisonLimits,
   defaultIlBody,
-  functionDossier,
   inspectionLimits,
   memberLimits,
   nativeBoundaryLimits,

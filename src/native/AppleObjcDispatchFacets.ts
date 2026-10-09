@@ -216,7 +216,7 @@ export const decodeObjcDispatchFacets = (input: {
         `Superclass of ${name} requires external binding resolution`,
       );
     const ivarList = read.pointer(ro + 48n);
-    let ivarCount = 0;
+    let ivarCount: number | null = meta ? null : 0;
     if (ivarList !== 0n && !meta) {
       const stride = read.u32(ivarList),
         count = read.u32(ivarList + 4n);
@@ -276,8 +276,8 @@ export const decodeObjcDispatchFacets = (input: {
               BigInt(Number.MAX_SAFE_INTEGER)
               ? Number(BigInt(item.implementation_address))
               : null,
-          is_required: false,
-          is_optional: false,
+          is_required: null,
+          is_optional: null,
         })),
       properties: readObjcPropertiesOf(read, read.pointer(ro + 64n), {
         owner: name,

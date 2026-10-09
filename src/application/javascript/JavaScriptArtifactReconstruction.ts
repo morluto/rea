@@ -11,6 +11,7 @@ import { createJavaScriptArtifactReader as createReader } from "../../artifacts/
 import type { JavaScriptApplicationGraph } from "../../domain/javascript/javascriptApplicationGraph.js";
 import type { JavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticGraph.js";
 import type { ElectronBoundarySummary } from "../../domain/javascript/javascriptApplicationAnalysis.js";
+import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import { analyzeAndProjectJavaScriptArtifactFiles } from "./JavaScriptArtifactAnalysis.js";
 import { readJavaScriptArtifactFiles } from "../../artifacts/javascript/JavaScriptArtifactFiles.js";
 import { buildImmutableJavaScriptArtifactGraphSteps } from "./JavaScriptArtifactGraphBuilder.js";
@@ -34,6 +35,7 @@ export interface JavaScriptArtifactReconstructionResult {
   readonly root_artifact_sha256: string;
   readonly inventory_manifest_id: string;
   readonly inventory_graph_sha256: string;
+  readonly integrity_contradictions: ArtifactInventorySnapshot["integrity_contradictions"];
   readonly graph: JavaScriptApplicationGraph;
   readonly semantic_graph: JavaScriptSemanticGraph;
   readonly electron_summary: ElectronBoundarySummary;
@@ -47,7 +49,6 @@ export interface JavaScriptArtifactReconstructionResult {
     readonly findings: number;
     readonly modules: number;
     readonly parse_failures: number;
-    readonly truncated_scopes: number;
   };
   readonly limitations: readonly string[];
 }
@@ -66,7 +67,10 @@ export const reconstructJavaScriptArtifact = async (
   abortIfNeeded(signal);
   const path = await resolveSelectedInput(input.input_path);
   const format = await resolveFormat(path, input);
-  const snapshot = await scanCanonicalArtifactInventory(path, { signal });
+  const snapshot = await scanCanonicalArtifactInventory(path, {
+    signal,
+    integrity: { mode: input.integrity_policy },
+  });
   if (snapshot.manifest.root_format !== format)
     throw new ArtifactReaderFailure(
       "format",
@@ -124,7 +128,6 @@ export const reconstructJavaScriptArtifact = async (
     const semanticGraphSteps = semanticProjection.finishImmutableSteps(
       snapshot.manifest.root_sha256,
       graph,
-      analysis,
     );
     await reportPhase(
       "seal_javascript_semantic_graph",
@@ -141,6 +144,7 @@ export const reconstructJavaScriptArtifact = async (
       root_artifact_sha256: snapshot.manifest.root_sha256,
       inventory_manifest_id: snapshot.manifest.manifest_id,
       inventory_graph_sha256: snapshot.manifest.graph_sha256,
+      integrity_contradictions: snapshot.integrity_contradictions,
       graph,
       semantic_graph: semanticGraph,
       electron_summary: summarizeElectronBoundaries(analysis),
@@ -156,7 +160,6 @@ export const reconstructJavaScriptArtifact = async (
         findings: analysis.findings,
         modules: analysis.modules,
         parse_failures: analysis.parse_failures,
-        truncated_scopes: analysis.truncated_scopes,
       },
       limitations: analysis.limitations,
     };

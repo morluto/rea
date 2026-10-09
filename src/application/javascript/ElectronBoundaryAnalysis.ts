@@ -1,4 +1,4 @@
-import { compareCodePoints } from "../../domain/canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import type { ElectronIpcFinding } from "../../domain/javascript/electronStaticAnalysisTypes.js";
 import type { ElectronBoundarySummary } from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import type { JavaScriptModuleArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
@@ -37,7 +37,7 @@ export const collectElectronIpcRecords = (
         finding,
       })),
     )
-    .sort((left, right) => compareCodePoints(left.key, right.key));
+    .sort((left, right) => compareUnicodeCodePoints(left.key, right.key));
 
 /** Match only exact literal channels and retain ambiguous matches separately. */
 export const classifyElectronIpcPairings = (

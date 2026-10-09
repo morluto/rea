@@ -1,4 +1,4 @@
-import { canonicalDigest } from "../domain/comparisonSemantics.js";
+import { digestCanonicalValue } from "../domain/canonicalDigest.js";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
 import type {
   ElectronPageInspection,
@@ -289,7 +289,7 @@ const captureResources = async (
             ? null
             : Math.max(0, numberValue(resource.contentSize) ?? 0),
       };
-      const resourceKey = `electron_resource_${canonicalDigest(item, "CDP capture")}`;
+      const resourceKey = `electron_resource_${digestCanonicalValue(item, "CDP capture")}`;
       if (seen.has(resourceKey)) continue;
       seen.add(resourceKey);
       resources.push({

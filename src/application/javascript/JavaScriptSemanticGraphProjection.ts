@@ -1,9 +1,8 @@
-import { compareCodePoints } from "../../domain/canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import type { JavaScriptSemanticGraphNode } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 import { JAVASCRIPT_SEMANTIC_RELATION_FAMILIES } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 import type { JavaScriptSemanticIr } from "../../domain/javascript/javascriptSemanticIr.js";
 import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
-import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
 
 interface SourceInterval {
   readonly range: JavaScriptSourceRange;
@@ -65,7 +64,7 @@ export const createSemanticCallableOwnerLookup = (
         const rank =
           best === undefined
             ? 1
-            : compareCodePoints(candidate.priority, best.priority) ||
+            : compareUnicodeCodePoints(candidate.priority, best.priority) ||
               best.order - candidate.order;
         if (node !== undefined && rank > 0) {
           best = candidate;
@@ -171,8 +170,7 @@ const rangeKey = (range: JavaScriptSourceRange): string =>
 /** Report extractor support without treating missing families as absence. */
 export const semanticFamilyStatus = (
   family: (typeof JAVASCRIPT_SEMANTIC_RELATION_FAMILIES)[number],
-  analysis: Pick<JavaScriptArtifactAnalysis, "truncated_scopes">,
-): "complete" | "partial" | "unknown" | "unsupported" => {
+): "partial" | "unsupported" => {
   if (
     ![
       "call-flow",
@@ -190,7 +188,7 @@ export const semanticFamilyStatus = (
     ].includes(family)
   )
     return "unsupported";
-  return analysis.truncated_scopes === 0 ? "partial" : "unknown";
+  return "partial";
 };
 
 const contains = (

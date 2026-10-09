@@ -1,8 +1,9 @@
 import { z } from "zod";
+import { isAbsolute } from "node:path";
 
-import { isAbsoluteLocalPath, localPathStringSchema } from "../localPath.js";
+import { localPathStringSchema } from "../localPath.js";
 
-const pathInputSchema = localPathStringSchema.refine(isAbsoluteLocalPath, {
+const pathInputSchema = localPathStringSchema.refine(isAbsolute, {
   message:
     "Electron executable, application, and root paths must be absolute local filesystem paths (for example /Applications/Electron.app/Contents/MacOS/Electron)",
 });
@@ -80,7 +81,7 @@ export const electronActiveObservationInputSchema = z.strictObject({
     .array(
       z
         .string()
-        .regex(/^[^\u0000]*$/u, "Electron arguments must not contain NUL"),
+        .regex(/^[^\x00]*$/u, "Electron arguments must not contain NUL"),
     )
     .default([]),
   actions: z.array(actionSchema).default([]),

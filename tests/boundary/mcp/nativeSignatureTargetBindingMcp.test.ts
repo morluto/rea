@@ -22,7 +22,7 @@ it("rejects changed signature targets through MCP and accepts reopening the new 
   const session = createTestBinarySession(
     new NativeMacOSProvider({}, new NativeFixtureRunner(), "darwin"),
   );
-  const server = createServer(session, session);
+  const server = createServer({ kind: "session", session });
   const client = new Client({ name: "signature-binding-test", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();

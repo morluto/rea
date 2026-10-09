@@ -24,6 +24,12 @@ const dossier = jsonValueSchema.parse(
     procedure: {
       address: "0x1000",
       name: "main",
+      classification: null,
+      body: {
+        available: false,
+        reason:
+          "Hopper's public Python API does not expose complete function body ranges",
+      },
       signature: "int main(void)",
       locals: [],
     },
@@ -36,7 +42,10 @@ const dossier = jsonValueSchema.parse(
     outgoing_references: [],
     referenced_strings: [],
     referenced_names: [],
+    native_api: null,
+    native_value_flow: null,
     basic_blocks: [{ start: "0x1000", end: "0x1001", successors: [] }],
+    limitations: [],
   }),
 );
 

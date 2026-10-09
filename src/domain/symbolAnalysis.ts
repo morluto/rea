@@ -5,6 +5,18 @@ import {
   type SwiftTypeCategory,
 } from "./swiftSymbolClassification.js";
 
+/** Objective-C class definition markers emitted by modern Apple clang. */
+const OBJC_CLASS_MARKER = "OBJC_CLASS_$_" as const;
+
+/** Local class records emitted by Apple's fragile Objective-C ABI. */
+const LEGACY_OBJC_CLASS_PREFIX = "l_OBJC_CLASS_" as const;
+
+/**
+ * Objective-C protocol declaration marker. `PROTOCOL_REFERENCE` slots
+ * share the substring but are uses, not definitions.
+ */
+const OBJC_PROTOCOL_MARKER = "OBJC_PROTOCOL_$_" as const;
+
 /** Select and deduplicate Objective-C class labels. */
 export const discoverObjcClasses = (
   names: readonly AddressedName[],
@@ -12,8 +24,12 @@ export const discoverObjcClasses = (
 ): JsonValue => {
   const classes = uniqueByName(
     names
-      .filter(({ name }) =>
-        ["OBJC_CLASS", "OBJC_$_CLASS"].some((marker) => name.includes(marker)),
+      .filter(
+        ({ name }) =>
+          name.includes(OBJC_CLASS_MARKER) ||
+          (name.startsWith(LEGACY_OBJC_CLASS_PREFIX) &&
+            name.length > LEGACY_OBJC_CLASS_PREFIX.length &&
+            !/^l_OBJC_CLASS_NAME_(?:\.\d+)?$/u.test(name)),
       )
       .filter(({ name }) => pattern.length === 0 || name.includes(pattern)),
   );
@@ -29,7 +45,11 @@ export const discoverObjcProtocols = (
 ): JsonValue => {
   const protocols = uniqueByName(
     names.filter(
-      ({ name }) => name.includes("OBJC_PROTOCOL") || name.includes("_TtP"),
+      ({ name }) =>
+        name.includes(OBJC_PROTOCOL_MARKER) ||
+        name.includes("_TtP") ||
+        (name.endsWith("Mp") &&
+          classifySwiftSymbol(name)?.category === "protocols"),
     ),
   );
   return {

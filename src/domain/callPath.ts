@@ -10,6 +10,7 @@ import {
   parseFunctionEvidence,
   type FunctionSnapshot,
 } from "./functionDossierEvidence.js";
+import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 
 /** Minimal directed caller-to-callee adjacency for call-path search. */
 class CallGraph {
@@ -104,9 +105,7 @@ export const buildCallPath = (input: CallPathInput): CallPathResult => {
     goal: parsed.goal.address,
     explored: summarizeSearch(graph, search.reached),
     evidence_links: uniqueEvidence(snapshots.values()),
-    limitations: [...new Set(limitations)].sort((left, right) =>
-      left.localeCompare(right),
-    ),
+    limitations: [...new Set(limitations)].sort(compareUnicodeCodePoints),
   };
   const searchScope = { exhaustive };
   if (found)
@@ -157,9 +156,9 @@ const parseSnapshots = (
   const snapshots = new Map<string, FunctionSnapshot>();
   for (const group of groups) {
     const snapshot = parseFunctionEvidence(group);
-    const address = normalizeAddress(snapshot.dossier.procedure.address);
+    const address = parseCallPathAddress(snapshot.dossier.procedure.address);
     for (const callee of snapshot.dossier.callees)
-      normalizeAddress(callee.address);
+      parseCallPathAddress(callee.address);
     if (snapshots.has(address))
       throw new TypeError(`Duplicate function Evidence for ${address}`);
     snapshots.set(address, snapshot);
@@ -196,7 +195,7 @@ const createGraph = (
   for (const [address, snapshot] of snapshots) {
     graph.mergeNode(address);
     for (const callee of snapshot.dossier.callees) {
-      const calleeAddress = normalizeAddress(callee.address);
+      const calleeAddress = parseCallPathAddress(callee.address);
       graph.mergeNode(calleeAddress);
       graph.mergeDirectedEdge(address, calleeAddress);
     }
@@ -242,9 +241,7 @@ const inspectSearch = ({
       );
       continue;
     }
-    const neighbors = graph
-      .outNeighbors(node)
-      .sort((left, right) => left.localeCompare(right));
+    const neighbors = graph.outNeighbors(node).sort(compareUnicodeCodePoints);
     for (const neighbor of neighbors)
       if (!reached.has(neighbor)) {
         reached.set(neighbor, depth + 1);
@@ -289,7 +286,7 @@ const enumeratePaths = ({
             distance !== undefined &&
             goalDistances.get(neighbor) === distance - 1,
         )
-        .sort((left, right) => left.localeCompare(right));
+        .sort(compareUnicodeCodePoints);
       neighbors.set(node, candidates);
     }
     return { neighbors: candidates, nextIndex: 0 };
@@ -370,6 +367,4 @@ const snapshotLinks = (snapshot: FunctionSnapshot | undefined): string[] => {
 const uniqueEvidence = (snapshots: Iterable<FunctionSnapshot>): string[] =>
   [
     ...new Set([...snapshots].flatMap((snapshot) => snapshotLinks(snapshot))),
-  ].sort((left, right) => left.localeCompare(right));
-
-const normalizeAddress = (input: string): string => parseCallPathAddress(input);
+  ].sort(compareUnicodeCodePoints);

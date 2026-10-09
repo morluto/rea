@@ -20,7 +20,10 @@ it("advertises exact valid schemas and records inline EVM interface evidence wit
   const session = createTestBinarySession(() => {
     throw new Error("deep provider must not start");
   });
-  const server = createServer(session, session, { evmInterface: service });
+  const server = createServer(
+    { kind: "session", session },
+    { evmInterface: service },
+  );
   const client = new Client({ name: "evm-interface-contract", version: "1" });
   onTestFinished(async () => {
     await client.close();

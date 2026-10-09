@@ -1,9 +1,10 @@
 import {
   clientRegistrationEntry,
   clientConfigurationValuesEqual,
+  clientServerListedDisabled,
   clientServerPath,
-  grokServerListedDisabled,
   legacyClientServerPath,
+  OMP_DISABLED_SERVERS_KEY,
   parseClientConfiguration,
   serializeClientConfiguration,
   withClientServers,
@@ -26,13 +27,11 @@ import type {
 } from "./SetupTypes.js";
 import type { SetupClient } from "./SupportedClients.js";
 
-const defaultCommand = (): readonly string[] => npxRegistrationCommand();
-
 /** Configure one supported client's native stdio MCP registration shape. */
 export const configureClientConfiguration = (
   client: SetupClient,
   environment: SetupProviderEnvironment = {},
-  command: readonly string[] = defaultCommand(),
+  command: readonly string[] = npxRegistrationCommand(),
 ): Promise<ClientConfigurationResult> => {
   if (client.format === undefined || client.format === "unsupported")
     return Promise.resolve({ status: "failed", reason: "readback" });
@@ -87,11 +86,28 @@ const configureClientDocument = async (
     parsed,
     PRODUCT_IDENTITY.mcpServerKey,
   );
-  const document = withClientServers(
+  const registered = withClientServers(
     parsed,
     { ...parsed.servers, [PRODUCT_IDENTITY.mcpServerKey]: desired },
     PRODUCT_IDENTITY.mcpServerKey,
   );
+  // OMP's denylist would hide the registration; keep every other listed name.
+  const ompDisabled =
+    parsed.dialect === "omp"
+      ? parsed.document[OMP_DISABLED_SERVERS_KEY]
+      : undefined;
+  const enableOmp =
+    Array.isArray(ompDisabled) &&
+    ompDisabled.includes(PRODUCT_IDENTITY.mcpServerKey);
+  const document =
+    enableOmp && Array.isArray(ompDisabled)
+      ? {
+          ...registered,
+          [OMP_DISABLED_SERVERS_KEY]: ompDisabled.filter(
+            (name: unknown) => name !== PRODUCT_IDENTITY.mcpServerKey,
+          ),
+        }
+      : registered;
   try {
     await mkdir(dirname(client.configPath), { recursive: true });
     await writeFileAtomic(
@@ -99,6 +115,7 @@ const configureClientDocument = async (
       serializeClientConfiguration(document, format, original, [
         clientServerPath(parsed, PRODUCT_IDENTITY.mcpServerKey),
         ...(legacyPath === undefined ? [] : [legacyPath]),
+        ...(enableOmp ? [[OMP_DISABLED_SERVERS_KEY]] : []),
       ]),
       {
         encoding: "utf8",
@@ -235,7 +252,7 @@ const restoreConfig = async (
   }
 };
 
-/** Whether REA's entry matches, no legacy entry remains, and Grok is not suppressing it. */
+/** Whether REA's entry matches, no legacy entry remains, and no client disable list suppresses it. */
 const registrationCurrent = (
   parsed: ClientConfigurationDocument,
   desired: unknown,
@@ -245,10 +262,7 @@ const registrationCurrent = (
     desired,
   ) &&
   !Object.hasOwn(parsed.legacyServers, PRODUCT_IDENTITY.mcpServerKey) &&
-  !(
-    parsed.dialect === "grok" &&
-    grokServerListedDisabled(parsed.document, PRODUCT_IDENTITY.mcpServerKey)
-  );
+  !clientServerListedDisabled(parsed, PRODUCT_IDENTITY.mcpServerKey);
 
 const clientConfigurationDesired = (
   client: SetupClient,

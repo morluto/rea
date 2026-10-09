@@ -116,5 +116,96 @@ it("reports a typed binary cleanup failure and retains the client for retry", as
   ]);
   expect(retainDocument).toBe(true);
   cleanupAllowed = true;
+  requests[0]?.();
+  await new Promise((resolve) => setImmediate(resolve));
   expect((await session.close()).ok).toBe(true);
+});
+
+it("retries only failed cleanup owners after concurrent shutdown requests", async () => {
+  const requests: Array<() => void> = [];
+  const logs: string[] = [];
+  const exitCodes: number[] = [];
+  let unregisterCount = 0;
+  let handleCalls = 0;
+  let androidCalls = 0;
+  let sessionCalls = 0;
+  const dependencies: RuntimeDependencies = {
+    env: {},
+    serve: () => {
+      throw new Error("unused fixture transport");
+    },
+    writeStderr: () => undefined,
+    setExitCode: (code) => exitCodes.push(code),
+    registerShutdown: (request) => {
+      requests.push(request);
+      return () => {
+        unregisterCount += 1;
+      };
+    },
+  };
+  const session = createTestBinarySession(() => ({
+    execute: async () => observed(null),
+    close: async () => {
+      sessionCalls += 1;
+      return ok(null);
+    },
+  }));
+  const [target] = await createBinarySessionTargets();
+  if (target === undefined) throw new Error("Missing fixture target");
+  expect((await session.open(target)).ok).toBe(true);
+  const lifecycle = createShutdown({
+    handle: {
+      close: async () => {
+        handleCalls += 1;
+        if (handleCalls === 1) throw new Error("first handle close failed");
+      },
+    },
+    closeAndroid: async () => {
+      androidCalls += 1;
+      if (androidCalls === 1) throw new Error("first Android close failed");
+    },
+    session,
+    dependencies,
+    serverLogger: pino(
+      { level: "debug" },
+      { write: (line) => logs.push(line) },
+    ),
+  });
+
+  const first = lifecycle.shutdown();
+  const concurrent = lifecycle.shutdown();
+  requests[0]?.();
+  await expect(first).rejects.toBeInstanceOf(AggregateError);
+  await expect(concurrent).rejects.toBeInstanceOf(AggregateError);
+  await expect(first).rejects.toMatchObject({
+    errors: [
+      { message: "first handle close failed" },
+      { message: "first Android close failed" },
+    ],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(exitCodes).toEqual([1]);
+  expect(logs.map((line) => JSON.parse(line))).toContainEqual(
+    expect.objectContaining({
+      msg: "MCP shutdown rejected",
+      failure_cause: expect.objectContaining({
+        errors: [
+          expect.objectContaining({ message: "first handle close failed" }),
+          expect.objectContaining({ message: "first Android close failed" }),
+        ],
+      }),
+    }),
+  );
+  expect([handleCalls, androidCalls, sessionCalls, unregisterCount]).toEqual([
+    1, 1, 1, 0,
+  ]);
+
+  await lifecycle.shutdown();
+  expect([handleCalls, androidCalls, sessionCalls, unregisterCount]).toEqual([
+    2, 2, 1, 1,
+  ]);
+  await lifecycle.shutdown();
+  expect([handleCalls, androidCalls, sessionCalls, unregisterCount]).toEqual([
+    2, 2, 1, 1,
+  ]);
 });

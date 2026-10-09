@@ -44,7 +44,7 @@ const connect = async () => {
   const session = createTestBinarySession(() => {
     throw new Error("Process comparison must not launch a provider");
   });
-  const server = createServer(session, session);
+  const server = createServer({ kind: "session", session });
   const client = new Client({ name: "process-comparison-test", version: "1" });
   onTestFinished(async () => {
     await Promise.allSettled([client.close(), server.close(), session.close()]);
@@ -175,7 +175,7 @@ it("names the side and constraint when Evidence is not a usable capture", async 
     error: {
       code: "evidence_integrity_mismatch",
       message: expect.stringContaining(
-        "The right Evidence failed validation (Evidence semantic identifier does not match its record)",
+        "The right Evidence failed validation (at evidence_id: Evidence semantic identifier does not match its record)",
       ),
     },
   });

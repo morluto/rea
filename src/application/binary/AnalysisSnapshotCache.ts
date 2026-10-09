@@ -30,6 +30,7 @@ import type {
   CapabilityDescriptor,
 } from "../AnalysisProvider.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../../contracts/officialToolContracts.js";
+import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
 const STATEFUL_OPERATIONS: ReadonlySet<AnalysisOperation> = new Set([
   "health",
@@ -144,10 +145,11 @@ export class AnalysisSnapshotCache {
       const snapshotTargetIdentity = snapshotTarget(target);
       const binding = snapshotBinding(profile);
       const entries = [...this.#entries.values()].sort((left, right) =>
-        left.query_id.localeCompare(right.query_id),
+        compareUnicodeCodePoints(left.query_id, right.query_id),
       );
       const workflows = [...this.#workflowEntries.values()].sort(
-        (left, right) => left.query_id.localeCompare(right.query_id),
+        (left, right) =>
+          compareUnicodeCodePoints(left.query_id, right.query_id),
       );
       // Parsing owns the returned JSON and metadata; pre-cloning the same
       // payloads here only adds another full materialization.
@@ -209,14 +211,18 @@ export class AnalysisSnapshotCache {
   /** Return canonical entries for persistence. */
   entries(): AnalysisSnapshotEntry[] {
     return [...this.#entries.values()]
-      .sort((left, right) => left.query_id.localeCompare(right.query_id))
+      .sort((left, right) =>
+        compareUnicodeCodePoints(left.query_id, right.query_id),
+      )
       .map((entry) => structuredClone(entry));
   }
 
   /** Return canonical composed-workflow entries for persistence. */
   workflowEntries(): AnalysisSnapshotWorkflowEntry[] {
     return [...this.#workflowEntries.values()]
-      .sort((left, right) => left.query_id.localeCompare(right.query_id))
+      .sort((left, right) =>
+        compareUnicodeCodePoints(left.query_id, right.query_id),
+      )
       .map((entry) => structuredClone(entry));
   }
 

@@ -122,6 +122,42 @@ const expectNodeAgreement = async (
   return outcome;
 };
 describe("ordered package exports conditions", () => {
+  it.each([
+    { ".": "./default.cjs", import: "./specific.cjs" },
+    { default: "./default.cjs", "./feature": "./specific.cjs" },
+    { "0": "./specific.cjs", default: "./default.cjs" },
+    { ".": { "1.5": "./specific.cjs", default: "./default.cjs" } },
+    { node: [{ "4294967294": null }, "./array.cjs"], default: "./default.cjs" },
+  ])(
+    "rejects invalid exports configuration %j without fallback",
+    async (exportsMap) => {
+      for (const moduleKind of ["import", "require"] as const) {
+        const { node, node_error, outcome } = await compareWithNode(
+          exportsMap,
+          moduleKind,
+        );
+        expect(node).toBeNull();
+        expect(node_error).toBe("ERR_INVALID_PACKAGE_CONFIG");
+        expect(outcome).toMatchObject({
+          resolved_path: null,
+          resolution_status: "rejected",
+        });
+        expect(outcome.limitations[0]).toContain("exports configuration");
+      }
+    },
+  );
+
+  it.each([
+    { "01": "./specific.cjs", default: "./default.cjs" },
+    { "4294967295": "./specific.cjs", default: "./default.cjs" },
+    { browser: { "0": null }, default: "./default.cjs" },
+    ["./default.cjs", { "0": null }],
+    { ".": "./default.cjs", "./feature": "./specific.cjs" },
+  ])("preserves valid or unvisited conditions in %j", async (exportsMap) => {
+    for (const moduleKind of ["import", "require"] as const)
+      await expectNodeAgreement(exportsMap, "default.cjs", moduleKind);
+  });
+
   it.each(["import", "require"] as const)(
     "matches Node when default precedes %s",
     async (moduleKind) => {

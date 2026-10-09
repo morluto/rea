@@ -26,13 +26,11 @@ import {
   partialApplicationCoverage,
 } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import type { JavaScriptSemanticResourceLimit } from "../../domain/javascript/javascriptSemanticValueTypes.js";
-import { semanticCoverageResourceLimits } from "../../domain/javascript/javascriptSemanticCoverage.js";
 import {
-  SEMANTIC_EXPRESSION_DEPTH_LIMIT,
-  SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT,
-  SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT,
-  semanticResourceLimitReason,
-} from "../../domain/javascript/javascriptSemanticResourceLimits.js";
+  semanticCoverageResourceLimits,
+  semanticResourceLimitCoverage,
+} from "../../domain/javascript/javascriptSemanticCoverage.js";
+import { semanticResourceLimitReason } from "../../domain/javascript/javascriptSemanticResourceLimits.js";
 import {
   addJavaScriptArtifactContainers,
   addJavaScriptArtifactFiles,
@@ -134,14 +132,19 @@ const graphCoverage = (context: JavaScriptArtifactGraphContext) => {
     sourceMapPolicyGap ||
     malformedStructuredData ||
     partialJavaScript;
-  if (context.analysis.truncated_scopes > 0)
-    return partialApplicationCoverage([], null);
   if (resourceLimits.length > 0)
     return partialApplicationCoverage(
-      resourceLimits.map(applicationGraphResourceLimit),
+      semanticResourceLimitCoverage(resourceLimits),
       null,
     );
   if (unknownGap) return partialApplicationCoverage([], null);
+  if (context.snapshot.integrity_contradictions.length > 0) {
+    const nestedArchiveWasOpaque =
+      context.snapshot.integrity_contradictions.some(({ logical_path }) =>
+        logical_path.toLowerCase().endsWith(".asar"),
+      );
+    return partialApplicationCoverage([], nestedArchiveWasOpaque ? null : 0);
+  }
   return completeApplicationCoverage();
 };
 
@@ -157,24 +160,6 @@ const semanticResourceLimits = (
       ),
     ),
   ].sort();
-
-const applicationGraphResourceLimit = (
-  resourceLimit: JavaScriptSemanticResourceLimit,
-) => ({
-  name: `javascript_semantic_${resourceLimit.replaceAll("-", "_")}`,
-  value:
-    resourceLimit === "primitive-candidates"
-      ? SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT
-      : resourceLimit === "primitive-bytes"
-        ? SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT
-        : SEMANTIC_EXPRESSION_DEPTH_LIMIT,
-  unit:
-    resourceLimit === "expression-depth"
-      ? ("depth" as const)
-      : resourceLimit === "primitive-bytes"
-        ? ("bytes" as const)
-        : ("items" as const),
-});
 
 const graphLimitations = (
   context: JavaScriptArtifactGraphContext,
@@ -198,6 +183,10 @@ const graphLimitations = (
   );
   return [
     ...context.analysis.limitations,
+    ...context.snapshot.integrity_contradictions.map(
+      ({ logical_path: path }) =>
+        `Artifact integrity metadata contradicts observed bytes at ${path}; the observed bytes are untrusted.`,
+    ),
     ...selfReferenceOmissions(
       relationshipOmissions.selfImports,
       ["import specifier", "import specifiers"],

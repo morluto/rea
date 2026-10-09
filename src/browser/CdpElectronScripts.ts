@@ -2,7 +2,7 @@ import type {
   ElectronPageInspection,
   InspectElectronPageInput,
 } from "../domain/javascript/electronObservation.js";
-import { canonicalDigest } from "../domain/comparisonSemantics.js";
+import { digestCanonicalValue } from "../domain/canonicalDigest.js";
 import { createWebTextArtifact } from "../domain/webContentArtifact.js";
 import type { CdpConnection } from "./CdpConnection.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
@@ -49,7 +49,7 @@ export const captureElectronScripts = async (
       is_module: script.isModule,
       language: script.language,
     };
-    const scriptKey = `electron_script_${canonicalDigest(identity, "CDP capture")}`;
+    const scriptKey = `electron_script_${digestCanonicalValue(identity, "CDP capture")}`;
     if (seen.has(scriptKey)) continue;
     seen.add(scriptKey);
     total += 1;

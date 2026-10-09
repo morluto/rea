@@ -51,11 +51,10 @@ export async function verifyLegacyGhidraReferenceSnapshot(
     legacyParameters,
   );
   assert.notEqual(legacyProfile.digest, observed.analysis_profile.digest);
-  const parsed = await parseBinaryTarget(
-    target.path,
-    process.cwd(),
-    process.arch,
-  );
+  const parsed = await parseBinaryTarget(target.path, {
+    cwd: process.cwd(),
+    hostArchitecture: process.arch,
+  });
   if (!parsed.ok) throw parsed.error;
   const nativeTarget = parsed.value;
   const result = structuredClone(observed.normalized_result);

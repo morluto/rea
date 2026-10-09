@@ -2,7 +2,8 @@ import { posix, relative, win32 } from "node:path";
 
 import type { ApplicationNode } from "./javascriptApplicationGraphSchemas.js";
 import type { JavaScriptApplicationGraph } from "./javascriptApplicationGraph.js";
-import { compareCodePoints, uniqueSorted } from "../canonicalOrdering.js";
+import { uniqueSorted } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { ParsedStaticLayer } from "./javascriptRuntimeReconciliationParsing.js";
 import type { RuntimeReconciliationEntity } from "./javascriptRuntimeReconciliationRuntime.js";
 
@@ -39,8 +40,8 @@ export const collectStaticRuntimeCandidates = (
     .flatMap((layer) => candidatesForLayer(layer))
     .sort(
       (left, right) =>
-        compareCodePoints(left.layer.layerId, right.layer.layerId) ||
-        compareCodePoints(left.node.node_id, right.node.node_id),
+        compareUnicodeCodePoints(left.layer.layerId, right.layer.layerId) ||
+        compareUnicodeCodePoints(left.node.node_id, right.node.node_id),
     );
 
 /** Translate one already-authorized runtime location into artifact paths. */
@@ -284,7 +285,7 @@ const activeArtifactPrefixes = (
       )
     )
       prefixes.add(mapping.artifact_prefix);
-  return [...prefixes].sort(compareCodePoints);
+  return [...prefixes].sort(compareUnicodeCodePoints);
 };
 
 const pathWithinPrefix = (path: string, prefix: string): boolean =>
@@ -315,6 +316,6 @@ const uniqueMappedPaths = (
     ).values(),
   ].sort(
     (left, right) =>
-      compareCodePoints(left.path, right.path) ||
-      compareCodePoints(left.basis, right.basis),
+      compareUnicodeCodePoints(left.path, right.path) ||
+      compareUnicodeCodePoints(left.basis, right.basis),
   );

@@ -113,7 +113,7 @@ const hostCheck = async (host: DoctorHost): Promise<DoctorCheck> => {
       : `${linuxDistribution.id} ${linuxDistribution.versionId ?? "unknown"}`);
   return check("host", supported, detail, {
     remediation:
-      "REA supports macOS 12+, Ubuntu 24.04+, Fedora 41+, 64-bit Arch Linux, CachyOS, and the experimental Windows x64 Ghidra P0 boundary.",
+      "REA supports macOS 12+, Ubuntu 24.04+, Fedora 41+, Nobara 44+, 64-bit Arch Linux, CachyOS, and the experimental Windows x64 Ghidra P0 boundary.",
     classification: "unsupported_host",
   });
 };

@@ -123,24 +123,25 @@ const cleanup = async (
     resources.session = undefined;
   } catch (cause) {
     // Retain an uncertain workspace until the caller can resolve process ownership.
-    return err(
-      new ProviderCleanupError(
-        "jadx",
-        [
-          session?.transport.runId ?? "unknown",
-          ...(root === undefined ? [] : [root.path]),
-        ],
-        {
-          ...diagnostics,
-          reason: cause instanceof Error ? cause.message : String(cause),
-          provider_cleanup:
-            cause instanceof ProviderCleanupError
-              ? (cause.diagnostics ?? null)
-              : null,
-        },
-        { cause: previousError ?? cause },
-      ),
+    const error = new ProviderCleanupError(
+      "jadx",
+      [
+        session?.transport.runId ?? "unknown",
+        ...(root === undefined ? [] : [root.path]),
+      ],
+      {
+        ...diagnostics,
+        reason: cause instanceof Error ? cause.message : String(cause),
+        provider_cleanup:
+          cause instanceof ProviderCleanupError
+            ? (cause.diagnostics ?? null)
+            : null,
+      },
+      { cause: previousError ?? cause },
     );
+    if (previousError?.partialObservation !== undefined)
+      error.retainPartialObservation(previousError.partialObservation);
+    return err(error);
   }
   try {
     await root?.close();
@@ -396,6 +397,9 @@ export class JadxProvider implements AndroidAnalysisPort {
         signal: options?.signal,
         session,
       });
+      const partialObservation = session?.partialObservation();
+      if (partialObservation !== undefined)
+        previousError.retainPartialObservation(partialObservation);
       // Admission can fail before selecting an existing session for execution.
       root ??= this.#retained?.root;
       session ??= this.#retained?.session;

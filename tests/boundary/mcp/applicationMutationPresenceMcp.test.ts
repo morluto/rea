@@ -233,6 +233,24 @@ it.each([
     baseline: 'const result = {kind:"r",count:2};',
   },
   {
+    title: "array length mutation",
+    body: 'const items = [1]; items.length = query(); const result = {kind:"r", length: items.length, items};',
+    path: "/length",
+    presence: "present",
+    valueState: "unknown",
+    change: "unknown",
+    baseline: 'const result = {kind:"r",length:1,items:[2]};',
+  },
+  {
+    title: "array length mutation followed by another write",
+    body: 'const items = [1]; items.length = 0; items[0] = 9; const result = {kind:"r", length: items.length, items};',
+    path: "/length",
+    presence: "present",
+    valueState: "unknown",
+    change: "unknown",
+    baseline: 'const result = {kind:"r",length:1,items:[2]};',
+  },
+  {
     title: "an array hole",
     body: 'const result = {kind:"r",items:[,]};',
     path: "/items/0",
@@ -270,6 +288,10 @@ it.each([
     expect(projection.static_return_shapes[0]?.fields).toContainEqual(
       expect.objectContaining({ path, presence, state: valueState }),
     );
+    if (path === "/length")
+      expect(
+        projection.static_return_shapes[0]?.property_coverage,
+      ).toContainEqual({ path: "/items", status: "partial", omitted: null });
     const { client, close } = await createApplicationMcpHarness();
     onTestFinished(close);
     const traced = await client.callTool({

@@ -49,20 +49,20 @@ const callPseudoCode = async (
     recordEvidence,
     delivery,
   );
-  registerOfficialTools(
-    server,
-    {
-      execute: () =>
-        Promise.resolve(
-          ok(createAnalysisExecution(payload, provider, { rawResult })),
-        ),
-    },
-    {
-      logger: silentLogger,
-      activeTarget: undefined,
-      recordEvidence,
-    },
-  );
+  registerOfficialTools(server, {
+    logger: silentLogger,
+    activeTarget: undefined,
+    recordEvidence,
+    withAdmittedAnalysis: async (_operationName, _signal, operation) =>
+      ok(
+        await operation({
+          execute: () =>
+            Promise.resolve(
+              ok(createAnalysisExecution(payload, provider, { rawResult })),
+            ),
+        }),
+      ),
+  });
   const client = new Client({ name: "complete-evidence-client", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();

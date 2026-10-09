@@ -1,13 +1,21 @@
 import { createEvidence } from "../../domain/evidence.js";
-import { reconcileJavaScriptRuntime } from "../../domain/javascript/javascriptRuntimeReconciliation.js";
+import {
+  parseRuntimeReconciliationInput,
+  reconcileJavaScriptRuntime,
+} from "../../domain/javascript/javascriptRuntimeReconciliation.js";
 import {
   JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE,
   JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE,
 } from "./javascriptRuntimeReconciliationExample.js";
 import { createHistoricalSourceGraph } from "../../domain/referenceSourceGraph.js";
+import { reconcileJavaScriptRuntimeInputSchema } from "../../domain/javascript/javascriptRuntimeReconciliationSchemas.js";
 
 const reconciliation = reconcileJavaScriptRuntime(
-  JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE,
+  parseRuntimeReconciliationInput(
+    reconcileJavaScriptRuntimeInputSchema.parse(
+      JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE,
+    ),
+  ),
 );
 const reconciliationEvidence = createEvidence(
   undefined,

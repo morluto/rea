@@ -24,18 +24,18 @@ export const workflowAnalysisProfile = (
   });
 
 /** Provider identity for deterministic artifact inventories. */
-export const ARTIFACT_GRAPH_PROVIDER = {
+export const ARTIFACT_GRAPH_PROVIDER = Object.freeze({
   id: "rea-artifact-graph",
   name: "REA safe artifact graph provider",
   version: "1",
-} as const;
+} as const);
 
 /** Provider identity for execution-free managed PE/CLI analysis. */
-export const MANAGED_STATIC_PROVIDER = {
+export const MANAGED_STATIC_PROVIDER = Object.freeze({
   id: "rea-dotnet-static",
   name: "REA managed static analysis provider",
   version: "1",
-} as const;
+} as const);
 
 /** Provider identity for deterministic managed-code comparison workflows. */
 export const MANAGED_WORKFLOW_PROVIDER = {

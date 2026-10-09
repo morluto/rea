@@ -34,7 +34,10 @@ it("publishes valid SDK schemas and retains historical inline Evidence with the 
   const session = createTestBinarySession(() => {
     throw new Error("Binary provider must not start");
   });
-  const server = createServer(session, session, { webNetworkCapture: service });
+  const server = createServer(
+    { kind: "session", session },
+    { webNetworkCapture: service },
+  );
   const client = new Client({
     name: "historical-capture-contract",
     version: "1",

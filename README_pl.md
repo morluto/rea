@@ -11,7 +11,7 @@
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
 [![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](docs/mcp-contracts.md#generated-catalog)
-[![Node.js 22+](https://img.shields.io/badge/Node.js-22.19%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#current-status)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 [![Discord](https://img.shields.io/discord/1556595354999332884?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/GkcryMnJDM)
@@ -28,7 +28,7 @@
 
 <img src="docs/assets/rea-hopper-analysis.png" alt="REA uruchamia most analityczny w Hopperze podczas analizy natywnego pliku binarnego" width="1200" />
 
-<br />
+<br /><br />
 
 <table aria-label="Społeczność REA">
 <tr>
@@ -154,6 +154,8 @@ Obsługiwane formaty natywne i platformy zależą od dostawcy analizy. Zobacz [k
 
 ## Przykłady zastosowań
 
+[![Ilustracje studiów przypadku panoramowania dźwięku w DX-Ball, mostka schowka w Notion i pierścienia pocisków w TH04](docs/assets/rea-showcases.png)](https://rea.tools/showcase/)
+
 ### DX-Ball: odtworzenie obliczania panoramy dźwięku
 
 Prześledź wywołanie dźwięku do funkcji pomocniczej przeliczającej pozycję na panoramę, sprawdź instrukcje i przekształć niepełny pseudokod w C. Odtworzona implementacja przechodzi 3 205 przypadków dla oryginalnego x86 i odtwarza wszystkie 63 bajty skompilowanej funkcji.
@@ -200,7 +202,7 @@ REA uruchamia Hoppera, gdy wymaga tego operacja. W systemie macOS przy pierwszym
 <details>
 <summary><strong>Co daje zainstalowanie umiejętności z skills.sh?</strong></summary>
 
-Umiejętność dostarcza agentowi instrukcje prowadzenia analizy. Użyj `rea setup`, aby zarejestrować serwer MCP REA i zainstalować pasujące instrukcje, a następnie uruchom agenta ponownie. Zobacz [instalację samej umiejętności](docs/installation.md#skill-only-installation).
+Umiejętność dostarcza agentowi instrukcje prowadzenia analizy. Użyj `npx rea-agents setup`, aby zarejestrować serwer MCP REA i zainstalować pasujące instrukcje, a następnie uruchom agenta ponownie. Zobacz [instalację samej umiejętności](docs/installation.md#skill-only-installation).
 
 </details>
 
@@ -252,19 +254,9 @@ Zacznij od [przewodników z przykładami](https://rea.tools/guides/) na stronie 
 
 Zgłaszaj podatności zgodnie z [SECURITY.md](SECURITY.md).
 
-## Współtworzenie
-
-Chętnie przyjmiemy Twoją pomoc w rozwoju REA! [Otwórz zgłoszenie](https://github.com/morluto/rea/issues), aby poinformować o błędzie lub zaproponować funkcję, albo [wyślij pull request](https://github.com/morluto/rea/pulls) z ulepszeniami kodu lub dokumentacji.
-
-Zobacz [CONTRIBUTING.md](CONTRIBUTING.md), aby poznać konfigurację środowiska programistycznego i kontrole, [testowanie](docs/testing.md), aby poznać ścieżki weryfikacji, oraz [mapę architektury](docs/architecture.mermaid), aby poznać strukturę projektu.
-
-## Linki projektu
-
-[Strona internetowa](https://rea.tools/) · [npm](https://www.npmjs.com/package/rea-agents) · [skills.sh](https://skills.sh/morluto/rea/reverse-engineer-anything) · [Zgłoszenia](https://github.com/morluto/rea/issues) · [Bezpieczeństwo](SECURITY.md)
-
 ## Historia gwiazdek
 
-🎉 **30 000 gwiazdek na GitHubie — dziękujemy!**
+🎉 **40 000 gwiazdek na GitHubie — dziękujemy!**
 
 Dziękujemy wszystkim, którzy używają REA, zgłaszają błędy, proponują nowe funkcje, testują kompilacje i przesyłają poprawki.
 
@@ -279,6 +271,12 @@ Dziękujemy wszystkim, którzy używają REA, zgłaszają błędy, proponują no
 ## Zastrzeżenie
 
 REA dostarcza narzędzia do zgodnych z prawem badań z zakresu inżynierii wstecznej, analizy i odtwarzania. Odpowiadasz za uzyskanie wymaganych zezwoleń i przestrzeganie obowiązującego prawa. Projekt nie popiera działań nielegalnych ani nieautoryzowanych.
+
+## Współtworzenie
+
+Chętnie przyjmiemy Twoją pomoc w rozwoju REA! [Otwórz zgłoszenie](https://github.com/morluto/rea/issues), aby poinformować o błędzie lub zaproponować funkcję, albo [wyślij pull request](https://github.com/morluto/rea/pulls) z ulepszeniami kodu lub dokumentacji.
+
+Zobacz [CONTRIBUTING.md](CONTRIBUTING.md), aby poznać konfigurację środowiska programistycznego i kontrole, [testowanie](docs/testing.md), aby poznać ścieżki weryfikacji, oraz [mapę architektury](docs/architecture.mermaid), aby poznać strukturę projektu.
 
 ## Licencja
 

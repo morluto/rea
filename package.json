@@ -1,7 +1,7 @@
 {
   "name": "rea-agents",
   "mcpName": "io.github.morluto/rea",
-  "version": "6.1.0",
+  "version": "6.2.0",
   "description": "Reverse engineer anything from your terminal or agent with one CLI and MCP server.",
   "license": "MIT",
   "repository": {
@@ -88,7 +88,7 @@
     "prebuild": "npm run deps:check",
     "build": "node scripts/run-exclusive.mjs artifacts turbo run artifacts:skills --force",
     "precheck": "npm run deps:check",
-    "check": "node scripts/run-exclusive.mjs artifacts turbo run typecheck lint format:check knip metadata:check",
+    "check": "node scripts/run-exclusive.mjs artifacts turbo run typecheck lint format:check knip metadata:check && npm run verify:architecture-guards",
     "precheck:fast": "npm run deps:check",
     "check:fast": "turbo run typecheck lint --output-logs=errors-only",
     "precheck:changed": "npm run deps:check",
@@ -98,7 +98,7 @@
     "precheck:pr": "npm run deps:check",
     "check:pr": "node scripts/run-exclusive.mjs artifacts turbo run typecheck lint format:check knip metadata:check test:run && npm run docs:check && npm run jscpd && npm run scan:todos",
     "precheck:ci": "npm run deps:check",
-    "check:ci": "node scripts/run-exclusive.mjs artifacts turbo run typecheck lint format:check knip metadata:check jscpd scan:todos",
+    "check:ci": "node scripts/run-exclusive.mjs artifacts turbo run typecheck lint format:check knip metadata:check jscpd scan:todos && npm run verify:architecture-guards",
     "build:cached": "node scripts/check-dependency-install.mjs && node scripts/run-exclusive.mjs artifacts turbo run artifacts:skills",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
@@ -144,6 +144,8 @@
     "verify:native-ui": "npm run build:cached && node scripts/verify-native-ui.mjs",
     "verify:keyed-archive": "npm run build:cached && node scripts/verify/apple/keyed-archive.mjs",
     "verify:macos-bundle": "npm run build:cached && node scripts/verify/apple/macos-bundle.mjs",
+    "verify:legacy-simulator": "npm run build:cached && node scripts/verify/apple/legacy-simulator.mjs",
+    "verify:architecture-guards": "node scripts/verify/architecture-guards.mjs",
     "verify:ghidra": "npm run build:cached && node scripts/verify-real-ghidra.mjs",
     "verify:ghidra:swift": "npm run build:cached && node scripts/verify-real-ghidra-swift.mjs",
     "verify:ida": "npm run build:cached && node scripts/verify-real-ida.mjs",
@@ -232,7 +234,7 @@
       "oxfmt",
       "oxlint --fix"
     ],
-    "*.{json,md,yml,yaml}": "oxfmt"
+    "*.{json,md,yml,yaml}": "oxfmt --no-error-on-unmatched-pattern"
   },
   "dependencies": {
     "@babel/parser": "8.0.4",
@@ -263,6 +265,7 @@
     "plist": "5.0.0",
     "semver": "7.8.5",
     "smol-toml": "1.9.0",
+    "stream-json": "3.7.0",
     "write-file-atomic": "7.0.0",
     "ws": "8.21.0",
     "zod": "4.4.3",

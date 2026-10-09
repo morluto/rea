@@ -27,7 +27,9 @@ mcpTest.for(archiveNumberMetadataCases)(
     onTestFinished(async () => {
       await session.close();
     });
-    const client = await mcp.connect(createServer(session, session));
+    const client = await mcp.connect(
+      createServer({ kind: "session", session }),
+    );
     const opened = await client.callTool({
       name: "open_binary",
       arguments: { path: fixture.path },

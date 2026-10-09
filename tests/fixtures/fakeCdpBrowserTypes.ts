@@ -1,3 +1,4 @@
+import type { JsonValue } from "../../src/domain/jsonValue.js";
 export interface FakeCdpCommand {
   readonly id: number;
   readonly method: string;
@@ -100,6 +101,7 @@ export interface FakeOptions {
   readonly webMcpSameUrlRegistrations?: "retain" | "remove-second";
   readonly webMcpFrameCount?: number;
   readonly webMcpSchemaPropertyCount?: number;
+  readonly webMcpInputSchema?: JsonValue;
   readonly webMcpChildLeavesScope?: boolean;
   readonly webMcpChildTransientBlank?: boolean;
   readonly webMcpChildRecoversAfterTransient?: boolean;

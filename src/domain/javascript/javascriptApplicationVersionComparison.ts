@@ -1,9 +1,9 @@
-import { canonicalDigest } from "../comparisonSemantics.js";
+import { digestCanonicalValue } from "../canonicalDigest.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import type { Evidence } from "../evidence.js";
 import { buildJavaScriptApplicationChangeGraph } from "./javascriptApplicationChangeGraph.js";
 import {
-  applicationVersionComparisonResultSchema,
+  ownedApplicationVersionComparisonResultSchema,
   type ApplicationVersionComparisonResult,
 } from "./javascriptApplicationVersionComparisonSchemas.js";
 import type { JavaScriptApplicationGraph } from "./javascriptApplicationGraph.js";
@@ -76,9 +76,9 @@ export const compareJavaScriptApplicationVersions = (
     evidence_links: evidenceLinks,
     limitations: comparisonLimitations(input),
   };
-  return applicationVersionComparisonResultSchema.parse({
+  return ownedApplicationVersionComparisonResultSchema.parse({
     ...semantic,
-    comparison_id: `javc_${canonicalDigest(semantic, "Application version comparison")}`,
+    comparison_id: `javc_${digestCanonicalValue(semantic, "Application version comparison")}`,
   });
 };
 

@@ -130,20 +130,32 @@ export class V8InspectorProvider implements JavaScriptRuntimeObservationPort {
     options: ExecutionOptions = {},
   ): Promise<Result<JavaScriptRuntimeObservation, AnalysisError>> {
     let connection: CdpConnection | undefined;
+    let discovery: Awaited<ReturnType<typeof discoverV8Inspector>> | undefined;
+    let target: AuthorizedV8InspectorTarget | undefined;
+    let state: CaptureState | undefined;
     let primaryFailure: unknown;
     let failed = false;
     let cleanupFailure: unknown;
     let cleanupFailed = false;
+    let connectionClosePromise: Promise<void> | undefined;
     let outcome:
       | Result<JavaScriptRuntimeObservation, AnalysisError>
       | undefined;
+    const closeConnection = (): Promise<void> => {
+      if (connection === undefined) return Promise.resolve();
+      connectionClosePromise ??= closeInspectorConnection(
+        connection,
+        options.signal,
+      );
+      return connectionClosePromise;
+    };
     try {
-      const discovery = await discoverV8Inspector(
+      discovery = await discoverV8Inspector(
         input.inspector_endpoint,
         "observe_javascript_runtime",
         options.signal,
       );
-      const target = await authorizedTarget(
+      target = await authorizedTarget(
         discovery.targets,
         input,
         discovery.runtime.product,
@@ -156,9 +168,10 @@ export class V8InspectorProvider implements JavaScriptRuntimeObservationPort {
         options.signal,
         { maxPayloadBytes: INSPECTOR_MAX_PAYLOAD_BYTES },
       );
-      const state = emptyCaptureState();
+      const captureState = emptyCaptureState();
+      state = captureState;
       const removeListener = connection.onEvent((event) =>
-        ingestEvent(event, state),
+        ingestEvent(event, captureState),
       );
       try {
         await connection.send("Runtime.enable", {}, undefined, options.signal);
@@ -171,18 +184,71 @@ export class V8InspectorProvider implements JavaScriptRuntimeObservationPort {
         input,
         runtime: discovery.runtime,
         target,
-        state,
+        state: captureState,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
       outcome = ok(javascriptRuntimeObservationSchema.parse(result));
     } catch (cause: unknown) {
       failed = true;
       primaryFailure = cause;
-      outcome = err(providerError(cause, "observe_javascript_runtime"));
+      let error = providerError(cause, "observe_javascript_runtime");
+      if (
+        state !== undefined &&
+        discovery !== undefined &&
+        target !== undefined &&
+        (cause instanceof BrowserObservationError ||
+          options.signal?.aborted === true)
+      ) {
+        const reason =
+          options.signal?.aborted === true
+            ? "cancelled"
+            : cause instanceof BrowserObservationError
+              ? cause.reason
+              : "protocol_error";
+        try {
+          await closeConnection();
+        } catch (cause: unknown) {
+          cleanupFailed = true;
+          cleanupFailure = cause;
+        }
+        try {
+          const partialObservation = await finalizeInspectorCapture({
+            input,
+            runtime: discovery.runtime,
+            target,
+            state,
+            locationMode: "reported",
+          });
+          error = new BrowserObservationError(
+            "observe_javascript_runtime",
+            reason,
+            {
+              cause: error,
+              ...(error.userMessage === undefined
+                ? {}
+                : { detail: error.userMessage }),
+              partialObservation,
+            },
+          );
+        } catch (projectionFailure: unknown) {
+          error = new BrowserObservationError(
+            "observe_javascript_runtime",
+            reason,
+            {
+              cause: new AggregateError(
+                [error, projectionFailure],
+                "Inspector failure and partial-observation projection both failed",
+              ),
+              detail: `${error.message} Partial observations could not be projected.`,
+            },
+          );
+        }
+      }
+      outcome = err(error);
     } finally {
       if (connection !== undefined)
         try {
-          await closeInspectorConnection(connection, options.signal);
+          await closeConnection();
         } catch (cause: unknown) {
           cleanupFailed = true;
           cleanupFailure = cause;
@@ -356,7 +422,7 @@ const ingestScript = (event: CdpEvent, state: CaptureState): void => {
   state.scriptsObserved += 1;
   const value = recordValue(event.params);
   const rawUrl = cdpStringValue(value?.url);
-  if (rawUrl === undefined || rawUrl === "") {
+  if (rawUrl === undefined) {
     state.invalidScripts += 1;
     retainEvent(state, 0);
     return;

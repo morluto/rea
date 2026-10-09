@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { NativeMacOSProvider } from "./NativeMacOSProvider.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { ok } from "../domain/result.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   NativeFixtureRunner,
@@ -56,5 +57,34 @@ describe("native dispatch metadata input boundary", () => {
         },
       });
     }
+  });
+
+  it("closes only the native call tracer owned by that client", async () => {
+    const closes = [0, 0];
+    let next = 0;
+    const provider = new NativeMacOSProvider(
+      {},
+      new NativeFixtureRunner(),
+      "darwin",
+      () => {
+        const index = next++;
+        return {
+          trace: async () => {
+            throw new Error("trace is unused in this lifecycle test");
+          },
+          close: async () => {
+            closes[index] = (closes[index] ?? 0) + 1;
+            return ok(null);
+          },
+        };
+      },
+    );
+    const first = provider.createClient(nativeMachoTarget("/first"));
+    const second = provider.createClient(nativeMachoTarget("/second"));
+
+    expect((await first.close()).ok).toBe(true);
+    expect(closes).toEqual([1, 0]);
+    expect((await second.close()).ok).toBe(true);
+    expect(closes).toEqual([1, 1]);
   });
 });

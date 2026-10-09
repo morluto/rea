@@ -1,6 +1,10 @@
 import { z } from "zod";
 
-import { applicationGraphEvidenceSchema } from "./javascriptApplicationEvidenceSchemas.js";
+import {
+  applicationGraphEvidenceContextSchema,
+  applicationGraphEvidenceLocationSchema,
+  applicationGraphEvidenceSchema,
+} from "./javascriptApplicationEvidenceSchemas.js";
 import { jsonValueSchema } from "../jsonValue.js";
 import { digestSchema } from "../digests.js";
 import { prefixedDigestSchema } from "../digests.js";
@@ -13,6 +17,21 @@ const semanticRelationIdSchema = z
 const semanticUnknownIdSchema = z
   .string()
   .regex(/^jsrg_unknown_[a-f0-9]{64}$/u);
+const semanticEvidenceContextIdSchema = z
+  .string()
+  .regex(/^jsrg_evidence_[a-f0-9]{64}$/u);
+
+/** One canonical owner for provenance shared by semantic graph facts. */
+export const javaScriptSemanticEvidenceContextSchema =
+  applicationGraphEvidenceContextSchema.extend({
+    context_id: semanticEvidenceContextIdSchema,
+  });
+
+/** Location-specific reference to one exact graph-level evidence context. */
+export const javaScriptSemanticEvidenceReferenceSchema = z.strictObject({
+  context_id: semanticEvidenceContextIdSchema,
+  location: applicationGraphEvidenceLocationSchema,
+});
 
 /** Semantic entity kinds admitted by JavaScript Semantic Relation Graph. */
 export const JAVASCRIPT_SEMANTIC_NODE_KINDS = [
@@ -213,6 +232,7 @@ export const javaScriptSemanticNodeInputSchema = z.strictObject({
 /** One exact, artifact-version semantic entity. */
 export const javaScriptSemanticNodeSchema =
   javaScriptSemanticNodeInputSchema.extend({
+    evidence: javaScriptSemanticEvidenceReferenceSchema,
     node_id: semanticNodeIdSchema,
     identifier_strategy: z.strictObject({
       strategy: z.literal("semantic-content-sha256"),
@@ -233,6 +253,7 @@ export const javaScriptSemanticRelationInputSchema = z.strictObject({
 /** One canonical directed semantic relationship. */
 export const javaScriptSemanticRelationSchema =
   javaScriptSemanticRelationInputSchema.extend({
+    evidence: javaScriptSemanticEvidenceReferenceSchema,
     relation_id: semanticRelationIdSchema,
     identifier_strategy: z.strictObject({
       strategy: z.literal("semantic-content-sha256"),
@@ -251,6 +272,7 @@ export const JAVASCRIPT_SEMANTIC_UNKNOWN_REASONS = [
   "incomplete-module",
   "missing-source",
   "resource-limit",
+  "unknown-value",
   "unsupported-syntax",
 ] as const;
 
@@ -268,6 +290,7 @@ export const javaScriptSemanticUnknownInputSchema = z.strictObject({
 /** One canonical unresolved semantic frontier. */
 export const javaScriptSemanticUnknownSchema =
   javaScriptSemanticUnknownInputSchema.extend({
+    evidence: javaScriptSemanticEvidenceReferenceSchema,
     unknown_id: semanticUnknownIdSchema,
   });
 
@@ -303,6 +326,7 @@ export const javaScriptSemanticFingerprintInputSchema = z.strictObject({
 /** One canonical function fingerprint record. */
 export const javaScriptSemanticFingerprintSchema =
   javaScriptSemanticFingerprintInputSchema.extend({
+    evidence: javaScriptSemanticEvidenceReferenceSchema,
     fingerprint_id: prefixedDigestSchema("jsrg_fingerprint"),
     fingerprint_sha256: digestSchema,
   });
@@ -336,6 +360,7 @@ export const javaScriptSemanticGraphInputSchema = z.strictObject({
   root_artifact_sha256: digestSchema,
   application_graph_id: prefixedDigestSchema("jag"),
   root_node_ids: z.array(semanticNodeIdSchema).min(1),
+  evidence_contexts: z.array(javaScriptSemanticEvidenceContextSchema),
   nodes: z.array(javaScriptSemanticNodeSchema).min(1),
   relations: z.array(javaScriptSemanticRelationSchema),
   fingerprints: z.array(javaScriptSemanticFingerprintSchema),
@@ -354,6 +379,14 @@ export const javaScriptSemanticGraphRecordSchema =
 export type JavaScriptSemanticGraphNode = z.infer<
   typeof javaScriptSemanticNodeSchema
 >;
+/** Compact provenance on one graph fact. */
+export type JavaScriptSemanticEvidenceReference = z.infer<
+  typeof javaScriptSemanticEvidenceReferenceSchema
+>;
+/** Content-addressed graph-level provenance context. */
+export type JavaScriptSemanticEvidenceContext = z.infer<
+  typeof javaScriptSemanticEvidenceContextSchema
+>;
 /** Canonical semantic relation. */
 export type JavaScriptSemanticGraphRelation = z.infer<
   typeof javaScriptSemanticRelationSchema
@@ -361,6 +394,10 @@ export type JavaScriptSemanticGraphRelation = z.infer<
 /** Canonical unresolved semantic frontier. */
 export type JavaScriptSemanticGraphUnknown = z.infer<
   typeof javaScriptSemanticUnknownSchema
+>;
+/** Canonical function fingerprint with a compact evidence reference. */
+export type JavaScriptSemanticFingerprint = z.infer<
+  typeof javaScriptSemanticFingerprintSchema
 >;
 /** Canonical graph content before graph ID derivation. */
 export type JavaScriptSemanticGraphInput = z.infer<

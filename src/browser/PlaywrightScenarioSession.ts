@@ -3,10 +3,7 @@ import { type BrowserContext, type Page } from "playwright-core";
 import type { BrowserScenario } from "../domain/browserScenario.js";
 import type { BrowserScenarioAction } from "../domain/browserScenarioValues.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
-import type {
-  BrowserScenarioSessionFactory,
-  BrowserScenarioSessionPort,
-} from "./BrowserScenarioSessionPort.js";
+import type { BrowserScenarioSessionPort } from "./BrowserScenarioSessionPort.js";
 import { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
 import {
   failBrowserScenarioOperation,
@@ -138,7 +135,9 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
     if (secrets === undefined)
       throw new BrowserObservationError(OPERATION, "secret_unavailable");
     const startedAt = Date.now();
-    const opening = openPlaywrightScenarioBrowser(scenario, environment);
+    const opening = openPlaywrightScenarioBrowser(scenario, environment, {
+      signal: options.signal,
+    });
     let opened: OpenedScenarioBrowser;
     let events: PlaywrightScenarioEvents | undefined;
     try {
@@ -309,21 +308,5 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
     return this.secrets.redact(
       error instanceof Error ? error.message : "browser action failed",
     );
-  }
-}
-
-/** Production Playwright/CDP session factory. */
-export class PlaywrightScenarioSessionFactory implements BrowserScenarioSessionFactory {
-  constructor(
-    private readonly environment: Readonly<Record<string, string | undefined>>,
-  ) {}
-
-  open(
-    scenario: BrowserScenario,
-    options: {
-      readonly signal?: AbortSignal;
-    } = {},
-  ): Promise<BrowserScenarioSessionPort> {
-    return PlaywrightScenarioSession.open(scenario, this.environment, options);
   }
 }

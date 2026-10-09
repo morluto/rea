@@ -333,7 +333,6 @@ const completeCapture = async (options: {
   readonly exit: Awaited<ReturnType<typeof awaitTerminalExit>>;
   readonly signal?: AbortSignal;
   readonly captureSnapshot: typeof snapshotRoots;
-  readonly initiallyTruncated: boolean;
   readonly eventJournal: readonly ProcessCaptureEventJournalEntry[];
   readonly observationBuffer: ProcessCaptureObservationBuffer;
   readonly recordEvent: RecordProcessCaptureEvent;
@@ -385,7 +384,7 @@ const completeCapture = async (options: {
     ...options.observationBuffer.filesystem_snapshots,
     after: {
       state: "available",
-      value: { files: after.files, truncated: after.truncated },
+      value: after,
     },
   };
   options.recordEvent("filesystem_checkpoints", 1);
@@ -436,32 +435,19 @@ const completeCapture = async (options: {
     throw cause;
   }
   options.observationBuffer.manifest = { state: "available", value: manifest };
-  const truncated =
-    options.initiallyTruncated ||
-    after.truncated ||
-    runtime.rawTerminalRetention().observed_frames >
-      runtime.rawTerminalRetention().retained_frames ||
-    checkpoints.some(({ truncated: partial }) => partial) ||
-    samplingPartial ||
-    runtime.renderer.truncated();
   return buildCaptureResult({
     frames: options.frames,
     exit: { ...options.exit, reason },
     samples: options.samples,
     before: options.before,
     after,
-    truncated,
-    ...(options.before.coverage === undefined || after.coverage === undefined
-      ? {}
-      : {
-          truncationDetails: {
-            raw_terminal: runtime.rawTerminalRetention(),
-            rendered_terminal: runtime.renderer.retention(),
-            filesystem_before: options.before.coverage,
-            filesystem_after: after.coverage,
-            process: sampling.coverage,
-          },
-        }),
+    truncationDetails: {
+      raw_terminal: runtime.rawTerminalRetention(),
+      rendered_terminal: runtime.renderer.retention(),
+      filesystem_before: options.before.coverage,
+      filesystem_after: after.coverage,
+      process: sampling.coverage,
+    },
     scenario,
     rootPid: runtime.terminal.pid,
     samplingPartial,
@@ -558,7 +544,6 @@ const runProcessScenario = async (
       samples,
       interactions,
       exit,
-      initiallyTruncated: before.truncated,
       eventJournal,
       observationBuffer: observations,
       recordEvent,

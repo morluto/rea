@@ -3,7 +3,7 @@ import type {
   ApplicationNode,
 } from "./javascriptApplicationGraphSchemas.js";
 import type { JavaScriptApplicationGraph } from "./javascriptApplicationGraph.js";
-import { compareCodePoints } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 
 interface AdjacencyEntry {
   readonly edge: ApplicationEdge;
@@ -53,9 +53,11 @@ export const traverseApplicationFeature = (
     nodes: [...visited]
       .map((nodeId) => nodeById.get(nodeId))
       .filter((node): node is ApplicationNode => node !== undefined)
-      .sort((left, right) => compareCodePoints(left.node_id, right.node_id)),
+      .sort((left, right) =>
+        compareUnicodeCodePoints(left.node_id, right.node_id),
+      ),
     edges: [...retainedEdges.values()].sort((left, right) =>
-      compareCodePoints(left.edge_id, right.edge_id),
+      compareUnicodeCodePoints(left.edge_id, right.edge_id),
     ),
     predecessors,
   };
@@ -80,7 +82,7 @@ const buildAdjacency = (
   }
   for (const entries of adjacency.values())
     entries.sort((left, right) =>
-      compareCodePoints(
+      compareUnicodeCodePoints(
         `${left.edge.edge_id}\0${left.nextNodeId}`,
         `${right.edge.edge_id}\0${right.nextNodeId}`,
       ),

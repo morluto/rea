@@ -56,9 +56,21 @@ export interface GhidraLauncher {
 
 /** Local launch failure retained as the cause of a provider-neutral error. */
 export class GhidraLaunchError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
-    super(message, options);
+  readonly #partialLaunch: GhidraLaunch | undefined;
+
+  constructor(
+    message: string,
+    options?: ErrorOptions & { readonly partialLaunch?: GhidraLaunch },
+  ) {
+    const { partialLaunch, ...errorOptions } = options ?? {};
+    super(message, errorOptions);
     this.name = "GhidraLaunchError";
+    this.#partialLaunch = partialLaunch;
+  }
+
+  /** Process ownership retained for the client to retry an incomplete rollback. */
+  get partialLaunch(): GhidraLaunch | undefined {
+    return this.#partialLaunch;
   }
 }
 
@@ -74,6 +86,8 @@ export interface GhidraHeadlessLauncherOptions {
   readonly dosMz?: true;
   readonly dosCom?: true;
   readonly analysisExtensions?: readonly GhidraExtension[];
+  /** Spawn seam for provider-boundary lifecycle tests. */
+  readonly spawnProcess?: typeof spawnOwnedProviderProcess;
 }
 
 /** Launch Ghidra without copying scripts into or modifying its installation. */
@@ -168,7 +182,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
                 : { signal: options.signal }),
             })
           : { ...scriptCommand, environment };
-      started = await spawnOwnedProviderProcess({
+      started = await (this.options.spawnProcess ?? spawnOwnedProviderProcess)({
         command: command.command,
         arguments: command.arguments,
         runId: session.runId,
@@ -181,6 +195,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         hostEnvironment: {},
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
+      const partialLaunch = ownedGhidraLaunch(started, paths, platform);
       await writeGhidraRuntimeFile(
         paths.ownershipPath,
         `${JSON.stringify({
@@ -199,32 +214,59 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         platform,
       );
       if (isAborted(options.signal)) {
-        await cleanupStartedProcess(started, platform);
-        return err(new AnalysisCancelledError("open_binary"));
+        throw new AnalysisCancelledError("open_binary");
       }
-      const spawned = started;
-      return ok({
-        ...ownedGhidraProcess(spawned, platform),
-        projectRoot: paths.projectRoot,
-        ghidraLogPath: paths.ghidraLogPath,
-        scriptLogPath: paths.scriptLogPath,
-      });
+      return ok(partialLaunch);
     } catch (cause: unknown) {
-      if (started !== undefined)
-        await cleanupStartedProcess(started, platform).catch(
-          (cause: unknown) => {
-            // best-effort cleanup: started-process cleanup must not mask the launch failure.
-            void cause;
-          },
-        );
-      return isAborted(options.signal)
-        ? err(new AnalysisCancelledError("open_binary"))
-        : err(
-            new GhidraLaunchError("Ghidra headless launch failed", { cause }),
+      const primary = isAborted(options.signal)
+        ? new AnalysisCancelledError("open_binary", { cause })
+        : new GhidraLaunchError("Ghidra headless launch failed", { cause });
+      if (started === undefined) return err(primary);
+
+      let cleanupFailure: unknown;
+      try {
+        const cleanup = await cleanupStartedProcess(started, platform);
+        if (!cleanup.cleaned)
+          cleanupFailure = new Error(
+            `Ghidra process cleanup was incomplete: ${cleanup.reason}`,
           );
+      } catch (failure: unknown) {
+        cleanupFailure = failure;
+      }
+      if (cleanupFailure !== undefined) {
+        const partialLaunch = ownedGhidraLaunch(started, paths, platform);
+        const primaryMessage = isAborted(options.signal)
+          ? primary.message
+          : `Ghidra headless launch failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+        return err(
+          new GhidraLaunchError(
+            `${primaryMessage}; process cleanup remains incomplete`,
+            {
+              cause: new AggregateError(
+                [primary, cleanupFailure],
+                "Ghidra launch rollback did not release its process",
+                { cause: primary },
+              ),
+              partialLaunch,
+            },
+          ),
+        );
+      }
+      return err(primary);
     }
   }
 }
+
+const ownedGhidraLaunch = (
+  spawned: SpawnedOwnedProviderProcess,
+  paths: ReturnType<typeof ghidraRuntimePaths>,
+  platform: NodeJS.Platform,
+): GhidraLaunch => ({
+  ...ownedGhidraProcess(spawned, platform),
+  projectRoot: paths.projectRoot,
+  ghidraLogPath: paths.ghidraLogPath,
+  scriptLogPath: paths.scriptLogPath,
+});
 
 const ownedGhidraProcess = (
   spawned: SpawnedOwnedProviderProcess,

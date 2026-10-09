@@ -15,7 +15,6 @@ import {
 } from "../../domain/process/processScenario.js";
 import { parseProcessCapture } from "../../domain/process/processCaptureParsing.js";
 import { PRODUCT_IDENTITY } from "../../identity.js";
-import type { SnapshotResult } from "./FilesystemSnapshot.js";
 import { snapshotRoots } from "./FilesystemSnapshot.js";
 import { classifyFilesystemEffects } from "./ProcessFilesystemEffects.js";
 import {
@@ -59,7 +58,7 @@ import type {
   ProcessCaptureCleanupReport,
   PartialProcessCaptureObservation,
   IncompleteProcessCaptureObservations,
-  PartialFilesystemSnapshot,
+  ProcessFilesystemSnapshot,
   PartialProcessObservationField,
   ProcessCaptureEventJournalEntry,
   RecordProcessCaptureEvent,
@@ -86,10 +85,9 @@ interface CaptureResultOptions {
     readonly reason: "exited" | "timeout" | "idle_timeout";
   };
   readonly samples: readonly ProcessSample[];
-  readonly before: SnapshotResult;
-  readonly after: SnapshotResult;
-  readonly truncated: boolean;
-  readonly truncationDetails?: ProcessCaptureTruncationDetails;
+  readonly before: ProcessFilesystemSnapshot;
+  readonly after: ProcessFilesystemSnapshot;
+  readonly truncationDetails: ProcessCaptureTruncationDetails;
   readonly scenario: ProcessScenario;
   readonly rootPid: number;
   readonly samplingPartial: boolean;
@@ -134,8 +132,8 @@ export interface ProcessCaptureObservationBuffer {
   settlement: IncompleteProcessCaptureObservations["settlement"];
   process_samples: PartialProcessObservationField<readonly ProcessSample[]>;
   filesystem_snapshots: {
-    before: PartialProcessObservationField<PartialFilesystemSnapshot>;
-    after: PartialProcessObservationField<PartialFilesystemSnapshot>;
+    before: PartialProcessObservationField<ProcessFilesystemSnapshot>;
+    after: PartialProcessObservationField<ProcessFilesystemSnapshot>;
   };
   event_journal: PartialProcessObservationField<
     readonly ProcessCaptureEventJournalEntry[]
@@ -149,7 +147,7 @@ export const createProcessCaptureObservationBuffer = (options: {
   readonly interactions: readonly InteractionEvent[];
   readonly samples: readonly ProcessSample[];
   readonly eventJournal: readonly ProcessCaptureEventJournalEntry[];
-  readonly before: SnapshotResult;
+  readonly before: ProcessFilesystemSnapshot;
 }): ProcessCaptureObservationBuffer => ({
   target_pid: {
     state: "unavailable",
@@ -175,10 +173,7 @@ export const createProcessCaptureObservationBuffer = (options: {
   filesystem_snapshots: {
     before: {
       state: "available",
-      value: {
-        files: options.before.files,
-        truncated: options.before.truncated,
-      },
+      value: options.before,
     },
     after: {
       state: "unavailable",
@@ -255,11 +250,13 @@ export const buildCaptureResult = (
     options.before,
     options.after,
   );
-  const hasUnknownFilesystemEffects = filesystemEffects.some(
-    ({ status }) => status === "unknown",
-  );
-  const incompleteFilesystemUnknown =
-    "Path absence in incomplete enumeration or below an unfollowed symbolic link remains unknown.";
+  const filesystemUnknowns = [
+    ...new Set(
+      filesystemEffects.flatMap((effect) =>
+        effect.status === "unknown" ? [effect.reason] : [],
+      ),
+    ),
+  ];
   return {
     manifest: options.manifest,
     normalization: options.scenario.normalization,
@@ -285,13 +282,8 @@ export const buildCaptureResult = (
     files_before: options.before.files,
     files_after: options.after.files,
     filesystem_effects: filesystemEffects,
-    truncated:
-      options.truncationDetails === undefined
-        ? options.truncated
-        : hasCaptureTruncation(options.truncationDetails),
-    ...(options.truncationDetails === undefined
-      ? {}
-      : { truncation_details: options.truncationDetails }),
+    truncated: hasCaptureTruncation(options.truncationDetails),
+    truncation_details: options.truncationDetails,
     limitations: [
       "The executable digest is a prelaunch file sample; matching path metadata immediately after spawn does not prove an atomic operating-system image binding.",
       "Process trees are sampled and may omit short-lived descendants.",
@@ -301,12 +293,10 @@ export const buildCaptureResult = (
       "Filesystem observations are before/after snapshots, not syscall traces.",
       "Inherited host environment variables are not recorded and may affect results.",
       ...(!hasFilesystemObservations ? [filesystemObservationUnknown] : []),
-      ...(hasUnknownFilesystemEffects ? [incompleteFilesystemUnknown] : []),
-      ...(options.truncationDetails === undefined
-        ? []
-        : captureCoverageUnknowns(options.truncationDetails).map(
-            ({ reason }) => reason,
-          )),
+      ...filesystemUnknowns,
+      ...captureCoverageUnknowns(options.truncationDetails).map(
+        ({ reason }) => reason,
+      ),
       ...(hasSensitiveScriptedInput ? [sensitiveInputUnknown] : []),
     ],
     residual_unknowns: [
@@ -336,22 +326,16 @@ export const buildCaptureResult = (
             },
           ]
         : []),
-      ...(hasUnknownFilesystemEffects
-        ? [
-            {
-              scope: "filesystem" as const,
-              reason: incompleteFilesystemUnknown,
-            },
-          ]
-        : []),
+      ...filesystemUnknowns.map((reason) => ({
+        scope: "filesystem" as const,
+        reason,
+      })),
       ...(hasSensitiveScriptedInput
         ? [{ scope: "interaction" as const, reason: sensitiveInputUnknown }]
         : []),
-      ...(options.truncationDetails === undefined
-        ? []
-        : captureCoverageUnknowns(options.truncationDetails).filter(
-            ({ scope }) => scope !== "terminal",
-          )),
+      ...captureCoverageUnknowns(options.truncationDetails).filter(
+        ({ scope }) => scope !== "terminal",
+      ),
     ],
   };
 };
@@ -1106,7 +1090,7 @@ export const prepareProcessCapture = async (
   readonly temporaryRoot: string;
   readonly runId: string;
   readonly ownershipBaseline: ProcessOwnershipBaseline;
-  readonly before: SnapshotResult;
+  readonly before: ProcessFilesystemSnapshot;
 }> => {
   assertNotCancelled(signal);
   await host.prepareOwnershipInspector?.(signal);

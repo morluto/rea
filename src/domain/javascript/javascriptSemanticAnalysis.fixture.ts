@@ -17,6 +17,12 @@ export const bindingsNamed = (
 ): JavaScriptSemanticBinding[] =>
   ir.bindings.filter(({ name: candidate }) => candidate === name);
 
+export const bindingById = (
+  ir: JavaScriptSemanticIr,
+  bindingId: string,
+): JavaScriptSemanticBinding | undefined =>
+  ir.bindings.find(({ bindingId: candidate }) => candidate === bindingId);
+
 export const onlyBinding = (
   ir: JavaScriptSemanticIr,
   name: string,

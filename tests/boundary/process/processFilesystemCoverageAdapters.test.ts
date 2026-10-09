@@ -17,11 +17,27 @@ import {
 
 const exec = promisify(execFile);
 
+const captureViaCli = async (scenario: Record<string, unknown>) => {
+  const scenarioPath = join(
+    await createTestTempDirectory("rea-fs-scenario-"),
+    "scenario.json",
+  );
+  await writeFile(scenarioPath, JSON.stringify(scenario));
+  const { stdout } = await exec(process.execPath, [
+    "scripts/rea.mjs",
+    "capture-process",
+    scenarioPath,
+    "--format",
+    "json",
+  ]);
+  return parseEvidence(JSON.parse(stdout));
+};
+
 const captureViaMcp = async (scenario: Record<string, unknown>) => {
   const session = createTestBinarySession(() => {
     throw new Error("Process capture must not launch a binary provider");
   });
-  const server = createServer(session, session);
+  const server = createServer({ kind: "session", session });
   const client = new Client({ name: "filesystem-coverage", version: "1" });
   onTestFinished(async () => {
     await client.close();
@@ -54,22 +70,9 @@ itWithCaptureCapability.each(["cli", "mcp"] as const)(
       filesystem_observation_paths: [root],
       limits: { files: 2 },
     };
-    let evidence;
-    if (adapter === "cli") {
-      const scenarioPath = join(
-        await createTestTempDirectory("rea-fs-scenario-"),
-        "scenario.json",
-      );
-      await writeFile(scenarioPath, JSON.stringify(scenario));
-      const { stdout } = await exec(process.execPath, [
-        "scripts/rea.mjs",
-        "capture-process",
-        scenarioPath,
-        "--format",
-        "json",
-      ]);
-      evidence = parseEvidence(JSON.parse(stdout));
-    } else evidence = await captureViaMcp(scenario);
+    const evidence = await (adapter === "cli" ? captureViaCli : captureViaMcp)(
+      scenario,
+    );
     const capture = parseProcessCapture(evidence.normalized_result);
     expect(capture.truncated).toBe(true);
     expect(await readFile(join(root, "z.txt"), "utf8")).toBe("unchanged");
@@ -82,6 +85,56 @@ itWithCaptureCapability.each(["cli", "mcp"] as const)(
         .find(({ name }) => name === "after_settlement")
         ?.effects.find(({ path }) => path === "root_0:z.txt")?.status,
     ).toBe("unknown");
+  },
+  20_000,
+);
+
+itWithCaptureCapability.each(["cli", "mcp"] as const)(
+  "reports unknown content after a same-size rewrite without digests through %s",
+  async (adapter) => {
+    const root = await createTestTempDirectory("rea-fs-content-adapter-");
+    const file = join(root, "changed.txt");
+    await writeFile(file, "before");
+    const scenario = {
+      executable: process.execPath,
+      arguments: [
+        "-e",
+        "require('node:fs').writeFileSync('changed.txt','after!')",
+      ],
+      working_directory: root,
+      filesystem_observation_paths: [root],
+      limits: { file_bytes: 1 },
+    };
+    const evidence = await (adapter === "cli" ? captureViaCli : captureViaMcp)(
+      scenario,
+    );
+    const capture = parseProcessCapture(evidence.normalized_result);
+    expect(await readFile(file, "utf8")).toBe("after!");
+    const effect = capture.filesystem_effects.find(
+      ({ path }) => path === "root_0:changed.txt",
+    );
+    expect(effect).toMatchObject({
+      status: "unknown",
+      reason: expect.any(String),
+      before: { size: 6, sha256: null },
+      after: { size: 6, sha256: null },
+    });
+    if (effect?.status !== "unknown")
+      throw new Error("Expected unknown file contents");
+    expect(
+      capture.filesystem_checkpoints.find(
+        ({ name }) => name === "after_settlement",
+      )?.effects,
+    ).toContainEqual(effect);
+    expect(capture.residual_unknowns).toContainEqual({
+      scope: "filesystem",
+      reason: effect.reason,
+    });
+    expect(capture.limitations).toContain(effect.reason);
+    expect(
+      capture.truncation_details.filesystem_after.enumeration_truncated,
+    ).toBe(false);
+    expect(compareProcessCaptures(capture, capture).filesystem).toBe("unknown");
   },
   20_000,
 );
@@ -125,9 +178,7 @@ it.skipIf(CAPTURE_SKIP_REASON || process.platform === "win32")(
       scope: "filesystem",
       reason: expect.any(String),
     });
-    expect(["unknown", "truncated"]).toContain(
-      compareProcessCaptures(capture, capture).filesystem,
-    );
+    expect(compareProcessCaptures(capture, capture).filesystem).toBe("unknown");
   },
   20_000,
 );

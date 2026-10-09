@@ -4,6 +4,7 @@ import {
   type AnalysisExecution,
 } from "../application/AnalysisProvider.js";
 import type { AndroidRequest } from "../domain/android/androidAnalysis.js";
+import type { AndroidPartialObservation } from "../domain/android/androidPartialObservation.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
@@ -35,6 +36,23 @@ export class JadxSession {
   readonly #client = new Client({ name: "rea-android-adapter", version: "1" });
   #loaded: ReturnType<typeof jadxLoadSchema.parse> | undefined;
   #connected = false;
+  #partialContext:
+    | {
+        readonly operation: AndroidRequest["operation"];
+        readonly selectedPath: string;
+        readonly target: BinaryTarget;
+        readonly jarHash: string;
+        readonly bridgeHash: string;
+      }
+    | undefined;
+  #observedCalls: {
+    readonly operation: string;
+    readonly input: Readonly<Record<string, JsonValue>>;
+    readonly response: JsonValue;
+  }[] = [];
+  #serverName: string | null = null;
+  #serverVersion: string | null = null;
+  #engineVersion: string | null = null;
 
   constructor(
     options: Omit<OwnedProviderProcessSpawnOptions, "runId" | "stdin">,
@@ -53,6 +71,17 @@ export class JadxSession {
     readonly signal: AbortSignal;
   }): Promise<AnalysisExecution> {
     const { request, target, snapshot, jarHash, signal } = context;
+    this.#partialContext = {
+      operation: request.operation,
+      selectedPath: request.input.path,
+      target,
+      jarHash,
+      bridgeHash: context.bridgeHash,
+    };
+    this.#observedCalls = [];
+    this.#serverName = null;
+    this.#serverVersion = null;
+    this.#engineVersion = null;
     const abort = () => {
       void this.transport.close().catch(() => undefined);
     };
@@ -60,12 +89,13 @@ export class JadxSession {
     try {
       signal.throwIfAborted();
       this.transport.beginOperation();
-      const raw: JsonValue[] = [];
       if (!this.#connected) {
         await this.#client.connect(this.transport, { timeout: 30_000 });
         this.#connected = true;
       }
       const server = this.#client.getServerVersion();
+      this.#serverName = server?.name ?? null;
+      this.#serverVersion = server?.version ?? null;
       if (
         server?.name !== JADX_BRIDGE_IDENTITY.name ||
         server.version !== JADX_BRIDGE_IDENTITY.version
@@ -75,10 +105,11 @@ export class JadxSession {
           request.operation,
           `Expected ${JADX_BRIDGE_IDENTITY.name} ${JADX_BRIDGE_IDENTITY.version}; server reported ${server?.name ?? "unknown"} ${server?.version ?? "unknown"}.`,
         );
-      const tools = this.#tools(request, target, signal, raw);
+      const tools = this.#tools(request, target, signal);
       const runtime = jadxRuntimeSchema.parse(
         await tools.json("rea_jvm_status", {}),
       );
+      this.#engineVersion = runtime.engine_reported_version;
       if (runtime.engine_reported_version !== JADX_RELEASE.version)
         throw new AnalysisCapabilityUnavailableError(
           "jadx",
@@ -117,7 +148,7 @@ export class JadxSession {
           bridge_sha256: context.bridgeHash,
           jar_sha256: jarHash,
           loaded,
-          calls: raw,
+          calls: this.#observedCalls,
         },
         subject: target,
         limitations: JADX_LIMITATIONS,
@@ -129,6 +160,32 @@ export class JadxSession {
     } finally {
       signal.removeEventListener("abort", abort);
     }
+  }
+
+  /** Facts and upstream replies retained if a later request step fails. */
+  partialObservation(): AndroidPartialObservation | undefined {
+    const context = this.#partialContext;
+    if (context === undefined) return undefined;
+    return {
+      provider_id: "jadx",
+      operation: context.operation,
+      target: {
+        selected_path: context.selectedPath,
+        path: context.target.path,
+        sha256: context.target.sha256,
+        format: "apk",
+      },
+      provider_facts: {
+        jar_sha256: context.jarHash,
+        bridge_sha256: context.bridgeHash,
+        bridge_name: JADX_BRIDGE_IDENTITY.name,
+        bridge_version: JADX_BRIDGE_IDENTITY.version,
+        server_name: this.#serverName,
+        server_version: this.#serverVersion,
+        engine_version: this.#engineVersion,
+      },
+      calls: this.#observedCalls,
+    };
   }
 
   /** Whether the selected Java runtime established the REA bridge protocol. */
@@ -149,7 +206,6 @@ export class JadxSession {
     request: AndroidRequest,
     target: BinaryTarget,
     signal: AbortSignal,
-    raw: JsonValue[],
   ): JadxToolPort {
     const call = async (
       name: string,
@@ -160,12 +216,10 @@ export class JadxSession {
         { name, arguments: input },
         { timeout: 120_000, signal },
       );
+      const observedResponse = jsonValueSchema.parse(response);
+      const call = { operation: name, input, response: observedResponse };
+      this.#observedCalls.push(call);
       const envelope = parseJadxEnvelope(response, request.operation);
-      raw.push({
-        operation: name,
-        input,
-        response: jsonValueSchema.parse(response),
-      });
       if (envelope.failed) {
         if (envelope.text.startsWith("{")) {
           const failure = jadxInputFailureSchema.safeParse(

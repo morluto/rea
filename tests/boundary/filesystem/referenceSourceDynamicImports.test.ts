@@ -17,6 +17,8 @@ it("resolves dynamic source imports while retaining computed targets as unknown"
         'const lazy = import("./lazy");',
         'async function load() { return await import("./data.json", { with: { type: "json" } }); }',
         'const name = "./not-guessed.js"; import(name);',
+        "import(`./${name}.js`);",
+        'import("node:fs");',
       ].join("\n"),
     ),
     ...["static.ts", "common.js", "lazy.ts"].map((path) =>
@@ -32,7 +34,7 @@ it("resolves dynamic source imports while retaining computed targets as unknown"
   });
   if (!result.ok) throw result.error;
   expect(result.value.parse_failures).toEqual([]);
-  expect(result.value.relationships).toHaveLength(5);
+  expect(result.value.relationships).toHaveLength(6);
   for (const [to, kind] of [
     ["static.ts", "imports"],
     ["common.js", "requires"],
@@ -52,5 +54,12 @@ it("resolves dynamic source imports while retaining computed targets as unknown"
     kind: "imports",
     resolution: "unknown",
     parse_state: "partial",
+  });
+  expect(result.value.relationships).toContainEqual({
+    from_path: "main.ts",
+    to: "node:fs",
+    kind: "imports",
+    resolution: "external",
+    parse_state: "parsed",
   });
 });

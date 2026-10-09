@@ -26,10 +26,6 @@ export interface ProductCatalog {
     readonly format: string;
     readonly configuration: string;
   }[];
-  readonly schemas: readonly {
-    readonly id: string;
-    readonly version: string | number;
-  }[];
   readonly cli: {
     readonly primary_count: number;
     readonly commands: readonly string[];
@@ -45,21 +41,6 @@ export interface ProductCatalog {
 }
 
 export function createProductCatalog(root: string): Promise<ProductCatalog>;
-export function providerCatalogDigest(
-  providers: ProductCatalog["providers"],
-): string;
-export function createCliInventory(cli: unknown): {
-  readonly primary: readonly string[];
-  readonly aliases: readonly {
-    readonly name: string;
-    readonly target: string;
-  }[];
-};
-export function cliCommandOptionNames(
-  cli: unknown,
-  name: string,
-): readonly string[];
-export function cliCommandDescriptionIssues(cli: unknown): readonly string[];
 export function serializeProductCatalog(
   catalog: ProductCatalog,
 ): Promise<string>;

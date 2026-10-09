@@ -1,6 +1,6 @@
 import * as t from "@babel/types";
 
-import { compareCodePoints } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { ElectronStaticValue } from "./electronStaticAnalysisTypes.js";
 import {
   readExactJavaScriptLiteral,
@@ -105,7 +105,7 @@ export const collectContextBridgeMembers = (
     unknown: 0,
   };
   collectMembersAt(node, "", 0, state);
-  const members = [...new Set(state.members)].sort(compareCodePoints);
+  const members = [...new Set(state.members)].sort(compareUnicodeCodePoints);
   return {
     status: "object-literal",
     members,
@@ -151,7 +151,11 @@ const literalValue = (
   if (
     t.isUnaryExpression(node, { operator: "-" }) &&
     t.isNumericLiteral(node.argument)
-  )
-    return { found: true, value: -node.argument.value };
+  ) {
+    const value = -node.argument.value;
+    return Number.isFinite(value) && !Object.is(value, -0)
+      ? { found: true, value }
+      : { found: false };
+  }
   return { found: false };
 };

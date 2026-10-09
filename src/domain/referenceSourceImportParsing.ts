@@ -1,4 +1,4 @@
-import { parse, type ParserPlugin } from "@babel/parser";
+import { parse } from "@babel/parser";
 import type {
   CallExpression,
   File,
@@ -6,6 +6,8 @@ import type {
   Node,
   StringLiteral,
 } from "@babel/types";
+import { traverseJavaScriptAst } from "./javascript/javascriptSemanticTraversal.js";
+import { parserPluginsForPath } from "./javascript/javascriptSourceParser.js";
 import {
   isCallExpression,
   isExportAllDeclaration,
@@ -15,7 +17,6 @@ import {
   isImportDeclaration,
   isImportExpression,
   isMemberExpression,
-  isNode,
   isStringLiteral,
   isTSExternalModuleReference,
   isTSImportEqualsDeclaration,
@@ -201,50 +202,22 @@ const isRequireCallee = (callee: Node | null | undefined): boolean => {
   return false;
 };
 
-const isImportCallee = (callee: Node | null | undefined): boolean =>
-  isImport(callee);
-
-const collectModuleExpressions = (
-  node: unknown,
-  targets: Array<CallExpression | ImportExpression>,
-): void => {
-  if (node === null || node === undefined) return;
-  if (typeof node !== "object") return;
-  if (Array.isArray(node)) {
-    for (const item of node) collectModuleExpressions(item, targets);
-    return;
-  }
-  if (!isNode(node)) return;
-  if (isCallExpression(node) || isImportExpression(node)) {
-    targets.push(node);
-  }
-  for (const value of Object.values(node)) {
-    if (
-      value !== null &&
-      value !== undefined &&
-      typeof value === "object" &&
-      !isSourceLocation(value)
-    ) {
-      collectModuleExpressions(value, targets);
-    }
-  }
-};
-
-const isSourceLocation = (value: unknown): boolean =>
-  typeof value === "object" &&
-  value !== null &&
-  "start" in value &&
-  "end" in value &&
-  !("type" in value);
-
 const extractRequireAndDynamicImports = (
   body: readonly Node[],
   from_path: string,
   relationships: ReferenceSourceImportRelationship[],
 ): void => {
+  // Single traversal owner: iterative, VISITOR_KEYS-gated, no recursion over
+  // loc/comment objects. Survives deeply nested generated member chains that
+  // overflowed the previous hand-rolled Object.values walker.
   const expressions: Array<CallExpression | ImportExpression> = [];
   for (const statement of body)
-    collectModuleExpressions(statement, expressions);
+    traverseJavaScriptAst(statement, {
+      enter: (node) => {
+        if (isCallExpression(node) || isImportExpression(node))
+          expressions.push(node);
+      },
+    });
 
   for (const call of expressions) {
     if (isImportExpression(call)) {
@@ -272,7 +245,7 @@ const extractRequireAndDynamicImports = (
       continue;
     }
 
-    if (isImportCallee(call.callee) && isModuleExpression(first)) {
+    if (isImport(call.callee) && isModuleExpression(first)) {
       const result = moduleSpecifierFromExpression(first);
       if (result !== undefined) {
         appendRelationship(relationships, {
@@ -294,18 +267,11 @@ const parseWithBabel = (
   ast: File | undefined;
   reasons: readonly string[];
 } => {
-  const plugins: ParserPlugin[] = ["jsx"];
-  if (language === "TypeScript" || language === "TSX") {
-    plugins.push([
-      "typescript",
-      {
-        dts:
-          path.endsWith(".d.ts") ||
-          path.endsWith(".d.mts") ||
-          path.endsWith(".d.cts"),
-      },
-    ]);
-  }
+  // Single parser-mode owner: path-driven plugins (dts/JSX/mts) shared with
+  // the semantic pipeline. `language` only gates non-JS/TS callers upstream;
+  // TypeScript syntax must parse identically here and in semantic analysis.
+  void language;
+  const plugins = parserPluginsForPath(path);
 
   try {
     const ast = parse(source, {
@@ -334,7 +300,22 @@ export const parseReferenceSourceImports = (
   if (language !== null && !codeSourceLanguages.has(language))
     return { relationships: [], parse_failures: [] };
 
-  const source = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  let source: string;
+  try {
+    source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return {
+      relationships: [],
+      parse_failures: [
+        {
+          path,
+          parser: "utf-8",
+          reason:
+            "Source bytes are not valid UTF-8; import targets were not parsed.",
+        },
+      ],
+    };
+  }
   const { ast, reasons } = parseWithBabel(path, source, language);
   const parseFailures = reasons.map((reason) => ({
     path,

@@ -2,6 +2,7 @@ import { parse } from "@babel/parser";
 import * as t from "@babel/types";
 
 import { sanitizeEndpointCandidate } from "./browserObservation.js";
+import { compositeKey } from "./unicodeCodePointOrder.js";
 import type { WebPageInspection } from "./browserObservationSchemas.js";
 import type { WebBundleAnalysis } from "./webBundleAnalysis.js";
 import { traverseJavaScriptAst } from "./javascript/javascriptSemanticTraversal.js";
@@ -271,7 +272,14 @@ const addWebMcpDeclaration = (
           : [],
       )
     : [];
-  const key = `webmcp\0${script.script_key}\0${name ?? ""}\0${schemaPropertyNames.join("\0")}`;
+  // Property names are a variable-length source-derived list: NUL-joins
+  // would collapse ["a\0b"] with ["a", "b"] and drop a declaration.
+  const key = compositeKey([
+    "webmcp",
+    script.script_key,
+    name ?? "",
+    schemaPropertyNames,
+  ]);
   addUnique(accumulator, key, () =>
     accumulator.webMcp.push({
       name: name ?? null,

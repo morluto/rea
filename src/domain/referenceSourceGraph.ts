@@ -2,7 +2,8 @@ import { posix } from "node:path";
 
 import { z } from "zod";
 
-import { canonicalDigest, canonicalJson } from "./comparisonSemantics.js";
+import { canonicalJson } from "./comparisonSemantics.js";
+import { digestCanonicalValue } from "./canonicalDigest.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import { digestSchema } from "./../domain/digests.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
@@ -132,8 +133,6 @@ const exclusionSchema = z.strictObject({
   reason: z.enum([
     "configured-secret",
     "symlink-escape",
-    "size-limit",
-    "inventory-limit",
     "unreadable",
     "caller-excluded",
   ]),
@@ -473,7 +472,7 @@ const computeRootSha256 = (
   entries: readonly z.infer<typeof sourceEntrySchema>[],
   exclusions: readonly z.infer<typeof exclusionSchema>[],
 ): string =>
-  canonicalDigest(
+  digestCanonicalValue(
     rootCommitment(entries, exclusions),
     "Reference source graph",
   );
@@ -496,7 +495,10 @@ export const parseHistoricalSourceGraph = (
 
 /** Compute a deterministic graph commitment containing no absolute root path. */
 export const computeHistoricalSourceGraphSha256 = (input: unknown): string =>
-  canonicalDigest(parseHistoricalSourceGraph(input), "Reference source graph");
+  digestCanonicalValue(
+    parseHistoricalSourceGraph(input),
+    "Reference source graph",
+  );
 
 /** Build a deterministic, relocation-independent manifest for a source graph. */
 export const createHistoricalSourceManifest = (
@@ -514,7 +516,7 @@ export const createHistoricalSourceManifest = (
   };
   return historicalSourceManifestBaseSchema.parse({
     ...semantic,
-    manifest_id: `hsm_${canonicalDigest(semantic, "Reference source graph")}`,
+    manifest_id: `hsm_${digestCanonicalValue(semantic, "Reference source graph")}`,
   });
 };
 
@@ -525,7 +527,8 @@ export const parseHistoricalSourceManifest = (
   const manifest = historicalSourceManifestBaseSchema.parse(input);
   const { manifest_id: manifestId, ...semantic } = manifest;
   if (
-    `hsm_${canonicalDigest(semantic, "Reference source graph")}` !== manifestId
+    `hsm_${digestCanonicalValue(semantic, "Reference source graph")}` !==
+    manifestId
   )
     throw new TypeError("Historical source manifest identifier does not match");
   return manifest;

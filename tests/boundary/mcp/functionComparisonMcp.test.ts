@@ -39,7 +39,7 @@ describe("function comparison reconstruction MCP integration", () => {
                 authority: left.authority,
               },
             );
-      const server = createServer(session, session);
+      const server = createServer({ kind: "session", session });
       const client = new Client({
         name: "function-verification-test",
         version: "1",
@@ -140,7 +140,7 @@ describe("function comparison MCP integration", () => {
     expect(session.recordEvidence(FUNCTION_COMPARISON_EXAMPLE.right).ok).toBe(
       true,
     );
-    const server = createServer(session, session);
+    const server = createServer({ kind: "session", session });
     const client = new Client({
       name: "function-comparison-test",
       version: "1",
@@ -196,7 +196,7 @@ describe("function comparison MCP integration", () => {
       execute: () => Promise.resolve(observed(null)),
       close: () => Promise.resolve(resultOk(null)),
     }));
-    const server = createServer(session, session);
+    const server = createServer({ kind: "session", session });
     const client = new Client({ name: "function-link-test", version: "1" });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
@@ -240,7 +240,7 @@ describe("function comparison MCP integration", () => {
     );
     session.recordEvidence(wrong);
     session.recordEvidence(FUNCTION_COMPARISON_EXAMPLE.right);
-    const server = createServer(session, session);
+    const server = createServer({ kind: "session", session });
     const client = new Client({
       name: "function-authority-test",
       version: "1",

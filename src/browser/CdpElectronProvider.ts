@@ -30,12 +30,10 @@ import { inspectCdpElectronPage } from "./CdpElectronInspection.js";
 import { authorizedElectronFile } from "./ElectronFileScope.js";
 
 import { CDP_ELECTRON_PROVIDER_IDENTITY } from "./providerIdentities.js";
-const IDENTITY = CDP_ELECTRON_PROVIDER_IDENTITY;
-
 /** Passive Electron provider for local file pages exposed by loopback CDP. */
 export class CdpElectronProvider implements ElectronObservationPort {
   identity(): ProviderIdentity {
-    return IDENTITY;
+    return CDP_ELECTRON_PROVIDER_IDENTITY;
   }
 
   async listTargets(
@@ -169,4 +167,6 @@ const providerError = (
     ? new BrowserObservationError(operation, cause.reason, { cause })
     : cause instanceof AnalysisError
       ? cause
-      : new ProviderAdapterError(IDENTITY.id, operation, { cause });
+      : new ProviderAdapterError(CDP_ELECTRON_PROVIDER_IDENTITY.id, operation, {
+          cause,
+        });

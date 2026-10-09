@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { constants } from "node:buffer";
 import { createHash } from "node:crypto";
 
-import { canonicalDigest } from "../../../dist/domain/comparisonSemantics.js";
+import { digestCanonicalValue } from "../../../dist/domain/canonicalDigest.js";
 import {
   createEvidence,
   parseEvidence,
@@ -23,7 +23,7 @@ for (let index = 0; index < count; index += 1) {
   expected.update(encodedLeaf);
 }
 expected.update("]}");
-assert.equal(canonicalDigest(value), expected.digest("hex"));
+assert.equal(digestCanonicalValue(value), expected.digest("hex"));
 
 const evidence = createEvidence(
   undefined,

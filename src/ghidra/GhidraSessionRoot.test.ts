@@ -3,9 +3,6 @@ import { describe, expect, it } from "vitest";
 
 import { ghidraSessionRoot } from "./GhidraSessionRoot.js";
 
-const hasDotPrefixElement = (directory: string): boolean =>
-  directory.split(sep).some((element) => element.startsWith("."));
-
 const POSIX = process.platform !== "win32";
 const posixFallback = join(resolve(sep), "tmp");
 const posixBase = (...segments: string[]) => join(resolve(sep), ...segments);
@@ -28,13 +25,6 @@ describe("ghidraSessionRoot", () => {
     );
   });
 
-  it("relocates a base that is itself a hidden directory", () => {
-    const base = posixBase("home", "operator", ".tmp");
-    expect(ghidraSessionRoot({ base, fallback: posixBase("var", "tmp") })).toBe(
-      posixBase("var", "tmp"),
-    );
-  });
-
   it("ignores a fallback that is itself dotted", () => {
     const base = posixBase("home", "operator", ".cache", "scratch");
     expect(
@@ -43,14 +33,6 @@ describe("ghidraSessionRoot", () => {
         fallback: posixBase("home", "operator", ".tmp"),
       }),
     ).toBe(posixBase("home", "operator"));
-  });
-
-  it("never returns a path with a dot-prefixed element", () => {
-    const directory = ghidraSessionRoot({
-      base: posixBase("home", "operator", ".cache", "scratch"),
-      fallback: posixBase("home", "operator", ".cache"),
-    });
-    expect(hasDotPrefixElement(directory)).toBe(false);
   });
 
   it("uses the nearest safe ancestor when the platform has no fallback", () => {

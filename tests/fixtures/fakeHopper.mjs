@@ -87,6 +87,11 @@ const enhancedFixtureResult = (method) => {
         procedure: {
           address: "0x1000",
           name: "fixture",
+          classification: null,
+          body: {
+            available: false,
+            reason: "The fixture has no function body-extent observation.",
+          },
           signature: null,
           locals: [],
         },
@@ -100,6 +105,9 @@ const enhancedFixtureResult = (method) => {
         referenced_strings: [],
         referenced_names: [],
         basic_blocks: [{ start: "0x1000", end: "0x1001", successors: [] }],
+        native_api: null,
+        native_value_flow: null,
+        limitations: [],
       };
     }
     case "search_strings":

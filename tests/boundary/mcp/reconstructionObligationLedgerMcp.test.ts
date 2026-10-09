@@ -13,7 +13,7 @@ describe("reconstruction obligation ledger MCP parity", () => {
       execute: () => Promise.resolve(observed(null)),
       close: () => Promise.resolve(resultOk(null)),
     }));
-    const server = createServer(session, session);
+    const server = createServer({ kind: "session", session });
     const client = new Client({ name: "obligation-ledger-test", version: "1" });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();

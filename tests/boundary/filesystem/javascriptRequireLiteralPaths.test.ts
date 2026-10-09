@@ -15,7 +15,9 @@ const analyze = async (root: string) => {
     format: "directory",
   });
   if (!result.ok) throw result.error;
-  const authenticated = parseApplicationGraphEvidence(result.value);
+  const parsed = parseApplicationGraphEvidence(result.value);
+  if (!parsed.ok) throw new Error("Analysis Evidence must parse");
+  const authenticated = parsed.value;
   return {
     graph: authenticated.graph,
     result: javascriptApplicationAnalysisResultSchema.parse(
