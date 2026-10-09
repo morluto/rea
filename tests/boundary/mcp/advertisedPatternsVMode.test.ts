@@ -78,9 +78,12 @@ it("advertises portable NUL escapes and patterns that compile in all JS modes", 
   expect(uncompilable).toEqual([]);
 
   // DeepSeek rejects the short NUL escape even though V8 accepts it in all
-  // three modes. Schema compilation must not hide that interchange failure.
-  expect(patterns.filter(({ pattern }) => pattern.includes("\\0"))).toEqual([]);
-  expect(patterns.some(({ pattern }) => pattern.includes("\\u0000"))).toBe(
-    true,
-  );
+  // three modes, and other strict validators reject the `\u` form as well, so
+  // NUL is advertised as the hex escape every engine compiles.
+  expect(
+    patterns.filter(
+      ({ pattern }) => pattern.includes("\\0") || pattern.includes("\\u0000"),
+    ),
+  ).toEqual([]);
+  expect(patterns.some(({ pattern }) => pattern.includes("\\x00"))).toBe(true);
 });

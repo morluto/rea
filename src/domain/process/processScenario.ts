@@ -8,7 +8,7 @@ const reservedRunIdEnvironmentName = "REA_PROCESS_RUN_ID";
 const environmentName = z
   .string()
   .min(1, "Environment names must not be empty")
-  .regex(/^(?!REA_PROCESS_RUN_ID(?![\s\S]))[^=\u0000]+$/u, {
+  .regex(/^(?!REA_PROCESS_RUN_ID(?![\s\S]))[^=\x00]+$/u, {
     error: (issue) =>
       issue.input === reservedRunIdEnvironmentName
         ? `${reservedRunIdEnvironmentName} is reserved by the process adapter`
@@ -17,7 +17,7 @@ const environmentName = z
 const childProcessString = z
   .string()
   .regex(
-    /^[^\u0000]*$/u,
+    /^[^\x00]*$/u,
     "Values passed to operating-system APIs cannot contain NUL",
   );
 export const normalizationSchema = z.object({
