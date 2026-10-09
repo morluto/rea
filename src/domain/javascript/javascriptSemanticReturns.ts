@@ -132,15 +132,17 @@ const directReturnExpressions = (callable: t.Node): ReturnExpression[] => {
     return [{ node: callable.body, location: range(callable.body) }];
   if (!t.isFunction(callable)) return [];
   const output: ReturnExpression[] = [];
-  const visit = (node: t.Node): void => {
-    if (t.isFunction(node) || t.isClass(node)) return;
+  const pending = childNodes(callable.body).reverse();
+  while (pending.length > 0) {
+    const node = pending.pop();
+    if (node === undefined || t.isFunction(node) || t.isClass(node)) continue;
     if (t.isReturnStatement(node)) {
       output.push({ node: node.argument ?? null, location: range(node) });
-      return;
+      continue;
     }
-    for (const child of childNodes(node)) visit(child);
-  };
-  for (const child of childNodes(callable.body)) visit(child);
+    // Reverse children so the explicit stack retains source-tree order.
+    for (const child of childNodes(node).reverse()) pending.push(child);
+  }
   return output;
 };
 
