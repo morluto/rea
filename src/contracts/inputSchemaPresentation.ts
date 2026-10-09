@@ -130,6 +130,13 @@ const requiredProperties = (
     ? branch.required.filter((name) => typeof name === "string")
     : [];
 
+const sharedRequiredProperties = (
+  branches: readonly Readonly<Record<string, unknown>>[],
+): readonly string[] => {
+  const [first = [], ...others] = branches.map(requiredProperties);
+  return first.filter((name) => others.every((names) => names.includes(name)));
+};
+
 const inputGroup = (branch: Readonly<Record<string, unknown>>): string => {
   const required = requiredProperties(branch);
   const optional = Object.keys(branch.properties ?? {})
@@ -147,7 +154,11 @@ const flattenRootObjectUnion = (
 ): Record<string, unknown> => {
   const { anyOf, oneOf, ...rest } = root;
   const alternatives = Array.isArray(anyOf) ? anyOf : oneOf;
-  if (!Array.isArray(alternatives) || root.properties !== undefined)
+  if (
+    !Array.isArray(alternatives) ||
+    alternatives.length === 0 ||
+    root.properties !== undefined
+  )
     return root;
   const branches = alternatives.map((branch) => objectBranch(root, branch));
   if (!branches.every((branch) => branch !== undefined)) return root;
@@ -159,9 +170,20 @@ const flattenRootObjectUnion = (
         known.push(schema);
       variants.set(name, known);
     }
-  const required = branches
-    .map(requiredProperties)
-    .reduce((shared, names) => shared.filter((name) => names.includes(name)));
+  const required = sharedRequiredProperties(branches);
+  // A field unique to a group still needs that group's required partners.
+  // Counting properties alone would let optional fields pad an incomplete pair.
+  const dependencies = Object.fromEntries(
+    [...variants.keys()].flatMap((name) => {
+      const owners = branches.filter((branch) =>
+        Object.hasOwn(branch.properties ?? {}, name),
+      );
+      const partners = sharedRequiredProperties(owners).filter(
+        (partner) => partner !== name && !required.includes(partner),
+      );
+      return partners.length > 0 ? [[name, partners]] : [];
+    }),
+  );
   const fewestRequired = Math.min(
     ...branches.map((branch) => requiredProperties(branch).length),
   );
@@ -170,7 +192,7 @@ const flattenRootObjectUnion = (
   const description = [
     typeof rest.description === "string" ? rest.description : undefined,
     groups.length > 1
-      ? `Provide exactly one input group: ${groups.join("; ")}.`
+      ? `Provide a complete input group: ${groups.join("; ")}.`
       : undefined,
   ].filter((text) => text !== undefined);
   return {
@@ -185,6 +207,13 @@ const flattenRootObjectUnion = (
     ),
     ...(required.length > 0 ? { required } : {}),
     ...(fewestRequired > 0 ? { minProperties: fewestRequired } : {}),
+    ...(Object.keys(dependencies).length > 0
+      ? {
+          [root.$schema === "http://json-schema.org/draft-07/schema#"
+            ? "dependencies"
+            : "dependentRequired"]: dependencies,
+        }
+      : {}),
     ...(branches.every((branch) => branch.additionalProperties === false)
       ? { additionalProperties: false }
       : {}),

@@ -162,47 +162,63 @@ describe("root input presentation", () => {
     expect(Object.hasOwn(properties, "__proto__")).toBe(true);
   });
 
-  it("advertises every root alternative as one object while runtime keeps the exact union", () => {
-    const schema = z.union([
-      z.strictObject({ before: z.string(), after: z.string() }),
-      z.strictObject({
-        before_scenario: z.number(),
-        after_scenario: z.number(),
-      }),
-    ]);
-    const canonical = z.toJSONSchema(schema, { io: "input" });
-    const advertised = presentInputJsonSchema(
-      canonical,
-      (property) => property,
-    );
-    // Anthropic tool input schemas reject anyOf, oneOf, and allOf at the root.
-    for (const combinator of ["anyOf", "oneOf", "allOf"])
-      expect(advertised).not.toHaveProperty(combinator);
-    expect(advertised.description).toBe(
-      "Provide exactly one input group: before + after; before_scenario + after_scenario.",
-    );
-    const validate = new Ajv2020({ strict: false }).compile(advertised);
-    for (const input of [
-      { before: "first", after: "second" },
-      { before_scenario: 1, after_scenario: 2 },
-    ]) {
-      expect(schema.safeParse(input).success).toBe(true);
-      expect(validate(input)).toBe(true);
-    }
-    for (const input of [
-      {},
-      { before: "first" },
-      { unexpected: true },
-      { before_scenario: 1, after_scenario: "wrong" },
-    ]) {
-      expect(schema.safeParse(input).success).toBe(false);
-      expect(validate(input)).toBe(false);
-    }
-    // Cross-group exclusion is enforced only by the canonical runtime parser.
-    const mixed = { before: "first", after_scenario: 2 };
-    expect(validate(mixed)).toBe(true);
-    expect(schema.safeParse(mixed).success).toBe(false);
-  });
+  it.each(["draft-2020-12", "draft-07"] as const)(
+    "advertises complete root groups while runtime keeps the exact union in %s",
+    (target) => {
+      const schema = z.union([
+        z.strictObject({ before: z.string(), after: z.string() }),
+        z.strictObject({
+          before_scenario: z.number(),
+          after_scenario: z.number(),
+          normalization: z.boolean().optional(),
+        }),
+      ]);
+      const canonical = z.toJSONSchema(schema, { io: "input", target });
+      const advertised = presentInputJsonSchema(
+        canonical,
+        (property) => property,
+      );
+      // Anthropic tool input schemas reject anyOf, oneOf, and allOf at the root.
+      for (const combinator of ["anyOf", "oneOf", "allOf"])
+        expect(advertised).not.toHaveProperty(combinator);
+      expect(advertised.description).toBe(
+        "Provide a complete input group: before + after; before_scenario + after_scenario + [normalization].",
+      );
+      const ajv =
+        target === "draft-2020-12"
+          ? new Ajv2020({ strict: false })
+          : new Ajv({ strict: false });
+      const validate = ajv.compile(advertised);
+      for (const input of [
+        { before: "first", after: "second" },
+        { before_scenario: 1, after_scenario: 2 },
+        { before_scenario: 1, after_scenario: 2, normalization: true },
+      ]) {
+        expect(schema.safeParse(input).success).toBe(true);
+        expect(validate(input)).toBe(true);
+      }
+      for (const input of [
+        {},
+        { before: "first" },
+        { unexpected: true },
+        { before_scenario: 1, after_scenario: "wrong" },
+        { before_scenario: 1, normalization: true },
+        { after_scenario: 2, normalization: true },
+      ]) {
+        expect(schema.safeParse(input).success).toBe(false);
+        expect(validate(input)).toBe(false);
+      }
+      // Cross-group exclusion is enforced only by the canonical runtime parser.
+      const mixed = {
+        before: "first",
+        after: "second",
+        before_scenario: 1,
+        after_scenario: 2,
+      };
+      expect(validate(mixed)).toBe(true);
+      expect(schema.safeParse(mixed).success).toBe(false);
+    },
+  );
 
   it("keeps a root branch whose reference siblings cannot be merged", () => {
     const branch = { $ref: "#/$defs/object", additionalProperties: false };

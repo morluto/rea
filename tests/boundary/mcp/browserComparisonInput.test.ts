@@ -23,9 +23,25 @@ const delivery = new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 
 const contract = toolContract("compare_web_captures");
 
-const comparisonCase =
-  (expected: boolean, advertised = expected) =>
-  (input: Record<string, unknown>) => ({ input, expected, advertised });
+async function capturePassivePair(
+  provider: CdpBrowserProvider,
+  browser: Awaited<ReturnType<typeof startFakeCdpBrowser>>,
+) {
+  const produced = await provider.inspectPage(
+    inspectWebPageInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      target_id: "allowed-page",
+      observation_ms: 0,
+      include_json_body_shapes: true,
+      include_websocket_shapes: true,
+    }),
+  );
+  if (!produced.ok) throw produced.error;
+  return {
+    before: { inspection: produced.value },
+    after: { inspection: produced.value },
+  };
+}
 
 describe("browser comparison input boundary", () => {
   it("advertises complete producer captures and agrees with SDK validation on both comparison families", async () => {
@@ -60,20 +76,7 @@ describe("browser comparison input boundary", () => {
       const ajv = new Ajv2020({ strict: false, validateFormats: false });
       expect(ajv.validateSchema(advertised.inputSchema)).toBe(true);
       const validate = ajv.compile(advertised.inputSchema);
-      const produced = await provider.inspectPage(
-        inspectWebPageInputSchema.parse({
-          cdp_endpoint: browser.endpoint,
-          target_id: "allowed-page",
-          observation_ms: 0,
-          include_json_body_shapes: true,
-          include_websocket_shapes: true,
-        }),
-      );
-      if (!produced.ok) throw produced.error;
-      const passive = {
-        before: { inspection: produced.value },
-        after: { inspection: produced.value },
-      };
+      const passive = await capturePassivePair(provider, browser);
       const scenario = contract.examples[0]?.input;
       if (scenario === undefined) throw new Error("Missing scenario example");
       const withoutNormalization = Object.fromEntries(
@@ -88,10 +91,19 @@ describe("browser comparison input boundary", () => {
         { before: { inspection: {} }, after: passive.after },
         {
           before: passive.before,
-          after: { inspection: produced.value, webmcp: {} },
+          after: { ...passive.after, webmcp: {} },
         },
         { before_scenario: {}, after_scenario: {} },
         { before_scenario: scenario.before_scenario },
+        { ...passive, normalization: { rules: [] } },
+        {
+          before_scenario: scenario.before_scenario,
+          normalization: { rules: [] },
+        },
+        {
+          after_scenario: scenario.after_scenario,
+          normalization: { rules: [] },
+        },
         { ...passive, unexpected: true },
         {
           ...scenario,
@@ -106,31 +118,39 @@ describe("browser comparison input boundary", () => {
           },
         },
       ];
-      // The object root cannot express group exclusion; the SDK's canonical
-      // parser still rejects mixed groups before the handler runs.
-      const cases = [
-        ...[passive, scenario, withoutNormalization].map(comparisonCase(true)),
-        ...invalid.map(comparisonCase(false)),
-        ...[
-          { ...passive, ...scenario },
-          { ...passive, normalization: { rules: [] } },
-        ].map(comparisonCase(false, true)),
-      ];
-      for (const { input, expected, advertised } of cases) {
+      // The projection leaves group exclusion to the canonical runtime parser.
+      const mixedGroups = [{ ...passive, ...scenario }];
+      for (const { input, advertisedValid, runtimeValid } of [
+        ...[passive, scenario, withoutNormalization].map((input) => ({
+          input,
+          advertisedValid: true,
+          runtimeValid: true,
+        })),
+        ...invalid.map((input) => ({
+          input,
+          advertisedValid: false,
+          runtimeValid: false,
+        })),
+        ...mixedGroups.map((input) => ({
+          input,
+          advertisedValid: true,
+          runtimeValid: false,
+        })),
+      ]) {
         expect(validate(input), JSON.stringify(validate.errors)).toBe(
-          advertised,
+          advertisedValid,
         );
         expect(
           browserCaptureComparisonInputSchema.safeParse(input).success,
-        ).toBe(expected);
+        ).toBe(runtimeValid);
         const beforeCalls = calls;
         const result = await client.callTool({
           name: contract.name,
           arguments: input,
         });
-        expect(calls - beforeCalls).toBe(expected ? 1 : 0);
-        expect(result.isError === true).toBe(!expected);
-        if (expected)
+        expect(calls - beforeCalls).toBe(runtimeValid ? 1 : 0);
+        expect(result.isError === true).toBe(!runtimeValid);
+        if (runtimeValid)
           expect(result.structuredContent).toMatchObject({
             operation: contract.name,
             normalized_result: compareBrowserCaptures(
@@ -140,8 +160,8 @@ describe("browser comparison input boundary", () => {
       }
       const parsedPassive = browserCaptureComparisonInputSchema.parse(passive);
       expect(parsedPassive).toEqual({
-        before: { inspection: produced.value, webmcp: null },
-        after: { inspection: produced.value, webmcp: null },
+        before: { ...passive.before, webmcp: null },
+        after: { ...passive.after, webmcp: null },
       });
       expect(compareBrowserCaptures(parsedPassive).overall_status).toBe(
         "unknown",

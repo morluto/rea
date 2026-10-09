@@ -396,23 +396,10 @@ describe("MCP root input schemas", () => {
       expect(ajv.compile(graphTool.inputSchema)({ unrelated: true })).toBe(
         false,
       );
-      const captureContract = TOOL_CONTRACTS.find(
-        ({ name }) => name === "compare_web_captures",
+      expect(graphTool.inputSchema.description).toContain(
+        "Provide a complete input group",
       );
-      const captureTool = advertised.get("compare_web_captures");
-      if (captureContract === undefined || captureTool === undefined)
-        throw new Error("Capture comparison tool was not advertised");
-      const mixedGroups = {
-        ...captureContract.examples[0]?.input,
-        before: {},
-        after: {},
-      };
-      expect(captureContract.inputSchema.safeParse(mixedGroups).success).toBe(
-        false,
-      );
-      expect(captureTool.inputSchema.description).toContain(
-        "Provide exactly one input group",
-      );
+      expect(graphTool.inputSchema.description).not.toContain("exactly one");
 
       for (const contract of TOOL_CONTRACTS) {
         const inputSchema = advertised.get(contract.name)!.inputSchema;
