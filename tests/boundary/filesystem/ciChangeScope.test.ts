@@ -171,3 +171,51 @@ it("fails classification rather than treating an invalid Git comparison as a sco
   });
   expect(await readFile(join(directory, "scope-output"), "utf8")).toBe("");
 });
+
+it("retains native Inspector verification on every documented package host", async () => {
+  const stepSchema = z.object({
+    run: z.string().optional(),
+    if: z.string().optional(),
+  });
+  const steps = z.array(stepSchema);
+  const workflow = z
+    .object({
+      jobs: z.object({
+        "package-e2e": z.object({
+          strategy: z.object({
+            matrix: z.object({
+              include: z.array(
+                z.object({ platform: z.string(), architecture: z.string() }),
+              ),
+            }),
+          }),
+          steps,
+        }),
+        "windows-curated": z.object({ steps }),
+      }),
+    })
+    .parse(
+      parse(
+        await readFile(
+          new URL("../../../.github/workflows/ci.yml", import.meta.url),
+          "utf8",
+        ),
+      ),
+    );
+  const packageLane = workflow.jobs["package-e2e"];
+  const packageInspector = stepSchema.parse(
+    packageLane.steps.find((step) => step.run === "npm run verify:inspector"),
+  );
+  expect(packageInspector.if).toBeUndefined();
+  expect(
+    packageLane.strategy.matrix.include
+      .map(({ platform, architecture }) => `${platform}/${architecture}`)
+      .sort(),
+  ).toEqual(["darwin/arm64", "darwin/x64", "linux/arm64", "linux/x64"]);
+  const windowsInspector = stepSchema.parse(
+    workflow.jobs["windows-curated"].steps.find(
+      (step) => step.run === "npm run verify:inspector",
+    ),
+  );
+  expect(windowsInspector.if).toBeUndefined();
+});
