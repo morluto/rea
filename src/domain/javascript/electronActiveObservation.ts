@@ -78,7 +78,9 @@ export const electronActiveObservationInputSchema = z.strictObject({
     ),
   args: z
     .array(
-      z.string().regex(/^[^\0]*$/u, "Electron arguments must not contain NUL"),
+      z
+        .string()
+        .regex(/^[^\u0000]*$/u, "Electron arguments must not contain NUL"),
     )
     .default([]),
   actions: z.array(actionSchema).default([]),

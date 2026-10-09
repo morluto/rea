@@ -71,7 +71,7 @@ export const swiftSymbolsSchema = z
       .string()
       .min(1)
       .regex(/^[^\n]*$/u, "Each Swift symbol must be one line.")
-      .regex(/^[^\0]*$/u, "Swift symbols cannot contain NUL."),
+      .regex(/^[^\u0000]*$/u, "Swift symbols cannot contain NUL."),
   )
   .min(1);
 

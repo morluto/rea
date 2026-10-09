@@ -21,7 +21,7 @@ import {
 
 /** Normalized path below the analyzed root: no `.`/`..` or empty segments. */
 const ROOT_RELATIVE_PATH =
-  /^(?!\/)(?!(?:.*\/)?\.{1,2}(?:\/|$))(?!.*\/\/)(?!.*\/$)[^\\\0]+$/u;
+  /^(?!\/)(?!(?:.*\/)?\.{1,2}(?:\/|$))(?!.*\/\/)(?!.*\/$)[^\\\u0000]+$/u;
 const rootRelativePathSchema = z
   .string()
   .min(1)

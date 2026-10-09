@@ -30,7 +30,7 @@ const collectPatterns = (
   }
 };
 
-it("advertises patterns that compile under every engine a client may use", async () => {
+it("advertises portable NUL escapes and patterns that compile in all JS modes", async () => {
   const session = createTestBinarySession(() => {
     throw new Error("No deep provider may start for a schema projection");
   });
@@ -63,15 +63,24 @@ it("advertises patterns that compile under every engine a client may use", async
   // class, so REA's own schema validation cannot observe the defect. `v` mode
   // rejects them, and a client that compiles advertised patterns rejects the
   // complete tools request rather than the affected call.
-  const uncompilable = patterns.flatMap((entry) => {
-    try {
-      new RegExp(entry.pattern, "v");
-      return [];
-    } catch (cause: unknown) {
-      return [
-        `${entry.tool} ${entry.where} ${entry.pattern}: ${cause instanceof Error ? cause.message : String(cause)}`,
-      ];
-    }
-  });
+  const uncompilable = patterns.flatMap((entry) =>
+    ["", "u", "v"].flatMap((flags) => {
+      try {
+        new RegExp(entry.pattern, flags);
+        return [];
+      } catch (cause: unknown) {
+        return [
+          `${entry.tool} ${entry.where} /${entry.pattern}/${flags}: ${cause instanceof Error ? cause.message : String(cause)}`,
+        ];
+      }
+    }),
+  );
   expect(uncompilable).toEqual([]);
+
+  // DeepSeek rejects the short NUL escape even though V8 accepts it in all
+  // three modes. Schema compilation must not hide that interchange failure.
+  expect(patterns.filter(({ pattern }) => pattern.includes("\\0"))).toEqual([]);
+  expect(patterns.some(({ pattern }) => pattern.includes("\\u0000"))).toBe(
+    true,
+  );
 });

@@ -5,7 +5,7 @@ import { z } from "zod";
 export const localPathStringSchema = z
   .string()
   .min(1)
-  .regex(/^[^\0]*$/u, "Local filesystem paths cannot contain NUL");
+  .regex(/^[^\u0000]*$/u, "Local filesystem paths cannot contain NUL");
 
 /** True when the value is an absolute filesystem path on the host platform. */
 export const isAbsoluteLocalPath = (value: string): boolean =>
