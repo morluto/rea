@@ -375,6 +375,93 @@ describe("JavaScript export matching uncertain projections", () => {
   );
 });
 
+describe("JavaScript export localized mutation uncertainty", () => {
+  it.each([
+    {
+      initializer: '{ kind: "result", count: 1 }',
+      mutation: "delete result.count;",
+      uncertain: "/count",
+      right: '{ kind: "result", total: 1 }',
+      added: "/total",
+    },
+    {
+      initializer: '{ kind: "result" }',
+      mutation: "result.count = query();",
+      uncertain: "/count",
+      right: '{ kind: "result", total: 1 }',
+      added: "/total",
+    },
+    {
+      initializer: '{ kind: "result" }',
+      mutation: "delete result.count;",
+      uncertain: "/count",
+      right: '{ kind: "result", total: 1 }',
+      added: "/total",
+    },
+    {
+      initializer: '{ kind: "result", nested: {} }',
+      mutation: "result.nested.count = query();",
+      uncertain: "/nested/count",
+      right: '{ kind: "result", nested: { total: 1 } }',
+      added: "/nested/total",
+    },
+    {
+      initializer: '{ kind: "result", items: [] }',
+      mutation: "result.items[1] = query();",
+      uncertain: "/items/1",
+      right: '{ kind: "result", items: [,,1] }',
+      added: "/items/2",
+    },
+    {
+      initializer: '{ kind: "result", items: [] }',
+      mutation: "delete result.items[1];",
+      uncertain: "/items/1",
+      right: '{ kind: "result", items: [,,1] }',
+      added: "/items/2",
+    },
+    {
+      initializer: '{ kind: "result", items: [] }',
+      mutation: "result.items[1000000000] = query();",
+      uncertain: "/items/1000000000",
+      right: '{ kind: "result", items: [,,1] }',
+      added: "/items/2",
+    },
+  ])(
+    "localizes $mutation without losing sibling absence",
+    async ({ initializer, mutation, uncertain, right, added }) => {
+      const graphs = await analyzeSources({
+        left: `export default function make() {
+          const result = ${initializer};
+          ${mutation}
+          return result;
+        }`,
+        right: `export default () => (${right});`,
+      });
+      const result = compare(...graphs);
+      expect(result.changes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: uncertain,
+            status: "unknown",
+            presence: { left: "unknown-coverage", right: "absent" },
+          }),
+          expect.objectContaining({
+            path: added,
+            status: "added",
+            presence: { left: "absent", right: "present" },
+          }),
+        ]),
+      );
+      expect(result.summary).toEqual({
+        added: 1,
+        removed: 0,
+        changed: 0,
+        unknown: 1,
+      });
+    },
+  );
+});
+
 describe("JavaScript export property presence boundaries", () => {
   it("normalizes omitted legacy presence before comparing identical literals and unions", async () => {
     const source =
@@ -430,38 +517,6 @@ describe("JavaScript export property presence boundaries", () => {
       expect(result.changes).toEqual([]);
       expect(result.coverage.status).toBe("complete-within-inputs");
     }
-  });
-
-  it("localizes mutation uncertainty while preserving sibling absence", async () => {
-    const graphs = await analyzeSources({
-      left: `export default function make() {
-        const result = { kind: "result", count: 1 };
-        delete result.count;
-        return result;
-      }`,
-      right: 'export default () => ({ kind: "result", total: 1 });',
-    });
-    const result = compare(...graphs);
-    expect(result.changes).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          path: "/count",
-          status: "unknown",
-          presence: { left: "unknown-coverage", right: "absent" },
-        }),
-        expect.objectContaining({
-          path: "/total",
-          status: "added",
-          presence: { left: "absent", right: "present" },
-        }),
-      ]),
-    );
-    expect(result.summary).toEqual({
-      added: 1,
-      removed: 0,
-      changed: 0,
-      unknown: 1,
-    });
   });
 
   it("proves absence beyond literal holes while retaining unknown spread coverage", async () => {

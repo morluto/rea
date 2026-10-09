@@ -275,6 +275,13 @@ const flattenValue = (
         value.itemPresence?.[index] ?? "present",
       ),
     );
+    // Sparse mutation metadata retains uncertain slots without expanding arrays.
+    for (const [index, itemPresence] of Object.entries(
+      value.itemPresence ?? {},
+    )) {
+      if (Number(index) < value.items.length) continue;
+      flattenValue(value, `${path}/${index}`, fields, coverage, itemPresence);
+    }
     return;
   }
   fields.push({
