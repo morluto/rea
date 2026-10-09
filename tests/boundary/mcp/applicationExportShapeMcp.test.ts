@@ -12,6 +12,7 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { javaScriptExportShapeComparisonResultSchema } from "../../../src/domain/javascript/javascriptExportShapeComparisonSchemas.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { APPLICATION_TOOL_CONTRACTS } from "../../../src/contracts/applicationToolContracts.js";
+import { JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE } from "../../../src/contracts/javascript/javascriptExportShapeComparisonExample.js";
 
 it("executes the advertised export presence example with matching analyzed Evidence", async () => {
   const contract = APPLICATION_TOOL_CONTRACTS.find(
@@ -26,6 +27,14 @@ it("executes the advertised export presence example with matching analyzed Evide
     throw new Error("Missing advertised presence example");
   const { client, close } = await createApplicationMcpHarness();
   onTestFinished(close);
+  const listing = await client.listTools();
+  const advertised = listing.tools.find(
+    ({ name }) => name === "compare_javascript_export_shapes",
+  );
+  const examples = z.array(z.unknown()).parse(advertised?.inputSchema.examples);
+  expect(new Set(examples.map((input) => JSON.stringify(input))).size).toBe(
+    examples.length,
+  );
   const response = await client.callTool({
     name: "compare_javascript_export_shapes",
     arguments: example.input,
@@ -64,6 +73,47 @@ it("executes the advertised export presence example with matching analyzed Evide
       ]),
     },
   });
+});
+
+it("traces example semantic modules with their parsed artifact digests", async () => {
+  const { client, close } = await createApplicationMcpHarness();
+  onTestFinished(close);
+  for (const application of [
+    JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE.left,
+    JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE.right,
+  ]) {
+    const analysis = javascriptApplicationAnalysisResultSchema.parse(
+      application.normalized_result,
+    );
+    const module = analysis.semantic_graph.nodes.find(
+      ({ kind }) => kind === "module",
+    );
+    if (module === undefined || !module.evidence.artifact.available)
+      throw new Error("Example must retain an artifact-backed semantic module");
+    const response = await client.callTool({
+      name: "trace_javascript_semantics",
+      arguments: {
+        application,
+        query: {
+          seed: { kind: "semantic-node", node_id: module.node_id },
+          direction: "ownership",
+        },
+      },
+    });
+    expect(response.isError).not.toBe(true);
+    expect(response.structuredContent).toMatchObject({
+      result: {
+        nodes: expect.arrayContaining([
+          expect.objectContaining({
+            node_id: module.node_id,
+            identity: expect.objectContaining({
+              artifact_sha256: module.evidence.artifact.sha256,
+            }),
+          }),
+        ]),
+      },
+    });
+  }
 });
 
 describe("application workflow MCP parity", () => {

@@ -161,7 +161,8 @@ export const APPLICATION_TOOL_CONTRACTS = [
     outputSchema: exportShapeComparisonOutputSchema,
     examples: [
       {
-        title: "Compare one exact parser export without execution",
+        title:
+          "Report observed return-property presence when static values stay unknown",
         input: JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE,
       },
       {
@@ -175,11 +176,6 @@ export const APPLICATION_TOOL_CONTRACTS = [
             JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE.right.evidence_id,
           ),
         },
-      },
-      {
-        title:
-          "Report observed return-property presence when static values stay unknown",
-        input: JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE,
       },
     ],
   },

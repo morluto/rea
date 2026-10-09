@@ -186,7 +186,7 @@ const exampleEvidence = (property: "count" | "total") => {
   const module = createJavaScriptSemanticGraphNode({
     kind: "module",
     identity: {
-      artifact_sha256: metadata.root_artifact_sha256,
+      artifact_sha256: artifact.sha256,
       module_path: modulePath,
       source_range: null,
       role_key: "example-module",
