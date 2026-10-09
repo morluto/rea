@@ -145,7 +145,10 @@ setup writes a `type: "stdio"` entry under `mcpServers.rea` in the user-level
 `~/.pi/agent/mcp.json` and installs the bundled skill under `~/.agents/skills`.
 Use `rea setup --client pi --dry-run --json` to inspect the plan, then
 `rea setup --client pi --yes --json` to approve it. Check the registration with
-`rea doctor --client pi --json`.
+`rea doctor --client pi --json`. Pi reads `mcp.json` as strict JSON, like its
+own loader: comments, trailing commas, a byte-order mark, or an empty existing
+file are invalid, and setup reports them instead of rewriting the file. Repair
+such a file to plain JSON first, then rerun setup.
 
 Setup follows Pi's `PI_CODING_AGENT_DIR`: unset or empty selects the default;
 `~` and `~/` expand to the home directory; absolute paths and file URLs select

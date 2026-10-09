@@ -2,10 +2,13 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { parse as parseJsonc } from "jsonc-parser";
 
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
-import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
+import { parseClientConfiguration } from "../../../src/application/ClientConfigurationDocument.js";
+import {
+  configureClientConfiguration,
+  inspectClientConfiguration,
+} from "../../../src/application/SetupClientConfiguration.js";
 import { detectClients } from "../../../src/application/SetupHost.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
 import { systemUninstallHost } from "../../../src/application/Uninstall.js";
@@ -127,9 +130,9 @@ const piClient = async () => {
 describe("Pi registration semantics", () => {
   it("preserves unrelated content and OMP-only lists during setup, repeat, and uninstall", async () => {
     const { home, client } = await piClient();
-    const original = `{
-  // Keep personal configuration.
-  "autoEnableCodemode": false,
+    // Pi loads mcp.json with strict JSON, so the retained unrelated settings
+    // are valid strict JSON rather than the commented JSONC fixture.
+    const original = `{"autoEnableCodemode": false,
   "mcpServers": { "other": { "command": "other-server" } },
   "enabledServers": ["other"],
   "disabledServers": ["rea", "other"]
@@ -142,8 +145,7 @@ describe("Pi registration semantics", () => {
       original,
     );
     const configured = await readFile(client.configPath, "utf8");
-    expect(configured).toContain("// Keep personal configuration.");
-    expect(parseJsonc(configured)).toEqual({
+    expect(JSON.parse(configured)).toEqual({
       autoEnableCodemode: false,
       mcpServers: {
         other: { command: "other-server" },
@@ -170,9 +172,9 @@ describe("Pi registration semantics", () => {
     expect((await systemUninstallHost(home).removeClient(client)).status).toBe(
       "removed",
     );
-    const removed = await readFile(client.configPath, "utf8");
-    expect(removed).toContain("// Keep personal configuration.");
-    expect(parseJsonc(removed)).toEqual(parseJsonc(original));
+    expect(JSON.parse(await readFile(client.configPath, "utf8"))).toEqual(
+      JSON.parse(original),
+    );
     expect(await readFile(`${client.configPath}.rea.backup`, "utf8")).toBe(
       original,
     );
@@ -212,4 +214,120 @@ describe("Pi registration semantics", () => {
       });
     },
   );
+});
+
+describe("Pi strict JSON parsing", () => {
+  it.each([
+    [
+      "a comment",
+      `{ // Pi loads strict JSON only\n"mcpServers": { "other": { "command": "other" } }\n}\n`,
+    ],
+    [
+      "a trailing comma",
+      `{"mcpServers": { "other": { "command": "other" }, },}\n`,
+    ],
+    [
+      "a BOM before valid JSON",
+      `\uFEFF{"mcpServers": { "other": { "command": "other" } }}\n`,
+    ],
+    ["empty text", ""],
+    ["whitespace only", "\n \t\r\n"],
+    ["a BOM only", "\uFEFF"],
+  ])(
+    "rejects an existing Pi configuration with %s before any mutation",
+    async (_description, original) => {
+      const { home, client } = await piClient();
+      await writeFile(client.configPath, original);
+      expect(() => parseClientConfiguration(original, "pi")).toThrow();
+      expect(
+        await inspectClientConfiguration(client, {}, NPX_REGISTRATION_COMMAND),
+      ).toMatchObject({ status: "invalid" });
+      expect(
+        await configureClientConfiguration(
+          client,
+          {},
+          NPX_REGISTRATION_COMMAND,
+        ),
+      ).toEqual({ status: "failed", reason: "readback" });
+      expect(await readFile(client.configPath, "utf8")).toBe(original);
+      await expect(
+        readFile(`${client.configPath}.rea.backup`),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      expect(
+        (
+          await readClientRegistrationStatuses(home, undefined, {
+            environment: {},
+          })
+        ).find(({ client: name }) => name === "pi"),
+      ).toMatchObject({ state: "invalid" });
+      expect(
+        await systemUninstallHost(home).removeClient(client),
+      ).toMatchObject({
+        name: "pi",
+        status: "failed",
+        detail: expect.stringContaining("not valid JSON"),
+      });
+      expect(await readFile(client.configPath, "utf8")).toBe(original);
+      await expect(
+        readFile(`${client.configPath}.rea.backup`),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
+
+  it("initializes a missing Pi configuration as valid strict JSON without a backup", async () => {
+    const { home, client } = await piClient();
+    await expect(readFile(client.configPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(
+      await inspectClientConfiguration(client, {}, NPX_REGISTRATION_COMMAND),
+    ).toEqual({ status: "create" });
+    expect(
+      await configureClientConfiguration(client, {}, NPX_REGISTRATION_COMMAND),
+    ).toMatchObject({ status: "configured" });
+    const created = await readFile(client.configPath, "utf8");
+    expect(() => JSON.parse(created)).not.toThrow();
+    expect(JSON.parse(created)).toEqual({
+      mcpServers: {
+        rea: {
+          type: "stdio",
+          command: "npx",
+          args: NPX_REGISTRATION_COMMAND.slice(1),
+        },
+      },
+    });
+    await expect(
+      readFile(`${client.configPath}.rea.backup`),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    expect(
+      await configureClientConfiguration(client, {}, NPX_REGISTRATION_COMMAND),
+    ).toEqual({ status: "unchanged" });
+    expect(await readFile(client.configPath, "utf8")).toBe(created);
+    expect(
+      (
+        await readClientRegistrationStatuses(home, undefined, {
+          environment: {},
+        })
+      ).find(({ client: name }) => name === "pi"),
+    ).toMatchObject({ state: "aligned" });
+    expect(await systemUninstallHost(home).removeClient(client)).toMatchObject({
+      name: "pi",
+      status: "removed",
+    });
+    expect(JSON.parse(await readFile(client.configPath, "utf8"))).toEqual({
+      mcpServers: {},
+    });
+  });
+
+  it("keeps JSONC tolerance for other dialects while Pi rejects the same text", () => {
+    const jsonc = `\uFEFF{\n  // A comment Pi rejects but OpenCode keeps.\n  "mcp": { "other": { "type": "local" }, },\n}\n`;
+    expect(parseClientConfiguration(jsonc, "opencode").servers).toEqual({
+      other: { type: "local" },
+    });
+    expect(parseClientConfiguration("", "opencode").document).toEqual({});
+    expect(parseClientConfiguration("\uFEFF", "opencode").document).toEqual({});
+    expect(() => parseClientConfiguration(jsonc, "pi")).toThrow();
+    expect(() => parseClientConfiguration("", "pi")).toThrow();
+    expect(() => parseClientConfiguration("\uFEFF", "pi")).toThrow();
+  });
 });

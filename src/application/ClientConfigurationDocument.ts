@@ -93,6 +93,10 @@ const parseDocument = (
 ): Record<string, unknown> => {
   if (format === "toml" || format === "grok")
     return objectSchema.parse(parseToml(text));
+  // Pi loads `mcp.json` with a strict `JSON.parse` and no BOM tolerance, so
+  // comments, trailing commas, a BOM, or an empty existing file must be
+  // rejected instead of registering into a document Pi cannot load.
+  if (format === "pi") return objectSchema.parse(JSON.parse(text));
   // An empty file, which some clients create before any server is added,
   // holds no settings to preserve.
   if (isEmptyClientConfigurationText(text)) return {};
