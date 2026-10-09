@@ -52,6 +52,18 @@ const cases: readonly {
     rejectedTarget: "./../outside.cjs",
   },
   {
+    name: "extensionless target is not completed with an extension",
+    exports: "./actual",
+    expected: null,
+    nodeError: "MODULE_NOT_FOUND",
+  },
+  {
+    // Node reports ERR_UNSUPPORTED_DIR_IMPORT for import, MODULE_NOT_FOUND for require.
+    name: "directory target does not load its index",
+    exports: "./folder",
+    expected: null,
+  },
+  {
     name: "top-level array skips an invalid target",
     exports: ["./../outside.cjs", "./actual.cjs"],
     expected: "node_modules/fixture/actual.cjs",
@@ -166,6 +178,7 @@ it.each(
           "node_modules/fixture/node_modules/actual.cjs",
           "node_modules/fixture/node_modules.cjs",
           "node_modules/fixture/literal%2e.cjs",
+          "node_modules/fixture/folder/index.js",
         ].map((path) => [path, `module.exports = ${JSON.stringify(path)};`]),
       ),
     };

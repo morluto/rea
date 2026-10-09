@@ -105,8 +105,11 @@ const resolvePackagePath = (
         ],
       },
     );
-  const resolved =
-    mode === "files-and-index"
+  // An exports target names one exact file; Node tries no extension or index.
+  const resolved = exportsTargetUrl
+    ? (resolveFileCandidates(input, [confined]) ??
+      exactExportsTargetNotFound(confined))
+    : mode === "files-and-index"
       ? (resolveFileCandidates(input, [
           ...fileCandidates(confined),
           ...indexCandidates(confined),
@@ -616,6 +619,14 @@ const notFoundCandidate = (): CandidateResolution => ({
   status: "not-found",
   limitations: [
     "No extension, directory package, or index candidate exists in the inventoried artifact container.",
+  ],
+});
+
+const exactExportsTargetNotFound = (path: string): CandidateResolution => ({
+  resolvedPath: null,
+  status: "not-found",
+  limitations: [
+    `The selected package exports target ${path} does not exist in the inventoried artifact container; exports targets are exact files, so no extension or directory index was tried.`,
   ],
 });
 
