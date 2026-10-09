@@ -370,6 +370,7 @@ const completeCapture = async (options: {
       scenario.settle_ms,
       options.recordEvent,
       options.hostPlatform,
+      options.signal,
     );
   } catch (cause: unknown) {
     options.observationBuffer.settlement = {

@@ -145,6 +145,41 @@ describe("owned process-group cleanup validation: ownership and lineage", () => 
 });
 
 describe("owned process-group cleanup validation: exited members", () => {
+  it("preserves cancellation during process-table observation instead of reporting unverifiable ownership", async () => {
+    const controller = new AbortController();
+    const reason = new Error("cancelled process observation");
+    const adapter: ProcessOwnershipHost = {
+      listProcesses: async (signal) => {
+        controller.abort(reason);
+        signal?.throwIfAborted();
+        return [];
+      },
+      environment: () => Promise.resolve({}),
+      signalGroup: () => {
+        throw new Error("Observation must never signal processes");
+      },
+    };
+    await expect(
+      observeOwnedProcessGroup(ownership, adapter, controller.signal),
+    ).rejects.toBe(reason);
+  });
+  it("does not inspect a process group after observation was cancelled", async () => {
+    const controller = new AbortController();
+    const reason = new Error("already cancelled observation");
+    controller.abort(reason);
+    const adapter: ProcessOwnershipHost = {
+      listProcesses: () => {
+        throw new Error("Cancelled observation must not inspect processes");
+      },
+      environment: () => Promise.resolve({}),
+      signalGroup: () => {
+        throw new Error("Observation must never signal processes");
+      },
+    };
+    await expect(
+      observeOwnedProcessGroup(ownership, adapter, controller.signal),
+    ).rejects.toBe(reason);
+  });
   it("ignores exited zombie members during live ownership checks", async () => {
     const environment = vi.fn((pid: number) =>
       Promise.resolve(pid === 101 ? {} : { REA_PROCESS_RUN_ID: "run-token" }),

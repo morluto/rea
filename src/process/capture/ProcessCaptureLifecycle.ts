@@ -3,6 +3,7 @@ import { constants, statSync, type BigIntStats } from "node:fs";
 import { open, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import type { IPty } from "@lydell/node-pty";
 
 import type {
@@ -530,7 +531,9 @@ export const observeSettlement = async (
   settleMs: number,
   recordEvent: RecordProcessCaptureEvent = () => undefined,
   platform: NodeJS.Platform = process.platform,
+  signal?: AbortSignal,
 ): Promise<ObservedProcessSettlement> => {
+  assertNotCancelled(signal);
   if (platform === "win32") {
     recordEvent("lifecycle", 1);
     return { state: "unverifiable", elapsed_ms: 0 };
@@ -539,15 +542,17 @@ export const observeSettlement = async (
   let consecutiveEmpty = 0;
   let deadlineReached = false;
   while (!deadlineReached) {
+    assertNotCancelled(signal);
     const observations = await Promise.all(
       [...new Set(processGroupIds)].map((processGroupId) =>
-        observeOwnedProcessGroup({
-          runId,
-          leaderPid: processGroupId,
-          processGroupId,
-        }),
+        observeOwnedProcessGroup(
+          { runId, leaderPid: processGroupId, processGroupId },
+          undefined,
+          signal,
+        ),
       ),
     );
+    assertNotCancelled(signal);
     if (observations.some(({ state }) => state === "unverifiable")) {
       recordEvent("lifecycle", 1);
       return { state: "unverifiable", elapsed_ms: Date.now() - started };
@@ -561,7 +566,7 @@ export const observeSettlement = async (
     } else consecutiveEmpty = 0;
     deadlineReached = Date.now() - started >= settleMs;
     if (deadlineReached) break;
-    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    await delay(50, undefined, { signal });
   }
   recordEvent("lifecycle", 1);
   return { state: "alive_at_deadline", elapsed_ms: Date.now() - started };

@@ -19,31 +19,36 @@ import type {
 export const observeOwnedProcessGroupWithHost = async (
   ownership: OwnedProcessGroup,
   host: ProcessOwnershipHost,
+  signal?: AbortSignal,
 ): Promise<ProcessGroupObservation> => {
+  signal?.throwIfAborted();
   let members: readonly ProcessTableEntry[];
   try {
-    members = (await host.listProcesses()).filter(
+    members = (await host.listProcesses(signal)).filter(
       ({ processGroupId }) => processGroupId === ownership.processGroupId,
     );
   } catch (cause: unknown) {
+    signal?.throwIfAborted();
     return {
       state: "unverifiable",
       reason: `process group could not be inspected: ${errorMessage(cause)}`,
     };
   }
+  signal?.throwIfAborted();
   const liveMembers = liveProcesses(members);
   if (liveMembers.length === 0) return { state: "empty" };
   for (const member of liveMembers) {
+    signal?.throwIfAborted();
     try {
-      if (
-        (await host.environment(member.pid)).REA_PROCESS_RUN_ID !==
-        ownership.runId
-      )
+      const runId = (await host.environment(member.pid)).REA_PROCESS_RUN_ID;
+      signal?.throwIfAborted();
+      if (runId !== ownership.runId)
         return {
           state: "unverifiable",
           reason: "process ownership did not match",
         };
     } catch (cause: unknown) {
+      signal?.throwIfAborted();
       if (!(await processIsGone(host, member.pid))) {
         return {
           state: "unverifiable",
@@ -438,8 +443,9 @@ export const prepareProcessOwnershipInspection = async (
 export const observeOwnedProcessGroup = async (
   ownership: OwnedProcessGroup,
   host: ProcessOwnershipHost = systemProcessOwnershipHost,
+  signal?: AbortSignal,
 ): Promise<ProcessGroupObservation> =>
-  observeOwnedProcessGroupWithHost(ownership, host);
+  observeOwnedProcessGroupWithHost(ownership, host, signal);
 
 /**
  * Record the live launcher and descendant lineage after run-token validation.

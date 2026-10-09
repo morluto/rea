@@ -47,6 +47,7 @@ export const isProcessCliFailure = (
 export const captureProcessScenarioFile = async (
   path: string,
   environment: Readonly<Record<string, string | undefined>> = process.env,
+  signal?: AbortSignal,
 ) => {
   try {
     const input = await readJson(path);
@@ -60,7 +61,7 @@ export const captureProcessScenarioFile = async (
       );
     const captured = await captureProcessScenario(
       parsed.data,
-      undefined,
+      signal,
       process.platform,
       environment,
     );
