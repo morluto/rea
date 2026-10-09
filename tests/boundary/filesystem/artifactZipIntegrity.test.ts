@@ -9,7 +9,31 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
+import { ZipArtifactReader } from "../../../src/artifacts/ZipArtifactReader.js";
 import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph.js";
+
+it("bounds a requested metadata read without rejecting the underlying valid ZIP", async () => {
+  const root = await createTestTempDirectory("rea-zip-metadata-budget-");
+  const path = join(root, "large-directory.zip");
+  const name = `${"a".repeat(8192)}.class`;
+  await writeOrderedZip(path, [name]);
+  const bounded = new ZipArtifactReader(path, "zip", 4096);
+  const control = new ZipArtifactReader(path, "zip");
+  const collect = async (reader: ZipArtifactReader): Promise<string[]> => {
+    const names: string[] = [];
+    for await (const entry of reader.entries()) names.push(entry.path);
+    return names;
+  };
+  try {
+    await expect(collect(bounded)).rejects.toMatchObject({
+      reason: "limit",
+      message: expect.stringContaining("4096-byte read budget"),
+    });
+    await expect(collect(control)).resolves.toEqual([name]);
+  } finally {
+    await Promise.all([bounded.close(), control.close()]);
+  }
+});
 
 it("rejects overlapping ZIP member data ranges through artifact inventory", async () => {
   const root = await createTestTempDirectory("rea-zip-overlap-");
@@ -65,6 +89,22 @@ it("preserves encrypted-member and corrupt-CRC observations", async () => {
       hash_status: "unavailable",
     }),
   );
+  // REA does not decrypt entries, so complete extraction is unsupported.
+  const extractionRoot = join(root, "encrypted-output");
+  expect(
+    await new ArtifactProvider()
+      .createClient(encryptedTarget.value)
+      .execute("extract_artifact", { output_root: extractionRoot }),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisUnsupportedTargetError",
+      reason: expect.stringContaining("Archive entry secret.txt is encrypted"),
+    },
+  });
+  await expect(readFile(extractionRoot)).rejects.toMatchObject({
+    code: "ENOENT",
+  });
 
   const corruptPath = join(root, "corrupt-crc.zip");
   const corruptWriter = new ZipWriter(new Uint8ArrayWriter());

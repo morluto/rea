@@ -3,6 +3,9 @@ name: Release
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
+    types: [closed]
   workflow_dispatch:
     inputs:
       release_branch:
@@ -20,7 +23,7 @@ env:
   HUSKY: "0"
 
 concurrency:
-  group: release-${{ inputs.release_branch || github.ref_name }}
+  group: release-${{ inputs.release_branch || github.event.pull_request.merge_commit_sha || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -37,6 +40,68 @@ jobs:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           target-branch: main
           skip-github-release: true
+
+  merged-release:
+    name: Release reviewed main merge
+    if: >-
+      github.event_name == 'pull_request' && github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'release-please--branches--main--')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      sha: ${{ steps.release.outputs.sha }}
+    steps:
+      - name: Check out reviewed release merge
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
+      - run: npm ci
+
+      - name: Validate reviewed merge before release creation
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          if [[ "${SOURCE_SHA}" != "${GITHUB_SHA}" ]]; then
+            echo "The reviewed merge differs from the workflow source; refusing mismatched publication provenance." >&2
+            exit 1
+          fi
+          node scripts/verify-release-checkpoint.mjs \
+            --phase publish --release-branch main --source-sha "$SOURCE_SHA"
+
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          target-branch: main
+          skip-github-release: false
+          skip-github-pull-request: true
+
+      - name: Bind publication to the reviewed merge
+        env:
+          RELEASE_CREATED: ${{ steps.release.outputs.release_created }}
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
+          SOURCE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          if [[ "${RELEASE_CREATED}" != true ]]; then
+            echo "Release Please did not create a release for the reviewed merge. Check its pending label and release metadata; for a partial publication, re-run failed jobs in the original run." >&2
+            exit 1
+          fi
+          if [[ "${RELEASE_SHA}" != "${SOURCE_SHA}" ]]; then
+            echo "The tagged release differs from the reviewed merge; refusing mismatched publication provenance. The GitHub release already exists; do not create another release as a retry." >&2
+            exit 1
+          fi
 
   release-please:
     name: Release Please
@@ -193,8 +258,11 @@ jobs:
 
   publish:
     name: Publish to npm
-    needs: release-please
-    if: inputs.phase == 'publish' && needs.release-please.outputs.release_created == 'true'
+    needs: [merged-release, release-please]
+    if: >-
+      always() && !cancelled() &&
+      ((needs.merged-release.result == 'success' && needs.merged-release.outputs.release_created == 'true') ||
+      (needs.release-please.result == 'success' && inputs.phase == 'publish' && needs.release-please.outputs.release_created == 'true'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -202,7 +270,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.release-please.outputs.sha }}
+          ref: ${{ needs.merged-release.outputs.sha || needs.release-please.outputs.sha }}
           persist-credentials: false
 
       - uses: actions/setup-node@v6
@@ -265,8 +333,11 @@ jobs:
 
   publish-mcp:
     name: Publish to MCP Registry
-    needs: [release-please, publish]
-    if: inputs.phase == 'publish' && needs.release-please.outputs.release_created == 'true' && needs.publish.result == 'success'
+    needs: [merged-release, release-please, publish]
+    if: >-
+      always() && !cancelled() && needs.publish.result == 'success' &&
+      ((needs.merged-release.result == 'success' && needs.merged-release.outputs.release_created == 'true') ||
+      (needs.release-please.result == 'success' && inputs.phase == 'publish' && needs.release-please.outputs.release_created == 'true'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -274,7 +345,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.release-please.outputs.sha }}
+          ref: ${{ needs.merged-release.outputs.sha || needs.release-please.outputs.sha }}
           persist-credentials: false
 
       - name: Verify package and registry metadata versions

@@ -17,6 +17,7 @@ const readmeLanguages = [
   { path: "README_th.md", label: "ไทย" },
   { path: "README_de.md", label: "Deutsch" },
   { path: "README_es.md", label: "Español" },
+  { path: "README_fr.md", label: "Français" },
   { path: "README_uk.md", label: "Українська" },
   { path: "README_pl.md", label: "Polski" },
   { path: "README_pt-BR.md", label: "Português (Brasil)" },

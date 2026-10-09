@@ -11,6 +11,7 @@ import {
   type ArtifactEntry,
   type ArtifactReader,
 } from "../ArtifactReader.js";
+import { abortIfNeeded } from "../ArtifactHash.js";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { SafeOutputTree } from "../SafeOutputTree.js";
 import { ZipArtifactReader } from "../ZipArtifactReader.js";
@@ -22,6 +23,7 @@ import {
   type ArtifactNode,
   type ArtifactOccurrence,
 } from "../../domain/artifactGraph.js";
+import { AnalysisUnsupportedTargetError } from "../../domain/analysisErrorCore.js";
 import type { BinaryTarget } from "../../domain/binaryTarget.js";
 import { scanArtifactInventory } from "../inventory/ArtifactInventory.js";
 
@@ -37,7 +39,10 @@ export const extractArtifact = async (
   input: ArtifactExtractionInput,
   signal?: AbortSignal,
 ): Promise<ArtifactExtractionResult> => {
+  // Cancellation wins over every later refusal, including unsupported formats.
+  abortIfNeeded(signal);
   const sourcePath = await realpath(input.inputPath);
+  await requireExtractableFormat(sourcePath, input);
   const snapshot = await scanArtifactInventory(sourcePath, {
     signal,
   });
@@ -65,15 +70,22 @@ export const extractArtifact = async (
     nodes,
   };
   const selected = selectedOccurrences.map((occurrence) => {
+    // REA never decrypts archive entries, so an encrypted entry makes the
+    // complete extraction unsupported rather than the archive invalid.
+    if (occurrence.encrypted)
+      throw new AnalysisUnsupportedTargetError(
+        "extract_artifact",
+        input.inputPath,
+        `Archive entry ${occurrence.logical_path} is encrypted; REA does not decrypt archive entries, so the archive cannot be extracted completely`,
+      );
     if (
       (occurrence.entry_kind !== "file" && occurrence.entry_kind !== "slice") ||
       occurrence.artifact_id === null ||
-      occurrence.encrypted ||
       occurrence.logical_path === "."
     )
       throw new ArtifactReaderFailure(
         "format",
-        `Selected occurrence is not an extractable regular child file: ${occurrence.occurrence_id}`,
+        `Selected occurrence is not an extractable regular child file: ${occurrence.logical_path} (${occurrence.occurrence_id})`,
       );
     const node = inventory.nodes.get(occurrence.artifact_id);
     if (node === undefined)
@@ -121,7 +133,7 @@ const materializeSelection = async ({
   const byPath = new Map(
     selected.map((item) => [item.occurrence.logical_path, item]),
   );
-  const reader = await createReader(sourcePath, input.inputFormat);
+  const reader = await createReader(sourcePath, input);
   const output = await SafeOutputTree.create(input.outputRoot);
   let readerClosed = false;
   const extracted: ExtractedOccurrence[] = [];
@@ -240,26 +252,48 @@ const collectNodes = (
     if (selected.has(item.artifact_id)) output.set(item.artifact_id, item);
 };
 
+const ZIP_FORMATS = ["ipa", "apk", "msix", "appx", "zip"] as const;
+
+const isZipFormat = (
+  format: BinaryTarget["format"],
+): format is (typeof ZIP_FORMATS)[number] =>
+  (ZIP_FORMATS as readonly string[]).includes(format);
+
+/**
+ * Refuse a format without an extraction reader before inventory work starts.
+ * The target kind, not the host, is unsupported by extraction. The error keeps
+ * the caller's spelling of the path; I/O uses the canonical path.
+ */
+const requireExtractableFormat = async (
+  path: string,
+  input: Pick<ArtifactExtractionInput, "inputPath" | "inputFormat">,
+): Promise<boolean> => {
+  const format = input.inputFormat;
+  const directory = (await lstat(path)).isDirectory();
+  if (
+    !directory &&
+    format !== "asar" &&
+    format !== "mach-o" &&
+    !isZipFormat(format)
+  )
+    throw new AnalysisUnsupportedTargetError(
+      "extract_artifact",
+      input.inputPath,
+      `Artifact format has no extraction reader: ${format}`,
+    );
+  return directory;
+};
+
 const createReader = async (
   path: string,
-  format: BinaryTarget["format"],
+  input: Pick<ArtifactExtractionInput, "inputPath" | "inputFormat">,
 ): Promise<ArtifactReader> => {
-  if ((await lstat(path)).isDirectory())
+  const format = input.inputFormat;
+  if (await requireExtractableFormat(path, input))
     return new DirectoryArtifactReader(path);
   if (format === "asar") return new AsarArtifactReader(path);
-  if (
-    format === "ipa" ||
-    format === "apk" ||
-    format === "msix" ||
-    format === "appx" ||
-    format === "zip"
-  )
-    return new ZipArtifactReader(path, format);
-  if (format === "mach-o") return new MachOSliceArtifactReader(path);
-  throw new ArtifactReaderFailure(
-    "unavailable",
-    `Artifact format has no extraction reader: ${format}`,
-  );
+  if (isZipFormat(format)) return new ZipArtifactReader(path, format);
+  return new MachOSliceArtifactReader(path);
 };
 
 const preflight = (entry: ArtifactEntry): void => {

@@ -17,6 +17,7 @@ import {
 import { nativeUiResultSchema } from "../../../src/domain/native/nativeUiObservation.js";
 import { processCaptureSchema } from "../../../src/domain/process/processCapture.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
+import { inlineLocalJsonSchemaReferences } from "../../fixtures/localJsonSchemaReferences.js";
 
 const record = (value: unknown): Record<string, unknown> => {
   if (typeof value !== "object" || value === null || Array.isArray(value))
@@ -66,7 +67,7 @@ it("advertises semantic output invariants and keeps producers aligned with Zod",
           : { $defs: outputSchema.$defs }),
       });
       return {
-        result,
+        result: record(inlineLocalJsonSchemaReferences(standaloneResultSchema)),
         validate: new Ajv2020({
           strict: false,
           validateFormats: false,

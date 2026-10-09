@@ -255,7 +255,7 @@ const lipoMatchesSlice = (
     reported.cpu_subtype_code !== null;
   return (
     (hasPhysicalIdentity || structurallyUnique) &&
-    reported.name === observed.architecture &&
+    lipoNameMatches(reported.name, observed.architecture) &&
     (reported.file_offset === null ||
       reported.file_offset === observed.slice_offset) &&
     (reported.size === null || reported.size === observed.slice_size) &&
@@ -268,6 +268,15 @@ const lipoMatchesSlice = (
       reported.alignment === 2 ** observed.fat_alignment_exponent)
   );
 };
+
+/**
+ * Newer lipo names an arm64e ABI variant `arm64e.<variant>` (for example
+ * `arm64e.v1` for pointer-auth ABI version 1). The FAT table names that slice
+ * `arm64e`; its physical identity is still compared field by field.
+ */
+const lipoNameMatches = (reported: string, observed: string): boolean =>
+  reported === observed ||
+  (observed === "arm64e" && /^arm64e\.[A-Za-z0-9_]+$/u.test(reported));
 
 const parseSliceKeyInteger = (value: string | undefined): number | null => {
   if (value === undefined || !/^\d+$/u.test(value)) return null;

@@ -7,6 +7,7 @@ import {
   chunkLookupKey,
   javascriptAnalysisCoverage,
   moduleLookupKey,
+  selfReferenceOmissions,
   type JavaScriptArtifactGraphContext,
   type JavaScriptArtifactGraphCoverage,
 } from "./JavaScriptArtifactGraphContext.js";
@@ -15,10 +16,11 @@ import {
   staticInferenceEvidence,
 } from "./JavaScriptArtifactGraphEvidence.js";
 
-/** Project Webpack/Rspack chunk and factory literals recovered from AST. */
+/** Project Webpack/Rspack AST literals and disclose unrepresentable relationships. */
 export const addJavaScriptBundlerNodes = (
   context: JavaScriptArtifactGraphContext,
-): void => {
+): readonly string[] => {
+  let selfAsyncChunks = 0;
   for (const analyzed of context.analysis.files) {
     const { file, javascript } = analyzed;
     const asset = context.assetNodes.get(file.path);
@@ -49,8 +51,14 @@ export const addJavaScriptBundlerNodes = (
       records.push({ file, registration, chunk, coverage });
       addBundlerModuleNodes(context, { ...input, chunk });
     }
-    for (const record of records) addBundlerRuntimeEdges(context, record);
+    for (const record of records)
+      selfAsyncChunks += addBundlerRuntimeEdges(context, record);
   }
+  return selfReferenceOmissions(
+    selfAsyncChunks,
+    ["bundler async-chunk reference", "bundler async-chunk references"],
+    "the requesting chunk",
+  );
 };
 
 interface BundlerProjectionInput {
@@ -177,7 +185,8 @@ interface BundlerGraphRecord {
 const addBundlerRuntimeEdges = (
   context: JavaScriptArtifactGraphContext,
   record: BundlerGraphRecord,
-): void => {
+): number => {
+  let selfAsyncChunks = 0;
   const { file, registration, chunk, coverage } = record;
   for (const moduleKey of registration.entry_module_keys) {
     const resolved = context.moduleNodes.get(
@@ -209,6 +218,10 @@ const addBundlerRuntimeEdges = (
   for (const chunkKey of registration.async_chunk_keys) {
     const lookup = chunkLookupKey(file.path, registration.runtime, chunkKey);
     const resolved = context.chunkNodes.get(lookup);
+    if (resolved?.node_id === chunk.node_id) {
+      selfAsyncChunks++;
+      continue;
+    }
     const target =
       resolved ?? unresolvedBundlerChunkNode(context, record, chunkKey);
     context.accumulator.addEdge({
@@ -232,6 +245,7 @@ const addBundlerRuntimeEdges = (
       }),
     });
   }
+  return selfAsyncChunks;
 };
 
 const unresolvedBundlerModuleNode = (

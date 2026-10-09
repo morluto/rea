@@ -12,6 +12,7 @@ import {
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { writeOrderedZip } from "../artifactEntryOrder.js";
 import { createTestTempDirectory } from "../temporaryDirectory.js";
+import { writeJadxJarInventory } from "./jadxJar.js";
 
 const fixture = fileURLToPath(new URL("./jadx-mcp.mjs", import.meta.url));
 
@@ -30,7 +31,7 @@ export const createJadxProtocolFixture = async (mode = "normal") => {
   );
   await chmod(java, 0o755);
   await writeOrderedZip(apk, ["AndroidManifest.xml", "classes.dex"]);
-  await writeFile(jar, "synthetic engine bytes; not a Java archive");
+  await writeJadxJarInventory(jar);
   const launches: {
     runId: string;
     cwd: string | undefined;

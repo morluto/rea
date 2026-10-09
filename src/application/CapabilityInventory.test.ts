@@ -48,6 +48,7 @@ const status = (
   options: {
     readonly open?: boolean;
     readonly kind?: "executable" | "database" | "archive" | "artifact";
+    readonly format?: string;
     readonly capabilities?: readonly {
       readonly operation: string;
       readonly available: boolean;
@@ -58,6 +59,7 @@ const status = (
 ) => ({
   open: options.open ?? false,
   ...(options.kind === undefined ? {} : { kind: options.kind }),
+  ...(options.format === undefined ? {} : { format: options.format }),
   capabilities: (options.capabilities ?? []).map((capability) => ({
     ...capability,
     availability_code: capability.available
@@ -234,6 +236,129 @@ describe("capability inventory: provider status", () => {
       available: false,
       reason: "provider_missing",
     });
+  });
+});
+
+describe("capability inventory: active-target operations", () => {
+  const ACTIVE_TARGET_TOOLS = [
+    "inspect_macho",
+    "inspect_signature",
+    "list_architectures",
+    "demangle_swift",
+    "inspect_artifact",
+    "extract_artifact",
+  ] as const;
+  const declared = (
+    names: readonly string[],
+    availability: {
+      readonly available: boolean;
+      readonly reason: string | null;
+    } = {
+      available: true,
+      reason: null,
+    },
+  ) => names.map((operation) => ({ operation, ...availability }));
+  const reasons = (
+    sessionStatus: ReturnType<typeof status>,
+    names: readonly string[],
+    policy = enabledPolicy,
+  ) =>
+    Object.fromEntries(
+      names.map((name) => [name, entry(name, sessionStatus, policy).reason]),
+    );
+
+  it("requires an open target even when the provider declares the operation", () => {
+    const closed = status({ capabilities: declared(ACTIVE_TARGET_TOOLS) });
+    for (const name of ACTIVE_TARGET_TOOLS)
+      expect(entry(name, closed)).toMatchObject({
+        available: false,
+        reason: "target_required",
+        remediation: expect.stringContaining("open_binary"),
+      });
+  });
+
+  it("keeps explicit-path operations available without a target", () => {
+    const explicitPath = [
+      "inspect_managed_artifact",
+      "inspect_binary_layout",
+      "inspect_recorded_crash",
+      "inspect_evm_interface",
+    ];
+    expect(
+      reasons(status(), explicitPath, {
+        ...enabledPolicy,
+        binaryLayoutEnabled: true,
+        recordedCrashEnabled: true,
+        evmInterfaceEnabled: true,
+      }),
+    ).toEqual(
+      Object.fromEntries(explicitPath.map((name) => [name, "available"])),
+    );
+  });
+
+  it("reserves Mach-O operations for an open Mach-O executable", () => {
+    const capabilities = declared(ACTIVE_TARGET_TOOLS);
+    const machO = status({
+      open: true,
+      kind: "executable",
+      format: "mach-o",
+      capabilities,
+    });
+    const zip = status({
+      open: true,
+      kind: "archive",
+      format: "zip",
+      capabilities,
+    });
+    const elf = status({
+      open: true,
+      kind: "executable",
+      format: "elf",
+      capabilities,
+    });
+    expect(reasons(machO, ACTIVE_TARGET_TOOLS)).toEqual(
+      Object.fromEntries(
+        ACTIVE_TARGET_TOOLS.map((name) => [name, "available"]),
+      ),
+    );
+    for (const target of [zip, elf])
+      expect(reasons(target, ACTIVE_TARGET_TOOLS)).toEqual({
+        inspect_macho: "target_unsupported",
+        inspect_signature: "available",
+        list_architectures: "target_unsupported",
+        demangle_swift: "available",
+        inspect_artifact: "available",
+        extract_artifact: "available",
+      });
+    expect(entry("inspect_macho", zip).remediation).toContain("Mach-O");
+  });
+
+  it("reports an unsupported host before asking for a target", () => {
+    const capabilities = declared(["inspect_macho"], {
+      available: false,
+      reason: "Native macOS utilities require macOS.",
+    }).map((capability) => ({
+      ...capability,
+      availability_code: "unsupported_host" as const,
+    }));
+    for (const sessionStatus of [
+      status({ capabilities }),
+      status({ open: true, kind: "archive", format: "zip", capabilities }),
+    ])
+      expect(entry("inspect_macho", sessionStatus)).toMatchObject({
+        reason: "unsupported_host",
+        remediation: "Native macOS utilities require macOS.",
+      });
+    const composed = capabilities.map((capability) => ({
+      ...capability,
+      operation: "inspect_native_dispatch_metadata",
+    }));
+    expect(
+      entry(
+        "inspect_native_dispatch_metadata",
+        status({ capabilities: composed }),
+      ).reason,
+    ).toBe("target_required");
   });
 });
 

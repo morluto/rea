@@ -25,7 +25,9 @@ __attribute__((noinline, used)) int rea_branch(int value) {
 
 __attribute__((noinline, used)) int rea_entry(void) {
   puts("REA_C_ENTRY");
-  return rea_branch(5);
+  /* Give the native locals oracle explicit stack storage. */
+  volatile int input = 5;
+  return rea_branch(input);
 }
 
 int main(void) { return rea_entry() == 12 ? 0 : 1; }

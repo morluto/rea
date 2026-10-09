@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { lstat, open, readlink, realpath } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { resolveTreePath } from "../../domain/apple/dyldPaths.js";
 import {
   dylibResolutionInputSchema,
@@ -13,10 +14,12 @@ import {
   type DylibTreeView,
   type MachoImageFacts,
 } from "../../domain/apple/dylibResolution.js";
+import { projectInputIssues } from "../../domain/inputIssueProjection.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { hasMachoMagic, readMachoImage } from "./MachoLoadCommandReader.js";
 
+const OPERATION = "trace_dylib_resolution";
 const HASH_CHUNK_BYTES = 1024 * 1024;
 
 /** Device, inode, size and change times of the file whose bytes were parsed. */
@@ -86,9 +89,10 @@ export const traceDylibResolution = async (options: {
 }): Promise<DylibResolutionResult> => {
   const parsed = dylibResolutionInputSchema.safeParse(options.parameters);
   if (!parsed.success)
-    throw new ArtifactReaderFailure(
-      "path",
-      "roots must be normalized paths relative to the analyzed root",
+    throw new AnalysisInputError(
+      OPERATION,
+      { cause: parsed.error },
+      projectInputIssues(parsed.error.issues, options.parameters),
     );
   // Canonicalization is inside the translated region: a revoked permission
   // keeps its reason and path.
@@ -105,7 +109,11 @@ export const traceDylibResolution = async (options: {
         : options.enumerateRoots
           ? await executableRoots(root, view, options.signal)
           : { roots: [target], unclassified: [] };
-    const roots = await requireMachoRoots(view, requested);
+    const roots = await requireMachoRoots(
+      view,
+      requested,
+      parsed.data.roots !== undefined,
+    );
     const trace = await traceDylibLoading(view, {
       roots,
       unclassified,
@@ -203,29 +211,35 @@ const compare = (left: string, right: string): number =>
 /**
  * Resolve each root segment by segment, as dependency candidates are, so a
  * symlink in an intermediate directory cannot lead outside the analyzed root.
+ * A root the caller selected that fails is an input error on that root; a
+ * root REA derived itself keeps reporting an artifact failure.
  */
 const requireMachoRoots = async (
   view: FilesystemTreeView,
   roots: readonly string[],
+  callerSelected: boolean,
 ): Promise<string[]> => {
   const resolved: string[] = [];
-  for (const path of roots) {
+  for (const [index, path] of roots.entries()) {
+    const reject = (
+      reason: "path" | "format",
+      message: string,
+    ): AnalysisInputError | ArtifactReaderFailure =>
+      callerSelected
+        ? new AnalysisInputError(OPERATION, undefined, [
+            { path: ["roots", index], reason: "invalid_value", message },
+          ])
+        : new ArtifactReaderFailure(reason, message);
     const lookup = await resolveTreePath(view, path);
     if (lookup.kind === "escapes")
-      throw new ArtifactReaderFailure(
-        "path",
-        `Root ${path} resolves outside the analyzed root`,
-      );
+      throw reject("path", `Root ${path} resolves outside the analyzed root`);
     if (lookup.kind !== "file")
-      throw new ArtifactReaderFailure(
+      throw reject(
         "path",
         `Root ${path} is not a regular file in the analyzed root`,
       );
     if ((await view.image(lookup.path)).status === "not-mach-o")
-      throw new ArtifactReaderFailure(
-        "format",
-        `Root ${path} is not a Mach-O image`,
-      );
+      throw reject("format", `Root ${path} is not a Mach-O image`);
     if (!resolved.includes(lookup.path)) resolved.push(lookup.path);
   }
   return resolved;

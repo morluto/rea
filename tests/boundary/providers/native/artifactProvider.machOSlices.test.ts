@@ -186,3 +186,72 @@ const lipoRunner = (stdout: string): NativeCommandRunner => ({
       }),
     ),
 });
+
+// Newer lipo names arm64e ABI variants `arm64e.<variant>`; the FAT table names
+// the same slice `arm64e`, and its physical identity must still match.
+describe("artifact Mach-O arm64e variant slices", () => {
+  const ARM64E_V1 = { type: 0x0100000c, subtype: 0x81000002 } as const;
+  const variantSlices = async (
+    cpu: { readonly type: number; readonly subtype: number },
+    lipo: (size: number) => string,
+  ) => {
+    const root = await createTestTempDirectory("rea-slices-arm64e-");
+    const binary = join(root, "fat");
+    const x86 = machoImage({ cpu: CPU.x86_64 });
+    const arm = machoImage({ cpu });
+    await writeFile(
+      binary,
+      fatImage([
+        { cpu: CPU.x86_64, bytes: x86 },
+        { cpu, bytes: arm },
+      ]),
+    );
+    const reader = new MachOSliceArtifactReader(
+      binary,
+      lipoRunner(
+        `architecture x86_64\n cputype CPU_TYPE_X86_64\n cpusubtype CPU_SUBTYPE_X86_64_ALL\n offset 4096\n size ${String(x86.length)}\n align 2^12 (4096)\n${lipo(arm.length)}`,
+      ),
+    );
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    return entries.map(({ path, byteOffset }) => [path, byteOffset]);
+  };
+
+  it.each([
+    [
+      "arm64e.v1",
+      " cputype CPU_TYPE_ARM64\n cpusubtype CPU_SUBTYPE_ARM64E\n capabilities PTR_AUTH_VERSION USERSPACE 1",
+    ],
+    [
+      "arm64e.x1",
+      " cputype CPU_TYPE_ARM64\n cpusubtype unknown arm64 cpusubtype",
+    ],
+  ])("accepts lipo's %s name for the FAT arm64e slice", async (name, cpu) => {
+    expect(
+      await variantSlices(
+        ARM64E_V1,
+        (size) =>
+          `architecture ${name}\n${cpu}\n offset 8192\n size ${String(size)}\n align 2^12 (4096)\n`,
+      ),
+    ).toEqual([
+      ["slices/x86_64", 4096],
+      [`slices/${name}`, 8192],
+    ]);
+  });
+
+  it.each([
+    ["a plain arm64 slice", CPU.arm64, "8192"],
+    ["a different offset", ARM64E_V1, "8193"],
+  ])(
+    "still rejects an arm64e variant name for %s",
+    async (_label, cpu, offset) => {
+      await expect(
+        variantSlices(
+          cpu,
+          (size) =>
+            `architecture arm64e.v1\n cputype CPU_TYPE_ARM64\n cpusubtype unknown arm64 cpusubtype\n offset ${offset}\n size ${String(size)}\n align 2^12 (4096)\n`,
+        ),
+      ).rejects.toMatchObject({ reason: "integrity" });
+    },
+  );
+});

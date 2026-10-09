@@ -310,6 +310,19 @@ host mount and the rest of `/tmp` remain unchanged; this fallback never invokes
 `sudo`. `rea doctor --provider hopper --json` reports the selected
 strategy and both host and effective mount facts.
 
+The supported Linux demo forwards additional launches into its existing
+application, even across private displays. REA therefore reserves one Linux
+Hopper application per user across cooperating REA processes. A competing
+CLI or MCP session receives the owning session ID before Hopper is launched,
+for both the same target and a different target. Switch targets through that
+MCP session, or close it before starting another session. Closing the owner
+releases the reservation. This does not attach to or claim ownership of
+manually opened Hopper applications.
+
+Stale lease recovery is serialized. If an interrupted recovery leaves its
+reservation directory, the diagnostic identifies that exact path. Stop REA
+sessions before removing that recovery directory and retrying.
+
 ### Launcher paths and troubleshooting
 
 On macOS, REA uses
@@ -560,8 +573,11 @@ rea uninstall --purge-data
 
 Uninstall preserves Hopper, Node.js, Evidence files, captures, unrelated skills
 and other MCP servers. Purging removes only REA's cache and state under
-`~/.rea`; malformed client configuration or purge-path symlinks stop the
-operation. See the [CLI guide](cli.md#output-and-exit-status) for exit statuses.
+`~/.rea`. A client configuration that is malformed, unreadable, or at an unsafe
+path stops the operation before anything is removed, and a client that fails
+while being updated stops the remaining removals. A purge path that is a
+symbolic link is retained and reported rather than followed. See the
+[CLI guide](cli.md#output-and-exit-status) for exit statuses.
 
 ## MCP Registry
 

@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, mkdir, rm, symlink } from "node:fs/promises";
+import {
+  access,
+  mkdtemp,
+  mkdir,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { Client } from "@modelcontextprotocol/client";
@@ -67,6 +74,8 @@ export async function verifyAndroidFailureRecovery({
     }
     const withoutJavaHome = { ...environment };
     delete withoutJavaHome.JAVA_HOME;
+    const invalidJar = join(root, "invalid.jar");
+    await writeFile(invalidJar, "not a Java archive");
     const environments = [
       {
         label: "JRE without compiler",
@@ -77,6 +86,12 @@ export async function verifyAndroidFailureRecovery({
         label: "missing java",
         env: { ...withoutJavaHome, PATH: empty },
         observation: "ENOENT",
+      },
+      {
+        label: "invalid engine archive with a working JDK",
+        env: { ...environment, REA_JADX_MCP_JAR: invalidJar },
+        observation: "Cannot inspect REA_JADX_MCP_JAR",
+        jarFailure: true,
       },
     ];
     if (process.platform === "darwin") {
@@ -114,8 +129,16 @@ export async function verifyAndroidFailureRecovery({
         JSON.stringify(failure).includes(scenario.observation),
         JSON.stringify(failure),
       );
-      assert.match(failure.message, /full JDK/u);
-      assert.match(failure.remediation.action, /java --list-modules/u);
+      assert.match(
+        failure.message,
+        scenario.jarFailure ? /REA_JADX_MCP_JAR/u : /full JDK/u,
+      );
+      assert.match(
+        failure.remediation.action,
+        scenario.jarFailure ? /jadx-headless-mcp/u : /java --list-modules/u,
+      );
+      if (scenario.jarFailure)
+        assert.doesNotMatch(failure.message, /Select a full JDK/u);
       assert.doesNotMatch(JSON.stringify(failure), /rea doctor/u);
       await verifyAndroidReadiness({
         entrypoint,

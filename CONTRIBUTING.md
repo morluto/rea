@@ -165,16 +165,14 @@ Describe the behavior change and verification performed in the pull request. Nev
 
 ## Maintainer release checklist
 
-Use the [checkpoint release guide](docs/releasing.md). Main pushes automatically
-refresh a release proposal with the next version and changelog. Keep this preview
-PR unmerged until it is superseded by the published release's metadata sync.
-Publication starts from an explicit `release/VERSION` branch cut at a recorded
-application commit. Manually prepare its bot PR, wait for its exact-head CI and
-review, merge into that frozen branch, and manually publish through the official
-Release workflow. Main pushes cannot publish packages. Both publishers build
-the exact SHA tagged by Release Please.
+Use the [release guide](docs/releasing.md). Main pushes automatically refresh a
+Release Please PR with the next version and changelog. Review its migration
+notes, wait for the current CI checks to pass, and merge it into main to publish.
+The Release workflow validates and tags that merge; both publishers build its
+exact SHA. Ordinary main pushes cannot publish packages. An optional manual
+`release/VERSION` checkpoint retains explicit preparation and publication.
 
 Keep new implementation commits on main for the next release. The workflow
 owns packaged-artifact verification, npm publication, the published CLI/MCP
-canary, and MCP Registry publication. Sync release metadata back to main after
-publication; see the guide for partial-publication recovery and verification.
+canary, and MCP Registry publication. Sync manual checkpoint metadata back to
+main after publication; see the guide for recovery and verification.

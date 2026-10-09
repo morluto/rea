@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmod, lstat, mkdir, realpath, rm } from "node:fs/promises";
+import { chmod, lstat, mkdir, realpath, rm, rmdir } from "node:fs/promises";
 import {
   createConnection,
   createServer,
@@ -23,7 +23,7 @@ export type HopperTargetLeaseAcquisition =
   | { readonly acquired: true; readonly lease: HopperTargetLease }
   | { readonly acquired: false; readonly owner: HopperTargetLeaseOwner };
 
-/** Shared private parent of per-target lease sockets; it outlives individual sessions. */
+/** Shared private parent of Hopper lease sockets; it outlives individual sessions. */
 export const HOPPER_TARGET_LEASE_DIRECTORY = join(
   "/tmp",
   `rea-hopper-${process.getuid?.() ?? 0}`,
@@ -37,8 +37,6 @@ export const acquireHopperTargetLease = async (input: {
   readonly runId: string;
   readonly directory?: string;
 }): Promise<HopperTargetLeaseAcquisition> => {
-  const directory = input.directory ?? HOPPER_TARGET_LEASE_DIRECTORY;
-  await ensureLeaseDirectory(directory);
   // The canonical path only derives the lease key; it never authorizes access.
   // Common expected `realpath` failures include a missing target or path
   // component (ENOENT, ENOTDIR), an unreadable component (EACCES), or a
@@ -49,48 +47,115 @@ export const acquireHopperTargetLease = async (input: {
   const targetPath = await realpath(input.targetPath).catch(() =>
     resolve(input.targetPath),
   );
+  return acquireLease({
+    ...input,
+    identity: {
+      targetPath,
+      targetKind: input.targetKind,
+      loaderArgs: input.loaderArgs,
+    },
+  });
+};
+
+/** Reserve the Linux demo's singleton application before it can forward a target to another owner. */
+export const acquireLinuxHopperApplicationLease = (input: {
+  readonly runId: string;
+  readonly directory?: string;
+}): Promise<HopperTargetLeaseAcquisition> =>
+  acquireLease({ ...input, identity: { application: "linux-hopper-demo" } });
+
+const acquireLease = async (input: {
+  readonly identity: Readonly<Record<string, unknown>>;
+  readonly runId: string;
+  readonly directory?: string;
+}): Promise<HopperTargetLeaseAcquisition> => {
+  const directory = input.directory ?? HOPPER_TARGET_LEASE_DIRECTORY;
+  await ensureLeaseDirectory(directory);
   const key = createHash("sha256")
-    .update(
-      JSON.stringify({
-        targetPath,
-        targetKind: input.targetKind,
-        loaderArgs: input.loaderArgs,
-      }),
-    )
+    .update(JSON.stringify(input.identity))
     .digest("hex")
     .slice(0, 32);
   const socketPath = join(directory, `${key}.sock`);
   const owner = { runId: input.runId, processId: process.pid };
+  const acquisition = await tryAcquireLease(socketPath, owner);
+  if (typeof acquisition !== "string") return acquisition;
 
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const server = createServer((socket) => sendOwner(socket, owner));
-    const bound = await bind(server, socketPath);
-    if (bound) {
-      await chmod(socketPath, 0o600);
-      let released = false;
-      return {
-        acquired: true,
-        lease: {
-          release: async () => {
-            if (released) return;
-            released = true;
-            await closeServer(server);
-            await rm(socketPath, { force: true });
-          },
-        },
-      };
+  // Serialize stale cleanup through the replacement bind: otherwise two
+  // recoverers can unlink the socket that one of them has just acquired.
+  const recoveryPath = `${socketPath}.recovery`;
+  await reserveRecovery(recoveryPath);
+  let recovered: HopperTargetLeaseAcquisition | "missing" | "stale" | undefined;
+  try {
+    recovered = await tryAcquireLease(socketPath, owner);
+    if (recovered === "stale") await rm(socketPath, { force: true });
+    if (typeof recovered === "string")
+      recovered = await tryAcquireLease(socketPath, owner);
+    if (typeof recovered !== "string") return recovered;
+    throw new HopperStartError({
+      userMessage:
+        "REA could not reserve Hopper for this request. Close competing REA sessions and retry.",
+    });
+  } finally {
+    try {
+      await rmdir(recoveryPath);
+    } catch (cause: unknown) {
+      if (typeof recovered !== "string" && recovered?.acquired)
+        await recovered.lease.release();
+      throw new HopperStartError({
+        cause,
+        userMessage: `REA could not remove its Hopper recovery directory at ${JSON.stringify(recoveryPath)}. Check this directory's write access before retrying.`,
+      });
     }
-
-    const existingOwner = await readOwner(socketPath);
-    if (existingOwner !== undefined)
-      return { acquired: false, owner: existingOwner };
-    await rm(socketPath, { force: true });
   }
+};
 
-  throw new HopperStartError({
-    userMessage:
-      "REA could not reserve this Hopper target. Close competing REA sessions and retry.",
-  });
+const reserveRecovery = async (recoveryPath: string): Promise<void> => {
+  try {
+    await mkdir(recoveryPath, { mode: 0o700 });
+  } catch (cause: unknown) {
+    const busy =
+      typeof cause === "object" &&
+      cause !== null &&
+      Reflect.get(cause, "code") === "EEXIST";
+    throw new HopperStartError({
+      cause,
+      userMessage: busy
+        ? `REA could not reserve Hopper lease recovery at ${JSON.stringify(recoveryPath)}; the existing socket was left unchanged. Retry after concurrent startup finishes. If recovery was interrupted, stop REA sessions and remove this recovery directory before retrying.`
+        : `REA could not create its Hopper recovery directory at ${JSON.stringify(recoveryPath)}; the existing socket was left unchanged. Check the parent directory's write access before retrying.`,
+    });
+  }
+};
+
+const tryAcquireLease = async (
+  socketPath: string,
+  owner: HopperTargetLeaseOwner,
+): Promise<HopperTargetLeaseAcquisition | "missing" | "stale"> => {
+  const server = createServer((socket) => sendOwner(socket, owner));
+  if (!(await bind(server, socketPath))) {
+    const existingOwner = await readOwner(socketPath);
+    return typeof existingOwner === "string"
+      ? existingOwner
+      : { acquired: false, owner: existingOwner };
+  }
+  try {
+    await chmod(socketPath, 0o600);
+  } catch (cause: unknown) {
+    await closeServer(server);
+    throw cause;
+  }
+  let released = false;
+  return {
+    acquired: true,
+    lease: {
+      release: async () => {
+        if (released) return;
+        released = true;
+        // Node removes a bound Unix socket on close. A second unlink here
+        // could remove a new owner's socket bound after that close.
+        await closeServer(server);
+      },
+    },
+  };
 };
 
 const ensureLeaseDirectory = async (directory: string): Promise<void> => {
@@ -139,15 +204,29 @@ const sendOwner = (socket: Socket, owner: HopperTargetLeaseOwner): void => {
 
 const readOwner = (
   socketPath: string,
-): Promise<HopperTargetLeaseOwner | undefined> =>
-  new Promise((resolveOwner) => {
+): Promise<HopperTargetLeaseOwner | "missing" | "stale"> =>
+  new Promise((resolveOwner, rejectOwner) => {
     const socket = createConnection(socketPath);
     let response = "";
-    const timer = setTimeout(() => {
+    let settled = false;
+    const fail = (reason: string, cause?: unknown): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       socket.destroy();
-      resolveOwner(undefined);
-    }, 250);
-    const finish = (owner: HopperTargetLeaseOwner | undefined): void => {
+      rejectOwner(
+        new HopperStartError({
+          cause,
+          userMessage: `REA could not verify the existing Hopper lease (${reason}); it was left unchanged. Retry when the owning REA session is responsive.`,
+        }),
+      );
+    };
+    const timer = setTimeout(() => fail("owner response timed out"), 250);
+    const finish = (
+      owner: HopperTargetLeaseOwner | "missing" | "stale",
+    ): void => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       socket.destroy();
       resolveOwner(owner);
@@ -158,24 +237,34 @@ const readOwner = (
       if (newline < 0) return;
       const parsed = safeParseJson(response.slice(0, newline));
       if (!parsed.ok) {
-        finish(undefined);
+        fail("malformed owner response");
         return;
       }
       const value: unknown = parsed.value;
+      const runId =
+        typeof value === "object" && value !== null
+          ? Reflect.get(value, "runId")
+          : undefined;
+      const processId =
+        typeof value === "object" && value !== null
+          ? Reflect.get(value, "processId")
+          : undefined;
       if (
-        typeof value === "object" &&
-        value !== null &&
-        typeof Reflect.get(value, "runId") === "string" &&
-        typeof Reflect.get(value, "processId") === "number"
+        typeof runId === "string" &&
+        runId.length > 0 &&
+        typeof processId === "number" &&
+        Number.isSafeInteger(processId) &&
+        processId > 0
       )
-        finish({
-          runId: Reflect.get(value, "runId") as string,
-          processId: Reflect.get(value, "processId") as number,
-        });
-      else finish(undefined);
+        finish({ runId, processId });
+      else fail("invalid owner identity");
     });
-    socket.on("error", () => finish(undefined));
-    socket.on("end", () => finish(undefined));
+    socket.on("error", (cause: NodeJS.ErrnoException) => {
+      if (cause.code === "ENOENT") finish("missing");
+      else if (cause.code === "ECONNREFUSED") finish("stale");
+      else fail(cause.code ?? "owner connection failed", cause);
+    });
+    socket.on("end", () => fail("owner closed without a complete response"));
   });
 
 const closeServer = (server: Server): Promise<void> =>

@@ -306,6 +306,21 @@ export const linkElectronRoleToAsset = (
   });
 };
 
+/**
+ * Disclose relationships omitted because they resolved to their own source;
+ * the application graph forbids self-referential edges.
+ */
+export const selfReferenceOmissions = (
+  count: number,
+  noun: readonly [singular: string, plural: string],
+  owner: string,
+): string[] =>
+  count === 0
+    ? []
+    : [
+        `${String(count)} ${count === 1 ? noun[0] : noun[1]} resolved back to ${owner} itself and ${count === 1 ? "was" : "were"} omitted; application graph edges cannot be self-referential.`,
+      ];
+
 /** Deterministic key for one recovered module inside a bundle asset. */
 export const moduleLookupKey = (path: string, moduleKey: string): string =>
   `${path}\0${moduleKey}`;

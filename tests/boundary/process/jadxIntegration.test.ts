@@ -13,6 +13,7 @@ import {
   createJadxProtocolFixture as setup,
   verifyJadxFixtureCleanup as verifyCleanup,
 } from "../../fixtures/android/jadx.js";
+import { writeJadxJarInventory } from "../../fixtures/android/jadxJar.js";
 
 const it = test.skipIf(process.platform === "win32");
 
@@ -104,7 +105,7 @@ it("retire sessions when APK bytes, engine bytes or JVM options change", async (
   const changed = await inspect();
   expect(changed.subject?.digest.sha256).not.toBe(first.subject?.digest.sha256);
   await verifyCleanup(launches.slice(0, 1));
-  await writeFile(jar, "new engine bytes");
+  await writeJadxJarInventory(jar, ["fixture/NewEngineMarker.class"]);
   await inspect();
   environment.JAVA_TOOL_OPTIONS = "-Xmx8g";
   environment._JAVA_OPTIONS = "-XX:+UseG1GC";

@@ -22,7 +22,13 @@ import {
 /** Normalized path below the analyzed root: no `.`/`..` or empty segments. */
 const ROOT_RELATIVE_PATH =
   /^(?!\/)(?!(?:.*\/)?\.{1,2}(?:\/|$))(?!.*\/\/)(?!.*\/$)[^\\\0]+$/u;
-const rootRelativePathSchema = z.string().min(1).regex(ROOT_RELATIVE_PATH);
+const rootRelativePathSchema = z
+  .string()
+  .min(1)
+  .regex(
+    ROOT_RELATIVE_PATH,
+    "Use a normalized path relative to the analyzed root, without a leading or trailing '/', '//', or '.' and '..' segments",
+  );
 
 /** Caller selection of process roots and one CPU slice. */
 export const dylibResolutionInputSchema = z.strictObject({

@@ -14,7 +14,10 @@ import type { ZipPackageFormat } from "../domain/zipPackageFormat.js";
 class NodeFileReader extends Reader<string> {
   #handle: FileHandle | undefined;
 
-  constructor(private readonly path: string) {
+  constructor(
+    private readonly path: string,
+    private readonly maximumReadBytes?: number,
+  ) {
     super(path);
   }
 
@@ -29,7 +32,16 @@ class NodeFileReader extends Reader<string> {
   ): Promise<Uint8Array> {
     const handle = this.#handle;
     if (handle === undefined) throw new Error("ZIP reader is not initialized");
-    const bytes = Buffer.alloc(Math.min(length, this.size - index));
+    const readBytes = Math.min(length, this.size - index);
+    if (
+      this.maximumReadBytes !== undefined &&
+      readBytes > this.maximumReadBytes
+    )
+      throw new ArtifactReaderFailure(
+        "limit",
+        `ZIP metadata read requires ${readBytes} bytes, exceeding the ${this.maximumReadBytes}-byte read budget`,
+      );
+    const bytes = Buffer.alloc(readBytes);
     const read = await handle.read(bytes, 0, bytes.length, index);
     return bytes.subarray(0, read.bytesRead);
   }
@@ -47,9 +59,14 @@ export class ZipArtifactReader implements ArtifactReader {
   readonly #reader: ZipReader<string>;
   readonly #entries = new Map<string, Entry>();
 
-  constructor(path: string, format: ZipPackageFormat) {
+  /** Optionally bound each metadata read before allocating its backing buffer. */
+  constructor(
+    path: string,
+    format: ZipPackageFormat,
+    maximumMetadataReadBytes?: number,
+  ) {
     this.format = format;
-    this.#source = new NodeFileReader(path);
+    this.#source = new NodeFileReader(path, maximumMetadataReadBytes);
     this.#reader = new ZipReader(this.#source, {
       checkSignature: true,
       checkOverlappingEntry: true,

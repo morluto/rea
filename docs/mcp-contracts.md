@@ -31,6 +31,12 @@ check the complete catalog after SDK conversion and its generated counterpart.
 This is REA's local compatibility profile; individual model APIs can impose
 additional limits.
 
+Input and output schemas share repeated definitions through schema-local
+references while preserving their complete fields and validation rules. Input
+properties retain their descriptions and literal examples. Root input unions
+keep their inline object presentation to avoid redundant branch nesting.
+Canonical Zod validation and the input compatibility profile continue to apply.
+
 For passive `compare_web_captures` inputs, pass each complete
 `inspect_web_page` result in `before.inspection` or `after.inspection`, with an
 optional complete `discover_webmcp_tools` result in the matching `webmcp` field.
@@ -192,6 +198,8 @@ that reference for a summary, one section/module, or a stable page, or call
 bundle exports stream canonical JSON into an atomically published file. A broad
 follow-up or `get_evidence_bundle` can also exceed the response budget; exporting
 preserves the complete session without sending it through a single MCP frame.
+Cancelling an export stops further serialization and removes its staging file.
+The destination changes only when a complete export is atomically published.
 
 Clients that explicitly configure a larger receive buffer can set the REA
 server's `REA_MCP_MAX_RESPONSE_BYTES` environment variable to the same byte

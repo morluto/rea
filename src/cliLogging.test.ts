@@ -145,6 +145,7 @@ describe("CLI command outcome classification", () => {
   it("returns nonzero when the real uninstall outcome contains a failed action", async () => {
     const host: UninstallHost = {
       clients: () => Promise.resolve([]),
+      inspectClient: () => Promise.resolve(undefined),
       removeClient: () =>
         Promise.resolve({ name: "client", status: "failed", detail: "write" }),
       removeSkill: () =>

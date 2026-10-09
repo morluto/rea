@@ -24,6 +24,7 @@ import type { BinaryTarget } from "../domain/binaryTarget.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import { type AnalysisError } from "../domain/analysisErrorBase.js";
@@ -89,8 +90,8 @@ class ArtifactClient implements AnalysisClient {
           this.target.sourcePath === undefined ||
           !this.target.sourcePath.toLowerCase().endsWith(".app")
         )
-          throw new ArtifactReaderFailure(
-            "unavailable",
+          throw this.unsupportedTarget(
+            operation,
             "decode_interface_builder requires an active .app bundle target",
           );
         const limits = interfaceBuilderLimitsSchema.parse(parameters);
@@ -135,8 +136,8 @@ class ArtifactClient implements AnalysisClient {
           bundlePath === undefined ||
           (!standalone && !bundlePath.toLowerCase().endsWith(".app"))
         )
-          throw new ArtifactReaderFailure(
-            "unavailable",
+          throw this.unsupportedTarget(
+            operation,
             "inspect_keyed_archive requires an active plist or .app bundle",
           );
         const result = await inspectBundleKeyedArchive({
@@ -214,6 +215,18 @@ class ArtifactClient implements AnalysisClient {
     return Promise.resolve();
   }
 
+  /** The active target's kind is outside this operation's supported targets. */
+  private unsupportedTarget(
+    operation: string,
+    reason: string,
+  ): AnalysisUnsupportedTargetError {
+    return new AnalysisUnsupportedTargetError(
+      operation,
+      this.target.sourcePath ?? this.target.path,
+      reason,
+    );
+  }
+
   private async inspectAssetCatalog(
     parameters: Readonly<Record<string, JsonValue>>,
     options?: ExecutionOptions,
@@ -224,8 +237,8 @@ class ArtifactClient implements AnalysisClient {
       bundlePath === undefined ||
       !bundlePath.toLowerCase().endsWith(".app")
     )
-      throw new ArtifactReaderFailure(
-        "unavailable",
+      throw this.unsupportedTarget(
+        "inspect_asset_catalog",
         "inspect_asset_catalog requires an active .app bundle target",
       );
     const result = await analyzeAppleAssetCatalogs({
@@ -250,8 +263,8 @@ class ArtifactClient implements AnalysisClient {
     options?: ExecutionOptions,
   ) {
     if (this.target.kind !== "executable" || this.target.format !== "mach-o")
-      throw new ArtifactReaderFailure(
-        "unavailable",
+      throw this.unsupportedTarget(
+        "trace_dylib_resolution",
         "trace_dylib_resolution requires an active Mach-O or .app bundle target",
       );
     // Only a target opened from an app bundle directory carries its Info.plist;
@@ -360,8 +373,13 @@ const translateFailure = (
       cause.details,
       cause.message,
     );
-  // Caller-selection failures are already typed; keep their correction details.
-  if (cause instanceof AnalysisInputError) return cause;
+  // Caller-selection and unsupported-target failures are already typed; keep
+  // their correction details instead of reducing them to an I/O failure.
+  if (
+    cause instanceof AnalysisInputError ||
+    cause instanceof AnalysisUnsupportedTargetError
+  )
+    return cause;
   return new ArtifactOperationError(operation, "io");
 };
 

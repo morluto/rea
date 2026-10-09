@@ -5,6 +5,7 @@ import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.
 import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { ProviderAvailability } from "../application/AnalysisProvider.js";
+import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
 import {
   execFileOutput,
   execFileOutputFailure,
@@ -13,6 +14,9 @@ import { JADX_JAR_CONFIGURATION_REMEDIATION } from "./JadxRelease.js";
 
 const JAVA_MODULE_LISTING_TIMEOUT_MS = 10_000;
 const JAVA_MODULE_LISTING_MAX_OUTPUT_BYTES = 1024 * 1024;
+// Bound ZIP metadata allocation during discovery. The audited 0.7.1 JAR's
+// central directory occupies 2,294,350 bytes; class bodies are not read here.
+const JAR_METADATA_READ_MAX_BYTES = 8 * 1024 * 1024;
 
 /** Caller-supplied tools, resolved only when an Android operation is selected. */
 export interface JadxConfiguration {
@@ -116,7 +120,51 @@ const readJadxConfiguration = async (
   await requireJavaHomeExecutable(environment.JAVA_HOME, java);
   const jvmArguments = resolveJvmArguments(environment);
   await inspectJavaRuntime(java, environment, signal);
+  await requireEngineArchive(jar, signal);
   return { jar, java, jvmArguments };
+};
+
+const requireEngineArchive = async (
+  jar: string,
+  signal?: AbortSignal,
+): Promise<void> => {
+  // These classes are consumed directly by ReaJadxBridge.java. This checks the
+  // classpath inventory without loading engine code or starting a JADX session.
+  const missing = new Set([
+    "com/atxx/jhmcp/JadxSession.class",
+    "com/atxx/jhmcp/SessionHolder.class",
+    "jadx/api/JadxDecompiler.class",
+    "com/google/gson/Gson.class",
+    "io/modelcontextprotocol/kotlin/sdk/server/Server.class",
+  ]);
+  const reader = new ZipArtifactReader(jar, "zip", JAR_METADATA_READ_MAX_BYTES);
+  try {
+    for await (const entry of reader.entries(signal)) {
+      if (entry.kind === "file" && !entry.encrypted) missing.delete(entry.path);
+      if (missing.size === 0) return;
+    }
+  } catch (cause) {
+    if (signal?.aborted === true) throw cause;
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    throw configurationFailure(
+      "version_unresolved",
+      `Cannot inspect REA_JADX_MCP_JAR ${jar} as a Java archive: ${reason}. ${JADX_JAR_CONFIGURATION_REMEDIATION}`,
+      {
+        jar_path: jar,
+        phase: "jar-inspection",
+        archive_error: reason,
+        maximum_metadata_read_bytes: JAR_METADATA_READ_MAX_BYTES,
+      },
+      cause,
+    );
+  } finally {
+    await reader.close();
+  }
+  throw configurationFailure(
+    "unsupported_version",
+    `REA_JADX_MCP_JAR ${jar} does not contain the required metadata bridge classes: ${[...missing].join(", ")}. ${JADX_JAR_CONFIGURATION_REMEDIATION}`,
+    { jar_path: jar, phase: "jar-inspection", missing_classes: [...missing] },
+  );
 };
 
 const requireSupportedHost = (): void => {

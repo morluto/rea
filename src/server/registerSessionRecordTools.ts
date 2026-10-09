@@ -42,12 +42,13 @@ const registerExportEvidenceTool = ({
   server.registerTool(
     exportContract.name,
     toolRegistrationOptions(exportContract),
-    async (input) => {
+    async (input, context) => {
       const bundle = bundleForSerialization(session);
       const written = await writeEvidenceBundle(
         bundle,
         input.path,
         input.overwrite,
+        context.mcpReq.signal,
       );
       return written.ok
         ? toCallToolResult(

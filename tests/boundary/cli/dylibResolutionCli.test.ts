@@ -15,7 +15,7 @@ import {
 import { dylibResolutionResultSchema } from "../../../src/domain/apple/dylibResolution.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 
 const ENVIRONMENT = { REA_LOG_LEVEL: "silent", REA_ANALYSIS_PROVIDER: "auto" };
 
@@ -27,6 +27,41 @@ const writeFiles = async (
     await mkdir(dirname(join(root, path)), { recursive: true });
     await writeFile(join(root, path), content);
   }
+};
+
+/** A caller-selected root that cannot be traced is an input issue on that root. */
+const expectRootInputError = async (
+  cli: TestCli,
+  {
+    app,
+    root,
+    reason,
+    message,
+  }: {
+    readonly app: string;
+    readonly root: string;
+    readonly reason: string;
+    readonly message: string;
+  },
+): Promise<void> => {
+  const rejected = await cli.run({
+    arguments: ["trace-dylib-resolution", app, "--root", root, "--json"],
+    environment: ENVIRONMENT,
+  });
+  expect(rejected.exitCode).toBe(1);
+  expect(rejected.json).toMatchObject({
+    error: "Analysis failed",
+    code: "invalid_request",
+    details: {
+      issues: [
+        {
+          path: ["roots", 0],
+          reason,
+          message: expect.stringContaining(message),
+        },
+      ],
+    },
+  });
 };
 
 const fixtureApp = async (): Promise<string> => {
@@ -141,17 +176,16 @@ describe("trace-dylib-resolution CLI", () => {
       const outside = await createTestTempDirectory("rea-dylib-outside-");
       await writeFiles(outside, { Tool: machoImage({}) });
       await symlink(outside, join(app, "Contents/Linked"));
-      for (const root of [
-        "../outside",
-        "Contents/Info.plist",
-        "Contents/Linked/Tool",
-      ]) {
-        const rejected = await cli.run({
-          arguments: ["trace-dylib-resolution", app, "--root", root, "--json"],
-          environment: ENVIRONMENT,
-        });
-        expect(rejected.exitCode).toBe(1);
-        expect(rejected.json).toMatchObject({ error: "Analysis failed" });
+      for (const [root, reason, message] of [
+        ["../outside", "invalid_format", "Use a normalized path"],
+        ["Contents/Info.plist", "invalid_value", "is not a Mach-O image"],
+        [
+          "Contents/Linked/Tool",
+          "invalid_value",
+          "resolves outside the analyzed root",
+        ],
+      ] as const) {
+        await expectRootInputError(cli, { app, root, reason, message });
       }
     },
   );

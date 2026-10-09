@@ -9,6 +9,7 @@ import {
   EvidenceIntegrityError,
 } from "../domain/evidenceErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { parseProcessCapture } from "../domain/process/processCapture.js";
 import {
   bufferedJsonParts,
@@ -17,7 +18,10 @@ import {
 import { readJsonFile, writeTextParts } from "./JsonFiles.js";
 
 type EvidenceReadFailure = EvidenceFileError | EvidenceIntegrityError;
-type EvidenceWriteFailure = EvidenceFileError | EvidenceIntegrityError;
+type EvidenceWriteFailure =
+  | EvidenceFileError
+  | EvidenceIntegrityError
+  | AnalysisCancelledError;
 
 /** Read and validate an evidence bundle at the caller-supplied path. */
 export const readEvidenceBundle = async (
@@ -57,12 +61,15 @@ export const writeEvidenceBundle = async (
   bundle: EvidenceBundle,
   path: string,
   overwrite: boolean,
+  signal?: AbortSignal,
 ): Promise<
   Result<
     { readonly path: string; readonly bytes: number },
     EvidenceWriteFailure
   >
 > => {
+  if (signal?.aborted === true)
+    return err(new AnalysisCancelledError("export_evidence_bundle"));
   let checked: EvidenceBundle;
   try {
     checked = parseEvidenceBundle(bundle);
@@ -77,5 +84,8 @@ export const writeEvidenceBundle = async (
     bufferedJsonParts(canonicalJsonParts(checked)),
     path,
     overwrite,
+    signal === undefined
+      ? undefined
+      : { signal, operation: "export_evidence_bundle" },
   );
 };

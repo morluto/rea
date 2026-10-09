@@ -81,21 +81,40 @@ export const isUninstallFailure = (result: UninstallResult): boolean => {
 /** Filesystem boundary used by the contained uninstall workflow. */
 export interface UninstallHost {
   clients(): Promise<readonly SetupClient[]>;
+  /** Report a configuration that cannot be read safely, before any removal. */
+  inspectClient(client: SetupClient): Promise<UninstallItem | undefined>;
   removeClient(client: SetupClient): Promise<UninstallItem>;
   removeSkill(): Promise<UninstallItem>;
   purgeData(): Promise<readonly UninstallItem[]>;
 }
 
-/** Remove only REA-owned registrations and managed files, optionally including local state. */
+/**
+ * Remove only REA-owned registrations and managed files, optionally including
+ * local state. A client configuration that cannot be read safely stops the
+ * operation before anything is removed; one that fails during removal stops
+ * the remaining removals.
+ */
 export const runUninstall = async (
   purgeData: boolean,
   host: UninstallHost = systemUninstallHost(),
 ): Promise<UninstallResult> => {
-  const items: UninstallItem[] = [];
-  for (const client of await host.clients())
-    items.push(await host.removeClient(client));
-  items.push(await host.removeSkill());
-  if (purgeData) items.push(...(await host.purgeData()));
+  const clients = await host.clients();
+  const blocked: UninstallItem[] = [];
+  for (const client of clients) {
+    const blocking = await host.inspectClient(client);
+    if (blocking !== undefined) blocked.push(blocking);
+  }
+  const items: UninstallItem[] =
+    blocked.length > 0
+      ? [
+          ...blocked,
+          item(
+            "uninstall",
+            "skipped",
+            "No REA registration, skill, or data was removed. Repair each failed configuration, then rerun uninstall.",
+          ),
+        ]
+      : await removeAll(clients, purgeData, host);
   items.push({
     name: "analysis_engine",
     status: "retained",
@@ -109,12 +128,46 @@ export const runUninstall = async (
   };
 };
 
+/**
+ * Each client is reread when it is edited, so a concurrent change is never
+ * overwritten. A client that fails then still stops the remaining removals.
+ */
+const removeAll = async (
+  clients: readonly SetupClient[],
+  purgeData: boolean,
+  host: UninstallHost,
+): Promise<UninstallItem[]> => {
+  const items: UninstallItem[] = [];
+  for (const client of clients) {
+    const removed = await host.removeClient(client);
+    items.push(removed);
+    if (removed.status === "failed")
+      return [
+        ...items,
+        item(
+          "uninstall",
+          "skipped",
+          "Uninstall stopped at this failure; the items above report what changed. Repair the failed configuration, then rerun uninstall.",
+        ),
+      ];
+  }
+  items.push(await host.removeSkill());
+  if (purgeData) items.push(...(await host.purgeData()));
+  return items;
+};
+
 /** Create uninstall effects contained to detected client configs and REA-owned paths. */
 export const systemUninstallHost = (
   home = homedir(),
   fileSystem: UninstallFileSystem = systemFileSystem,
 ): UninstallHost => ({
   clients: () => Promise.resolve(supportedClients(home)),
+  inspectClient: async (client) => {
+    const read = await readClientConfiguration(client, fileSystem);
+    return read.kind === "item" && read.item.status === "failed"
+      ? read.item
+      : undefined;
+  },
   removeClient: (client) => removeClient(client, fileSystem),
   removeSkill: () => removeManagedSkills(home, fileSystem),
   purgeData: async () => [
@@ -123,43 +176,72 @@ export const systemUninstallHost = (
   ],
 });
 
-const removeClient = async (
+type ClientConfigurationRead =
+  | { readonly kind: "item"; readonly item: UninstallItem }
+  | {
+      readonly kind: "configuration";
+      readonly transactionPath: string;
+      readonly original: string;
+      readonly parsed: ClientConfigurationDocument;
+    };
+
+const readClientConfiguration = async (
   client: SetupClient,
   fileSystem: UninstallFileSystem,
-): Promise<UninstallItem> => {
+): Promise<ClientConfigurationRead> => {
   if (client.format === "unsupported")
-    return item(
-      client.name,
-      "skipped",
-      manualRegistrationRemediation(client.name) ??
-        "This client has no documented local MCP configuration boundary.",
+    return itemRead(
+      item(
+        client.name,
+        "skipped",
+        manualRegistrationRemediation(client.name) ??
+          "This client has no documented local MCP configuration boundary.",
+      ),
     );
   const resolved = await resolveUninstallConfigPath(client, fileSystem);
-  if (typeof resolved !== "string") return resolved;
+  if (typeof resolved !== "string") return itemRead(resolved);
   const transactionPath = resolved;
   let original: string;
   try {
     original = await fileSystem.readText(transactionPath);
   } catch (cause: unknown) {
-    return isMissing(cause)
-      ? item(client.name, "skipped", "Configuration does not exist.")
-      : item(
-          client.name,
-          "failed",
-          "Configuration could not be read. Check file permissions, then rerun uninstall.",
-        );
-  }
-  let parsed: ClientConfigurationDocument;
-  try {
-    parsed = parseClientConfiguration(original, client.format);
-  } catch (cause: unknown) {
-    void cause;
-    return item(
-      client.name,
-      "failed",
-      `Configuration is not valid ${client.format === "toml" || client.format === "grok" ? "TOML" : client.format === "opencode" ? "JSONC" : "JSON"} and was not changed. Repair it, then rerun uninstall.`,
+    return itemRead(
+      isMissing(cause)
+        ? item(client.name, "skipped", "Configuration does not exist.")
+        : item(
+            client.name,
+            "failed",
+            "Configuration could not be read. Check file permissions, then rerun uninstall.",
+          ),
     );
   }
+  try {
+    const parsed = parseClientConfiguration(original, client.format);
+    return { kind: "configuration", transactionPath, original, parsed };
+  } catch (cause: unknown) {
+    void cause;
+    return itemRead(
+      item(
+        client.name,
+        "failed",
+        `Configuration is not valid ${client.format === "toml" || client.format === "grok" ? "TOML" : client.format === "opencode" ? "JSONC" : "JSON"} and was not changed. Repair it, then rerun uninstall.`,
+      ),
+    );
+  }
+};
+
+const itemRead = (result: UninstallItem): ClientConfigurationRead => ({
+  kind: "item",
+  item: result,
+});
+
+const removeClient = async (
+  client: SetupClient,
+  fileSystem: UninstallFileSystem,
+): Promise<UninstallItem> => {
+  const read = await readClientConfiguration(client, fileSystem);
+  if (read.kind === "item") return read.item;
+  const { transactionPath, original, parsed } = read;
   const name = PRODUCT_IDENTITY.mcpServerKey;
   // Beside a native OpenCode V2 table, OpenCode also loads a V1 `mcp.rea`.
   const legacyPath = legacyClientServerPath(parsed, name);
