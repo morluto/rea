@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -11,6 +11,60 @@ import { compareJavaScriptExportShapesEvidence } from "../../../src/application/
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { javaScriptExportShapeComparisonResultSchema } from "../../../src/domain/javascript/javascriptExportShapeComparisonSchemas.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
+import { APPLICATION_TOOL_CONTRACTS } from "../../../src/contracts/applicationToolContracts.js";
+
+it("executes the advertised export presence example with matching analyzed Evidence", async () => {
+  const contract = APPLICATION_TOOL_CONTRACTS.find(
+    ({ name }) => name === "compare_javascript_export_shapes",
+  );
+  const example = contract?.examples.find(
+    ({ title }) =>
+      title ===
+      "Report observed return-property presence when static values stay unknown",
+  );
+  if (example === undefined)
+    throw new Error("Missing advertised presence example");
+  const { client, close } = await createApplicationMcpHarness();
+  onTestFinished(close);
+  const response = await client.callTool({
+    name: "compare_javascript_export_shapes",
+    arguments: example.input,
+  });
+  expect(response.isError).not.toBe(true);
+  expect(response.structuredContent).toMatchObject({
+    result: {
+      left: { status: "selected" },
+      right: { status: "selected" },
+      summary: { added: 1, removed: 1, changed: 0, unknown: 0 },
+      property_inventories: expect.arrayContaining([
+        expect.objectContaining({
+          side: "left",
+          paired: true,
+          properties: ["/count", "/kind"],
+        }),
+        expect.objectContaining({
+          side: "right",
+          paired: true,
+          properties: ["/kind", "/total"],
+        }),
+      ]),
+      changes: expect.arrayContaining([
+        expect.objectContaining({
+          path: "/count",
+          status: "removed",
+          presence: { left: "present", right: "absent" },
+          left: { availability: "unknown", reason: expect.any(String) },
+        }),
+        expect.objectContaining({
+          path: "/total",
+          status: "added",
+          presence: { left: "absent", right: "present" },
+          right: { availability: "unknown", reason: expect.any(String) },
+        }),
+      ]),
+    },
+  });
+});
 
 describe("application workflow MCP parity", () => {
   it("compares exact parser export shapes with inline Evidence", async () => {

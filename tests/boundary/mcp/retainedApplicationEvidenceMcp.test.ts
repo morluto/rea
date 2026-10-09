@@ -21,6 +21,7 @@ const retained = (evidence_id: string) => ({
 });
 const application = JAVASCRIPT_FEATURE_TRACE_EXAMPLE.application;
 const pair = JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE;
+const exportPair = JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE;
 
 async function connect() {
   const session = createTestBinarySession(() => {
@@ -39,6 +40,8 @@ it("runs the same trace/compare workflows with inline and retained application E
   const { client, session } = await connect();
   expect(session.recordEvidence(pair.left).ok).toBe(true);
   expect(session.recordEvidence(pair.right).ok).toBe(true);
+  expect(session.recordEvidence(exportPair.left).ok).toBe(true);
+  expect(session.recordEvidence(exportPair.right).ok).toBe(true);
   const scenarios = [
     {
       name: "trace_application_feature",
@@ -61,8 +64,8 @@ it("runs the same trace/compare workflows with inline and retained application E
       inline: JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE,
       refs: {
         ...JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE,
-        left: retained(pair.left.evidence_id),
-        right: retained(pair.right.evidence_id),
+        left: retained(exportPair.left.evidence_id),
+        right: retained(exportPair.right.evidence_id),
       },
     },
     {

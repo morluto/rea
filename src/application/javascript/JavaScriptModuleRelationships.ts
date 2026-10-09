@@ -32,7 +32,7 @@ import {
   resolveArtifactPathByContext,
   type ArtifactPathResolution,
 } from "./JavaScriptArtifactPathResolution.js";
-import { projectJavaScriptExportReturnShapes } from "./JavaScriptReturnShapeProjection.js";
+import { projectJavaScriptExportReturnShapes } from "../../domain/javascript/javascriptExportReturnShapeProjection.js";
 
 import type { JavaScriptModuleSemanticIr } from "./JavaScriptArtifactAnalysisTypes.js";
 

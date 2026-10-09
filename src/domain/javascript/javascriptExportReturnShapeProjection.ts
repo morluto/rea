@@ -1,30 +1,31 @@
-import { jsonObjectSchema, jsonValueSchema } from "../../domain/jsonValue.js";
+import { jsonObjectSchema, jsonValueSchema } from "../jsonValue.js";
 import {
   partialApplicationCoverage,
   truncatedApplicationCoverage,
-} from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
+  type ApplicationCoverage,
+} from "./javascriptApplicationEvidenceSchemas.js";
 import type {
   JavaScriptSemanticCallable,
   JavaScriptSemanticModuleLink,
-} from "../../domain/javascript/javascriptSemanticIr.js";
-import { flattenSemanticReturnValue } from "../../domain/javascript/javascriptSemanticReturns.js";
-import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
-import type { JavaScriptArtifactGraphCoverage } from "./JavaScriptArtifactGraphContext.js";
-import type { JavaScriptModuleSemanticIr } from "./JavaScriptArtifactAnalysisTypes.js";
+  JavaScriptSemanticIr,
+} from "./javascriptSemanticIr.js";
+import { flattenSemanticReturnValue } from "./javascriptSemanticReturns.js";
+import type { JavaScriptSourceRange } from "./javascriptStaticAnalysisTypes.js";
 
+/** Return-shape facts and coverage inferred for one exported callable. */
 export interface JavaScriptReturnShapeProjection {
   readonly properties: ReturnType<typeof jsonObjectSchema.parse>;
   readonly range: JavaScriptSourceRange;
-  readonly coverage: JavaScriptArtifactGraphCoverage;
+  readonly coverage: ApplicationCoverage;
   readonly limitations: readonly string[];
 }
 
-/** Project one exact export/callable link into shallow bounded graph values. */
+/** Project one exact export/callable link into inert return-shape observations. */
 export const projectJavaScriptExportReturnShapes = (input: {
-  readonly ir: JavaScriptModuleSemanticIr;
+  readonly ir: Pick<JavaScriptSemanticIr, "callables" | "limitations">;
   readonly link: JavaScriptSemanticModuleLink;
   readonly modulePath: string;
-  readonly baseCoverage: JavaScriptArtifactGraphCoverage;
+  readonly baseCoverage: ApplicationCoverage;
 }): JavaScriptReturnShapeProjection | null => {
   if (input.link.callableId === null || input.link.exportedName === null)
     return null;
