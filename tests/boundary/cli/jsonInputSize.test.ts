@@ -8,14 +8,14 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest(
-  "preserves a real decoder string-limit failure through CLI and Evidence file inputs",
+  "preserves the runtime string limit through CLI and Evidence file inputs",
   async ({ cli, processes }) => {
     const root = await createTestTempDirectory("rea-json-string-limit-");
     const input = join(root, "oversized.json");
     const file = await open(input, "wx");
     try {
-      // Sparse zero bytes are valid UTF-8. Decoding exceeds the native string
-      // limit before JSON syntax can be inspected; no huge fixture is retained.
+      // Sparse zero bytes are valid UTF-8. Decoded length exceeds the runtime
+      // string limit before JSON syntax can be inspected; no fixture is retained.
       await file.truncate(constants.MAX_STRING_LENGTH + 1);
     } finally {
       await file.close();
