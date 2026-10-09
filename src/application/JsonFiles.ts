@@ -14,6 +14,7 @@ import { basename, dirname, resolve } from "node:path";
 import { EvidenceFileError } from "../domain/evidenceErrors.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { decodeUtf8Json } from "../domain/safeJson.js";
 
 /** Request control and its owning operation for an interruptible atomic write. */
 export interface TextWriteCancellation {
@@ -37,13 +38,17 @@ export const readJsonFile = async (
         new EvidenceFileError("read", "not-file", { path: requestedPath }),
       );
     const encoded = await readFile(canonicalPath);
-    let decoded: unknown;
-    try {
-      decoded = JSON.parse(
-        new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-          encoded,
+    const decoded = decodeUtf8Json(encoded);
+    if (!decoded.ok)
+      return err(
+        new EvidenceFileError(
+          "read",
+          decoded.reason === "too-large" ? "too-large" : "invalid-json",
+          { cause: decoded.cause, path: requestedPath },
         ),
       );
+    try {
+      return ok(JSON.parse(decoded.text));
     } catch (cause: unknown) {
       return err(
         new EvidenceFileError("read", "invalid-json", {
@@ -52,7 +57,6 @@ export const readJsonFile = async (
         }),
       );
     }
-    return ok(decoded);
   } catch (cause: unknown) {
     return err(
       new EvidenceFileError("read", missingOrIo(cause), {

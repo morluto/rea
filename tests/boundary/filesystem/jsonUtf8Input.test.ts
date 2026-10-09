@@ -1,3 +1,4 @@
+import { constants as bufferConstants } from "node:buffer";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -36,5 +37,39 @@ describe("JSON file UTF-8 byte integrity", () => {
     const cliInput = await parseCliJsonInput(path, "compare_web_captures");
     expect(fileInput).toMatchObject({ ok: true, value });
     expect(cliInput).toMatchObject({ ok: true, value });
+  });
+  it("reports a JSON file beyond the runtime string limit as a size constraint, not invalid JSON", async () => {
+    const root = await createTestTempDirectory("rea-json-oversize-");
+    const path = join(root, "input.json");
+    const bytes = Buffer.alloc(bufferConstants.MAX_STRING_LENGTH + 1, 0x61);
+    await writeFile(path, bytes);
+    const fileInput = await readJsonFile(path);
+    expect(fileInput).toMatchObject({
+      ok: false,
+      error: { reason: "too-large" },
+    });
+    const cliInput = await parseCliJsonInput(path, "compare_web_captures");
+    expect(cliInput).toMatchObject({
+      ok: false,
+      error: {
+        code: "resource_constraint",
+        category: "resource_constraint",
+        retryable: false,
+        input_path: path,
+        input_reason: "input-too-large",
+        message: expect.stringContaining(String(bytes.length)),
+        details: {
+          operation: "compare_web_captures",
+          resource: "memory",
+          reported_limits: {
+            input_bytes: bytes.length,
+            max_string_code_units: bufferConstants.MAX_STRING_LENGTH,
+          },
+        },
+        remediation: {
+          action: expect.stringContaining("smaller subset"),
+        },
+      },
+    });
   });
 });

@@ -146,6 +146,8 @@ const evidenceFileCode = (
   reason: EvidenceFileError["reason"],
 ): AnalysisErrorProjection["code"] => {
   if (reason === "invalid-json") return "evidence_integrity_mismatch";
+  // An oversized file is a runtime size constraint, not an integrity defect.
+  if (reason === "too-large") return "resource_constraint";
   // A missing, non-file or already-existing path is the caller's selection.
   if (reason === "io") return "execution_failure";
   return "invalid_request";

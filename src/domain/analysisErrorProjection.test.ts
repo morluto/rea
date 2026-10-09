@@ -586,6 +586,7 @@ describe("analysis error projection: evidence files", () => {
       "evidence_integrity_mismatch",
       "execution_failure",
     ],
+    ["read", "too-large", "resource_constraint", "resource_constraint"],
     ["read", "io", "execution_failure", "execution_failure"],
   ] as const)(
     "classifies a %s %s evidence file by who can correct it",

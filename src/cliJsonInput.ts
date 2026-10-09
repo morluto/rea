@@ -1,13 +1,17 @@
+import { constants as bufferConstants } from "node:buffer";
 import { resolve } from "node:path";
 
 import {
   NonRegularFileReadError,
   readRegularFile,
 } from "./application/RegularFileRead.js";
-import { AnalysisInputError } from "./domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  AnalysisResourceConstraintError,
+} from "./domain/analysisErrorCore.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import type { JsonValue } from "./domain/jsonValue.js";
-import { safeParseJson } from "./domain/safeJson.js";
+import { decodeUtf8Json, safeParseJson } from "./domain/safeJson.js";
 
 /** Parse inline JSON or one local JSON file for a CLI workflow. */
 export const parseCliJsonInput = async (
@@ -17,15 +21,21 @@ export const parseCliJsonInput = async (
   | { readonly ok: true; readonly value: unknown }
   | { readonly ok: false; readonly error: JsonValue }
 > => {
-  const inline = parseJson(value);
-  if (inline !== undefined) return { ok: true, value: inline };
+  const inline = safeParseJson(value);
+  if (inline.ok) return { ok: true, value: inline.value };
   try {
-    // Read raw bytes so invalid UTF-8 is rejected by parseJson instead of
+    // Read raw bytes so invalid UTF-8 is rejected by decoding instead of
     // being silently replaced by lossy "utf8" decoding.
-    const parsed = parseJson(await readRegularFile(value));
-    return parsed === undefined
-      ? jsonFileError(value, operation, "invalid-json")
-      : { ok: true, value: parsed };
+    const bytes = await readRegularFile(value);
+    const decoded = decodeUtf8Json(bytes);
+    if (!decoded.ok)
+      return decoded.reason === "too-large"
+        ? oversizedJsonInputError(value, operation, bytes.length)
+        : jsonFileError(value, operation, "invalid-json");
+    const parsed = safeParseJson(decoded.text);
+    return parsed.ok
+      ? { ok: true, value: parsed.value }
+      : jsonFileError(value, operation, "invalid-json");
   } catch (cause: unknown) {
     if (
       ["{", "["].includes(value.trimStart()[0] ?? "") &&
@@ -87,26 +97,6 @@ const cannotBeAnExistingFile = (cause: unknown): boolean =>
 const hasExplicitJsonFileExtension = (value: string): boolean =>
   value.toLowerCase().endsWith(".json");
 
-const parseJson = (value: string | Uint8Array): unknown => {
-  let text: string;
-  if (typeof value === "string") {
-    text = value;
-  } else {
-    try {
-      text = new TextDecoder("utf-8", {
-        fatal: true,
-        ignoreBOM: true,
-      }).decode(value);
-    } catch (cause: unknown) {
-      // Decoding failure means the bytes are not valid UTF-8 JSON input.
-      void cause;
-      return undefined;
-    }
-  }
-  const parsed = safeParseJson(text);
-  return parsed.ok ? parsed.value : undefined;
-};
-
 const inputError = (operation: string): JsonValue => ({
   error: "Application workflow failed",
   ...projectAnalysisError(
@@ -136,6 +126,40 @@ const jsonFileError = (
     ),
     ...(path === undefined ? {} : { input_path: path }),
     input_reason: reason,
+  },
+});
+
+/**
+ * Report JSON input the runtime cannot hold as one string. The bytes may be
+ * valid JSON, so this is a size constraint with observed and limit sizes,
+ * not an invalid-format rejection.
+ */
+const oversizedJsonInputError = (
+  path: string,
+  operation: string,
+  bytes: number,
+) => ({
+  ok: false as const,
+  error: {
+    error: "Application workflow failed",
+    ...projectAnalysisError(
+      new AnalysisResourceConstraintError(
+        operation,
+        "memory",
+        `Decoding the ${bytes}-byte JSON input would exceed Node's single-string representation limit of ${bufferConstants.MAX_STRING_LENGTH} code units, so it cannot be parsed as one JSON document.`,
+        {
+          boundary: "cli-json-input",
+          input_bytes: bytes,
+          max_string_code_units: bufferConstants.MAX_STRING_LENGTH,
+        },
+        {
+          remediationAction:
+            "Re-run the producing analysis on a smaller subset so the JSON input stays below the reported limit, or select a smaller JSON document.",
+        },
+      ),
+    ),
+    input_path: path,
+    input_reason: "input-too-large",
   },
 });
 

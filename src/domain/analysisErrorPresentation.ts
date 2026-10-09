@@ -126,6 +126,8 @@ export const analysisErrorCategory = (
       error.reason === "exists")
   )
     return "invalid_input";
+  if (error instanceof EvidenceFileError && error.reason === "too-large")
+    return "resource_constraint";
   return STATIC_ERROR_CATEGORIES[error._tag] ?? "execution_failure";
 };
 
@@ -354,6 +356,8 @@ const evidenceFileMessage = ({
     return "Evidence file already exists. Choose another path or allow overwrite.";
   if (reason === "invalid-json")
     return "Evidence file is not valid JSON. Repair or recreate the file and try again.";
+  if (reason === "too-large")
+    return "Evidence file is too large for the runtime to hold as one string, so it cannot be decoded as one JSON document. Export or select a smaller file and try again.";
   return "Evidence file could not be accessed. Check file permissions and try again.";
 };
 
