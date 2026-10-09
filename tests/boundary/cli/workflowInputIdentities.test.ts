@@ -257,7 +257,14 @@ cliTest(
       if (definition?.outputSchema === undefined)
         throw new Error("Missing workflow schema");
       expect(ajv.validateSchema(definition.inputSchema)).toBe(true);
-      expect(ajv.validateSchema(definition.outputSchema)).toBe(true);
+      const { $schema, ...outputKeywords } = definition.outputSchema;
+      expect(
+        ajv.validateSchema(
+          $schema === undefined
+            ? outputKeywords
+            : { ...outputKeywords, $schema },
+        ),
+      ).toBe(true);
     }
     const context = {
       cli,
