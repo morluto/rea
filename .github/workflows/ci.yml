@@ -460,12 +460,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22.19.0
-      - name: Verify native directory identity on Node 22
+      - name: Verify native path boundaries on Node 22
         run: >-
           npx vitest run --coverage.enabled=false
           tests/boundary/filesystem/directoryArtifactReaderOpen.test.ts
           tests/boundary/filesystem/javascriptPackagePrecedence.test.ts
           tests/boundary/filesystem/javascriptArtifactContentIdentity.test.ts
+          tests/boundary/process/sourceMapUncHosts.test.ts
       - uses: actions/upload-artifact@v4
         if: always()
         with:

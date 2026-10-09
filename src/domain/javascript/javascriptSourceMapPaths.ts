@@ -1,5 +1,5 @@
 import { posix } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { domainToASCII, fileURLToPath, pathToFileURL } from "node:url";
 
 import { z } from "zod";
 
@@ -101,11 +101,12 @@ const resolveJavaScriptSourceMapPath = (
   return { path: value, kind: relative ? "artifact-relative" : "suffix" };
 };
 
-// Code points and escapes a file URL host cannot carry.
+// Reject URL delimiters/escapes before IDNA can truncate or decode the host.
 const unusableHost = /[\0\t\n\r #/:<>?@[\\\]^|%]/u;
 
+// URL/IDNA validation also rejects Unicode hosts that normalize to empty.
 const carriesUsableHost = (host: string): boolean =>
-  host !== "" && !unusableHost.test(host);
+  !unusableHost.test(host) && domainToASCII(host) !== "";
 
 const windowsFileUrl = (path: string): URL | null => {
   // A malformed UNC host aborts pathToFileURL() on the Node builds this
