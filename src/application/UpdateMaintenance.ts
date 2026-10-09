@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { readClientConfigurationText } from "./ClientConfigurationFile.js";
 import { isOwnedClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import { readClientRegistrationStatuses } from "./ClientRegistrationStatus.js";
 import {
@@ -69,7 +70,7 @@ export const existingMaintenanceScope = async (
     const client = supported.find(({ name }) => name === registration.client);
     if (client === undefined) continue;
     const parsed = parseClientConfiguration(
-      await readFile(client.configPath, "utf8"),
+      await readClientConfigurationText(client.configPath),
       client.format,
     );
     const enabled = z

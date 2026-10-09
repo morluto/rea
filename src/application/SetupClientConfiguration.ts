@@ -12,11 +12,15 @@ import {
   type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
 import { constants as fsConstants } from "node:fs";
-import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import writeFileAtomic from "write-file-atomic";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
+import {
+  ClientConfigurationNotRegularError,
+  readClientConfigurationText,
+} from "./ClientConfigurationFile.js";
 import { npxRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import { MCP_STARTUP_POLICY } from "../mcpStartupPolicy.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
@@ -51,7 +55,7 @@ const configureClientDocument = async (
     return { status: "failed", reason: "path" };
   let original: string | undefined;
   try {
-    original = await readFile(transactionPath, "utf8");
+    original = await readClientConfigurationText(transactionPath);
   } catch (cause: unknown) {
     if (!isMissing(cause)) return { status: "failed", reason: "readback" };
   }
@@ -129,7 +133,7 @@ const configureClientDocument = async (
   }
   try {
     const readback = parseClientConfiguration(
-      await readFile(transactionPath, "utf8"),
+      await readClientConfigurationText(transactionPath),
       format,
     );
     if (!registrationCurrent(readback, desired)) {
@@ -155,7 +159,7 @@ export const clientConfigurationAligned = async (
   command: readonly string[],
 ): Promise<boolean> => {
   try {
-    const original = await readFile(client.configPath, "utf8");
+    const original = await readClientConfigurationText(client.configPath);
     const parsed = parseClientConfiguration(original, client.format);
     return registrationCurrent(
       parsed,
@@ -191,13 +195,15 @@ export const inspectClientConfiguration = async (
     };
   let original: string;
   try {
-    original = await readFile(transactionPath, "utf8");
+    original = await readClientConfigurationText(transactionPath);
   } catch (cause: unknown) {
     if (isMissing(cause)) return { status: "create" };
     return {
       status: "invalid",
       remediation:
-        "The configuration file could not be read. Check its permissions before rerunning setup.",
+        cause instanceof ClientConfigurationNotRegularError
+          ? `${cause.message}. Select a regular configuration file before rerunning setup.`
+          : "The configuration file could not be read. Check its permissions before rerunning setup.",
     };
   }
   try {

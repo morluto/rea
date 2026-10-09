@@ -6,7 +6,7 @@ import {
   withClientServers,
   type ClientConfigurationDocument,
 } from "./ClientConfigurationDocument.js";
-import { copyFile, lstat, readFile, realpath, rm } from "node:fs/promises";
+import { copyFile, lstat, realpath, rm } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { join } from "node:path";
@@ -15,6 +15,10 @@ import writeFileAtomic from "write-file-atomic";
 import { z } from "zod";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
+import {
+  ClientConfigurationNotRegularError,
+  readClientConfigurationText,
+} from "./ClientConfigurationFile.js";
 import { claudeCodeSkillsDirectory, skillDestinations } from "./SetupSkill.js";
 import { isOwnedClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
@@ -42,7 +46,7 @@ export interface UninstallFileSystem {
 }
 
 const systemFileSystem: UninstallFileSystem = {
-  readText: (path) => readFile(path, "utf8"),
+  readText: readClientConfigurationText,
   copy: (source, destination) =>
     copyFile(source, destination, fsConstants.COPYFILE_EXCL),
   writeText: (path, contents) =>
@@ -222,7 +226,9 @@ const readClientConfiguration = async (
         : item(
             client.name,
             "failed",
-            "Configuration could not be read. Check file permissions, then rerun uninstall.",
+            cause instanceof ClientConfigurationNotRegularError
+              ? `${cause.message}. Select a regular configuration file, then rerun uninstall.`
+              : "Configuration could not be read. Check file permissions, then rerun uninstall.",
           ),
     );
   }

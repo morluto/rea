@@ -4,12 +4,16 @@ import {
   effectiveClientServer,
   parseClientConfiguration,
 } from "./ClientConfigurationDocument.js";
-import { access, readFile } from "node:fs/promises";
+import { access } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { z } from "zod";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
+import {
+  ClientConfigurationNotRegularError,
+  readClientConfigurationText,
+} from "./ClientConfigurationFile.js";
 import { MCP_STARTUP_POLICY } from "../mcpStartupPolicy.js";
 import {
   isOwnedClientRegistrationCommand,
@@ -113,7 +117,7 @@ export const readClientRegistrationStatuses = async (
       continue;
     }
     try {
-      const content = await readFile(client.configPath, "utf8");
+      const content = await readClientConfigurationText(client.configPath);
       const parsed = parseClientConfiguration(content, client.format);
       const raw = effectiveClientServer(parsed, PRODUCT_IDENTITY.mcpServerKey);
       if (raw === undefined) {
@@ -150,6 +154,9 @@ export const readClientRegistrationStatuses = async (
           client.name,
           client.configPath,
           isMissing(cause) ? "missing" : "invalid",
+          cause instanceof ClientConfigurationNotRegularError
+            ? `${cause.message}. Select a regular configuration file, then rerun rea setup.`
+            : undefined,
         ),
       );
     }
@@ -270,12 +277,13 @@ const unavailableStatus = (
   client: string,
   configPath: string,
   state: "missing" | "invalid",
+  detail: string = remediation,
 ): ClientRegistrationStatus => ({
   client,
   config_path: configPath,
   command: [],
   state,
-  remediation,
+  remediation: detail,
 });
 
 const exists = async (path: string | undefined): Promise<boolean> => {
