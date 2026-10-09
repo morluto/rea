@@ -511,8 +511,9 @@ const observedFile = (
 itWithCaptureCapability(
   "lets a cooperative target write its final report within the finalization interval",
   async () => {
+    // The deadline leaves Node enough time to register its SIGTERM handler.
     const { result } = await captureFinalizationFixture("cooperative", {
-      timeout_ms: 500,
+      timeout_ms: 1_500,
       finalization_ms: 1_500,
     });
     const { capture } = captureObservations(result);
@@ -520,6 +521,10 @@ itWithCaptureCapability(
     expect(capture.exit.reason, "initiating deadline stays the reason").toBe(
       "timeout",
     );
+    expect(
+      capture.exit.code,
+      "a deadline reason never declares a normal exit code",
+    ).toBeNull();
     expect(capture.exit.finalization, "finalization is recorded").toMatchObject(
       {
         requested_ms: 1_500,
@@ -527,6 +532,31 @@ itWithCaptureCapability(
         outcome: "target_exited",
       },
     );
+    expect(
+      observedFile(capture, "final.json")?.sha256,
+      "final report is retained with a digest",
+    ).toMatch(/^[0-9a-f]{64}$/u);
+  },
+  15_000,
+);
+
+itWithCaptureCapability(
+  "starts finalization when the idle deadline fires",
+  async () => {
+    const { result } = await captureFinalizationFixture("cooperative", {
+      timeout_ms: 10_000,
+      idle_timeout_ms: 1_500,
+      finalization_ms: 1_500,
+    });
+    const { capture } = captureObservations(result);
+
+    expect(capture.exit.reason, "idle deadline is the initiating reason").toBe(
+      "idle_timeout",
+    );
+    expect(
+      capture.exit.finalization,
+      "idle finalization is recorded",
+    ).toMatchObject({ requested_ms: 1_500, outcome: "target_exited" });
     expect(
       observedFile(capture, "final.json")?.sha256,
       "final report is retained with a digest",
