@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import type { TerminalRetention } from "../../domain/process/processCaptureCoverage.js";
 
 import type {
   RecordProcessCaptureEvent,
@@ -36,6 +37,8 @@ export class TerminalRenderer {
   readonly #frames: RenderedTerminalFrame[] = [];
   #pending: Promise<void> = Promise.resolve();
   #capturedBytes = 0;
+  #observedBytes = 0;
+  #observedFrames = 0;
   #truncated = false;
 
   constructor(private readonly options: TerminalRendererOptions) {
@@ -80,6 +83,17 @@ export class TerminalRenderer {
     return this.#truncated;
   }
 
+  /** Budget accounting after awaiting queued writes with frames(). */
+  retention(): TerminalRetention {
+    return {
+      budget_bytes: this.options.maxBytes,
+      observed_bytes: this.#observedBytes,
+      retained_bytes: this.#capturedBytes,
+      observed_frames: this.#observedFrames,
+      retained_frames: this.#frames.length,
+    };
+  }
+
   /** Release addon and terminal resources after all writes settle. */
   async dispose(): Promise<void> {
     await this.#pending;
@@ -107,6 +121,8 @@ export class TerminalRenderer {
     const bytes =
       Buffer.byteLength(serializedState) +
       lines.reduce((total, line) => total + Buffer.byteLength(line), 0);
+    this.#observedBytes += bytes;
+    this.#observedFrames += 1;
     if (this.#capturedBytes + bytes > this.options.maxBytes) {
       this.#truncated = true;
       return;

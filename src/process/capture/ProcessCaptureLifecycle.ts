@@ -59,6 +59,11 @@ import {
 } from "./ProcessNormalization.js";
 import { PROCESS_PROVIDER } from "../../domain/process/processEvidenceProvider.js";
 import { TerminalRenderer } from "./TerminalRenderer.js";
+import {
+  hasCaptureTruncation,
+  type TerminalRetention,
+  type ProcessCaptureTruncationDetails,
+} from "../../domain/process/processCaptureCoverage.js";
 import { scheduleProcessInterval, type ProcessTimer } from "./ProcessTimer.js";
 
 interface TerminalExitOptions {
@@ -84,6 +89,7 @@ interface CaptureResultOptions {
   readonly before: SnapshotResult;
   readonly after: SnapshotResult;
   readonly truncated: boolean;
+  readonly truncationDetails?: ProcessCaptureTruncationDetails;
   readonly scenario: ProcessScenario;
   readonly rootPid: number;
   readonly samplingPartial: boolean;
@@ -279,7 +285,13 @@ export const buildCaptureResult = (
     files_before: options.before.files,
     files_after: options.after.files,
     filesystem_effects: filesystemEffects,
-    truncated: options.truncated,
+    truncated:
+      options.truncationDetails === undefined
+        ? options.truncated
+        : hasCaptureTruncation(options.truncationDetails),
+    ...(options.truncationDetails === undefined
+      ? {}
+      : { truncation_details: options.truncationDetails }),
     limitations: [
       "The executable digest is a prelaunch file sample; matching path metadata immediately after spawn does not prove an atomic operating-system image binding.",
       "Process trees are sampled and may omit short-lived descendants.",
@@ -290,6 +302,11 @@ export const buildCaptureResult = (
       "Inherited host environment variables are not recorded and may affect results.",
       ...(!hasFilesystemObservations ? [filesystemObservationUnknown] : []),
       ...(hasUnknownFilesystemEffects ? [incompleteFilesystemUnknown] : []),
+      ...(options.truncationDetails === undefined
+        ? []
+        : captureCoverageUnknowns(options.truncationDetails).map(
+            ({ reason }) => reason,
+          )),
       ...(hasSensitiveScriptedInput ? [sensitiveInputUnknown] : []),
     ],
     residual_unknowns: [
@@ -330,8 +347,59 @@ export const buildCaptureResult = (
       ...(hasSensitiveScriptedInput
         ? [{ scope: "interaction" as const, reason: sensitiveInputUnknown }]
         : []),
+      ...(options.truncationDetails === undefined
+        ? []
+        : captureCoverageUnknowns(options.truncationDetails).filter(
+            ({ scope }) => scope !== "terminal",
+          )),
     ],
   };
+};
+
+const captureCoverageUnknowns = (
+  details: ProcessCaptureTruncationDetails,
+): UnverifiedProcessCapture["residual_unknowns"] => {
+  const unknowns: Array<UnverifiedProcessCapture["residual_unknowns"][number]> =
+    [];
+  if (
+    details.raw_terminal.observed_frames > details.raw_terminal.retained_frames
+  )
+    unknowns.push({
+      scope: "terminal",
+      reason:
+        "Raw PTY chunks exceeded output_bytes and were omitted; rendered states also lack those inputs. See truncation_details.raw_terminal.",
+    });
+  if (
+    details.rendered_terminal.observed_frames >
+    details.rendered_terminal.retained_frames
+  )
+    unknowns.push({
+      scope: "terminal",
+      reason:
+        "Cumulative rendered state and visible-line bytes exceeded output_bytes; whole rendered frames were omitted. Raw PTY coverage is reported separately. See truncation_details.rendered_terminal.",
+    });
+  for (const [name, coverage] of [
+    ["before", details.filesystem_before],
+    ["after_settlement", details.filesystem_after],
+  ] as const) {
+    if (coverage.enumeration_truncated)
+      unknowns.push({
+        scope: "filesystem",
+        reason: `Filesystem ${name} path enumeration was incomplete: ${coverage.enumeration_reasons.join(", ")}. See truncation_details.`,
+      });
+    if (coverage.hash_omissions.length > 0)
+      unknowns.push({
+        scope: "filesystem",
+        reason: `Filesystem ${name} omitted ${String(coverage.hash_omissions.length)} whole-file digests; per-path reasons and remaining file_bytes budget are in truncation_details.`,
+      });
+  }
+  if (details.process.sampling_partial)
+    unknowns.push({
+      scope: "process",
+      reason:
+        "Process sampling stopped with incomplete observations; sample_limit is reported in truncation_details.process.",
+    });
+  return unknowns;
 };
 
 interface ExecutableFileIdentity {
@@ -840,14 +908,16 @@ export const captureTerminalFrames = (options: {
   readonly onOutput: () => void;
   readonly renderer: TerminalRenderer;
   readonly recordEvent: RecordProcessCaptureEvent;
-}): (() => boolean) => {
+}): (() => TerminalRetention) => {
   let outputBytes = 0;
-  let truncated = false;
+  let observedBytes = 0;
+  let observedFrames = 0;
   options.terminal.onData((data) => {
     options.onOutput();
     const bytes = Buffer.byteLength(data);
+    observedBytes += bytes;
+    observedFrames += 1;
     if (outputBytes + bytes > options.scenario.limits.output_bytes) {
-      truncated = true;
       return;
     }
     outputBytes += bytes;
@@ -871,7 +941,13 @@ export const captureTerminalFrames = (options: {
     options.renderer.write(data, atMs);
     options.recordEvent("frames", sequence);
   });
-  return () => truncated;
+  return () => ({
+    budget_bytes: options.scenario.limits.output_bytes,
+    observed_bytes: observedBytes,
+    retained_bytes: outputBytes,
+    observed_frames: observedFrames,
+    retained_frames: options.frames.length,
+  });
 };
 
 export const resolveProcessResult = (

@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { JsonValue } from "../jsonValue.js";
 import type { ProcessCapture } from "./processCapture.js";
+import { processSourceTruncated } from "./processCaptureCoverage.js";
 import {
   processObservationLocationSchema,
   projectProcessObservation,
@@ -412,7 +413,7 @@ export const evaluateProcessTraceSide = (
   const sources = new Set(specification.events.map(({ source }) => source));
   const relevantScopes = scopesFor(sources);
   if (
-    capture.truncated ||
+    [...sources].some((source) => processSourceTruncated(capture, source)) ||
     capture.residual_unknowns.some(({ scope }) => relevantScopes.has(scope))
   )
     return { result: unknownSide(), diagnostic: null };

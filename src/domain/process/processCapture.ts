@@ -3,6 +3,10 @@ import { jsonValueSchema } from "../jsonValue.js";
 
 import { normalizationSchema } from "./processScenario.js";
 import { collectProcessCaptureIssues } from "./processCaptureValidation.js";
+import {
+  processCaptureTruncationDetailsSchema,
+  type ProcessCaptureTruncationDetails,
+} from "./processCaptureCoverage.js";
 
 export * from "./processScenario.js";
 
@@ -206,6 +210,8 @@ export interface UnverifiedProcessCapture {
   readonly files_after: readonly FileState[];
   readonly filesystem_effects: readonly FileEffect[];
   readonly truncated: boolean;
+  /** Optional on older captures; identifies each producer's actual coverage. */
+  readonly truncation_details?: ProcessCaptureTruncationDetails | undefined;
   readonly limitations: readonly string[];
   readonly residual_unknowns: readonly {
     readonly scope:
@@ -477,6 +483,7 @@ const processCaptureShapeSchema = z.strictObject({
   files_after: z.array(fileStateSchema),
   filesystem_effects: z.array(fileEffectSchema),
   truncated: z.boolean(),
+  truncation_details: processCaptureTruncationDetailsSchema.optional(),
   limitations: z.array(z.string()),
   residual_unknowns: z.array(
     z.object({

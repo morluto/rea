@@ -1,4 +1,5 @@
 import type { IPty } from "@lydell/node-pty";
+import type { TerminalRetention } from "../../domain/process/processCaptureCoverage.js";
 import type {
   InteractionEvent,
   ProcessCapture,
@@ -65,8 +66,8 @@ interface StartedCaptureRuntime {
   readonly startedAt: Date;
   readonly executableIdentity: ReturnType<typeof observeLaunchedExecutable>;
   readonly lastOutput: () => number;
-  readonly framesTruncated: () => boolean;
-  readonly stopSampler: () => Promise<{ readonly partial: boolean }>;
+  readonly rawTerminalRetention: () => TerminalRetention;
+  readonly stopSampler: ReturnType<typeof startProcessSampler>;
 }
 
 const cleanupFailedStartup = async (options: {
@@ -200,7 +201,7 @@ const startCaptureRuntime = async (
       scenario.executable,
       selectedExecutable,
     );
-    const framesTruncated = captureTerminalFrames({
+    const rawTerminalRetention = captureTerminalFrames({
       ...options,
       terminal,
       started,
@@ -228,7 +229,7 @@ const startCaptureRuntime = async (
       startedAt,
       executableIdentity,
       lastOutput: () => lastOutput,
-      framesTruncated,
+      rawTerminalRetention,
       stopSampler,
     };
   } catch (cause: unknown) {
@@ -365,7 +366,8 @@ const completeCapture = async (options: {
     state: "available",
     value: settlement,
   };
-  const samplingPartial = (await runtime.stopSampler()).partial;
+  const sampling = await runtime.stopSampler();
+  const samplingPartial = sampling.partial;
   await settleProcessCaptureJournal(options.eventJournal);
   assertNotCancelled(options.signal);
   let after: Awaited<ReturnType<typeof snapshotRoots>>;
@@ -439,7 +441,8 @@ const completeCapture = async (options: {
   const truncated =
     options.initiallyTruncated ||
     after.truncated ||
-    runtime.framesTruncated() ||
+    runtime.rawTerminalRetention().observed_frames >
+      runtime.rawTerminalRetention().retained_frames ||
     checkpoints.some(({ truncated: partial }) => partial) ||
     samplingPartial ||
     runtime.renderer.truncated();
@@ -450,6 +453,17 @@ const completeCapture = async (options: {
     before: options.before,
     after,
     truncated,
+    ...(options.before.coverage === undefined || after.coverage === undefined
+      ? {}
+      : {
+          truncationDetails: {
+            raw_terminal: runtime.rawTerminalRetention(),
+            rendered_terminal: runtime.renderer.retention(),
+            filesystem_before: options.before.coverage,
+            filesystem_after: after.coverage,
+            process: sampling.coverage,
+          },
+        }),
     scenario,
     rootPid: runtime.terminal.pid,
     samplingPartial,
