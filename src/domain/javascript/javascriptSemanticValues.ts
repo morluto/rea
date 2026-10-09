@@ -171,7 +171,10 @@ const evaluateExpression = (
   if (context.expressionDepth > SEMANTIC_EXPRESSION_DEPTH_LIMIT)
     return semanticResourceLimitUnknown("expression-depth");
   const literal = readExactJavaScriptLiteral(node);
-  if (literal.found) return { status: "literal", value: literal.value };
+  if (literal.found)
+    return typeof literal.value === "number"
+      ? primitiveSet([literal.value])
+      : { status: "literal", value: literal.value };
   if (t.isIdentifier(node)) {
     const binding = resolveSemanticBindingState(context.state, node, node.name);
     return binding === undefined

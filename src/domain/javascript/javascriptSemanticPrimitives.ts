@@ -21,6 +21,11 @@ export const semanticPrimitiveSet = (
         status: "unknown",
         reason: "Nonfinite numbers are outside the JSON primitive lattice.",
       };
+    if (typeof value === "number" && Object.is(value, -0))
+      return {
+        status: "unknown",
+        reason: "Negative zero cannot be preserved by JSON primitive evidence.",
+      };
     uniqueValues.add(value);
     if (uniqueValues.size > SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT)
       return semanticResourceLimitUnknown("primitive-candidates");
