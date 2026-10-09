@@ -16,11 +16,13 @@
 
 ### Features
 
+* **setup:** register OMP during setup ([#1301](https://github.com/morluto/rea/pull/1301)) ([8b4c359](https://github.com/morluto/rea/commit/8b4c3591358ee59297d8298ede1b63d08459d817))
 * **javascript:** record Electron integrity mismatches ([7915ee5](https://github.com/morluto/rea/commit/7915ee51781878ed67e094259924b6e6f3093b3f))
 
 
 ### Bug Fixes
 
+* **inspector:** retain observations after capture failures ([dea3498](https://github.com/morluto/rea/commit/dea3498b2b8d919606eefc4fd62f6ebcbbe5ed30))
 * **artifacts:** bind ASAR interpretation to owned snapshots ([d79317c](https://github.com/morluto/rea/commit/d79317cda0bbe8240eb7e25b0a5de90dcffca5fa))
 * **artifacts:** infer legacy Mach-O simulator platforms ([5aa2002](https://github.com/morluto/rea/commit/5aa200285ab066e48b37b716495936e6e2a963fd))
 * **artifacts:** preserve archive facts and Unicode path identity ([5751f5c](https://github.com/morluto/rea/commit/5751f5caac86c770123ae739a4e4101a72b0989c))
@@ -101,6 +103,7 @@
 
 ### Code Refactoring
 
+* use canonical implementations and types directly ([765e809](https://github.com/morluto/rea/commit/765e809e366eff21b4b9c224f1a813ad64245ea3))
 * **artifacts:** remove unused root classifier ([5291bca](https://github.com/morluto/rea/commit/5291bca108af781214572fac709f9808bb8aa4db))
 * **artifacts:** test inventory changes at materialization boundary ([750fb65](https://github.com/morluto/rea/commit/750fb6565052e9eaad40b946b6a284d0730d14f8))
 * **browser:** open scenario sessions without a factory wrapper ([d1983a4](https://github.com/morluto/rea/commit/d1983a45767bfcdc020652f48109a78a3f9fa590))
@@ -120,6 +123,9 @@
 
 ### Documentation
 
+* keep license sections text-only ([e10f1f0](https://github.com/morluto/rea/commit/e10f1f0901fa56fb4443837cf9528b31a12e140e))
+* align translated README artwork and layout ([ccfbe87](https://github.com/morluto/rea/commit/ccfbe87e984e456e12c66d0d2fe6d5a559d09518))
+* add README artwork and refine closing sections ([4b8e744](https://github.com/morluto/rea/commit/4b8e744d90579e353371649047215c4e4be7a5f6))
 * add repository-local REA tool design skill ([7738c1f](https://github.com/morluto/rea/commit/7738c1f6a9ccf1ec9868ef832f154abe9ba5eebd))
 * celebrate 40,000 GitHub stars 🎉 ([3edb217](https://github.com/morluto/rea/commit/3edb2172def0e0bd9076f23148f0c41cd2f341a3))
 * celebrate 40,000 GitHub stars 🎉 ([5ecc98a](https://github.com/morluto/rea/commit/5ecc98a5eac4c10d33e9c418b9ffae61c68e3ef2))
@@ -134,6 +140,8 @@
 
 ### Tests
 
+* share the client registration command to restore the jscpd gate ([#1317](https://github.com/morluto/rea/pull/1317)) ([5d16be2](https://github.com/morluto/rea/commit/5d16be2a7185db8b70a5fcbc5f5e1be63297f2c8))
+* **mcp:** remove arbitrary schema inventory thresholds ([24673aa](https://github.com/morluto/rea/commit/24673aaae497ca4ef0902544c0cd69817f5424ed))
 * **android:** allow provider readiness under load ([961c3c3](https://github.com/morluto/rea/commit/961c3c3de79ec44d608d011eb3fa3d6bd645cf6a))
 * **artifacts:** verify extraction races with real filesystem changes ([1ac8389](https://github.com/morluto/rea/commit/1ac8389c5c1f75faf8d7f2f3faf2f24febad5fea))
 * **browser:** avoid duplicating source-map listener setup ([9367dc1](https://github.com/morluto/rea/commit/9367dc13bd8d2732d36d5376b5de170c9f4af424))
