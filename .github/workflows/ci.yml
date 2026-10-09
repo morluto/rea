@@ -8,7 +8,9 @@ on:
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # The latest main push verifies the full tree, including earlier changes.
+  # Publication uses its own release workflow and concurrency group.
+  cancel-in-progress: true
 
 env:
   HUSKY: "0"
@@ -47,15 +49,22 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          if [[ "${{ github.event_name }}" != "pull_request" ]]; then
+          if [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
             echo "required=true" >> "${GITHUB_OUTPUT}"
-          elif git diff --quiet "${BASE_SHA}" "${HEAD_SHA}" -- \
+          # Compare the PR's changes, excluding unrelated updates on its base.
+          elif git diff --quiet "${BASE_SHA}...${HEAD_SHA}" -- \
             . \
             ':(exclude)docs/**' \
+            ':(top,exclude,glob)README*.md' \
             ':(exclude)AGENTS.md' \
             ':(exclude)CONTRIBUTING.md'; then
             echo "required=false" >> "${GITHUB_OUTPUT}"
           else
+            diff_status=$?
+            # A failed comparison must fail classification, not report a scope.
+            if [[ "${diff_status}" -ne 1 ]]; then
+              exit "${diff_status}"
+            fi
             echo "required=true" >> "${GITHUB_OUTPUT}"
           fi
 
