@@ -377,11 +377,16 @@ const decodeCommand = (
     slice.platforms.push(platform);
     return;
   }
+  // Legacy version-min commands predate explicit simulator platform IDs.
+  // Match dyld's CPU-based interpretation: tvOS used x86_64, while iOS
+  // and watchOS also had i386 simulator images.
+  const x86_64 = slice.cpu_type === (CPU_TYPE_X86 | CPU_ARCH_ABI64);
+  const x86 = slice.cpu_type === CPU_TYPE_X86 || x86_64;
   const legacyPlatform = new Map<number, number>([
     [LC_VERSION_MIN_MACOSX, 1],
-    [LC_VERSION_MIN_IPHONEOS, 2],
-    [LC_VERSION_MIN_TVOS, 3],
-    [LC_VERSION_MIN_WATCHOS, 4],
+    [LC_VERSION_MIN_IPHONEOS, x86 ? 7 : 2],
+    [LC_VERSION_MIN_TVOS, x86_64 ? 8 : 3],
+    [LC_VERSION_MIN_WATCHOS, x86 ? 9 : 4],
   ]).get(command);
   if (legacyPlatform !== undefined) {
     if (body.byteLength < 16)

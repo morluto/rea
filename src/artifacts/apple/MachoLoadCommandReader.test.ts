@@ -23,6 +23,39 @@ import {
 const read = (bytes: Uint8Array) =>
   readMachoImage(readerOf(bytes), bytes.length);
 
+// version_min_command has no simulator flag. dyld uses the Mach-O CPU type
+// to distinguish old simulator images from their device counterparts.
+it.each([
+  [0x25, 7, false, 7],
+  [0x25, 0x01000007, true, 7],
+  [0x25, 0x0100000c, true, 2],
+  [0x2f, 0x01000007, true, 8],
+  [0x2f, 0x0100000c, true, 3],
+  [0x2f, 7, false, 3],
+  [0x30, 7, false, 9],
+  [0x30, 0x01000007, true, 9],
+  [0x30, 12, false, 4],
+  [0x24, 0x01000007, true, 1],
+] as const)(
+  "classifies legacy command %i on CPU %i (wide=%s) as platform %i",
+  async (command, cpuType, wide, platform) => {
+    const bytes = new Uint8Array(16);
+    const view = new DataView(bytes.buffer);
+    view.setUint32(0, command, true);
+    view.setUint32(4, bytes.length, true);
+    view.setUint32(8, 0x00090000, true);
+    const facts = await read(
+      machoImage({
+        cpu: { type: cpuType, subtype: 3 },
+        wide,
+        commands: [bytes],
+      }),
+    );
+    if (facts.status !== "parsed") throw new Error(facts.status);
+    expect(facts.slices[0]).toMatchObject({ platform, platforms: [platform] });
+  },
+);
+
 describe("Mach-O load command reader: decodes thin-image load commands", () => {
   it("decodes dylib loading commands of a thin image", async () => {
     const image = machoImage({
