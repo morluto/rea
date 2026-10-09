@@ -147,6 +147,10 @@ from observations of the current app. File names do not automatically exclude
 files. Set `REA_REFERENCE_SECRET_PATTERNS_JSON` to a JSON array of ignore
 patterns when you want to exclude selected paths.
 
+JavaScript and TypeScript import parsing requires valid UTF-8. Malformed source
+bytes retain their original hashes and sizes with a decoding diagnostic; REA
+does not infer module targets from replacement characters.
+
 Historical-source import requires safe no-follow file opens on Linux or
 macOS. Native Windows returns `unsupported_host`; use Linux REA inside WSL
 or another supported host. See

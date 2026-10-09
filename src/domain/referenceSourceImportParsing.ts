@@ -334,7 +334,25 @@ export const parseReferenceSourceImports = (
   if (language !== null && !codeSourceLanguages.has(language))
     return { relationships: [], parse_failures: [] };
 
-  const source = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  let source: string;
+  try {
+    source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch (cause: unknown) {
+    // The import still records the original bytes; lossy text cannot supply
+    // observed module names or relationships.
+    void cause;
+    return {
+      relationships: [],
+      parse_failures: [
+        {
+          path,
+          parser: "utf-8",
+          reason:
+            "Source bytes are not valid UTF-8; import targets were not parsed.",
+        },
+      ],
+    };
+  }
   const { ast, reasons } = parseWithBabel(path, source, language);
   const parseFailures = reasons.map((reason) => ({
     path,
