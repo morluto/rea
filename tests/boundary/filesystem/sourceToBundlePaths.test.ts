@@ -116,6 +116,17 @@ it.each([
     source: "modules/a.js",
     expected: "pkg/maps/modules/a.js",
   },
+  {
+    mapPath: "pkg/maps/main.js.map",
+    source: "generated/../src/a.js",
+    expected: "pkg/maps/src/a.js",
+  },
+  {
+    mapPath: "pkg/maps/main.js.map",
+    sourceRoot: "generated/..",
+    source: "src/a.js",
+    expected: "pkg/maps/src/a.js",
+  },
 ])(
   "resolves $source against $mapPath without selecting a same-basename decoy",
   async ({ mapPath, source, sourceRoot, expected }) => {
@@ -173,6 +184,122 @@ it.each([
         .flatMap(({ signals }) => signals)
         .some(({ kind }) => kind === "source-map-original-path"),
     ).toBe(false);
+  },
+);
+
+it("retains every map location when identical map artifacts merge", async () => {
+  const root = await createTestTempDirectory("rea-source-map-merged-");
+  const previous = join(root, "previous");
+  const current = join(root, "current");
+  const map = JSON.stringify({
+    version: 3,
+    sources: ["../src/x.js"],
+    sourcesContent: ["export const value = 2;"],
+    names: [],
+    mappings: "AAAA",
+  });
+  for (const prefix of ["a", "b"]) {
+    await Promise.all([
+      mkdir(join(previous, prefix, "src"), { recursive: true }),
+      mkdir(join(current, prefix, "maps"), { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(join(previous, prefix, "src/x.js"), "export const value = 1;"),
+      writeFile(join(current, prefix, "maps/main.js.map"), map),
+    ]);
+  }
+  const { comparison } = await compareTrees(previous, current);
+  for (const prefix of ["a", "b"]) {
+    const path = `${prefix}/src/x.js`;
+    const item = comparison.items.find(
+      ({ source_path }) => source_path === path,
+    );
+    expect(item?.current_node_ids).toHaveLength(1);
+    expect(item?.candidates).toContainEqual(
+      expect.objectContaining({
+        confidence: "high",
+        signals: expect.arrayContaining([
+          expect.objectContaining({
+            kind: "source-map-original-path",
+            current_values: [path],
+          }),
+        ]),
+      }),
+    );
+  }
+});
+
+it.each([
+  "file:/repo/src/a.js",
+  "node:internal/src/a.js",
+  "data:text/javascript,virtual/src/a.js",
+])(
+  "preserves URI path candidates for %s without map-relative joining",
+  async (source) => {
+    const root = await createTestTempDirectory("rea-source-map-uri-");
+    const previous = join(root, "previous");
+    const current = join(root, "current");
+    await Promise.all([
+      mkdir(join(previous, "src"), { recursive: true }),
+      mkdir(join(current, "maps"), { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(join(previous, "src/a.js"), "export const value = 1;"),
+      writeFile(
+        join(current, "maps/main.js.map"),
+        JSON.stringify({
+          version: 3,
+          sources: [source],
+          sourcesContent: ["export const value = 2;"],
+          names: [],
+          mappings: "AAAA",
+        }),
+      ),
+    ]);
+    const { comparison } = await compareTrees(previous, current);
+    expect(comparison.items[0]?.candidates).toContainEqual(
+      expect.objectContaining({
+        confidence: "high",
+        signals: expect.arrayContaining([
+          expect.objectContaining({ kind: "source-map-original-path" }),
+        ]),
+      }),
+    );
+  },
+);
+
+it.each([
+  { source: "", historicalPath: "maps.js" },
+  { source: ".", historicalPath: "maps.js" },
+  { source: "./", historicalPath: "maps.js" },
+  { source: "child/..", historicalPath: "maps.js" },
+  { source: "child.js/", historicalPath: "maps.js/child.js" },
+])(
+  "keeps the directory-only source name $source out of file path indices",
+  async ({ source, historicalPath }) => {
+    const root = await createTestTempDirectory("rea-source-map-empty-");
+    const previous = join(root, "previous");
+    const current = join(root, "current");
+    await Promise.all([
+      mkdir(join(previous, historicalPath, ".."), { recursive: true }),
+      mkdir(join(current, "maps.js"), { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(join(previous, historicalPath), "export const value = 1;"),
+      writeFile(
+        join(current, "maps.js/main.js.map"),
+        JSON.stringify({
+          version: 3,
+          sources: [source],
+          sourcesContent: ["export const value = 2;"],
+          names: [],
+          mappings: "AAAA",
+        }),
+      ),
+    ]);
+    const { comparison } = await compareTrees(previous, current);
+    expect(comparison.items[0]?.source_path).toBe(historicalPath);
+    expect(comparison.items[0]?.candidates).toEqual([]);
   },
 );
 

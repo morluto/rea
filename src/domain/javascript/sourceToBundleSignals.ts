@@ -307,8 +307,14 @@ const addPath = (
   mapPath?: string,
 ): void => {
   const portable = raw.replaceAll("\\", "/");
+  if (
+    portable === "" ||
+    portable.endsWith("/") ||
+    /(?:^|\/)\.{1,2}$/u.test(portable)
+  )
+    return;
   const relative =
-    !SCHEME_URL.test(portable) &&
+    !URI_SCHEME.test(portable) &&
     !portable.startsWith("/") &&
     !/^[a-z]:\//iu.test(portable);
   const resolved =
@@ -324,6 +330,8 @@ const addPath = (
     });
 };
 
+/** Recognize URI schemes even when the URI has no authority component. */
+const URI_SCHEME = /^[a-z][a-z0-9+.-]*:/iu;
 /** Matches a `scheme://...` URL prefix; bare filesystem paths keep `?`/`#`. */
 const SCHEME_URL = /^[a-z][a-z0-9+.-]*:\/\//iu;
 /** Matches a `scheme://...` URL prefix with any run of slashes, for stripping. */
