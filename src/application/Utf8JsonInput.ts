@@ -12,6 +12,7 @@ export const parseUtf8Json = (
   bytes: Uint8Array,
   operation: string,
   path: string,
+  boundary = "json-input",
 ): SafeJsonParseResult => {
   let text: string;
   try {
@@ -26,12 +27,13 @@ export const parseUtf8Json = (
     if (code === "ERR_STRING_TOO_LONG")
       throw new AnalysisResourceConstraintError(
         operation,
-        "file-size",
+        "memory",
         "JSON input exceeds the runtime's maximum decoded string length",
         {
+          boundary,
           input_path: path,
           input_bytes: bytes.byteLength,
-          max_string_utf16_code_units: constants.MAX_STRING_LENGTH,
+          max_string_code_units: constants.MAX_STRING_LENGTH,
         },
         {
           cause,
