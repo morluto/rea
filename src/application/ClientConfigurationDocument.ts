@@ -832,15 +832,15 @@ const disabledServerListLines = (
 
 /**
  * Replace REA's TOML server tables and assignments. Comments that introduce a
- * following table stay. Text inside strings is not treated as a header. Only
- * Grok Build reads the root `disabled_mcp_servers` list that registration
- * also edits.
+ * following table stay. Codex also retains comments around REA's own table.
+ * Text inside strings is not treated as a header. Only Grok Build reads the
+ * root `disabled_mcp_servers` list that registration also edits.
  */
 const upsertTomlServerSection = (
   originalText: string,
   serverKey: string,
   entry: unknown,
-  editDisabledList: boolean,
+  format: "toml" | "grok",
 ): string => {
   // smol-toml accepts a leading BOM. Leave it in place or the first header is missed.
   const bom = originalText.startsWith("\uFEFF");
@@ -917,24 +917,25 @@ const upsertTomlServerSection = (
         mode = "none";
         continue;
       }
-      const disabledLines = editDisabledList
-        ? disabledServerListLines(
-            disabledServerListEdit({
-              text,
-              lineStart,
-              valueOffset,
-              valueEnd,
-              statementEnd,
-              tablePath,
-              segments: assignment.segments,
-              serverKey,
-              entry,
-            }),
-            lines,
-            lineIndex,
-            endLine,
-          )
-        : undefined;
+      const disabledLines =
+        format === "grok"
+          ? disabledServerListLines(
+              disabledServerListEdit({
+                text,
+                lineStart,
+                valueOffset,
+                valueEnd,
+                statementEnd,
+                tablePath,
+                segments: assignment.segments,
+                serverKey,
+                entry,
+              }),
+              lines,
+              lineIndex,
+              endLine,
+            )
+          : undefined;
       if (disabledLines !== undefined) {
         flushPending();
         kept.push(...disabledLines);
@@ -975,7 +976,10 @@ const upsertTomlServerSection = (
       continue;
     }
     if (isBlankOrComment(line)) {
-      pending.push(physical);
+      if (format === "toml" && line.trimStart().startsWith("#")) {
+        flushPending();
+        kept.push(physical);
+      } else pending.push(physical);
       lineIndex += 1;
       continue;
     }
@@ -1044,7 +1048,7 @@ const serializeGrokConfiguration = (
     originalText,
     PRODUCT_IDENTITY.mcpServerKey,
     entry,
-    true,
+    "grok",
   );
 };
 
@@ -1077,7 +1081,7 @@ const serializeCodexConfiguration = (
     originalText,
     PRODUCT_IDENTITY.mcpServerKey,
     tomlServerEntry(document, PRODUCT_IDENTITY.mcpServerKey),
-    false,
+    "toml",
   );
   // Removing a final table also drops the file's last line break.
   const edited =

@@ -31,6 +31,14 @@ const OPENCODE_ORIGINAL = `{
   },
 }\n`;
 
+const CODEX_ORIGINAL = [
+  "# Keep Codex preferences and their spelling.",
+  'model = "gpt-5"',
+  'notify = ["a", "b"]',
+  "literal = 'C:\\demo\\path'",
+  "",
+].join("\n");
+
 const verifyMcpAdd = async ({ cli, environment, npxLog }) => {
   await run(cli, ["mcp", "add"], environment);
   const mcpRegistration = await readFile(npxLog, "utf8");
@@ -248,7 +256,7 @@ const verifySetupPlan = async ({
       !planned.plannedActions.some(({ kind }) => kind === "configure_client") ||
       !planned.plannedActions.some(({ kind }) => kind === "install_skill") ||
       plannedClaudeConfig !== '{"existing":true}\n' ||
-      plannedCodexConfig !== 'model = "gpt-5"\n' ||
+      plannedCodexConfig !== CODEX_ORIGINAL ||
       plannedCursorConfig !== '{"existing":true}\n' ||
       plannedOpenCodeConfig !== opencodeOriginal
     )
@@ -459,8 +467,8 @@ const assertCodexSymlink = async ({
     !codex.includes("[mcp_servers.rea]") ||
     !codex.includes(`command = "${cli}"`) ||
     !codex.includes("startup_timeout_sec = 30") ||
-    (await readFile(`${codexConfig}.rea.backup`, "utf8")) !==
-      'model = "gpt-5"\n' ||
+    !codex.startsWith(CODEX_ORIGINAL) ||
+    (await readFile(`${codexConfig}.rea.backup`, "utf8")) !== CODEX_ORIGINAL ||
     (await readFile(`${cursorConfig}.rea.backup`, "utf8")) !==
       '{"existing":true}\n'
   )
@@ -631,7 +639,6 @@ const verifyUninstall = async ({
   codexTarget,
   opencodeConfig,
 }) => {
-  const openCodeBeforeUninstall = await readFile(opencodeConfig, "utf8");
   const uninstallExecution = await runWithStatus(
     cli,
     ["uninstall", "--json"],
@@ -657,7 +664,7 @@ const verifyUninstall = async ({
     !(await lstat(codexConfig)).isSymbolicLink() ||
     cursorAfterUninstall.existing !== true ||
     cursorAfterUninstall.mcpServers?.rea !== undefined ||
-    !codexAfterUninstall.includes('model = "gpt-5"') ||
+    codexAfterUninstall !== CODEX_ORIGINAL ||
     codexAfterUninstall.includes("mcp_servers.rea") ||
     openCodeErrors.length !== 0 ||
     openCodeAfterUninstall?.model !== "provider/model" ||
@@ -670,11 +677,10 @@ const verifyUninstall = async ({
       "Keep this independently managed server",
     ) ||
     (await readFile(`${opencodeConfig}.rea.backup`, "utf8")) !==
-      openCodeBeforeUninstall ||
-    !(await readFile(`${cursorConfig}.rea.backup`, "utf8")).includes('"rea"') ||
-    !(await readFile(`${codexConfig}.rea.backup`, "utf8")).includes(
-      "[mcp_servers.rea]",
-    )
+      OPENCODE_ORIGINAL ||
+    (await readFile(`${cursorConfig}.rea.backup`, "utf8")) !==
+      '{"existing":true}\n' ||
+    (await readFile(`${codexConfig}.rea.backup`, "utf8")) !== CODEX_ORIGINAL
   )
     throw new Error(
       `packaged uninstall did not preserve config symlinks: ${JSON.stringify(uninstall)}`,
@@ -704,6 +710,7 @@ export async function verifyPackageSetup({
   );
   const siblingSkillPath = join(home, ".agents/skills/unrelated/SKILL.md");
   if (supportedSetupHost) {
+    await writeFile(codexTarget, CODEX_ORIGINAL);
     await mkdir(join(home, ".agents/skills/unrelated"), { recursive: true });
     await writeFile(siblingSkillPath, "unrelated skill\n");
   }

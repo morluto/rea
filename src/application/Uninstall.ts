@@ -7,6 +7,7 @@ import {
   type ClientConfigurationDocument,
 } from "./ClientConfigurationDocument.js";
 import { copyFile, lstat, readFile, realpath, rm } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -31,6 +32,7 @@ interface ManagedPathStats {
 /** Injectable filesystem operations used to prove uninstall failure recovery. */
 export interface UninstallFileSystem {
   readText(path: string): Promise<string>;
+  /** Preserve the first backup; reject an existing destination with EEXIST. */
   copy(source: string, destination: string): Promise<void>;
   writeText(path: string, contents: string): Promise<void>;
   stat(path: string): Promise<ManagedPathStats>;
@@ -40,7 +42,8 @@ export interface UninstallFileSystem {
 
 const systemFileSystem: UninstallFileSystem = {
   readText: (path) => readFile(path, "utf8"),
-  copy: (source, destination) => copyFile(source, destination),
+  copy: (source, destination) =>
+    copyFile(source, destination, fsConstants.COPYFILE_EXCL),
   writeText: (path, contents) =>
     writeFileAtomic(path, contents, { encoding: "utf8" }),
   stat: (path) => lstat(path),
@@ -274,12 +277,12 @@ const removeClient = async (
   try {
     await fileSystem.copy(transactionPath, backupPath);
   } catch (cause: unknown) {
-    void cause;
-    return item(
-      client.name,
-      "failed",
-      "Configuration could not be backed up, so no change was made. Check file permissions, then rerun uninstall.",
-    );
+    if (!(cause instanceof Error && "code" in cause && cause.code === "EEXIST"))
+      return item(
+        client.name,
+        "failed",
+        "Configuration could not be backed up, so no change was made. Check file permissions, then rerun uninstall.",
+      );
   }
   try {
     await fileSystem.writeText(

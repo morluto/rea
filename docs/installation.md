@@ -195,8 +195,9 @@ Before applying changes, REA checks your current configuration. The plan lists:
 
 Malformed or unsafe existing configuration blocks the whole transaction before
 Hopper installation or any file write. Declining or pressing Ctrl-C makes no
-changes. Agent configuration writes preserve unrelated
-entries, create backups, use atomic replacement, and verify their result.
+changes. Agent configuration writes preserve unrelated entries and comments,
+create backups, use atomic replacement, and verify their result. Setup and
+uninstall retain an existing `.rea.backup` rather than replacing the first snapshot.
 
 After setup, REA reports which agents, analysis tools, and workflow files passed
 its final checks. Restart any agent named in the completion message, then begin

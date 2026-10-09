@@ -1,3 +1,4 @@
+import { constants as fsConstants } from "node:fs";
 import {
   copyFile,
   lstat,
@@ -1587,7 +1588,7 @@ describe("client configuration filesystem failure reporting", () => {
         copy: (source, destination) =>
           failure === "backup"
             ? Promise.reject(new Error("SECRET backup failure"))
-            : copyFile(source, destination),
+            : copyFile(source, destination, fsConstants.COPYFILE_EXCL),
         writeText: async (path, contents) => {
           writes += 1;
           if ((failure === "update" && writes === 1) || failure === "restore")
@@ -1606,6 +1607,25 @@ describe("client configuration filesystem failure reporting", () => {
       expect(JSON.stringify(result)).not.toContain("SECRET");
     },
   );
+
+  it("restores the current configuration without replacing its initial backup", async () => {
+    const { home, config } = await uninstallFixture();
+    const current = await readFile(config, "utf8");
+    const initial = '{"existing":true}\n';
+    await writeFile(`${config}.rea.backup`, initial);
+    let writes = 0;
+    const result = await systemUninstallHost(home, {
+      ...testFileSystem,
+      writeText: async (path, contents) => {
+        writes += 1;
+        await writeFile(path, contents);
+        if (writes === 1) throw new Error("update failed after writing");
+      },
+    }).removeClient({ name: "cursor", format: "json", configPath: config });
+    expect(result.status).toBe("failed");
+    expect(await readFile(config, "utf8")).toBe(current);
+    expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(initial);
+  });
 
   it("reports a managed-path removal failure", async () => {
     const home = await createTestTempDirectory("rea-uninstall-remove-");
@@ -1631,7 +1651,8 @@ describe("client configuration filesystem failure reporting", () => {
 
 const testFileSystem: UninstallFileSystem = {
   readText: (path) => readFile(path, "utf8"),
-  copy: (source, destination) => copyFile(source, destination),
+  copy: (source, destination) =>
+    copyFile(source, destination, fsConstants.COPYFILE_EXCL),
   writeText: (path, contents) => writeFile(path, contents),
   stat: (path) => lstat(path),
   realpath: (path) => realpath(path),
