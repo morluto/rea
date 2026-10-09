@@ -4,6 +4,7 @@ import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { join } from "node:path";
 
 import { analysisErrorRemediationAction } from "../domain/analysisErrorPresentation.js";
+import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { parseBinaryTarget } from "./BinaryTargetResolver.js";
 import { execFileOutput } from "../process/ExecFileOutput.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -324,10 +325,18 @@ export const systemDoctorHost = (
       readMacosVersion(hostExecFileOutput, commandEnvironment),
     linuxDistribution: readLinuxDistribution,
     async validTarget(path) {
-      return (await parseBinaryTarget(path, process.cwd(), architecture)).ok;
+      return (
+        await parseBinaryTarget(path, {
+          cwd: process.cwd(),
+          hostArchitecture: architecture,
+        })
+      ).ok;
     },
     async inspectTarget(path) {
-      const result = await parseBinaryTarget(path, process.cwd(), architecture);
+      const result = await parseBinaryTarget(path, {
+        cwd: process.cwd(),
+        hostArchitecture: architecture,
+      });
       if (result.ok)
         return {
           name: "target",
@@ -336,19 +345,21 @@ export const systemDoctorHost = (
           detail: path,
         };
       const error = result.error;
+      const targetError =
+        error instanceof BinaryTargetError ? error : undefined;
       return {
         name: "target",
         ok: false,
         classification:
-          error.constraint === "directory_requires_file"
+          targetError?.constraint === "directory_requires_file"
             ? "unsupported_target"
             : "config_drift",
         detail: path,
         details: {
-          reason: error.reason,
-          ...(error.constraint === undefined
+          reason: targetError?.reason ?? error.message,
+          ...(targetError?.constraint === undefined
             ? {}
-            : { constraint: error.constraint }),
+            : { constraint: targetError.constraint }),
         },
         remediation: analysisErrorRemediationAction(error),
       };

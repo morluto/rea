@@ -1,9 +1,9 @@
 import { createJavaScriptApplicationEdge } from "./javascriptApplicationGraph.js";
 import type { ApplicationEdge } from "./javascriptApplicationGraphSchemas.js";
 import type { ApplicationGraphEvidence } from "./javascriptApplicationEvidenceSchemas.js";
-import { canonicalDigest } from "../comparisonSemantics.js";
+import { digestCanonicalValue } from "../canonicalDigest.js";
 import type { ParsedStaticLayer } from "./javascriptRuntimeReconciliationParsing.js";
-import { compareCodePoints } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { JavaScriptRuntimeReconciliationItem } from "./javascriptRuntimeReconciliationSchemas.js";
 import type { RuntimeReconciliationEntity } from "./javascriptRuntimeReconciliationRuntime.js";
 import {
@@ -29,7 +29,7 @@ export const reconcileRuntimeEntities = (input: {
     reconcileEntity(entity, index, input.layers),
   );
   const retained = evaluated.sort((left, right) =>
-    compareCodePoints(
+    compareUnicodeCodePoints(
       left.item.reconciliation_id,
       right.item.reconciliation_id,
     ),
@@ -177,7 +177,7 @@ const candidatesWithLocation = (
         if (!located.has(key)) located.set(key, { candidate, mapping });
       }
   return [...located.values()].sort((left, right) =>
-    compareCodePoints(
+    compareUnicodeCodePoints(
       candidateKey(left.candidate),
       candidateKey(right.candidate),
     ),
@@ -331,7 +331,7 @@ const createItem = (
     candidate_static_nodes: candidateReferences.items,
   } satisfies Omit<JavaScriptRuntimeReconciliationItem, "reconciliation_id">;
   return {
-    reconciliation_id: `jrr_item_${canonicalDigest(semantic, "Runtime reconciliation")}`,
+    reconciliation_id: `jrr_item_${digestCanonicalValue(semantic, "Runtime reconciliation")}`,
     ...semantic,
   };
 };

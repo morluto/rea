@@ -1,5 +1,5 @@
 import { canonicalJson } from "../comparisonSemantics.js";
-import { compareCodePoints } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { ApplicationNode } from "./javascriptApplicationGraphSchemas.js";
 import type { JsonValue } from "../jsonValue.js";
 
@@ -85,7 +85,7 @@ export const matchJavaScriptApplicationVersions = (
   const rightIds = new Set(remainingRight.map(({ node_id: id }) => id));
   return {
     pairs: pairs.sort((a, b) =>
-      compareCodePoints(
+      compareUnicodeCodePoints(
         `${a.left.node_id}\0${a.right.node_id}`,
         `${b.left.node_id}\0${b.right.node_id}`,
       ),
@@ -109,7 +109,7 @@ interface TierContext {
 const applyTier = (context: TierContext): void => {
   const leftByKey = nodesByKey(context.left.values(), context.tier.key);
   const rightByKey = nodesByKey(context.right.values(), context.tier.key);
-  for (const key of [...leftByKey.keys()].sort(compareCodePoints)) {
+  for (const key of [...leftByKey.keys()].sort(compareUnicodeCodePoints)) {
     const leftGroup = leftByKey.get(key) ?? [];
     const rightGroup = rightByKey.get(key) ?? [];
     if (rightGroup.length === 0) continue;
@@ -174,7 +174,7 @@ const filteredCandidates = (
     [...candidates.entries()].flatMap(([nodeId, values]) => {
       const filtered = [...values]
         .filter((value) => retained.has(value))
-        .sort(compareCodePoints);
+        .sort(compareUnicodeCodePoints);
       return filtered.length === 0 ? [] : [[nodeId, filtered] as const];
     }),
   );
@@ -309,10 +309,10 @@ const stringList = (value: unknown): string[] =>
   Array.isArray(value)
     ? value
         .filter((item): item is string => typeof item === "string")
-        .sort(compareCodePoints)
+        .sort(compareUnicodeCodePoints)
     : [];
 
 const sortedNodes = (nodes: Iterable<ApplicationNode>): ApplicationNode[] =>
   [...nodes].sort((left, right) =>
-    compareCodePoints(left.node_id, right.node_id),
+    compareUnicodeCodePoints(left.node_id, right.node_id),
   );

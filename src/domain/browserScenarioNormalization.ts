@@ -1,4 +1,4 @@
-import { canonicalDigest } from "./comparisonSemantics.js";
+import { digestCanonicalValue } from "./canonicalDigest.js";
 
 import type {
   BrowserScenarioArtifactKind,
@@ -30,7 +30,7 @@ export const commitBrowserScenarioNormalization = (
   const commitment = { built_in_rules: [...BUILT_IN_RULES], rules };
   return {
     ...commitment,
-    sha256: canonicalDigest(commitment, "Browser scenario"),
+    sha256: digestCanonicalValue(commitment, "Browser scenario"),
   };
 };
 
@@ -40,7 +40,7 @@ export const digestNormalizedScenarioValue = (
   artifact: BrowserScenarioArtifactKind,
   rules: readonly BrowserScenarioNormalizationRule[],
 ): string =>
-  canonicalDigest(normalize(value, artifact, rules), "Browser scenario");
+  digestCanonicalValue(normalize(value, artifact, rules), "Browser scenario");
 
 const normalize = (
   value: unknown,

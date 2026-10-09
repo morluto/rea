@@ -137,6 +137,16 @@ listed after the table because its connector is not one of these files:
 | Command Code       | `commandcode`    |
 | VS Code            | `vscode`         |
 | Grok Build         | `grok_build`     |
+| OMP                | `omp`            |
+
+For OMP, setup writes a `type: "stdio"` entry to the user-level
+`~/.omp/agent/mcp.json`. It follows `PI_CONFIG_DIR`, an absolute
+`PI_CODING_AGENT_DIR`, and the profile selected by `OMP_PROFILE` or
+`PI_PROFILE` (`~/.omp/profiles/<name>/agent/mcp.json`). Setup also removes
+`rea` from that file's `disabledServers` list, which would otherwise hide the
+registration. Doctor treats an `enabled: false` entry as active when
+`enabledServers` lists `rea`, as OMP does, unless `disabledServers` also lists
+it. Run setup under each profile that should load REA.
 
 For OpenCode, setup writes the V1 `mcp.rea` entry, which OpenCode V1 and V2
 both load. If the configuration already uses OpenCode V2's native

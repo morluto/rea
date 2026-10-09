@@ -157,9 +157,9 @@ const parseSnapshots = (
   const snapshots = new Map<string, FunctionSnapshot>();
   for (const group of groups) {
     const snapshot = parseFunctionEvidence(group);
-    const address = normalizeAddress(snapshot.dossier.procedure.address);
+    const address = parseCallPathAddress(snapshot.dossier.procedure.address);
     for (const callee of snapshot.dossier.callees)
-      normalizeAddress(callee.address);
+      parseCallPathAddress(callee.address);
     if (snapshots.has(address))
       throw new TypeError(`Duplicate function Evidence for ${address}`);
     snapshots.set(address, snapshot);
@@ -196,7 +196,7 @@ const createGraph = (
   for (const [address, snapshot] of snapshots) {
     graph.mergeNode(address);
     for (const callee of snapshot.dossier.callees) {
-      const calleeAddress = normalizeAddress(callee.address);
+      const calleeAddress = parseCallPathAddress(callee.address);
       graph.mergeNode(calleeAddress);
       graph.mergeDirectedEdge(address, calleeAddress);
     }
@@ -371,5 +371,3 @@ const uniqueEvidence = (snapshots: Iterable<FunctionSnapshot>): string[] =>
   [
     ...new Set([...snapshots].flatMap((snapshot) => snapshotLinks(snapshot))),
   ].sort((left, right) => left.localeCompare(right));
-
-const normalizeAddress = (input: string): string => parseCallPathAddress(input);

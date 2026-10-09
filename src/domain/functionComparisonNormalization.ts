@@ -1,5 +1,5 @@
 import { canonicalJson } from "./comparisonSemantics.js";
-import { compareCodePoints } from "./canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 
 import type { FunctionSnapshot } from "./functionDossierEvidence.js";
 import type { FunctionComparisonResult } from "./functionComparisonSchemas.js";
@@ -179,7 +179,7 @@ export const sorted = (values: readonly unknown[]): readonly unknown[] =>
       value,
       json: canonicalJson(value, "Function normalization"),
     }))
-    .sort((left, right) => compareCodePoints(left.json, right.json))
+    .sort((left, right) => compareUnicodeCodePoints(left.json, right.json))
     .map(({ value }) => value);
 
 export const isAutoName = (name: string): boolean =>

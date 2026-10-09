@@ -16,7 +16,7 @@ import {
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
-import { compareCodePoints } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
@@ -300,7 +300,7 @@ const evaluateObject = (
     });
   }
   const properties = [...propertiesByName.values()].sort((left, right) =>
-    compareCodePoints(left.name, right.name),
+    compareUnicodeCodePoints(left.name, right.name),
   );
   return unknownProperties
     ? {

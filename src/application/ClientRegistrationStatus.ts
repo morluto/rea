@@ -1,6 +1,7 @@
 import {
+  clientServerForcedEnabled,
+  clientServerListedDisabled,
   effectiveClientServer,
-  grokServerListedDisabled,
   parseClientConfiguration,
 } from "./ClientConfigurationDocument.js";
 import { access, readFile } from "node:fs/promises";
@@ -85,7 +86,11 @@ export const readClientRegistrationStatuses = async (
           CODEX_HOME: options.environment.CODEX_HOME,
           COPILOT_HOME: options.environment.COPILOT_HOME,
           GROK_HOME: options.environment.GROK_HOME,
+          OMP_PROFILE: options.environment.OMP_PROFILE,
           OPENCODE_CONFIG: options.environment.OPENCODE_CONFIG,
+          PI_CODING_AGENT_DIR: options.environment.PI_CODING_AGENT_DIR,
+          PI_CONFIG_DIR: options.environment.PI_CONFIG_DIR,
+          PI_PROFILE: options.environment.PI_PROFILE,
           SAND_DATA_ROOT: options.environment.SAND_DATA_ROOT,
           XDG_CONFIG_HOME: options.environment.XDG_CONFIG_HOME,
         },
@@ -132,14 +137,9 @@ export const readClientRegistrationStatuses = async (
             client,
             currentCommandPath,
             options.platform ?? process.platform,
+            clientServerForcedEnabled(parsed, PRODUCT_IDENTITY.mcpServerKey),
           ) &&
-            !(
-              client.format === "grok" &&
-              grokServerListedDisabled(
-                parsed.document,
-                PRODUCT_IDENTITY.mcpServerKey,
-              )
-            )
+            !clientServerListedDisabled(parsed, PRODUCT_IDENTITY.mcpServerKey)
             ? "aligned"
             : "stale",
         ),
@@ -164,9 +164,13 @@ const registrationAligned = (
   client: SetupClient,
   currentCommandPath: string,
   platform: NodeJS.Platform,
+  forcedEnabled = false,
 ): boolean => {
   const command = [registration.command, ...registration.args];
-  if (registration.disabled === true || registration.enabled === false)
+  if (
+    registration.disabled === true ||
+    (registration.enabled === false && !forcedEnabled)
+  )
     return false;
   if (!isOwnedClientRegistrationCommand(command, currentCommandPath))
     return false;
@@ -177,6 +181,13 @@ const registrationAligned = (
   )
     return false;
   if (client.format === "vscode" && registration.type !== "stdio") return false;
+  // OMP infers stdio for a command entry without an explicit type.
+  if (
+    client.format === "omp" &&
+    registration.type !== undefined &&
+    registration.type !== "stdio"
+  )
+    return false;
   if (
     client.format === "copilot_cli" &&
     (registration.type !== "stdio" ||
@@ -232,6 +243,12 @@ const parseRegistration = (
   )
     throw new TypeError("Expected an stdio registration");
   if (client.format === "commandcode" && registration.transport !== "stdio")
+    throw new TypeError("Expected an stdio registration");
+  if (
+    client.format === "omp" &&
+    registration.type !== undefined &&
+    registration.type !== "stdio"
+  )
     throw new TypeError("Expected an stdio registration");
   return registration;
 };

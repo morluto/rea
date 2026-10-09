@@ -151,8 +151,8 @@ export const projectManagedApplicationGraph = (
   };
   const artifactNode = addArtifactNode(state);
   addArtifactIdentityNodes(state, artifactNode, parsed);
-  const memberCounts = addMemberNodes(state, artifactNode, parsed);
-  const boundaryCounts = addBoundaryNodes(state, artifactNode, parsed);
+  addMemberNodes(state, artifactNode, parsed);
+  addBoundaryNodes(state, artifactNode, parsed);
   const omissions = omittedCounts(parsed);
   const limitations = projectionLimitations(parsed, omissions);
   const graph = createJavaScriptApplicationGraph({
@@ -175,10 +175,16 @@ export const projectManagedApplicationGraph = (
     summary: {
       graph_nodes: graph.nodes.length,
       graph_edges: graph.edges.length,
-      assemblies: parsed.artifact?.result.assembly === null ? 0 : 1,
-      modules: parsed.artifact?.result.module === null ? 0 : 1,
-      ...memberCounts,
-      ...boundaryCounts,
+      assemblies: countNodes(graph.nodes, "managed-assembly"),
+      modules: countNodes(graph.nodes, "managed-module"),
+      types: countNodes(graph.nodes, "managed-type"),
+      methods: countNodes(graph.nodes, "managed-method"),
+      fields: countNodes(graph.nodes, "managed-field"),
+      pinvoke_imports: countNodes(graph.nodes, "managed-pinvoke-import"),
+      native_implementations: countNodes(
+        graph.nodes,
+        "managed-native-implementation",
+      ),
     },
     graph,
     coverage: managedGraphResultCoverage(omissions),
@@ -190,6 +196,11 @@ export const projectManagedApplicationGraph = (
     projection_id: `magp_${sha256(withoutId)}`,
   });
 };
+
+const countNodes = (
+  nodes: readonly ApplicationNode[],
+  kind: ApplicationNode["kind"],
+): number => nodes.filter((node) => node.kind === kind).length;
 
 const parseManagedInputs = (
   input: ProjectManagedApplicationGraphInput,

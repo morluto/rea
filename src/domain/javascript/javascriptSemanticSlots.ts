@@ -3,12 +3,9 @@ import type {
   JavaScriptSemanticValue,
 } from "./javascriptSemanticValueTypes.js";
 
-/** A container's own slot, using the value lattice's canonical presence model. */
-export type JavaScriptSemanticSlot = JavaScriptSemanticProperty;
-
 /** Static container inventory; partial siblings do not weaken retained slots. */
 export interface JavaScriptSemanticContainer {
-  readonly slots: readonly JavaScriptSemanticSlot[];
+  readonly slots: readonly JavaScriptSemanticProperty[];
   readonly coverage:
     | { readonly status: "complete"; readonly omitted: 0 }
     | { readonly status: "partial"; readonly omitted: number | null };
@@ -48,9 +45,9 @@ export function semanticContainer(
 export const semanticSlotAtPath = (
   value: JavaScriptSemanticValue,
   path: readonly string[],
-): JavaScriptSemanticSlot => {
+): JavaScriptSemanticProperty => {
   const leafName = path.at(-1) ?? "";
-  let current: JavaScriptSemanticSlot = {
+  let current: JavaScriptSemanticProperty = {
     name: "",
     presence: "present",
     value,

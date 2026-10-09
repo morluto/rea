@@ -39,7 +39,6 @@ export const compareApplicationVersionsInputSchema = z
     }
   });
 
-const emptyCandidateNodesSchema = emptyArraySchema;
 const candidateNodesSchema = z.tuple([nodeIdSchema]).rest(nodeIdSchema);
 const exactMatchSchema = z.strictObject({
   status: z.literal("matched"),
@@ -49,22 +48,22 @@ const exactMatchSchema = z.strictObject({
     "exact-module-source-digest",
   ]),
   confidence: z.literal("exact"),
-  candidate_left_node_ids: emptyCandidateNodesSchema,
-  candidate_right_node_ids: emptyCandidateNodesSchema,
+  candidate_left_node_ids: emptyArraySchema,
+  candidate_right_node_ids: emptyArraySchema,
 });
 const sourceMapMatchSchema = z.strictObject({
   status: z.literal("matched"),
   basis: z.literal("source-map-identity"),
   confidence: z.literal("high"),
-  candidate_left_node_ids: emptyCandidateNodesSchema,
-  candidate_right_node_ids: emptyCandidateNodesSchema,
+  candidate_left_node_ids: emptyArraySchema,
+  candidate_right_node_ids: emptyArraySchema,
 });
 const inferredMatchSchema = z.strictObject({
   status: z.literal("matched"),
   basis: z.enum(["structural-fingerprint", "semantic-key"]),
   confidence: z.literal("medium"),
-  candidate_left_node_ids: emptyCandidateNodesSchema,
-  candidate_right_node_ids: emptyCandidateNodesSchema,
+  candidate_left_node_ids: emptyArraySchema,
+  candidate_right_node_ids: emptyArraySchema,
 });
 const matchedItemMatchSchema = z.union([
   exactMatchSchema,
@@ -75,14 +74,14 @@ const unmatchedItemMatchSchema = z.strictObject({
   status: z.literal("unmatched"),
   basis: z.literal("none"),
   confidence: z.literal("unknown"),
-  candidate_left_node_ids: emptyCandidateNodesSchema,
-  candidate_right_node_ids: emptyCandidateNodesSchema,
+  candidate_left_node_ids: emptyArraySchema,
+  candidate_right_node_ids: emptyArraySchema,
 });
 const leftAmbiguousMatchSchema = z.strictObject({
   status: z.literal("ambiguous"),
   basis: z.literal("none"),
   confidence: z.literal("unknown"),
-  candidate_left_node_ids: emptyCandidateNodesSchema,
+  candidate_left_node_ids: emptyArraySchema,
   candidate_right_node_ids: candidateNodesSchema,
 });
 const rightAmbiguousMatchSchema = z.strictObject({
@@ -90,7 +89,7 @@ const rightAmbiguousMatchSchema = z.strictObject({
   basis: z.literal("none"),
   confidence: z.literal("unknown"),
   candidate_left_node_ids: candidateNodesSchema,
-  candidate_right_node_ids: emptyCandidateNodesSchema,
+  candidate_right_node_ids: emptyArraySchema,
 });
 
 const comparisonItemContextShape = {

@@ -31,6 +31,10 @@ beforeEach(async () => {
     SAND_DATA_ROOT: join(home, ".grokbot"),
     XDG_CONFIG_HOME: join(home, ".config"),
     OPENCODE_CONFIG: join(home, ".config", "opencode", "opencode.jsonc"),
+    OMP_PROFILE: undefined,
+    PI_CODING_AGENT_DIR: undefined,
+    PI_CONFIG_DIR: undefined,
+    PI_PROFILE: undefined,
   }))
     vi.stubEnv(name, value);
 });
@@ -74,6 +78,29 @@ const action = {
   backupPath: "/test/.codex/config.toml.rea.backup",
   commands: ["rea mcp"],
 };
+
+describe("OMP integration maintenance", () => {
+  it("refreshes an OMP entry that enabledServers forces on", async () => {
+    const entry = { type: "stdio", command: entryPoint, args: ["mcp"] };
+    await writeClient(
+      "omp",
+      JSON.stringify({ mcpServers: { rea: { ...entry, enabled: false } } }),
+    );
+    await expect(
+      existingMaintenanceScope(home, entryPoint, process.env),
+    ).resolves.toMatchObject({ clients: [] });
+    await writeClient(
+      "omp",
+      JSON.stringify({
+        mcpServers: { rea: { ...entry, enabled: false } },
+        enabledServers: ["rea"],
+      }),
+    );
+    await expect(
+      existingMaintenanceScope(home, entryPoint, process.env),
+    ).resolves.toMatchObject({ clients: ["omp"] });
+  });
+});
 
 describe("existing REA integration maintenance", () => {
   it("selects owned registrations while preserving unconfigured, foreign, and disabled choices", async () => {

@@ -694,6 +694,31 @@ describe("native macOS provider failures and parsing", () => {
     }
   });
 
+  it.each([
+    {
+      ...machoTarget("/fixture.dll"),
+      format: "pe" as const,
+      executableRole: "shared-library" as const,
+      managed: false,
+    },
+    { ...machoTarget("/fixture.elf"), format: "elf" as const },
+  ])(
+    "refuses to list architectures of a $format target without running lipo",
+    async (target) => {
+      const runner = new CountingRunner();
+      const result = await new NativeMacOSProvider({}, runner, "darwin")
+        .createClient(target)
+        .execute("list_architectures", {});
+      if (result.ok) throw new Error("Expected a non-Mach-O refusal");
+      expect(result.error._tag).toBe("AnalysisCapabilityUnavailableError");
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "capability_unavailable",
+        details: { reason: "Active artifact is not Mach-O." },
+      });
+      expect(runner.calls).toBe(0);
+    },
+  );
+
   it("classifies pre-aborted requests before operation or runner discovery", async () => {
     const controller = new AbortController();
     controller.abort();

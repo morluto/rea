@@ -26,13 +26,11 @@ import {
   partialApplicationCoverage,
 } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import type { JavaScriptSemanticResourceLimit } from "../../domain/javascript/javascriptSemanticValueTypes.js";
-import { semanticCoverageResourceLimits } from "../../domain/javascript/javascriptSemanticCoverage.js";
 import {
-  SEMANTIC_EXPRESSION_DEPTH_LIMIT,
-  SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT,
-  SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT,
-  semanticResourceLimitReason,
-} from "../../domain/javascript/javascriptSemanticResourceLimits.js";
+  semanticCoverageResourceLimits,
+  semanticResourceLimitCoverage,
+} from "../../domain/javascript/javascriptSemanticCoverage.js";
+import { semanticResourceLimitReason } from "../../domain/javascript/javascriptSemanticResourceLimits.js";
 import {
   addJavaScriptArtifactContainers,
   addJavaScriptArtifactFiles,
@@ -138,7 +136,7 @@ const graphCoverage = (context: JavaScriptArtifactGraphContext) => {
     return partialApplicationCoverage([], null);
   if (resourceLimits.length > 0)
     return partialApplicationCoverage(
-      resourceLimits.map(applicationGraphResourceLimit),
+      semanticResourceLimitCoverage(resourceLimits),
       null,
     );
   if (unknownGap) return partialApplicationCoverage([], null);
@@ -157,24 +155,6 @@ const semanticResourceLimits = (
       ),
     ),
   ].sort();
-
-const applicationGraphResourceLimit = (
-  resourceLimit: JavaScriptSemanticResourceLimit,
-) => ({
-  name: `javascript_semantic_${resourceLimit.replaceAll("-", "_")}`,
-  value:
-    resourceLimit === "primitive-candidates"
-      ? SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT
-      : resourceLimit === "primitive-bytes"
-        ? SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT
-        : SEMANTIC_EXPRESSION_DEPTH_LIMIT,
-  unit:
-    resourceLimit === "expression-depth"
-      ? ("depth" as const)
-      : resourceLimit === "primitive-bytes"
-        ? ("bytes" as const)
-        : ("items" as const),
-});
 
 const graphLimitations = (
   context: JavaScriptArtifactGraphContext,

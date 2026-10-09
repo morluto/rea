@@ -15,7 +15,7 @@ import type {
   ProjectedPropertyCoverage,
   ProjectedReturnField,
 } from "./javascriptExportShapeComparisonSchemas.js";
-import { compareCodePoints } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
 import {
   resolveSemanticBindingState,
@@ -204,9 +204,9 @@ export const flattenSemanticReturnValue = (
   const fields: ProjectedReturnField[] = [];
   const propertyCoverage: ProjectedPropertyCoverage[] = [];
   flattenValue(value, "", fields, propertyCoverage);
-  fields.sort((left, right) => compareCodePoints(left.path, right.path));
+  fields.sort((left, right) => compareUnicodeCodePoints(left.path, right.path));
   propertyCoverage.sort((left, right) =>
-    compareCodePoints(left.path, right.path),
+    compareUnicodeCodePoints(left.path, right.path),
   );
   return { fields, propertyCoverage };
 };

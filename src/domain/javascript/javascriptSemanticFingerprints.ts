@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import * as t from "@babel/types";
 
-import { compareCodePoints } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { JavaScriptSemanticCallAnalysis } from "./javascriptSemanticCalls.js";
 import type {
   JavaScriptSemanticCallable,
@@ -100,7 +100,7 @@ export const collectJavaScriptSemanticFingerprints = (
             ),
           ),
           literalSetSha256: digest(
-            [...new Set(syntax.literals)].sort(compareCodePoints),
+            [...new Set(syntax.literals)].sort(compareUnicodeCodePoints),
           ),
           effects: [
             ...(isAsyncCallable(node) ? (["async"] as const) : []),

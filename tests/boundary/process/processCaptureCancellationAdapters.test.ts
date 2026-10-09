@@ -161,7 +161,7 @@ itWithCaptureCapability(
         },
       },
     );
-    const server = createServer(session, session, { logger });
+    const server = createServer({ kind: "session", session }, { logger });
     const client = new Client({
       name: "process-settlement-cancellation",
       version: "1",

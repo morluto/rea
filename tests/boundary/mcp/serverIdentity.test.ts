@@ -206,7 +206,7 @@ describe("server and catalog identity", () => {
 describe("live server identity over MCP", () => {
   it("exposes live identity, a stable catalog, and changing availability", async () => {
     const session = createTestBinarySession(availabilityProvider());
-    const server = createServer(session, session);
+    const server = createServer({ kind: "session", session });
     const client = new Client(
       { name: "identity-test", version: "9" },
       {
@@ -252,7 +252,7 @@ describe("active-target availability over MCP", () => {
     const session = createTestBinarySession(
       availabilityProvider(["inspect_macho", "inspect_artifact"]),
     );
-    const server = createServer(session, session);
+    const server = createServer({ kind: "session", session });
     const client = new Client({ name: "availability-test", version: "1" });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();

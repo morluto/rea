@@ -283,6 +283,16 @@ class NativeMacOSClient implements AnalysisClient {
   async #listArchitectures(
     signal?: AbortSignal,
   ): Promise<Result<NativeObservation, AnalysisError>> {
+    // lipo reads only Mach-O; its refusal of a PE, ELF, or plist target is not
+    // a tool failure that a retry or `rea doctor` could repair.
+    if (this.target.format !== "mach-o")
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          IDENTITY.id,
+          "list_architectures",
+          "Active artifact is not Mach-O.",
+        ),
+      );
     const capture = await this.#run(
       "list_architectures",
       "lipo",

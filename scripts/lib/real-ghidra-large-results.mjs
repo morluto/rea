@@ -89,9 +89,12 @@ export async function verifyGhidraLargeResults({
       length,
     });
     const readId = retainedReference(readError, "read_bytes");
+    // Two annotation strings repeated in text and structured content must
+    // exceed the receive budget even without obsolete Evidence envelopes.
+    // The request contains only the two strings and remains below that budget.
     const comment =
       "REA_BIG_COMMENT:" +
-      "x".repeat(Math.ceil(STDIO_DEFAULT_MAX_BUFFER_SIZE / 10));
+      "x".repeat(Math.ceil(STDIO_DEFAULT_MAX_BUFFER_SIZE / 4));
     const annotationError = await reject("annotate_native_function", {
       procedure: entry.address,
       name: "rea_frame_probe",

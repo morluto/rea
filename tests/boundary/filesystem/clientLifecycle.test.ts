@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parse as parseJsonc, type ParseError } from "jsonc-parser";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
 
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
@@ -30,19 +31,7 @@ import {
 } from "../../../src/application/Uninstall.js";
 
 const roots: string[] = [];
-beforeEach(() => {
-  for (const name of [
-    "APPDATA",
-    "CLAUDE_CONFIG_DIR",
-    "CODEX_HOME",
-    "COPILOT_HOME",
-    "GROK_HOME",
-    "OPENCODE_CONFIG",
-    "SAND_DATA_ROOT",
-    "XDG_CONFIG_HOME",
-  ])
-    vi.stubEnv(name, undefined);
-});
+beforeEach(clearClientLocationEnvironment);
 afterEach(async () => {
   vi.unstubAllEnvs();
   await Promise.all(
@@ -72,6 +61,7 @@ describe("client configuration filesystem lifecycle", () => {
       "commandcode",
       "vscode",
       "grok_build",
+      "omp",
       "grok_bot",
     ]);
     expect(

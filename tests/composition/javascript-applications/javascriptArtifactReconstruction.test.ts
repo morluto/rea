@@ -144,6 +144,26 @@ it("reports semantic value resource limits in application graph coverage", async
         }),
       ]),
     });
+    const sourceModuleLimits = graph.nodes
+      .filter(({ kind }) => kind === "javascript-module")
+      .flatMap(({ observations }) => observations)
+      .filter(
+        ({ evidence }) =>
+          evidence.extractor.operation === "recover-source-module",
+      )
+      .flatMap(({ evidence }) => evidence.coverage.limits);
+    expect(sourceModuleLimits).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "javascript_semantic_primitive_candidates",
+          unit: "items",
+        }),
+        expect.objectContaining({
+          name: "javascript_semantic_primitive_bytes",
+          unit: "bytes",
+        }),
+      ]),
+    );
     expect(graph.limitations).toContain(
       "Primitive candidate budget exceeded (maximum 256 alternatives).",
     );

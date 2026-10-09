@@ -6,7 +6,7 @@ import {
   createJavaScriptApplicationNode,
 } from "./javascriptApplicationGraph.js";
 import { createHistoricalSourceGraph } from "../referenceSourceGraph.js";
-import { compareCodePoints } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { compareSourceToBundle } from "./sourceToBundleComparison.js";
 import {
   SOURCE_TO_BUNDLE_SIGNAL_WEIGHTS,
@@ -365,7 +365,7 @@ const historicalGraph = (
         content_state: "hashed" as const,
         limitations: [],
       })),
-    ].sort((left, right) => compareCodePoints(left.path, right.path)),
+    ].sort((left, right) => compareUnicodeCodePoints(left.path, right.path)),
     relationships: [],
     parse_failures: [],
     exclusions: [],

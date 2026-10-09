@@ -1,4 +1,5 @@
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "./processCaptureExample.js";
+import { hasCaptureTruncation } from "./processCaptureCoverage.js";
 import {
   parseProcessCapture,
   type ProcessCapture,
@@ -24,11 +25,30 @@ export const capture = (
     >[];
   },
   options: {
-    readonly truncated?: boolean;
+    readonly omittedTerminalFrame?: boolean;
     readonly residualUnknowns?: ProcessCapture["residual_unknowns"];
   } = {},
-): ProcessCapture =>
-  parseProcessCapture({
+): ProcessCapture => {
+  const omittedTerminalFrame = options.omittedTerminalFrame ?? false;
+  const retainedBytes = values.frames.reduce(
+    (total, frame) => total + Buffer.byteLength(frame.raw_data ?? frame.data),
+    0,
+  );
+  const truncationDetails = {
+    ...emptyCapture.truncation_details,
+    raw_terminal: {
+      ...emptyCapture.truncation_details.raw_terminal,
+      observed_bytes: retainedBytes + (omittedTerminalFrame ? 1 : 0),
+      retained_bytes: retainedBytes,
+      observed_frames: values.frames.length + (omittedTerminalFrame ? 1 : 0),
+      retained_frames: values.frames.length,
+    },
+    process: {
+      ...emptyCapture.truncation_details.process,
+      retained_samples: values.process_samples.length,
+    },
+  };
+  return parseProcessCapture({
     ...emptyCapture,
     frames: values.frames,
     process_samples: values.process_samples,
@@ -54,9 +74,11 @@ export const capture = (
         index: 1,
       },
     ],
-    truncated: options.truncated ?? false,
+    truncated: hasCaptureTruncation(truncationDetails),
+    truncation_details: truncationDetails,
     residual_unknowns: options.residualUnknowns ?? [],
   });
+};
 
 export const values = (
   order: readonly ("terminal" | "process")[],

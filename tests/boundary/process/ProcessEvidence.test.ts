@@ -6,7 +6,10 @@ import {
   observeLaunchedExecutable,
   observeSelectedExecutable,
 } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
-import { emptyUnverifiedProcessCapture } from "../../../src/domain/process/processCapture.fixture.js";
+import {
+  accountFullyObservedProcessCapture,
+  emptyUnverifiedProcessCapture,
+} from "../../../src/domain/process/processCapture.fixture.js";
 import { compareProcessCaptures } from "../../../src/domain/process/processComparison.js";
 import { parseProcessCapture } from "../../../src/domain/process/processCaptureParsing.js";
 import {
@@ -81,18 +84,20 @@ const captureEvidenceForEnvironmentSecret = async (value: string) => {
     ...manifest,
     normalization_sha256: digestProcessCommitment(scenario.normalization),
   };
-  const capture = parseProcessCapture({
-    ...base,
-    normalization: scenario.normalization,
-    frames: [{ sequence: 0, at_ms: 0, data: "observed-output" }],
-    residual_unknowns: [
-      {
-        scope: "environment",
-        reason: "Inherited host environment variables are not recorded.",
-      },
-    ],
-    manifest: scenarioManifest,
-  });
+  const capture = parseProcessCapture(
+    accountFullyObservedProcessCapture({
+      ...base,
+      normalization: scenario.normalization,
+      frames: [{ sequence: 0, at_ms: 0, data: "observed-output" }],
+      residual_unknowns: [
+        {
+          scope: "environment",
+          reason: "Inherited host environment variables are not recorded.",
+        },
+      ],
+      manifest: scenarioManifest,
+    }),
+  );
   return createProcessCaptureEvidence(scenario, capture);
 };
 
@@ -135,10 +140,12 @@ it("preserves selected local environment and input values", async () => {
     rightCapture.manifest.comparison_contract_sha256,
   );
 
-  const changedOutput = parseProcessCapture({
-    ...leftCapture,
-    frames: [{ sequence: 0, at_ms: 0, data: "different-output" }],
-  });
+  const changedOutput = parseProcessCapture(
+    accountFullyObservedProcessCapture({
+      ...leftCapture,
+      frames: [{ sequence: 0, at_ms: 0, data: "different-output" }],
+    }),
+  );
   expect(compareProcessCaptures(leftCapture, changedOutput)).toMatchObject({
     status: "changed",
     terminal: "changed",

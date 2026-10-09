@@ -13,11 +13,34 @@ import { browserScenarioCaptureSchema } from "./browserScenarioCapture.js";
 const networkEvent = {
   sequence: 1,
   step_index: 0,
+  transaction_id: "request-1",
+  redirected_from_transaction_id: null,
   method: "GET",
   url: sanitizeBrowserUrl("https://example.test/resource"),
   resource_type: "document",
   header_names: [],
 } as const;
+
+it("requires transaction IDs and explicit unknown redirect predecessors", () => {
+  const request = {
+    ...networkEvent,
+    kind: "request",
+    status: null,
+    failure: null,
+  } as const;
+  expect(
+    browserScenarioEventSchema.safeParse({
+      ...request,
+      transaction_id: undefined,
+    }).success,
+  ).toBe(false);
+  expect(
+    browserScenarioEventSchema.safeParse({
+      ...request,
+      redirected_from_transaction_id: undefined,
+    }).success,
+  ).toBe(false);
+});
 
 it("parses each network outcome without contradictory status or failure data", () => {
   expect(

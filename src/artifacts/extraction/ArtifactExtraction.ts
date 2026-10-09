@@ -1,7 +1,7 @@
 import { lstat, realpath } from "node:fs/promises";
 
-import { compareCodePoints } from "../../domain/canonicalOrdering.js";
-import { canonicalDigest } from "../../domain/comparisonSemantics.js";
+import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
+import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
 import {
   ArtifactPathRegistry,
@@ -178,7 +178,7 @@ const materializeSelection = async ({
     await reader.close();
     readerClosed = true;
     extracted.sort((left, right) =>
-      compareCodePoints(left.relative_path, right.relative_path),
+      compareUnicodeCodePoints(left.relative_path, right.relative_path),
     );
     const result = createExtractionResult(
       input,
@@ -245,15 +245,15 @@ const createExtractionResult = (
     source_manifest_id: inventory.manifest.manifest_id,
     selected_occurrence_ids: selected
       .map(({ occurrence }) => occurrence.occurrence_id)
-      .sort(compareCodePoints),
-    files_sha256: canonicalDigest(extracted, "Artifact"),
+      .sort(compareUnicodeCodePoints),
+    files_sha256: digestCanonicalValue(extracted, "Artifact"),
     output_root_alias: "$OUTPUT_ROOT" as const,
   };
   return artifactExtractionResultSchema.parse({
     manifest: inventory.manifest,
     extraction_manifest: {
       ...extractionSemantic,
-      extraction_id: `aex_${canonicalDigest(extractionSemantic, "Artifact")}`,
+      extraction_id: `aex_${digestCanonicalValue(extractionSemantic, "Artifact")}`,
     },
     output_root: input.outputRoot,
     artifacts: extracted,

@@ -28,7 +28,7 @@
 
 <img src="docs/assets/rea-hopper-analysis.png" alt="REA เริ่มบริดจ์การวิเคราะห์ภายใน Hopper ขณะตรวจสอบไบนารีเนทีฟ" width="1200" />
 
-<br />
+<br /><br />
 
 <table aria-label="ชุมชน REA">
 <tr>
@@ -154,6 +154,8 @@ REA ต้องใช้ Node.js 22.x (>=22.19), 24.x (>=24.11) หรือ 26
 
 ## ตัวอย่างการใช้งาน
 
+[![ภาพประกอบกรณีศึกษาการแพนเสียงใน DX-Ball บริดจ์คลิปบอร์ดของ Notion และวงแหวนกระสุนใน TH04](docs/assets/rea-showcases.png)](https://rea.tools/showcase/)
+
 ### DX-Ball: สร้างการคำนวณแพนเสียงขึ้นใหม่
 
 ติดตามการเรียกเสียงไปยังฟังก์ชันช่วยแปลงตำแหน่งเป็นค่าแพน ตรวจสอบคำสั่ง และแปลงโค้ดเทียมที่ยังไม่สมบูรณ์เป็น C การสร้างขึ้นใหม่นี้ผ่านการทดสอบ 3,205 กรณีเทียบกับ x86 ต้นฉบับ และสร้างไบต์ทั้ง 63 ไบต์ของฟังก์ชันที่คอมไพล์แล้วได้ตรงกัน
@@ -252,16 +254,6 @@ npx rea-agents@latest setup
 
 รายงานช่องโหว่ผ่าน [SECURITY.md](SECURITY.md)
 
-## การมีส่วนร่วม
-
-เรายินดีรับความช่วยเหลือในการพัฒนา REA! [เปิด issue](https://github.com/morluto/rea/issues) เพื่อรายงานบั๊กหรือเสนอฟีเจอร์ หรือ[ส่ง pull request](https://github.com/morluto/rea/pulls) เพื่อปรับปรุงโค้ดหรือเอกสาร
-
-ดู [CONTRIBUTING.md](CONTRIBUTING.md) สำหรับการตั้งค่าสภาพแวดล้อมพัฒนาและการตรวจสอบ ดู[การทดสอบ](docs/testing.md) สำหรับแนวทางการตรวจยืนยัน และ[แผนผังสถาปัตยกรรม](docs/architecture.mermaid) สำหรับโครงสร้างโปรเจกต์
-
-## ลิงก์ของโปรเจกต์
-
-[เว็บไซต์](https://rea.tools/) · [npm](https://www.npmjs.com/package/rea-agents) · [skills.sh](https://skills.sh/morluto/rea/reverse-engineer-anything) · [Issues](https://github.com/morluto/rea/issues) · [ความปลอดภัย](SECURITY.md)
-
 ## ประวัติดาว
 
 🎉 **30,000 ดาวบน GitHub — ขอบคุณทุกคน!**
@@ -279,6 +271,12 @@ npx rea-agents@latest setup
 ## ข้อสงวนสิทธิ์
 
 REA มีเครื่องมือสำหรับการวิจัยวิศวกรรมย้อนกลับ การวิเคราะห์ และการสร้างขึ้นใหม่อย่างถูกกฎหมาย คุณมีหน้าที่ขออนุญาตตามที่จำเป็นและปฏิบัติตามกฎหมายที่เกี่ยวข้อง โปรเจกต์นี้ไม่สนับสนุนการใช้งานที่ผิดกฎหมายหรือไม่ได้รับอนุญาต
+
+## การมีส่วนร่วม
+
+เรายินดีรับความช่วยเหลือในการพัฒนา REA! [เปิด issue](https://github.com/morluto/rea/issues) เพื่อรายงานบั๊กหรือเสนอฟีเจอร์ หรือ[ส่ง pull request](https://github.com/morluto/rea/pulls) เพื่อปรับปรุงโค้ดหรือเอกสาร
+
+ดู [CONTRIBUTING.md](CONTRIBUTING.md) สำหรับการตั้งค่าสภาพแวดล้อมพัฒนาและการตรวจสอบ ดู[การทดสอบ](docs/testing.md) สำหรับแนวทางการตรวจยืนยัน และ[แผนผังสถาปัตยกรรม](docs/architecture.mermaid) สำหรับโครงสร้างโปรเจกต์
 
 ## สัญญาอนุญาต
 

@@ -25,6 +25,15 @@ const environment = () => ({
   ...(process.env.JAVA_HOME === undefined
     ? {}
     : { JAVA_HOME: process.env.JAVA_HOME }),
+  ...(process.env.GHIDRA_HEADLESS_MAXMEM === undefined
+    ? {}
+    : { GHIDRA_HEADLESS_MAXMEM: process.env.GHIDRA_HEADLESS_MAXMEM }),
+  ...(process.env.GHIDRA_MAXMEM === undefined
+    ? {}
+    : { GHIDRA_MAXMEM: process.env.GHIDRA_MAXMEM }),
+  ...(process.env._JAVA_OPTIONS === undefined
+    ? {}
+    : { _JAVA_OPTIONS: process.env._JAVA_OPTIONS }),
 });
 
 const verifyGraph = (input, target, procedure, globalAddress) => {

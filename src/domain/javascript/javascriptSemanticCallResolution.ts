@@ -4,7 +4,7 @@ import type {
   JavaScriptSemanticArgumentFlow,
   JavaScriptSemanticCallable,
 } from "./javascriptSemanticIr.js";
-import { compareCodePoints } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
 import {
   resolveSemanticBindingState,
@@ -182,7 +182,9 @@ export const parameterBindings = (
             parameterAcceptsArgument(callable, location, index, state),
         ),
     )
-    .sort((left, right) => compareCodePoints(left.bindingId, right.bindingId));
+    .sort((left, right) =>
+      compareUnicodeCodePoints(left.bindingId, right.bindingId),
+    );
 };
 
 const parameterAcceptsArgument = (
@@ -216,4 +218,4 @@ const rangeContains = (
       outer.end.column >= inner.end.column));
 
 const uniqueCallableIds = (values: readonly string[]): string[] =>
-  [...new Set(values)].sort(compareCodePoints);
+  [...new Set(values)].sort(compareUnicodeCodePoints);

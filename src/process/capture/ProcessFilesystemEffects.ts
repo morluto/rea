@@ -1,9 +1,9 @@
 import type {
   FileState,
   FilesystemCheckpoint,
+  ProcessFilesystemSnapshot,
 } from "../../domain/process/processCapture.js";
 import { sep } from "node:path";
-import type { SnapshotResult } from "./FilesystemSnapshot.js";
 
 const unobservedAbsenceReason = (
   path: string,
@@ -31,8 +31,8 @@ const unobservedAbsenceReason = (
 
 /** Classify effects only when a snapshot establishes the missing path's absence. */
 export const classifyFilesystemEffects = (
-  before: SnapshotResult,
-  after: SnapshotResult,
+  before: ProcessFilesystemSnapshot,
+  after: ProcessFilesystemSnapshot,
 ): FilesystemCheckpoint["effects"] => {
   const beforeByPath = new Map(before.files.map((file) => [file.path, file]));
   const afterByPath = new Map(after.files.map((file) => [file.path, file]));

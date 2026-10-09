@@ -1,11 +1,11 @@
-import { canonicalDigest } from "../domain/comparisonSemantics.js";
+import { digestCanonicalValue } from "../domain/canonicalDigest.js";
 import { createEvidence } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 
 const inventory = (format: "apk" | "ipa" | "directory", digit: string) => {
   const sha = digit.repeat(64);
-  const artifactId = `art_${canonicalDigest({ sha256: sha }, "Artifact inventory")}`;
-  const occurrenceId = `occ_${canonicalDigest(
+  const artifactId = `art_${digestCanonicalValue({ sha256: sha }, "Artifact inventory")}`;
+  const occurrenceId = `occ_${digestCanonicalValue(
     { root: artifactId },
     "Artifact inventory",
   )}`;
@@ -39,7 +39,7 @@ const inventory = (format: "apk" | "ipa" | "directory", digit: string) => {
       limitations: [],
     },
   ];
-  const graphSha256 = canonicalDigest(
+  const graphSha256 = digestCanonicalValue(
     {
       nodes,
       occurrences,
@@ -50,7 +50,7 @@ const inventory = (format: "apk" | "ipa" | "directory", digit: string) => {
   );
   return jsonValueSchema.parse({
     manifest: {
-      manifest_id: `agm_${canonicalDigest(
+      manifest_id: `agm_${digestCanonicalValue(
         {
           root_artifact_id: artifactId,
           graph_sha256: graphSha256,

@@ -1,9 +1,6 @@
-import {
-  absenceClaimable,
-  canonicalDigest,
-  canonicalJson,
-} from "../comparisonSemantics.js";
-import { compareCodePoints } from "../canonicalOrdering.js";
+import { absenceClaimable, canonicalJson } from "../comparisonSemantics.js";
+import { digestCanonicalValue } from "../canonicalDigest.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { Evidence } from "../evidence.js";
 import type {
   ApplicationEdge,
@@ -96,7 +93,9 @@ export const classifyJavaScriptApplicationVersions = (
       ...matching.pairs.map((pair) => matchedItem(pair, fullContext)),
       ...leftItems,
       ...rightItems,
-    ].sort((left, right) => compareCodePoints(left.item_id, right.item_id)),
+    ].sort((left, right) =>
+      compareUnicodeCodePoints(left.item_id, right.item_id),
+    ),
   };
 };
 
@@ -326,7 +325,7 @@ const locations = (node: ApplicationNode) =>
       evidence.location.available ? evidence.location.value : evidence.location,
     )
     .sort((left, right) =>
-      compareCodePoints(canonicalJson(left), canonicalJson(right)),
+      compareUnicodeCodePoints(canonicalJson(left), canonicalJson(right)),
     );
 
 const properties = (node: ApplicationNode) =>
@@ -337,7 +336,7 @@ const properties = (node: ApplicationNode) =>
       source_map_reference,
     }))
     .sort((left, right) =>
-      compareCodePoints(canonicalJson(left), canonicalJson(right)),
+      compareUnicodeCodePoints(canonicalJson(left), canonicalJson(right)),
     );
 
 const relationshipSignature = (
@@ -371,7 +370,7 @@ const relationshipSignature = (
       ];
     return [];
   });
-  return canonicalJson(signatures.sort(compareCodePoints));
+  return canonicalJson(signatures.sort(compareUnicodeCodePoints));
 };
 
 interface EdgeSignatureContext {
@@ -400,7 +399,7 @@ const itemEvidenceLinks = (
       ...nativeLinks(left, context.leftNativeEvidence),
       ...nativeLinks(right, context.rightNativeEvidence),
     ]),
-  ].sort(compareCodePoints);
+  ].sort(compareUnicodeCodePoints);
 
 const nativeLinks = (
   node: ApplicationNode | undefined,
@@ -445,7 +444,7 @@ const itemWithId = <Semantic extends ComparisonItemSemantic>(
   semantic: Semantic,
 ): Semantic & { readonly item_id: string } => ({
   ...semantic,
-  item_id: `javc_item_${canonicalDigest(semantic, "Application version item")}`,
+  item_id: `javc_item_${digestCanonicalValue(semantic, "Application version item")}`,
 });
 
 const stringProperty = (node: ApplicationNode, key: string): string | null => {

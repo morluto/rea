@@ -7,7 +7,8 @@ import type {
   JavaScriptExportShapeComparisonResult,
   JavaScriptExportShapePropertyInventory,
 } from "./javascriptExportShapeComparisonSchemas.js";
-import { compareCodePoints, uniqueSorted } from "../canonicalOrdering.js";
+import { uniqueSorted } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type {
   SelectedJavaScriptExport,
   RetainedJavaScriptExportShapes,
@@ -252,7 +253,7 @@ const compareDiscriminants = (
   left: Discriminant,
   right: Discriminant,
 ): number =>
-  compareCodePoints(
+  compareUnicodeCodePoints(
     canonicalExportShapeValue(left),
     canonicalExportShapeValue(right),
   );

@@ -28,6 +28,7 @@ const networkCapture = (sourceSequence: number, receiptStep: number) => {
       },
       resource_type: "fetch",
       transaction_id: "request-1",
+      redirected_from_transaction_id: null,
       header_names: [],
       status: null,
       failure: null,

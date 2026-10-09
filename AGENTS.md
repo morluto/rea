@@ -44,7 +44,7 @@ See [docs/testing.md](docs/testing.md) for test scopes and verification lanes an
 
 ## Configuration & Environment Variables
 
-Configuration is parsed and validated by `src/config.ts` and `src/config/`. Keep user-facing setup and provider configuration in [README.md](README.md) and the relevant guide under `docs/`; do not maintain a second environment-variable catalogue here.
+Configuration is parsed and validated by `src/config/`. Keep user-facing setup and provider configuration in [README.md](README.md) and the relevant guide under `docs/`; do not maintain a second environment-variable catalogue here.
 
 ## Coding Style & Naming Conventions
 

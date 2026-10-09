@@ -1,4 +1,4 @@
-import { canonicalDigest } from "../domain/comparisonSemantics.js";
+import { digestCanonicalValue } from "../domain/canonicalDigest.js";
 import type { ProviderIdentity } from "./AnalysisProvider.js";
 import type { BrowserScenario } from "../domain/browserScenario.js";
 import type { BrowserScenarioCapture } from "../domain/browserScenarioCapture.js";
@@ -13,7 +13,7 @@ const browserScenarioParameters = (
   scenario: BrowserScenario,
 ): EvidenceObservation["parameters"] => ({
   ...jsonObjectSchema.parse(scenario),
-  scenario_sha256: canonicalDigest(scenario, "Browser scenario"),
+  scenario_sha256: digestCanonicalValue(scenario, "Browser scenario"),
 });
 
 /** Create Evidence without retaining resolved scenario secret values. */

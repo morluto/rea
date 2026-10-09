@@ -27,8 +27,7 @@ const connect = async (binaryLayout?: BinaryLayoutService) => {
     throw new Error("selected views must not start a deep provider");
   });
   const server = createServer(
-    session,
-    session,
+    { kind: "session", session },
     binaryLayout === undefined ? {} : { binaryLayout },
   );
   const client = new Client({ name: "analysis-view-mcp", version: "1" });

@@ -12,10 +12,6 @@ export const objcMethodTypeSchema = z.enum([
 export const objcPropertyAttributeSchema = z.strictObject({
   name: z.string().min(1),
   value: z.string(),
-  is_weak: z.boolean().default(false),
-  is_atomic: z.boolean().default(false),
-  is_copy: z.boolean().default(false),
-  is_strong: z.boolean().default(false),
 });
 
 /** Objective-C method metadata. */
@@ -23,8 +19,8 @@ export const objcMethodSchema = z.strictObject({
   selector: z.string().min(1),
   method_type: objcMethodTypeSchema,
   address: z.number().int().nullable(),
-  is_required: z.boolean().default(false),
-  is_optional: z.boolean().default(false),
+  is_required: z.boolean().nullable(),
+  is_optional: z.boolean().nullable(),
 });
 type ObjcMethod = z.infer<typeof objcMethodSchema>;
 
@@ -32,8 +28,9 @@ type ObjcMethod = z.infer<typeof objcMethodSchema>;
 export const objcPropertySchema = z.strictObject({
   name: z.string().min(1),
   type_encoding: z.string().nullable(),
-  attributes: z.array(objcPropertyAttributeSchema).default([]),
-  is_readonly: z.boolean().default(false),
+  attributes: z.array(objcPropertyAttributeSchema),
+  atomicity: z.enum(["atomic", "nonatomic"]).nullable(),
+  is_readonly: z.boolean().nullable(),
   getter: z.string().nullable(),
   setter: z.string().nullable(),
 });
@@ -50,12 +47,12 @@ export const objcProtocolSchema = z.strictObject({
 export const objcClassSchema = z.strictObject({
   name: z.string().min(1),
   super_class: z.string().nullable(),
-  is_meta_class: z.boolean().default(false),
-  is_root_class: z.boolean().default(false),
+  is_meta_class: z.boolean().nullable(),
+  is_root_class: z.boolean().nullable(),
   methods: z.array(objcMethodSchema).default([]),
   properties: z.array(objcPropertySchema).default([]),
   protocols: z.array(z.string()).default([]),
-  ivar_count: z.number().int().nonnegative().default(0),
+  ivar_count: z.number().int().nonnegative().nullable(),
   instance_size: z.number().int().nonnegative().nullable(),
   location: z
     .object({
@@ -380,20 +377,20 @@ export const inspectNativeDispatchMetadata = (
       selector: implementation.selector,
       method_type: implementation.method_type,
       address: parseMetadataAddress(implementation.implementation_address),
-      is_required: false,
-      is_optional: false,
+      is_required: null,
+      is_optional: null,
     });
     methodsByClass.set(implementation.class_name, methods);
   }
   const classes: ObjcClass[] = [...classNames].sort().map((name) => ({
     name,
     super_class: null,
-    is_meta_class: false,
-    is_root_class: false,
+    is_meta_class: null,
+    is_root_class: null,
     methods: methodsByClass.get(name) ?? [],
     properties: [],
     protocols: [],
-    ivar_count: 0,
+    ivar_count: null,
     instance_size: null,
   }));
   const decodedImplementations = [...implementations.values()].sort(

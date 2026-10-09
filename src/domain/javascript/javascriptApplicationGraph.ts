@@ -1,6 +1,8 @@
 import { z } from "zod";
-import { canonicalDigest, canonicalJson } from "../comparisonSemantics.js";
-import { compareCodePoints, uniqueSorted } from "../canonicalOrdering.js";
+import { canonicalJson } from "../comparisonSemantics.js";
+import { digestCanonicalValue } from "../canonicalDigest.js";
+import { uniqueSorted } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { freezeOwnedJsonSnapshotSteps } from "../immutableJson.js";
 
 import type {
@@ -37,7 +39,7 @@ const normalizeLimits = (
   limits: ApplicationGraphEvidence["coverage"]["limits"],
 ): ApplicationGraphEvidence["coverage"]["limits"] =>
   [...new Map(limits.map((limit) => [limitKey(limit), limit])).values()].sort(
-    (left, right) => compareCodePoints(limitKey(left), limitKey(right)),
+    (left, right) => compareUnicodeCodePoints(limitKey(left), limitKey(right)),
   );
 
 const normalizeEvidence = (
@@ -65,7 +67,7 @@ const nodeSemantic = (node: Pick<ApplicationNode, "kind" | "identity">) => ({
 });
 
 const nodeId = (node: Pick<ApplicationNode, "kind" | "identity">): string =>
-  `jag_node_${canonicalDigest(nodeSemantic(node), "JavaScript Application Graph")}`;
+  `jag_node_${digestCanonicalValue(nodeSemantic(node), "JavaScript Application Graph")}`;
 
 const observationSemantic = (
   nodeIdentifier: string,
@@ -82,14 +84,14 @@ const observationId = (
     "observation_id"
   >,
 ): string =>
-  `jag_observation_${canonicalDigest(
+  `jag_observation_${digestCanonicalValue(
     observationSemantic(nodeIdentifier, observation),
   )}`;
 
 type EdgeSemantic = Omit<ApplicationEdge, "edge_id">;
 
 const edgeId = (edge: EdgeSemantic): string =>
-  `jag_edge_${canonicalDigest(edge, "JavaScript Application Graph")}`;
+  `jag_edge_${digestCanonicalValue(edge, "JavaScript Application Graph")}`;
 
 const sortedUniqueIssue = (
   values: readonly string[],
@@ -98,7 +100,9 @@ const sortedUniqueIssue = (
   context: z.RefinementCtx,
 ): void => {
   for (let index = 1; index < values.length; index += 1) {
-    if (compareCodePoints(values[index - 1] ?? "", values[index] ?? "") < 0)
+    if (
+      compareUnicodeCodePoints(values[index - 1] ?? "", values[index] ?? "") < 0
+    )
       continue;
     context.addIssue({
       code: "custom",
@@ -394,7 +398,7 @@ const checkGraphInvariants = (
   const { graph_id: identifier, ...semantic } = graph;
   if (
     identifier !==
-    `jag_${canonicalDigest(semantic, "JavaScript Application Graph")}`
+    `jag_${digestCanonicalValue(semantic, "JavaScript Application Graph")}`
   )
     context.addIssue({
       code: "custom",
@@ -432,7 +436,7 @@ export const createJavaScriptApplicationNode = (
       });
     })
     .sort((left, right) =>
-      compareCodePoints(left.observation_id, right.observation_id),
+      compareUnicodeCodePoints(left.observation_id, right.observation_id),
     );
   return applicationNodeSchema.parse({
     node_id: identifier,
@@ -467,10 +471,10 @@ export const createJavaScriptApplicationGraph = (
     ...parsed,
     root_node_ids: uniqueSorted(parsed.root_node_ids),
     nodes: [...parsed.nodes].sort((left, right) =>
-      compareCodePoints(left.node_id, right.node_id),
+      compareUnicodeCodePoints(left.node_id, right.node_id),
     ),
     edges: [...parsed.edges].sort((left, right) =>
-      compareCodePoints(left.edge_id, right.edge_id),
+      compareUnicodeCodePoints(left.edge_id, right.edge_id),
     ),
     coverage: {
       ...parsed.coverage,
@@ -480,7 +484,7 @@ export const createJavaScriptApplicationGraph = (
   };
   return javascriptApplicationGraphSchema.parse({
     ...semantic,
-    graph_id: `jag_${canonicalDigest(semantic, "JavaScript Application Graph")}`,
+    graph_id: `jag_${digestCanonicalValue(semantic, "JavaScript Application Graph")}`,
   });
 };
 
@@ -517,7 +521,7 @@ export const parseJavaScriptApplicationGraph = (
 export const computeJavaScriptApplicationGraphSha256 = (
   input: unknown,
 ): string =>
-  canonicalDigest(
+  digestCanonicalValue(
     parseJavaScriptApplicationGraph(input),
     "JavaScript Application Graph",
   );

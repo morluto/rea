@@ -19,25 +19,141 @@ import {
   type NativeDmgHost,
 } from "../../../../src/artifacts/NativeDmgArtifactReader.js";
 
+const infoPlist = (
+  imagePath: string,
+  entities: { "dev-entry": string; "mount-point"?: string }[],
+): string =>
+  build({
+    images: [{ "image-path": imagePath, "system-entities": entities }],
+  });
+
+const emptyInfoPlist = build({ images: [] });
+
+const attachPlist = (
+  entities: { "dev-entry": string; "mount-point"?: string }[],
+): string => build({ "system-entities": entities });
+
+const createMountFixture = () => {
+  let root: string | undefined;
+  onTestFinished(async () => {
+    if (root !== undefined) await rm(root, { recursive: true, force: true });
+  });
+  const rememberRoot = (arguments_: readonly string[]): string => {
+    root = arguments_[arguments_.indexOf("-mountroot") + 1];
+    if (root === undefined) throw new Error("missing mount root");
+    return root;
+  };
+  return {
+    root: () => root,
+    rememberRoot,
+    async createVolume(
+      arguments_: readonly string[],
+      contents?: string,
+    ): Promise<{ readonly mountRoot: string; readonly mountPoint: string }> {
+      const mountRoot = rememberRoot(arguments_);
+      const mountPoint = join(mountRoot, "Fixture");
+      await mkdir(mountPoint);
+      if (contents !== undefined)
+        await writeFile(join(mountPoint, "hello.txt"), contents);
+      return { mountRoot, mountPoint };
+    },
+  };
+};
+
+const createOmittedInventoryHost = () => {
+  const mount = createMountFixture();
+  const state: {
+    calls: string[][];
+    mountRoot: string | undefined;
+    mountPoint: string | undefined;
+    inventoryMode: "omitted" | "listed";
+    attached: boolean;
+    detachAttempts: number;
+  } = {
+    calls: [],
+    mountRoot: undefined,
+    mountPoint: undefined,
+    inventoryMode: "omitted",
+    attached: false,
+    detachAttempts: 0,
+  };
+  const host: NativeDmgHost = {
+    async run(arguments_) {
+      state.calls.push([...arguments_]);
+      if (arguments_[0] === "info")
+        return {
+          stdout:
+            state.attached &&
+            state.inventoryMode === "listed" &&
+            state.mountPoint !== undefined
+              ? infoPlist("/tmp/image.dmg", [
+                  {
+                    "dev-entry": "/dev/disk24",
+                    "mount-point": state.mountPoint,
+                  },
+                ])
+              : emptyInfoPlist,
+          exitCode: 0,
+        };
+      if (arguments_[0] === "detach") {
+        state.detachAttempts += 1;
+        if (state.detachAttempts < 5)
+          return { stdout: "", stderr: "device busy", exitCode: 1 };
+        state.attached = false;
+        return { stdout: "", exitCode: 0 };
+      }
+      if (arguments_[0] !== "attach") return { stdout: "", exitCode: 0 };
+      const mounted = await mount.createVolume(arguments_, "owned mount");
+      state.mountRoot = mounted.mountRoot;
+      state.mountPoint = mounted.mountPoint;
+      state.attached = true;
+      return {
+        stdout: attachPlist([
+          { "dev-entry": "/dev/disk24", "mount-point": state.mountPoint },
+        ]),
+        exitCode: 0,
+      };
+    },
+    delay: () => Promise.resolve(),
+  };
+  return { host, state };
+};
+
 describe("native DMG artifact reader", () => {
   it("uses plist attachment metadata and detaches returned devices", async () => {
     const calls: string[][] = [];
+    const mount = createMountFixture();
+    let attached = false;
+    let mountPoint: string | undefined;
     const host: NativeDmgHost = {
       async run(arguments_) {
         const args = [...arguments_];
         calls.push(args);
+        if (args[0] === "info")
+          return {
+            stdout: attached
+              ? infoPlist("/tmp/image.dmg", [
+                  {
+                    "dev-entry": "/dev/disk-fixture",
+                    ...(mountPoint === undefined
+                      ? {}
+                      : { "mount-point": mountPoint }),
+                  },
+                ])
+              : emptyInfoPlist,
+            exitCode: 0,
+          };
+        if (args[0] === "detach") {
+          attached = false;
+          return { stdout: "", exitCode: 0 };
+        }
         if (args[0] !== "attach") return { stdout: "", exitCode: 0 };
-        const mountRoot = args[args.indexOf("-mountroot") + 1];
-        if (mountRoot === undefined) throw new Error("missing mount root");
-        const mountPoint = join(mountRoot, "Fixture");
-        await mkdir(mountPoint);
-        await writeFile(join(mountPoint, "hello.txt"), "hello");
+        ({ mountPoint } = await mount.createVolume(args, "hello"));
+        attached = true;
         return {
-          stdout: build({
-            "system-entities": [
-              { "dev-entry": "/dev/disk-fixture", "mount-point": mountPoint },
-            ],
-          }),
+          stdout: attachPlist([
+            { "dev-entry": "/dev/disk-fixture", "mount-point": mountPoint },
+          ]),
           exitCode: 0,
         };
       },
@@ -61,7 +177,7 @@ describe("native DMG artifact reader", () => {
     expect(calls).toContainEqual(["detach", "/dev/disk-fixture"]);
   });
 
-  it("rejects non-zero results and surfaces detach failure during attach cleanup", async () => {
+  it("rejects non-zero verification results", async () => {
     await expect(
       NativeDmgArtifactReader.create("/tmp/image.dmg", process.env, undefined, {
         run: () =>
@@ -77,39 +193,29 @@ describe("native DMG artifact reader", () => {
         /"arguments":\["verify","\/tmp\/image\.dmg"\].*"exitCode":1.*"stderr":"hdiutil: verify failed - image not recognized"/u,
       ),
     });
+  });
 
-    let mountRoot: string | undefined;
-    onTestFinished(async () => {
-      if (mountRoot !== undefined)
-        await rm(mountRoot, { recursive: true, force: true });
-    });
+  it("retains the root and reports unknown ownership when recovery discovery fails", async () => {
+    const mount = createMountFixture();
     const host: NativeDmgHost = {
-      delay: () => Promise.resolve(),
       run(arguments_) {
-        if (arguments_[0] === "detach")
-          return Promise.reject(new Error("detach failed"));
-        if (arguments_[0] === "info")
+        if (arguments_[0] === "info") {
+          if (mount.root() === undefined)
+            return Promise.resolve({
+              stdout: emptyInfoPlist,
+              exitCode: 0,
+            });
           return Promise.resolve({
-            stdout: build({
-              images: [
-                { "system-entities": [{ "dev-entry": "/dev/disk-fixture" }] },
-              ],
-            }),
-            exitCode: 0,
+            stdout: "unavailable info plist",
+            stderr: "hdiutil info failed",
+            exitCode: 1,
           });
+        }
         if (arguments_[0] !== "attach")
           return Promise.resolve({ stdout: "", exitCode: 0 });
-        mountRoot = arguments_[arguments_.indexOf("-mountroot") + 1];
-        if (mountRoot === undefined) throw new Error("missing mount root");
+        mount.rememberRoot(arguments_);
         return Promise.resolve({
-          stdout: build({
-            "system-entities": [
-              {
-                "dev-entry": "/dev/disk-fixture",
-                "mount-point": "/tmp/not-owned",
-              },
-            ],
-          }),
+          stdout: build({ unexpected: true }),
           exitCode: 0,
         });
       },
@@ -122,23 +228,459 @@ describe("native DMG artifact reader", () => {
         host,
       ),
     ).rejects.toMatchObject({
+      reason: "format",
       cleanup: {
         resources: expect.arrayContaining([
-          "DMG device /dev/disk-fixture",
+          expect.stringMatching(
+            /^DMG attachment ownership unknown at mount root /u,
+          ),
           expect.stringMatching(/^DMG mount root /u),
         ]),
       },
     });
+    expect(mount.root()).toBeDefined();
+    expect(await realpath(mount.root() ?? "")).toBe(mount.root());
+  });
+});
+
+describe("DMG attach recovery", () => {
+  it("keeps attach-output ownership when the first inventory omits the mount", async () => {
+    const { host, state } = createOmittedInventoryHost();
+    const reader = await NativeDmgArtifactReader.create(
+      "/tmp/image.dmg",
+      process.env,
+      undefined,
+      host,
+    );
+    await expect(reader.close()).rejects.toMatchObject({
+      reason: "unavailable",
+      cleanup: {
+        resources: expect.arrayContaining([
+          "DMG device /dev/disk24",
+          expect.stringMatching(/^DMG mount root /u),
+        ]),
+      },
+    });
+    expect(state.detachAttempts).toBe(4);
+    expect(await realpath(state.mountRoot ?? "")).toBe(state.mountRoot);
+
+    state.inventoryMode = "listed";
+    await reader.close();
+    expect(state.detachAttempts).toBe(5);
+    expect(
+      await realpath(state.mountRoot ?? "").catch(() => undefined),
+    ).toBeUndefined();
+  });
+});
+
+describe("DMG rooted ownership isolation", () => {
+  it("detaches its rooted group while leaving a concurrent foreign image alone", async () => {
+    const calls: string[][] = [];
+    const mount = createMountFixture();
+    let mountPoint: string | undefined;
+    let ownedAttached = false;
+    const host: NativeDmgHost = {
+      async run(arguments_) {
+        calls.push([...arguments_]);
+        if (arguments_[0] === "info")
+          return {
+            stdout:
+              !ownedAttached || mountPoint === undefined
+                ? emptyInfoPlist
+                : build({
+                    images: [
+                      {
+                        "image-path": "/tmp/image.dmg",
+                        "system-entities": [
+                          {
+                            "dev-entry": "/dev/disk26",
+                            "mount-point": mountPoint,
+                          },
+                        ],
+                      },
+                      {
+                        "image-path": "/tmp/foreign.dmg",
+                        "system-entities": [
+                          {
+                            "dev-entry": "/dev/disk99",
+                            "mount-point": "/Volumes/Foreign",
+                          },
+                        ],
+                      },
+                    ],
+                  }),
+            exitCode: 0,
+          };
+        if (arguments_[0] === "detach") {
+          if (arguments_[1] === "/dev/disk26") ownedAttached = false;
+          return { stdout: "", exitCode: 0 };
+        }
+        if (arguments_[0] !== "attach") return { stdout: "", exitCode: 0 };
+        ({ mountPoint } = await mount.createVolume(arguments_));
+        ownedAttached = true;
+        return {
+          stdout: attachPlist([
+            { "dev-entry": "/dev/disk26", "mount-point": mountPoint },
+          ]),
+          exitCode: 0,
+        };
+      },
+    };
+
+    const reader = await NativeDmgArtifactReader.create(
+      "/tmp/image.dmg",
+      process.env,
+      undefined,
+      host,
+    );
+    await reader.close();
+    expect(calls.filter(([operation]) => operation === "detach")).toEqual([
+      ["detach", "/dev/disk26"],
+    ]);
+    expect(ownedAttached).toBe(false);
+    expect(calls).not.toContainEqual(["detach", "/dev/disk99"]);
+    expect(
+      await realpath(mount.root() ?? "").catch(() => undefined),
+    ).toBeUndefined();
+  });
+});
+
+describe("DMG failed attach output recovery", () => {
+  it("uses captured attach stdout to recover a failed command's rooted device", async () => {
+    const calls: string[][] = [];
+    const mount = createMountFixture();
+    const host: NativeDmgHost = {
+      run(arguments_) {
+        calls.push([...arguments_]);
+        if (arguments_[0] === "info")
+          return Promise.resolve({
+            stdout: emptyInfoPlist,
+            exitCode: 0,
+          });
+        if (arguments_[0] === "attach") {
+          const mountRoot = mount.rememberRoot(arguments_);
+          return Promise.resolve({
+            stdout: attachPlist([
+              {
+                "dev-entry": "/dev/disk25",
+                "mount-point": join(mountRoot, "Fixture"),
+              },
+            ]),
+            stderr: "attach interrupted after mounting",
+            exitCode: 1,
+          });
+        }
+        return Promise.resolve({ stdout: "", exitCode: 0 });
+      },
+    };
+
+    await expect(
+      NativeDmgArtifactReader.create(
+        "/tmp/image.dmg",
+        process.env,
+        undefined,
+        host,
+      ),
+    ).rejects.toThrow(/hdiutil attach failed/u);
+    expect(calls).toContainEqual(["detach", "/dev/disk25"]);
+    expect(
+      await realpath(mount.root() ?? "").catch(() => undefined),
+    ).toBeUndefined();
+  });
+});
+
+describe("DMG attach fallback recovery", () => {
+  it("recovers a mounted image after the attach plist is malformed", async () => {
+    const calls: string[][] = [];
+    const mount = createMountFixture();
+    let attached = false;
+    let mountPoint: string | undefined;
+    const host: NativeDmgHost = {
+      async run(arguments_) {
+        calls.push([...arguments_]);
+        if (arguments_[0] === "info")
+          return {
+            stdout:
+              !attached || mountPoint === undefined
+                ? emptyInfoPlist
+                : infoPlist("/tmp/image.dmg", [
+                    { "dev-entry": "/dev/disk20" },
+                    {
+                      "dev-entry": "/dev/disk20s1",
+                      "mount-point": mountPoint,
+                    },
+                  ]),
+            exitCode: 0,
+          };
+        if (arguments_[0] === "detach") {
+          attached = false;
+          return { stdout: "", exitCode: 0 };
+        }
+        if (arguments_[0] !== "attach") return { stdout: "", exitCode: 0 };
+        ({ mountPoint } = await mount.createVolume(
+          arguments_,
+          "recovered mount",
+        ));
+        attached = true;
+        return { stdout: "{invalid plist", exitCode: 0 };
+      },
+    };
+
+    await expect(
+      NativeDmgArtifactReader.create(
+        "/tmp/image.dmg",
+        process.env,
+        undefined,
+        host,
+      ),
+    ).rejects.toThrow();
+    expect(calls.map(([operation]) => operation)).toEqual([
+      "verify",
+      "info",
+      "attach",
+      "info",
+      "detach",
+    ]);
+    expect(calls).toContainEqual(["detach", "/dev/disk20"]);
+    expect(
+      await realpath(mount.root() ?? "").catch(() => undefined),
+    ).toBeUndefined();
+  });
+
+  it("keeps unmounted new devices ambiguous without detaching them", async () => {
+    const calls: string[][] = [];
+    const mount = createMountFixture();
+    const host: NativeDmgHost = {
+      run(arguments_) {
+        calls.push([...arguments_]);
+        if (arguments_[0] === "info")
+          return Promise.resolve({
+            stdout:
+              mount.root() === undefined
+                ? emptyInfoPlist
+                : infoPlist("/tmp/image.dmg", [{ "dev-entry": "/dev/disk23" }]),
+            exitCode: 0,
+          });
+        if (arguments_[0] !== "attach")
+          return Promise.resolve({ stdout: "", exitCode: 0 });
+        mount.rememberRoot(arguments_);
+        return Promise.resolve({
+          stdout: attachPlist([{ "dev-entry": "/dev/disk23" }]),
+          exitCode: 0,
+        });
+      },
+    };
+
+    await expect(
+      NativeDmgArtifactReader.create(
+        "/tmp/image.dmg",
+        process.env,
+        undefined,
+        host,
+      ),
+    ).rejects.toMatchObject({
+      reason: "unavailable",
+      cleanup: {
+        resources: expect.arrayContaining([
+          expect.stringMatching(
+            /^DMG attachment ownership unknown at mount root /u,
+          ),
+          expect.stringMatching(/^DMG mount root /u),
+        ]),
+      },
+    });
+    expect(calls.filter(([operation]) => operation === "detach")).toEqual([]);
+    expect(await realpath(mount.root() ?? "")).toBe(mount.root());
+  });
+});
+
+describe("DMG attach cancellation and preexisting mounts", () => {
+  it("waits for an aborted attach result before discovering and detaching its mount", async () => {
+    const calls: string[][] = [];
+    const controller = new AbortController();
+    const mount = createMountFixture();
+    let markAttachStarted = (): void => {};
+    const attachStarted = new Promise<void>((resolveStarted) => {
+      markAttachStarted = resolveStarted;
+    });
+    let attached = false;
+    let mountPoint: string | undefined;
+    const host: NativeDmgHost = {
+      async run(arguments_, signal) {
+        calls.push([...arguments_]);
+        if (arguments_[0] === "info")
+          return {
+            stdout:
+              !attached || mountPoint === undefined
+                ? emptyInfoPlist
+                : infoPlist("/tmp/image.dmg", [
+                    {
+                      "dev-entry": "/dev/disk21",
+                      "mount-point": mountPoint,
+                    },
+                  ]),
+            exitCode: 0,
+          };
+        if (arguments_[0] === "detach") {
+          attached = false;
+          return { stdout: "", exitCode: 0 };
+        }
+        if (arguments_[0] !== "attach") return { stdout: "", exitCode: 0 };
+        mountPoint = join(mount.rememberRoot(arguments_), "Fixture");
+        markAttachStarted();
+        return new Promise((_, reject) => {
+          signal?.addEventListener(
+            "abort",
+            () => {
+              void mkdir(mountPoint ?? "").then(async () => {
+                attached = true;
+                await writeFile(
+                  join(mountPoint ?? "", "hello.txt"),
+                  "after exit",
+                );
+                reject(
+                  Object.assign(new Error("attach aborted"), {
+                    name: "AbortError",
+                  }),
+                );
+              });
+            },
+            { once: true },
+          );
+        });
+      },
+    };
+
+    const creating = NativeDmgArtifactReader.create(
+      "/tmp/image.dmg",
+      process.env,
+      controller.signal,
+      host,
+    );
+    await attachStarted;
+    controller.abort();
+    await expect(creating).rejects.toMatchObject({ reason: "cancelled" });
+    expect(calls.map(([operation]) => operation)).toEqual([
+      "verify",
+      "info",
+      "attach",
+      "info",
+      "detach",
+    ]);
+    expect(calls).toContainEqual(["detach", "/dev/disk21"]);
+  });
+
+  it("leaves a preexisting outside-root mount attached", async () => {
+    const calls: string[][] = [];
+    const host: NativeDmgHost = {
+      async run(arguments_) {
+        calls.push([...arguments_]);
+        if (arguments_[0] === "info")
+          return {
+            stdout: infoPlist("/tmp/image.dmg", [
+              {
+                "dev-entry": "/dev/disk22",
+                "mount-point": "/Volumes/AlreadyMounted",
+              },
+            ]),
+            exitCode: 0,
+          };
+        if (arguments_[0] === "attach")
+          return {
+            stdout: attachPlist([
+              {
+                "dev-entry": "/dev/disk22",
+                "mount-point": "/Volumes/AlreadyMounted",
+              },
+            ]),
+            exitCode: 0,
+          };
+        return { stdout: "", exitCode: 0 };
+      },
+    };
+
+    await expect(
+      NativeDmgArtifactReader.create(
+        "/tmp/image.dmg",
+        process.env,
+        undefined,
+        host,
+      ),
+    ).rejects.toMatchObject({ reason: "path" });
+    expect(calls.filter(([operation]) => operation === "detach")).toEqual([]);
+    expect(calls.map(([operation]) => operation)).toEqual([
+      "verify",
+      "info",
+      "attach",
+      "info",
+    ]);
   });
 });
 
 describe("native DMG command failure diagnostics", () => {
+  it("removes an empty root when the attach process never started", async () => {
+    const calls: string[][] = [];
+    let mountRoot: string | undefined;
+    onTestFinished(async () => {
+      if (mountRoot !== undefined)
+        await rm(mountRoot, { recursive: true, force: true });
+    });
+    const host: NativeDmgHost = {
+      run(arguments_) {
+        calls.push([...arguments_]);
+        if (arguments_[0] === "verify")
+          return Promise.resolve({ stdout: "", exitCode: 0 });
+        if (arguments_[0] === "info")
+          return Promise.resolve({ stdout: emptyInfoPlist, exitCode: 0 });
+        if (arguments_[0] === "attach") {
+          mountRoot = arguments_[arguments_.indexOf("-mountroot") + 1];
+          return Promise.reject(
+            Object.assign(new Error("could not spawn hdiutil"), {
+              code: "ENOENT",
+              syscall: "spawn /usr/bin/hdiutil",
+              errno: -2,
+            }),
+          );
+        }
+        throw new Error(`unexpected command: ${arguments_[0] ?? ""}`);
+      },
+    };
+
+    await expect(
+      NativeDmgArtifactReader.create(
+        "/tmp/image.dmg",
+        process.env,
+        undefined,
+        host,
+      ),
+    ).rejects.toMatchObject({
+      reason: "unavailable",
+      message: expect.stringContaining('"code":"ENOENT"'),
+      cleanup: undefined,
+    });
+    expect(calls.map(([operation]) => operation)).toEqual([
+      "verify",
+      "info",
+      "attach",
+    ]);
+    expect(
+      await realpath(mountRoot ?? "").catch(() => undefined),
+    ).toBeUndefined();
+  });
+});
+
+describe("native DMG command diagnostics", () => {
   it("keeps unknown attach failures unavailable with command evidence", async () => {
     await expect(
       NativeDmgArtifactReader.create("/tmp/image.dmg", process.env, undefined, {
         run(arguments_) {
           if (arguments_[0] === "verify")
             return Promise.resolve({ stdout: "", exitCode: 0 });
+          if (arguments_[0] === "info")
+            return Promise.resolve({
+              stdout: emptyInfoPlist,
+              exitCode: 0,
+            });
           return Promise.resolve({
             stdout: "attach output",
             stderr: "attach failed for an unknown reason",
@@ -370,26 +912,43 @@ describe("native DMG real verification diagnostics", () => {
 
 it("owns the canonical mount root and detaches each observed whole image once", async () => {
   const calls: string[][] = [];
+  const mount = createMountFixture();
+  let attached = false;
+  let mountPoint: string | undefined;
   const host: NativeDmgHost = {
     async run(arguments_) {
       calls.push([...arguments_]);
+      if (arguments_[0] === "info")
+        return {
+          stdout:
+            !attached || mountPoint === undefined
+              ? emptyInfoPlist
+              : infoPlist("/tmp/image.dmg", [
+                  { "dev-entry": "/dev/disk41" },
+                  { "dev-entry": "/dev/disk41s1" },
+                  { "dev-entry": "/dev/disk41s2", "mount-point": mountPoint },
+                  { "dev-entry": "/dev/disk42" },
+                  { "dev-entry": "/dev/disk42s1" },
+                ]),
+          exitCode: 0,
+        };
+      if (arguments_[0] === "detach") {
+        attached = false;
+        return { stdout: "", exitCode: 0 };
+      }
       if (arguments_[0] !== "attach") return { stdout: "", exitCode: 0 };
-      const mountRoot = arguments_[arguments_.indexOf("-mountroot") + 1];
-      if (mountRoot === undefined) throw new Error("missing mount root");
-      expect(mountRoot).toBe(await realpath(mountRoot));
-      const mountPoint = join(await realpath(mountRoot), "Fixture");
-      await mkdir(mountPoint);
-      await writeFile(join(mountPoint, "hello.txt"), "hello");
+      const mounted = await mount.createVolume(arguments_, "hello");
+      expect(mounted.mountRoot).toBe(await realpath(mounted.mountRoot));
+      mountPoint = mounted.mountPoint;
+      attached = true;
       return {
-        stdout: build({
-          "system-entities": [
-            { "dev-entry": "/dev/disk41" },
-            { "dev-entry": "/dev/disk41s1" },
-            { "dev-entry": "/dev/disk41s2", "mount-point": mountPoint },
-            { "dev-entry": "/dev/disk42" },
-            { "dev-entry": "/dev/disk42s1" },
-          ],
-        }),
+        stdout: attachPlist([
+          { "dev-entry": "/dev/disk41" },
+          { "dev-entry": "/dev/disk41s1" },
+          { "dev-entry": "/dev/disk41s2", "mount-point": mountPoint },
+          { "dev-entry": "/dev/disk42" },
+          { "dev-entry": "/dev/disk42s1" },
+        ]),
         exitCode: 0,
       };
     },
@@ -421,11 +980,9 @@ const apfsHost = (
 ) => {
   const calls: string[][] = [];
   let infoReads = 0;
-  let mountRoot: string | undefined;
-  onTestFinished(async () => {
-    if (mountRoot !== undefined)
-      await rm(mountRoot, { recursive: true, force: true });
-  });
+  const mount = createMountFixture();
+  let mountPoint: string | undefined;
+  let attached = false;
   const host: NativeDmgHost = {
     delay: () => Promise.resolve(),
     async run(arguments_) {
@@ -435,33 +992,48 @@ const apfsHost = (
       if (arguments_[0] === "info")
         return {
           stdout: build({
-            images:
-              stillListed.length === 0 || (infoReads += 1) > listedInfoReads
-                ? []
-                : [
+            images: !attached
+              ? []
+              : infoReads++ === 0
+                ? [
                     {
-                      "system-entities": stillListed.map((device) => ({
-                        "dev-entry": device,
-                      })),
+                      "image-path": "/tmp/image.dmg",
+                      "system-entities": [
+                        { "dev-entry": "/dev/disk4" },
+                        { "dev-entry": "/dev/disk4s1" },
+                        {
+                          "dev-entry": "/dev/disk5s1",
+                          ...(mountPoint === undefined
+                            ? {}
+                            : { "mount-point": mountPoint }),
+                        },
+                        { "dev-entry": "/dev/disk5" },
+                      ],
                     },
-                  ],
+                  ]
+                : stillListed.length === 0 || infoReads > listedInfoReads + 1
+                  ? []
+                  : [
+                      {
+                        "image-path": "/tmp/image.dmg",
+                        "system-entities": stillListed.map((device) => ({
+                          "dev-entry": device,
+                        })),
+                      },
+                    ],
           }),
           exitCode: 0,
         };
       if (arguments_[0] !== "attach") return { stdout: "", exitCode: 0 };
-      mountRoot = arguments_[arguments_.indexOf("-mountroot") + 1];
-      if (mountRoot === undefined) throw new Error("missing mount root");
-      const mountPoint = join(mountRoot, "Fixture");
-      await mkdir(mountPoint);
+      ({ mountPoint } = await mount.createVolume(arguments_));
+      attached = true;
       return {
-        stdout: build({
-          "system-entities": [
-            { "dev-entry": "/dev/disk4" },
-            { "dev-entry": "/dev/disk4s1" },
-            { "dev-entry": "/dev/disk5s1", "mount-point": mountPoint },
-            { "dev-entry": "/dev/disk5" },
-          ],
-        }),
+        stdout: attachPlist([
+          { "dev-entry": "/dev/disk4" },
+          { "dev-entry": "/dev/disk4s1" },
+          { "dev-entry": "/dev/disk5s1", "mount-point": mountPoint },
+          { "dev-entry": "/dev/disk5" },
+        ]),
         exitCode: 0,
       };
     },
@@ -471,16 +1043,13 @@ const apfsHost = (
 
 // One mounted device whose detach reports busy while `busy(attempt)` holds.
 const singleDeviceHost = (busy: (attempt: number) => boolean) => {
+  const mount = createMountFixture();
   const state = {
-    attached: true,
+    attached: false,
     attempts: 0,
     mountRoot: undefined as string | undefined,
     waits: [] as number[],
   };
-  onTestFinished(async () => {
-    if (state.mountRoot !== undefined)
-      await rm(state.mountRoot, { recursive: true, force: true });
-  });
   const host: NativeDmgHost = {
     delay: (milliseconds) => {
       state.waits.push(milliseconds);
@@ -488,28 +1057,26 @@ const singleDeviceHost = (busy: (attempt: number) => boolean) => {
     },
     async run(args) {
       if (args[0] === "attach") {
-        state.mountRoot = args[args.indexOf("-mountroot") + 1];
-        if (state.mountRoot === undefined)
-          throw new Error("missing mount root");
-        const mountPoint = join(state.mountRoot, "Fixture");
-        await mkdir(mountPoint);
-        await writeFile(join(mountPoint, "hello.txt"), "owned observation");
+        const mounted = await mount.createVolume(args, "owned observation");
+        state.mountRoot = mounted.mountRoot;
+        state.attached = true;
         return {
-          stdout: build({
-            "system-entities": [
-              { "dev-entry": "/dev/disk7", "mount-point": mountPoint },
-            ],
-          }),
+          stdout: attachPlist([
+            { "dev-entry": "/dev/disk7", "mount-point": mounted.mountPoint },
+          ]),
           exitCode: 0,
         };
       }
       if (args[0] === "info")
         return {
-          stdout: build({
-            images: state.attached
-              ? [{ "system-entities": [{ "dev-entry": "/dev/disk7" }] }]
-              : [],
-          }),
+          stdout: state.attached
+            ? infoPlist("/tmp/image.dmg", [
+                {
+                  "dev-entry": "/dev/disk7",
+                  "mount-point": join(state.mountRoot ?? "", "Fixture"),
+                },
+              ])
+            : emptyInfoPlist,
           exitCode: 0,
         };
       if (args[0] === "detach") {
@@ -545,9 +1112,9 @@ const closeApfsFixture = async (
   await reader.close();
   return {
     reader,
-    cleanup: calls.filter(
-      (call) => call[0] !== "verify" && call[0] !== "attach",
-    ),
+    cleanup: calls
+      .slice(calls.findIndex((call) => call[0] === "attach") + 1)
+      .slice(1),
   };
 };
 

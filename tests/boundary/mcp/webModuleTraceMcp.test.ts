@@ -21,7 +21,10 @@ it("publishes valid SDK schemas and records the named module trace without a bin
   const session = createTestBinarySession(() => {
     throw new Error("binary provider must not start");
   });
-  const server = createServer(session, session, { webModuleTrace: service });
+  const server = createServer(
+    { kind: "session", session },
+    { webModuleTrace: service },
+  );
   const client = new Client({ name: "module-contract", version: "1" });
   onTestFinished(async () => {
     await client.close();

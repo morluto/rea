@@ -18,6 +18,7 @@ import {
   observeSelectedExecutable,
 } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import { parseProcessScenario } from "../../../src/domain/process/processScenario.js";
+import { emptyProcessCapture } from "../../../src/domain/process/processCapture.fixture.js";
 import { type ProcessCapture } from "../../../src/domain/process/processCaptureParsing.js";
 
 const processFixture = fileURLToPath(
@@ -33,6 +34,8 @@ type PartialCapture = Extract<
   NonNullable<ProcessCaptureError["partialObservation"]>,
   { readonly capture: unknown }
 >["capture"];
+const emptyFilesystemCoverage =
+  emptyProcessCapture().truncation_details.filesystem_before;
 const expectUnverifiedHostCleanup = (error: ProcessCaptureError): void => {
   const report = error.cleanupReport;
   expect(error.reason, error.message).toBe("cleanup_incomplete");
@@ -225,7 +228,12 @@ itWithCaptureCapability(
     const captureSnapshot: typeof snapshotRoots = async () => {
       snapshotCalls += 1;
       if (snapshotCalls === 1)
-        return { files: [], truncated: false, completeRoots: [] };
+        return {
+          files: [],
+          truncated: false,
+          completeRoots: [],
+          coverage: emptyFilesystemCoverage,
+        };
       throw new Error("fixture final snapshot failure");
     };
     const cleanupHost: ProcessCaptureCleanupHost = {

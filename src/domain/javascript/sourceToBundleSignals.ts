@@ -1,6 +1,6 @@
 import { posix } from "node:path";
 
-import { compareCodePoints } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { ApplicationNode } from "./javascriptApplicationGraphSchemas.js";
 import type { HistoricalSourceGraph } from "../referenceSourceGraph.js";
 import {
@@ -70,7 +70,9 @@ export const sourceBearingNodes = (
 ): ApplicationNode[] =>
   nodes
     .filter(({ kind }) => RELEVANT_NODE_KINDS.has(kind))
-    .sort((left, right) => compareCodePoints(left.node_id, right.node_id));
+    .sort((left, right) =>
+      compareUnicodeCodePoints(left.node_id, right.node_id),
+    );
 
 /** Keep historical source files in stable path order. */
 export const historicalSourceFiles = (
@@ -81,7 +83,7 @@ export const historicalSourceFiles = (
       (entry): entry is SourceFile =>
         entry.kind === "file" && entry.classifications.includes("source"),
     )
-    .sort((left, right) => compareCodePoints(left.path, right.path));
+    .sort((left, right) => compareUnicodeCodePoints(left.path, right.path));
 
 /** Build deterministic candidate indices without assigning fuzzy matches. */
 export const buildSourceToBundleCandidateIndex = (
@@ -130,7 +132,7 @@ export const candidateIdsForSource = (
   const output: string[] = [];
   for (const group of groups) {
     if (group === undefined) continue;
-    for (const nodeId of [...group].sort(compareCodePoints)) {
+    for (const nodeId of [...group].sort(compareUnicodeCodePoints)) {
       if (seen.has(nodeId)) continue;
       seen.add(nodeId);
       output.push(nodeId);
@@ -256,7 +258,7 @@ const signal = (
   kind,
   weight: signalWeight(kind),
   source_value: sourceValue,
-  current_values: [...new Set(currentValues)].sort(compareCodePoints),
+  current_values: [...new Set(currentValues)].sort(compareUnicodeCodePoints),
 });
 
 const candidateConfidence = (
@@ -325,7 +327,7 @@ const uniquePaths = (paths: readonly CurrentPath[]): CurrentPath[] =>
       ]),
     ).values(),
   ].sort((left, right) =>
-    compareCodePoints(
+    compareUnicodeCodePoints(
       `${left.kind}\0${left.value}`,
       `${right.kind}\0${right.value}`,
     ),

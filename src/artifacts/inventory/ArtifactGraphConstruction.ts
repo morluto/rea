@@ -1,5 +1,5 @@
-import { compareCodePoints } from "../../domain/canonicalOrdering.js";
-import { canonicalDigest } from "../../domain/comparisonSemantics.js";
+import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
+import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
 import {
   artifactEdgeId,
   artifactIdForContent,
@@ -52,7 +52,7 @@ export const createOccurrence = (
   path: string,
   parent: string | null,
 ): MutableOccurrence => ({
-  occurrence_id: `occ_${canonicalDigest({ path, kind: entry.kind }, "Artifact")}`,
+  occurrence_id: `occ_${digestCanonicalValue({ path, kind: entry.kind }, "Artifact")}`,
   artifact_id: null,
   parent_occurrence_id: parent,
   logical_path: path,
@@ -80,8 +80,6 @@ export const createOccurrence = (
 });
 
 /** Compare exact child names independently of host locale and traversal order. */
-export const compareDirectoryChildNames = compareCodePoints;
-
 export const materializeDirectoryNodes = (
   occurrences: MutableOccurrence[],
   nodes: Map<string, ArtifactNode>,
@@ -107,9 +105,9 @@ export const materializeDirectoryNodes = (
         artifact_id,
         entry_kind,
       }))
-      .sort((left, right) => compareDirectoryChildNames(left.name, right.name));
+      .sort((left, right) => compareUnicodeCodePoints(left.name, right.name));
     const node = createArtifactNode({
-      sha256: canonicalDigest({ kind: "directory", children }, "Artifact"),
+      sha256: digestCanonicalValue({ kind: "directory", children }, "Artifact"),
       size: 0,
       format: "directory",
       contentState: "virtual",
@@ -131,7 +129,7 @@ export const createRootNode = (input: {
   createArtifactNode({
     sha256:
       input.digest?.sha256 ??
-      canonicalDigest(
+      digestCanonicalValue(
         {
           kind: "directory-root",
           children: input.occurrences
@@ -140,7 +138,7 @@ export const createRootNode = (input: {
               artifact_id,
             }))
             .sort((left, right) =>
-              compareDirectoryChildNames(left.logical_path, right.logical_path),
+              compareUnicodeCodePoints(left.logical_path, right.logical_path),
             ),
         },
         "Artifact",

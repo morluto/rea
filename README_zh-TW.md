@@ -28,7 +28,7 @@
 
 <img src="docs/assets/rea-hopper-analysis.png" alt="REA 在 Hopper 中啟動分析橋，檢查原生二進位檔案" width="1200" />
 
-<br />
+<br /><br />
 
 <table aria-label="REA 社群">
 <tr>
@@ -154,6 +154,8 @@ REA 需要 Node.js 22.x（>=22.19）、24.x（>=24.11）或 26+，以及 npm。�
 
 ## 案例
 
+[![DX-Ball 聲音平移、Notion 剪貼簿橋接與 TH04 彈幕環案例的插圖](docs/assets/rea-showcases.png)](https://rea.tools/showcase/)
+
 ### DX-Ball：重建聲像計算
 
 沿聲音呼叫追蹤到根據位置計算聲像的輔助函數，檢查指令，將不完整的偽程式碼轉為 C。重建結果通過了 3,205 個原始 x86 測試用例，並復現了編譯後函數的全部 63 個位元組。
@@ -254,16 +256,6 @@ npx rea-agents@latest setup
 
 請按照 [SECURITY.md](SECURITY.md) 報告漏洞。
 
-## 參與貢獻
-
-歡迎幫助改進 REA！你可以[提交 issue](https://github.com/morluto/rea/issues) 報告錯誤或建議功能，也可以[提交 pull request](https://github.com/morluto/rea/pulls) 改進程式碼或文件。
-
-開發設定和檢查見 [CONTRIBUTING.md](CONTRIBUTING.md)，驗證流程見[測試指南](docs/testing.md)，專案結構見[架構圖](docs/architecture.mermaid)。
-
-## 專案連結
-
-[網站](https://rea.tools/) · [npm](https://www.npmjs.com/package/rea-agents) · [skills.sh](https://skills.sh/morluto/rea/reverse-engineer-anything) · [Issues](https://github.com/morluto/rea/issues) · [安全](SECURITY.md)
-
 ## Star 歷史
 
 🎉 **GitHub Star 達到 30,000 個，感謝大家！**
@@ -281,6 +273,12 @@ npx rea-agents@latest setup
 ## 免責聲明
 
 REA 為合法的逆向工程研究、分析和重建提供工具。你有責任取得所需授權並遵守適用法律。本專案不認同非法或未經授權的使用。
+
+## 參與貢獻
+
+歡迎幫助改進 REA！你可以[提交 issue](https://github.com/morluto/rea/issues) 報告錯誤或建議功能，也可以[提交 pull request](https://github.com/morluto/rea/pulls) 改進程式碼或文件。
+
+開發設定和檢查見 [CONTRIBUTING.md](CONTRIBUTING.md)，驗證流程見[測試指南](docs/testing.md)，專案結構見[架構圖](docs/architecture.mermaid)。
 
 ## 授權條款
 

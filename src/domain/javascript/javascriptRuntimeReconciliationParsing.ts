@@ -20,10 +20,10 @@ import {
   javascriptRuntimeObservationSchema,
   javascriptRuntimeKindSchema,
   type JavaScriptRuntimeObservation,
-  type JavaScriptRuntimeLocation,
+  type JavaScriptRuntimeTargetLocation,
 } from "./javascriptRuntimeObservation.js";
-import { canonicalDigest } from "../comparisonSemantics.js";
-import { compareCodePoints } from "../canonicalOrdering.js";
+import { digestCanonicalValue } from "../canonicalDigest.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { parseEvidence, type Evidence } from "../evidence.js";
 import {
   javascriptApplicationAnalysisResultSchema,
@@ -89,7 +89,16 @@ interface NormalizedV8Inspection {
       language: null;
       source: { readonly included: false; readonly reason: string };
     }> &
-      ({ readonly file_path: string } | { readonly url: string }))[];
+      (
+        | { readonly file_path: string }
+        | { readonly url: string }
+        | {
+            readonly unresolved_location: Extract<
+              JavaScriptRuntimeObservation["scripts"]["items"][number]["location"],
+              { kind: "unresolved" }
+            >;
+          }
+      ))[];
   };
   readonly workers: readonly [];
   readonly completeness: BrowserCompleteness;
@@ -131,7 +140,9 @@ export const parseStaticLayers = (
 ): ParsedStaticLayer[] =>
   layers
     .map((layer) => parseStaticLayer(layer))
-    .sort((left, right) => compareCodePoints(left.layerId, right.layerId));
+    .sort((left, right) =>
+      compareUnicodeCodePoints(left.layerId, right.layerId),
+    );
 
 /** Parse only supported passive web/Electron inspection Evidence. */
 export const parseRuntimeCaptures = (
@@ -140,7 +151,10 @@ export const parseRuntimeCaptures = (
   observations
     .map((observation) => parseRuntimeCapture(observation))
     .sort((left, right) =>
-      compareCodePoints(left.evidence.evidence_id, right.evidence.evidence_id),
+      compareUnicodeCodePoints(
+        left.evidence.evidence_id,
+        right.evidence.evidence_id,
+      ),
     );
 
 const parseStaticLayer = (layer: StaticLayerInput): ParsedStaticLayer => {
@@ -167,7 +181,7 @@ const parseStaticLayer = (layer: StaticLayerInput): ParsedStaticLayer => {
       "JavaScript application Evidence subject disagrees with its result",
     );
   return {
-    layerId: `jrl_${canonicalDigest(
+    layerId: `jrl_${digestCanonicalValue(
       {
         role: layer.role,
         evidence_id: evidence.evidence_id,
@@ -210,7 +224,7 @@ const parseRuntimeCapture = (input: Evidence): ParsedRuntimeCapture => {
       kind: "browser",
       evidence,
       inspection,
-      captureSha256: canonicalDigest(inspection, "Runtime reconciliation"),
+      captureSha256: digestCanonicalValue(inspection, "Runtime reconciliation"),
       scriptsCompleteWithinScope: scriptsComplete(inspection.completeness),
     };
   }
@@ -238,7 +252,7 @@ const parseRuntimeCapture = (input: Evidence): ParsedRuntimeCapture => {
       kind: "electron",
       evidence,
       inspection,
-      captureSha256: canonicalDigest(inspection, "Runtime reconciliation"),
+      captureSha256: digestCanonicalValue(inspection, "Runtime reconciliation"),
       scriptsCompleteWithinScope: scriptsComplete(inspection.completeness),
     };
   }
@@ -261,7 +275,7 @@ const parseRuntimeCapture = (input: Evidence): ParsedRuntimeCapture => {
       kind: "v8-inspector",
       evidence,
       inspection,
-      captureSha256: canonicalDigest(result, "Runtime reconciliation"),
+      captureSha256: digestCanonicalValue(result, "Runtime reconciliation"),
       scriptsCompleteWithinScope: false,
     };
   }
@@ -367,8 +381,17 @@ const normalizeV8Inspection = (
 });
 
 const runtimeLocation = (
-  location: JavaScriptRuntimeLocation,
-): { readonly file_path: string } | { readonly url: string } => {
+  location: JavaScriptRuntimeTargetLocation,
+):
+  | { readonly file_path: string }
+  | { readonly url: string }
+  | {
+      readonly unresolved_location: Extract<
+        JavaScriptRuntimeTargetLocation,
+        { kind: "unresolved" }
+      >;
+    } => {
+  if (location.kind === "unresolved") return { unresolved_location: location };
   if (location.kind === "file") return { file_path: location.file_path };
   if (location.kind === "url") return { url: location.sanitized_url };
   return { url: location.specifier };

@@ -5,7 +5,7 @@ import {
   type ArtifactOccurrence,
   type IntegrityContradiction,
 } from "./artifactGraph.js";
-import { compareCodePoints } from "./canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import { canonicalJson } from "./comparisonSemantics.js";
 import {
   artifactContradictionId,
@@ -163,13 +163,13 @@ const orderedInventory = (
   },
 ): InventorySet => {
   const nodes = [...values.nodes.values()].sort((left, right) =>
-    compareCodePoints(left.artifact_id, right.artifact_id),
+    compareUnicodeCodePoints(left.artifact_id, right.artifact_id),
   );
   const occurrences = [...values.occurrences.values()].sort((left, right) =>
-    compareCodePoints(left.logical_path, right.logical_path),
+    compareUnicodeCodePoints(left.logical_path, right.logical_path),
   );
   const edges = [...values.edges.values()].sort((left, right) =>
-    compareCodePoints(left.edge_id, right.edge_id),
+    compareUnicodeCodePoints(left.edge_id, right.edge_id),
   );
   return {
     manifest: first.manifest,
@@ -179,7 +179,7 @@ const orderedInventory = (
     integrityContradictions: first.integrity_contradictions,
     limitations: [
       ...new Set(pages.flatMap(({ inventory }) => inventory.limitations)),
-    ].sort(compareCodePoints),
+    ].sort(compareUnicodeCodePoints),
     complete:
       nodes.length === first.manifest.node_count &&
       occurrences.length === first.manifest.occurrence_count &&

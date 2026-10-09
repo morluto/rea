@@ -3,8 +3,8 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import { projectAppleApplication } from "./appleApplication.js";
-import { compareCodePoints } from "../canonicalOrdering.js";
-import { canonicalDigest } from "../comparisonSemantics.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
+import { digestCanonicalValue } from "../canonicalDigest.js";
 import { createEvidence, type Evidence } from "../evidence.js";
 import { jsonValueSchema } from "../jsonValue.js";
 
@@ -20,7 +20,7 @@ interface FixtureEntry {
 const sha = (text: string): string =>
   createHash("sha256").update(text).digest("hex");
 const artifactId = (sha256: string): string =>
-  `art_${canonicalDigest({ sha256 }, "Artifact inventory")}`;
+  `art_${digestCanonicalValue({ sha256 }, "Artifact inventory")}`;
 
 /** Build one complete, content-addressed inventory page for pure projection tests. */
 const inventoryEvidence = (
@@ -57,8 +57,8 @@ const inventoryEvidence = (
   ) => ({
     occurrence_id:
       path === "."
-        ? `occ_${canonicalDigest({ root: rootId }, "Artifact inventory")}`
-        : `occ_${canonicalDigest(
+        ? `occ_${digestCanonicalValue({ root: rootId }, "Artifact inventory")}`
+        : `occ_${digestCanonicalValue(
             { root_artifact_id: rootId, logical_path: path, entry_kind: kind },
             "Artifact inventory",
           )}`,
@@ -97,9 +97,9 @@ const inventoryEvidence = (
     left.artifact_id.localeCompare(right.artifact_id),
   );
   const sortedOccurrences = occurrences.sort((left, right) =>
-    compareCodePoints(left.logical_path, right.logical_path),
+    compareUnicodeCodePoints(left.logical_path, right.logical_path),
   );
-  const graphSha256 = canonicalDigest(
+  const graphSha256 = digestCanonicalValue(
     {
       nodes: sortedNodes,
       occurrences: sortedOccurrences,
@@ -122,7 +122,7 @@ const inventoryEvidence = (
       authority: "shipped-artifact",
       result: jsonValueSchema.parse({
         manifest: {
-          manifest_id: `agm_${canonicalDigest(
+          manifest_id: `agm_${digestCanonicalValue(
             { root_artifact_id: rootId, graph_sha256: graphSha256 },
             "Artifact inventory",
           )}`,

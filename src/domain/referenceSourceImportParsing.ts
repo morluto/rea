@@ -201,9 +201,6 @@ const isRequireCallee = (callee: Node | null | undefined): boolean => {
   return false;
 };
 
-const isImportCallee = (callee: Node | null | undefined): boolean =>
-  isImport(callee);
-
 const collectModuleExpressions = (
   node: unknown,
   targets: Array<CallExpression | ImportExpression>,
@@ -272,7 +269,7 @@ const extractRequireAndDynamicImports = (
       continue;
     }
 
-    if (isImportCallee(call.callee) && isModuleExpression(first)) {
+    if (isImport(call.callee) && isModuleExpression(first)) {
       const result = moduleSpecifierFromExpression(first);
       if (result !== undefined) {
         appendRelationship(relationships, {

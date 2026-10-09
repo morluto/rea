@@ -1,6 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import type { Socket } from "node:net";
-import { tmpdir } from "node:os";
 
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -26,7 +25,7 @@ import type {
 import type { GhidraInventoryOperation } from "./GhidraInventoryValues.js";
 import type { GhidraFunctionOperation } from "./GhidraFunctionValues.js";
 import { createGhidraDiagnostics } from "./GhidraDiagnostics.js";
-import type { GhidraLaunch } from "./GhidraLauncher.js";
+import { GhidraLaunchError, type GhidraLaunch } from "./GhidraLauncher.js";
 import { GhidraResponseBuffer } from "./GhidraResponseBuffer.js";
 import { GhidraResponseRouter } from "./GhidraResponseRouter.js";
 import { GhidraRequestQueue } from "./GhidraRequestQueue.js";
@@ -48,9 +47,10 @@ import {
 } from "./GhidraTransport.js";
 import { GhidraWire } from "./GhidraClientWire.js";
 import { completeGhidraStartupHandshake } from "./GhidraClientStartup.js";
+import { ghidraSessionRoot } from "./GhidraSessionRoot.js";
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
-const SESSION_ROOT = tmpdir();
+const SESSION_ROOT = ghidraSessionRoot();
 
 /** Closed Java-bridge operation union callable after the exact handshake. */
 export type GhidraOperation =
@@ -425,8 +425,18 @@ export class GhidraClient {
         err(this.#failure("start", "Ghidra launcher failed", cause)),
       );
     if (!launched.ok) {
+      const partialLaunch =
+        launched.error instanceof GhidraLaunchError
+          ? launched.error.partialLaunch
+          : undefined;
+      if (partialLaunch !== undefined) {
+        this.#launch = partialLaunch;
+        this.#process = new ProviderProcessSupervisor(partialLaunch, {
+          onDiagnostic: (event) => this.#onProcessDiagnostic(event),
+        });
+      }
       const failure = deadline.signal.aborted
-        ? this.#interruptionFailure(deadline)
+        ? this.#interruptionFailure(deadline, launched.error)
         : launched.error instanceof GhidraSessionError
           ? launched.error
           : this.#failure("start", launched.error.message, launched.error);
@@ -699,10 +709,13 @@ export class GhidraClient {
     return this.#startupFailure(failure);
   }
 
-  #interruptionFailure(deadline: ProviderStartupDeadline): GhidraSessionError {
+  #interruptionFailure(
+    deadline: ProviderStartupDeadline,
+    cause?: unknown,
+  ): GhidraSessionError {
     return deadline.interruption === "cancelled"
-      ? this.#failure("cancelled", "Ghidra startup was cancelled")
-      : this.#failure("timeout", "Ghidra startup deadline elapsed", undefined, {
+      ? this.#failure("cancelled", "Ghidra startup was cancelled", cause)
+      : this.#failure("timeout", "Ghidra startup deadline elapsed", cause, {
           timeoutMs: deadline.timeoutMs,
         });
   }

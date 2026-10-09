@@ -25,7 +25,7 @@ export interface OpenedScenarioBrowser {
 }
 
 /** Provider actions retained until the owned browser and profile are released. */
-export interface PlaywrightScenarioCleanupResources {
+interface PlaywrightScenarioCleanupResources {
   readonly closeBrowser: () => Promise<void>;
   readonly removeProfile: (() => Promise<void>) | undefined;
 }

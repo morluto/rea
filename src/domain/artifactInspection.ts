@@ -4,7 +4,7 @@ import {
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,
 } from "./artifactGraph.js";
-import { canonicalDigest } from "./comparisonSemantics.js";
+import { digestCanonicalValue } from "./canonicalDigest.js";
 import { uniqueSorted } from "./canonicalOrdering.js";
 import { evidenceSchema, parseEvidence, type Evidence } from "./evidence.js";
 import { jsonValueSchema } from "./jsonValue.js";
@@ -170,7 +170,7 @@ export const createArtifactInspection = (
     },
     substeps: [
       {
-        substep_id: `ais_${canonicalDigest(
+        substep_id: `ais_${digestCanonicalValue(
           {
             operation: "inventory_artifact",
             evidence_id: inventoryEvidence.evidence_id,
@@ -211,7 +211,7 @@ export const createArtifactInspection = (
   };
   return artifactInspectionResultSchema.parse({
     ...semantic,
-    inspection_id: `ai_${canonicalDigest(semantic, "Artifact inspection")}`,
+    inspection_id: `ai_${digestCanonicalValue(semantic, "Artifact inspection")}`,
   });
 };
 
@@ -258,7 +258,7 @@ const observation = (
     evidence_id: evidenceId,
   };
   return {
-    observation_id: `aio_${canonicalDigest(semantic, "Artifact inspection")}`,
+    observation_id: `aio_${digestCanonicalValue(semantic, "Artifact inspection")}`,
     ...semantic,
   };
 };
@@ -277,7 +277,7 @@ const allRelationships = (
       evidence_id: evidenceId,
     };
     return {
-      relationship_id: `air_${canonicalDigest(semantic, "Artifact inspection")}`,
+      relationship_id: `air_${digestCanonicalValue(semantic, "Artifact inspection")}`,
       ...semantic,
     };
   });
@@ -305,7 +305,7 @@ const allHypotheses = (
         "Format classification proposes a bounded follow-up; it is not semantic proof.",
     };
     return {
-      hypothesis_id: `aih_${canonicalDigest(semantic, "Artifact inspection")}`,
+      hypothesis_id: `aih_${digestCanonicalValue(semantic, "Artifact inspection")}`,
       ...semantic,
     };
   });
@@ -324,7 +324,7 @@ const contradictions = (
       evidence_id: evidenceId,
     };
     return {
-      contradiction_id: `aic_${canonicalDigest(semantic, "Artifact inspection")}`,
+      contradiction_id: `aic_${digestCanonicalValue(semantic, "Artifact inspection")}`,
       ...semantic,
     };
   });
@@ -418,7 +418,7 @@ const branch = (
     evidence_id: evidenceId,
   };
   return {
-    branch_id: `aib_${canonicalDigest(semantic, "Artifact inspection")}`,
+    branch_id: `aib_${digestCanonicalValue(semantic, "Artifact inspection")}`,
     ...semantic,
   };
 };

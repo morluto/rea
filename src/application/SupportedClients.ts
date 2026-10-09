@@ -15,6 +15,7 @@ export interface SetupClient {
     | "opencode"
     | "commandcode"
     | "grok"
+    | "omp"
     | "unsupported";
 }
 
@@ -29,7 +30,11 @@ interface ClientPathContext {
     readonly CODEX_HOME?: string | undefined;
     readonly COPILOT_HOME?: string | undefined;
     readonly GROK_HOME?: string | undefined;
+    readonly OMP_PROFILE?: string | undefined;
     readonly OPENCODE_CONFIG?: string | undefined;
+    readonly PI_CODING_AGENT_DIR?: string | undefined;
+    readonly PI_CONFIG_DIR?: string | undefined;
+    readonly PI_PROFILE?: string | undefined;
     readonly SAND_DATA_ROOT?: string | undefined;
     readonly XDG_CONFIG_HOME?: string | undefined;
   };
@@ -105,6 +110,40 @@ export const manualRegistrationRemediation = (
   clientName === "grok_bot"
     ? GROK_BOT_MANUAL_REGISTRATION_REMEDIATION
     : undefined;
+
+const OMP_PROFILE_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
+
+/**
+ * OMP's active named profile. OMP_PROFILE wins over the legacy PI_PROFILE even
+ * when empty; empty and "default" select the default profile. OMP refuses to
+ * start with an invalid name, so one leaves the default location in place.
+ */
+const ompProfile = ({ env }: ClientPathContext): string | undefined => {
+  const name = (env.OMP_PROFILE ?? env.PI_PROFILE)?.trim();
+  return name === undefined ||
+    name === "" ||
+    name === "default" ||
+    name.endsWith(".") ||
+    !OMP_PROFILE_NAME.test(name)
+    ? undefined
+    : name;
+};
+
+/**
+ * The OMP agent directory whose `mcp.json` holds user-scope MCP servers. OMP
+ * joins PI_CONFIG_DIR to the home directory, and a named profile ignores
+ * PI_CODING_AGENT_DIR. OMP resolves a relative agent directory against each
+ * process's working directory, so only an absolute override names one file.
+ */
+const ompAgentDirectory = (context: ClientPathContext): string => {
+  const root = join(context.home, context.env.PI_CONFIG_DIR || ".omp");
+  const profile = ompProfile(context);
+  if (profile !== undefined) return join(root, "profiles", profile, "agent");
+  const override = context.env.PI_CODING_AGENT_DIR;
+  return override !== undefined && override !== "" && isAbsolute(override)
+    ? override
+    : join(root, "agent");
+};
 
 const copilotDirectory = ({ home, env }: ClientPathContext): string =>
   env.COPILOT_HOME ?? join(home, ".copilot");
@@ -250,6 +289,14 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     format: "grok",
   },
   {
+    name: "omp",
+    displayName: "OMP",
+    configPath: (context: ClientPathContext) =>
+      join(ompAgentDirectory(context), "mcp.json"),
+    markerPath: ompAgentDirectory,
+    format: "omp",
+  },
+  {
     name: "grok_bot",
     displayName: "Grok Bot",
     configPath: grokBotDirectory,
@@ -271,7 +318,11 @@ export const supportedClients = (
     CODEX_HOME: process.env.CODEX_HOME,
     COPILOT_HOME: process.env.COPILOT_HOME,
     GROK_HOME: process.env.GROK_HOME,
+    OMP_PROFILE: process.env.OMP_PROFILE,
     OPENCODE_CONFIG: process.env.OPENCODE_CONFIG,
+    PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+    PI_CONFIG_DIR: process.env.PI_CONFIG_DIR,
+    PI_PROFILE: process.env.PI_PROFILE,
     SAND_DATA_ROOT: process.env.SAND_DATA_ROOT,
     XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
   },

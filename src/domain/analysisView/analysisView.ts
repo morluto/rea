@@ -208,11 +208,6 @@ export const analysisViewInputError = (
 ): AnalysisInputError =>
   new AnalysisInputError(INSPECT_ANALYSIS_VIEW_OPERATION, undefined, issues);
 
-/** SHA-256 of the canonical projected JSON, excluding this digest field. */
-export const analysisViewDigest = (
-  projection: Omit<AnalysisViewResult, "view_digest">,
-): string => digestCanonicalValue(projection, "Analysis view");
-
 /** View payload before the content digest is attached. */
 export type UnsignedAnalysisView =
   | Omit<
@@ -229,7 +224,7 @@ export const sealAnalysisView = (
 ): AnalysisViewResult =>
   analysisViewResultSchema.parse({
     ...projection,
-    view_digest: analysisViewDigest(projection),
+    view_digest: digestCanonicalValue(projection, "Analysis view"),
   });
 
 const parentDigest = (evidenceId: string): string => evidenceId.slice(3);

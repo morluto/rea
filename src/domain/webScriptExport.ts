@@ -34,7 +34,7 @@ const sourceSchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({
     kind: z.literal("scenario-response"),
-    transaction_id: z.string().nullable(),
+    transaction_id: z.string().min(1),
     request_sequence: z.number().int().min(1),
     response_sequence: z.number().int().min(1).nullable(),
     status: z.number().nullable(),

@@ -1,4 +1,4 @@
-import { compareCodePoints } from "./canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import { z } from "zod";
 
 import {
@@ -147,7 +147,7 @@ export const compareArtifacts = (
     right_manifest_id: right.inventory.manifest.manifest_id,
     summary,
     changes,
-    limitations: [...new Set(limitations)].sort(compareCodePoints),
+    limitations: [...new Set(limitations)].sort(compareUnicodeCodePoints),
   });
 };
 
@@ -171,7 +171,7 @@ const compareOccurrences = (
   const rightRelations = relationsByPath(right);
   const paths = [
     ...new Set([...leftByPath.keys(), ...rightByPath.keys()]),
-  ].sort(compareCodePoints);
+  ].sort(compareUnicodeCodePoints);
   const output: ArtifactChange[] = [];
   for (const path of paths) {
     const leftOccurrence = leftByPath.get(path);
@@ -370,7 +370,7 @@ const relationsByPath = (
   }
   for (const values of output.values())
     values.sort((left, right) =>
-      compareCodePoints(canonicalJson(left), canonicalJson(right)),
+      compareUnicodeCodePoints(canonicalJson(left), canonicalJson(right)),
     );
   return output;
 };

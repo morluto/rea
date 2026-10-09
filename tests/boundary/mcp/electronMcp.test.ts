@@ -72,13 +72,16 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(resultOk(null)),
   }));
-  const server = createServer(session, session, {
-    electronObservation: new CdpElectronProvider(),
-    availabilityPolicy: () => ({
-      processCaptureEnabled: false,
-      investigationInputRoots: 1,
-    }),
-  });
+  const server = createServer(
+    { kind: "session", session },
+    {
+      electronObservation: new CdpElectronProvider(),
+      availabilityPolicy: () => ({
+        processCaptureEnabled: false,
+        investigationInputRoots: 1,
+      }),
+    },
+  );
   const client = new Client({ name: "electron-mcp-test", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -197,13 +200,16 @@ it("runs active Electron scenarios with selected paths and inferred working dire
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(resultOk(null)),
   }));
-  const server = createServer(session, session, {
-    electronActiveObservation: provider,
-    availabilityPolicy: () => ({
-      processCaptureEnabled: false,
-      investigationInputRoots: 0,
-    }),
-  });
+  const server = createServer(
+    { kind: "session", session },
+    {
+      electronActiveObservation: provider,
+      availabilityPolicy: () => ({
+        processCaptureEnabled: false,
+        investigationInputRoots: 0,
+      }),
+    },
+  );
   const client = new Client({ name: "electron-active-mcp-test", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -279,12 +285,15 @@ it("exposes the target-free static JavaScript application workflow", async () =>
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(resultOk(null)),
   }));
-  const server = createServer(session, session, {
-    availabilityPolicy: () => ({
-      processCaptureEnabled: false,
-      investigationInputRoots: 1,
-    }),
-  });
+  const server = createServer(
+    { kind: "session", session },
+    {
+      availabilityPolicy: () => ({
+        processCaptureEnabled: false,
+        investigationInputRoots: 1,
+      }),
+    },
+  );
   const client = new Client({
     name: "electron-static-mcp-test",
     version: "1",

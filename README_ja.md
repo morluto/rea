@@ -28,7 +28,7 @@
 
 <img src="docs/assets/rea-hopper-analysis.png" alt="REA が Hopper 内で分析ブリッジを起動し、ネイティブバイナリを調べる様子" width="1200" />
 
-<br />
+<br /><br />
 
 <table aria-label="REA コミュニティ">
 <tr>
@@ -154,6 +154,8 @@ REA には Node.js 22.x（>=22.19）、24.x（>=24.11）、または 26+ と npm
 
 ## 事例
 
+[![DX-Ball の音声パン、Notion のクリップボードブリッジ、TH04 の弾幕リングの事例を表すイラスト](docs/assets/rea-showcases.png)](https://rea.tools/showcase/)
+
 ### DX-Ball：音声のパン計算を再構築する
 
 音声の呼び出しから位置をパンに変換する補助関数をたどり、命令を調べ、不完全な疑似コードを C に書き直します。再構築した実装は、元の x86 に対する 3,205 ケースの検証を通過し、コンパイル後の関数の全 63 バイトを再現しています。
@@ -254,16 +256,6 @@ npx rea-agents@latest setup
 
 脆弱性の報告は [SECURITY.md](SECURITY.md) に従ってください。
 
-## 貢献する
-
-REA への貢献を歓迎します！[issue を作成](https://github.com/morluto/rea/issues)してバグや機能の提案を報告したり、[pull request を送信](https://github.com/morluto/rea/pulls)してコードやドキュメントを改善したりできます。
-
-開発環境とチェックは [CONTRIBUTING.md](CONTRIBUTING.md)、検証レーンは[テストガイド](docs/testing.md)、プロジェクト構造は[アーキテクチャ図](docs/architecture.mermaid)を参照してください。
-
-## プロジェクトリンク
-
-[ウェブサイト](https://rea.tools/) · [npm](https://www.npmjs.com/package/rea-agents) · [skills.sh](https://skills.sh/morluto/rea/reverse-engineer-anything) · [Issues](https://github.com/morluto/rea/issues) · [セキュリティ](SECURITY.md)
-
 ## スター履歴
 
 🎉 **GitHub スター 30,000 件、ありがとうございます！**
@@ -281,6 +273,12 @@ REA の利用、バグ報告、機能の要望、ビルドのテスト、修正�
 ## 免責事項
 
 REA は、合法的なリバースエンジニアリングの研究、分析、再構築のためのツールを提供します。必要な許可を得て、適用される法律に従う責任は利用者にあります。このプロジェクトは違法または無許可の利用を支持しません。
+
+## 貢献する
+
+REA への貢献を歓迎します！[issue を作成](https://github.com/morluto/rea/issues)してバグや機能の提案を報告したり、[pull request を送信](https://github.com/morluto/rea/pulls)してコードやドキュメントを改善したりできます。
+
+開発環境とチェックは [CONTRIBUTING.md](CONTRIBUTING.md)、検証レーンは[テストガイド](docs/testing.md)、プロジェクト構造は[アーキテクチャ図](docs/architecture.mermaid)を参照してください。
 
 ## ライセンス
 

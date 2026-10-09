@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
 import type { Readable } from "node:stream";
 
-import { compareCodePoints } from "../../domain/canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
 import {
   ArtifactPathRegistry,
@@ -84,13 +84,13 @@ export const readJavaScriptArtifactFiles = async (
   };
   await visitReader(reader, "", snapshot.manifest.root_sha256, context);
   const files = context.files.sort((left, right) =>
-    compareCodePoints(left.path, right.path),
+    compareUnicodeCodePoints(left.path, right.path),
   );
   assertExpectedFilesWereVisited(expected, files);
   return {
     files,
     containers: context.containers.sort((left, right) =>
-      compareCodePoints(left.path, right.path),
+      compareUnicodeCodePoints(left.path, right.path),
     ),
     text_bytes_read: context.textBytes,
     invalid_utf8_files: context.invalidUtf8,

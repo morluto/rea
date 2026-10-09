@@ -28,7 +28,7 @@
 
 <img src="docs/assets/rea-hopper-analysis.png" alt="REA startet seine Analysebrücke in Hopper und untersucht eine native Binärdatei" width="1200" />
 
-<br />
+<br /><br />
 
 <table aria-label="REA-Community">
 <tr>
@@ -154,6 +154,8 @@ Native Formate und unterstützte Hostsysteme unterscheiden sich je nach Provider
 
 ## Fallstudien
 
+[![Illustrationen der Fallstudien zu DX-Balls Klangbalance, Notions Zwischenablage-Brücke und TH04s Geschossring](docs/assets/rea-showcases.png)](https://rea.tools/showcase/)
+
 ### DX-Ball: Eine Stereo-Panning-Berechnung rekonstruieren
 
 Verfolge einen Sound-Aufruf zur Hilfsfunktion, die Positionen in Panning-Werte umrechnet, untersuche die Anweisungen und überführe unvollständigen Pseudocode in C. Die Rekonstruktion besteht 3.205 Tests mit dem ursprünglichen x86-Code und reproduziert alle 63 Bytes der kompilierten Funktion.
@@ -252,16 +254,6 @@ Beginne mit den [praxisnahen Anleitungen](https://rea.tools/guides/) auf der Web
 
 Melde Sicherheitslücken gemäß [SECURITY.md](SECURITY.md).
 
-## Mitwirken
-
-Wir freuen uns über deine Hilfe bei REA! [Öffne ein Issue](https://github.com/morluto/rea/issues), um einen Fehler zu melden oder eine Funktion vorzuschlagen, oder [sende einen Pull Request](https://github.com/morluto/rea/pulls), um Code oder Dokumentation zu verbessern.
-
-Die Entwicklungsumgebung und Prüfungen beschreibt [CONTRIBUTING.md](CONTRIBUTING.md), die Verifikationspfade der [Testleitfaden](docs/testing.md) und die Projektstruktur die [Architekturübersicht](docs/architecture.mermaid).
-
-## Projektlinks
-
-[Website](https://rea.tools/) · [npm](https://www.npmjs.com/package/rea-agents) · [skills.sh](https://skills.sh/morluto/rea/reverse-engineer-anything) · [Issues](https://github.com/morluto/rea/issues) · [Sicherheit](SECURITY.md)
-
 ## Sternverlauf
 
 🎉 **30.000 GitHub-Sterne – vielen Dank!**
@@ -279,6 +271,12 @@ Danke an alle, die REA nutzen, Fehler melden, Funktionswünsche äußern, Builds
 ## Haftungsausschluss
 
 REA stellt Werkzeuge für rechtmäßige Reverse-Engineering-Forschung, Analyse und Rekonstruktion bereit. Du bist dafür verantwortlich, erforderliche Genehmigungen einzuholen und geltendes Recht einzuhalten. Das Projekt unterstützt keine rechtswidrige oder unbefugte Nutzung.
+
+## Mitwirken
+
+Wir freuen uns über deine Hilfe bei REA! [Öffne ein Issue](https://github.com/morluto/rea/issues), um einen Fehler zu melden oder eine Funktion vorzuschlagen, oder [sende einen Pull Request](https://github.com/morluto/rea/pulls), um Code oder Dokumentation zu verbessern.
+
+Die Entwicklungsumgebung und Prüfungen beschreibt [CONTRIBUTING.md](CONTRIBUTING.md), die Verifikationspfade der [Testleitfaden](docs/testing.md) und die Projektstruktur die [Architekturübersicht](docs/architecture.mermaid).
 
 ## Lizenz
 

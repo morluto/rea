@@ -17,77 +17,92 @@ import type { Logger } from "pino";
 import { mcpProgressReporter } from "./mcpProgress.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 
 /** Optional session services used by direct tool registration. */
 export interface OfficialToolRegistration {
   readonly logger: Logger;
   readonly activeTarget: (() => BinaryTarget | undefined) | undefined;
   readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
+  readonly withAdmittedAnalysis: WithAdmittedAnalysis;
 }
 
 /** Register direct bridge proxies, preserving MCP cancellation and typed errors. */
 export const registerOfficialTools = (
   server: EvidenceMcpServer,
-  analysis: AnalysisOperationPort,
   options: OfficialToolRegistration,
 ): void => {
   for (const contract of OFFICIAL_TOOL_CONTRACTS) {
-    registerOfficialTool(server, analysis, contract, {
+    registerOfficialTool(server, contract, {
       logger: options.logger,
       activeTarget: options.activeTarget,
       recordEvidence: options.recordEvidence,
+      withAdmittedAnalysis: options.withAdmittedAnalysis,
     });
   }
 };
 
 const registerOfficialTool = (
   server: EvidenceMcpServer,
-  analysis: AnalysisOperationPort,
   contract: (typeof OFFICIAL_TOOL_CONTRACTS)[number],
   registration: {
     readonly logger: Logger;
     readonly activeTarget: (() => BinaryTarget | undefined) | undefined;
     readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
+    readonly withAdmittedAnalysis: WithAdmittedAnalysis;
   },
 ): void => {
   server.registerTool(
     contract.name,
     toolRegistrationOptions(contract),
     async (input: unknown, context: ServerContext) => {
-      const arguments_ = jsonObjectSchema.parse(
-        contract.inputSchema.parse(input),
-      );
-      const progress = mcpProgressReporter(context);
-      const result = await runOfficialOperation(
-        analysis,
-        contract,
-        arguments_,
-        {
-          logger: registration.logger,
-          signal: context.mcpReq.signal,
-          progress,
+      const admitted = await registration.withAdmittedAnalysis(
+        contract.name,
+        context.mcpReq.signal,
+        async (admittedAnalysis) => {
+          const arguments_ = jsonObjectSchema.parse(
+            contract.inputSchema.parse(input),
+          );
+          const progress = mcpProgressReporter(context);
+          const result = await runOfficialOperation(
+            admittedAnalysis,
+            contract,
+            arguments_,
+            {
+              logger: registration.logger,
+              signal: context.mcpReq.signal,
+              progress,
+            },
+          );
+          if (!result.ok) {
+            return server.delivery.toCallToolResult(result, contract);
+          }
+          const evidence = createEvidence(
+            result.value.subject ?? registration.activeTarget?.(),
+            result.value.provider,
+            {
+              operation: contract.name,
+              parameters: arguments_,
+              result: result.value.result,
+              ...(result.value.analysisProfile === undefined
+                ? {}
+                : { analysisProfile: result.value.analysisProfile }),
+              rawResult: result.value.rawResult,
+              limitations: result.value.limitations,
+              locations: result.value.locations,
+            },
+          );
+          const recorded = registration.recordEvidence?.(evidence);
+          return server.delivery.toEvidenceToolResult(
+            evidence,
+            contract,
+            recorded,
+          );
         },
       );
-      if (!result.ok) {
-        return server.delivery.toCallToolResult(result, contract);
-      }
-      const evidence = createEvidence(
-        result.value.subject ?? registration.activeTarget?.(),
-        result.value.provider,
-        {
-          operation: contract.name,
-          parameters: arguments_,
-          result: result.value.result,
-          ...(result.value.analysisProfile === undefined
-            ? {}
-            : { analysisProfile: result.value.analysisProfile }),
-          rawResult: result.value.rawResult,
-          limitations: result.value.limitations,
-          locations: result.value.locations,
-        },
-      );
-      const recorded = registration.recordEvidence?.(evidence);
-      return server.delivery.toEvidenceToolResult(evidence, contract, recorded);
+      return admitted.ok
+        ? admitted.value
+        : server.delivery.toCallToolResult(admitted, contract);
     },
   );
 };

@@ -16,9 +16,9 @@ import type {
 } from "./ProcessOwnership.js";
 
 /** Observe one group without signaling it, failing closed on identity doubt. */
-export const observeOwnedProcessGroupWithHost = async (
+export const observeOwnedProcessGroup = async (
   ownership: OwnedProcessGroup,
-  host: ProcessOwnershipHost,
+  host: ProcessOwnershipHost = systemProcessOwnershipHost,
   signal?: AbortSignal,
 ): Promise<ProcessGroupObservation> => {
   signal?.throwIfAborted();
@@ -60,10 +60,16 @@ export const observeOwnedProcessGroupWithHost = async (
   return { state: "alive" };
 };
 
-/** Record the live launcher and descendant lineage after run-token validation. */
-export const observeOwnedProcessLineageWithHost = async (
+/**
+ * Record the live launcher and descendant lineage after run-token validation.
+ *
+ * The observation is intentionally point-in-time. A verified empty descendant
+ * list means no descendants were live during this observation, not that the
+ * run never created a short-lived child.
+ */
+export const observeOwnedProcessLineage = async (
   ownership: OwnedProcessGroup,
-  host: ProcessOwnershipHost,
+  host: ProcessOwnershipHost = systemProcessOwnershipHost,
 ): Promise<ProcessLineageObservation> => {
   let processes: readonly ProcessTableEntry[];
   try {
@@ -438,27 +444,6 @@ export const prepareProcessOwnershipInspection = async (
 ): Promise<void> => {
   await systemProcessOwnershipHost.prepare?.(signal);
 };
-
-/** Observe one group without signaling it, failing closed on identity doubt. */
-export const observeOwnedProcessGroup = async (
-  ownership: OwnedProcessGroup,
-  host: ProcessOwnershipHost = systemProcessOwnershipHost,
-  signal?: AbortSignal,
-): Promise<ProcessGroupObservation> =>
-  observeOwnedProcessGroupWithHost(ownership, host, signal);
-
-/**
- * Record the live launcher and descendant lineage after run-token validation.
- *
- * The observation is intentionally point-in-time. A verified empty descendant
- * list means no descendants were live during this observation, not that the
- * run never created a short-lived child.
- */
-export const observeOwnedProcessLineage = async (
-  ownership: OwnedProcessGroup,
-  host: ProcessOwnershipHost = systemProcessOwnershipHost,
-): Promise<ProcessLineageObservation> =>
-  observeOwnedProcessLineageWithHost(ownership, host);
 
 const processIsGone = async (
   host: ProcessOwnershipHost,

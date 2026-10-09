@@ -47,11 +47,6 @@ export const authorizeRuntimeLocation = async (
   signal?: AbortSignal,
 ): Promise<RuntimeLocationDecision> => {
   throwIfRuntimeObservationCancelled(signal);
-  if (value.startsWith("node:") && value.length > 0)
-    return {
-      allowed: true,
-      location: { kind: "builtin", specifier: value },
-    };
   if (value.startsWith("file:")) {
     const filePath = await authorizedElectronFile(value);
     throwIfRuntimeObservationCancelled(signal);
@@ -59,6 +54,18 @@ export const authorizeRuntimeLocation = async (
       ? { allowed: false, reason: "not_approved" }
       : { allowed: true, location: { kind: "file", file_path: filePath } };
   }
+  return projectReportedRuntimeUrl(value);
+};
+
+/** Project non-file Inspector URLs without filesystem access. */
+export const projectReportedRuntimeUrl = (
+  value: string,
+): RuntimeLocationDecision => {
+  if (value.startsWith("node:") && value.length > 0)
+    return {
+      allowed: true,
+      location: { kind: "builtin", specifier: value },
+    };
   let url: URL;
   try {
     url = new URL(value);

@@ -8,7 +8,7 @@ import type {
   JavaScriptSemanticConfigurationOperation,
   JavaScriptSemanticRequestOperation,
 } from "./javascriptSemanticIr.js";
-import { compareCodePoints } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
   semanticStaticPropertyKey,
   semanticStaticPropertyName,
@@ -301,7 +301,7 @@ const collectResponseConsumers = (
       ),
       linkedRequestIds: linked
         .map(({ operation }) => operation.requestId)
-        .sort(compareCodePoints),
+        .sort(compareUnicodeCodePoints),
       endpoint: null,
       fields: [],
       resolution:

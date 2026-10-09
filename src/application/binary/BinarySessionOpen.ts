@@ -65,13 +65,15 @@ export const resolveSessionOpen = async (
   input: ResolveSessionOpenInput,
 ): Promise<Result<ResolvedSessionOpen, AnalysisError>> => {
   const { path, options } = input;
-  const parsed = await parseBinaryTarget(
-    path,
-    process.cwd(),
-    process.arch,
-    options.targetKind,
-    options.formatHint,
-  );
+  const parsed = await parseBinaryTarget(path, {
+    ...(options.targetKind === undefined
+      ? {}
+      : { targetKind: options.targetKind }),
+    ...(options.formatHint === undefined
+      ? {}
+      : { formatHint: options.formatHint }),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  });
   if (!parsed.ok) return parsed;
   return resolveSessionTarget({ ...input, target: parsed.value });
 };

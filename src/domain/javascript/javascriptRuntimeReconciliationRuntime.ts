@@ -144,9 +144,14 @@ const scriptEntities = (
 ): RuntimeReconciliationEntity[] =>
   capture.inspection.scripts.items.map((script) => {
     const location =
-      "url" in script
-        ? ({ kind: "url", value: script.url } as const)
-        : ({ kind: "file", value: script.file_path } as const);
+      "unresolved_location" in script
+        ? ({
+            kind: "unresolved",
+            value: script.unresolved_location.reported_url,
+          } as const)
+        : "url" in script
+          ? ({ kind: "url", value: script.url } as const)
+          : ({ kind: "file", value: script.file_path } as const);
     return runtimeEntity(capture, {
       kind: "script",
       nodeKind: "runtime-script-instance",
@@ -161,7 +166,13 @@ const scriptEntities = (
         : null,
       label: location.value,
       properties: {
-        location: location.value,
+        ...("unresolved_location" in script
+          ? {
+              location_kind: "unresolved",
+              reported_url: script.unresolved_location.reported_url,
+              location_reason: script.unresolved_location.reason,
+            }
+          : { location: location.value }),
         cdp_hash: script.cdp_hash,
         length: script.length,
         is_module: script.is_module,

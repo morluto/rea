@@ -3,7 +3,7 @@ import { lstat, open, opendir, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
 import type { Readable } from "node:stream";
 
-import { compareCodePoints } from "../domain/canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
 import {
   ArtifactReaderFailure,
@@ -49,7 +49,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
       await withDirectoryIoContext("inspect directory", directory, () =>
         assertContainedDirectory(root, directory),
       );
-      children.sort(compareCodePoints);
+      children.sort(compareUnicodeCodePoints);
       const directories: string[] = [];
       for (const name of children) {
         abortIfNeeded(signal);

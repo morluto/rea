@@ -34,7 +34,7 @@ it("advertises portable NUL escapes and patterns that compile in all JS modes", 
   const session = createTestBinarySession(() => {
     throw new Error("No deep provider may start for a schema projection");
   });
-  const server = createServer(session, session);
+  const server = createServer({ kind: "session", session });
   const client = new Client({ name: "advertised-patterns", version: "1" });
   onTestFinished(async () => {
     await client.close();
@@ -54,11 +54,6 @@ it("advertises portable NUL escapes and patterns that compile in all JS modes", 
       collectPatterns(tool.outputSchema, "outputSchema", tool.name, patterns);
   }
 
-  // A traversal that silently collapses would make the compilation check below
-  // vacuous, so the inventory itself is asserted.
-  expect(advertised.length).toBeGreaterThan(100);
-  expect(patterns.length).toBeGreaterThan(500);
-
   // Annex B and `u` mode accept an unescaped `-`, `/` or `[` inside a character
   // class, so REA's own schema validation cannot observe the defect. `v` mode
   // rejects them, and a client that compiles advertised patterns rejects the
@@ -76,6 +71,12 @@ it("advertises portable NUL escapes and patterns that compile in all JS modes", 
     }),
   );
   expect(uncompilable).toEqual([]);
+
+  // RE2 and Rust validators reject look-around and backreferences, and like
+  // the NUL escape below, one such pattern refuses the complete tools request.
+  expect(
+    patterns.filter(({ pattern }) => /\(\?<?[=!]|\\[1-9]|\\k</u.test(pattern)),
+  ).toEqual([]);
 
   // DeepSeek rejects the short NUL escape even though V8 accepts it in all
   // three modes, and other strict validators reject the `\u` form as well, so

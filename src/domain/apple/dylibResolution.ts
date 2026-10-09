@@ -19,9 +19,13 @@ import {
   deriveFindings,
 } from "./dylibResolutionFindings.js";
 
-/** Normalized path below the analyzed root: no `.`/`..` or empty segments. */
+/**
+ * Normalized path below the analyzed root: nonempty segments joined by single
+ * `/`, none of them `.` or `..`, without backslash or NUL. Advertised schema
+ * patterns avoid look-around, which RE2 and Rust validators reject.
+ */
 const ROOT_RELATIVE_PATH =
-  /^(?!\/)(?!(?:.*\/)?\.{1,2}(?:\/|$))(?!.*\/\/)(?!.*\/$)[^\\\x00]+$/u;
+  /^(?:[^\x2f\\\x00.][^\x2f\\\x00]*|\.[^\x2f\\\x00.][^\x2f\\\x00]*|\.\.[^\x2f\\\x00]+)(?:\x2f(?:[^\x2f\\\x00.][^\x2f\\\x00]*|\.[^\x2f\\\x00.][^\x2f\\\x00]*|\.\.[^\x2f\\\x00]+))*$/u;
 const rootRelativePathSchema = z
   .string()
   .min(1)

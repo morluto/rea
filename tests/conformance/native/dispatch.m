@@ -10,6 +10,7 @@
   int state;
 }
 @property(nonatomic, copy) NSString *fixtureName;
+@property NSInteger atomicValue;
 - (void)performAction:(id)sender;
 + (int)fixtureVersion;
 @end

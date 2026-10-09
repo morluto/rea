@@ -4,7 +4,7 @@ import * as t from "@babel/types";
 
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 
-import { compareCodePoints } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { propertyName } from "./javascriptAstValues.js";
 import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
 
@@ -37,7 +37,7 @@ export const collectJavaScriptExports = (node: t.Node): StaticExports => {
     },
   });
   return {
-    values: [...exports].sort(compareCodePoints),
+    values: [...exports].sort(compareUnicodeCodePoints),
   };
 };
 

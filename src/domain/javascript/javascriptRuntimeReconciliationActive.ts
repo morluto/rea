@@ -1,6 +1,6 @@
 import { isAbsolute } from "node:path";
 
-import { canonicalDigest } from "../comparisonSemantics.js";
+import { digestCanonicalValue } from "../canonicalDigest.js";
 import { isPathWithinRoot } from "../localPath.js";
 import { z } from "zod";
 
@@ -44,7 +44,7 @@ export const parseActiveElectronCapture = (
     kind: "electron-active",
     evidence,
     inspection: normalizeInspection(result),
-    captureSha256: canonicalDigest(result, "Runtime reconciliation"),
+    captureSha256: digestCanonicalValue(result, "Runtime reconciliation"),
     scriptsCompleteWithinScope: false,
   };
 };
@@ -83,7 +83,7 @@ const normalizeInspection = (
   readonly completeness: BrowserCompleteness;
 } => ({
   target: {
-    target_id: `electron-active:${canonicalDigest(result.application.application_path, "Runtime reconciliation").slice(0, 32)}`,
+    target_id: `electron-active:${digestCanonicalValue(result.application.application_path, "Runtime reconciliation").slice(0, 32)}`,
     type: "electron-application",
     title: result.application.application_path,
     attached: true,

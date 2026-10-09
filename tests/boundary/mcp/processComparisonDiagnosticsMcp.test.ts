@@ -44,7 +44,7 @@ const connect = async () => {
   const session = createTestBinarySession(() => {
     throw new Error("Process comparison must not launch a provider");
   });
-  const server = createServer(session, session);
+  const server = createServer({ kind: "session", session });
   const client = new Client({ name: "process-comparison-test", version: "1" });
   onTestFinished(async () => {
     await Promise.allSettled([client.close(), server.close(), session.close()]);

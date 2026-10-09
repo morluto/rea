@@ -1,4 +1,4 @@
-import { compareCodePoints } from "../../domain/canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import type { JavaScriptSemanticGraphNode } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 import { JAVASCRIPT_SEMANTIC_RELATION_FAMILIES } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 import type { JavaScriptSemanticIr } from "../../domain/javascript/javascriptSemanticIr.js";
@@ -65,7 +65,7 @@ export const createSemanticCallableOwnerLookup = (
         const rank =
           best === undefined
             ? 1
-            : compareCodePoints(candidate.priority, best.priority) ||
+            : compareUnicodeCodePoints(candidate.priority, best.priority) ||
               best.order - candidate.order;
         if (node !== undefined && rank > 0) {
           best = candidate;

@@ -7,7 +7,6 @@ const evidenceIdSchema = prefixedDigestSchema("ev");
 const graphIdSchema = prefixedDigestSchema("jag");
 const nodeIdSchema = prefixedDigestSchema("jag_node");
 const textSchema = z.string().min(1);
-const selectorTextSchema = textSchema;
 const semanticPrimitiveSchema = z.union([
   z.string(),
   z.number().finite(),
@@ -59,10 +58,10 @@ export const compareJavaScriptExportShapesInputSchema = z
   .strictObject({
     left: evidenceSchema,
     right: evidenceSchema,
-    left_module_path: selectorTextSchema,
-    left_export_name: selectorTextSchema,
-    right_module_path: selectorTextSchema,
-    right_export_name: selectorTextSchema,
+    left_module_path: textSchema,
+    left_export_name: textSchema,
+    right_module_path: textSchema,
+    right_export_name: textSchema,
   })
   .superRefine((input, context) => {
     if (input.left.evidence_id === input.right.evidence_id)
@@ -151,8 +150,8 @@ const projectedReturnShapeSchema = z
 export const projectedExportReturnShapesSchema = z
   .strictObject({
     semantic_role: z.literal("export-return-shapes"),
-    module_path: selectorTextSchema,
-    exported_name: selectorTextSchema,
+    module_path: textSchema,
+    exported_name: textSchema,
     callable_id: textSchema,
     callable_kind: z.enum(["function", "class", "method"]),
     static_return_shapes: z.array(projectedReturnShapeSchema),
@@ -179,8 +178,8 @@ export const projectedExportReturnShapesSchema = z
 
 const exportCandidateSchema = z.strictObject({
   node_id: nodeIdSchema,
-  module_path: selectorTextSchema,
-  export_name: selectorTextSchema,
+  module_path: textSchema,
+  export_name: textSchema,
   matches_requested_module: z.boolean(),
   matches_requested_export: z.boolean(),
 });
@@ -188,8 +187,8 @@ const exportCandidateSchema = z.strictObject({
 const selectorResultShape = {
   evidence_id: evidenceIdSchema,
   graph_id: graphIdSchema,
-  requested_module_path: selectorTextSchema,
-  requested_export_name: selectorTextSchema,
+  requested_module_path: textSchema,
+  requested_export_name: textSchema,
   candidates: z.array(exportCandidateSchema),
   omitted_candidates: z.number().int().min(0),
 };
@@ -238,7 +237,8 @@ const propertyPresenceSchema = z.enum([
   "unknown-coverage",
 ]);
 
-const comparisonChangeSchema = z.strictObject({
+/** One change row; presence is required even when values stay unknown. */
+export const javaScriptExportShapeComparisonChangeSchema = z.strictObject({
   change_id: prefixedDigestSchema("jesc_change"),
   status: z.enum(["added", "removed", "changed", "unknown"]),
   path: jsonPointerSchema,
@@ -254,10 +254,6 @@ const comparisonChangeSchema = z.strictObject({
   evidence_links: z.array(evidenceIdSchema).length(2),
   limitations: z.array(textSchema),
 });
-
-/** One change row; presence is required even when values stay unknown. */
-export const javaScriptExportShapeComparisonChangeSchema =
-  comparisonChangeSchema;
 
 const inventoryPropertyCoverageSchema = z.strictObject({
   path: jsonPointerSchema,
@@ -286,7 +282,7 @@ export const javaScriptExportShapeComparisonResultSchema = z.strictObject({
     changed: z.number().int().min(0),
     unknown: z.number().int().min(0),
   }),
-  changes: z.array(comparisonChangeSchema),
+  changes: z.array(javaScriptExportShapeComparisonChangeSchema),
   coverage: z.strictObject({
     status: z.enum(["complete-within-inputs", "partial", "truncated"]),
     left_graph_status: z.enum([
@@ -326,7 +322,7 @@ export type JavaScriptExportShapeComparisonResult = z.output<
   typeof javaScriptExportShapeComparisonResultSchema
 >;
 export type JavaScriptExportShapeComparisonChange = z.output<
-  typeof comparisonChangeSchema
+  typeof javaScriptExportShapeComparisonChangeSchema
 >;
 export type JavaScriptExportShapePropertyInventory = z.output<
   typeof propertyInventorySchema

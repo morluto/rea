@@ -60,10 +60,12 @@ const boot = async (factories: OptionalObservationFactories) => {
     await run({
       env: {},
       loadOptionalProviders: async () => loaded,
-      createServer: (analysis, selectedSession, options) => {
-        session = selectedSession;
+      createServer: (source, options) => {
+        if (source.kind !== "session")
+          throw new Error("Expected a session-owned server source");
+        session = source.session;
         // A configured policy cannot hide an actual adapter loading failure.
-        return createServer(analysis, selectedSession, {
+        return createServer(source, {
           ...options,
           availabilityPolicy: () => ({
             processCaptureEnabled: true,

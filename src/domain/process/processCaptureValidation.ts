@@ -127,7 +127,6 @@ const validateCoverage = (
   require: RequireInvariant,
 ): void => {
   const details = capture.truncation_details;
-  if (details === undefined) return;
   require(details.process.retained_samples === capture.process_samples.length &&
     details.process.retained_samples <= details.process.sample_limit &&
     details.process.sampling_partial ===

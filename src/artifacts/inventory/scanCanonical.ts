@@ -1,5 +1,5 @@
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
-import { compareCodePoints } from "../../domain/canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
 import { createReadStream } from "node:fs";
 import { lstat } from "node:fs/promises";
@@ -253,18 +253,20 @@ const verifyRootDigest = async (
 
 const sortNodes = (nodes: ArtifactNode[]): ArtifactNode[] =>
   nodes.sort((left, right) =>
-    compareCodePoints(left.artifact_id, right.artifact_id),
+    compareUnicodeCodePoints(left.artifact_id, right.artifact_id),
   );
 
 const sortOccurrences = (
   occurrences: MutableOccurrence[],
 ): MutableOccurrence[] =>
   occurrences.sort((left, right) =>
-    compareCodePoints(left.logical_path, right.logical_path),
+    compareUnicodeCodePoints(left.logical_path, right.logical_path),
   );
 
 const sortEdges = <T extends { edge_id: string }>(edges: T[]): T[] =>
-  edges.sort((left, right) => compareCodePoints(left.edge_id, right.edge_id));
+  edges.sort((left, right) =>
+    compareUnicodeCodePoints(left.edge_id, right.edge_id),
+  );
 
 const buildManifest = ({
   rootNode,

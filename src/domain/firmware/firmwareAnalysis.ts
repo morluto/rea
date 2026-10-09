@@ -1,13 +1,14 @@
 import { z } from "zod";
+import { isAbsolute } from "node:path";
 import { digestSchema } from "../digests.js";
 import { jsonValueSchema } from "../jsonValue.js";
-import { isAbsoluteLocalPath, localPathStringSchema } from "../localPath.js";
+import { localPathStringSchema } from "../localPath.js";
 
 const bytes = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const range = z.strictObject({ offset: bytes, length: bytes.positive() });
 const target = {
   path: localPathStringSchema
-    .refine(isAbsoluteLocalPath, {
+    .refine(isAbsolute, {
       message:
         "path must be an absolute local filesystem path (for example /tmp/firmware.bin or C:\\firmware\\firmware.bin)",
     })
@@ -22,7 +23,7 @@ export const firmwareInputSchemas = {
   extract_firmware: z.strictObject({
     ...target,
     output_directory: localPathStringSchema
-      .refine(isAbsoluteLocalPath, {
+      .refine(isAbsolute, {
         message: "output_directory must be an absolute local filesystem path",
       })
       .describe("Absolute, absent output directory; parent must exist"),

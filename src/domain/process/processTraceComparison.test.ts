@@ -219,7 +219,7 @@ describe("unknown process trace evidence", () => {
   it("never proves equivalence from truncated, unknown, or journal-free evidence", () => {
     const complete = capture(values(["terminal", "process"]));
     const truncated = capture(values(["terminal", "process"]), {
-      truncated: true,
+      omittedTerminalFrame: true,
     });
     expect(
       compareProcessTraces(complete, truncated, partialSpecification()).verdict,

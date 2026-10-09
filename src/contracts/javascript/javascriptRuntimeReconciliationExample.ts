@@ -110,7 +110,8 @@ const semanticGraph = createJavaScriptSemanticGraph({
   limitations: ["Semantic relations are unavailable in this minimal example."],
 });
 
-const staticEvidence = createEvidence(
+/** Minimal valid static application Evidence for graph workflow examples. */
+export const JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE = createEvidence(
   { path: inputPath, sha256: applicationSha256, format: "directory" },
   {
     id: "rea-javascript-application",
@@ -170,9 +171,6 @@ const staticEvidence = createEvidence(
     authority: "shipped-artifact",
   },
 );
-
-/** Minimal valid static application Evidence for graph workflow examples. */
-export const JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE = staticEvidence;
 
 const runtimeEvidence = createEvidence(
   undefined,
@@ -238,7 +236,7 @@ const runtimeEvidence = createEvidence(
 
 /** Compact valid Evidence pair used by the public reconciliation contract. */
 export const JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE = {
-  static_layers: [{ analysis: staticEvidence }],
+  static_layers: [{ analysis: JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE }],
   runtime_observations: [runtimeEvidence],
 };
 

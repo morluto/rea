@@ -40,7 +40,7 @@ const capture = async (
   const session = createTestBinarySession(() => {
     throw new Error("Capture must not launch a binary provider");
   });
-  const server = createServer(session, session);
+  const server = createServer({ kind: "session", session });
   const client = new Client({ name: "truncation-coverage", version: "1" });
   onTestFinished(async () => {
     await client.close();
@@ -116,12 +116,9 @@ itWithCaptureCapability.each(["cli", "mcp"] as const)(
     expect(compareProcessTraces(result, result, specification).verdict).toBe(
       "equivalent",
     );
-    const legacy = parseProcessCapture({
-      ...result,
-      truncation_details: undefined,
-    });
-    expect(compareProcessTraces(legacy, legacy, specification).verdict).toBe(
-      "unknown",
+    const { truncation_details: _details, ...withoutCoverage } = result;
+    expect(() => parseProcessCapture(withoutCoverage)).toThrow(
+      "truncation_details",
     );
     expect(compareProcessCaptures(result, result)).toMatchObject({
       terminal: "unknown",

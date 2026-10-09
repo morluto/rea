@@ -6,6 +6,7 @@ import { PRODUCT_IDENTITY } from "../identity.js";
 import { isOwnedClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import { readClientRegistrationStatuses } from "./ClientRegistrationStatus.js";
 import {
+  clientServerForcedEnabled,
   effectiveClientServer,
   parseClientConfiguration,
 } from "./ClientConfigurationDocument.js";
@@ -76,7 +77,12 @@ export const existingMaintenanceScope = async (
         disabled: z.boolean().optional(),
       })
       .parse(effectiveClientServer(parsed, PRODUCT_IDENTITY.mcpServerKey));
-    if (enabled.enabled !== false && enabled.disabled !== true)
+    // OMP's enabledServers allowlist runs an entry marked `enabled: false`.
+    if (
+      (enabled.enabled !== false ||
+        clientServerForcedEnabled(parsed, PRODUCT_IDENTITY.mcpServerKey)) &&
+      enabled.disabled !== true
+    )
       clients.push(client.name);
   }
   let skill = false;

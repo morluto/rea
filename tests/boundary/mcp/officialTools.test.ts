@@ -72,7 +72,7 @@ afterEach(async () => {
 });
 
 const connect = async (analysis: AnalysisOperationPort) => {
-  const server = createServer(analysis);
+  const server = createServer({ kind: "fixed", analysis });
   const client = new Client({ name: "contract-test", version: "1.0.0" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();

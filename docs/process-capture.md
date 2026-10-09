@@ -130,7 +130,7 @@ run the same owned-process cleanup path. Settlement reports whether the
 sampled process group quiesced or whether cleanup was needed or unverifiable;
 sampling cannot prove that every short-lived or detached descendant was seen.
 
-New captures include `truncation_details`, with separate accounting for:
+Every capture requires `truncation_details`, with separate accounting for:
 
 - `raw_terminal`: original UTF-8 PTY chunk bytes and observed/retained chunk
   counts. A chunk that does not fit `limits.output_bytes` is omitted whole;
@@ -150,7 +150,7 @@ New captures include `truncation_details`, with separate accounting for:
 - `process`: sampling limit and whether sampling ended partially. Coverage
   remains `sampled`, including when that limit was not exhausted.
 
-The legacy `truncated` flag summarizes these observations. Comparisons retain
+The aggregate `truncated` flag summarizes these observations. Comparisons retain
 results for unaffected dimensions and mark affected dimensions unknown; an
 incomplete capture cannot locate the first divergence across all dimensions.
 Trace assertions use coverage for the sources they select, so an assertion

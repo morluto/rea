@@ -17,11 +17,14 @@ const connect = async (environment: NodeJS.ProcessEnv) => {
   const session = createTestBinarySession(() => {
     throw new Error("Target-free analysis must not acquire a deep provider");
   });
-  const server = createServer(session, session, {
-    androidAnalysis: createAndroidAnalysisProvider(environment),
-    firmwareAnalysis: createFirmwareAnalysisProvider(environment),
-    javascriptRecovery: createJavaScriptRecoveryProvider(environment),
-  });
+  const server = createServer(
+    { kind: "session", session },
+    {
+      androidAnalysis: createAndroidAnalysisProvider(environment),
+      firmwareAnalysis: createFirmwareAnalysisProvider(environment),
+      javascriptRecovery: createJavaScriptRecoveryProvider(environment),
+    },
+  );
   const client = new Client({ name: "composition-parity", version: "1" });
   onTestFinished(async () => {
     await client.close();

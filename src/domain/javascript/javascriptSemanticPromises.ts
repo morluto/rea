@@ -11,7 +11,7 @@ import {
   semanticResolutionBlocked,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
-import { compareCodePoints } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
@@ -87,7 +87,7 @@ export const collectJavaScriptSemanticPromises = (
       ownerCallableId: candidate.ownerCallableId,
       ...ownership,
       sourcePromiseIds: [...new Set(sources.promiseIds)].sort(
-        compareCodePoints,
+        compareUnicodeCodePoints,
       ),
       sourceResolution: sources.status,
     };

@@ -11,27 +11,14 @@ import { supportedClients } from "../../../src/application/SupportedClients.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { isOwnedClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import {
+  clearClientLocationEnvironment,
+  NPX_REGISTRATION_COMMAND,
+} from "../../fixtures/clientEnvironment.js";
 
-const command = [
-  "npx",
-  "-y",
-  PRODUCT_IDENTITY.registrationPackageSpecifier,
-  "mcp",
-] as const;
+const command = NPX_REGISTRATION_COMMAND;
 
-beforeEach(() => {
-  for (const name of [
-    "APPDATA",
-    "CLAUDE_CONFIG_DIR",
-    "CODEX_HOME",
-    "COPILOT_HOME",
-    "GROK_HOME",
-    "OPENCODE_CONFIG",
-    "SAND_DATA_ROOT",
-    "XDG_CONFIG_HOME",
-  ])
-    vi.stubEnv(name, undefined);
-});
+beforeEach(clearClientLocationEnvironment);
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -44,6 +31,7 @@ const getClients = (home: string) =>
       "commandcode",
       "vscode",
       "devin",
+      "omp",
     ].includes(name),
   );
 
@@ -55,6 +43,7 @@ describe("additional client configuration dialects", () => {
     "commandcode",
     "vscode",
     "devin",
+    "omp",
   ] as const)("registers, reads back, and uninstalls %s", async (name) => {
     const home = await createTestTempDirectory("rea-client-dialect-");
     const client = getClients(home).find(
@@ -89,7 +78,7 @@ describe("additional client configuration dialects", () => {
         command,
         enabled: true,
       });
-    if (name === "vscode")
+    if (name === "vscode" || name === "omp")
       expect(registration).toMatchObject({
         type: "stdio",
         command: "npx",

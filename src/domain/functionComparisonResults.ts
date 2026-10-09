@@ -1,4 +1,4 @@
-import { canonicalDigest } from "./comparisonSemantics.js";
+import { digestCanonicalValue } from "./canonicalDigest.js";
 import type {
   DimensionName,
   FunctionComparisonResult,
@@ -87,4 +87,4 @@ export const summarize = (dimensions: readonly FunctionDimension[]) => ({
 });
 
 const digest = (value: unknown): string =>
-  canonicalDigest(value, "Function comparison");
+  digestCanonicalValue(value, "Function comparison");

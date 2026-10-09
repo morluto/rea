@@ -44,9 +44,12 @@ export const createSessionMcpHarness = async (
     resolveAnalysisProfile: () =>
       Promise.resolve(ok({ profile: SNAPSHOT_PROFILE })),
   });
-  const server = createServer(session, session, {
-    logger: silentLogger,
-  });
+  const server = createServer(
+    { kind: "session", session },
+    {
+      logger: silentLogger,
+    },
+  );
   const mcp = new Client({ name: "session-test", version: "1.0.0" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();

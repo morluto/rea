@@ -1037,6 +1037,47 @@ export const grokServerListedDisabled = (
   Array.isArray(document.disabled_mcp_servers) &&
   document.disabled_mcp_servers.includes(serverKey);
 
+/**
+ * OMP's user `disabledServers` denylist hides a server by name regardless of
+ * its entry, so a listed REA registration is not loaded.
+ */
+export const OMP_DISABLED_SERVERS_KEY = "disabledServers";
+
+/** Whether OMP's root `disabledServers` denylist names `serverKey`. */
+export const ompServerListedDisabled = (
+  document: Record<string, unknown>,
+  serverKey: string,
+): boolean => {
+  const listed = document[OMP_DISABLED_SERVERS_KEY];
+  return Array.isArray(listed) && listed.includes(serverKey);
+};
+
+/** OMP's user `enabledServers` allowlist overrides an entry's `enabled: false`. */
+const OMP_ENABLED_SERVERS_KEY = "enabledServers";
+
+/**
+ * Whether OMP's allowlist forces `serverKey` on despite its entry's
+ * `enabled: false`. The `disabledServers` denylist still wins over it.
+ */
+export const clientServerForcedEnabled = (
+  parsed: ClientConfigurationDocument,
+  serverKey: string,
+): boolean => {
+  if (parsed.dialect !== "omp") return false;
+  const listed = parsed.document[OMP_ENABLED_SERVERS_KEY];
+  return Array.isArray(listed) && listed.includes(serverKey);
+};
+
+/** Whether a client's own disable list suppresses `serverKey`. */
+export const clientServerListedDisabled = (
+  parsed: ClientConfigurationDocument,
+  serverKey: string,
+): boolean =>
+  (parsed.dialect === "grok" &&
+    grokServerListedDisabled(parsed.document, serverKey)) ||
+  (parsed.dialect === "omp" &&
+    ompServerListedDisabled(parsed.document, serverKey));
+
 /** Keep an existing Grok document intact aside from the REA server tables. */
 const serializeGrokConfiguration = (
   document: Record<string, unknown>,
@@ -1289,6 +1330,7 @@ export const clientRegistrationEntry = (
           : { environment: { ...environment } }),
       };
     case "vscode":
+    case "omp":
       return {
         type: "stdio",
         command: executable,

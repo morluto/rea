@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
-import { createCliInventory } from "../../../scripts/lib/product-catalog.mjs";
+import { createCliInventory } from "../../../scripts/lib/catalog-cli.mjs";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import {
   CLI_COMMAND_ALIASES,

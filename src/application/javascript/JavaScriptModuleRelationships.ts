@@ -1,18 +1,16 @@
 import { posix } from "node:path";
 
-import { compareCodePoints } from "../../domain/canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
 import {
   completeApplicationCoverage,
   partialApplicationCoverage,
 } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
-import { semanticCoverageResourceLimits } from "../../domain/javascript/javascriptSemanticCoverage.js";
 import {
-  SEMANTIC_EXPRESSION_DEPTH_LIMIT,
-  SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT,
-  SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT,
-  semanticResourceLimitReason,
-} from "../../domain/javascript/javascriptSemanticResourceLimits.js";
+  semanticCoverageResourceLimits,
+  semanticResourceLimitCoverage,
+} from "../../domain/javascript/javascriptSemanticCoverage.js";
+import { semanticResourceLimitReason } from "../../domain/javascript/javascriptSemanticResourceLimits.js";
 import type {
   JavaScriptModuleOrigin,
   JavaScriptSemanticModuleLink,
@@ -81,7 +79,7 @@ export const addJavaScriptSourceModules = (
       .flatMap(({ exportedName }) =>
         exportedName === null ? [] : [exportedName],
       )
-      .sort(compareCodePoints);
+      .sort(compareUnicodeCodePoints);
     const retainedExports = [...new Set(exports)];
     const source = context.accumulator.addNode({
       kind: "javascript-module",
@@ -408,21 +406,7 @@ const semanticCoverage = (
   if (semantic.ir.coverage.status === "complete" && resourceLimits.length === 0)
     return completeApplicationCoverage();
   return partialApplicationCoverage(
-    resourceLimits.map((resourceLimit) => ({
-      name: `javascript_semantic_${resourceLimit.replaceAll("-", "_")}`,
-      value:
-        resourceLimit === "primitive-candidates"
-          ? SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT
-          : resourceLimit === "primitive-bytes"
-            ? SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT
-            : SEMANTIC_EXPRESSION_DEPTH_LIMIT,
-      unit:
-        resourceLimit === "expression-depth"
-          ? ("depth" as const)
-          : resourceLimit === "primitive-bytes"
-            ? ("bytes" as const)
-            : ("items" as const),
-    })),
+    semanticResourceLimitCoverage(resourceLimits),
     semantic.ir.coverage.omittedCount,
   );
 };

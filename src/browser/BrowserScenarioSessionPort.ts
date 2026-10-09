@@ -35,11 +35,8 @@ export interface BrowserScenarioSessionPort {
   redactError(error: unknown): string;
 }
 
-export interface BrowserScenarioSessionFactory {
-  open(
-    scenario: BrowserScenario,
-    options?: {
-      readonly signal?: AbortSignal;
-    },
-  ): Promise<BrowserScenarioSessionPort>;
-}
+/** Acquire one scenario session whose lifecycle the caller owns. */
+export type BrowserScenarioSessionOpener = (
+  scenario: BrowserScenario,
+  options: { readonly signal?: AbortSignal },
+) => Promise<BrowserScenarioSessionPort>;

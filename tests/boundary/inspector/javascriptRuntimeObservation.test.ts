@@ -475,6 +475,75 @@ describe("passive V8 Inspector evidence", () => {
     expect(result.summary.runtime_scripts).toBe(1);
     expect(result.summary.matched).toBeGreaterThan(0);
   });
+
+  test("keeps unverified partial script URLs unresolved during reconciliation", () => {
+    const rawUrl = "file:///tmp/not-verified.js?caller-value=kept";
+    const resolvedObservation = runtimeObservation(
+      "/Applications/Example.app/Contents/Resources/app/index.html",
+      "/Applications/Example.app/Contents/Resources/app/renderer.js",
+    );
+    const resolvedScript = resolvedObservation.scripts.items[0];
+    if (resolvedScript === undefined)
+      throw new Error("Expected the runtime fixture to have one script");
+    const observation: JavaScriptRuntimeObservation = {
+      ...resolvedObservation,
+      scripts: {
+        ...resolvedObservation.scripts,
+        items: [
+          ...resolvedObservation.scripts.items.map((script) => ({
+            ...script,
+            location: {
+              kind: "unresolved" as const,
+              reported_url: rawUrl,
+              reason: "location-authorization-not-attempted" as const,
+            },
+          })),
+          {
+            ...resolvedScript,
+            script_key: `v8_script_${"5".repeat(64)}`,
+            location: {
+              kind: "unresolved",
+              reported_url: "",
+              reason: "location-authorization-not-attempted",
+            },
+            cdp_hash: null,
+            length: 0,
+          },
+        ],
+      },
+    };
+    const runtimeEvidence = createJavaScriptRuntimeObservationEvidence(
+      "observe_javascript_runtime",
+      {
+        inspector_endpoint: "http://127.0.0.1:9229",
+        target_id: "example-v8-target",
+        runtime_kind: "electron-main",
+        observation_ms: 100,
+      },
+      observation,
+      V8_INSPECTOR_PROVIDER_IDENTITY,
+    );
+
+    const reconciled = reconcileJavaScriptRuntimeEvidence({
+      static_layers: JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE.static_layers,
+      runtime_observations: [runtimeEvidence],
+    });
+    if (!reconciled.ok) throw reconciled.error;
+    const result = javascriptRuntimeReconciliationResultSchema.parse(
+      reconciled.value.normalized_result,
+    );
+    expect(result.summary.runtime_scripts).toBe(2);
+    expect(result.reconciliations).toContainEqual(
+      expect.objectContaining({
+        entity_kind: "script",
+        status: "unknown",
+        reason: "runtime-location-unresolved",
+      }),
+    );
+    expect(JSON.stringify(result.graph)).toContain(rawUrl);
+    expect(JSON.stringify(result.graph)).toContain("v8-hash");
+    expect(JSON.stringify(result.graph)).toContain('"reported_url":""');
+  });
 });
 
 const runtimeFixture = async () => {

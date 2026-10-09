@@ -96,8 +96,18 @@ complete observation.
 
   So an external superclass resolves from its `_OBJC_CLASS_$_` bind (for
   example `NSObject`). The `pointer_fixups` coverage facet names the mechanism.
-  Class properties, with parsed attributes, and `__objc_catlist` categories are
-  also decoded. Categories record the extended class, local or external, plus
+  Class properties preserve each encoded attribute as a raw `{name, value}`
+  pair, for example `{ name: "N", value: "" }`, and report atomicity on the
+  property: `N` means `nonatomic`; a complete typed attribute string without
+  `N` means the Objective-C default `atomic`;
+  missing or incomplete attribute metadata leaves `atomicity` and any
+  unestablished read-only value null. `is_meta_class`, `is_root_class`, and
+  `ivar_count` are also nullable when the selected provider exposes only symbol
+  names. Class implementation methods have null `is_required` and `is_optional`
+  fields because those facts apply to protocol declarations; decoded protocol
+  method lists retain their observed required/optional values. Class properties
+  and `__objc_catlist` categories are also decoded. Categories record the
+  extended class, local or external, plus
   their methods, protocols and properties; category methods appear as
   implementations with a `category`. Swift field-offset globals that are only
   initialized at runtime stay unresolved. Generic, resilient, async and

@@ -17,9 +17,12 @@ it.skipIf(process.platform !== "linux" || process.arch !== "x64")(
     const session = createTestBinarySession(() => {
       throw new Error("no binary provider should start");
     });
-    const server = createServer(session, session, {
-      javascriptRecovery: fixture.provider,
-    });
+    const server = createServer(
+      { kind: "session", session },
+      {
+        javascriptRecovery: fixture.provider,
+      },
+    );
     const client = new Client({ name: "recovery-contract", version: "1" });
     onTestFinished(async () => {
       await client.close();

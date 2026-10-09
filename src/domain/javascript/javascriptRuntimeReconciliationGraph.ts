@@ -11,7 +11,8 @@ import type {
   ParsedRuntimeCapture,
   ParsedStaticLayer,
 } from "./javascriptRuntimeReconciliationParsing.js";
-import { compareCodePoints, uniqueSorted } from "../canonicalOrdering.js";
+import { uniqueSorted } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { RuntimeProjection } from "./javascriptRuntimeReconciliationRuntime.js";
 
 interface ReconciledGraphInput {
@@ -93,12 +94,14 @@ const boundGraphContent = (
   const allRoots = preferredRootIds(input);
   const rootNodeIds = allRoots;
   const sortedNodes = [...nodes].sort((left, right) =>
-    compareCodePoints(left.node_id, right.node_id),
+    compareUnicodeCodePoints(left.node_id, right.node_id),
   );
   const retainedNodes = sortedNodes;
   const retainedIds = new Set(retainedNodes.map(({ node_id: id }) => id));
   const retainedEdges = [...edges]
-    .sort((left, right) => compareCodePoints(left.edge_id, right.edge_id))
+    .sort((left, right) =>
+      compareUnicodeCodePoints(left.edge_id, right.edge_id),
+    )
     .filter(
       ({ source_node_id: source, target_node_id: target }) =>
         retainedIds.has(source) && retainedIds.has(target),
@@ -231,7 +234,7 @@ const mergeNodes = (nodes: readonly ApplicationNode[]): ApplicationNode[] => {
           .map((observation) => [observation.observation_id, observation]),
       ).values(),
     ].sort((left, right) =>
-      compareCodePoints(left.observation_id, right.observation_id),
+      compareUnicodeCodePoints(left.observation_id, right.observation_id),
     );
     return createJavaScriptApplicationNode({
       kind: first.kind,

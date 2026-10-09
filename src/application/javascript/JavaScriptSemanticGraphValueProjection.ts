@@ -1,10 +1,12 @@
 import {
   semanticContainer,
   semanticPropertyPointer,
-  type JavaScriptSemanticSlot,
 } from "../../domain/javascript/javascriptSemanticSlots.js";
 import type { JavaScriptSemanticBinding } from "../../domain/javascript/javascriptSemanticIr.js";
-import type { JavaScriptSemanticValue } from "../../domain/javascript/javascriptSemanticValueTypes.js";
+import type {
+  JavaScriptSemanticProperty,
+  JavaScriptSemanticValue,
+} from "../../domain/javascript/javascriptSemanticValueTypes.js";
 import { createJavaScriptSemanticGraphUnknown } from "../../domain/javascript/javascriptSemanticGraph.js";
 import {
   retainSemanticGraphNode,
@@ -155,7 +157,7 @@ export const semanticPropertySlot = (
   context: SemanticFlowProjectionContext,
   objectBindingId: string,
   path: readonly string[],
-  fact: JavaScriptSemanticSlot,
+  fact: JavaScriptSemanticProperty,
 ) =>
   retainSemanticGraphNode(context.state, context.file, {
     kind: "property-slot",

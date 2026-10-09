@@ -3,17 +3,12 @@ import { constants as fsConstants } from "node:fs";
 import { lstat, open, readdir, readlink } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import type { ProcessScenario } from "../../domain/process/processScenario.js";
-import type { Stats } from "node:fs";
 import type { FilesystemCoverage } from "../../domain/process/processCaptureCoverage.js";
-
-import type { FileState } from "../../domain/process/processCapture.js";
-export interface SnapshotResult {
-  readonly files: readonly FileState[];
-  readonly truncated: boolean;
-  /** Root aliases whose path enumeration was exhausted, regardless of hash coverage. */
-  readonly completeRoots: readonly string[];
-  readonly coverage?: FilesystemCoverage;
-}
+import type { Stats } from "node:fs";
+import type {
+  FileState,
+  ProcessFilesystemSnapshot,
+} from "../../domain/process/processCapture.js";
 
 const hasSameIdentity = (
   before: Stats,
@@ -92,7 +87,7 @@ export const hashFile = async (
 export const snapshotRoots = async (
   scenario: ProcessScenario,
   signal?: AbortSignal,
-): Promise<SnapshotResult> => {
+): Promise<ProcessFilesystemSnapshot> => {
   const entries: FileState[] = [];
   const completeRoots: string[] = [];
   let remainingBytes = scenario.limits.file_bytes;

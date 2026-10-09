@@ -324,7 +324,7 @@ const connected = async () => {
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(resultOk(null)),
   }));
-  const server = createServer(session, session);
+  const server = createServer({ kind: "session", session });
   const client = new Client({ name: "investigation-test", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();

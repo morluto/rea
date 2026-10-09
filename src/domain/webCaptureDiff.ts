@@ -1,4 +1,4 @@
-import { canonicalDigest } from "./comparisonSemantics.js";
+import { digestCanonicalValue } from "./canonicalDigest.js";
 import type { WebPageInspection } from "./browserObservationSchemas.js";
 import {
   webCaptureDiffSchema,
@@ -106,7 +106,7 @@ const accessibilityDimension = (
   return compareDimension(
     singleton(
       "accessibility_tree",
-      digest(
+      digestCanonicalValue(
         accessibilityProjection(
           before.accessibility,
           textComparable,
@@ -116,7 +116,7 @@ const accessibilityDimension = (
     ),
     singleton(
       "accessibility_tree",
-      digest(
+      digestCanonicalValue(
         accessibilityProjection(
           after.accessibility,
           textComparable,
@@ -167,16 +167,15 @@ const compareWebCaptureDimensions = (
 ): WebCaptureDiff["dimensions"] => {
   const before = input.before.inspection;
   const after = input.after.inspection;
-  const dimension = compareDimension;
   return {
-    dom_structure: dimension(
-      singleton("document", digest(domProjection(before))),
-      singleton("document", digest(domProjection(after))),
+    dom_structure: compareDimension(
+      singleton("document", digestCanonicalValue(domProjection(before))),
+      singleton("document", digestCanonicalValue(domProjection(after))),
       sectionsComplete(before, ["frames", "dom"]) &&
         sectionsComplete(after, ["frames", "dom"]),
       "DOM or frame capture was incomplete in at least one observation.",
     ),
-    scripts: dimension(
+    scripts: compareDimension(
       keyed(
         before.scripts.items.map(scriptProjection),
         (item) => item.script_key,
@@ -189,28 +188,28 @@ const compareWebCaptureDimensions = (
         sectionsComplete(after, ["scripts"]),
       "Script inventory was incomplete in at least one observation.",
     ),
-    resources: dimension(
+    resources: compareDimension(
       keyed(before.resources, (item) => item.resource_key),
       keyed(after.resources, (item) => item.resource_key),
       sectionsComplete(before, ["resources"]) &&
         sectionsComplete(after, ["resources"]),
       "Resource inventory was incomplete in at least one observation.",
     ),
-    network: dimension(
+    network: compareDimension(
       networkMap(before),
       networkMap(after),
       sectionsComplete(before, ["network_requests"]) &&
         sectionsComplete(after, ["network_requests"]),
       "Network capture is attach-window limited or incomplete.",
     ),
-    metadata: dimension(
-      singleton("metadata", digest(metadataProjection(before))),
-      singleton("metadata", digest(metadataProjection(after))),
+    metadata: compareDimension(
+      singleton("metadata", digestCanonicalValue(metadataProjection(before))),
+      singleton("metadata", digestCanonicalValue(metadataProjection(after))),
       sectionsComplete(before, ["metadata"]) &&
         sectionsComplete(after, ["metadata"]),
       "Safe metadata capture was incomplete in at least one observation.",
     ),
-    webmcp: dimension(
+    webmcp: compareDimension(
       webMcpMap(input.before.webmcp),
       webMcpMap(input.after.webmcp),
       webMcpComplete(input.before.webmcp) && webMcpComplete(input.after.webmcp),
@@ -225,14 +224,16 @@ const keyed = <T>(
   values: readonly T[],
   identity: (value: T) => string,
 ): ReadonlyMap<string, string> =>
-  new Map(values.map((value) => [identity(value), digest(value)]));
+  new Map(
+    values.map((value) => [identity(value), digestCanonicalValue(value)]),
+  );
 
 const networkMap = (
   inspection: WebPageInspection,
 ): ReadonlyMap<string, string> => {
   const grouped = new Map<string, unknown[]>();
   for (const request of inspection.network.requests) {
-    const identity = `net_${digest({
+    const identity = `net_${digestCanonicalValue({
       method: request.method,
       url: request.url,
       resource_type: request.resource_type,
@@ -257,7 +258,9 @@ const networkMap = (
   return new Map(
     [...grouped].map(([identity, values]) => [
       identity,
-      digest(values.map((value) => digest(value)).sort()),
+      digestCanonicalValue(
+        values.map((value) => digestCanonicalValue(value)).sort(),
+      ),
     ]),
   );
 };
@@ -317,11 +320,13 @@ const scriptProjection = (
 const metadataProjection = (inspection: WebPageInspection) => ({
   responses: inspection.metadata.responses
     .map(({ request_id: _requestId, ...response }) => response)
-    .map((value) => digest(value))
+    .map((value) => digestCanonicalValue(value))
     .sort(),
-  dom_urls: inspection.metadata.dom_urls.map((value) => digest(value)).sort(),
+  dom_urls: inspection.metadata.dom_urls
+    .map((value) => digestCanonicalValue(value))
+    .sort(),
   agent_hints: inspection.metadata.agent_hints
-    .map((value) => digest(value))
+    .map((value) => digestCanonicalValue(value))
     .sort(),
   excluded_dom_urls: inspection.metadata.excluded_dom_urls,
   headers_allowlisted: inspection.metadata.headers_allowlisted,
@@ -329,8 +334,6 @@ const metadataProjection = (inspection: WebPageInspection) => ({
 
 const singleton = (key: string, value: string): ReadonlyMap<string, string> =>
   new Map([[key, value]]);
-
-const digest = (value: unknown): string => canonicalDigest(value);
 
 const accessibilityComparable = (
   inspection: WebPageInspection,
@@ -399,7 +402,7 @@ const storageMap = (
   const map = new Map<string, string>([
     [
       "storage:summary",
-      digest({
+      digestCanonicalValue({
         origin: storage.origin,
         values_redacted: storage.values_redacted,
         ...(includeUsage
@@ -414,7 +417,7 @@ const storageMap = (
   if (!includeKeys) return map;
   const add = (kind: string, keys: readonly string[]) => {
     for (const key of keys) {
-      map.set(`storage:${kind}:${key}`, digest(key));
+      map.set(`storage:${kind}:${key}`, digestCanonicalValue(key));
     }
   };
   add("local_storage", storage.local_storage_keys);
@@ -424,7 +427,10 @@ const storageMap = (
   for (const fingerprint of storage.content_fingerprints) {
     const identity = `${fingerprint.scope}:${fingerprint.identity_sha256}`;
     if (!fingerprintIdentities.has(identity)) continue;
-    map.set(`storage:content:${identity}`, digest(fingerprint.value_sha256));
+    map.set(
+      `storage:content:${identity}`,
+      digestCanonicalValue(fingerprint.value_sha256),
+    );
   }
   return map;
 };

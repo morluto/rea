@@ -5,8 +5,9 @@ import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
 import { functionComparisonResultSchema } from "./functionComparisonSchemas.js";
 import { createEvidence, type Evidence } from "./evidence.js";
 import { functionDossierSchema } from "./hopperValues.js";
-import { canonicalDigest, canonicalJson } from "./comparisonSemantics.js";
-import { compareCodePoints } from "./canonicalOrdering.js";
+import { canonicalJson } from "./comparisonSemantics.js";
+import { digestCanonicalValue } from "./canonicalDigest.js";
+import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import { jsonValueSchema } from "./jsonValue.js";
 
 import { compareFunctions } from "./functionComparison.js";
@@ -228,7 +229,7 @@ describe("function collection collation ties", () => {
     const canonicalProjection = callees
       .map(({ name }) => ({ direction: "out", name }))
       .sort((left, right) =>
-        compareCodePoints(canonicalJson(left), canonicalJson(right)),
+        compareUnicodeCodePoints(canonicalJson(left), canonicalJson(right)),
       );
     const result = compareFunctions(
       observe("b", calling(callees)),
@@ -239,8 +240,8 @@ describe("function collection collation ties", () => {
     );
     expect(calls).toMatchObject({
       status: "unchanged",
-      left_digest: canonicalDigest(canonicalProjection),
-      right_digest: canonicalDigest(canonicalProjection),
+      left_digest: digestCanonicalValue(canonicalProjection),
+      right_digest: digestCanonicalValue(canonicalProjection),
     });
   });
 });

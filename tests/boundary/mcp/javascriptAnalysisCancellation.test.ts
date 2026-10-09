@@ -51,7 +51,7 @@ it("stops a cancelled SDK request on the server, retains prior Evidence, and acc
       },
     },
   );
-  const server = createServer(session, session, { logger });
+  const server = createServer({ kind: "session", session }, { logger });
   const client = new Client({ name: "javascript-cancellation", version: "1" });
   onTestFinished(async () => {
     await client.close();

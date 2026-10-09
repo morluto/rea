@@ -28,7 +28,7 @@
 
 <img src="docs/assets/rea-hopper-analysis.png" alt="REA가 Hopper 안에서 분석 브리지를 실행해 네이티브 바이너리를 검사하는 모습" width="1200" />
 
-<br />
+<br /><br />
 
 <table aria-label="REA 커뮤니티">
 <tr>
@@ -154,6 +154,8 @@ REA에는 Node.js 22.x(>=22.19), 24.x(>=24.11) 또는 26+와 npm이 필요합니
 
 ## 사례
 
+[![DX-Ball 사운드 패닝, Notion 클립보드 브리지, TH04 탄환 고리 사례를 보여 주는 그림](docs/assets/rea-showcases.png)](https://rea.tools/showcase/)
+
 ### DX-Ball: 사운드 패닝 계산 재구현
 
 사운드 호출에서 위치를 패닝 값으로 변환하는 보조 함수까지 추적하고, 명령을 검사하여 불완전한 의사 코드를 C로 옮깁니다. 재구현한 코드는 원본 x86에 대한 3,205개 테스트 케이스를 통과했으며, 컴파일된 함수의 63바이트 전체를 재현합니다.
@@ -254,16 +256,6 @@ npx rea-agents@latest setup
 
 취약점은 [SECURITY.md](SECURITY.md)에 따라 보고하세요.
 
-## 기여
-
-REA에 도움을 보태 주세요! [issue를 등록](https://github.com/morluto/rea/issues)해 버그나 기능을 제안하거나, [pull request를 보내](https://github.com/morluto/rea/pulls) 코드와 문서를 개선할 수 있습니다.
-
-개발 환경과 검사 항목은 [CONTRIBUTING.md](CONTRIBUTING.md), 검증 절차는 [테스트 가이드](docs/testing.md), 프로젝트 구조는 [아키텍처 지도](docs/architecture.mermaid)를 참고하세요.
-
-## 프로젝트 링크
-
-[웹사이트](https://rea.tools/) · [npm](https://www.npmjs.com/package/rea-agents) · [skills.sh](https://skills.sh/morluto/rea/reverse-engineer-anything) · [Issues](https://github.com/morluto/rea/issues) · [보안](SECURITY.md)
-
 ## 스타 기록
 
 🎉 **GitHub 스타 30,000개, 감사합니다!**
@@ -281,6 +273,12 @@ REA를 사용하고, 버그를 보고하고, 기능을 요청하고, 빌드를 �
 ## 면책 조항
 
 REA는 합법적인 리버스 엔지니어링 연구, 분석, 재구성을 위한 도구를 제공합니다. 필요한 권한을 얻고 관련 법률을 준수할 책임은 사용자에게 있습니다. 이 프로젝트는 불법적이거나 허가받지 않은 사용을 지지하지 않습니다.
+
+## 기여
+
+REA에 도움을 보태 주세요! [issue를 등록](https://github.com/morluto/rea/issues)해 버그나 기능을 제안하거나, [pull request를 보내](https://github.com/morluto/rea/pulls) 코드와 문서를 개선할 수 있습니다.
+
+개발 환경과 검사 항목은 [CONTRIBUTING.md](CONTRIBUTING.md), 검증 절차는 [테스트 가이드](docs/testing.md), 프로젝트 구조는 [아키텍처 지도](docs/architecture.mermaid)를 참고하세요.
 
 ## 라이선스
 

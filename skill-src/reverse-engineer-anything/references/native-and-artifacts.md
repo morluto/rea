@@ -60,6 +60,15 @@ use inclusive ends and can contain gaps. Do not treat the enclosing span as code
 For packed targets, retain the original and separately derived artifact identities;
 decompiling an unpacking stub does not recover the unpacked program.
 
+When reading Objective-C dispatch metadata, distinguish class implementation
+methods from protocol requirements: class methods report null requirement
+flags, while decoded protocol declarations retain required and optional facts.
+Property attributes remain raw name/value tokens; use the property's
+`atomicity` field for the decoded `N` marker or the default atomic behavior.
+Null class/meta flags, ivar counts, atomicity, or read-only values mean the
+selected provider did not establish that fact. Symbol names alone do not prove
+that a class is a root class or has no ivars.
+
 ## Managed PE/CLI
 
 Start with `inspect_managed_artifact`. REA's canonical managed inspection is

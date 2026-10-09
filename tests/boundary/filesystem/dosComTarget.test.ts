@@ -11,13 +11,11 @@ describe("DOS COM admission", () => {
     const path = join(directory, "fixture.js");
     const bytes = Buffer.from("b83412c3", "hex");
     await writeFile(path, bytes);
-    const target = await parseBinaryTarget(
-      path,
-      directory,
-      "arm64",
-      undefined,
-      "dos-com",
-    );
+    const target = await parseBinaryTarget(path, {
+      cwd: directory,
+      hostArchitecture: "arm64",
+      formatHint: "dos-com",
+    });
     expect(target).toMatchObject({
       ok: true,
       value: {
@@ -38,7 +36,11 @@ describe("DOS COM admission", () => {
     const path = join(directory, "fixture.com");
     await writeFile(path, Buffer.alloc(length));
     expect(
-      await parseBinaryTarget(path, directory, "x64", undefined, "dos-com"),
+      await parseBinaryTarget(path, {
+        cwd: directory,
+        hostArchitecture: "x64",
+        formatHint: "dos-com",
+      }),
     ).toMatchObject({ ok: false, error: { _tag: "BinaryTargetError" } });
   });
   it("rejects contradictory target kind", async () => {
@@ -46,7 +48,12 @@ describe("DOS COM admission", () => {
     const path = join(directory, "fixture.com");
     await writeFile(path, Buffer.from("c3", "hex"));
     expect(
-      await parseBinaryTarget(path, directory, "x64", "database", "dos-com"),
+      await parseBinaryTarget(path, {
+        cwd: directory,
+        hostArchitecture: "x64",
+        targetKind: "database",
+        formatHint: "dos-com",
+      }),
     ).toMatchObject({ ok: false, error: { _tag: "BinaryTargetError" } });
   });
 });

@@ -3,7 +3,7 @@ import { decodeAppleDispatchMetadata } from "./AppleDispatchMetadata.js";
 
 const base = 0x100000000n;
 const fixture = (relative = false) => {
-  const bytes = Buffer.alloc(2048);
+  const bytes = Buffer.alloc(4096);
   const u32 = (offset: number, value: number) =>
     bytes.writeUInt32LE(value, offset);
   const ptr = (offset: number, target: number) =>
@@ -16,8 +16,8 @@ const fixture = (relative = false) => {
   u32(36, 152);
   bytes.write("__DATA", 40);
   ptr(56, 0);
-  bytes.writeBigUInt64LE(2048n, 64);
-  bytes.writeBigUInt64LE(2048n, 80);
+  bytes.writeBigUInt64LE(4096n, 64);
+  bytes.writeBigUInt64LE(4096n, 80);
   u32(92, 5);
   u32(96, 1);
   bytes.write("__objc_classlist", 104);
@@ -33,6 +33,8 @@ const fixture = (relative = false) => {
   ptr(0x318, 0x450);
   ptr(0x320, 0x480);
   ptr(0x330, 0x500);
+  ptr(0x328, 0x700);
+  ptr(0x340, 0x600);
   u32(0x380, 1);
   ptr(0x398, 0x450);
   bytes.write("Fixture\0", 0x450);
@@ -56,6 +58,34 @@ const fixture = (relative = false) => {
   u32(0x580, 8);
   bytes.write("state\0", 0x5a0);
   bytes.write("i\0", 0x5c0);
+  u32(0x600, 16);
+  u32(0x604, 3);
+  ptr(0x608, 0x640);
+  ptr(0x610, 0x650);
+  ptr(0x618, 0x660);
+  ptr(0x620, 0x670);
+  ptr(0x628, 0x680);
+  ptr(0x630, 0x690);
+  bytes.write("atomicValue\0", 0x640);
+  bytes.write("Tq\0", 0x650);
+  bytes.write("nonatomicValue\0", 0x660);
+  bytes.write("Tq,N\0", 0x670);
+  bytes.write("unknownValue\0", 0x680);
+  bytes.writeBigUInt64LE(1n, 0x700);
+  ptr(0x708, 0x740);
+  ptr(0x748, 0x900);
+  ptr(0x758, 0x800);
+  ptr(0x768, 0x840);
+  u32(0x780, 72);
+  u32(0x800, 24);
+  u32(0x804, 1);
+  ptr(0x808, 0x920);
+  u32(0x840, 24);
+  u32(0x844, 1);
+  ptr(0x848, 0x940);
+  bytes.write("FixtureProtocol\0", 0x900);
+  bytes.write("requiredAction:\0", 0x920);
+  bytes.write("optionalAction:\0", 0x940);
   return bytes;
 };
 const provenance = { path: "/fixture/app", sha256: "a".repeat(64) };
@@ -92,6 +122,69 @@ describe("Apple dispatch binary metadata", () => {
           location: { file_offset: 0x508 },
         },
       ]);
+      expect(result.objc_classes[0]?.properties).toEqual([
+        {
+          name: "atomicValue",
+          type_encoding: "q",
+          attributes: [{ name: "T", value: "q" }],
+          atomicity: "atomic",
+          is_readonly: false,
+          getter: null,
+          setter: null,
+        },
+        {
+          name: "nonatomicValue",
+          type_encoding: "q",
+          attributes: [
+            { name: "T", value: "q" },
+            { name: "N", value: "" },
+          ],
+          atomicity: "nonatomic",
+          is_readonly: false,
+          getter: null,
+          setter: null,
+        },
+        {
+          name: "unknownValue",
+          type_encoding: null,
+          attributes: [],
+          atomicity: null,
+          is_readonly: null,
+          getter: null,
+          setter: null,
+        },
+      ]);
+      expect(result.objc_classes[0]).toMatchObject({
+        is_meta_class: false,
+        is_root_class: false,
+        ivar_count: 1,
+      });
+      expect(result.objc_classes[1]).toMatchObject({
+        is_meta_class: true,
+        is_root_class: false,
+        ivar_count: null,
+      });
+      expect(result.objc_classes[0]?.methods[0]).toMatchObject({
+        is_required: null,
+        is_optional: null,
+      });
+      expect(result.objc_protocols[0]).toMatchObject({
+        name: "FixtureProtocol",
+        methods: [
+          {
+            selector: "requiredAction:",
+            is_required: true,
+            is_optional: false,
+          },
+        ],
+        optional_methods: [
+          {
+            selector: "optionalAction:",
+            is_required: false,
+            is_optional: true,
+          },
+        ],
+      });
     },
   );
   it("keeps unsupported pointers and record truncation explicit", () => {

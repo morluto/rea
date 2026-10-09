@@ -18,7 +18,7 @@ it("returns the complete session Evidence bundle in the tool result", async () =
     close: () => Promise.resolve(resultOk(null)),
   }));
   expect(session.recordEvidence(evidence).ok).toBe(true);
-  const server = createServer(session, session);
+  const server = createServer({ kind: "session", session });
   const client = new Client({ name: "inline-evidence-bundle", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();

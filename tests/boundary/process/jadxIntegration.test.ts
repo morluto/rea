@@ -1,5 +1,5 @@
 import { expect, it as test, vi } from "vitest";
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, readFile, truncate, writeFile } from "node:fs/promises";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { AndroidAnalysisService } from "../../../src/application/android/AndroidAnalysisService.js";
 import { JadxProvider } from "../../../src/android/JadxProvider.js";
@@ -16,6 +16,30 @@ import {
 import { writeJadxJarInventory } from "../../fixtures/android/jadxJar.js";
 
 const it = test.skipIf(process.platform === "win32");
+
+it("cancels Android admission while hashing the selected APK", async () => {
+  const { service, apk, launches, provider } = await setup();
+  await writeFile(apk, Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+  await truncate(apk, 1024 * 1024 * 1024);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 100);
+  try {
+    const result = await service.execute(
+      "inspect_android_package",
+      { path: apk },
+      { signal: controller.signal },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError" },
+    });
+    expect(launches).toHaveLength(0);
+  } finally {
+    clearTimeout(timer);
+    await provider.close();
+    await verifyCleanup(launches);
+  }
+});
 
 it("rejects a copied JAR that differs from its admitted session identity", async () => {
   const { jar } = await setup();

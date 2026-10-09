@@ -14,7 +14,7 @@ import {
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import { compareCodePoints } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
@@ -219,7 +219,7 @@ const childInteraction = (
     processBindingId: binding?.bindingId ?? null,
     linkedProcessIds: linked
       .map((candidate) => spawnId(candidate))
-      .sort(compareCodePoints),
+      .sort(compareUnicodeCodePoints),
     eventName: kind === "listener" ? eventName : null,
     signalName:
       kind === "signal"

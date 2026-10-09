@@ -28,7 +28,7 @@ async function connect() {
   const session = createTestBinarySession(() => {
     throw new Error("references must not launch a provider");
   });
-  const server = createServer(session, session);
+  const server = createServer({ kind: "session", session });
   const client = new Client({ name: "retained-evidence-test", version: "1" });
   resources.push(client, server, session);
   const [a, b] = InMemoryTransport.createLinkedPair();
