@@ -3,7 +3,6 @@ import {
   lstat,
   mkdtemp,
   open,
-  readFile,
   realpath,
   rename,
   rm,
@@ -18,6 +17,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { parseUtf8Json } from "./Utf8JsonInput.js";
+import { NonRegularFileReadError, readRegularFile } from "./RegularFileRead.js";
 
 /** Request control and its owning operation for an interruptible atomic write. */
 export interface TextWriteCancellation {
@@ -36,13 +36,7 @@ export const readJsonFile = async (
 > => {
   const requestedPath = resolve(path);
   try {
-    const canonicalPath = await realpath(requestedPath);
-    const stats = await lstat(canonicalPath);
-    if (!stats.isFile())
-      return err(
-        new EvidenceFileError("read", "not-file", { path: requestedPath }),
-      );
-    const encoded = await readFile(canonicalPath);
+    const encoded = await readRegularFile(requestedPath);
     const decoded = parseUtf8Json(encoded, "read_evidence_file", requestedPath);
     if (!decoded.ok) {
       return err(
@@ -56,10 +50,16 @@ export const readJsonFile = async (
   } catch (cause: unknown) {
     if (cause instanceof AnalysisResourceConstraintError) return err(cause);
     return err(
-      new EvidenceFileError("read", missingOrIo(cause), {
-        cause,
-        path: requestedPath,
-      }),
+      new EvidenceFileError(
+        "read",
+        cause instanceof NonRegularFileReadError
+          ? "not-file"
+          : missingOrIo(cause),
+        {
+          cause,
+          path: requestedPath,
+        },
+      ),
     );
   }
 };

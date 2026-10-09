@@ -99,6 +99,7 @@ describe("CLI JSON streamed input", () => {
         text: `${"x".repeat(65_524)}😀漢字`,
         escaped: "\ud800",
       }),
+      JSON.stringify({ [`${"x".repeat(70_000)}😀`]: "long key" }),
       JSON.stringify(
         Array.from({ length: 4_000 }, (_, id) => ({ id, text: "å" })),
       ),
