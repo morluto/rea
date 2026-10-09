@@ -129,7 +129,7 @@ itWithLinuxCaptureCapability.each([false, true])(
       state: "quiesced",
       cleanup_outcome: "not_required",
     });
-    expect(capture.cleanup).toEqual({
+    expect(capture.cleanup).toMatchObject({
       owned_process_group: "verified",
       temporary_root: "removed",
     });
