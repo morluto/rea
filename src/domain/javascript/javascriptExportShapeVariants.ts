@@ -188,6 +188,7 @@ const discriminantOccurrences = (
   const output = new Map<string, DiscriminantOccurrence>();
   shapes.forEach((shape, index) => {
     for (const field of shape.fields) {
+      if (fieldPresence(shape, field, field.path) !== "present") continue;
       const value = literalValue(field);
       if (!value.found) continue;
       const discriminant = { path: field.path, value: value.value };

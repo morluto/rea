@@ -113,6 +113,79 @@ describe("JavaScript export return-shape comparison", () => {
 });
 
 describe("JavaScript export return-shape pairing limits", () => {
+  it.each([
+    { presence: "absent", side: "left" },
+    { presence: "unknown-coverage", side: "left" },
+    { presence: "absent", side: "right" },
+    { presence: "unknown-coverage", side: "right" },
+  ] as const)(
+    "does not pair an inline $side discriminant whose presence is $presence",
+    async ({ presence, side }) => {
+      const [left, right] = await analyzeSources({
+        left: 'export default () => ({ kind: "result", count: 1 });',
+        right: 'export default () => ({ kind: "result", total: 2 });',
+      });
+      const selected = side === "left" ? left : right;
+      const graph = createJavaScriptApplicationGraph({
+        schema: "JavaScriptApplicationGraph",
+        root_node_ids: selected.graph.root_node_ids,
+        edges: selected.graph.edges,
+        coverage: selected.graph.coverage,
+        limitations: selected.graph.limitations,
+        nodes: selected.graph.nodes.map((node) =>
+          createJavaScriptApplicationNode({
+            kind: node.kind,
+            identity: node.identity,
+            observations: node.observations.map(
+              ({ label, properties, evidence }) => ({
+                label,
+                evidence,
+                properties:
+                  properties.semantic_role !== "export-return-shapes"
+                    ? properties
+                    : {
+                        ...properties,
+                        static_return_shapes: projectedExportReturnShapesSchema
+                          .parse(properties)
+                          .static_return_shapes.map((shape) => ({
+                            ...shape,
+                            fields: shape.fields.map((field) =>
+                              field.path === "/kind"
+                                ? { ...field, presence }
+                                : field,
+                            ),
+                          })),
+                      },
+              }),
+            ),
+          }),
+        ),
+      });
+      const result =
+        side === "left"
+          ? compare({ ...left, graph }, right)
+          : compare(left, { ...right, graph });
+      expect(result.coverage).toMatchObject({
+        status: "partial",
+        paired_variants: 0,
+        unpaired_left_variants: 1,
+        unpaired_right_variants: 1,
+      });
+      expect(result.changes).toHaveLength(2);
+      expect(
+        result.changes.every(
+          ({ status, discriminant }) =>
+            status === "unknown" && discriminant === null,
+        ),
+      ).toBe(true);
+      expect(
+        result.property_inventories.every(
+          ({ paired, discriminant }) => !paired && discriminant === null,
+        ),
+      ).toBe(true);
+    },
+  );
+
   it("does not pair discriminants that an unknown trailing spread can overwrite", async () => {
     const [left, right] = await analyzeSources({
       left: `
