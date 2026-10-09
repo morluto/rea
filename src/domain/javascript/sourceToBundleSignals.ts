@@ -9,6 +9,7 @@ import {
   type SourceToBundleSignal,
 } from "./sourceToBundleComparisonSchemas.js";
 import { isDigest } from "../digests.js";
+import { resolveJavaScriptSourceMapPath } from "./javascriptSourceMapPaths.js";
 
 type SourceFile = Extract<
   HistoricalSourceGraph["entries"][number],
@@ -306,54 +307,32 @@ const addPath = (
   raw: string,
   mapPath?: string,
 ): void => {
-  const portable = raw.replaceAll("\\", "/");
-  const windowsPath = /^[a-z]:\//iu.test(portable);
-  const sourceMapReference =
-    kind === "source-map-original" || mapPath !== undefined;
-  const scheme = windowsPath
-    ? undefined
-    : (sourceMapReference ? URI_SCHEME : AUTHORITY_URI_SCHEME).exec(
-        portable,
-      )?.[0];
-  // Opaque URI payloads do not establish a filesystem path, even with slash text.
-  if (scheme !== undefined && !raw.slice(scheme.length).startsWith("/")) return;
-  const reference =
-    scheme !== undefined || sourceMapReference
-      ? (portable.split(/[?#]/u, 1)[0] ?? "")
-      : portable;
-  if (
-    reference === "" ||
-    reference.endsWith("/") ||
-    /(?:^|\/)\.{1,2}$/u.test(reference)
-  )
+  if (kind === "source-map-original" || mapPath !== undefined) {
+    const resolved = resolveJavaScriptSourceMapPath(raw, mapPath);
+    if (resolved !== null)
+      paths.push({
+        kind,
+        value: resolved.value,
+        allowSuffix: resolved.scope === "suffix",
+      });
     return;
-  const relative =
-    scheme === undefined && !reference.startsWith("/") && !windowsPath;
-  const resolved =
-    mapPath !== undefined && relative
-      ? posix.join(posix.dirname(mapPath.replaceAll("\\", "/")), reference)
-      : reference;
-  const value = normalizeCurrentPath(
-    scheme === undefined
-      ? resolved
-      : resolved.slice(scheme.length).replace(/^\/+/u, ""),
-  );
-  if (value !== null)
-    paths.push({
-      kind,
-      value,
-      allowSuffix: mapPath === undefined || !relative,
-    });
+  }
+  const value = normalizeCurrentPath(raw);
+  if (value !== null) paths.push({ kind, value, allowSuffix: true });
 };
 
-/** Recognize URI schemes even when the URI has no authority component. */
-const URI_SCHEME = /^[a-z][a-z0-9+.-]*:/iu;
-/** Outside source maps, only an explicit authority distinguishes URLs from paths. */
-const AUTHORITY_URI_SCHEME = /^[a-z][a-z0-9+.-]*:(?=\/\/)/iu;
+const SCHEME_URL = /^[a-z][a-z0-9+.-]*:\/\//iu;
+const SCHEME_URL_PREFIX = /^[a-z][a-z0-9+.-]*:\/\/+/iu;
 
 const normalizeCurrentPath = (raw: string): string | null => {
+  const withoutQuery = SCHEME_URL.test(raw)
+    ? (raw.split(/[?#]/u, 1)[0] ?? "")
+    : raw;
+  const portable = withoutQuery
+    .replace(SCHEME_URL_PREFIX, "")
+    .replaceAll("\\", "/");
   const parts: string[] = [];
-  for (const part of raw.split("/")) {
+  for (const part of portable.split("/")) {
     if (part === "" || part === ".") continue;
     if (part === "..") {
       if (parts.length === 0) return null;

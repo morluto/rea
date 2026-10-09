@@ -127,20 +127,60 @@ it.each([
     source: "src/a.js",
     expected: "pkg/maps/src/a.js",
   },
+  {
+    mapPath: "pkg/maps/main.js.map",
+    source: "../actual/%2e%2e/src/a.js",
+    expected: "pkg/src/a.js",
+    decoy: "pkg/actual/%2e%2e/src/a.js",
+  },
+  {
+    mapPath: "pkg/maps/main.js.map",
+    sourceRoot: "../actual/.%2E",
+    source: "src/a.js",
+    expected: "pkg/src/a.js",
+    decoy: "pkg/actual/.%2E/src/a.js",
+  },
+  {
+    mapPath: "pkg#name?/maps/main.js.map",
+    source: "../src/a.js",
+    expected: "pkg#name?/src/a.js",
+  },
+  {
+    mapPath: "pkg/maps/main.js.map",
+    source: "modules/a%20b.js",
+    expected: "pkg/maps/modules/a b.js",
+  },
+  {
+    mapPath: "pkg/maps/main.js.map",
+    source: "modules/a%23b.js",
+    expected: "pkg/maps/modules/a#b.js",
+  },
+  {
+    mapPath: "pkg/maps/main.js.map",
+    source: "../actual/%252e%252e/src/a.js",
+    expected: "pkg/actual/%2e%2e/src/a.js",
+    decoy: "pkg/src/a.js",
+  },
 ])(
   "resolves $source against $mapPath without selecting a same-basename decoy",
-  async ({ mapPath, source, sourceRoot, expected }) => {
+  async ({
+    mapPath,
+    source,
+    sourceRoot,
+    expected,
+    decoy: decoyPath = "src/a.js",
+  }) => {
     const root = await createTestTempDirectory("rea-nested-map-");
     const previous = join(root, "previous");
     const current = join(root, "current");
     await Promise.all([
       mkdir(join(previous, expected, ".."), { recursive: true }),
-      mkdir(join(previous, "src"), { recursive: true }),
+      mkdir(join(previous, decoyPath, ".."), { recursive: true }),
       mkdir(join(current, mapPath, ".."), { recursive: true }),
     ]);
     await Promise.all([
       writeFile(join(previous, expected), "export const value = 1;"),
-      writeFile(join(previous, "src/a.js"), "export const decoy = 99;"),
+      writeFile(join(previous, decoyPath), "export const decoy = 99;"),
       writeFile(
         join(current, mapPath),
         JSON.stringify({
@@ -170,7 +210,7 @@ it.each([
       }),
     );
     const decoy = comparison.items.find(
-      ({ source_path }) => source_path === "src/a.js",
+      ({ source_path }) => source_path === decoyPath,
     );
     expect(decoy?.current_node_ids).toEqual([]);
     expect(
@@ -231,6 +271,10 @@ it("retains every map location when identical map artifacts merge", async () => 
 
 it.each([
   { source: "file:/repo/src/a.js", hasPath: true },
+  { source: "file:C:/repo/src/a.js", hasPath: true },
+  { source: "file:C:\\repo\\src\\a.js", hasPath: true },
+  { source: "C:\\repo\\src\\a.js", hasPath: true },
+  { source: "file://server/share/src/a.js", hasPath: true },
   { source: "file:/repo/src/a.js?version=2#original", hasPath: true },
   { source: "webpack:///src/a.js", hasPath: true },
   { source: "https://example.com/src/a.js#original", hasPath: true },
@@ -239,7 +283,7 @@ it.each([
   { source: "data:text/javascript,virtual/../src/a.js", hasPath: false },
   { source: "data:\\src\\a.js", hasPath: false },
 ])(
-  "projects a filesystem path from $source only when it is hierarchical",
+  "projects source references from $source only when they name a file",
   async ({ source, hasPath }) => {
     const root = await createTestTempDirectory("rea-source-map-uri-");
     const previous = join(root, "previous");
@@ -343,8 +387,14 @@ it.each([
   { source: "#original.js", historicalPath: "maps.js" },
   { source: "?version.js", historicalPath: "maps.js" },
   { source: "./?version.js", historicalPath: "maps.js" },
+  { source: "%2e", historicalPath: "maps.js" },
+  { source: "%2e%2e", historicalPath: "maps.js" },
+  { source: "child%2fpart.js", historicalPath: "maps.js/child/part.js" },
+  { source: "child%5cpart.js", historicalPath: "maps.js/child/part.js" },
+  { source: "bad%zz.js", historicalPath: "maps.js/bad%zz.js" },
+  { source: "../../outside/a.js", historicalPath: "outside/a.js" },
 ])(
-  "keeps the directory-only source name $source out of file path indices",
+  "declines source references without a trustworthy file path: $source",
   async ({ source, historicalPath }) => {
     const root = await createTestTempDirectory("rea-source-map-empty-");
     const previous = join(root, "previous");
