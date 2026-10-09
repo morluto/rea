@@ -88,7 +88,7 @@ const buildJavaScriptArtifactGraphInput = (
   addJavaScriptArtifactFiles(context);
   const packageRoots = addJavaScriptPackageNodes(context);
   addJavaScriptSourceModules(context);
-  addJavaScriptBundlerNodes(context);
+  const bundlerLimitations = addJavaScriptBundlerNodes(context);
   const relationshipOmissions = addJavaScriptModuleRelationships(context);
   addJavaScriptStaticFindings(context);
   addElectronBoundaries(context);
@@ -104,11 +104,10 @@ const buildJavaScriptArtifactGraphInput = (
     nodes: accumulator.nodes(),
     edges: accumulator.edges(),
     coverage,
-    limitations: graphLimitations(
-      context,
-      coverage.status,
-      relationshipOmissions,
-    ),
+    limitations: [
+      ...bundlerLimitations,
+      ...graphLimitations(context, coverage.status, relationshipOmissions),
+    ],
   };
 };
 
