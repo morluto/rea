@@ -211,14 +211,33 @@ const flattenValue = (
   path: string,
   fields: ProjectedReturnField[],
   coverage: ProjectedPropertyCoverage[],
+  presence: "present" | "absent" | "unknown-coverage" = "present",
 ): void => {
+  if (presence !== "present") {
+    fields.push({
+      path,
+      presence,
+      state: "unknown",
+      value: null,
+      reason:
+        "reason" in value ? value.reason : "Property presence is uncertain.",
+    });
+    return;
+  }
   if (value.status === "literal") {
-    fields.push({ path, state: "literal", value: value.value, reason: null });
+    fields.push({
+      path,
+      presence,
+      state: "literal",
+      value: value.value,
+      reason: null,
+    });
     return;
   }
   if (value.status === "union") {
     fields.push({
       path,
+      presence,
       state: "union",
       value: [...value.values],
       reason: null,
@@ -237,6 +256,7 @@ const flattenValue = (
         `${path}/${escapePointer(property.name)}`,
         fields,
         coverage,
+        property.presence ?? "present",
       );
     return;
   }
@@ -247,11 +267,23 @@ const flattenValue = (
         : { path, status: "complete", omitted: 0 },
     );
     value.items.forEach((item, index) =>
-      flattenValue(item, `${path}/${String(index)}`, fields, coverage),
+      flattenValue(
+        item,
+        `${path}/${String(index)}`,
+        fields,
+        coverage,
+        value.itemPresence?.[index] ?? "present",
+      ),
     );
     return;
   }
-  fields.push({ path, state: "unknown", value: null, reason: value.reason });
+  fields.push({
+    path,
+    presence,
+    state: "unknown",
+    value: null,
+    reason: value.reason,
+  });
 };
 
 const escapePointer = (value: string): string =>

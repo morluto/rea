@@ -151,8 +151,11 @@ const inventoryFor = (
   variant_index: variantIndex,
   discriminant: pair?.discriminant ?? null,
   paired: pair !== undefined,
+  source_range: shape.source_range,
   properties: uniqueSorted([
-    ...shape.fields.map(({ path }) => path),
+    ...shape.fields
+      .filter((field) => fieldPresence(shape, field, field.path) === "present")
+      .map(({ path }) => path),
     ...shape.property_coverage.map(({ path }) => path),
   ]),
   property_coverage: shape.property_coverage.map(({ path, status }) => ({
@@ -165,8 +168,13 @@ const inventoryFor = (
 export const hasPartialJavaScriptExportPropertyCoverage = (
   shapes: readonly Shape[],
 ): boolean =>
-  shapes.some((shape) =>
-    shape.property_coverage.some(({ status }) => status === "partial"),
+  shapes.some(
+    (shape) =>
+      shape.property_coverage.some(({ status }) => status === "partial") ||
+      shape.fields.some(
+        (field) =>
+          fieldPresence(shape, field, field.path) === "unknown-coverage",
+      ),
   );
 
 interface DiscriminantOccurrence {
@@ -343,6 +351,7 @@ const fieldAtPath = (
     return undefined;
   return {
     path,
+    presence: "present",
     state: "unknown",
     value: null,
     reason:
@@ -367,6 +376,16 @@ const fieldChangeStatus = ({
 }: FieldChangeInput):
   | JavaScriptExportShapeComparisonChange["status"]
   | null => {
+  const leftPresence = fieldPresence(leftShape, leftField, path);
+  const rightPresence = fieldPresence(rightShape, rightField, path);
+  if (leftPresence === "absent" && rightPresence === "absent") return null;
+  if (
+    leftPresence === "unknown-coverage" ||
+    rightPresence === "unknown-coverage"
+  )
+    return "unknown";
+  if (leftPresence === "absent") return "added";
+  if (rightPresence === "absent") return "removed";
   if (leftField !== undefined && rightField !== undefined) {
     if (
       canonicalExportShapeValue(leftField) ===
@@ -377,14 +396,7 @@ const fieldChangeStatus = ({
       ? "unknown"
       : "changed";
   }
-  const present = leftField ?? rightField;
-  if (present === undefined) return null;
-  const parent = parentPointer(path);
-  const parentsComplete =
-    propertyCoverageComplete(leftShape, parent) &&
-    propertyCoverageComplete(rightShape, parent);
-  if (!parentsComplete) return "unknown";
-  return leftField === undefined ? "added" : "removed";
+  return null;
 };
 
 const fieldPresence = (
@@ -392,7 +404,12 @@ const fieldPresence = (
   field: Field | undefined,
   path: string,
 ): PropertyPresence => {
-  if (field !== undefined) return "present";
+  // Legacy unknown fields did not distinguish unresolved values from uncertain slots.
+  if (field !== undefined)
+    return (
+      field.presence ??
+      (field.state === "unknown" ? "unknown-coverage" : "present")
+    );
   return propertyCoverageComplete(shape, parentPointer(path))
     ? "absent"
     : "unknown-coverage";
@@ -411,7 +428,8 @@ const parentPointer = (path: string): string | null => {
 };
 
 const fieldAvailability = (field: Field | undefined): ValueAvailability => {
-  if (field === undefined) return { availability: "absent" };
+  if (field === undefined || field.presence === "absent")
+    return { availability: "absent" };
   if (field.state === "unknown")
     return {
       availability: "unknown",

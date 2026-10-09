@@ -73,7 +73,10 @@ export const compareJavaScriptExportShapesInputSchema = z
       });
   });
 
-const projectedReturnFieldShape = { path: jsonPointerSchema };
+const projectedReturnFieldShape = {
+  path: jsonPointerSchema,
+  presence: z.enum(["present", "absent", "unknown-coverage"]).optional(),
+};
 const projectedReturnFieldSchema = z.discriminatedUnion("state", [
   z.strictObject({
     ...projectedReturnFieldShape,
@@ -266,6 +269,7 @@ const propertyInventorySchema = z.strictObject({
   variant_index: z.number().int().nonnegative(),
   discriminant: discriminantSchema.nullable(),
   paired: z.boolean(),
+  source_range: sourceRangeSchema,
   properties: z.array(jsonPointerSchema),
   property_coverage: z.array(inventoryPropertyCoverageSchema),
 });

@@ -20,16 +20,20 @@ export const invalidateSemanticMutationPath = (
       property.name === name
         ? {
             ...property,
+            ...(remaining.length === 0
+              ? { presence: "unknown-coverage" as const }
+              : {}),
             value: invalidateSemanticMutationPath(property.value, remaining),
           }
         : property,
     );
-    return value.unknownProperties || !observed
+    return value.unknownProperties || !observed || remaining.length === 0
       ? {
           status: "object",
           properties,
           unknownProperties: true,
-          omittedProperties: observed ? value.omittedProperties : null,
+          omittedProperties:
+            observed && remaining.length > 0 ? value.omittedProperties : null,
         }
       : {
           status: "object",
@@ -52,14 +56,27 @@ export const invalidateSemanticMutationPath = (
         ? invalidateSemanticMutationPath(item, remaining)
         : item,
     );
+    const itemPresence = {
+      ...value.itemPresence,
+      ...(remaining.length === 0
+        ? { [index]: "unknown-coverage" as const }
+        : {}),
+    };
     return value.unknownItems || !observed
       ? {
           status: "array",
           items,
+          itemPresence,
           unknownItems: true,
           omittedItems: observed ? value.omittedItems : null,
         }
-      : { status: "array", items, unknownItems: false, omittedItems: 0 };
+      : {
+          status: "array",
+          items,
+          itemPresence,
+          unknownItems: false,
+          omittedItems: 0,
+        };
   }
   return unknown;
 };

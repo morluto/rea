@@ -24,6 +24,9 @@ type JavaScriptSemanticObjectValue = {
 type JavaScriptSemanticArrayValue = {
   readonly status: "array";
   readonly items: readonly JavaScriptSemanticValue[];
+  readonly itemPresence?: Readonly<
+    Record<number, "absent" | "unknown-coverage">
+  >;
 } & (
   | {
       readonly unknownItems: false;
@@ -57,4 +60,5 @@ export type JavaScriptSemanticValue =
 export interface JavaScriptSemanticProperty {
   readonly name: string;
   readonly value: JavaScriptSemanticValue;
+  readonly presence?: "unknown-coverage";
 }

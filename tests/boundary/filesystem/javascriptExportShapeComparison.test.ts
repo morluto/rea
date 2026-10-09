@@ -179,6 +179,97 @@ describe("JavaScript export return-shape pairing limits", () => {
   });
 });
 
+describe("JavaScript export return-shape uncertain presence", () => {
+  it.each([false, true])(
+    "keeps deleted property presence unknown (reversed: %s)",
+    async (reversed) => {
+      const plain = 'export default () => ({ kind: "result" });';
+      const mutated = `export default function make() {
+      const result = { kind: "result", count: 1 };
+      delete result.count;
+      return result;
+    }`;
+      const graphs = await analyzeSources({
+        left: reversed ? mutated : plain,
+        right: reversed ? plain : mutated,
+      });
+      const result = compare(...graphs);
+      expect(result.changes).toContainEqual(
+        expect.objectContaining({
+          path: "/count",
+          status: "unknown",
+          presence: reversed
+            ? { left: "unknown-coverage", right: "absent" }
+            : { left: "absent", right: "unknown-coverage" },
+        }),
+      );
+      expect(
+        inventoryProperties(result, reversed ? "left" : "right", 0),
+      ).not.toContain("/count");
+      expect(result.summary.added + result.summary.removed).toBe(0);
+      expect(result.coverage.status).toBe("partial");
+    },
+  );
+
+  it("excludes array holes while preserving observed unknown elements", async () => {
+    const holes = 'export default () => ({ kind: "result", items: [,] });';
+    const empty = await analyzeSources({
+      left: holes,
+      right: 'export default () => ({ kind: "result", items: [] });',
+    });
+    const result = compare(...empty);
+    expect(inventoryProperties(result, "left", 0)).not.toContain("/items/0");
+    expect(result.changes.some(({ path }) => path === "/items/0")).toBe(false);
+    const filled = await analyzeSources({
+      left: holes,
+      right: 'export default () => ({ kind: "result", items: [call()] });',
+    });
+    expect(compare(...filled).changes).toContainEqual(
+      expect.objectContaining({
+        path: "/items/0",
+        status: "added",
+        presence: { left: "absent", right: "present" },
+        left: { availability: "absent" },
+        right: expect.objectContaining({ availability: "unknown" }),
+      }),
+    );
+  });
+
+  it("retains unpaired inventory locations when the opposite export has no return", async () => {
+    const graphs = await analyzeSources({
+      left: "export default function f() {}",
+      right: `export default function f(flag) {
+        if (flag) return { count: call() };
+        return { total: call() };
+      }`,
+    });
+    const result = compare(...graphs);
+    expect(result.property_inventories).toEqual([
+      expect.objectContaining({
+        side: "right",
+        paired: false,
+        variant_index: 0,
+        properties: expect.arrayContaining(["/count"]),
+        source_range: expect.objectContaining({
+          start: expect.objectContaining({ line: 2 }),
+        }),
+      }),
+      expect.objectContaining({
+        side: "right",
+        paired: false,
+        variant_index: 1,
+        properties: expect.arrayContaining(["/total"]),
+        source_range: expect.objectContaining({
+          start: expect.objectContaining({ line: 3 }),
+        }),
+      }),
+    ]);
+    expect(() =>
+      javaScriptExportShapeComparisonResultSchema.parse(result),
+    ).not.toThrow();
+  });
+});
+
 describe("JavaScript export return-shape property presence", () => {
   it("lists observed names without pairing untagged search variants", async () => {
     const graphs = await analyzeSources(
