@@ -319,6 +319,10 @@ MCP session, or close it before starting another session. Closing the owner
 releases the reservation. This does not attach to or claim ownership of
 manually opened Hopper applications.
 
+Stale lease recovery is serialized. If an interrupted recovery leaves its
+reservation directory, the diagnostic identifies that exact path. Stop REA
+sessions before removing that recovery directory and retrying.
+
 ### Launcher paths and troubleshooting
 
 On macOS, REA uses

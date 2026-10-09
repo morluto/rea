@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { once } from "node:events";
-import { lstat, mkdtemp, readdir, rm } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, rm, rmdir } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -152,12 +152,7 @@ describe("Linux Hopper application leases", () => {
   it("recovers a socket left by a process that exited without releasing it", async () => {
     const directory = await temporaryDirectory();
     const socketPath = await releasedApplicationSocket(directory);
-    await promisify(execFile)(process.execPath, [
-      "--input-type=module",
-      "-e",
-      'import {createServer} from "node:net"; createServer().listen(process.argv[1],()=>process.exit(0));',
-      socketPath,
-    ]);
+    await leaveStaleSocket(socketPath);
     expect((await lstat(socketPath)).isSocket()).toBe(true);
     const recovered = await acquireLinuxHopperApplicationLease({
       directory,
@@ -167,6 +162,39 @@ describe("Linux Hopper application leases", () => {
     if (recovered.acquired) await recovered.lease.release();
   });
 });
+
+it("leaves a stale socket unchanged while another process reserves its recovery", async () => {
+  const directory = await temporaryDirectory();
+  const socketPath = await releasedApplicationSocket(directory);
+  await leaveStaleSocket(socketPath);
+  const recoveryPath = `${socketPath}.recovery`;
+  await mkdir(recoveryPath, { mode: 0o700 });
+  const stale = await lstat(socketPath);
+  await expect(
+    acquireLinuxHopperApplicationLease({ directory, runId: "competing" }),
+  ).rejects.toMatchObject({
+    _tag: "HopperStartError",
+    userMessage: expect.stringContaining(recoveryPath),
+  });
+  expect((await lstat(socketPath)).ino).toBe(stale.ino);
+  await rmdir(recoveryPath);
+  const recovered = await acquireLinuxHopperApplicationLease({
+    directory,
+    runId: "after-recovery",
+  });
+  expect(recovered.acquired).toBe(true);
+  if (recovered.acquired) await recovered.lease.release();
+  expect(await readdir(directory)).toEqual([]);
+});
+
+const leaveStaleSocket = async (socketPath: string): Promise<void> => {
+  await promisify(execFile)(process.execPath, [
+    "--input-type=module",
+    "-e",
+    'import {createServer} from "node:net"; createServer().listen(process.argv[1],()=>process.exit(0));',
+    socketPath,
+  ]);
+};
 
 const releasedApplicationSocket = async (
   directory: string,
