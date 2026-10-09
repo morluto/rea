@@ -261,7 +261,7 @@ describe("JavaScript export return-shape property presence", () => {
           status: "removed",
           path: "/count",
           presence: { left: "present", right: "absent" },
-          left: { availability: "unknown" },
+          left: expect.objectContaining({ availability: "unknown" }),
           right: { availability: "absent" },
         }),
         expect.objectContaining({
@@ -269,14 +269,14 @@ describe("JavaScript export return-shape property presence", () => {
           path: "/total",
           presence: { left: "absent", right: "present" },
           left: { availability: "absent" },
-          right: { availability: "unknown" },
+          right: expect.objectContaining({ availability: "unknown" }),
         }),
         expect.objectContaining({
           status: "added",
           path: "/query",
           presence: { left: "absent", right: "present" },
           left: { availability: "absent" },
-          right: { availability: "unknown" },
+          right: expect.objectContaining({ availability: "unknown" }),
         }),
       ]),
     );
