@@ -51,7 +51,8 @@ describe("browser comparison input boundary", () => {
       );
       if (advertised === undefined) throw new Error("Missing comparison tool");
       expect(advertised.inputSchema.type).toBe("object");
-      expect(advertised.inputSchema.anyOf).toHaveLength(2);
+      // Anthropic tool input schemas reject root combinators.
+      expect(advertised.inputSchema).not.toHaveProperty("anyOf");
       const ajv = new Ajv2020({ strict: false, validateFormats: false });
       expect(ajv.validateSchema(advertised.inputSchema)).toBe(true);
       const validate = ajv.compile(advertised.inputSchema);
@@ -87,8 +88,6 @@ describe("browser comparison input boundary", () => {
         },
         { before_scenario: {}, after_scenario: {} },
         { before_scenario: scenario.before_scenario },
-        { ...passive, ...scenario },
-        { ...passive, normalization: { rules: [] } },
         { ...passive, unexpected: true },
         {
           ...scenario,
@@ -110,8 +109,21 @@ describe("browser comparison input boundary", () => {
         })),
         ...invalid.map((input) => ({ input, expected: false })),
       ];
-      for (const { input, expected } of cases) {
-        expect(validate(input), JSON.stringify(validate.errors)).toBe(expected);
+      // The object root cannot express group exclusion; the SDK's canonical
+      // parser still rejects mixed groups before the handler runs.
+      const mixedGroups: readonly Record<string, unknown>[] = [
+        { ...passive, ...scenario },
+        { ...passive, normalization: { rules: [] } },
+      ];
+      for (const input of mixedGroups) expect(validate(input)).toBe(true);
+      for (const { input, expected } of [
+        ...cases,
+        ...mixedGroups.map((input) => ({ input, expected: false })),
+      ]) {
+        if (!mixedGroups.includes(input))
+          expect(validate(input), JSON.stringify(validate.errors)).toBe(
+            expected,
+          );
         expect(
           browserCaptureComparisonInputSchema.safeParse(input).success,
         ).toBe(expected);

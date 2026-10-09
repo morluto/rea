@@ -396,15 +396,31 @@ describe("MCP root input schemas", () => {
       expect(ajv.compile(graphTool.inputSchema)({ unrelated: true })).toBe(
         false,
       );
+      const captureContract = TOOL_CONTRACTS.find(
+        ({ name }) => name === "compare_web_captures",
+      );
+      const captureTool = advertised.get("compare_web_captures");
+      if (captureContract === undefined || captureTool === undefined)
+        throw new Error("Capture comparison tool was not advertised");
+      const mixedGroups = {
+        ...captureContract.examples[0]?.input,
+        before: {},
+        after: {},
+      };
+      expect(captureContract.inputSchema.safeParse(mixedGroups).success).toBe(
+        false,
+      );
+      expect(captureTool.inputSchema.description).toContain(
+        "Provide exactly one input group",
+      );
 
       for (const contract of TOOL_CONTRACTS) {
         const inputSchema = advertised.get(contract.name)!.inputSchema;
         expect(inputSchema.type, contract.name).toBe("object");
-        expect(
-          inputSchema.properties !== undefined ||
-            Array.isArray(inputSchema.anyOf),
-          contract.name,
-        ).toBe(true);
+        expect(inputSchema.properties, contract.name).toBeDefined();
+        // Anthropic tool input schemas reject root combinators.
+        for (const combinator of ["anyOf", "oneOf", "allOf"])
+          expect(inputSchema, contract.name).not.toHaveProperty(combinator);
         const validate = ajv.compile(inputSchema);
         for (const example of contract.examples)
           expect(
