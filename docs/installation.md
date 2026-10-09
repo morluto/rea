@@ -493,14 +493,14 @@ installs, upgrades, or modifies Ghidra or Java.
 
 Each verified session uses an ephemeral temporary project and isolated
 home/cache/config/temp paths. REA passes `-readOnly`, `-deleteProject`, uses
-Ghidra's default analysis and resource settings, and loads its packaged Java
+Ghidra's default analysis settings, and loads its packaged Java
 bridge via `-scriptPath`; it never opens an existing user project. Linux and
 macOS use a current-user-only local bridge socket and descriptor. The
 project remains under the selected temporary directory. If its Unix socket
 pathname would exceed the host's byte limit, REA allocates a separate mode-0700
 socket directory under `/tmp` and removes it on close, cancellation, or failure.
 Diagnostics retain the actual endpoint and both owned directories.
-On macOS, REA starts the inspected JVM directly using Ghidra's own LaunchSupport
+On Linux and macOS, REA starts the inspected JVM directly using Ghidra's own LaunchSupport
 configuration. Apple platform shell wrappers hide their environments from
 ownership inspection, so retaining those wrappers would prevent verified
 process-group cancellation during startup.
@@ -533,6 +533,65 @@ Operations run until a result, caller cancellation, or provider shutdown; there
 is no fixed per-operation or response-size ceiling. Unresolved computed calls
 remain unknown, reference-kind provenance is preserved, and provider-specific
 pseudocode is never treated as original source or Hopper-equivalent text.
+
+### Ghidra heap and CPU controls
+
+Set resource controls in the environment that launches the CLI or MCP server,
+before opening a new Ghidra session. On Linux and macOS, REA chooses the first
+nonempty setting in this order: `GHIDRA_HEADLESS_MAXMEM`, `GHIDRA_MAXMEM`, then
+`2G`. The chosen value becomes the JVM's `-Xmx` argument. Use a JVM heap-size
+value such as `512M` or `2G`; an invalid value causes Java startup to fail.
+The supported Ghidra 12.1.4 Windows headless script consumes the same settings
+with the same precedence.
+
+For a small target on a constrained host:
+
+```bash
+export GHIDRA_HEADLESS_MAXMEM=512M
+```
+
+In PowerShell:
+
+```powershell
+$env:GHIDRA_HEADLESS_MAXMEM = "512M"
+```
+
+An MCP client must pass this setting to its REA server process; changing an
+unrelated terminal's environment does not reconfigure an existing server or
+JVM. A 512 MiB heap was verified with small native fixtures, but larger targets
+can require more memory. The Java heap limit does not bound JVM RSS, Node's
+heap, or total memory used by the process family. The startup deadline controls
+waiting time independently of these memory settings.
+
+REA clears `_JAVA_OPTIONS`, `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS`, and
+`GHIDRA_JAVA_OPTIONS` inherited from the caller, and owns
+`GHIDRA_HEADLESS_JAVA_OPTIONS`. Custom flags injected through these variables
+are not supported configuration. On Windows, REA replaces `JDK_JAVA_OPTIONS`
+with its own isolated home/temp settings and `-XX:-UsePerfData`; on Linux and
+macOS it supplies isolated paths directly to Java. Use the supported heap
+settings above instead of adding a second `-Xmx` through an injection variable.
+
+The Linux/macOS launch sets `-XX:ParallelGCThreads=2` and
+`-XX:CICompilerCount=2`; the supported Windows headless script also sets these
+counts. These constrain particular JVM thread pools, not all analysis threads
+or CPU usage. REA does not pass Ghidra's `-max-cpu` option or expose a general
+Ghidra CPU limit. When needed, apply host CPU affinity and scheduling controls
+to the REA process and verify the resulting JVM's affinity. Select CPUs allowed
+on the host; do not assume CPU numbers from another machine are valid.
+
+Verify controls at their consumer after the first Ghidra-backed query starts
+the JVM: inspect that owned JVM's effective `-Xmx` and GC/compiler flags, CPU
+affinity, and observed memory use. Do not infer them from the parent shell's
+environment or the absence of an error. On Linux, `/proc/<jvm-pid>/cmdline`
+contains the launch arguments and `/proc/<jvm-pid>/status` reports
+`Cpus_allowed_list` and `VmRSS`. Inspect only the process belonging to this
+session and retain the resource flags needed for the measurement rather than
+copying full command lines or environments into reports. Heap and affinity
+settings affect cost and latency; they are not part of REA's semantic analysis
+profile identity. See [real-provider testing](testing.md) for bounded
+verification workflows.
+
+### Ghidra diagnostics and verification
 
 Unexpected request failures retain their original internal cause. CLI and MCP
 errors expose Error names, messages, and available codes under
