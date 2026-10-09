@@ -157,7 +157,7 @@ const inventoryFor = (
       .filter((field) => fieldPresence(shape, field, field.path) === "present")
       .map(({ path }) => path),
     ...shape.property_coverage.map(({ path }) => path),
-  ]),
+  ]).filter((path) => path !== ""),
   property_coverage: shape.property_coverage.map(({ path, status }) => ({
     path,
     status,
@@ -388,8 +388,8 @@ const fieldChangeStatus = ({
   if (rightPresence === "absent") return "removed";
   if (leftField !== undefined && rightField !== undefined) {
     if (
-      canonicalExportShapeValue(leftField) ===
-      canonicalExportShapeValue(rightField)
+      canonicalExportShapeValue({ ...leftField, presence: leftPresence }) ===
+      canonicalExportShapeValue({ ...rightField, presence: rightPresence })
     )
       return null;
     return leftField.state === "unknown" || rightField.state === "unknown"

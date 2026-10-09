@@ -27,13 +27,12 @@ export const invalidateSemanticMutationPath = (
           }
         : property,
     );
-    return value.unknownProperties || !observed || remaining.length === 0
+    return value.unknownProperties || !observed
       ? {
           status: "object",
           properties,
           unknownProperties: true,
-          omittedProperties:
-            observed && remaining.length > 0 ? value.omittedProperties : null,
+          omittedProperties: observed ? value.omittedProperties : null,
         }
       : {
           status: "object",

@@ -311,8 +311,6 @@ const evaluateArray = (
     }
     if (element === null) {
       itemPresence[items.length] = "absent";
-      unknownItems = true;
-      if (omittedItems !== null) omittedItems += 1;
       items.push({
         status: "unknown",
         reason: "Array hole has no primitive value.",
@@ -323,7 +321,13 @@ const evaluateArray = (
   }
   return unknownItems
     ? { status: "array", items, itemPresence, unknownItems: true, omittedItems }
-    : { status: "array", items, unknownItems: false, omittedItems: 0 };
+    : {
+        status: "array",
+        items,
+        itemPresence,
+        unknownItems: false,
+        omittedItems: 0,
+      };
 };
 
 const evaluateMember = (

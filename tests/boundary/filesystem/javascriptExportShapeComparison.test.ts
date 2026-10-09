@@ -8,7 +8,10 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { analyzeJavaScriptApplication } from "../../../src/application/javascript/JavaScriptApplicationService.js";
 import { parseApplicationGraphEvidence } from "../../../src/application/javascript/JavaScriptApplicationEvidenceGraph.js";
 import { compareJavaScriptExportShapes } from "../../../src/domain/javascript/javascriptExportShapeComparison.js";
-import { javaScriptExportShapeComparisonResultSchema } from "../../../src/domain/javascript/javascriptExportShapeComparisonSchemas.js";
+import {
+  javaScriptExportShapeComparisonResultSchema,
+  projectedExportReturnShapesSchema,
+} from "../../../src/domain/javascript/javascriptExportShapeComparisonSchemas.js";
 import {
   createJavaScriptApplicationGraph,
   createJavaScriptApplicationNode,
@@ -218,6 +221,7 @@ describe("JavaScript export return-shape uncertain presence", () => {
       right: 'export default () => ({ kind: "result", items: [] });',
     });
     const result = compare(...empty);
+    expect(result.coverage.status).toBe("complete-within-inputs");
     expect(inventoryProperties(result, "left", 0)).not.toContain("/items/0");
     expect(result.changes.some(({ path }) => path === "/items/0")).toBe(false);
     const filled = await analyzeSources({
@@ -267,6 +271,141 @@ describe("JavaScript export return-shape uncertain presence", () => {
     expect(() =>
       javaScriptExportShapeComparisonResultSchema.parse(result),
     ).not.toThrow();
+  });
+});
+
+describe("JavaScript export property presence boundaries", () => {
+  it("normalizes omitted legacy presence before comparing identical literals and unions", async () => {
+    const source =
+      'export default () => ({ kind: "result", count: flag ? 1 : 2, nested: { enabled: true } });';
+    const [left, right] = await analyzeSources({ left: source, right: source });
+    const graph = createJavaScriptApplicationGraph({
+      schema: "JavaScriptApplicationGraph",
+      root_node_ids: left.graph.root_node_ids,
+      edges: left.graph.edges,
+      coverage: left.graph.coverage,
+      limitations: left.graph.limitations,
+      nodes: left.graph.nodes.map((node) =>
+        createJavaScriptApplicationNode({
+          kind: node.kind,
+          identity: node.identity,
+          observations: node.observations.map(
+            ({ label, properties, evidence }) => {
+              if (properties.semantic_role !== "export-return-shapes")
+                return { label, properties, evidence };
+              const projection =
+                projectedExportReturnShapesSchema.parse(properties);
+              return {
+                label,
+                evidence,
+                properties: {
+                  ...properties,
+                  static_return_shapes: projection.static_return_shapes.map(
+                    (shape) => ({
+                      ...shape,
+                      fields: shape.fields.map(
+                        ({ path, state, value, reason }) => ({
+                          path,
+                          state,
+                          value,
+                          reason,
+                        }),
+                      ),
+                    }),
+                  ),
+                },
+              };
+            },
+          ),
+        }),
+      ),
+    });
+    for (const sides of [
+      [{ ...left, graph }, right],
+      [right, { ...left, graph }],
+    ] as const) {
+      const result = compare(sides[0], sides[1]);
+      expect(result.coverage.paired_variants).toBe(1);
+      expect(result.changes).toEqual([]);
+      expect(result.coverage.status).toBe("complete-within-inputs");
+    }
+  });
+
+  it("localizes mutation uncertainty while preserving sibling absence", async () => {
+    const graphs = await analyzeSources({
+      left: `export default function make() {
+        const result = { kind: "result", count: 1 };
+        delete result.count;
+        return result;
+      }`,
+      right: 'export default () => ({ kind: "result", total: 1 });',
+    });
+    const result = compare(...graphs);
+    expect(result.changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: "/count",
+          status: "unknown",
+          presence: { left: "unknown-coverage", right: "absent" },
+        }),
+        expect.objectContaining({
+          path: "/total",
+          status: "added",
+          presence: { left: "absent", right: "present" },
+        }),
+      ]),
+    );
+    expect(result.summary).toEqual({
+      added: 1,
+      removed: 0,
+      changed: 0,
+      unknown: 1,
+    });
+  });
+
+  it("proves absence beyond literal holes while retaining unknown spread coverage", async () => {
+    const right =
+      'export default () => ({ kind: "result", items: [,, call()] });';
+    const literal = await analyzeSources({
+      left: 'export default () => ({ kind: "result", items: [,] });',
+      right,
+    });
+    const result = compare(...literal);
+    expect(result.changes).toEqual([
+      expect.objectContaining({
+        path: "/items/2",
+        status: "added",
+        presence: { left: "absent", right: "present" },
+      }),
+    ]);
+    expect(result.coverage.status).toBe("complete-within-inputs");
+    const spread = await analyzeSources({
+      left: 'export default () => ({ kind: "result", items: [, ...rest] });',
+      right,
+    });
+    expect(compare(...spread).changes).toContainEqual(
+      expect.objectContaining({
+        path: "/items/2",
+        status: "unknown",
+        presence: { left: "unknown-coverage", right: "present" },
+      }),
+    );
+  });
+
+  it("excludes the return root but retains empty property names and nested containers", async () => {
+    const source =
+      'export default () => ({ kind: "result", "": call(), options: {} });';
+    const graphs = await analyzeSources({ left: source, right: source });
+    const result = compare(...graphs);
+    expect(inventoryProperties(result, "left", 0)).toEqual([
+      "/",
+      "/kind",
+      "/options",
+    ]);
+    expect(result.property_inventories[0]?.property_coverage).toContainEqual({
+      path: "",
+      status: "complete",
+    });
   });
 });
 
