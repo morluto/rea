@@ -308,14 +308,18 @@ const addPath = (
 ): void => {
   const portable = raw.replaceAll("\\", "/");
   const windowsPath = /^[a-z]:\//iu.test(portable);
-  const scheme = windowsPath ? undefined : URI_SCHEME.exec(portable)?.[0];
+  const sourceMapReference =
+    kind === "source-map-original" || mapPath !== undefined;
+  const scheme = windowsPath
+    ? undefined
+    : (sourceMapReference ? URI_SCHEME : AUTHORITY_URI_SCHEME).exec(
+        portable,
+      )?.[0];
   // Opaque URI payloads do not establish a filesystem path, even with slash text.
-  if (scheme !== undefined && !portable.slice(scheme.length).startsWith("/"))
+  if (scheme !== undefined && !raw.slice(scheme.length).startsWith("/"))
     return;
   const reference =
-    scheme !== undefined ||
-    kind === "source-map-original" ||
-    mapPath !== undefined
+    scheme !== undefined || sourceMapReference
       ? (portable.split(/[?#]/u, 1)[0] ?? "")
       : portable;
   if (
@@ -345,6 +349,8 @@ const addPath = (
 
 /** Recognize URI schemes even when the URI has no authority component. */
 const URI_SCHEME = /^[a-z][a-z0-9+.-]*:/iu;
+/** Outside source maps, only an explicit authority distinguishes URLs from paths. */
+const AUTHORITY_URI_SCHEME = /^[a-z][a-z0-9+.-]*:(?=\/\/)/iu;
 
 const normalizeCurrentPath = (raw: string): string | null => {
   const parts: string[] = [];

@@ -237,6 +237,7 @@ it.each([
   { source: "node:internal/src/a.js", hasPath: false },
   { source: "data:text/javascript,virtual/src/a.js", hasPath: false },
   { source: "data:text/javascript,virtual/../src/a.js", hasPath: false },
+  { source: "data:\\src\\a.js", hasPath: false },
 ])(
   "projects a filesystem path from $source only when it is hierarchical",
   async ({ source, hasPath }) => {
