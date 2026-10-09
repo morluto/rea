@@ -5,7 +5,10 @@ import * as t from "@babel/types";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import { propertyName } from "./javascriptAstValues.js";
+import {
+  propertyName,
+  semanticStaticPropertyKey,
+} from "./javascriptAstValues.js";
 import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
 
 /** Static CommonJS export names. */
@@ -71,15 +74,20 @@ const collectAssignmentExports = (
   output: Set<string>,
 ): void => {
   const path = memberPath(left);
-  if (path === "exports" || path === "module.exports") {
+  if (path === null) return;
+  const exportOffset =
+    path[0] === "exports"
+      ? 1
+      : path[0] === "module" && path[1] === "exports"
+        ? 2
+        : null;
+  if (exportOffset === null) return;
+  if (path.length === exportOffset) {
     if (t.isObjectExpression(right)) collectObjectKeys(right, output);
     else addExport(output, "default");
     return;
   }
-  if (path.startsWith("exports."))
-    addExport(output, path.slice("exports.".length));
-  if (path.startsWith("module.exports."))
-    addExport(output, path.slice("module.exports.".length));
+  addExport(output, path.slice(exportOffset).join("."));
 };
 
 const collectCallExports = (
@@ -87,19 +95,26 @@ const collectCallExports = (
   output: Set<string>,
 ): void => {
   const callee = memberPath(call.callee);
-  if (callee === "Object.defineProperty") {
-    const target = memberPath(call.arguments[0]);
-    const name = stringValue(call.arguments[1]);
-    if ((target === "exports" || target === "module.exports") && name)
-      addExport(output, name);
-  }
-  if (!callee.endsWith(".d")) return;
+  if (callee === null) return;
   const target = memberPath(call.arguments[0]);
-  const declarations = call.arguments[1];
+  const exportTarget =
+    target !== null &&
+    ((target.length === 1 && target[0] === "exports") ||
+      (target.length === 2 &&
+        target[0] === "module" &&
+        target[1] === "exports"));
+  if (!exportTarget) return;
   if (
-    (target === "exports" || target === "module.exports") &&
-    t.isObjectExpression(declarations)
-  )
+    callee.length === 2 &&
+    callee[0] === "Object" &&
+    callee[1] === "defineProperty"
+  ) {
+    const name = stringValue(call.arguments[1]);
+    if (name !== undefined) addExport(output, name);
+  }
+  if (callee.at(-1) !== "d") return;
+  const declarations = call.arguments[1];
+  if (t.isObjectExpression(declarations))
     collectObjectKeys(declarations, output);
 };
 
@@ -109,8 +124,8 @@ const collectObjectKeys = (
 ): void => {
   for (const property of object.properties) {
     if (!t.isObjectProperty(property) && !t.isObjectMethod(property)) continue;
-    const name = propertyName(property.key);
-    if (name !== "") addExport(output, name);
+    const name = semanticStaticPropertyKey(property.key, property.computed);
+    if (name !== null) addExport(output, name);
   }
 };
 
@@ -118,7 +133,9 @@ const addExport = (output: Set<string>, name: string): void => {
   output.add(name);
 };
 
-const memberPath = (node: t.Node | null | undefined): string => {
+const memberPath = (
+  node: t.Node | null | undefined,
+): readonly string[] | null => {
   const properties: string[] = [];
   let current = node;
   while (
@@ -126,23 +143,15 @@ const memberPath = (node: t.Node | null | undefined): string => {
     current !== null &&
     (t.isMemberExpression(current) || t.isOptionalMemberExpression(current))
   ) {
-    properties.push(propertyName(current.property));
-    current = t.isNode(current.object) ? current.object : undefined;
+    const property = semanticStaticPropertyKey(
+      current.property,
+      current.computed,
+    );
+    if (property === null) return null;
+    properties.push(property);
+    current = current.object;
   }
-
-  const root =
-    current !== undefined && t.isIdentifier(current)
-      ? current.name
-      : current !== undefined && t.isThisExpression(current)
-        ? "this"
-        : "";
-  if (properties.length === 0) return root;
-
-  properties.reverse();
-  const path = root === "" ? [] : [root];
-  for (const property of properties) {
-    if (path.length === 0 && property === "") continue;
-    path.push(property);
-  }
-  return path.join(".");
+  if (current === undefined || current === null || !t.isIdentifier(current))
+    return null;
+  return [current.name, ...properties.reverse()];
 };

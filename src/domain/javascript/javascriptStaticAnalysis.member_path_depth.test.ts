@@ -15,7 +15,7 @@ it("collects a 12,000-member CommonJS export path without recursion", () => {
   ]);
 });
 
-it("preserves empty, dynamic, this, and private member path behavior", () => {
+it("preserves empty keys without inventing dynamic, this, or private exports", () => {
   const file = parseJavaScriptSource(`
     exports[""].value = 1;
     exports[""] = 0;
@@ -24,11 +24,7 @@ it("preserves empty, dynamic, this, and private member path behavior", () => {
     class Example { #private = 0; read() { this.#private = 1; } }
   `);
   if (file === null) throw new Error("Expected valid JavaScript");
-  expect(collectJavaScriptExports(file).values).toEqual([
-    "",
-    ".value",
-    "key.value",
-  ]);
+  expect(collectJavaScriptExports(file).values).toEqual(["", ".value"]);
 });
 
 it("keeps left-first and outer-member-first bundler runtime matches", () => {
