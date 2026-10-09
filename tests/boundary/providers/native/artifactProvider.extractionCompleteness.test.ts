@@ -1,11 +1,13 @@
+import { createHash } from "node:crypto";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { createPackage, createPackageWithOptions } from "@electron/asar";
-import { expect, it, onTestFinished, vi } from "vitest";
+import { expect, it } from "vitest";
 
 import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
-import { SafeOutputTree } from "../../../../src/artifacts/SafeOutputTree.js";
+import { materializeArtifactInventory } from "../../../../src/artifacts/extraction/ArtifactExtraction.js";
+import { scanArtifactInventory } from "../../../../src/artifacts/inventory/ArtifactInventory.js";
 import { artifactExtractionResultSchema } from "../../../../src/domain/artifactGraph.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
@@ -17,31 +19,28 @@ it.each(["file", "directory"] as const)(
     const source = join(root, "source");
     await mkdir(join(source, "z"), { recursive: true });
     // Equal bytes share an artifact node, but both occurrences must be copied.
-    await writeFile(join(source, "a.txt"), "same bytes\n");
-    await writeFile(join(source, "z", "missing.txt"), "same bytes\n");
+    const bytes = Buffer.from("same bytes\n");
+    await writeFile(join(source, "a.txt"), bytes);
+    await writeFile(join(source, "z", "missing.txt"), bytes);
     const output = join(root, "output");
-    afterInventory(async () => {
-      await rm(
-        removedKind === "file"
-          ? join(source, "z", "missing.txt")
-          : join(source, "z"),
-        { recursive: removedKind === "directory" },
-      );
-    });
-
-    const result = await extract(source, output);
-    if (result.ok) throw new Error("Incomplete extraction must fail");
-    expect(projectAnalysisError(result.error)).toMatchObject({
-      code: "artifact_operation_failed",
-      details: {
-        operation: "extract_artifact",
-        reason: "integrity",
-        detail:
-          "Inventoried regular artifact entries were not materialized: z/missing.txt",
-      },
+    const materialize = await inventoriedExtraction(source, output);
+    await rm(
+      removedKind === "file"
+        ? join(source, "z", "missing.txt")
+        : join(source, "z"),
+      { recursive: removedKind === "directory" },
+    );
+    await expect(materialize()).rejects.toMatchObject({
+      reason: "integrity",
+      message:
+        "Inventoried regular artifact entries were not materialized: z/missing.txt",
     });
     await expect(access(output)).rejects.toThrow();
-    expect(await readFile(join(source, "a.txt"), "utf8")).toBe("same bytes\n");
+    expect(
+      createHash("sha256")
+        .update(await readFile(join(source, "a.txt")))
+        .digest("hex"),
+    ).toBe(createHash("sha256").update(bytes).digest("hex"));
   },
 );
 
@@ -51,16 +50,11 @@ it("still refuses a regular file added after inventory and rolls back", async ()
   await mkdir(source);
   await writeFile(join(source, "a.txt"), "original\n");
   const output = join(root, "output");
-  afterInventory(async () => {
-    await writeFile(join(source, "z.txt"), "new\n");
-  });
-  const result = await extract(source, output);
-  if (result.ok) throw new Error("Changed inventory must fail");
-  expect(projectAnalysisError(result.error)).toMatchObject({
-    details: {
-      reason: "integrity",
-      detail: "Regular artifact entry is missing from inventory: z.txt",
-    },
+  const materialize = await inventoriedExtraction(source, output);
+  await writeFile(join(source, "z.txt"), "new\n");
+  await expect(materialize()).rejects.toMatchObject({
+    reason: "integrity",
+    message: "Regular artifact entry is missing from inventory: z.txt",
   });
   await expect(access(output)).rejects.toThrow();
 });
@@ -136,18 +130,19 @@ it("ignores unavailable members of a nested ASAR but refuses them as active entr
   await expect(access(activeOutput)).rejects.toThrow();
 });
 
-// Synchronize a real filesystem change after the actual inventory scan. The
-// production reader, writes, failure translation and rollback all remain real.
-const afterInventory = (change: () => Promise<void>): void => {
-  const create = SafeOutputTree.create;
-  const hook = vi
-    .spyOn(SafeOutputTree, "create")
-    .mockImplementationOnce(async (...args) => {
-      const output = await create(...args);
-      await change();
-      return output;
-    });
-  onTestFinished(() => hook.mockRestore());
+const inventoriedExtraction = async (source: string, output: string) => {
+  const snapshot = await scanArtifactInventory(source);
+  return () =>
+    materializeArtifactInventory(
+      {
+        inputPath: source,
+        inputFormat: "asar",
+        outputRoot: output,
+        environment: process.env,
+      },
+      source,
+      snapshot,
+    );
 };
 
 const extract = (source: string, output: string) =>

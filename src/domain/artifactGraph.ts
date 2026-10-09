@@ -137,7 +137,7 @@ const artifactOccurrenceSchema = z.object({
 });
 
 /** Observed bytes that contradict a container's declared integrity identity. */
-const integrityContradictionSchema = z.object({
+export const integrityContradictionSchema = z.object({
   contradiction_id: contradictionIdSchema,
   occurrence_id: occurrenceIdSchema,
   parent_artifact_id: artifactIdSchema,

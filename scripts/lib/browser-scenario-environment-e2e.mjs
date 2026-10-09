@@ -126,17 +126,22 @@ export async function verifyScenarioEnvironment(endpoint, targetId, origin) {
     });
     try {
       await client.connect(transport);
+      const definition = (await client.listTools()).tools.find(
+        ({ name }) => name === "capture_browser_scenario",
+      );
+      assert.ok(definition, "Scenario tool is absent from the current catalog");
       assertCapture(
         requireMcpEvidenceResult(
-          await client.callTool({
-            name: "capture_browser_scenario",
-            arguments: scenario,
-          }),
+          await client.callTool(
+            { name: "capture_browser_scenario", arguments: scenario },
+            { toolDefinition: definition },
+          ),
           "capture_browser_scenario",
         ),
       );
       await verifyConcurrentMcpCapture({
         client,
+        definition,
         connection,
         endpoint,
         targetId,
@@ -198,6 +203,7 @@ export async function verifyScenarioEnvironment(endpoint, targetId, origin) {
 
 const verifyConcurrentMcpCapture = async ({
   client,
+  definition,
   connection,
   endpoint,
   targetId,
@@ -226,7 +232,7 @@ const verifyConcurrentMcpCapture = async ({
   const callTool = (arguments_, signal) => {
     const pending = client.callTool(
       { name: "capture_browser_scenario", arguments: arguments_ },
-      { signal, timeout: 60_000 },
+      { signal, timeout: 60_000, toolDefinition: definition },
     );
     void pending.catch(() => {});
     pendingCalls.push(pending);

@@ -1,0 +1,78 @@
+import { constants } from "node:buffer";
+
+import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import { safeParseJson, type SafeJsonParseResult } from "../domain/safeJson.js";
+
+/** Decode JSON bytes without confusing a runtime string limit with malformed input. */
+export const parseUtf8Json = (
+  bytes: Uint8Array,
+  operation: string,
+  path: string,
+  boundary = "json-input",
+): SafeJsonParseResult => {
+  const stringLimitFailure = (
+    cause?: unknown,
+    decodedUnits?: number,
+  ): AnalysisResourceConstraintError =>
+    new AnalysisResourceConstraintError(
+      operation,
+      "memory",
+      "JSON input exceeds the runtime's maximum decoded string length",
+      {
+        boundary,
+        input_path: path,
+        input_bytes: bytes.byteLength,
+        max_string_code_units: constants.MAX_STRING_LENGTH,
+        ...(decodedUnits === undefined
+          ? {}
+          : { decoded_string_code_units_at_least: decodedUnits }),
+      },
+      {
+        ...(cause === undefined ? {} : { cause }),
+        remediationAction:
+          "Provide a smaller JSON document. For Evidence-based workflows, re-analyze a smaller selection of the original target and use its Evidence; splitting JSON text alone does not produce a valid workflow input.",
+      },
+    );
+  let text: string;
+  try {
+    const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+    if (bytes.byteLength <= constants.MAX_STRING_LENGTH) {
+      text = decoder.decode(bytes);
+    } else {
+      // Node 22's UTF-8 fast path bounds encoded bytes before decoding. Decode
+      // large inputs in chunks so valid multibyte text is bounded by its actual
+      // UTF-16 length. Streaming also preserves characters spanning chunks.
+      const parts: string[] = [];
+      let decodedUnits = 0;
+      const append = (part: string): void => {
+        decodedUnits += part.length;
+        if (decodedUnits > constants.MAX_STRING_LENGTH)
+          throw stringLimitFailure(undefined, decodedUnits);
+        parts.push(part);
+      };
+      const chunkBytes = 1024 * 1024;
+      for (let offset = 0; offset < bytes.byteLength; offset += chunkBytes)
+        append(
+          decoder.decode(bytes.subarray(offset, offset + chunkBytes), {
+            stream: true,
+          }),
+        );
+      append(decoder.decode());
+      text = parts.join("");
+    }
+  } catch (cause: unknown) {
+    if (cause instanceof AnalysisResourceConstraintError) throw cause;
+    const code =
+      typeof cause === "object" && cause !== null && "code" in cause
+        ? cause.code
+        : undefined;
+    if (code === "ERR_STRING_TOO_LONG") throw stringLimitFailure(cause);
+    if (code !== "ERR_ENCODING_INVALID_ENCODED_DATA") throw cause;
+    return {
+      ok: false,
+      error: "JSON input is not valid UTF-8",
+      cause,
+    };
+  }
+  return safeParseJson(text);
+};

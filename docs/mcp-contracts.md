@@ -339,3 +339,9 @@ Contradictory bytes are quarantined from nested expansion and recorded with
 declared and observed hashes, trust, provenance, path, and unpacked state.
 Verified siblings continue. Comparisons classify the result as a contradiction
 and reconstruction cannot treat it as unchanged.
+
+`analyze_javascript_application` accepts the same policy in MCP and as
+`--integrity-policy` on both JavaScript CLI routes. Its result returns the
+canonical `integrity_contradictions` records and marks application graph
+coverage partial when any mismatch is continued. Contradicted nested ASARs
+remain opaque.

@@ -100,7 +100,7 @@ describe("dependency install freshness", () => {
   it("checks installed dependencies before restoring a cached build", async () => {
     const root = await createBuildCacheFixture();
     const seeded = await runNpm(root, ["run", "build:cached"]);
-    expect(seeded.status, seeded.stderr).toBe(0);
+    expect(seeded.status, `${seeded.stdout}${seeded.stderr}`).toBe(0);
 
     const rootLock = asRecord(
       JSON.parse(await readFile(join(root, "package-lock.json"), "utf8")),

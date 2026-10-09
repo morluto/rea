@@ -26,6 +26,7 @@ import {
 } from "../../domain/artifactGraph.js";
 import { AnalysisUnsupportedTargetError } from "../../domain/analysisErrorCore.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
+import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import { scanArtifactInventory } from "../inventory/ArtifactInventory.js";
 
 /** Local extraction input with the output root chosen by the adapter. */
@@ -49,6 +50,17 @@ export const extractArtifact = async (
     signal,
     environment: input.environment,
   });
+  return materializeArtifactInventory(input, sourcePath, snapshot, signal);
+};
+
+/** Materialize a scanned inventory, verifying every current occurrence against it. */
+export const materializeArtifactInventory = async (
+  input: ArtifactExtractionInput,
+  sourcePath: string,
+  snapshot: ArtifactInventorySnapshot,
+  signal?: AbortSignal,
+): Promise<ArtifactExtractionResult> => {
+  abortIfNeeded(signal);
   const selectedOccurrences = snapshot.occurrences.filter(
     (occurrence) =>
       (occurrence.entry_kind === "file" || occurrence.entry_kind === "slice") &&

@@ -8,6 +8,7 @@ import {
   EvidenceIntegrityError,
 } from "../../domain/evidenceErrors.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import type { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { readJsonFile, writeTextFile } from "../JsonFiles.js";
 
 type SnapshotFailure = EvidenceFileError | EvidenceIntegrityError;
@@ -15,7 +16,9 @@ type SnapshotFailure = EvidenceFileError | EvidenceIntegrityError;
 /** Read and validate an analysis snapshot from the caller's path. */
 export const readAnalysisSnapshot = async (
   path: string,
-): Promise<Result<AnalysisSnapshot, SnapshotFailure>> => {
+): Promise<
+  Result<AnalysisSnapshot, SnapshotFailure | AnalysisResourceConstraintError>
+> => {
   const loaded = await readJsonFile(path);
   if (!loaded.ok) return loaded;
   try {
