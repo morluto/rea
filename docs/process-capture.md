@@ -175,6 +175,19 @@ run the same owned-process cleanup path. Settlement reports whether the
 sampled process group quiesced or whether cleanup was needed or unverifiable;
 sampling cannot prove that every short-lived or detached descendant was seen.
 
+By default a deadline sends `SIGKILL` at once. Set `finalization_ms` to let the
+target finish first: when `timeout_ms` or `idle_timeout_ms` fires, REA sends
+`SIGTERM`, keeps capturing output and selected files, and sends `SIGKILL` only
+if the target is still running after `finalization_ms`. `exit.reason` keeps the
+initiating deadline, so a target that exits during finalization is still
+reported as `timeout` or `idle_timeout`. `exit.finalization` then records
+`requested_ms`, `signal`, `outcome` (`target_exited` or `forced_kill`) and
+`elapsed_ms`; it is absent when no finalization was attempted. The wall-clock
+bound becomes `timeout_ms + finalization_ms + settle_ms`. Cancellation is not
+delayed: it sends `SIGKILL` immediately, also during finalization, and ends the
+run as cancelled. A scenario with the default `finalization_ms` of `0` keeps its
+committed identity.
+
 Every capture requires `truncation_details`, with separate accounting for:
 
 - `raw_terminal`: original UTF-8 PTY chunk bytes and observed/retained chunk
