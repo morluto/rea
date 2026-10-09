@@ -94,7 +94,8 @@ struct Runtime : Resource {
   Runtime() : Resource(Kind::Runtime) {}
 };
 struct Process : Resource {
-  Handle job, process, stdoutRead, stderrRead;
+  Handle job, process, stdoutRead, stderrRead, stdinWrite;
+  bool inputPending = false;
   DWORD pid = 0;
   Process() : Resource(Kind::Process) {}
 };
@@ -122,7 +123,8 @@ void closeRuntime(Runtime& runtime);
 napi_value filesystemCall(napi_env env, const std::wstring& operation,
                           const std::vector<napi_value>& args);
 std::unique_ptr<Process> spawnProcess(const std::wstring& command, const std::wstring& commandLine,
-                                    const std::wstring& cwd, const std::vector<std::wstring>& environment);
+                                    const std::wstring& cwd, const std::vector<std::wstring>& environment,
+                                    bool protocolStdin = false);
 napi_value processCall(napi_env env, const std::wstring& operation,
                        const std::vector<napi_value>& args);
 napi_value inspect(napi_env env);

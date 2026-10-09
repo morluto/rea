@@ -23,6 +23,23 @@ export REA_JADX_MCP_JAR=/absolute/path/jadx-headless-mcp-0.7.1-all.jar
 export JAVA_HOME=/absolute/path/existing-jdk
 ```
 
+On Windows x64, use a REA package with its matching bundled Windows native
+controls **including owned protocol stdin support**. This Windows boundary is
+new on repository main; an older released package can still reject this host.
+PowerShell accepts paths containing spaces without additional escaping
+inside these environment values:
+
+```powershell
+$env:REA_JADX_MCP_JAR = 'D:\tools\jadx-headless-mcp-0.7.1-all.jar'
+$env:JAVA_HOME = 'D:\tools\jdk-21'
+rea inspect-android-package 'D:\targets\Example.apk'
+```
+
+REA selects `JAVA_HOME\bin\java.exe`, or resolves `java.exe` on the selected
+Windows `PATH`. A missing or mismatched native artifact reports the package
+prerequisite rather than attempting an unowned Java launch. Windows arm64 is
+outside this provider's current native boundary.
+
 Readiness checks the selected JAR's ZIP directory for the classes consumed by
 REA's metadata bridge, as well as Java's compiler and version modules. It does
 not load an APK or execute engine code. Invalid archives and missing bridge
@@ -34,7 +51,9 @@ the exhausted read budget and the selected JAR path.
 The current metadata bridge is verified on macOS arm64 with OpenJDK 21 and the
 public Appium ApiDemos fixture. The POSIX adapter also supports Linux; the new
 bridge has not yet undergone real verification on Linux/JDK 25.
-Windows is unsupported for this provider's owned stdio process boundary.
+Windows x64 uses an owned Job Object with bidirectional stdio, atomic job
+assignment and kill-on-owner-close. Real Windows verification uses JDK 21 and
+the pinned JADX 0.7.1 JAR; see the real verification lane below.
 
 ## Answer an analyst question
 
@@ -138,6 +157,12 @@ target/configuration changes, failure, timeout, cancellation, MCP disconnect or
 server shutdown. One-shot CLI commands always join cleanup before returning.
 REA never writes to the original APK or launches target code.
 
+On Windows, stdin writes preserve stream backpressure and run outside the Node
+event loop. Cancellation terminates the retained job, including descendants,
+before workspace cleanup. An abrupt CLI/server process termination closes the
+job and stops Java, but cannot run JavaScript workspace cleanup; temporary
+workspace files can remain after that forced exit.
+
 If Java cannot start the bridge, REA reports the selected executable and retained
 startup diagnostics. Select a full JDK through `JAVA_HOME` or `PATH`, and use
 `java --list-modules` to confirm `jdk.compiler` is present. A runnable JRE alone
@@ -196,6 +221,12 @@ The lane also uses the selected full JDK's `jlink` to create a disposable JRE
 without the compiler module. It checks real Java startup failures, missing
 selectors, recovery after failures, and CLI cancellation with owned cleanup.
 The original APK and host Java configuration remain unchanged.
+
+The same lane runs on Windows x64 with the bundled native controls and a full
+JDK. It checks CLI/MCP results, real MCP cancellation and disconnect, and Java
+exit after abrupt CLI owner termination. Windows forced termination is checked
+separately from the POSIX CLI SIGTERM handler; it does not claim a structured
+cancellation result or workspace removal after the owner is forcibly killed.
 
 The download script verifies fixed SHA-256 values, reuses matching files and
 refuses to overwrite a different existing file. APK/JAR files live under ignored

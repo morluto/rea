@@ -17,6 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { verifyWindowsProtocolInput } from "./lib/windows-protocol-input.mjs";
 
 if (process.platform !== "win32")
   throw new Error(
@@ -411,6 +412,10 @@ setInterval(()=>{},1000);\n`,
     await delay();
   assert.equal(live(ownerClose.pid), false);
   report.processes.killOnOwnerClose = true;
+  report.processes.protocolInput = await verifyWindowsProtocolInput(
+    packageRoot,
+    workspace,
+  );
   const exited = launch([
     "--max-old-space-size=128",
     "-e",

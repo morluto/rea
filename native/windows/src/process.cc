@@ -34,16 +34,17 @@ static Handle createJob() {
   return job;
 }
 
-static void pipe(Handle& read, Handle& write) {
+static void pipe(Handle& read, Handle& write, bool parentReads = true) {
   SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
   HANDLE rawRead, rawWrite;
   require(CreatePipe(&rawRead, &rawWrite, &attributes, 0), "Create owned process output pipe failed");
   read.reset(rawRead); write.reset(rawWrite);
-  require(SetHandleInformation(read.get(), HANDLE_FLAG_INHERIT, 0), "Protect process output handle inheritance failed");
+  require(SetHandleInformation(parentReads ? read.get() : write.get(), HANDLE_FLAG_INHERIT, 0), "Protect parent process pipe handle inheritance failed");
 }
 
 std::unique_ptr<Process> spawnProcess(const std::wstring& command, const std::wstring& commandLine,
-                                    const std::wstring& cwd, const std::vector<std::wstring>& environment) {
+                                    const std::wstring& cwd, const std::vector<std::wstring>& environment,
+                                    bool protocolStdin) {
   const auto executable = ordinaryDriveSeparators(command);
   require(executable.size() >= 3 && executable[1] == L':' && executable[2] == L'\\',
           "Owned Windows process requires an absolute executable path", command, ERROR_INVALID_PARAMETER);
@@ -52,9 +53,13 @@ std::unique_ptr<Process> spawnProcess(const std::wstring& command, const std::ws
   Handle stdoutWrite, stderrWrite;
   pipe(result->stdoutRead, stdoutWrite); pipe(result->stderrRead, stderrWrite);
   SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
-  Handle input(CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                          &security, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
-  require(input.valid(), "Open owned process null input failed");
+  Handle input;
+  if (protocolStdin) pipe(input, result->stdinWrite, false);
+  else {
+    input.reset(CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                           &security, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
+    require(input.valid(), "Open owned process null input failed");
+  }
   Attributes attributes(2);
   HANDLE job = result->job.get();
   attributes.add(PROC_THREAD_ATTRIBUTE_JOB_LIST, &job, sizeof(job));
@@ -198,16 +203,93 @@ static napi_value callerToken(napi_env env) {
   return result;
 }
 
+struct InputWork {
+  napi_async_work work = nullptr;
+  napi_deferred deferred = nullptr;
+  napi_ref processReference = nullptr;
+  Process* process;
+  Handle pipe;
+  std::vector<unsigned char> bytes;
+  size_t written = 0;
+  std::unique_ptr<Failure> failure;
+  explicit InputWork(Process& process) : process(&process) {}
+};
+
+static void writeInput(napi_env, void* pointer) {
+  auto& work = *static_cast<InputWork*>(pointer);
+  try {
+    // Anonymous pipe writes may block. Keep them off the JS thread so output
+    // polling and job termination remain live while a child stops reading.
+    while (work.written < work.bytes.size()) {
+      DWORD written = 0;
+      const auto count = static_cast<DWORD>(std::min<size_t>(65536, work.bytes.size() - work.written));
+      require(WriteFile(work.pipe.get(), work.bytes.data() + work.written, count, &written, nullptr),
+              "Write owned process input failed");
+      require(written > 0, "Owned process input write made no progress", L"", ERROR_WRITE_FAULT);
+      work.written += written;
+    }
+  } catch (const Failure& failure) {
+    work.failure = std::make_unique<Failure>(failure);
+  } catch (const std::exception& failure) {
+    work.failure = std::make_unique<Failure>(failure.what(), L"", ERROR_GEN_FAILURE);
+  }
+}
+
+static void completeInput(napi_env env, napi_status status, void* pointer) {
+  std::unique_ptr<InputWork> work(static_cast<InputWork*>(pointer));
+  work->process->inputPending = false;
+  if (work->failure) napi_reject_deferred(env, work->deferred, failureValue(env, *work->failure));
+  else if (status != napi_ok)
+    napi_reject_deferred(env, work->deferred, failureValue(env, Failure("Owned process input worker was cancelled", L"", ERROR_OPERATION_ABORTED)));
+  else napi_resolve_deferred(env, work->deferred, number(env, work->written));
+  napi_delete_reference(env, work->processReference);
+  napi_delete_async_work(env, work->work);
+}
+
+static napi_value inputWrite(napi_env env, napi_value owner, Process& process, napi_value input) {
+  require(process.stdinWrite.valid(), "Owned process has no writable input", L"", ERROR_BROKEN_PIPE);
+  require(!process.inputPending, "Owned process input already has a pending write", L"", ERROR_BUSY);
+  auto work = std::make_unique<InputWork>(process);
+  void* bytes = nullptr;
+  size_t size = 0;
+  bool buffer = false;
+  check(napi_is_buffer(env, input, &buffer));
+  require(buffer, "Owned process input must be a Buffer", L"", ERROR_INVALID_PARAMETER);
+  check(napi_get_buffer_info(env, input, &bytes, &size));
+  if (size > 0) work->bytes.assign(static_cast<unsigned char*>(bytes), static_cast<unsigned char*>(bytes) + size);
+  HANDLE pipe;
+  require(DuplicateHandle(GetCurrentProcess(), process.stdinWrite.get(), GetCurrentProcess(), &pipe,
+                          0, FALSE, DUPLICATE_SAME_ACCESS), "Retain owned process input handle failed");
+  work->pipe.reset(pipe);
+  napi_value promise;
+  check(napi_create_promise(env, &work->deferred, &promise));
+  check(napi_create_reference(env, owner, 1, &work->processReference));
+  try {
+    check(napi_create_async_work(env, nullptr, string(env, std::string("REA owned process input")),
+                               writeInput, completeInput, work.get(), &work->work));
+    check(napi_queue_async_work(env, work->work));
+    process.inputPending = true;
+  } catch (...) {
+    if (work->work) napi_delete_async_work(env, work->work);
+    napi_delete_reference(env, work->processReference);
+    throw;
+  }
+  work.release();
+  return promise;
+}
+
 napi_value processCall(napi_env env, const std::wstring& operation, const std::vector<napi_value>& args) {
   if (operation == L"process_caller_token") {
     require(args.empty(), "Caller token observation takes no arguments", L"", ERROR_INVALID_PARAMETER);
     return callerToken(env);
   }
   if (operation == L"process_spawn") {
-    require(args.size() == 4, "Wrong native process launch argument count", L"", ERROR_INVALID_PARAMETER);
+    require(args.size() == 4 || args.size() == 5, "Wrong native process launch argument count", L"", ERROR_INVALID_PARAMETER);
+    bool protocolStdin = false;
+    if (args.size() == 5) check(napi_get_value_bool(env, args[4], &protocolStdin));
     std::vector<std::wstring> environment;
     for (const auto& entry : array(env, args[3])) environment.push_back(wide(env, entry));
-    auto process = spawnProcess(wide(env, args[0]), wide(env, args[1]), wide(env, args[2]), environment);
+    auto process = spawnProcess(wide(env, args[0]), wide(env, args[1]), wide(env, args[2]), environment, protocolStdin);
     auto result = object(env);
     set(env, result, "pid", number(env, process->pid));
     set(env, result, "jobAssigned", boolean(env, true));
@@ -215,8 +297,16 @@ napi_value processCall(napi_env env, const std::wstring& operation, const std::v
     set(env, result, "handle", wrap(env, std::move(process)));
     return result;
   }
+  if (operation == L"process_stdin_write") {
+    require(args.size() == 2, "Wrong native process input argument count", L"", ERROR_INVALID_PARAMETER);
+    return inputWrite(env, args[0], static_cast<Process&>(resource(env, args[0], Kind::Process)), args[1]);
+  }
   require(args.size() == 1, "Wrong native process handle argument count", L"", ERROR_INVALID_PARAMETER);
   auto& process = static_cast<Process&>(resource(env, args[0], Kind::Process));
+  if (operation == L"process_stdin_close") {
+    process.stdinWrite.reset();
+    return null(env);
+  }
   if (operation == L"process_poll") {
     auto result = object(env);
     bool stdoutEnded = false, stderrEnded = false;
@@ -240,7 +330,7 @@ napi_value processCall(napi_env env, const std::wstring& operation, const std::v
   }
   if (operation == L"process_close") {
     // Closing the job is the crash-safe authority; no PID enumeration is used.
-    process.job.reset(); process.process.reset(); process.stdoutRead.reset(); process.stderrRead.reset();
+    process.job.reset(); process.process.reset(); process.stdoutRead.reset(); process.stderrRead.reset(); process.stdinWrite.reset();
     process.closed = true;
     return null(env);
   }
@@ -266,6 +356,7 @@ napi_value inspect(napi_env env) {
   set(env, result, "privateDacl", boolean(env, true));
   set(env, result, "atomicJobAssignment", boolean(env, true));
   set(env, result, "killOnOwnerClose", boolean(env, true));
+  set(env, result, "protocolStdin", boolean(env, true));
   return result;
 }
 

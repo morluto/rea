@@ -11,11 +11,16 @@ export const verifyAndroidMetadata = async ({
   bridge,
   repository,
   execute,
+  jvmArguments = [],
 }) => {
   const javac =
     process.env.JAVA_HOME === undefined
       ? "javac"
-      : resolve(process.env.JAVA_HOME, "bin/javac");
+      : resolve(
+          process.env.JAVA_HOME,
+          "bin",
+          process.platform === "win32" ? "javac.exe" : "javac",
+        );
   try {
     await execute(javac, ["-version"], { timeout: 10_000 });
   } catch (cause) {
@@ -29,6 +34,7 @@ export const verifyAndroidMetadata = async ({
     await execute(
       javac,
       [
+        ...jvmArguments.map((argument) => `-J${argument}`),
         "-classpath",
         jar,
         "-d",
@@ -44,6 +50,7 @@ export const verifyAndroidMetadata = async ({
     const result = await execute(
       java,
       [
+        ...jvmArguments,
         "-classpath",
         `${classes}${delimiter}${jar}`,
         "ReaJadxMetadataRegression",

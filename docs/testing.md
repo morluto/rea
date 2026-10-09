@@ -458,6 +458,13 @@ Electron GUI behavior or another engine.
 
 ## Android APK analysis
 
+The real Android lane also runs on Windows x64 with its matching bundled native
+controls. It verifies bidirectional protocol input, CLI/MCP result parity,
+real MCP cancellation/disconnect and Java exit after abrupt CLI owner
+termination. The forced Windows exit does not exercise the POSIX SIGTERM
+handler and can leave temporary workspace files. `verify:windows-native`
+separately checks binary input, backpressure, EOF and pending-write job closure.
+
 `npm run verify:android` requires an existing Java 17+ and an explicit
 `REA_JADX_MCP_JAR` for jadx-headless-mcp 0.7.1. Set `REA_ANDROID_TEST_APK` to the
 fixed public ApiDemos v6.0.18 fixture. Obtain both with the explicit

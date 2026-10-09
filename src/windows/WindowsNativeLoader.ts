@@ -43,6 +43,7 @@ const inspectionSchema = z.strictObject({
   privateDacl: z.literal(true),
   atomicJobAssignment: z.literal(true),
   killOnOwnerClose: z.literal(true),
+  protocolStdin: z.boolean().optional(),
 });
 
 type NativeCall = (
