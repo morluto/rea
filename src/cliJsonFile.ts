@@ -5,6 +5,7 @@ import { pipeline } from "node:stream/promises";
 import streamValues from "stream-json/streamers/stream-values.js";
 
 import { withRegularFile } from "./application/RegularFileRead.js";
+import { parseUtf8Json } from "./application/Utf8JsonInput.js";
 import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
@@ -33,14 +34,12 @@ export const readCliJsonFile = (
           stats.size <= NATIVE_PARSE_READ_BUDGET
             ? await readPrefix(handle, stats.size + 1, signal)
             : undefined;
-        if (prefix?.complete === true)
-          return ok(
-            JSON.parse(
-              new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-                prefix.bytes,
-              ),
-            ),
-          );
+        if (prefix?.complete === true) {
+          const parsed = parseUtf8Json(prefix.bytes, operation, path);
+          return parsed.ok
+            ? ok(parsed.value)
+            : err(invalidJson(operation, parsed.error, parsed.cause));
+        }
         await pipeline(
           decodedChunks(handle, signal, prefix?.bytes),
           streamValues.withParserAsStream({

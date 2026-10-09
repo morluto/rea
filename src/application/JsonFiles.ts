@@ -12,8 +12,12 @@ import {
 import { basename, dirname, resolve } from "node:path";
 
 import { EvidenceFileError } from "../domain/evidenceErrors.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisResourceConstraintError,
+} from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { parseUtf8Json } from "./Utf8JsonInput.js";
 
 /** Request control and its owning operation for an interruptible atomic write. */
 export interface TextWriteCancellation {
@@ -27,7 +31,9 @@ type TextWriteResult<Failure = EvidenceFileError | AnalysisCancelledError> =
 /** Read JSON data from a regular file at the caller-supplied path. */
 export const readJsonFile = async (
   path: string,
-): Promise<Result<unknown, EvidenceFileError>> => {
+): Promise<
+  Result<unknown, EvidenceFileError | AnalysisResourceConstraintError>
+> => {
   const requestedPath = resolve(path);
   try {
     const canonicalPath = await realpath(requestedPath);
@@ -37,23 +43,18 @@ export const readJsonFile = async (
         new EvidenceFileError("read", "not-file", { path: requestedPath }),
       );
     const encoded = await readFile(canonicalPath);
-    let decoded: unknown;
-    try {
-      decoded = JSON.parse(
-        new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-          encoded,
-        ),
-      );
-    } catch (cause: unknown) {
+    const decoded = parseUtf8Json(encoded, "read_evidence_file", requestedPath);
+    if (!decoded.ok) {
       return err(
         new EvidenceFileError("read", "invalid-json", {
-          cause,
+          cause: decoded.cause,
           path: requestedPath,
         }),
       );
     }
-    return ok(decoded);
+    return ok(decoded.value);
   } catch (cause: unknown) {
+    if (cause instanceof AnalysisResourceConstraintError) return err(cause);
     return err(
       new EvidenceFileError("read", missingOrIo(cause), {
         cause,

@@ -288,11 +288,8 @@ const configureAttachedEnvironment = async (
   environment: BrowserScenario["environment"],
   signal: AbortSignal | undefined,
 ): Promise<void> => {
-  await page.setViewportSize({
-    width: environment.viewport.width,
-    height: environment.viewport.height,
-  });
-  throwIfScenarioCancelled(signal);
+  // setViewportSize also resizes the external browser window. The scenario's
+  // CDP metrics override below supplies the viewport and expires on disconnect.
   await page.emulateMedia({
     colorScheme: environment.color_scheme,
     reducedMotion: environment.reduced_motion,
@@ -307,6 +304,7 @@ const configureAttachedEnvironment = async (
     height: environment.viewport.height,
     deviceScaleFactor: environment.viewport.device_scale_factor,
     mobile: false,
+    dontSetVisibleSize: true,
   });
   throwIfScenarioCancelled(signal);
   await session.send("Emulation.setLocaleOverride", {

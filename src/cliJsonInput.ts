@@ -15,8 +15,8 @@ export const parseCliJsonInput = async (
   | { readonly ok: true; readonly value: unknown }
   | { readonly ok: false; readonly error: JsonValue }
 > => {
-  const inline = parseJson(value);
-  if (inline !== undefined) return { ok: true, value: inline };
+  const inline = safeParseJson(value);
+  if (inline.ok) return { ok: true, value: inline.value };
   try {
     const parsed = await readCliJsonFile(value, operation);
     return parsed.ok
@@ -30,7 +30,7 @@ export const parseCliJsonInput = async (
             input_reason:
               parsed.error._tag === "AnalysisInputError"
                 ? "invalid-json"
-                : "resource-constraint",
+                : "too-large",
           },
         };
   } catch (cause: unknown) {
@@ -99,11 +99,6 @@ const cannotBeAnExistingFile = (cause: unknown): boolean =>
 
 const hasExplicitJsonFileExtension = (value: string): boolean =>
   value.toLowerCase().endsWith(".json");
-
-const parseJson = (value: string): unknown => {
-  const parsed = safeParseJson(value);
-  return parsed.ok ? parsed.value : undefined;
-};
 
 const inputError = (operation: string): JsonValue => ({
   error: "Application workflow failed",

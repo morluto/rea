@@ -598,6 +598,17 @@ not make native host acceptance unavailable.
 
 ## Native platform baseline in CI
 
+Pull requests that change only root `README*.md` files, `docs/`, `AGENTS.md`,
+or `CONTRIBUTING.md` run formatting and generated-document validation without
+the source-test shards or native package lanes. Classification compares the PR
+head with its merge base, so later base-branch changes do not expand that scope.
+The required static and coverage aggregate jobs remain present and fail if
+classification fails. Mixed changes, unknown paths and CI configuration changes
+retain full checks. Main pushes retain the full baseline, including after
+documentation merges; newer commits cancel superseded CI for the same PR or
+main branch. Release publication has its own concurrency group and retains its
+package verification and public-registry canary.
+
 CI exercises the pinned Node.js runtime on native hosted runners:
 
 | Host                  | Runner             | Baseline checks                                                                          |
@@ -608,17 +619,20 @@ CI exercises the pinned Node.js runtime on native hosted runners:
 | macOS 15 x64          | `macos-15-intel`   | Installed package and real Node Inspector CLI/MCP                                        |
 | Windows x64           | `windows-latest`   | Curated capabilities, native controls, installed package and real Node Inspector CLI/MCP |
 
-Package and Inspector matrices assert the actual Node platform/architecture
-before verification and record those values with the Node version. Each matrix
+Package lanes assert the actual Node platform/architecture before verification
+and record those values with the Node version. The four-host package matrix
 runs at most two jobs concurrently with explicit timeouts and Node heap/thread
-limits. Package checks cover installation, CLI/MCP discovery, target-free
+limits; Windows retains its curated capability lane. Package checks cover
+installation, CLI/MCP discovery, target-free
 analysis, configuration backups/recovery, Evidence and owned lifecycle; Inspector
 checks execute source-owned loopback targets and special filename cases.
 
-macOS uses one OS version with one native baseline job per architecture. Each job
-runs package and Inspector checks after a single dependency installation. The
-separate Inspector matrix covers Linux and Windows; Apple artifact checks retain
-their own macOS 15 arm64 job for Xcode-dependent workflows.
+Each native package host runs package and Inspector checks on the same runner
+after a single dependency installation. macOS uses one OS version with one
+native baseline job per architecture. Windows runs Inspector with its curated
+capability/package checks before switching Node versions for directory-identity
+regressions. Inspector steps retain a ten-minute deadline; Apple artifact checks
+retain their own macOS 15 arm64 job for Xcode-dependent workflows.
 
 These native baseline checks complement the Linux source-test shards and the
 separate Apple-artifact and real-provider lanes. Actual Hopper, Ghidra, IDA,
