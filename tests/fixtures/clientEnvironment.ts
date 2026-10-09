@@ -1,5 +1,15 @@
 import { vi } from "vitest";
 
+import { PRODUCT_IDENTITY } from "../../src/identity.js";
+
+/** The default npx registration command setup writes on POSIX hosts. */
+export const NPX_REGISTRATION_COMMAND = [
+  "npx",
+  "-y",
+  PRODUCT_IDENTITY.registrationPackageSpecifier,
+  "mcp",
+] as const;
+
 /** Environment variables that redirect where supported clients keep config. */
 export const CLIENT_LOCATION_ENVIRONMENT = [
   "APPDATA",

@@ -8,16 +8,13 @@ import { readClientRegistrationStatuses } from "../../../src/application/ClientR
 import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
 import { systemUninstallHost } from "../../../src/application/Uninstall.js";
-import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
+import {
+  clearClientLocationEnvironment,
+  NPX_REGISTRATION_COMMAND,
+} from "../../fixtures/clientEnvironment.js";
 
-const command = [
-  "npx",
-  "-y",
-  PRODUCT_IDENTITY.registrationPackageSpecifier,
-  "mcp",
-] as const;
+const command = NPX_REGISTRATION_COMMAND;
 
 beforeEach(clearClientLocationEnvironment);
 afterEach(() => vi.unstubAllEnvs());
