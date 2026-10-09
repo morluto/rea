@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { classifySwiftSymbol } from "./swiftSymbolClassification.js";
 
 import {
   categorizeSwiftTypes,
@@ -240,5 +241,26 @@ describe("Swift alias ambiguity", () => {
         },
       ],
     });
+  });
+});
+
+it.each(["$s4main7ScoringMp", "_$s4main7ScoringMp"])(
+  "decodes the emitted Swift protocol descriptor %s",
+  (name) => {
+    expect(classifySwiftSymbol(name)).toEqual({ category: "protocols" });
+  },
+);
+
+it("discovers an emitted Swift protocol descriptor without treating methods as declarations", () => {
+  const names = [
+    { address: "0xf0", name: "_$s4main7ScoringMp" },
+    { address: "0x100", name: "_$s4main7ScoringTL" },
+    { address: "0x8", name: "_$s4main3useySiAA7Scoring_pF" },
+    { address: "0x110", name: "_$s4main7ScoringP5scoreSiyFTq" },
+    { address: "0x120", name: "_$s4main7ScoringVMp" },
+  ];
+  expect(discoverObjcProtocols(names)).toEqual({
+    count: 1,
+    protocols: [{ address: "0xf0", name: "_$s4main7ScoringMp" }],
   });
 });

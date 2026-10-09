@@ -29,7 +29,11 @@ export const discoverObjcProtocols = (
 ): JsonValue => {
   const protocols = uniqueByName(
     names.filter(
-      ({ name }) => name.includes("OBJC_PROTOCOL") || name.includes("_TtP"),
+      ({ name }) =>
+        name.includes("OBJC_PROTOCOL") ||
+        name.includes("_TtP") ||
+        (name.endsWith("Mp") &&
+          classifySwiftSymbol(name)?.category === "protocols"),
     ),
   );
   return {

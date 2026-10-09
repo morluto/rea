@@ -39,6 +39,28 @@ describe("enhanced MCP tools", () => {
     expect(result).toMatchObject({ count: 2 });
   });
 
+  it("discovers current Swift protocol descriptor labels through the public inventory tool", async () => {
+    const client = await connect({
+      execute: (name) => {
+        expect(name).toBe("list_names");
+        return Promise.resolve(
+          ok([
+            { address: "0xf0", value: "_$s4main7ScoringMp" },
+            { address: "0x100", value: "_$s4main7ScoringTL" },
+            { address: "0x8", value: "_$s4main3useySiAA7Scoring_pF" },
+          ]),
+        );
+      },
+    });
+    const result = jsonResult(
+      await client.callTool({ name: "get_objc_protocols", arguments: {} }),
+    );
+    expect(result).toMatchObject({
+      count: 1,
+      protocols: [{ address: "0xf0", name: "_$s4main7ScoringMp" }],
+    });
+  });
+
   it("returns the complete overview inline with exhaustive totals", async () => {
     const client = await connect({
       execute: (name) => {

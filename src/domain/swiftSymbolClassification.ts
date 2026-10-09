@@ -42,7 +42,9 @@ export const classifySwiftSymbol = (
     const kind = mangling.charAt(end);
     const nominal = NOMINAL_CATEGORIES.get(kind);
     if (nominal === undefined) {
-      if (kind === "E" && category !== null) category = "extensions";
+      // Protocol descriptors omit the nominal P marker before their Mp suffix.
+      if (mangling.slice(end) === "Mp") category = "protocols";
+      else if (kind === "E" && category !== null) category = "extensions";
       break;
     }
     category = nominal;
