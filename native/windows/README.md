@@ -57,7 +57,9 @@ without this lane reports Windows native controls as unavailable.
   deduplicated using Windows ordinal comparison, preserving their native Unicode
   semantics and caller-selected values.
 - Cleanup walks locked directory objects, removes files by handle, and unlinks
-  reparse entries without traversing their targets. Normal close, cancellation,
+  reparse entries without traversing their targets. Failed removal retains the
+  root and ancestor leases for retry; a partially removed runtime accepts only
+  cleanup, and its registry entry remains until removal succeeds. Normal close, cancellation,
   startup failure, and timeout release provider resources. Abrupt owner death
   kills the owned job; it can leave private runtime files for later operator
   cleanup and does not claim transactional deletion after a crash.

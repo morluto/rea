@@ -2,8 +2,8 @@ import { afterEach, expect, it, vi } from "vitest";
 
 import { browserScenarioSchema } from "../domain/browserScenario.js";
 import {
-  closePlaywrightScenarioBrowser,
   openPlaywrightScenarioBrowser,
+  PlaywrightScenarioBrowserCleanupOwner,
 } from "./PlaywrightScenarioBrowser.js";
 
 afterEach(() => vi.unstubAllEnvs());
@@ -42,23 +42,21 @@ it("passes the selected environment to the actual browser launch boundary", asyn
 
 it("returns cancellation instead of success when an attached browser hangs on close", async () => {
   const controller = new AbortController();
-  let closeStarted = false;
-  const closing = closePlaywrightScenarioBrowser(
-    {
-      browser: {
-        close: () => {
-          closeStarted = true;
-          return new Promise<void>(() => undefined);
-        },
-      },
-      context: { close: async () => undefined },
-      profilePath: undefined,
+  let resolveCloseStarted: () => void = () => undefined;
+  const closeStarted = new Promise<void>((resolve) => {
+    resolveCloseStarted = resolve;
+  });
+  const cleanup = new PlaywrightScenarioBrowserCleanupOwner({
+    closeBrowser: () => {
+      resolveCloseStarted();
+      return new Promise<void>(() => undefined);
     },
-    controller.signal,
-  );
+    removeProfile: undefined,
+  });
+  const closing = cleanup.close(undefined, controller.signal);
 
+  await closeStarted;
   controller.abort();
-  expect(closeStarted).toBe(true);
   await expect(closing).rejects.toMatchObject({
     _tag: "BrowserObservationError",
     reason: "cleanup_failed",

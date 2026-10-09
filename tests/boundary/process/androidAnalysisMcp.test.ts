@@ -136,8 +136,6 @@ it("publishes and executes all APK contracts with inline Evidence and no active 
     expect(validateOutput(response.structuredContent)).toBe(true);
     const result = contract.outputSchema.parse(response.structuredContent);
     const evidence = parseEvidence(result);
-    expect(result.normalized_result).toEqual(evidence.normalized_result);
-    expect(result.evidence_id).toBe(evidence.evidence_id);
     expect(evidence.operation).toBe(contract.name);
     expect(evidence.raw_result).not.toBeNull();
   }

@@ -188,7 +188,18 @@ export class NativeDmgArtifactReader implements ArtifactReader {
       throw new ArtifactReaderFailure(
         "unavailable",
         `DMG detach or mount-root cleanup failed for ${JSON.stringify(this.path)}: ${failureMessage(detachFailure)}`,
-        { cause: detachFailure },
+        {
+          cause: detachFailure,
+          cleanup: {
+            reason: failureMessage(detachFailure),
+            resources: [
+              ...this.#devices.map((device) => `DMG device ${device}`),
+              ...(this.#mountRoot === undefined
+                ? []
+                : [`DMG mount root ${this.#mountRoot}`]),
+            ],
+          },
+        },
       );
   }
 
@@ -298,10 +309,12 @@ export class NativeDmgArtifactReader implements ArtifactReader {
         cleanupFailure = cleanupCause;
       }
       if (cleanupFailure !== undefined)
-        throw new ArtifactReaderFailure(
-          "unavailable",
-          `DMG attach failed and cleanup could not detach every device: ${failureMessage(cause)}; cleanup: ${failureMessage(cleanupFailure)}`,
-          { cause: new AggregateError([cause, cleanupFailure]) },
+        throw ArtifactReaderFailure.withCleanup(
+          cause,
+          ArtifactReaderFailure.cleanupObservation(
+            cleanupFailure,
+            `DMG mount root ${this.#mountRoot ?? this.path}`,
+          ),
         );
       throw cause;
     }

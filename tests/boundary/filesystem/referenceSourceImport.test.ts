@@ -11,7 +11,11 @@ import {
   importReferenceSource,
   normalizeHistoricalSourceParseFailures,
 } from "../../../src/application/ReferenceSourceImport.js";
-import { projectReferenceSourceEntryFailure } from "../../../src/application/ReferenceSourceImportEntries.js";
+import {
+  parseReferenceSourceEntries,
+  projectReferenceSourceEntryFailure,
+} from "../../../src/application/ReferenceSourceImportEntries.js";
+import type { ReferenceSourceRead } from "../../../src/reference/ReferenceSourceReader.js";
 import {
   projectReferenceSourceImportError,
   type ReferenceSourceImportError,
@@ -114,6 +118,33 @@ describe("reference source import error projection", () => {
 });
 
 describe("reference source symlink import", () => {
+  it("preserves an unreadable target as unknown instead of a synthetic path", () => {
+    const read: ReferenceSourceRead = {
+      root: "/reference",
+      entries: [
+        {
+          status: "failed",
+          kind: "symlink",
+          path: "src/link.ts",
+          code: "io",
+          message: "Symbolic link target could not be read",
+        },
+      ],
+      bytesRead: 0,
+      limitations: [],
+    };
+
+    const parsed = parseReferenceSourceEntries(read, new Set());
+    expect(parsed.entries).toContainEqual(
+      expect.objectContaining({
+        kind: "symlink",
+        path: "src/link.ts",
+        target: null,
+        target_state: "unreadable",
+      }),
+    );
+  });
+
   it("retains external symlink targets as local graph diagnostics", async () => {
     const root = await createTestTempDirectory("rea-reference-links-");
     const outside = await createTestTempDirectory("rea-reference-outside-");
@@ -289,8 +320,6 @@ describe("reference source import behavior", () => {
         importTree(leftRoot),
         importTree(rightRoot),
       ]);
-      expect(left.ok).toBe(true);
-      expect(right.ok).toBe(true);
       if (!left.ok || !right.ok) throw new Error("expected imports to pass");
       expect(createHistoricalSourceManifest(left.value)).toEqual(
         createHistoricalSourceManifest(right.value),

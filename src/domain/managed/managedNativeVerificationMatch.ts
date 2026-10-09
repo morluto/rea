@@ -109,8 +109,16 @@ const sameSymbolName = (expected: string, native: NativeSymbol): boolean =>
 const normalizeModule = (value: string): string =>
   basename(value)
     .toLowerCase()
-    .replace(/^lib/u, "")
     .replace(/\.(dll|dylib|so|node|exe)$/u, "");
+
+const nativeModuleIdentities = (value: string): ReadonlySet<string> => {
+  const filename = basename(value).toLowerCase();
+  const stem = normalizeModule(filename);
+  const identities = new Set([stem]);
+  if (/\.(dylib|so)$/u.test(filename) && stem.startsWith("lib"))
+    identities.add(stem.slice("lib".length));
+  return identities;
+};
 
 const moduleCompatible = (
   scope: string | null,
@@ -120,8 +128,7 @@ const moduleCompatible = (
   const expected = normalizeModule(scope);
   return [symbol.module_name, symbol.module_path]
     .filter((value): value is string => value !== null)
-    .map(normalizeModule)
-    .some((value) => value === expected);
+    .some((value) => nativeModuleIdentities(value).has(expected));
 };
 
 const candidateNames = (

@@ -11,7 +11,7 @@ import type {
 } from "./BrowserScenarioSessionPort.js";
 import { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
 import {
-  closePlaywrightScenarioBrowser,
+  failBrowserScenarioOperation,
   openPlaywrightScenarioBrowser,
   type OpenedScenarioBrowser,
 } from "./PlaywrightScenarioBrowser.js";
@@ -103,10 +103,8 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
   readonly product = "Chromium";
   readonly version: string;
   readonly initialUrl: string;
-  private closed = false;
   private readonly secrets: BrowserScenarioSecrets;
   private readonly eventCapture: PlaywrightScenarioEvents;
-  private readonly signal: AbortSignal | undefined;
 
   private constructor(
     private readonly opened: OpenedScenarioBrowser,
@@ -114,7 +112,6 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
       readonly mode: BrowserScenario["browser"]["mode"];
       readonly secrets: BrowserScenarioSecrets;
       readonly eventCapture: PlaywrightScenarioEvents;
-      readonly signal?: AbortSignal;
     },
   ) {
     this.mode = options.mode;
@@ -122,7 +119,6 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
       options.mode === "launch" ? "provider-owned" : "external";
     this.secrets = options.secrets;
     this.eventCapture = options.eventCapture;
-    this.signal = options.signal;
     this.version = opened.browser.version();
     this.initialUrl = opened.page.url();
   }
@@ -141,6 +137,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
       throw new BrowserObservationError(OPERATION, "secret_unavailable");
     const opening = openPlaywrightScenarioBrowser(scenario, environment);
     let opened: OpenedScenarioBrowser;
+    let events: PlaywrightScenarioEvents | undefined;
     try {
       opened = await withPlaywrightExecutionBoundary(
         () => opening,
@@ -150,7 +147,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
     } catch (cause: unknown) {
       void opening
         .then((lateOpened) =>
-          closePlaywrightScenarioBrowser(lateOpened, options.signal),
+          lateOpened.cleanup.close(undefined, options.signal),
         )
         .catch((cause: unknown) => {
           // best-effort cleanup: late-open cleanup must not mask the boundary failure.
@@ -164,7 +161,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
         undefined,
         options.signal,
       );
-      const events = new PlaywrightScenarioEvents({
+      events = new PlaywrightScenarioEvents({
         page: opened.page,
         context: opened.context,
         ownsContext: scenario.browser.mode === "launch",
@@ -177,7 +174,6 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
         mode: scenario.browser.mode,
         secrets,
         eventCapture: events,
-        ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
       await withPlaywrightExecutionBoundary(
         () =>
@@ -190,8 +186,16 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
       );
       return session;
     } catch (cause: unknown) {
-      await closePlaywrightScenarioBrowser(opened, options.signal);
-      throw cause;
+      return failBrowserScenarioOperation(
+        () =>
+          opened.cleanup.close(
+            events === undefined
+              ? undefined
+              : () => events?.finish() ?? Promise.resolve(),
+            options.signal,
+          ),
+        cause,
+      );
     }
   }
 
@@ -260,16 +264,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
   }
 
   async close() {
-    if (this.closed)
-      return this.mode === "launch"
-        ? ("terminated-owned-process" as const)
-        : ("disconnected-external" as const);
-    this.closed = true;
-    try {
-      await this.eventCapture.finish();
-    } finally {
-      await closePlaywrightScenarioBrowser(this.opened, this.signal);
-    }
+    await this.opened.cleanup.close(() => this.eventCapture.finish());
     return this.mode === "launch"
       ? ("terminated-owned-process" as const)
       : ("disconnected-external" as const);

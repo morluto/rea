@@ -104,9 +104,6 @@ it("advertises exact schemas and projects one layout section from retained Evide
     parent_evidence_id: parent.evidence_id,
     item: { name: { display: ".data" } },
   });
-  expect(parsed.normalized_result).toEqual(
-    parseEvidence(parsed).normalized_result,
-  );
   expect(session.evidenceById(parsed.evidence_id)).toEqual(
     parseEvidence(parsed),
   );

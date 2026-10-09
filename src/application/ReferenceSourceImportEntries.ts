@@ -59,7 +59,7 @@ const failedEntry = (
     return {
       path: entry.path,
       kind: "symlink",
-      target: "<unreadable>",
+      target: null,
       target_state: "unreadable",
       classifications,
       limitations: [limitation],

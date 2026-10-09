@@ -121,7 +121,14 @@ describe("native DMG artifact reader", () => {
         undefined,
         host,
       ),
-    ).rejects.toThrow("cleanup could not detach every device");
+    ).rejects.toMatchObject({
+      cleanup: {
+        resources: expect.arrayContaining([
+          "DMG device /dev/disk-fixture",
+          expect.stringMatching(/^DMG mount root /u),
+        ]),
+      },
+    });
   });
 });
 
@@ -570,6 +577,12 @@ describe("APFS disk image detach", () => {
     await expect(reader.close()).rejects.toMatchObject({
       reason: "unavailable",
       message: expect.stringContaining("No such file or directory"),
+      cleanup: {
+        resources: expect.arrayContaining([
+          "DMG device /dev/disk4",
+          expect.stringMatching(/^DMG mount root /u),
+        ]),
+      },
     });
   });
 

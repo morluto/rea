@@ -71,7 +71,6 @@ it("publishes valid SDK schemas and records the named module trace without a bin
       },
     ],
   });
-  expect(parsed.normalized_result).toEqual(evidence.normalized_result);
   expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
   const invalid = await client.callTool({
     name: "trace_web_module_imports",

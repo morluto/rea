@@ -91,11 +91,13 @@ const scopesFor = (
     }),
   );
 
-const unknownSide = (): z.infer<typeof sideResultSchema> => ({
+const unknownSide = (
+  rawTrace: z.infer<typeof matchedEventSchema>[] = [],
+): z.infer<typeof sideResultSchema> => ({
   status: "unknown",
   matched_variant: null,
   satisfied_constraints: [],
-  raw_trace: [],
+  raw_trace: rawTrace,
 });
 
 export type EvaluatedSide = {
@@ -412,11 +414,9 @@ export const evaluateProcessTraceSide = (
 ): EvaluatedSide => {
   const sources = new Set(specification.events.map(({ source }) => source));
   const relevantScopes = scopesFor(sources);
-  if (
+  const incomplete =
     [...sources].some((source) => processSourceTruncated(capture, source)) ||
-    capture.residual_unknowns.some(({ scope }) => relevantScopes.has(scope))
-  )
-    return { result: unknownSide(), diagnostic: null };
+    capture.residual_unknowns.some(({ scope }) => relevantScopes.has(scope));
   if (capture.event_journal.length === 0)
     return {
       result: unknownSide(),
@@ -428,6 +428,13 @@ export const evaluateProcessTraceSide = (
       },
     };
   const matched = matchRecords(collectRecords(capture, sources), specification);
+  if (incomplete)
+    return {
+      result: unknownSide(
+        "rawTrace" in matched ? matched.rawTrace : matched.result.raw_trace,
+      ),
+      diagnostic: null,
+    };
   return "rawTrace" in matched
     ? evaluateMatchedTrace(matched, specification)
     : matched;

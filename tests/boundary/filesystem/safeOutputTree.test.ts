@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
-import { access, readFile, readdir, readlink, rm } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  readFile,
+  readdir,
+  readlink,
+  rm,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 
@@ -8,6 +15,7 @@ import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
+import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 
 describe("safe artifact output tree", () => {
   it.skipIf(process.platform !== "linux")(
@@ -48,6 +56,32 @@ describe("safe artifact output tree", () => {
     await expect(access(output)).rejects.toThrow();
     expect(await readdir(parent)).toEqual([]);
   });
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "reports the owned residual root when rollback lacks directory permissions",
+    async () => {
+      const parent = await createTestTempDirectory("rea-safe-output-rollback-");
+      const output = join(parent, "published");
+      const tree = await SafeOutputTree.create(output);
+      const bytes = Buffer.from("retained until rollback can retry");
+      await tree.write(
+        "nested/file.txt",
+        Readable.from(bytes),
+        createHash("sha256").update(bytes).digest("hex"),
+      );
+      try {
+        await chmod(output, 0o500);
+        const failure = await tree.rollback().catch((cause: unknown) => cause);
+        expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+        expect(failure).toMatchObject({
+          cleanup: { resources: [output] },
+        });
+      } finally {
+        await chmod(output, 0o700).catch(() => undefined);
+        await tree.rollback();
+      }
+    },
+  );
 
   it("publishes files while building and preserves them after sealing", async () => {
     const parent = await createTestTempDirectory("rea-safe-output-");

@@ -10,6 +10,7 @@ import {
 } from "playwright-core";
 
 import type { BrowserScenario } from "../domain/browserScenario.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { withPlaywrightExecutionBoundary } from "./PlaywrightExecutionBoundary.js";
 
@@ -20,12 +21,98 @@ export interface OpenedScenarioBrowser {
   readonly page: Page;
   readonly browser: Browser;
   readonly profilePath: string | undefined;
+  readonly cleanup: PlaywrightScenarioBrowserCleanupOwner;
 }
 
-interface CloseableScenarioBrowser {
-  readonly context: Pick<BrowserContext, "close">;
-  readonly browser: Pick<Browser, "close">;
-  readonly profilePath: string | undefined;
+/** Provider actions retained until the owned browser and profile are released. */
+export interface PlaywrightScenarioCleanupResources {
+  readonly closeBrowser: () => Promise<void>;
+  readonly removeProfile: (() => Promise<void>) | undefined;
+}
+
+/** Owns one browser connection and optional private profile through cleanup retries. */
+export class PlaywrightScenarioBrowserCleanupOwner {
+  #browserClosed = false;
+  #profileRemoved: boolean;
+  #closePromise: Promise<void> | undefined;
+  #eventFinalizationPromise: Promise<void> | undefined;
+
+  /** Keep the narrow provider actions needed to release one opened browser. */
+  constructor(private readonly resources: PlaywrightScenarioCleanupResources) {
+    this.#profileRemoved = resources.removeProfile === undefined;
+  }
+
+  close(
+    finishEvents?: () => Promise<void>,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const cleanup = this.#closePromise ?? this.#closeResources(finishEvents);
+    if (this.#closePromise === undefined) {
+      this.#closePromise = cleanup;
+      void cleanup.catch(() => {
+        if (this.#closePromise === cleanup) this.#closePromise = undefined;
+      });
+    }
+    return this.#awaitCleanup(cleanup, signal);
+  }
+
+  async #awaitCleanup(
+    cleanup: Promise<void>,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    try {
+      await withPlaywrightExecutionBoundary(() => cleanup, 1_000, signal);
+    } catch (cause: unknown) {
+      throw new BrowserObservationError(OPERATION, "cleanup_failed", {
+        cause,
+        cleanup: {
+          reason: cause instanceof Error ? cause.message : String(cause),
+          resources: [
+            "browser_transport",
+            ...(this.resources.removeProfile === undefined
+              ? []
+              : ["browser_profile"]),
+          ],
+        },
+      });
+    }
+  }
+
+  async #closeResources(finishEvents?: () => Promise<void>): Promise<void> {
+    const failures: unknown[] = [];
+    const eventFinalization = (this.#eventFinalizationPromise ??=
+      Promise.resolve().then(async () => {
+        await finishEvents?.();
+      }));
+    try {
+      await eventFinalization;
+    } catch (cause: unknown) {
+      failures.push(cause);
+    }
+    if (!this.#browserClosed) {
+      try {
+        await this.resources.closeBrowser();
+        this.#browserClosed = true;
+      } catch (cause: unknown) {
+        failures.push(cause);
+      }
+    }
+    if (
+      this.#browserClosed &&
+      !this.#profileRemoved &&
+      this.resources.removeProfile !== undefined
+    ) {
+      try {
+        await this.resources.removeProfile();
+        this.#profileRemoved = true;
+      } catch (cause: unknown) {
+        failures.push(cause);
+      }
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1)
+      throw new AggregateError(failures, "Browser session cleanup failed");
+  }
 }
 
 const allowedBrowserEnvironment = (
@@ -54,7 +141,6 @@ const allowedBrowserEnvironment = (
       ),
   );
 };
-
 const findConnectedPage = async (
   browser: Browser,
   targetId: string,
@@ -105,6 +191,41 @@ const configureAttachedEnvironment = async (
   }
 };
 
+/** Preserve an operation failure while reporting any incomplete cleanup. */
+export const failBrowserScenarioOperation = async (
+  cleanup: () => Promise<void>,
+  primaryFailure: unknown,
+  fallbackCleanupResources: readonly string[] = ["browser_transport"],
+): Promise<never> => {
+  try {
+    await cleanup();
+  } catch (cleanupFailure: unknown) {
+    const cleanupDetails =
+      cleanupFailure instanceof AnalysisError &&
+      cleanupFailure.cleanup !== undefined
+        ? cleanupFailure.cleanup
+        : {
+            reason:
+              cleanupFailure instanceof Error
+                ? cleanupFailure.message
+                : String(cleanupFailure),
+            resources:
+              cleanupFailure instanceof AnalysisError
+                ? cleanupFailure.cleanupResources
+                : fallbackCleanupResources,
+          };
+    throw new BrowserObservationError(OPERATION, "cleanup_failed", {
+      cause: new AggregateError(
+        [primaryFailure, cleanupFailure],
+        "Browser scenario operation and cleanup both failed",
+        { cause: primaryFailure },
+      ),
+      cleanup: cleanupDetails,
+    });
+  }
+  throw primaryFailure;
+};
+
 /** Launch or attach using the caller-selected environment and browser engine. */
 export const openPlaywrightScenarioBrowser = async (
   scenario: BrowserScenario,
@@ -119,23 +240,32 @@ export const openPlaywrightScenarioBrowser = async (
       scenario.browser.cdp_endpoint,
       { timeout: 0 },
     );
+    const cleanup = new PlaywrightScenarioBrowserCleanupOwner({
+      closeBrowser: () => browser.close(),
+      removeProfile: undefined,
+    });
     try {
       const target = await findConnectedPage(
         browser,
         scenario.browser.target_id,
       );
       await configureAttachedEnvironment(target.context, target.page, scenario);
-      return { ...target, browser, profilePath: undefined };
+      return {
+        ...target,
+        browser,
+        profilePath: undefined,
+        cleanup,
+      };
     } catch (cause: unknown) {
-      await browser.close();
-      throw cause;
+      return failBrowserScenarioOperation(() => cleanup.close(), cause);
     }
   }
 
   const profilePath = await mkdtemp(join(tmpdir(), "rea-browser-scenario-"));
-  await chmod(profilePath, 0o700);
+  let context: BrowserContext;
   try {
-    const context = await launcher.launchPersistentContext(profilePath, {
+    await chmod(profilePath, 0o700);
+    context = await launcher.launchPersistentContext(profilePath, {
       executablePath: resolve(scenario.browser.executable_path),
       headless: scenario.browser.headless,
       acceptDownloads: false,
@@ -155,42 +285,31 @@ export const openPlaywrightScenarioBrowser = async (
       handleSIGTERM: false,
       timeout: 0,
     });
-    const browser = context.browser();
-    if (browser === null) {
-      await context.close();
-      throw new BrowserObservationError(OPERATION, "protocol_error");
-    }
-    const page = context.pages()[0] ?? (await context.newPage());
-    return { context, page, browser, profilePath };
   } catch (cause: unknown) {
-    await rm(profilePath, { recursive: true, force: true, maxRetries: 3 });
-    throw cause;
+    return failBrowserScenarioOperation(
+      () => rm(profilePath, { recursive: true, force: true, maxRetries: 3 }),
+      cause,
+      ["browser_profile"],
+    );
   }
-};
-
-export const closePlaywrightScenarioBrowser = async (
-  { context, browser, profilePath }: CloseableScenarioBrowser,
-  signal?: AbortSignal,
-): Promise<void> => {
-  const cleanup = (async () => {
-    try {
-      // In connect mode Playwright's Browser.close disconnects its CDP client;
-      // it does not close the externally owned browser process.
-      if (profilePath === undefined) await browser.close();
-      else await context.close();
-    } finally {
-      if (profilePath !== undefined)
-        await rm(profilePath, { recursive: true, force: true, maxRetries: 3 });
-    }
-  })();
-  // best-effort cleanup: the bounded execution boundary below observes the
-  // same cleanup promise; this early attachment only prevents unhandled rejection.
-  void cleanup.catch(() => undefined);
-  // The shared execution boundary rejects cancellation/timeouts instead of
-  // returning a successful capture whose browser or profile may still exist.
+  const cleanup = new PlaywrightScenarioBrowserCleanupOwner({
+    closeBrowser: () => context.close(),
+    removeProfile: () =>
+      rm(profilePath, { recursive: true, force: true, maxRetries: 3 }),
+  });
   try {
-    await withPlaywrightExecutionBoundary(() => cleanup, 1_000, signal);
+    const browser = context.browser();
+    if (browser === null)
+      throw new BrowserObservationError(OPERATION, "protocol_error");
+    const page = context.pages()[0] ?? (await context.newPage());
+    return {
+      context,
+      page,
+      browser,
+      profilePath,
+      cleanup,
+    };
   } catch (cause: unknown) {
-    throw new BrowserObservationError(OPERATION, "cleanup_failed", { cause });
+    return failBrowserScenarioOperation(() => cleanup.close(), cause);
   }
 };

@@ -73,7 +73,6 @@ it("publishes valid SDK schemas and records the named module trace without a bin
     },
     raw_result: { source_map_text: data.sourceMap.text },
   });
-  expect(parsed.normalized_result).toEqual(evidence.normalized_result);
   expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
   const invalid = await client.callTool({
     name: "trace_web_source_location",

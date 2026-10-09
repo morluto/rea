@@ -45,6 +45,7 @@ import {
 export const scanCanonicalArtifactInventory = async (
   path: string,
   options: ArtifactInventoryOptions = {},
+  readerFactory: typeof createReader = createReader,
 ): Promise<ArtifactInventorySnapshot> => {
   const integrity = options.integrity ?? STRICT_INTEGRITY_POLICY;
   const metadata = await lstat(path);
@@ -52,33 +53,59 @@ export const scanCanonicalArtifactInventory = async (
   const rootDigest = metadata.isDirectory()
     ? null
     : await hashReadable(createReadStream(path), options.signal);
-  const reader = await createReader(
+  const reader = await readerFactory(
     path,
     rootFormat,
     options.environment ?? {},
     options.signal,
   );
-
+  let outcome:
+    | {
+        readonly kind: "completed";
+        readonly snapshot: ArtifactInventorySnapshot;
+      }
+    | { readonly kind: "failed"; readonly cause: unknown };
   try {
     const { nodes, occurrences, pendingContradictions } = await scanReader(
       reader,
       options.signal,
       integrity,
     );
-    return await buildInventorySnapshot({
-      path,
-      metadata,
-      rootFormat,
-      rootDigest,
-      reader,
-      signal: options.signal,
-      nodes,
-      occurrences,
-      pendingContradictions,
-    });
-  } finally {
-    await reader?.close();
+    outcome = {
+      kind: "completed",
+      snapshot: await buildInventorySnapshot({
+        path,
+        metadata,
+        rootFormat,
+        rootDigest,
+        reader,
+        signal: options.signal,
+        nodes,
+        occurrences,
+        pendingContradictions,
+      }),
+    };
+  } catch (cause: unknown) {
+    outcome = { kind: "failed", cause };
   }
+  try {
+    await reader?.close();
+  } catch (cleanupCause: unknown) {
+    const cleanup = ArtifactReaderFailure.cleanupObservation(
+      cleanupCause,
+      `artifact reader for ${path}`,
+    );
+    const primary = outcome.kind === "failed" ? outcome.cause : cleanupCause;
+    throw ArtifactReaderFailure.withCleanup(
+      primary,
+      cleanup,
+      outcome.kind === "completed"
+        ? { kind: "artifact-inventory", inventory: outcome.snapshot }
+        : undefined,
+    );
+  }
+  if (outcome.kind === "failed") throw outcome.cause;
+  return outcome.snapshot;
 };
 
 interface SnapshotBuildInput {

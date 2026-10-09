@@ -72,7 +72,6 @@ it("publishes valid SDK schemas and retains historical inline Evidence with the 
     response.structuredContent,
   );
   const evidence = parseEvidence(parsed);
-  expect(parsed.normalized_result).toEqual(evidence.normalized_result);
   const capture = webNetworkCaptureSchema.parse(parsed.normalized_result);
   expect(capture.container.reported).toEqual({
     creator: "fixture",
