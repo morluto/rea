@@ -32,7 +32,11 @@ export const resolveXrefsAddress = async (
     )
       return resolveProcedureAddress(
         async (operation, parameters, signal) => {
-          const result = await analysis.execute(operation, parameters, (signal === undefined ? {} : { signal }));
+          const result = await analysis.execute(
+            operation,
+            parameters,
+            signal === undefined ? {} : { signal },
+          );
           return result.ok ? ok(result.value.result) : result;
         },
         selector,
