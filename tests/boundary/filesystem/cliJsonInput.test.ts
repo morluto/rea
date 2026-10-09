@@ -119,8 +119,7 @@ describe("CLI JSON input", () => {
           },
         },
         remediation: {
-          action:
-            "Split the JSON into smaller inputs or rerun its producer on a smaller subset, then retry.",
+          action: expect.stringContaining("re-analyze a smaller selection"),
         },
       },
     });
