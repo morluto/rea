@@ -33,7 +33,7 @@ const jsIncompatible = (detail: string): AnalysisError =>
     },
   ]);
 
-/** Artifact-relative path used to select a module when one exists. */
+/** Exact module path or original source-map reference, when available. */
 export const javascriptModulePath = (node: ApplicationNode): string | null => {
   if (node.identity.strategy === "canonical-path") return node.identity.path;
   if (node.identity.strategy === "source-map-original")

@@ -31,7 +31,13 @@ const facetViewSchema = z.strictObject({
 const itemSelectorSchema = z.union([
   z.strictObject({ index: z.number().int().nonnegative() }),
   z.strictObject({ name: z.string() }),
-  z.strictObject({ path: z.string() }),
+  z.strictObject({
+    path: z
+      .string()
+      .describe(
+        "Exact observed module path or original source-map reference from a module page; an empty reference is valid.",
+      ),
+  }),
   z.strictObject({ node_id: prefixedDigestSchema("jag_node") }),
 ]);
 const itemViewSchema = z
