@@ -12,8 +12,12 @@ import {
 import { err, ok, type Result } from "./domain/result.js";
 
 type JsonFileFailure = AnalysisInputError | AnalysisResourceConstraintError;
+const READ_CHUNK_BYTES = 64 * 1024;
+// Retain native-parser speed for modest inputs while bounding its extra copies.
+// This selects an implementation; larger files remain accepted through streaming.
+const NATIVE_PARSE_READ_BUDGET = 8 * 1024 * 1024;
 
-/** Parse a strict UTF-8 JSON file without retaining a whole-file buffer or string. */
+/** Parse strict UTF-8 JSON without requiring a whole-document string. */
 export const readCliJsonFile = (
   path: string,
   operation: string,
@@ -25,8 +29,20 @@ export const readCliJsonFile = (
       let found = false;
       let value: unknown;
       try {
+        const prefix =
+          stats.size <= NATIVE_PARSE_READ_BUDGET
+            ? await readPrefix(handle, stats.size + 1, signal)
+            : undefined;
+        if (prefix?.complete === true)
+          return ok(
+            JSON.parse(
+              new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+                prefix.bytes,
+              ),
+            ),
+          );
         await pipeline(
-          decodedChunks(handle, signal),
+          decodedChunks(handle, signal, prefix?.bytes),
           streamValues.withParserAsStream({
             jsonStreaming: false,
             streamValues: false,
@@ -60,11 +76,15 @@ export const readCliJsonFile = (
           return err(
             invalidJson(operation, "JSON input is not valid UTF-8", cause),
           );
-        if (cause instanceof Error && cause.message.startsWith("Parser "))
+        if (
+          cause instanceof SyntaxError ||
+          (cause instanceof Error && cause.message.startsWith("Parser "))
+        )
           return err(invalidJson(operation, cause.message, cause));
         if (
-          cause instanceof RangeError &&
-          (cause.message === "Invalid string length" ||
+          cause instanceof Error &&
+          ((cause instanceof RangeError &&
+            cause.message === "Invalid string length") ||
             ("code" in cause && cause.code === "ERR_STRING_TOO_LONG"))
         )
           return err(
@@ -92,9 +112,17 @@ export const readCliJsonFile = (
 async function* decodedChunks(
   handle: FileHandle,
   signal: AbortSignal | undefined,
+  prefix?: Uint8Array,
 ): AsyncGenerator<string> {
   const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
-  const bytes = Buffer.allocUnsafe(64 * 1024);
+  if (prefix !== undefined)
+    for (let offset = 0; offset < prefix.length; offset += READ_CHUNK_BYTES) {
+      signal?.throwIfAborted();
+      yield decoder.decode(prefix.subarray(offset, offset + READ_CHUNK_BYTES), {
+        stream: true,
+      });
+    }
+  const bytes = Buffer.allocUnsafe(READ_CHUNK_BYTES);
   while (true) {
     signal?.throwIfAborted();
     const read = await handle.read(bytes, 0, bytes.length, null);
@@ -104,6 +132,26 @@ async function* decodedChunks(
   }
   yield decoder.decode();
 }
+
+const readPrefix = async (
+  handle: FileHandle,
+  size: number,
+  signal: AbortSignal | undefined,
+): Promise<{ readonly bytes: Buffer; readonly complete: boolean }> => {
+  const bytes = Buffer.allocUnsafe(size);
+  let offset = 0;
+  while (offset < bytes.length) {
+    signal?.throwIfAborted();
+    const read = await handle.read(bytes, offset, bytes.length - offset, null);
+    signal?.throwIfAborted();
+    if (read.bytesRead === 0)
+      return { bytes: bytes.subarray(0, offset), complete: true };
+    offset += read.bytesRead;
+  }
+  // The file grew after admission. Continue from this same handle, preserving
+  // the prefix already read rather than reopening or dropping its bytes.
+  return { bytes, complete: false };
+};
 
 const invalidJson = (
   operation: string,

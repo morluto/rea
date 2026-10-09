@@ -104,7 +104,7 @@ describe("CLI JSON streamed input", () => {
       ),
     ];
     for (const text of documents) {
-      await writeFile(path, text);
+      await writeFile(path, `${" ".repeat(9 * 1024 * 1024)}${text}`);
       const parsed = await parseCliJsonInput(path, "test-input");
       if (!parsed.ok) throw new Error(JSON.stringify(parsed.error));
       expect(parsed.value).toEqual(JSON.parse(text));
@@ -132,15 +132,17 @@ describe("CLI JSON streamed input", () => {
   ])("rejects strict JSON syntax violations in files (%j)", async (text) => {
     const root = await createTestTempDirectory("rea-json-input-invalid-");
     const path = join(root, "input.json");
-    await writeFile(path, text);
-    expect(await parseCliJsonInput(path, "test-input")).toMatchObject({
-      ok: false,
-      error: {
-        code: "invalid_request",
-        input_path: path,
-        input_reason: "invalid-json",
-      },
-    });
+    for (const prefix of ["", " ".repeat(9 * 1024 * 1024)]) {
+      await writeFile(path, `${prefix}${text}`);
+      expect(await parseCliJsonInput(path, "test-input")).toMatchObject({
+        ok: false,
+        error: {
+          code: "invalid_request",
+          input_path: path,
+          input_reason: "invalid-json",
+        },
+      });
+    }
   });
 
   it.each([Buffer.from([0xf0, 0x28, 0x8c, 0xbc]), Buffer.from([0xe2, 0x82])])(
@@ -150,7 +152,10 @@ describe("CLI JSON streamed input", () => {
       const path = join(root, "input.json");
       await writeFile(
         path,
-        Buffer.concat([Buffer.from(`"${"x".repeat(65_534)}`), invalid]),
+        Buffer.concat([
+          Buffer.from(`${" ".repeat(9 * 1024 * 1024)}"${"x".repeat(65_534)}`),
+          invalid,
+        ]),
       );
       expect(await parseCliJsonInput(path, "test-input")).toMatchObject({
         ok: false,
@@ -165,7 +170,7 @@ describe("CLI JSON streamed input", () => {
   it("cancels a file parse and allows a following read", async () => {
     const root = await createTestTempDirectory("rea-json-input-cancel-");
     const path = join(root, "input.json");
-    await writeFile(path, `${" ".repeat(8 * 1024 * 1024)}{"after":true}`);
+    await writeFile(path, `${" ".repeat(9 * 1024 * 1024)}{"after":true}`);
     const controller = new AbortController();
     const cancelled = readCliJsonFile(path, "test-input", controller.signal);
     setImmediate(() => controller.abort(new Error("cancel JSON file parse")));
