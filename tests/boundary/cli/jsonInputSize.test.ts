@@ -14,8 +14,8 @@ cliTest(
     const input = join(root, "oversized.json");
     const file = await open(input, "wx");
     try {
-      // Sparse zero bytes are valid UTF-8. Decoding exceeds the native string
-      // limit before JSON syntax can be inspected; no huge fixture is retained.
+      // Sparse zero bytes are valid UTF-8. The Evidence reader reaches the
+      // decoded-length limit; the streamed CLI rejects their invalid JSON syntax.
       await file.truncate(constants.MAX_STRING_LENGTH + 1);
     } finally {
       await file.close();
