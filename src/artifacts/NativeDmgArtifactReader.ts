@@ -15,6 +15,12 @@ import {
 import { DirectoryArtifactReader } from "./DirectoryArtifactReader.js";
 import { execFileOutput } from "../process/ExecFileOutput.js";
 const DETACH_TIMEOUT_MS = 120_000;
+/**
+ * Waits before rechecking devices whose detach failed. A related device's
+ * later detach can eject one, `hdiutil info` can still list an ejected device
+ * briefly, and a volume can report busy just after it was read.
+ */
+const DETACH_SETTLE_DELAYS_MS = [250, 500, 1000] as const;
 const attachOutputSchema = z.object({
   "system-entities": z.array(
     z.object({
@@ -43,9 +49,13 @@ export interface NativeDmgHost {
     readonly exitCode: number;
     readonly cause?: unknown;
   }>;
+  /** Wait between detach rechecks; tests may resolve immediately. */
+  delay?(milliseconds: number): Promise<void>;
 }
 
 const systemHost: NativeDmgHost = {
+  delay: (milliseconds) =>
+    new Promise((resolve) => setTimeout(resolve, milliseconds)),
   async run(arguments_, signal, options) {
     try {
       const { stdout, stderr } = await execFileOutput(
@@ -128,23 +138,33 @@ export class NativeDmgArtifactReader implements ArtifactReader {
 
   async close(): Promise<void> {
     let detachFailure: unknown;
-    const remainingDevices: string[] = [];
+    let remainingDevices: string[] = [];
     for (const device of [...this.#devices].reverse()) {
-      try {
-        await runChecked(this.host, ["detach", device], undefined, {
-          timeoutMs: DETACH_TIMEOUT_MS,
-        });
-        this.#provenance.push(command(["detach", device], ["mount"]));
-      } catch (cause: unknown) {
-        // Detaching a synthesized APFS container also ejects the image that
-        // backs it, so a later whole disk of the same image may already be
-        // gone. Only a device that is still attached is a cleanup failure.
-        if (await this.#isAttached(device)) {
-          remainingDevices.push(device);
-          detachFailure ??= cause;
-        }
+      const failure = await this.#detach(device);
+      if (failure !== undefined) {
+        remainingDevices.push(device);
+        detachFailure ??= failure;
       }
     }
+    // Detaching a synthesized APFS container also ejects the image that backs
+    // it, so a device whose own detach failed may be gone by the end of the
+    // pass, and hdiutil can list an ejected device or report busy briefly.
+    // Only a device that stays attached through every recheck is a failure.
+    for (const delayMs of DETACH_SETTLE_DELAYS_MS) {
+      if (remainingDevices.length === 0) break;
+      await (this.host.delay ?? systemHost.delay)?.(delayMs);
+      const stillAttached: string[] = [];
+      for (const device of remainingDevices) {
+        if (!(await this.#isAttached(device))) continue;
+        const failure = await this.#detach(device);
+        if (failure !== undefined) {
+          stillAttached.push(device);
+          detachFailure = failure;
+        }
+      }
+      remainingDevices = stillAttached;
+    }
+    if (remainingDevices.length === 0) detachFailure = undefined;
     this.#devices = remainingDevices.reverse();
     if (this.#devices.length === 0 && this.#mountRoot !== undefined)
       await rm(this.#mountRoot, { recursive: true, force: true }).then(
@@ -162,6 +182,19 @@ export class NativeDmgArtifactReader implements ArtifactReader {
         `DMG detach or mount-root cleanup failed for ${JSON.stringify(this.path)}: ${failureMessage(detachFailure)}`,
         { cause: detachFailure },
       );
+  }
+
+  /** Detach one device; return the failure only while it remains attached. */
+  async #detach(device: string): Promise<unknown> {
+    try {
+      await runChecked(this.host, ["detach", device], undefined, {
+        timeoutMs: DETACH_TIMEOUT_MS,
+      });
+      this.#provenance.push(command(["detach", device], ["mount"]));
+      return undefined;
+    } catch (cause: unknown) {
+      return (await this.#isAttached(device)) ? cause : undefined;
+    }
   }
 
   /**
