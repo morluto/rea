@@ -79,8 +79,8 @@ it("advertises portable NUL escapes and patterns that compile in all JS modes", 
   ).toEqual([]);
 
   // DeepSeek rejects the short NUL escape even though V8 accepts it in all
-  // three modes, and other strict validators reject the `\u` form as well, so
-  // NUL is advertised as the hex escape every engine compiles.
+  // three modes. Keep the shared hex spelling across the advertised catalog;
+  // actual provider acceptance is verified separately from JS compilation.
   expect(
     patterns.filter(
       ({ pattern }) => pattern.includes("\\0") || pattern.includes("\\u0000"),

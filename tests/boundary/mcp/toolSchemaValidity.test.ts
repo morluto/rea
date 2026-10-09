@@ -517,51 +517,6 @@ it("ships nonrecursive input and output schemas in the generated catalog", () =>
   expect(recursiveReferences(GENERATED_MCP_TOOL_CATALOG)).toEqual([]);
 });
 
-it("advertises patterns that compile in every regex mode a client may use", () => {
-  // A tool schema rides along on every request, so a pattern the client's own
-  // regex engine cannot compile fails the whole `tools` request rather than the
-  // one call that would have used it. `\u0000` and a bare `[` inside a character
-  // class are valid under Annex B and `u` but rejected by stricter engines; the
-  // hex spellings below are the ones every engine accepts.
-  expect(unportablePatterns(GENERATED_MCP_TOOL_CATALOG)).toEqual([]);
-});
-
-/** Advertised patterns that a stricter regex engine may reject at compile time. */
-function unportablePatterns(tools: readonly ToolSchemas[]): string[] {
-  const found: string[] = [];
-  const visit = (node: unknown, label: string): void => {
-    if (!isRecord(node)) return;
-    for (const [key, child] of Object.entries(node)) {
-      if (key !== "pattern" || typeof child !== "string") {
-        visit(child, label);
-        continue;
-      }
-      if (containsJavaScriptOnlyEscape(child) || containsBareClassOpen(child))
-        found.push(`${label}: ${child}`);
-    }
-  };
-  for (const tool of tools)
-    for (const kind of ["inputSchema", "outputSchema"] as const) {
-      if (tool[kind] !== undefined) visit(tool[kind], `${tool.name}.${kind}`);
-    }
-  return found;
-}
-
-/** `\u0000` and a lone `\0` are JavaScript spellings stricter engines reject. */
-function containsJavaScriptOnlyEscape(pattern: string): boolean {
-  return /\\(?:u0000|u\{0\}|0(?![0-9]))/u.test(pattern);
-}
-
-/** An unescaped `[` inside a character class is a literal only to Annex B/`u`. */
-function containsBareClassOpen(pattern: string): boolean {
-  for (const characterClass of pattern.matchAll(/\[(?:\\.|[^\]\\])*\]/gu))
-    if (
-      /(?<!\\)\[/u.test(characterClass[0].slice(1, -1).replaceAll(/\\./gu, ""))
-    )
-      return true;
-  return false;
-}
-
 it("distinguishes recursive references from shared definitions", () => {
   const diamond = {
     type: "object",
