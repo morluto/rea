@@ -17,7 +17,8 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { parseUtf8Json } from "./Utf8JsonInput.js";
-import { NonRegularFileReadError, readRegularFile } from "./RegularFileRead.js";
+import { readRegularFile } from "./RegularFileRead.js";
+import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
 
 /** Request control and its owning operation for an interruptible atomic write. */
 export interface TextWriteCancellation {

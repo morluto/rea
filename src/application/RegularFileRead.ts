@@ -1,19 +1,7 @@
-import { constants, type Stats } from "node:fs";
-import { open, type FileHandle } from "node:fs/promises";
+import type { Stats } from "node:fs";
+import type { FileHandle } from "node:fs/promises";
 
-/** The opened input cannot supply regular-file bytes. */
-export class NonRegularFileReadError extends Error {
-  readonly code: "EISDIR" | "ENOTFILE";
-
-  constructor(
-    readonly path: string,
-    directory: boolean,
-  ) {
-    super(`Selected input must be a regular file: ${path}`);
-    this.name = "NonRegularFileReadError";
-    this.code = directory ? "EISDIR" : "ENOTFILE";
-  }
-}
+import { openRegularFile } from "../filesystem/RegularFile.js";
 
 /** Admit one regular-file handle, retain it through the consumer, and always close it. */
 export const withRegularFile = async <Value>(
@@ -21,19 +9,10 @@ export const withRegularFile = async <Value>(
   read: (handle: FileHandle, stats: Stats) => Promise<Value>,
   signal?: AbortSignal,
 ): Promise<Value> => {
-  signal?.throwIfAborted();
-  const handle = await open(
-    path,
-    constants.O_RDONLY |
-      (constants.O_NONBLOCK ?? 0) |
-      (constants.O_NOCTTY ?? 0),
-  );
+  const handle = await openRegularFile(path, { symlinks: "follow", signal });
   try {
-    signal?.throwIfAborted();
     const stats = await handle.stat();
     signal?.throwIfAborted();
-    if (!stats.isFile())
-      throw new NonRegularFileReadError(path, stats.isDirectory());
     const value = await read(handle, stats);
     signal?.throwIfAborted();
     return value;

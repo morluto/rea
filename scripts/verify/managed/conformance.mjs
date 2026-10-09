@@ -13,7 +13,7 @@ import { projectManagedApplicationGraphEvidence } from "../../../dist/applicatio
 import { traceApplicationFeatureEvidence } from "../../../dist/application/javascript/JavaScriptApplicationWorkflowService.js";
 import { MANAGED_STATIC_PROVIDER } from "../../../dist/application/InvestigationProviders.js";
 import { createEvidence } from "../../../dist/domain/evidence.js";
-import { functionDossier } from "../../fixtures/function-dossier.mjs";
+import { functionDossier } from "../../fixtures/managed/function-dossier.mjs";
 import {
   alternateMvid,
   buildNativePeFixture,

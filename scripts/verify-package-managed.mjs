@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { createEvidence } from "../dist/domain/evidence.js";
 import { buildManagedPeFixture } from "./fixtures/managed/pe.mjs";
-import { functionDossier } from "./fixtures/function-dossier.mjs";
+import { functionDossier } from "./fixtures/managed/function-dossier.mjs";
 import { json, run } from "./lib/verify-package-core.mjs";
 
 const buildManagedFixtures = async (workspace) => {

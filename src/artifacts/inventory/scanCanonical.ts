@@ -1,7 +1,6 @@
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
-import { createReadStream } from "node:fs";
 import { lstat } from "node:fs/promises";
 import type { Stats } from "node:fs";
 
@@ -30,8 +29,9 @@ import {
   artifactGraphDigest,
   artifactManifestId,
 } from "../../domain/artifactIdentity.js";
-import { classifyRoot } from "./classify.js";
-import { hashReadable, type HashResult } from "../ArtifactHash.js";
+import { classifyAndHashRoot } from "./classify.js";
+import { type HashResult } from "../ArtifactHash.js";
+import { hashStableRootArtifact } from "./hashStableRootArtifact.js";
 import { createReader, inventoryLimitations } from "./reader.js";
 import {
   scanReader,
@@ -49,10 +49,12 @@ export const scanCanonicalArtifactInventory = async (
 ): Promise<ArtifactInventorySnapshot> => {
   const integrity = options.integrity ?? STRICT_INTEGRITY_POLICY;
   const metadata = await lstat(path);
-  const rootFormat = await classifyRoot(path, metadata.isDirectory());
-  const rootDigest = metadata.isDirectory()
-    ? null
-    : await hashReadable(createReadStream(path), options.signal);
+  const { format: rootFormat, digest: rootDigest } = await classifyAndHashRoot(
+    path,
+    metadata.isDirectory(),
+    metadata,
+    options.signal,
+  );
   const reader = await readerFactory(
     path,
     rootFormat,
@@ -240,7 +242,7 @@ const verifyRootDigest = async (
   signal: AbortSignal | undefined,
 ): Promise<void> => {
   if (rootDigest === null) return;
-  const verified = await hashReadable(createReadStream(path), signal);
+  const verified = await hashStableRootArtifact(path, signal);
   if (
     verified.sha256 !== rootDigest.sha256 ||
     verified.bytes !== rootDigest.bytes

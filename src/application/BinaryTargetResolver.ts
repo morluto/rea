@@ -2,7 +2,7 @@ import { constants } from "node:fs";
 import { createHash } from "node:crypto";
 import {
   access,
-  open,
+  lstat,
   realpath,
   stat,
   type FileHandle,
@@ -10,6 +10,10 @@ import {
 import { extname, isAbsolute, resolve } from "node:path";
 
 import { BinaryTargetError } from "../domain/configurationErrors.js";
+import {
+  openRegularFile,
+  sameRegularFileState,
+} from "../filesystem/RegularFile.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -69,11 +73,13 @@ export const parseBinaryTarget = async (
     const { executable: path, infoPlist } = resolved.value;
     const bundle =
       infoPlist === undefined ? {} : { bundleInfoPlist: infoPlist };
-    const handle = await open(path, "r");
+    const handle = await openRegularFile(path, {
+      symlinks: "reject",
+      signal,
+    });
     try {
       throwIfTargetResolutionCancelled(signal);
-      if (!(await handle.stat()).isFile())
-        return err(new BinaryTargetError(path, "target is not a regular file"));
+      const metadata = await handle.stat();
       throwIfTargetResolutionCancelled(signal);
       if (formatHint === "dos-com") {
         if (targetKind !== undefined && targetKind !== "executable")
@@ -83,12 +89,12 @@ export const parseBinaryTarget = async (
               "DOS COM format requires an executable target kind",
             ),
           );
-        const length = validateDosComLength((await handle.stat()).size);
+        const length = validateDosComLength(metadata.size);
         if (!length.ok) return err(new BinaryTargetError(path, length.error));
         return ok({
           path,
           sourcePath: canonical,
-          sha256: await sha256Handle(handle, signal),
+          sha256: await sha256Handle(handle, path, metadata, signal),
           kind: "executable",
           format: "dos-com",
           architecture: "x86",
@@ -102,7 +108,7 @@ export const parseBinaryTarget = async (
         return ok({
           path,
           sourcePath: process.platform === "win32" ? candidate : canonical,
-          sha256: await sha256Handle(handle, signal),
+          sha256: await sha256Handle(handle, path, metadata, signal),
           kind: "database",
           format: "analysis-database",
         });
@@ -111,7 +117,7 @@ export const parseBinaryTarget = async (
         const identity = {
           path,
           sourcePath: process.platform === "win32" ? candidate : canonical,
-          sha256: await sha256Handle(handle, signal),
+          sha256: await sha256Handle(handle, path, metadata, signal),
         };
         return isArchiveFormat(artifactFormat)
           ? ok({ ...identity, kind: "archive", format: artifactFormat })
@@ -127,7 +133,7 @@ export const parseBinaryTarget = async (
         path,
         sourcePath: process.platform === "win32" ? candidate : canonical,
         ...bundle,
-        sha256: await sha256Handle(handle, signal),
+        sha256: await sha256Handle(handle, path, metadata, signal),
         kind: "executable",
         ...detected.value,
       });
@@ -136,6 +142,7 @@ export const parseBinaryTarget = async (
     }
   } catch (cause: unknown) {
     if (cause instanceof AnalysisCancelledError) return err(cause);
+    if (cause instanceof BinaryTargetError) return err(cause);
     if (!(cause instanceof Error)) throw cause;
     const code = filesystemErrorCode(cause);
     if (code === undefined) throw cause;
@@ -164,6 +171,10 @@ const targetFailureReason = (code: string, detail: string): string => {
       return `permission denied while reading target: ${detail}`;
     case "EISDIR":
       return `target is a directory, not a readable file: ${detail}`;
+    case "ENOTFILE":
+      return "target is not a regular file";
+    case "ELOOP":
+      return `target changed while being opened: ${detail}`;
     default:
       return `target could not be read (${code}): ${detail}`;
   }
@@ -235,6 +246,8 @@ const isArchiveFormat = (
 
 const sha256Handle = async (
   handle: FileHandle,
+  path: string,
+  initial: Awaited<ReturnType<FileHandle["stat"]>>,
   signal?: AbortSignal,
 ): Promise<string> => {
   const hash = createHash("sha256");
@@ -248,6 +261,14 @@ const sha256Handle = async (
     hash.update(chunk.subarray(0, observed.bytesRead));
     position += observed.bytesRead;
   }
+  throwIfTargetResolutionCancelled(signal);
+  const [opened, currentPath] = await Promise.all([handle.stat(), lstat(path)]);
+  if (
+    !sameRegularFileState(initial, opened) ||
+    !sameRegularFileState(initial, currentPath) ||
+    position !== initial.size
+  )
+    throw new BinaryTargetError(path, "target changed while being read");
   return hash.digest("hex");
 };
 

@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 
-import { NonRegularFileReadError } from "./application/RegularFileRead.js";
 import { readCliJsonFile } from "./cliJsonFile.js";
+import { NonRegularFileReadError } from "./filesystem/RegularFile.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
