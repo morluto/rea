@@ -45,6 +45,21 @@ export async function verifyGhidraEntryAliases({
       ({ address }) => address === alias.address,
     );
     assert.ok(canonical, "Fixture alias is not at a function entry");
+    const xrefsSelectors = [];
+    for (const value of [
+      canonical.value,
+      alias.value,
+      `${prefix}rea_xrefs_data`,
+      `${prefix}rea_xrefs_unreferenced`,
+    ]) {
+      const symbol = names.find((item) => item.value === value);
+      assert.ok(symbol, `Missing xrefs selector ${value}`);
+      const expected = await call("xrefs", { address: symbol.address });
+      if (value === `${prefix}rea_xrefs_unreferenced`)
+        assert.deepEqual(expected, []);
+      else assert.ok(expected.length > 0, `Missing references for ${value}`);
+      xrefsSelectors.push({ symbol, expected });
+    }
     for (const procedure of [
       alias.value,
       "dead",
@@ -117,6 +132,55 @@ export async function verifyGhidraEntryAliases({
     assert.equal(
       JSON.parse(stdout).normalized_result.procedure.address,
       alias.address,
+    );
+    for (const { symbol, expected } of xrefsSelectors) {
+      for (const selector of [
+        [symbol.value],
+        ["--address", symbol.value],
+        [symbol.address],
+      ]) {
+        const { stdout } = await exec(
+          process.execPath,
+          [
+            entrypoint,
+            "xrefs",
+            path,
+            ...selector,
+            "--provider",
+            "ghidra",
+            "--json",
+          ],
+          { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
+        );
+        const evidence = JSON.parse(stdout);
+        assert.deepEqual(evidence.normalized_result, expected);
+        assert.equal(evidence.parameters.address, selector.at(-1));
+      }
+    }
+    await assert.rejects(
+      exec(
+        process.execPath,
+        [
+          entrypoint,
+          "xrefs",
+          path,
+          "rea_missing_symbol",
+          "--provider",
+          "ghidra",
+          "--json",
+        ],
+        { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
+      ),
+      (error) => {
+        const failure = JSON.parse(error.stdout);
+        assert.equal(failure.code, "invalid_request");
+        assert.equal(failure.details.operation, "xrefs");
+        assert.match(
+          JSON.stringify(failure.details.issues),
+          /Unknown analyzed symbol name.*rea_missing_symbol/u,
+        );
+        return true;
+      },
     );
     assert.deepEqual(await readFile(path), bytes);
     await call("open_binary", { path: target.path, provider_id: "ghidra" });

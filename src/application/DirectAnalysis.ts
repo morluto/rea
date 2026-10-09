@@ -48,6 +48,8 @@ import {
 } from "./WorkflowEvidence.js";
 import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
 import { artifactInspectionResultSchema } from "../domain/artifactInspection.js";
+import { resolveXrefsAddress } from "./XrefsAddressResolution.js";
+import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 
 type DirectAnalysisTool =
   | "annotate_native_function"
@@ -356,7 +358,34 @@ const executeAnalysisTool = async (input: {
     });
     return { output: evidence, evidence };
   }
-  const result = await session.execute(tool, input.arguments, { signal });
+  let result = await session.execute(tool, input.arguments, { signal });
+  if (
+    tool === "xrefs" &&
+    typeof input.arguments.address === "string" &&
+    !result.ok &&
+    result.error instanceof AnalysisInputError &&
+    !result.error.cleanupIncomplete &&
+    result.error.issues.length > 0 &&
+    result.error.issues.every(
+      ({ path, reason }) =>
+        path.length === 1 &&
+        path[0] === "address" &&
+        reason === "invalid_format",
+    )
+  ) {
+    const address = await resolveXrefsAddress(
+      session,
+      input.arguments.address,
+      signal,
+    );
+    if (!address.ok) return { output: cliError(address.error) };
+    if (address.value !== input.arguments.address)
+      result = await session.execute(
+        tool,
+        { ...input.arguments, address: address.value },
+        { signal },
+      );
+  }
   if (!result.ok) return { output: cliError(result.error) };
   const evidence = createEvidence(
     result.value.subject ?? input.openedTarget,

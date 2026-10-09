@@ -5,10 +5,13 @@
 #define REA_SYMBOL(name) name
 #endif
 
+volatile int rea_xrefs_data = 17;
+__attribute__((used)) volatile int rea_xrefs_unreferenced = 41;
+
 __attribute__((noinline, used)) int rea_alias_target(void) {
   __asm__ volatile(".globl " REA_SYMBOL("rea_interior") "\n"
                    REA_SYMBOL("rea_interior") ":");
-  return 17;
+  return rea_xrefs_data;
 }
 
 __asm__(".globl " REA_SYMBOL("rea_entry_alias") "\n"
