@@ -1,3 +1,4 @@
+import { once } from "node:events";
 import { createServer } from "node:http";
 
 import { expect, it } from "vitest";
@@ -26,10 +27,9 @@ it("follows only HTTP redirect statuses when a source-map response carries Locat
       .end();
   });
   try {
-    await new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(0, "127.0.0.1", resolve);
-    });
+    const listening = once(server, "listening");
+    server.listen(0, "127.0.0.1");
+    await listening;
     const address = server.address();
     if (address === null || typeof address === "string")
       throw new TypeError("Expected TCP listener");
