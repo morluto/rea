@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { build } from "plist";
@@ -7,6 +7,7 @@ import { expect, it } from "vitest";
 import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
 import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 import { inspectBundleKeyedArchive } from "../../../src/artifacts/apple/KeyedArchiveReader.js";
+import { inventoryArtifact } from "../../../src/artifacts/inventory/ArtifactInventory.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import {
   AnalysisInputError,
@@ -39,6 +40,58 @@ const inspect = (bundlePath: string, parameters: Record<string, unknown>) =>
     parameters,
     platform: "darwin",
   });
+
+it("selects a native filesystem archive using its inventory Unicode spelling", async () => {
+  const root = await createTestTempDirectory("rea-keyed-unicode-");
+  const directory = "Cafe\u0301";
+  const filename = "Mode\u0301le.plist";
+  await mkdir(join(root, directory));
+  // This golden archive was produced by Foundation; the regression concerns
+  // filesystem spelling rather than a synthetic archive representation.
+  const bytes = await readFile(
+    new URL(
+      "../../fixtures/golden/keyed-archive/foundation.xml",
+      import.meta.url,
+    ),
+  );
+  await writeFile(join(root, directory, filename), bytes);
+  expect(await readdir(join(root, directory))).toEqual([filename]);
+  const inventory = await inventoryArtifact(root);
+  const path = inventory.occurrences.find(
+    ({ entry_kind }) => entry_kind === "file",
+  )?.logical_path;
+  expect(path).toBe(`${directory}/${filename}`.normalize("NFC"));
+  const result = await inspect(root, { path });
+  expect(result.archive_path).toBe(`${directory}/${filename}`);
+  expect(result.archive_sha256).toBe(
+    inventory.nodes.find(({ artifact_id }) =>
+      inventory.occurrences.some(
+        (entry) =>
+          entry.logical_path === path && entry.artifact_id === artifact_id,
+      ),
+    )?.sha256,
+  );
+});
+
+it.skipIf(process.platform === "darwin" || process.platform === "win32")(
+  "rejects Unicode-equivalent filenames on filesystems that retain both entries",
+  async () => {
+    const root = await createTestTempDirectory("rea-keyed-unicode-collision-");
+    for (const filename of ["Caf\u00e9.plist", "Cafe\u0301.plist"])
+      await writeFile(join(root, filename), archive);
+    await expect(
+      inspect(root, { path: "Caf\u00e9.plist" }),
+    ).rejects.toMatchObject({
+      issues: [
+        {
+          path: ["path"],
+          reason: "invalid_value",
+          message: expect.stringContaining("Unicode-equivalent"),
+        },
+      ],
+    });
+  },
+);
 
 it.each([
   [".", "invalid_format", "relative to the active app bundle"],

@@ -24,7 +24,10 @@ import {
   projectKeyedArchive,
 } from "../../domain/apple/keyedArchive.js";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactEntry,
+} from "../ArtifactReader.js";
 
 import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
 
@@ -126,78 +129,99 @@ export const inspectBundleKeyedArchive = async (input: {
     );
   const reader = new DirectoryArtifactReader(input.bundlePath);
   try {
-    for await (const entry of reader.entries(input.signal)) {
-      if (entry.path !== selected.path) continue;
-      if (entry.kind !== "file")
-        throw archivePathError(
-          "invalid_value",
-          `Archive path selects a ${entry.kind}, not a regular file: ${selected.path}`,
+    const entry = await selectBundleArchiveEntry(
+      reader,
+      selected.path,
+      input.signal,
+    );
+    if (entry.kind !== "file")
+      throw archivePathError(
+        "invalid_value",
+        `Archive path selects a ${entry.kind}, not a regular file: ${selected.path}`,
+      );
+    if ((entry.declaredSize ?? 0) > MAX_BYTES)
+      throw new ArtifactReaderFailure("limit", "Keyed archive exceeds 64 MiB");
+    const stream = await reader.open(entry, input.signal);
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of stream) {
+      if (input.signal?.aborted) {
+        stream.destroy();
+        throw new ArtifactReaderFailure(
+          "cancelled",
+          "Archive inspection cancelled",
         );
-      if ((entry.declaredSize ?? 0) > MAX_BYTES)
+      }
+      const bytes = z.instanceof(Buffer).parse(chunk);
+      size += bytes.length;
+      if (size > MAX_BYTES) {
+        stream.destroy();
         throw new ArtifactReaderFailure(
           "limit",
           "Keyed archive exceeds 64 MiB",
         );
-      const stream = await reader.open(entry, input.signal);
-      const chunks: Buffer[] = [];
-      let size = 0;
-      for await (const chunk of stream) {
-        if (input.signal?.aborted) {
-          stream.destroy();
-          throw new ArtifactReaderFailure(
-            "cancelled",
-            "Archive inspection cancelled",
-          );
-        }
-        const bytes = z.instanceof(Buffer).parse(chunk);
-        size += bytes.length;
-        if (size > MAX_BYTES) {
-          stream.destroy();
-          throw new ArtifactReaderFailure(
-            "limit",
-            "Keyed archive exceeds 64 MiB",
-          );
-        }
-        chunks.push(bytes);
       }
-      const bytes = Buffer.concat(chunks, size);
-      try {
-        return keyedArchiveResultSchema.parse({
-          target_sha256: input.targetSha256,
-          archive_path: entry.path,
-          archive_sha256: createHash("sha256").update(bytes).digest("hex"),
-          ...decodeKeyedArchiveBytes(bytes, selected),
-        });
-      } catch (cause) {
-        if (cause instanceof AnalysisInputError) throw cause;
-        // An intact file of another kind is not a damaged archive.
-        if (cause instanceof KeyedArchiveKindError)
-          throw new AnalysisUnsupportedTargetError(
-            "inspect_keyed_archive",
-            join(input.bundlePath, entry.path),
-            cause.message,
-            {
-              cause,
-              remediationAction: keyedArchiveKindRemediation(
-                cause.kind,
-                input.platform ?? process.platform,
-              ),
-            },
-          );
-        throw new ArtifactReaderFailure(
-          cause instanceof RangeError ? "limit" : "format",
-          `Cannot decode selected Foundation keyed archive: ${cause instanceof Error ? cause.message : String(cause)}`,
-          { cause },
-        );
-      }
+      chunks.push(bytes);
     }
-    throw archivePathError(
-      "invalid_value",
-      `No regular file exists at ${selected.path} in the active app bundle.`,
-    );
+    const bytes = Buffer.concat(chunks, size);
+    try {
+      return keyedArchiveResultSchema.parse({
+        target_sha256: input.targetSha256,
+        archive_path: entry.path,
+        archive_sha256: createHash("sha256").update(bytes).digest("hex"),
+        ...decodeKeyedArchiveBytes(bytes, selected),
+      });
+    } catch (cause) {
+      if (cause instanceof AnalysisInputError) throw cause;
+      // An intact file of another kind is not a damaged archive.
+      if (cause instanceof KeyedArchiveKindError)
+        throw new AnalysisUnsupportedTargetError(
+          "inspect_keyed_archive",
+          join(input.bundlePath, entry.path),
+          cause.message,
+          {
+            cause,
+            remediationAction: keyedArchiveKindRemediation(
+              cause.kind,
+              input.platform ?? process.platform,
+            ),
+          },
+        );
+      throw new ArtifactReaderFailure(
+        cause instanceof RangeError ? "limit" : "format",
+        `Cannot decode selected Foundation keyed archive: ${cause instanceof Error ? cause.message : String(cause)}`,
+        { cause },
+      );
+    }
   } finally {
     await reader.close();
   }
+};
+
+/** Bind an inventory's NFC path to exactly one original filesystem entry. */
+const selectBundleArchiveEntry = async (
+  reader: DirectoryArtifactReader,
+  path: string,
+  signal?: AbortSignal,
+): Promise<ArtifactEntry> => {
+  const logicalPath = path.normalize("NFC");
+  let selected: ArtifactEntry | undefined;
+  for await (const entry of reader.entries(signal)) {
+    // Keep the original entry for I/O and source evidence.
+    if (entry.path.normalize("NFC") !== logicalPath) continue;
+    if (selected !== undefined)
+      throw archivePathError(
+        "invalid_value",
+        `Archive path matches multiple Unicode-equivalent bundle entries: ${path}`,
+      );
+    selected = entry;
+  }
+  if (selected === undefined)
+    throw archivePathError(
+      "invalid_value",
+      `No regular file exists at ${path} in the active app bundle.`,
+    );
+  return selected;
 };
 
 /** A caller-selected archive path, not the artifact, failed its constraint. */
