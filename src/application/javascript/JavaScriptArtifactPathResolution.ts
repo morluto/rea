@@ -622,7 +622,8 @@ const exportTargets = (
  * Node selects an exports target by walking the declared keys in order and
  * taking the first whose condition is active for the calling resolver.
  * "default" is always active, and "node" plus "node-addons" are active for the
- * built-in resolver that owns installed-package imports and requires.
+ * built-in resolver that owns installed-package imports and requires. The
+ * supported Node runtimes also activate "module-sync" for both loaders.
  */
 const packageExportConditions = (
   moduleKind: ResolveArtifactPathInput["moduleKind"],
@@ -630,6 +631,7 @@ const packageExportConditions = (
   new Set([
     "node",
     "node-addons",
+    "module-sync",
     ...(moduleKind === undefined ? [] : [moduleKind]),
     "default",
   ]);
