@@ -331,7 +331,7 @@ prove behavior on the verified Ghidra 12.1.4 and JDK 21 build.
 | `npm run verify:ghidra:switch`             | Linux x64 ELF; GCC/Clang optimized and stripped switch fixtures                    | GCC, Clang, GNU nm/objdump/strip, Ghidra 12.1.4, and full JDK 21    |
 | `npm run verify:ghidra:aarch64-jump-table` | Any supported Ghidra host; AArch64 ELF; byte/halfword tables; host ARM64 Mach-O    | Clang with AArch64 target support, Ghidra 12.1.4, and full JDK 21   |
 | `npm run verify:ghidra:cross-format`       | Any supported Ghidra host; also analyzes AArch64 ELF, x86-64 PE, and x86-64 Mach-O | `clang`, LLD, and `lld-link` in addition to host-lane prerequisites |
-| `npm run verify:ghidra:windows`            | Controlled Windows x64 with native x86-64 PE; `-- --x86` selects native x86 PE     | Ghidra 12.1.4, full JDK 21, and the matching native artifact        |
+| `npm run verify:ghidra:windows`            | Controlled Windows x64 native x86-64 PE; `-- --x86`/`-- --dll` select x86/DLL      | Ghidra 12.1.4, full JDK 21, and the matching native artifact        |
 
 The optional Swift lane compiles a source-owned fixture and checks modern and
 provider-demangled procedure names through real stdio MCP, with and without the

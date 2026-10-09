@@ -26,8 +26,13 @@ if (process.platform !== "win32" || process.arch !== "x64")
   );
 const workspace = await mkdtemp(join(tmpdir(), "rea-packaged-ghidra-"));
 const exec = promisify(execFile);
-const x86Fixture = process.argv[2] === "--x86";
-const packageRootArgument = x86Fixture ? undefined : process.argv[2];
+const fixtureSelectors = process.argv
+  .slice(2)
+  .filter((value) => value === "--x86" || value === "--dll");
+const x86Fixture = fixtureSelectors.includes("--x86");
+const libraryFixture = fixtureSelectors.includes("--dll");
+const packageRootArgument =
+  fixtureSelectors.length > 0 ? undefined : process.argv[2];
 let packageRoot = resolve(packageRootArgument ?? ".");
 // The default lane verifies the npm artifact in an isolated prefix. Explicit
 // package roots support an already-installed artifact without a second install.
@@ -80,10 +85,8 @@ if (packageRootArgument === undefined) {
   }
 }
 const target = resolve(
-  process.argv[3] ??
-    (x86Fixture
-      ? "build/fixtures/rea-ghidra-windows-x86.exe"
-      : "build/fixtures/rea-ghidra-windows.exe"),
+  (packageRootArgument === undefined ? undefined : process.argv[3]) ??
+    `build/fixtures/rea-ghidra-windows${x86Fixture ? "-x86" : ""}.${libraryFixture ? "dll" : "exe"}`,
 );
 let TOOL_CONTRACTS, native, token, sha256;
 try {
@@ -230,6 +233,12 @@ try {
     await call("list_names", {});
     const procedures = await call("list_procedures", {});
     assert.ok(procedures.length > 0);
+    if (libraryFixture)
+      for (const name of ["fixture_caller", "fixture_return42"])
+        assert.ok(
+          procedures.some((item) => item.value === name),
+          `The DLL fixture did not expose its ${name} export.`,
+        );
     assert.ok((await call("list_segments", {})).length > 0);
     await call("list_strings", {});
     const procedure =

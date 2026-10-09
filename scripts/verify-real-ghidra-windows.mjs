@@ -62,21 +62,22 @@ if (
   );
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const architecture = process.argv[2] === "--x86" ? "x86" : "x86_64";
+const fixtureSelectors = new Set(process.argv.slice(2));
+const architecture = fixtureSelectors.has("--x86") ? "x86" : "x86_64";
+const library = fixtureSelectors.has("--dll");
 const targetPath = resolve(
   root,
   "build",
   "fixtures",
-  architecture === "x86"
-    ? "rea-ghidra-windows-x86.exe"
-    : "rea-ghidra-windows.exe",
+  `rea-ghidra-windows${architecture === "x86" ? "-x86" : ""}.${library ? "dll" : "exe"}`,
 );
 const target = await parseBinaryTarget(targetPath);
 if (
   !target.ok ||
   target.value.format !== "pe" ||
   target.value.architecture !== architecture ||
-  target.value.executableRole !== "application" ||
+  target.value.executableRole !==
+    (library ? "shared-library" : "application") ||
   target.value.managed !== false
 )
   throw new Error(
@@ -149,9 +150,15 @@ try {
   );
   if (procedure === undefined)
     throw new Error("Windows Ghidra fixture exposed no local procedure");
-  const calleeAddress = architecture === "x86" ? 0x401010n : 0x140001010n;
+  const imageBase = library
+    ? architecture === "x86"
+      ? 0x1000_0000n
+      : 0x1_8000_0000n
+    : architecture === "x86"
+      ? 0x40_0000n
+      : 0x1_4000_0000n;
   const callee = procedures.find(
-    (item) => BigInt(item.address) === calleeAddress,
+    (item) => BigInt(item.address) === imageBase + 0x1010n,
   );
   if (callee === undefined)
     throw new Error("Windows fixture exposed no controlled callee");
@@ -162,6 +169,27 @@ try {
     throw new Error(
       "Windows fixture decompilation lost its known return value",
     );
+  if (library) {
+    const caller = procedures.find(
+      (item) => BigInt(item.address) === imageBase + 0x1000n,
+    );
+    if (
+      callee.value !== "fixture_return42" ||
+      caller?.value !== "fixture_caller"
+    )
+      throw new Error("Windows DLL fixture exports were not recovered");
+    const callerCode = await functionOperation("procedure_pseudo_code", {
+      procedure: caller.value,
+    });
+    if (
+      typeof callerCode !== "string" ||
+      !callerCode.includes(callee.value) ||
+      !/\+\s*1\b/u.test(callerCode)
+    )
+      throw new Error(
+        "Windows DLL fixture decompilation lost the caller adding one",
+      );
+  }
 
   await inventory("inspect_native_load_image", {});
   const memory = await inventory("read_bytes", {
@@ -254,7 +282,7 @@ try {
     limitations: [
       "approved-non-sensitive-fixtures-only",
       "windows-x64-local-ntfs-only",
-      "native-x86-and-x86-64-pe-applications-only",
+      "native-x86-and-x86-64-pe-applications-and-dlls-only",
       "no-gui-or-mutation-authority",
     ],
   };

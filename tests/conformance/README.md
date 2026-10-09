@@ -16,8 +16,10 @@ stripped variants by `npm run verify:ghidra`. It fixes local functions, external
 the read-only Ghidra inventory contracts without committing a binary.
 
 `scripts/create-ghidra-windows-fixture.mjs` separately emits a deterministic,
-ignored native x86-64 PE application for the controlled Windows Ghidra P0 lane.
-The generator and fixed SHA-256 are versioned; the `.exe` is never committed or
+ignored native x86-64 PE application for the controlled Windows Ghidra P0 lane,
+plus x86 application and x86/x86-64 DLL variants. Each DLL has no entry routine
+and exports a callee returning 42 and a caller adding one. The generator and
+fixed SHA-256 are versioned; the `.exe` and `.dll` files are never committed or
 executed. `npm run verify:ghidra:windows` uses it to prove all 19 operations,
 digest linkage, transport, and cleanup on the self-hosted real-Ghidra runner.
 
