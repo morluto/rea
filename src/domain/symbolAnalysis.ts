@@ -13,7 +13,9 @@ export const discoverObjcClasses = (
   const classes = uniqueByName(
     names
       .filter(({ name }) =>
-        ["OBJC_CLASS", "OBJC_$_CLASS"].some((marker) => name.includes(marker)),
+        ["OBJC_CLASS_$_", "OBJC_$_CLASS"].some((marker) =>
+          name.includes(marker),
+        ),
       )
       .filter(({ name }) => pattern.length === 0 || name.includes(pattern)),
   );
@@ -29,7 +31,7 @@ export const discoverObjcProtocols = (
 ): JsonValue => {
   const protocols = uniqueByName(
     names.filter(
-      ({ name }) => name.includes("OBJC_PROTOCOL") || name.includes("_TtP"),
+      ({ name }) => name.includes("OBJC_PROTOCOL_$_") || name.includes("_TtP"),
     ),
   );
   return {

@@ -36,6 +36,26 @@ describe("symbol analysis", () => {
     });
   });
 
+  it("distinguishes class and protocol definitions from compiler bookkeeping labels", () => {
+    // Label forms emitted by Apple clang for a class and @protocol reference.
+    const names = [
+      { address: "0x40", name: "_OBJC_CLASS_$_Fixture" },
+      { address: "0x128", name: "__OBJC_CLASS_RO_$_Fixture" },
+      { address: "0x198", name: "_OBJC_CLASSLIST_REFERENCES_$_" },
+      { address: "0x90", name: "l_OBJC_CLASS_NAME_" },
+      { address: "0x1a0", name: "__OBJC_PROTOCOL_$_Delegate" },
+      { address: "0x208", name: "__OBJC_PROTOCOL_REFERENCE_$_Delegate" },
+    ];
+    expect(discoverObjcClasses(names, "")).toEqual({
+      count: 1,
+      classes: [{ address: "0x40", name: "_OBJC_CLASS_$_Fixture" }],
+    });
+    expect(discoverObjcProtocols(names)).toEqual({
+      count: 1,
+      protocols: [{ address: "0x1a0", name: "__OBJC_PROTOCOL_$_Delegate" }],
+    });
+  });
+
   it("categorizes every Swift mangling family and deduplicates names", () => {
     const result = categorizeSwiftTypes([
       { address: "1", name: "_TtCClass" },

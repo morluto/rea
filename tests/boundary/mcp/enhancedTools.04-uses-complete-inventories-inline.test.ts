@@ -29,6 +29,9 @@ describe("enhanced MCP tools", () => {
           ok([
             { address: "0x1", value: "_OBJC_CLASS_$_First" },
             { address: "0x2", value: "_OBJC_CLASS_$_Last" },
+            { address: "0x3", value: "__OBJC_CLASS_RO_$_First" },
+            { address: "0x4", value: "_OBJC_CLASSLIST_REFERENCES_$_" },
+            { address: "0x5", value: "l_OBJC_CLASS_NAME_" },
           ]),
         );
       },
@@ -37,6 +40,27 @@ describe("enhanced MCP tools", () => {
       await client.callTool({ name: "get_objc_classes", arguments: {} }),
     );
     expect(result).toMatchObject({ count: 2 });
+  });
+
+  it("discovers protocol definitions without counting compiler reference slots", async () => {
+    const client = await connect({
+      execute: (name) => {
+        expect(name).toBe("list_names");
+        return Promise.resolve(
+          ok([
+            { address: "0x1a0", value: "__OBJC_PROTOCOL_$_Delegate" },
+            { address: "0x208", value: "__OBJC_PROTOCOL_REFERENCE_$_Delegate" },
+          ]),
+        );
+      },
+    });
+    const result = jsonResult(
+      await client.callTool({ name: "get_objc_protocols", arguments: {} }),
+    );
+    expect(result).toMatchObject({
+      count: 1,
+      protocols: [{ address: "0x1a0", name: "__OBJC_PROTOCOL_$_Delegate" }],
+    });
   });
 
   it("returns the complete overview inline with exhaustive totals", async () => {
