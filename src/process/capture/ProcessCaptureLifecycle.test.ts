@@ -333,3 +333,17 @@ it("keeps an observed exit when a late kill delivery reports unverified", async 
     9,
   );
 });
+
+it("stops waiting when the escalation delivery never settles and no exit arrives", async () => {
+  const fake = fakeTerminal({}, new Promise<void>(() => undefined));
+  const pending = start(fake, { timeout_ms: 100, finalization_ms: 100 });
+
+  const result = await pending;
+
+  expect(result.unobserved, "no exit is invented").toBe(true);
+  expect(
+    result.finalization?.signals.at(-1),
+    "the undelivered escalation stays recorded as unverified",
+  ).toMatchObject({ signal: "SIGKILL", delivery: "unverified" });
+  expect(result.finalization?.elapsed_ms, "no exit was observed").toBeNull();
+}, 10_000);
