@@ -1,3 +1,6 @@
+import type { WasmArtifactService } from "../application/wasm/WasmArtifactService.js";
+import { createWasmArtifactService } from "../composition/wasm.js";
+import { registerWasmTools } from "./registerWasmTools.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
 import { createEvmInterfaceService } from "../composition/evm.js";
@@ -88,6 +91,7 @@ const ACTIVE_TARGET_INSTRUCTIONS =
 export interface CreateServerOptions {
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
   readonly delivery?: ToolResultDelivery;
+  readonly wasmArtifact?: WasmArtifactService;
   readonly evmInterface?: EvmInterfaceService;
   readonly logger?: Logger;
   readonly binaryLayout?: BinaryLayoutService;
@@ -121,6 +125,9 @@ const installSessionToolAvailability = (
   const policy = sessionAvailabilityPolicy(options.availabilityPolicy, {
     optionalProviderLoadFailures: options.optionalProviderLoadFailures,
     optionalFeatures: {
+      wasmArtifactEnabled:
+        options.wasmArtifact !== undefined ||
+        isAbsolute(environment.REA_WABT_BIN_DIRECTORY ?? ""),
       evmInterfaceEnabled: options.evmInterface !== undefined || linuxX64,
       webModuleResolutionEnabled:
         options.webModuleTrace !== undefined ||
@@ -303,6 +310,12 @@ const registerConfiguredAnalysisTools = (
     recordEvidence,
   );
   registerAnalysisViewTool(server, toolLogger, evidenceById, recordEvidence);
+  registerWasmTools(
+    server,
+    options.wasmArtifact ?? createWasmArtifactService(environment),
+    toolLogger,
+    recordEvidence,
+  );
   registerEvmTools(
     server,
     options.evmInterface ?? createEvmInterfaceService(environment),

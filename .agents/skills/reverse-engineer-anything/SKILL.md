@@ -2,7 +2,7 @@
 name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "35"
+  version: "36"
 ---
 
 # REA
@@ -106,6 +106,11 @@ explicit path or endpoint and do not need it.
   [historical captures](https://github.com/morluto/rea/blob/main/docs/web-network-captures.md) for the exact upstream
   profile and credential exclusions.
 - User-owned Electron runtime already open: `list_electron_targets`.
+- Explicit local WebAssembly artifact: `inspect_wasm_artifact`. Supply WABT 1.0.42
+  through `REA_WABT_BIN_DIRECTORY`; retain exact byte/tool identity and decoded WAT.
+  Select JavaScript glue and candidate paths explicitly and preserve URL/path
+  ambiguity. No implicit fetch or target execution; WAT is not original source.
+  See the [WASM guide](https://github.com/morluto/rea/blob/main/docs/wasm-artifacts.md).
 - Explicit local EVM bytecode carrier: `inspect_evm_interface` with caller-selected
   `raw` or `hex` encoding. Preserve carrier/decoded digests and treat selectors,
   argument strings and mutability as inferred candidates; this performs no chain
