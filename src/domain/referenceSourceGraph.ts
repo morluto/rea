@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { canonicalJson } from "./comparisonSemantics.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
+import { normalizeJoinedLogicalPath } from "./artifactIdentity.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import { digestSchema } from "./../domain/digests.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
@@ -327,7 +328,7 @@ const checkSymlinks = (
         path: ["entries", index, "target"],
       });
     if (entry.target_state !== "internal") continue;
-    const resolved = posix.normalize(
+    const resolved = normalizeJoinedLogicalPath(
       posix.join(posix.dirname(entry.path), entry.target),
     );
     if (resolved.startsWith("../") || resolved === ".." || !paths.has(resolved))
