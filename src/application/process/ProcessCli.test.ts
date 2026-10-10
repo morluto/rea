@@ -6,6 +6,7 @@ import {
   captureProcessScenarioFile,
   projectProcessCliError,
 } from "./ProcessCli.js";
+import { JSON_BYTE_ORDER_MARK_MESSAGE } from "../Utf8JsonInput.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -85,6 +86,16 @@ describe("process CLI input diagnostics", () => {
           expect.objectContaining({ path: ["executable"] }),
         ]),
       }),
+    });
+  });
+
+  it("names a leading byte-order mark instead of quoting it as a token", async () => {
+    const path = join(await fixture(), "scenario.json");
+    await writeFile(path, '\uFEFF{"executable":"/bin/echo"}');
+    expect(await captureProcessScenarioFile(path)).toEqual({
+      error: "Process command failed",
+      category: "invalid_input",
+      message: `Process input file is not valid UTF-8 JSON: ${path} (${JSON_BYTE_ORDER_MARK_MESSAGE}). Repair the file, then try again.`,
     });
   });
 });

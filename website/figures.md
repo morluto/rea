@@ -96,9 +96,25 @@ formula, default settings, slider outputs and reference cases consistent.
 
 ## Touhou reconstruction essay
 
-The essay opens with a takeaway and develops its argument in prose. It has no
-opening flow figure. Project dates and the attributed README excerpt support
-the narrative; detailed milestone references are available in a native
+The essay opens with a takeaway and a flywheel explaining how experience
+compounds. The figure uses selectable HTML labels and inline SVG connectors:
+an autonomous agent proposes an experiment, an oracle tests it against a
+reference, and code, evidence, checks and lessons remain in the repository.
+A dashed mismatch branch returns to the agent for revision. The repository
+supplies a better starting point for the next investigation; TH08 → TH095 →
+TH04 illustrates knowledge carried between projects. Human direction names
+the goal and acceptance criteria above the cycle.
+
+The caption connects reuse with improving the checks themselves. The TH08
+floating-literal case in the essay explains why a passing result can need
+reexamination when an oracle's blind spot is discovered. Preserve that link
+between the figure's ideal loop and the infrastructure lessons in the prose.
+
+The shared stylesheet positions the labels and gives narrow screens separate
+connector geometry. Keep the arrows clear of the text and retain the same
+meaning at every width. This is an explanatory model, with no measured speed
+or productivity multiplier. Project dates and the attributed README excerpt
+support the narrative; detailed milestone references are available in a native
 disclosure. Their provenance is documented in
 [evidence/touhou-reconstruction-method.md](evidence/touhou-reconstruction-method.md).
 

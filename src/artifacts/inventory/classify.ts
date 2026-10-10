@@ -17,17 +17,6 @@ import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import type { HashResult } from "../ArtifactHash.js";
 import { hashStableRootArtifactHandle } from "./hashStableRootArtifact.js";
 
-const classifyContainerExtension = (
-  path: string,
-): ArtifactOccurrence["artifact_format"] | undefined => {
-  const lower = path.toLowerCase();
-  const zipPackage = zipPackageFormatForPath(lower);
-  if (zipPackage !== undefined) return zipPackage;
-  for (const format of ["asar", "dmg", "pkg"] as const)
-    if (lower.endsWith(`.${format}`)) return format;
-  return undefined;
-};
-
 /** Classify and hash one file root through the same stable open descriptor. */
 export const classifyAndHashRoot = async (
   path: string,
@@ -47,9 +36,7 @@ export const classifyAndHashRoot = async (
         "integrity",
         `Root artifact changed before inventory: ${path}`,
       );
-    const format =
-      classifyContainerExtension(path) ??
-      (await classifyOpenedRoot(path, handle));
+    const format = await classifyRootFormat(path, handle);
     const digest = await hashStableRootArtifactHandle(
       path,
       handle,
@@ -79,14 +66,30 @@ const openRootFile = async (
   }
 };
 
-const classifyOpenedRoot = async (
+const classifyRootFormat = async (
   path: string,
   handle: FileHandle,
 ): Promise<ArtifactOccurrence["artifact_format"]> => {
   const magic = Buffer.alloc(ARTIFACT_CLASSIFICATION_PREFIX_BYTES);
   const observed = await handle.read(magic, 0, magic.length, 0);
   const prefix = magic.subarray(0, observed.bytesRead);
-  if (hasZipSignature(prefix)) return "zip";
+  const lower = path.toLowerCase();
+  if (hasZipSignature(prefix)) return zipPackageFormatForPath(lower) ?? "zip";
+  if (
+    lower.endsWith(".pkg") &&
+    prefix.subarray(0, 4).toString("ascii") === "xar!"
+  )
+    return "pkg";
+  if (lower.endsWith(".dmg") && (await hasKolyTrailer(handle))) return "dmg";
+  // ASAR is chosen from its header pickle; any other suffix is a role hint.
   return classifyArtifactContent(path, prefix, (await handle.stat()).size)
     .format;
+};
+
+const hasKolyTrailer = async (handle: FileHandle): Promise<boolean> => {
+  const size = (await handle.stat()).size;
+  if (size < 512) return false;
+  const trailer = Buffer.alloc(4);
+  const read = await handle.read(trailer, 0, trailer.length, size - 512);
+  return read.bytesRead === 4 && trailer.toString("ascii") === "koly";
 };

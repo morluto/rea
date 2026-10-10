@@ -37,12 +37,14 @@ describe("Android application projection", () => {
         Uint8Array.from([0x64, 0x65, 0x78, 0x0a, 0x30, 0x33, 0x35, 0]),
       ),
     );
-    await writer.add(
-      "lib/arm64-v8a/libreactnativejni.so",
+    const elf = () =>
       new Uint8ArrayReader(
         Uint8Array.from([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0]),
-      ),
-    );
+      );
+    await writer.add("lib/arm64-v8a/libreactnativejni.so", elf());
+    await writer.add("lib/arm64-v8a/libflutter.so", elf());
+    await writer.add("lib/arm64-v8a/libunity.so", elf());
+    await writer.add("lib/arm64-v8a/libcommunity.so", elf());
     await writer.add("assets/index.js", new TextReader("bridge();"));
     await writer.add("META-INF/FIXTURE.RSA", new TextReader("opaque signing"));
     await writeFile(path, await writer.close());
@@ -72,20 +74,34 @@ describe("Android application projection", () => {
     });
     expect(left.components.manifests).toHaveLength(1);
     expect(left.components.dex).toHaveLength(1);
-    expect(left.components.native_libraries).toHaveLength(1);
+    expect(left.components.native_libraries).toHaveLength(4);
     expect(left.components.javascript).toHaveLength(1);
     expect(left.components.signing).toHaveLength(1);
     expect(left.runtime_families).toEqual(
       expect.arrayContaining([
         "dalvik-art",
+        "flutter",
         "javascript",
         "native",
         "react-native",
+        "unity",
       ]),
     );
-    expect(left.bridge_candidates).toEqual([
-      expect.objectContaining({ basis: "react-native-convention" }),
-    ]);
+    expect(left.runtime_families).not.toContain("community");
+    expect(left.bridge_candidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ basis: "react-native-convention" }),
+        expect.objectContaining({ basis: "flutter-convention" }),
+        expect.objectContaining({ basis: "unity-convention" }),
+      ]),
+    );
+    const community = left.bridge_candidates.filter(({ native_path }) =>
+      native_path.endsWith("libcommunity.so"),
+    );
+    expect(community.length).toBeGreaterThan(0);
+    expect(
+      community.every(({ basis }) => basis === "jni-library-convention"),
+    ).toBe(true);
     expect(left.limitations).toEqual(
       expect.arrayContaining([
         "A bridge basis is inferred from the native path and is repeated for every managed component.",
@@ -103,7 +119,14 @@ describe("Android application projection", () => {
       projectAndroidApplicationEvidence({ inventory_evidence: [inventory] }),
     ).toMatchObject({
       ok: false,
-      error: { _tag: "AnalysisInputError" },
+      error: {
+        _tag: "AnalysisInputError",
+        issues: [
+          expect.objectContaining({
+            message: expect.stringContaining("root format is zip"),
+          }),
+        ],
+      },
     });
   });
 
@@ -149,6 +172,36 @@ describe("Android application projection", () => {
     expect(projection.limitations).toContain(
       "Runtime families are inferred from inventory formats and paths; filename suffixes do not establish valid DEX or JVM class bytes.",
     );
+  });
+});
+
+describe("APK family without a root manifest", () => {
+  const missingManifest =
+    "No root AndroidManifest.xml occurrence was observed. The APK family comes from the .apk suffix of a ZIP archive, so these bytes may not be an APK.";
+  const projectApk = async (entries: Record<string, string>) => {
+    const root = await createTestTempDirectory("rea-android-manifest-");
+    const path = join(root, "Plain.apk");
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    for (const [entry, text] of Object.entries(entries))
+      await writer.add(entry, new TextReader(text));
+    await writeFile(path, await writer.close());
+    const inventory = parseEvidence(
+      await runProviderAnalysis(path, "inventory_artifact", {}),
+    );
+    return androidApplicationProjectionResultSchema.parse(
+      requireSuccessfulProjection(
+        projectAndroidApplicationEvidence({ inventory_evidence: [inventory] }),
+      ).normalized_result,
+    );
+  };
+
+  it("says when the APK family rests only on the ZIP filename suffix", async () => {
+    expect((await projectApk({ "readme.txt": "hello" })).limitations).toContain(
+      missingManifest,
+    );
+    expect(
+      (await projectApk({ "AndroidManifest.xml": "manifest" })).limitations,
+    ).not.toContain(missingManifest);
   });
 });
 

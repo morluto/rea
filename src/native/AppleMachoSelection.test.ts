@@ -16,6 +16,27 @@ describe("native Mach-O slice selection", () => {
     expect(parseMachoLayout(Buffer.from(fat), "arm64").segments).toEqual([]);
   });
 
+  it("selects only the admitted CPU type and rejects a 32-bit slice", () => {
+    const sixtyFour = fatImage([
+      { cpu: CPU.x86_64, bytes: machoImage({ cpu: CPU.x86_64 }) },
+    ]);
+    expect(() => parseMachoLayout(Buffer.from(sixtyFour), "x86")).toThrow(
+      /Requested FAT architecture is absent/u,
+    );
+    expect(() => parseMachoLayout(Buffer.from(sixtyFour), "arm")).toThrow(
+      /Requested FAT architecture is absent/u,
+    );
+    const thirtyTwo = fatImage([
+      {
+        cpu: CPU.i386,
+        bytes: machoImage({ cpu: CPU.i386, wide: false }),
+      },
+    ]);
+    expect(() => parseMachoLayout(Buffer.from(thirtyTwo), "x86")).toThrow(
+      /Unsupported 32-bit Mach-O metadata for requested CPU type x86/u,
+    );
+  });
+
   it("rejects FAT subtype disagreement and unaligned slice offsets", () => {
     const original = fatImage([{ cpu: CPU.arm64, bytes: machoImage({}) }]);
     const mismatched = original.slice();

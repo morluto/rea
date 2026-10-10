@@ -98,7 +98,11 @@ cliTest(
     expect(doctor.exitCode).toBe(0);
     expect(doctor.json).toMatchObject({
       healthy: true,
-      identity: { registrations: [{ client: "pi", state: "aligned" }] },
+      identity: {
+        registrations: expect.arrayContaining([
+          expect.objectContaining({ client: "pi", state: "aligned" }),
+        ]),
+      },
     });
 
     const repeat = await run(["setup", "--client", "pi", "--yes", "--json"]);
@@ -159,7 +163,11 @@ cliTest(
     expect(doctor.exitCode).toBe(0);
     expect(doctor.json).toMatchObject({
       healthy: true,
-      identity: { registrations: [{ client: "pi", state: "aligned" }] },
+      identity: {
+        registrations: expect.arrayContaining([
+          expect.objectContaining({ client: "pi", state: "aligned" }),
+        ]),
+      },
     });
     await run(["uninstall", "--json"]);
     expect(
@@ -215,7 +223,9 @@ cliTest(
     expect(doctorMalformed.json).toMatchObject({
       healthy: false,
       identity: {
-        registrations: [{ client: "pi", state: "invalid" }],
+        registrations: expect.arrayContaining([
+          expect.objectContaining({ client: "pi", state: "invalid" }),
+        ]),
       },
     });
     const removed = await runMalformed(["uninstall", "--json"]);

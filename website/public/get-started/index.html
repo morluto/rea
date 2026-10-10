@@ -8,46 +8,46 @@
       name="description"
       content="Connect REA to your coding agent or inspect a local JavaScript or Electron app from the terminal. Setup, first questions and native provider guides."
     />
+    <!-- website:sharing:start -->
+    <!-- prettier-ignore -->
     <link rel="canonical" href="https://rea.tools/get-started/" />
+    <!-- prettier-ignore -->
     <meta property="og:type" content="website" />
+    <!-- prettier-ignore -->
     <meta property="og:site_name" content="REA" />
-    <meta
-      property="og:title"
-      content="Install REA and Set Up Your Coding Agent"
-    />
-    <meta
-      property="og:description"
-      content="Connect REA to your coding agent or inspect a local JavaScript or Electron app from the terminal. Setup, first questions and native provider guides."
-    />
+    <!-- prettier-ignore -->
+    <meta property="og:title" content="Install REA and Set Up Your Coding Agent" />
+    <!-- prettier-ignore -->
+    <meta property="og:description" content="Connect REA to your coding agent or inspect a local JavaScript or Electron app from the terminal. Setup, first questions and native provider guides." />
+    <!-- prettier-ignore -->
     <meta property="og:url" content="https://rea.tools/get-started/" />
-    <meta
-      property="og:image"
-      content="https://rea.tools/assets/social-card.png"
-    />
+    <!-- prettier-ignore -->
+    <meta property="og:image" content="https://rea.tools/assets/social-card.png" />
+    <!-- prettier-ignore -->
     <meta property="og:image:type" content="image/png" />
+    <!-- prettier-ignore -->
     <meta property="og:image:width" content="1200" />
+    <!-- prettier-ignore -->
     <meta property="og:image:height" content="630" />
+    <!-- prettier-ignore -->
     <meta
       property="og:image:alt"
       content="REA — Find out how software works. Reverse engineering with your coding agent."
     />
+    <!-- prettier-ignore -->
     <meta name="twitter:card" content="summary_large_image" />
-    <meta
-      name="twitter:title"
-      content="Install REA and Set Up Your Coding Agent"
-    />
-    <meta
-      name="twitter:description"
-      content="Connect REA to your coding agent or inspect a local JavaScript or Electron app from the terminal. Setup, first questions and native provider guides."
-    />
-    <meta
-      name="twitter:image"
-      content="https://rea.tools/assets/social-card.png"
-    />
+    <!-- prettier-ignore -->
+    <meta name="twitter:title" content="Install REA and Set Up Your Coding Agent" />
+    <!-- prettier-ignore -->
+    <meta name="twitter:description" content="Connect REA to your coding agent or inspect a local JavaScript or Electron app from the terminal. Setup, first questions and native provider guides." />
+    <!-- prettier-ignore -->
+    <meta name="twitter:image" content="https://rea.tools/assets/social-card.png" />
+    <!-- prettier-ignore -->
     <meta
       name="twitter:image:alt"
       content="REA — Find out how software works. Reverse engineering with your coding agent."
     />
+    <!-- website:sharing:end -->
     <meta name="theme-color" content="#ffffff" />
     <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="../assets/styles.css" />
@@ -55,6 +55,8 @@
   </head>
   <body id="top">
     <a class="skip-link" href="#main">Skip to content</a>
+    <!-- website:header:start -->
+    <!-- prettier-ignore -->
     <header class="site-header">
       <div class="container header-inner">
         <a class="brand" href="../" aria-label="REA home"
@@ -63,9 +65,10 @@
         >
         <nav class="navigation" aria-label="Main navigation">
           <a href="../showcase/">Showcases</a>
-          <a href="../blog/">Blog</a
-          ><a class="nav-start" href="./" aria-current="page">Get started</a
-          ><a href="../guides/">Guides</a><a href="../faq/">FAQ</a>
+          <a href="../blog/">Blog</a>
+          <a href="../get-started/" class="nav-start" aria-current="page">Get started</a>
+          <a href="../guides/">Guides</a>
+          <a href="../faq/">FAQ</a>
         </nav>
         <div class="header-social">
           <a
@@ -129,6 +132,7 @@
         </div>
       </div>
     </header>
+    <!-- website:header:end -->
     <main id="main" class="container">
       <div class="page-heading">
         <p class="breadcrumb"><a href="../">Home</a> / Get started</p>
@@ -291,8 +295,9 @@
                   <div>
                     <p>
                       Use an existing Ghidra 12.1.x installation and a 64-bit
-                      JDK 21 or newer on Linux x64 or macOS x64/arm64. Set the
-                      paths before running setup:
+                      JDK 21 or newer on Linux or macOS, on x64 or arm64. Your
+                      Ghidra installation needs a native decompiler for your
+                      host architecture. Set the paths before running setup:
                     </p>
                     <details class="evidence-details">
                       <summary>Connect your Ghidra installation</summary>
@@ -316,8 +321,38 @@ npx rea-agents@latest setup</code></pre>
                       <p>
                         Replace both paths with your existing installations.
                         Setup checks them and records valid settings for your
-                        selected client. On macOS, use a Ghidra package with the
-                        native decompiler matching your host architecture.
+                        selected client. On Linux arm64, you may need to build
+                        Ghidra's native decompiler separately.
+                      </p>
+                    </details>
+                    <details class="evidence-details">
+                      <summary>Connect Ghidra on Windows</summary>
+                      <p>
+                        Windows x64 has experimental, read-only support for
+                        native x86 and x64 PE applications and DLLs on fixed
+                        local NTFS drives. Use an existing Ghidra 12.1.x
+                        installation and a 64-bit JDK 21 or newer:
+                      </p>
+                      <div class="code-block">
+                        <div class="code-header">
+                          <span>Ghidra connection · Windows PowerShell</span>
+                          <button
+                            class="copy-button"
+                            type="button"
+                            data-copy="ghidra-windows-connect"
+                            aria-label="Copy Ghidra connection for Windows PowerShell"
+                          >
+                            Copy
+                          </button>
+                        </div>
+                        <pre><code id="ghidra-windows-connect">$env:GHIDRA_INSTALL_DIR = "C:/tools/ghidra_12.1.4_PUBLIC"
+$env:JAVA_HOME = "C:/tools/jdk-21"
+npx -y rea-agents@latest doctor --provider ghidra --json
+npx rea-agents@latest setup</code></pre>
+                      </div>
+                      <p>
+                        Replace the two paths with your installations, then
+                        review setup's plan.
                       </p>
                     </details>
                   </div>
@@ -492,13 +527,14 @@ npx rea-agents@latest setup</code></pre>
         </article>
       </div>
     </main>
+    <!-- website:footer:start -->
+    <!-- prettier-ignore -->
     <footer class="site-footer">
       <div class="container footer-inner">
         <p>REA · Reverse Engineer Anything</p>
         <div class="footer-links">
           <a href="https://github.com/morluto/rea">Source</a
-          ><a href="https://github.com/morluto/rea/blob/main/LICENSE"
-            >MIT license</a
+          ><a href="https://github.com/morluto/rea/blob/main/LICENSE">MIT license</a
           ><a href="https://discord.gg/GkcryMnJDM">Join the community</a
           ><a href="https://x.com/reatools">Follow us on X</a>
         </div>
@@ -508,5 +544,6 @@ npx rea-agents@latest setup</code></pre>
     <a class="back-to-top" href="#top" aria-label="Back to top">
       <span aria-hidden="true">↑</span> Top
     </a>
+    <!-- website:footer:end -->
   </body>
 </html>

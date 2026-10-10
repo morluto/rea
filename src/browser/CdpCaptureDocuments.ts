@@ -397,6 +397,7 @@ const domMetadata = (
     // Chrome already folds HTML names; SVG/XML names remain case-sensitive.
     const name = indexedString(strings, attributes[index]);
     const value = indexedString(strings, attributes[index + 1]);
+    // HTML keeps the first declaration. A later repeat must not move dom_urls.
     if (!pairs.has(name)) pairs.set(name, value);
   }
   const urls: WebPageInspection["metadata"]["dom_urls"] = [];

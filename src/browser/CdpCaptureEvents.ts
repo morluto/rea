@@ -159,10 +159,8 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
     script: CapturedScript,
     allowedFrameIds: ReadonlySet<string>,
   ): string | null {
-    if (script.executionContextKey === null) return null;
-    const frameId = this.executionContextFrames.get(script.executionContextKey);
-    return frameId !== undefined && allowedFrameIds.has(frameId)
-      ? frameId
+    return script.frameId !== null && allowedFrameIds.has(script.frameId)
+      ? script.frameId
       : null;
   }
 

@@ -3,6 +3,7 @@ import { constants as fsConstants } from "node:fs";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
 
 import type { ProcessScenario } from "../../domain/process/processScenario.js";
+import { snapshotEnvironment } from "../snapshotEnvironment.js";
 import {
   ProcessCaptureError,
   processCaptureCancelled,
@@ -12,6 +13,7 @@ import {
 export const resolveProcessScenarioRuntimePaths = async (
   scenario: ProcessScenario,
   environment: Readonly<Record<string, string | undefined>> = process.env,
+  platform: NodeJS.Platform = process.platform,
 ): Promise<ProcessScenario> => {
   const selectedWorkingDirectory = resolve(scenario.working_directory);
   let workingDirectory: string;
@@ -39,7 +41,9 @@ export const resolveProcessScenarioRuntimePaths = async (
   const executable = await resolveExecutable(
     scenario.executable,
     workingDirectory,
-    scenario.environment.PATH ?? environment.PATH ?? "",
+    snapshotEnvironment(scenario.environment, platform).PATH ??
+      snapshotEnvironment(environment, platform).PATH ??
+      "",
   );
   const observationPaths = scenario.filesystem_observation_paths.map((path) =>
     resolve(workingDirectory, path),

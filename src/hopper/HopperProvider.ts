@@ -1,6 +1,6 @@
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { fileURLToPath } from "node:url";
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, statSync } from "node:fs";
 
 import { createAnalysisExecution } from "../application/AnalysisProvider.js";
 import type {
@@ -75,6 +75,9 @@ export class HopperProvider implements AnalysisProviderCandidate {
       };
     try {
       accessSync(this.config.hopperLauncherPath, constants.X_OK);
+      // A searchable directory, such as an .app bundle, also passes X_OK.
+      if (!statSync(this.config.hopperLauncherPath).isFile())
+        throw new TypeError("Hopper launcher is not a regular file");
       return {
         status: "available",
         code: null,

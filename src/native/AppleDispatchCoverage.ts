@@ -4,11 +4,19 @@ import type { DecodeIssue } from "./AppleDispatchDecodeFacts.js";
 import type { FacetDecodeFacts } from "./AppleDispatchDecodeFacts.js";
 
 const describeFixups = (fixups: PointerFixups): string => {
-  if (fixups.kind === "chained")
-    return `chained fixups: ${fixups.formats.join(", ") || "no fixup segments"}`;
-  return fixups.kind === "dyld-info"
-    ? "LC_DYLD_INFO bind opcodes"
-    : "no fixup load commands";
+  const unread =
+    fixups.unreadRebaseBytes > 0
+      ? `LC_DYLD_INFO rebase opcodes were not decoded (${fixups.unreadRebaseBytes} bytes)`
+      : undefined;
+  const kind =
+    fixups.kind === "chained"
+      ? `chained fixups: ${fixups.formats.join(", ") || "no fixup segments"}`
+      : fixups.kind === "dyld-info"
+        ? "LC_DYLD_INFO bind opcodes"
+        : unread === undefined
+          ? "no fixup load commands"
+          : undefined;
+  return [unread, kind].filter((line) => line !== undefined).join("; ");
 };
 
 /** Append the per-facet coverage of one Apple dispatch metadata decode. */
@@ -83,18 +91,26 @@ export const pushDispatchCoverage = (input: {
       ({ decode }) => decode.status === "decoded",
     ).length,
   });
+  const fixupReason = [
+    describeFixups(fixups),
+    ...fixups.issues.map(
+      ({ code, location, message }) =>
+        `${code}${location === undefined ? "" : ` at ${location}`}: ${message}`,
+    ),
+  ]
+    .filter((line) => line.length > 0)
+    .join("; ");
   result.coverage.push({
     facet: "pointer_fixups",
-    status: fixups.issues.length > 0 ? "partial" : "complete",
-    reason: [
-      describeFixups(fixups),
-      ...fixups.issues.map(
-        ({ code, location, message }) =>
-          `${code}${location === undefined ? "" : ` at ${location}`}: ${message}`,
-      ),
-    ].join("; "),
-    examined: 0,
-    decoded: 0,
+    status:
+      fixups.issues.length > 0 || fixups.unreadRebaseBytes > 0
+        ? "partial"
+        : fixups.examined === 0
+          ? "unsupported"
+          : "complete",
+    reason: fixupReason.length > 0 ? fixupReason : null,
+    examined: fixups.examined,
+    decoded: fixups.issues.length > 0 ? 0 : fixups.examined,
   });
   result.coverage.push({
     facet: "swift_generic_resilient_witnesses_overrides_async_coroutines",

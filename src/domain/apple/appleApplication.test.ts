@@ -572,3 +572,80 @@ describe("Apple application bridge candidates", () => {
     });
   });
 });
+
+describe("Apple path conventions", () => {
+  it("recognizes anatomy names by English case and reports the archive spelling", () => {
+    const result = project(
+      inventoryEvidence("directory", "Fixture.app", [
+        { path: "contents/info.plist" },
+        macho("contents/macos/Fixture"),
+        { path: "contents/_codesignature/coderesources" },
+      ]),
+    );
+    expect(result.bundles[0]).toMatchObject({
+      layout: "macos-deep",
+      info_plist_path: "contents/info.plist",
+      executable_candidates: ["contents/macos/Fixture"],
+      signing_paths: ["contents/_codesignature/coderesources"],
+    });
+    expect(result.components.bundle_metadata.map(({ path }) => path)).toEqual([
+      "contents/info.plist",
+    ]);
+    expect(result.components.signing.map(({ path }) => path)).toEqual([
+      "contents/_codesignature/coderesources",
+    ]);
+  });
+
+  it("limits runtime families and bridge bases to path segments", () => {
+    const result = project(
+      inventoryEvidence("ipa", "Fixture.ipa", [
+        { path: "Payload/Fixture.app/Info.plist" },
+        macho("Payload/Fixture.app/Fixture"),
+        macho("Payload/Fixture.app/Frameworks/libfoo.dylib"),
+        macho("SwiftSupport/libswiftCore.dylib"),
+        macho("Payload/Fixture.app/Frameworks/MyApp.framework/MyApp"),
+        macho("Payload/Fixture.app/community/libcommunity.so"),
+        {
+          path: "Payload/Fixture.app/main.js",
+          format: "javascript-bundle",
+        },
+      ]),
+    );
+    expect(result.runtime_families).toEqual(
+      expect.arrayContaining(["javascript", "native", "swift-objective-c"]),
+    );
+    expect(result.runtime_families).not.toContain("flutter");
+    expect(result.runtime_families).not.toContain("unity");
+    expect(result.runtime_families).not.toContain("react-native");
+    expect(
+      result.bridge_candidates.every(
+        ({ basis }) => basis === "javascript-and-native-content",
+      ),
+    ).toBe(true);
+    expect(result.limitations).toEqual(
+      expect.arrayContaining([
+        "Runtime families are inferred from inventory formats and bounded framework path conventions, not observed runtime loading.",
+        "A bridge basis is inferred from the native path and is repeated for every managed component.",
+      ]),
+    );
+  });
+
+  it("recognizes framework segments and does not treat a bare dylib as Swift", () => {
+    const result = project(
+      inventoryEvidence("ipa", "Fixture.ipa", [
+        { path: "Payload/Fixture.app/Info.plist" },
+        macho("Payload/Fixture.app/Fixture"),
+        macho("Payload/Fixture.app/Frameworks/Flutter.framework/Flutter"),
+        macho(
+          "Payload/Fixture.app/Frameworks/UnityFramework.framework/UnityFramework",
+        ),
+        macho("Payload/Fixture.app/Frameworks/hermes.framework/hermes"),
+        macho("Payload/Fixture.app/Frameworks/libfoo.dylib"),
+      ]),
+    );
+    expect(result.runtime_families).toEqual(
+      expect.arrayContaining(["flutter", "unity", "react-native", "native"]),
+    );
+    expect(result.runtime_families).not.toContain("swift-objective-c");
+  });
+});

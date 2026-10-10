@@ -149,11 +149,35 @@ describe("pointer fixup tables", () => {
     data.writeUInt16LE(99, 46);
     const fixups = parsePointerFixups(
       data,
-      { chained: { offset: 0, size: data.length }, binds: [], dylibs: [] },
+      {
+        chained: { offset: 0, size: data.length },
+        binds: [],
+        rebases: [],
+        dylibs: [],
+      },
       SEGMENTS,
       BASE,
     );
     expect(fixups.failures).toContain("Unsupported chained pointer format 99");
+  });
+
+  it("keeps unread LC_DYLD_INFO rebase bytes when chained fixups are present", () => {
+    const data = chainedData(1);
+    const fixups = parsePointerFixups(
+      data,
+      {
+        chained: { offset: 0, size: data.length },
+        binds: [],
+        rebases: [{ offset: 8, size: 12 }],
+        dylibs: [],
+      },
+      SEGMENTS,
+      BASE,
+    );
+    expect(fixups).toMatchObject({
+      kind: "chained",
+      unreadRebaseBytes: 12,
+    });
   });
 
   it("does not decode unreferenced imports while constructing fixup facts", () => {
@@ -164,7 +188,12 @@ describe("pointer fixup tables", () => {
     expect(() =>
       parsePointerFixups(
         data,
-        { chained: { offset: 0, size: data.length }, binds: [], dylibs: [] },
+        {
+          chained: { offset: 0, size: data.length },
+          binds: [],
+          rebases: [],
+          dylibs: [],
+        },
         SEGMENTS,
         BASE,
       ),
@@ -179,6 +208,7 @@ describe("pointer fixup tables", () => {
         {
           chained: { offset: 0, size: data.length },
           binds: [],
+          rebases: [],
           dylibs: ["/usr/lib/libobjc.A.dylib", "/usr/lib/libSystem.B.dylib"],
         },
         SEGMENTS,
@@ -241,6 +271,7 @@ describe("pointer fixup tables", () => {
           { offset: 0, size: opcodes.length, stream: "bind" },
           { offset: opcodes.length, size: lazy.length, stream: "lazy" },
         ],
+        rebases: [],
         dylibs: ["/usr/lib/libobjc.A.dylib", "/usr/lib/libSystem.B.dylib"],
       },
       SEGMENTS,
