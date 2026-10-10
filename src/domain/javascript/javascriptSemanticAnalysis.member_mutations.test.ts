@@ -611,3 +611,40 @@ describe("property mutation collection on minified bundles", () => {
     });
   }, 30000);
 });
+
+describe("property mutations through a function's returned reference", () => {
+  it.each([
+    'const shared = { mode: "initial" }; const get = () => shared; get().mode = "updated"; return shared.mode;',
+    'const shared = { mode: "initial" }; const get = () => shared; const ref = get(); ref.mode = "updated"; return shared.mode;',
+    'const shared = { mode: "initial" }; function get() { return shared; } get().mode = "updated"; return shared.mode;',
+    'const shared = { mode: "initial" }; const get = function () { return shared; }; get().mode = "updated"; return shared.mode;',
+    'const shared = { mode: "initial" }; (() => shared)().mode = "updated"; return shared.mode;',
+    'const shared = { inner: { mode: "initial" } }; const get = () => shared.inner; get().mode = "updated"; return shared.inner.mode;',
+    'const shared = { mode: "initial" }; const get = () => shared; delete get().mode; return shared.mode;',
+    "const shared = { count: 1 }; const get = () => shared; get().count++; return shared.count;",
+  ])("keeps the write-through value unknown: %s", (body) => {
+    expect(resultValue(body)?.status).toBe("unknown");
+  });
+
+  it("keeps an unrelated literal returned from a thunk known", () => {
+    expect(
+      resultValue(`
+      const shared = { mode: "initial" };
+      const get = () => ({ mode: shared.mode });
+      get().mode = "updated";
+      return shared.mode;
+    `),
+    ).toEqual({ status: "literal", value: "initial" });
+  });
+
+  it("keeps the shared object known when the write lands on a promise wrapper", () => {
+    expect(
+      resultValue(`
+      const shared = { mode: "initial" };
+      const get = async () => shared;
+      get().mode = "updated";
+      return shared.mode;
+    `),
+    ).toEqual({ status: "literal", value: "initial" });
+  });
+});

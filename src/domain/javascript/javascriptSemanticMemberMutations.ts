@@ -260,6 +260,7 @@ export const collectSemanticMemberMutations = (
           expression,
           current.path,
           effect,
+          state,
         )) {
           if (value.iterableFallbackPath !== undefined)
             deferIterable({
@@ -554,6 +555,7 @@ const referencedValues = (
   node: t.Node,
   path: PropertyPath,
   effect: ValueEffect,
+  state: JavaScriptSemanticAnalysisState,
 ): readonly ReferencedValue[] => {
   // An initializer owns its slots; only deeper writes can affect shared children.
   if (t.isObjectExpression(node) || t.isArrayExpression(node)) {
@@ -584,7 +586,98 @@ const referencedValues = (
       { node: node.left, path },
       { node: node.right, path },
     ];
+  if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
+    return callReturnedValues(node, path, state);
   return [];
+};
+
+/**
+ * Read the captured references a simple thunk hands back, so writes through its
+ * call result attribute to the returned binding. Each returned expression must
+ * be an identifier or a member chain rooted at one with exact static keys; a
+ * returned call stays unexpanded, and every captured identifier re-enters the
+ * alias walk where its lifetime closes cycles. Async and generator functions
+ * hand back wrappers instead of the returned object itself.
+ */
+const functionReturnedReferences = (
+  node: t.Node,
+  path: PropertyPath,
+): readonly ReferencedValue[] => {
+  const fn = unwrapJavaScriptExpression(node).node;
+  if (!t.isFunction(fn) || fn.async || fn.generator) return [];
+  const returned: t.Expression[] = [];
+  if (!t.isBlockStatement(fn.body)) returned.push(fn.body);
+  else {
+    const collect = (statement: t.Node): void => {
+      // Returns inside a nested function or class body never exit this one.
+      if (t.isFunction(statement) || t.isClass(statement)) return;
+      if (t.isReturnStatement(statement)) {
+        if (statement.argument !== null && statement.argument !== undefined)
+          returned.push(statement.argument);
+        return;
+      }
+      for (const key of t.VISITOR_KEYS[statement.type] ?? []) {
+        const child = (
+          statement as unknown as Record<string, t.Node | readonly t.Node[]>
+        )[key];
+        if (Array.isArray(child)) {
+          for (const entry of child as readonly t.Node[])
+            if (entry !== null && entry !== undefined) collect(entry);
+        } else if (
+          child !== null &&
+          child !== undefined &&
+          !Array.isArray(child)
+        )
+          collect(child as t.Node);
+      }
+    };
+    for (const statement of fn.body.body) collect(statement);
+  }
+  const references: ReferencedValue[] = [];
+  for (const expression of returned) {
+    const unwrapped = unwrapJavaScriptExpression(expression).node;
+    const keys: (string | number)[] = [];
+    let current = unwrapped;
+    let resolved = true;
+    while (
+      t.isMemberExpression(current) ||
+      t.isOptionalMemberExpression(current)
+    ) {
+      const key = semanticStaticPropertyKey(current.property, current.computed);
+      if (key === null) {
+        resolved = false;
+        break;
+      }
+      keys.unshift(key);
+      current = current.object;
+    }
+    if (resolved && t.isIdentifier(current))
+      references.push({ node: current, path: [...keys, ...path] });
+  }
+  return references;
+};
+
+const callReturnedValues = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  path: PropertyPath,
+  state: JavaScriptSemanticAnalysisState,
+): readonly ReferencedValue[] => {
+  const callee = unwrapJavaScriptExpression(node.callee).node;
+  if (t.isFunction(callee)) return functionReturnedReferences(callee, path);
+  if (!t.isIdentifier(callee)) return [];
+  const binding = resolveSemanticBindingState(state, callee, callee.name);
+  if (binding === undefined) return [];
+  const references: ReferencedValue[] = [];
+  for (const initializer of binding.initializers) {
+    const fn = unwrapJavaScriptExpression(initializer.node).node;
+    if (!t.isFunction(fn)) continue;
+    for (const reference of functionReturnedReferences(fn, path))
+      references.push({
+        node: reference.node,
+        path: [...initializer.projection, ...reference.path],
+      });
+  }
+  return references;
 };
 
 type MutationObservableOrigin =
@@ -732,7 +825,12 @@ const observableMutationPaths = (
             observer,
           );
         else
-          for (const reference of referencedValues(expression, [], "escape"))
+          for (const reference of referencedValues(
+            expression,
+            [],
+            "escape",
+            state,
+          ))
             link(
               project(expressionNode(reference.node), reference.path),
               observer,
@@ -777,6 +875,7 @@ const observableMutationPaths = (
                 origin,
                 [key],
                 "escape",
+                state,
               )) {
                 link(
                   project(expressionNode(reference.node), reference.path),
