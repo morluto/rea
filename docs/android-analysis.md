@@ -129,6 +129,10 @@ signature validation, full resource-table semantics, native-library analysis or
 Android runtime capture. An `.aab` suffix is a ZIP archive, not an APK, so
 Android tools and the application graph do not treat it as a standalone APK.
 Existing artifact inventory/extraction tools can supply archive evidence.
+Inventory records an APK root only for ZIP bytes whose name ends in `.apk`.
+The projection adds a limitation when no root `AndroidManifest.xml` was
+observed, because such a ZIP may not be an APK. Nested members take a ZIP or
+ASAR family from their bytes; an unread member keeps an unknown format.
 Inventory keeps ZIP names that differ only in case and records that a
 case-insensitive destination cannot store both spellings. Extraction fails
 only when that destination directory cannot keep both names. Project that

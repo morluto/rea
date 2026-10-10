@@ -91,7 +91,9 @@ export const projectAndroidApplication = (
     parsed.inventory_evidence,
   );
   if (inventory.manifest.root_format !== "apk")
-    throw new TypeError("Android application projection requires APK Evidence");
+    throw new TypeError(
+      `Android application projection requires APK inventory Evidence; the inventory root format is ${inventory.manifest.root_format}. APK is chosen for a ZIP archive whose name ends in .apk.`,
+    );
   const nodes = new Map(
     inventory.nodes.map((node) => [node.artifact_id, node]),
   );
@@ -128,6 +130,11 @@ export const projectAndroidApplication = (
     "Bridge candidates are path-based hypotheses, not decoded JNI declarations or observed runtime calls.",
     "A bridge basis is inferred from the native path and is repeated for every managed component.",
     "ZIP inventory cannot see the APK Signing Block, so an empty signing array does not mean the APK is unsigned.",
+    ...(all.some(({ path }) => path === "AndroidManifest.xml")
+      ? []
+      : [
+          "No root AndroidManifest.xml occurrence was observed. The APK family comes from the .apk suffix of a ZIP archive, so these bytes may not be an APK.",
+        ]),
     ...(bridgeProjection.coverage.status === "partial"
       ? [
           `Bridge candidate pairs exceeded the projection safety budget; ${bridgeProjection.coverage.omitted_candidates} hypotheses are omitted. Component arrays still include every component from the supplied inventory pages.`,
