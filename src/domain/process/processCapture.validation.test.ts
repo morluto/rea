@@ -525,13 +525,19 @@ it("validates finalization evidence in incomplete observations", () => {
     unavailableExitElapsed.messages,
     "the unavailable-exit rule names elapsed_ms",
   ).toContain("elapsed_ms");
+  const sigkillFirst = incomplete(undefined, committed, {
+    ...finalization,
+    elapsed_ms: null,
+    signals: [{ signal: "SIGKILL", sent_at_ms: 0, delivery: "signaled" }],
+  });
   expect(
-    incomplete(undefined, committed, {
-      ...finalization,
-      signals: [{ signal: "SIGKILL", sent_at_ms: 0, delivery: "signaled" }],
-    }).success,
+    sigkillFirst.success,
     "an incomplete finalization still starts with SIGTERM",
   ).toBe(false);
+  expect(
+    sigkillFirst.messages,
+    "only the SIGTERM-first rule fires, not the null-elapsed rule",
+  ).toContain("start with SIGTERM");
   expect(
     incomplete(normal, withCommittedFinalization(undefined, normal).manifest)
       .success,
