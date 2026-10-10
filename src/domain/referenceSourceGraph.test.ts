@@ -434,6 +434,20 @@ describe("historical source graph symlink path identity", () => {
     });
   });
 
+  it("preserves an exact NFD inventory spelling when resolving its symlink", () => {
+    const input = { ...graphInput(), inventory_state: "partial" as const };
+    input.entries[1] = fileEntry({ path: "src/cafe\u0301.ts" });
+    input.entries[2] = symlinkEntry({
+      path: "src/link.js",
+      target: "cafe\u0301.ts",
+      target_state: "internal",
+    });
+    input.relationships = [];
+    expect(createHistoricalSourceGraph(input).entries[1]?.path).toBe(
+      "src/cafe\u0301.ts",
+    );
+  });
+
   it("still rejects an internal symlink target that no inventory holds", () => {
     const input = { ...graphInput(), inventory_state: "partial" as const };
     input.entries[2] = symlinkEntry({
