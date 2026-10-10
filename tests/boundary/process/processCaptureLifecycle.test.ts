@@ -702,6 +702,19 @@ itWithCaptureCapability(
         },
       },
     });
+    expect(
+      partial.observations.finalization,
+      "the attempts are published beside the exit, also for a failed run",
+    ).toMatchObject({
+      state: "available",
+      value: {
+        requested_ms: 20_000,
+        signals: [
+          { signal: "SIGTERM", delivery: "signaled" },
+          { signal: "SIGKILL" },
+        ],
+      },
+    });
     if (result.error.cleanupIncomplete) {
       expectUnverifiedHostCleanup(result.error);
       expect(
