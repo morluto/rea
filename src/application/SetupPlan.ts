@@ -276,17 +276,23 @@ const setupPlan = (input: {
         id:
           client === "claude_code"
             ? "install_skill:claude_code"
-            : "install_skill",
+            : client === "qwen_code"
+              ? "install_skill:qwen_code"
+              : "install_skill",
         kind: "install_skill",
         label:
           client === "claude_code"
             ? "REA skill for Claude Code"
-            : "REA reverse-engineering skill",
+            : client === "qwen_code"
+              ? "REA skill for Qwen Code"
+              : "REA reverse-engineering skill",
         target: path,
         detail:
           client === "claude_code"
             ? "Install or update the REA skill in Claude Code's personal skill directory."
-            : "Install or update the bundled REA reverse-engineering skill and on-demand references.",
+            : client === "qwen_code"
+              ? "Install or update the REA skill in Qwen Code's personal skill directory."
+              : "Install or update the bundled REA reverse-engineering skill and on-demand references.",
         external: false,
         operation: "install",
       }))

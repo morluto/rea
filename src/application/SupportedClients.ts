@@ -273,6 +273,13 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     format: "commandcode",
   },
   {
+    name: "qwen_code",
+    displayName: "Qwen Code",
+    configPath: [".qwen", "settings.json"],
+    markerPath: [".qwen"],
+    format: "json",
+  },
+  {
     name: "vscode",
     displayName: "VS Code",
     configPath: (context: ClientPathContext) =>
