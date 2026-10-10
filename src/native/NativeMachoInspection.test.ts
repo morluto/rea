@@ -48,10 +48,15 @@ const inspect = async (lipo: string, architecture: "x86" | "arm64") => {
 };
 
 describe("Mach-O tool architecture selection", () => {
-  it("does not pass -arch for a CPU lipo did not list", async () => {
-    const { commands } = await inspect("architecture arm64\n", "x86");
-    const otool = commands.find(({ tool }) => tool === "otool");
-    expect(otool?.args).toEqual(["-h", "-l", "/fixture/app"]);
+  it("rejects a CPU lipo did not list instead of reading another slice", async () => {
+    const { result, commands } = await inspect("architecture arm64\n", "x86");
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisOutputError",
+      reason: "lipo did not list i386; refusing to read another slice",
+    });
+    expect(commands.map(({ tool }) => tool)).toEqual(["file", "lipo"]);
   });
 
   it("passes the arm64e slice lipo listed for an arm64 target", async () => {

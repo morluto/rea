@@ -431,11 +431,16 @@ export const parsePointerFixups = (
   baseAddress: bigint,
 ): PointerFixups => {
   const image = { bytes, segments, dylibs: commands.dylibs, baseAddress };
-  if (commands.chained !== null) return chainedFixups(image, commands.chained);
   const unreadRebaseBytes = commands.rebases.reduce(
     (total, rebase) => total + rebase.size,
     0,
   );
+  if (commands.chained !== null) {
+    const chained = chainedFixups(image, commands.chained);
+    return unreadRebaseBytes === 0
+      ? chained
+      : { ...chained, unreadRebaseBytes };
+  }
   if (commands.binds.length === 0)
     return {
       kind: "none",
