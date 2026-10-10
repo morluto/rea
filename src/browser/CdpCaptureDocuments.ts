@@ -205,6 +205,7 @@ export const captureDom = (
         nodeIndex,
         nodeName,
         allowedOrigins,
+        svgElement: elementInSvgContext(index, nodeNames, parents, strings),
       });
       for (const url of metadata.urls) {
         urls.push(url);
@@ -375,7 +376,31 @@ interface DomMetadataOptions {
   readonly nodeIndex: number;
   readonly nodeName: string;
   readonly allowedOrigins: ReadonlySet<string>;
+  readonly svgElement: boolean;
 }
+
+// DOMSnapshot carries no namespace URI. Chrome's HTML parser records SVG
+// local names (`svg`, `foreignObject`). Descendants of foreignObject are HTML
+// until a nested `svg`.
+const elementInSvgContext = (
+  index: number,
+  nodeNames: readonly number[],
+  parents: readonly number[],
+  strings: readonly string[],
+): boolean => {
+  let current = index;
+  const seen = new Set<number>();
+  while (current >= 0 && current < nodeNames.length && !seen.has(current)) {
+    seen.add(current);
+    if (indexedString(strings, nodeNames[current]) === "svg") return true;
+    const parent = Math.trunc(parents[current] ?? -1);
+    if (parent < 0 || parent === current) return false;
+    if (indexedString(strings, nodeNames[parent]) === "foreignObject")
+      return false;
+    current = parent;
+  }
+  return false;
+};
 
 const domMetadata = (
   options: DomMetadataOptions,
@@ -391,6 +416,7 @@ const domMetadata = (
     nodeIndex,
     nodeName,
     allowedOrigins,
+    svgElement,
   } = options;
   const pairs = new Map<string, string>();
   for (let index = 0; index + 1 < attributes.length; index += 2) {
@@ -402,7 +428,13 @@ const domMetadata = (
   }
   const urls: WebPageInspection["metadata"]["dom_urls"] = [];
   for (const attribute of domUrlAttributes) {
-    const value = pairs.get(attribute);
+    // Chrome reads SVG xlink:href only when href itself is absent, and an
+    // empty href still wins. Report the fallback as href.
+    const value =
+      pairs.get(attribute) ??
+      (attribute === "href" && svgElement
+        ? pairs.get("xlink:href")
+        : undefined);
     if (value === undefined) continue;
     const tagName = nodeName.toLowerCase();
     // Chrome strips HTML whitespace for FORM.action, while submit controls
