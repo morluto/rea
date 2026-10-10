@@ -208,6 +208,11 @@ Windows, `~/.hermes` elsewhere — including any `HERMES_DATA_DIR_SUFFIX`. Herme
 connects an entry unless `enabled` is false, so setup states `enabled: true`.
 
 Hermes personal skills install under the active Hermes home's `skills` directory.
+Setup, doctor and uninstall follow the root's `active_profile` selection, as
+plain Hermes CLI commands do. An explicit `HERMES_HOME` pointing to
+`profiles/<name>` selects that named profile directly. An invalid, missing or
+deleted sticky profile is reported instead of writing into the default home;
+repair the profile or run `hermes profile use default` before retrying.
 REA follows `HERMES_HOME` whitespace trimming, environment-variable expansion,
 and home expansion before resolving that profile. Setup previews the resolved
 configuration and skill destinations; doctor and uninstall use those same paths.

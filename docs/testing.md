@@ -102,6 +102,8 @@ cleanup. These POSIX lanes use a deterministic loopback model, so they do not
 prove live model-provider or native Windows compatibility. Qwen and Pi use
 caller-configured skill directories to isolate the fixture account from the OS
 home; this does not prove their default home-directory discovery.
+Set `REA_VERIFY_HERMES_STICKY_PROFILE=1` to exercise native Hermes selection of
+a named sticky profile with `HERMES_HOME` still pointing to its root.
 
 Full E2E tests invoke the production command dispatcher and real providers,
 without fake launchers, runners or responses. `verify:keyed-archive` writes an

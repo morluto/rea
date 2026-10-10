@@ -1,6 +1,10 @@
 import { dirname, isAbsolute, join, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
-import { lstatSync, readFileSync } from "node:fs";
+import { lstatSync } from "node:fs";
+import {
+  HermesClientPathError,
+  resolveHermesClientHome,
+} from "./HermesClientHome.js";
 
 /** One supported client configuration location. */
 export interface SetupClient {
@@ -115,80 +119,8 @@ const qwenCodeDirectory = ({ home, env }: ClientPathContext): string => {
 const grokDirectory = ({ home, env }: ClientPathContext): string =>
   env.GROK_HOME || join(home, ".grok");
 
-const hermesProfileDirectory = (
-  root: string,
-  platform: NodeJS.Platform,
-): string => {
-  const path = platform === "win32" ? win32 : { join, resolve };
-  const directory = path.resolve(root);
-  const segments = directory.split(/[\\/]+/u);
-  if (segments.at(-2) === "profiles") return directory;
-
-  let profile: string;
-  try {
-    profile = readFileSync(
-      path.join(directory, "active_profile"),
-      "utf8",
-    ).trim();
-  } catch {
-    return directory;
-  }
-  if (
-    profile.length === 0 ||
-    profile === "default" ||
-    profile === "." ||
-    profile === ".." ||
-    /[\\/]/u.test(profile)
-  )
-    return directory;
-  return path.join(directory, "profiles", profile);
-};
-
-/**
- * Hermes Agent home. `HERMES_HOME` wins; otherwise the platform default mirrors
- * Hermes's own resolver (`%LOCALAPPDATA%\\hermes` on Windows, `~/.hermes`
- * elsewhere), including the optional `HERMES_DATA_DIR_SUFFIX` that is appended
- * to the literal `hermes`/`.hermes` directory name.
- */
-const hermesDirectory = ({
-  home,
-  platform,
-  env,
-}: ClientPathContext): string => {
-  const override = env.HERMES_HOME?.trim();
-  if (override) {
-    const expandedVariables = override.replace(
-      /\$(\w+|\{[^}]*\})/gu,
-      (match, variable: string) => {
-        const key = variable.startsWith("{") ? variable.slice(1, -1) : variable;
-        return env[key] ?? match;
-      },
-    );
-    const expanded =
-      platform === "win32"
-        ? expandedVariables.replace(
-            /%([^%]+)%/gu,
-            (match, variable: string) => env[variable] ?? match,
-          )
-        : expandedVariables;
-    if (expanded === "~") return hermesProfileDirectory(home, platform);
-    if (
-      expanded.startsWith("~/") ||
-      (platform === "win32" && expanded.startsWith("~\\"))
-    )
-      return hermesProfileDirectory(join(home, expanded.slice(2)), platform);
-    return hermesProfileDirectory(resolve(expanded), platform);
-  }
-  const suffix = env.HERMES_DATA_DIR_SUFFIX ?? "";
-  const root =
-    platform === "win32"
-      ? join(
-          env.LOCALAPPDATA?.trim() || join(home, "AppData", "Local"),
-          `hermes${suffix}`,
-        )
-      : join(home, `.hermes${suffix}`);
-  return hermesProfileDirectory(root, platform);
-};
+const hermesDirectory = ({ home, platform, env }: ClientPathContext): string =>
+  resolveHermesClientHome(home, platform, env);
 
 /** Grok Bot uses an absolute SAND_DATA_ROOT; anything else stays ~/.grokbot. */
 const grokBotDirectory = ({ home, env }: ClientPathContext): string => {
@@ -608,6 +540,14 @@ export const supportedClients = (
         format: definition.format,
       };
     } catch (cause: unknown) {
+      if (cause instanceof HermesClientPathError)
+        return {
+          name: definition.name,
+          displayName: definition.displayName,
+          format: definition.format,
+          configPath: cause.path,
+          configPathError: cause.message,
+        };
       if (definition.name !== "pi") throw cause;
       return {
         name: definition.name,
@@ -642,14 +582,21 @@ export const clientSkillDirectories = (
   const destinations = new Map<string, { client: string; directory: string }>();
   for (const client of selected) {
     const definition = definitions.find(({ name }) => name === client);
-    const directory =
-      definition?.skillPath === undefined
-        ? join(home, ".agents", "skills")
-        : resolvePath(definition.skillPath, {
-            home,
-            platform,
-            env: environment,
-          });
+    let directory: string;
+    try {
+      directory =
+        definition?.skillPath === undefined
+          ? join(home, ".agents", "skills")
+          : resolvePath(definition.skillPath, {
+              home,
+              platform,
+              env: environment,
+            });
+    } catch (cause: unknown) {
+      // Registration diagnostics own an unresolved profile; never fall back to another skill root.
+      if (cause instanceof HermesClientPathError) continue;
+      throw cause;
+    }
     if (!destinations.has(directory))
       destinations.set(directory, {
         client:
