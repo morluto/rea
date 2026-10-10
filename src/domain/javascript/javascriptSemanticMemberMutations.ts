@@ -194,8 +194,11 @@ export const collectSemanticMemberMutations = (
           current.originAt?.end,
         ]);
         if (recordedEffects.has(identity)) continue;
+        // A recorded write invalidates the binding to a non-primitive value, so
+        // only its first write can target a primitive. Re-evaluating it would
+        // replay every earlier write and make repeated writes superlinear.
         const value =
-          effect === "write"
+          effect === "write" && binding.mutatedPaths.length === 0
             ? evaluateSemanticBinding(binding, state)
             : undefined;
         const primitiveWrite =
