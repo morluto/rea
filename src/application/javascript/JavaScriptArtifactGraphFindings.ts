@@ -78,8 +78,12 @@ const addReference = (
   omissions: { selfReferences: number },
 ): void => {
   const source =
-    sourceNodeFor(context, input.file.path, input.value.module_key) ??
-    input.asset;
+    sourceNodeFor(
+      context,
+      input.file.path,
+      input.value.module_key,
+      input.value.module_runtime,
+    ) ?? input.asset;
   const resolved =
     input.value.specifier === null
       ? null
@@ -162,8 +166,12 @@ const addEndpoint = (
   input: FindingInput<StaticEndpoint>,
 ): void => {
   const source =
-    sourceNodeFor(context, input.file.path, input.value.module_key) ??
-    input.asset;
+    sourceNodeFor(
+      context,
+      input.file.path,
+      input.value.module_key,
+      input.value.module_runtime,
+    ) ?? input.asset;
   const key = compactStringIdentityKey(input.value.value);
   const label = `${input.value.kind} endpoint`;
   const node = context.accumulator.addNode({
@@ -204,8 +212,12 @@ const addStorage = (
   input: FindingInput<StaticStorage>,
 ): void => {
   const source =
-    sourceNodeFor(context, input.file.path, input.value.module_key) ??
-    input.asset;
+    sourceNodeFor(
+      context,
+      input.file.path,
+      input.value.module_key,
+      input.value.module_runtime,
+    ) ?? input.asset;
   const node = context.accumulator.addNode({
     kind: "storage",
     identity: artifactLocalIdentity(
@@ -262,8 +274,12 @@ const addDiscoveredRole = (
     coverage: input.coverage,
   });
   const source =
-    sourceNodeFor(context, input.file.path, input.value.module_key) ??
-    input.asset;
+    sourceNodeFor(
+      context,
+      input.file.path,
+      input.value.module_key,
+      input.value.module_runtime,
+    ) ?? input.asset;
   addStaticInferenceEdge(context, {
     source,
     target: role,
@@ -359,9 +375,12 @@ const resolveReference = (
   if (specifier === null) return null;
   const chunk = resolveBundlerChunkReference(context, sourcePath, reference);
   if (chunk !== null) return chunk;
-  const module = context.moduleNodes.get(
-    moduleLookupKey(sourcePath, specifier),
-  );
+  const module =
+    reference.module_runtime === undefined
+      ? undefined
+      : context.moduleNodes.get(
+          moduleLookupKey(sourcePath, reference.module_runtime, specifier),
+        );
   if (module !== undefined) {
     const file = context.filesByPath.get(sourcePath);
     return file === undefined
@@ -407,10 +426,11 @@ const resolveBundlerChunkReference = (
   if (file === undefined) return null;
   const registrations = context.analysis.files
     .find(({ file: analyzedFile }) => analyzedFile.path === sourcePath)
-    ?.javascript?.bundler_registrations.filter(({ modules }) =>
-      reference.module_key === null
-        ? true
-        : modules.some(
+    ?.javascript?.bundler_registrations.filter(({ runtime, modules }) =>
+      reference.module_runtime === undefined
+        ? reference.module_key === null
+        : runtime === reference.module_runtime &&
+          modules.some(
             ({ module_key: moduleKey }) => moduleKey === reference.module_key,
           ),
     );

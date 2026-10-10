@@ -25,6 +25,8 @@ interface JavaScriptStaticReferenceState {
     | "worker"
     | "service-worker";
   readonly module_key: string | null;
+  /** Recovered factory runtime; absent in older or unbundled findings. */
+  readonly module_runtime?: string;
   readonly location: JavaScriptSourceRange;
 }
 
@@ -41,6 +43,8 @@ export interface JavaScriptStaticEndpoint {
   readonly value: string;
   readonly mechanism: string;
   readonly module_key: string | null;
+  /** Recovered factory runtime; absent in older or unbundled findings. */
+  readonly module_runtime?: string;
   readonly location: JavaScriptSourceRange;
 }
 
@@ -55,6 +59,8 @@ export interface JavaScriptStaticStorage {
   readonly name: string | null;
   readonly mechanism: string;
   readonly module_key: string | null;
+  /** Recovered factory runtime; absent in older or unbundled findings. */
+  readonly module_runtime?: string;
   readonly location: JavaScriptSourceRange;
 }
 
@@ -95,6 +101,8 @@ export interface JavaScriptRolePath {
   readonly resolution_context: JavaScriptStaticPathContext;
   readonly mechanism: string;
   readonly module_key: string | null;
+  /** Recovered factory runtime; absent in older or unbundled findings. */
+  readonly module_runtime?: string;
   readonly location: JavaScriptSourceRange;
 }
 

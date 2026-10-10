@@ -40,7 +40,7 @@ export const inspectBundlerRegistration = (
   const table = entry.elements[1];
   const runtimeValue = runtimeMetadata(entry.elements[2]);
   if (!t.isArrayExpression(chunkIds) || !t.isObjectExpression(table)) return;
-  const recovered = recoverBundlerModules(source, table, accumulator);
+  const recovered = recoverBundlerModules(source, table, runtime, accumulator);
   const chunkKeys = staticArrayValues(chunkIds);
   accumulator.unknownFindings += chunkKeys.unknown;
   accumulator.unknownFindings +=
@@ -92,12 +92,13 @@ export const inspectEsbuildWrapper = (
         : null;
   const table = call.arguments[0];
   if (wrapperKind === null || !t.isObjectExpression(table)) return;
-  const recovered = recoverBundlerModules(source, table, accumulator);
+  const runtime = `esbuild-${wrapperKind}`;
+  const recovered = recoverBundlerModules(source, table, runtime, accumulator);
   if (recovered.modules.length === 0) return;
   accumulator.unknownFindings += recovered.unknownAsyncChunkKeys;
   const registration: JavaScriptBundlerRegistration = {
     bundler: "esbuild",
-    runtime: `esbuild-${wrapperKind}`,
+    runtime,
     chunk_keys: [`${wrapperKind}@${String(call.start ?? 0)}`],
     unknown_chunk_keys: 0,
     runtime_require_name: null,
@@ -127,13 +128,19 @@ interface RecoveredBundlerModules {
 const recoverBundlerModules = (
   source: string,
   table: t.ObjectExpression,
+  runtime: string,
   accumulator: AnalysisAccumulator,
 ): RecoveredBundlerModules => {
   const modules: JavaScriptBundlerModule[] = [];
   const asyncChunkKeys: string[] = [];
   let unknownAsyncChunkKeys = 0;
   for (const property of table.properties) {
-    const recovered = recoverBundlerModule(source, property, accumulator);
+    const recovered = recoverBundlerModule(
+      source,
+      property,
+      runtime,
+      accumulator,
+    );
     if (recovered === null) continue;
     modules.push(recovered.module);
     asyncChunkKeys.push(...recovered.asyncChunkKeys);
@@ -149,6 +156,7 @@ const recoverBundlerModules = (
 const recoverBundlerModule = (
   source: string,
   property: t.ObjectMethod | t.ObjectProperty | t.SpreadElement,
+  runtime: string,
   accumulator: AnalysisAccumulator,
 ): {
   readonly module: JavaScriptBundlerModule;
@@ -169,6 +177,7 @@ const recoverBundlerModule = (
       start: factory.start,
       end: factory.end,
       key,
+      runtime,
       requireName,
     };
     accumulator.moduleRangeIndex.add(moduleRange);

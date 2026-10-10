@@ -6,9 +6,27 @@ import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 it("preserves first insertion precedence and inclusive interval bounds", () => {
   const nested = new JavaScriptModuleRangeIndex(100);
   expect(nested.find(0)).toBeUndefined();
-  nested.add({ start: 10, end: 90, key: "outer-first", requireName: null });
-  nested.add({ start: 20, end: 30, key: "inner-second", requireName: null });
-  nested.add({ start: 30, end: 40, key: "later-overlap", requireName: null });
+  nested.add({
+    start: 10,
+    end: 90,
+    key: "outer-first",
+    runtime: "webpackChunkApp",
+    requireName: null,
+  });
+  nested.add({
+    start: 20,
+    end: 30,
+    key: "inner-second",
+    runtime: "webpackChunkApp",
+    requireName: null,
+  });
+  nested.add({
+    start: 30,
+    end: 40,
+    key: "later-overlap",
+    runtime: "webpackChunkApp",
+    requireName: null,
+  });
   expect(nested.find(9)).toBeUndefined();
   expect(nested.find(10)?.key).toBe("outer-first");
   expect(nested.find(20)?.key).toBe("outer-first");
@@ -20,7 +38,13 @@ it("preserves first insertion precedence and inclusive interval bounds", () => {
 
 it("rejects missing and out-of-range lookup offsets", () => {
   const index = new JavaScriptModuleRangeIndex(20);
-  index.add({ start: 5, end: 10, key: "bounded", requireName: null });
+  index.add({
+    start: 5,
+    end: 10,
+    key: "bounded",
+    runtime: "webpackChunkApp",
+    requireName: null,
+  });
   expect(index.find(undefined)).toBeUndefined();
   expect(index.find(null)).toBeUndefined();
   expect(index.find(-1)).toBeUndefined();
@@ -58,8 +82,11 @@ it("keeps module references attributed across many real factory ranges", () => {
     expect(
       analysis.references.find(
         ({ specifier }) => specifier === `dependency-${index}`,
-      )?.module_key,
-    ).toBe(`module-${index}`);
+      ),
+    ).toMatchObject({
+      module_key: `module-${index}`,
+      module_runtime: "webpackChunkApp",
+    });
   }
   expect(
     analysis.references.find(

@@ -2,9 +2,10 @@ import type { ApplicationNode } from "../../domain/javascript/javascriptApplicat
 import { sha256Text } from "../../domain/javascript/javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
-import type {
-  JavaScriptArtifactGraphContext,
-  JavaScriptArtifactGraphCoverage,
+import {
+  sourceNodeFor,
+  type JavaScriptArtifactGraphContext,
+  type JavaScriptArtifactGraphCoverage,
 } from "./JavaScriptArtifactGraphContext.js";
 import {
   astObservationEvidence,
@@ -38,10 +39,11 @@ export const electronFindingSourceNode = (
   context: JavaScriptArtifactGraphContext,
   file: JavaScriptArtifactFile,
   moduleKey: string | null,
+  runtime?: string,
 ): ApplicationNode | undefined =>
   moduleKey === null
     ? (context.assetNodes.get(file.path) ?? context.fileNodes.get(file.path))
-    : context.moduleNodes.get(`${file.path}\0${moduleKey}`);
+    : sourceNodeFor(context, file.path, moduleKey, runtime);
 
 /** Observation-scoped identity shared safely across different artifact files. */
 export const electronObservationIdentity = (

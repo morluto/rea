@@ -73,6 +73,7 @@ const addIpcRecord = (
     context,
     record.file,
     record.finding.module_key,
+    record.finding.module_runtime,
   );
   if (source === undefined) return;
   state.sources.set(record.key, source);
@@ -255,6 +256,7 @@ const addValidationObservations = (state: IpcGraphState): void => {
               state.context,
               file,
               validation.module_key,
+              validation.module_runtime,
             )
           : state.handlers.get(handlerRecord.key);
       if (target !== undefined)

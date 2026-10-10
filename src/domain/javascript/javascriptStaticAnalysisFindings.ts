@@ -130,7 +130,11 @@ export const finalizeLocatedFindings = <
   values: readonly LocatedJavaScriptFinding<Value>[],
   modules: JavaScriptModuleRangeIndex,
 ): Value[] =>
-  values.map(({ offset, value }) => ({
-    ...value,
-    module_key: modules.find(offset)?.key ?? null,
-  }));
+  values.map(({ offset, value }) => {
+    const module = modules.find(offset);
+    return {
+      ...value,
+      module_key: module?.key ?? null,
+      ...(module === undefined ? {} : { module_runtime: module.runtime }),
+    };
+  });

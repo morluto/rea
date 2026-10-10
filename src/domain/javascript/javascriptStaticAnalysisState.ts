@@ -23,6 +23,7 @@ export interface JavaScriptModuleRange {
   readonly start: number;
   readonly end: number;
   readonly key: string;
+  readonly runtime: string;
   readonly requireName: string | null;
 }
 

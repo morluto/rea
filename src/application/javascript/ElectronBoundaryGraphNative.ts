@@ -38,7 +38,12 @@ export const addElectronNativeBoundaries = (
 
 const addNativeBinding = (input: NativeBindingInput): void => {
   const { context, file, value, coverage } = input;
-  const source = electronFindingSourceNode(context, file, value.module_key);
+  const source = electronFindingSourceNode(
+    context,
+    file,
+    value.module_key,
+    value.module_runtime,
+  );
   if (source === undefined) return;
   const resolved = resolveArtifactPath(
     value.specifier,
