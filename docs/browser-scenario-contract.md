@@ -138,6 +138,15 @@ distinction: it closes and deletes provider-owned profiles, but only disconnects
 from an external CDP browser. Real-browser verification checks both outcomes and
 confirms that an attached external browser remains alive.
 
+Initial web-storage seeds apply once per browser storage area, before the first
+application script. Later changes, removals, and empty values survive navigation.
+Cross-site partitioned storage areas initialize independently; session storage
+belongs to the selected tab. Initialization bookkeeping remains outside page
+storage. When seeds are selected, the provider briefly pauses its isolated
+bootstrap using Chromium's debugger and resumes target debugger statements while
+capture runs. This can affect a concurrent debugging session on an attached tab.
+The bootstrap and its breakpoint are removed before disconnecting.
+
 HTTP(S) URLs may include ordinary query values and fragments directly. Use
 ordered structured query entries when a value needs to reference a declared
 environment-backed secret. Form, storage, and cookie values are either literal

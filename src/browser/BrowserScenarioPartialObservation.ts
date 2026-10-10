@@ -19,6 +19,7 @@ const OPERATION = "capture_browser_scenario" as const;
 
 const browserScenarioLimitations = (
   session: BrowserScenarioSessionPort,
+  scenario: BrowserScenario,
 ): string[] => [
   "Event sequence records provider receipt order; simultaneous browser causality is not inferred.",
   "Network content is retained only when selected; response bytes are browser-decoded, not compressed wire bytes.",
@@ -26,6 +27,12 @@ const browserScenarioLimitations = (
   "Network content reads settle within 5 seconds each and never wait for unfinished responses or refetch them.",
   "Playwright scenario events do not expose request initiator stacks; receipt order does not prove causality.",
   "Storage values are hashed only after declared-secret redaction.",
+  ...(scenario.storage.local_storage.length > 0 ||
+  scenario.storage.session_storage.length > 0
+    ? [
+        "Storage seeding briefly pauses provider bootstrap before application scripts; pauses from target debugger statements are resumed while capture runs.",
+      ]
+    : []),
   ...(session.eventLimitations?.() ?? []),
   ...(session.mode === "connect"
     ? [
@@ -65,7 +72,7 @@ export const browserScenarioCaptureData = (input: {
   steps: [...input.steps],
   events: input.session.events(),
   limitations: [
-    ...browserScenarioLimitations(input.session),
+    ...browserScenarioLimitations(input.session, input.scenario),
     ...(input.limitations ?? []),
   ],
 });

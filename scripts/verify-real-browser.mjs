@@ -45,6 +45,11 @@ import { verifyBrowserDomDestinations } from "./lib/browser-dom-destinations-e2e
 import { verifyBrowserCaptureMetadataBudget } from "./lib/browser-capture-metadata-budget-e2e.mjs";
 import { artifactCliEvidence, artifactMcpResult } from "./lib/artifact-e2e.mjs";
 import { verifyScenarioEnvironment } from "./lib/browser-scenario-environment-e2e.mjs";
+import {
+  verifyScenarioStorage,
+  verifyScenarioStorageFrames,
+  verifyScenarioStorageFailures,
+} from "./lib/browser-scenario-storage-e2e.mjs";
 
 const REAL_BROWSER_STARTUP_TIMEOUT_MS = 60_000;
 const SCENARIO_SECRET_VALUE = "rea-browser-verifier-secret";
@@ -305,6 +310,10 @@ try {
     executable,
     site.origin,
   );
+  const scenarioStorage = await verifyScenarioStorage(executable);
+  const scenarioStorageFrames = await verifyScenarioStorageFrames(executable);
+  const scenarioStorageFailures =
+    await verifyScenarioStorageFailures(executable);
   const scenarioResults = JSON.stringify([
     attachedScenario,
     launchedScenario.value,
@@ -373,6 +382,9 @@ try {
     browserScenarioLaunchCleanup: "terminated-owned-process",
     scenarioFailure,
     scenarioEnvironment,
+    scenarioStorage,
+    scenarioStorageFrames,
+    scenarioStorageFailures,
     verified: true,
   };
 } finally {
