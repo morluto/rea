@@ -502,6 +502,8 @@ itWithCaptureCapability(
     );
 
     const cancelling = await connectProgressClient(true);
+    // Prepare the SDK's full output-schema cache before timing capture control.
+    await cancelling.client.callTool({ name: "binary_session", arguments: {} });
     const controller = new AbortController();
     const stall = setTimeout(() => controller.abort(), 5_000);
     onTestFinished(() => clearTimeout(stall));
@@ -518,24 +520,30 @@ itWithCaptureCapability(
       },
       { signal: controller.signal },
     );
-    const sawRunning = await Promise.race([
-      expect
-        .poll(() =>
-          cancelling.notifications.some((note) => note.includes("running:")),
+    const completion = call.then(
+      (reply) => ({ kind: "reply" as const, reply }),
+      (cause: unknown) => ({ kind: "error" as const, cause }),
+    );
+    try {
+      await expect
+        .poll(
+          () =>
+            cancelling.notifications.some((note) => note.includes("running:")),
+          { timeout: 4_000 },
         )
-        .toBe(true)
-        .then(() => true),
-      new Promise<boolean>((resolve) => {
-        setTimeout(() => resolve(false), 4_000);
-      }),
-    ]);
-    clearTimeout(stall);
-    if (!sawRunning)
-      throw new Error(
-        `MCP cancellation saw no running progress: ${cancelling.notifications.join("\n")}`,
-      );
-    controller.abort();
-    await expect(call).rejects.toThrow(/abort/iu);
+        .toBe(true);
+      controller.abort();
+      const outcome = await completion;
+      if (outcome.kind !== "error")
+        throw new Error("Cancelled capture must reject its client wait");
+      expect(outcome.cause).toMatchObject({
+        message: expect.stringMatching(/abort/iu),
+      });
+    } finally {
+      clearTimeout(stall);
+      controller.abort();
+      await completion;
+    }
     await expect
       .poll(() => cancelling.notifications.join("\n"))
       .toContain("disposition=cancelled");
