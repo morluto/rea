@@ -3,7 +3,7 @@ import type * as t from "@babel/types";
 import { collectJavaScriptSemanticAsyncEffects } from "./javascriptSemanticAsyncEffects.js";
 import { collectJavaScriptSemanticCalls } from "./javascriptSemanticCalls.js";
 import { collectJavaScriptSemanticChildProcesses } from "./javascriptSemanticChildProcesses.js";
-import { collectJavaScriptSemanticFingerprints } from "./javascriptSemanticFingerprints.js";
+import { collectJavaScriptSemanticFingerprintsSteps } from "./javascriptSemanticFingerprints.js";
 import { collectJavaScriptSemanticDataEffects } from "./javascriptSemanticDataEffects.js";
 import type {
   JavaScriptSemanticCallable,
@@ -36,56 +36,68 @@ type DerivedSemanticAnalysis = Pick<
 >;
 
 /** Compose bounded semantic passes after lexical definitions are available. */
-export const collectJavaScriptDerivedSemantics = (
+/**
+ * Collect derived semantics with a yield between collectors. Each collector
+ * completes before the next starts, so results equal the synchronous form.
+ */
+export function* collectJavaScriptDerivedSemanticsSteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
   callables: readonly JavaScriptSemanticCallable[],
   parserPartial: boolean,
-): DerivedSemanticAnalysis => {
+): Generator<void, DerivedSemanticAnalysis> {
   const calls = collectJavaScriptSemanticCalls(program, state, callables);
+  yield;
   const promiseOperations = collectJavaScriptSemanticPromises(
     program,
     state,
     callables,
   );
+  yield;
   const asyncEffects = collectJavaScriptSemanticAsyncEffects(
     program,
     state,
     callables,
   );
+  yield;
   const childProcesses = collectJavaScriptSemanticChildProcesses(
     program,
     state,
     callables,
   );
+  yield;
   const dataEffects = collectJavaScriptSemanticDataEffects(
     program,
     state,
     callables,
   );
+  yield;
   const resourceOperations = collectJavaScriptSemanticResources(
     program,
     state,
     callables,
   );
+  yield;
   const objectOperations = collectJavaScriptSemanticObjects(
     program,
     state,
     callables,
   );
-  const functionFingerprints = collectJavaScriptSemanticFingerprints({
-    state,
-    callables,
-    calls,
-    promises: promiseOperations,
-    events: asyncEffects.eventOperations,
-    timers: asyncEffects.timerOperations,
-    childProcessSpawns: childProcesses.childProcessSpawns,
-    childProcessInteractions: childProcesses.childProcessInteractions,
-    requestOperations: dataEffects.requestOperations,
-    resourceOperations,
-    parserPartial,
-  });
+  yield;
+  const functionFingerprints =
+    yield* collectJavaScriptSemanticFingerprintsSteps({
+      state,
+      callables,
+      calls,
+      promises: promiseOperations,
+      events: asyncEffects.eventOperations,
+      timers: asyncEffects.timerOperations,
+      childProcessSpawns: childProcesses.childProcessSpawns,
+      childProcessInteractions: childProcesses.childProcessInteractions,
+      requestOperations: dataEffects.requestOperations,
+      resourceOperations,
+      parserPartial,
+    });
   return {
     ...calls,
     promiseOperations,
@@ -96,4 +108,4 @@ export const collectJavaScriptDerivedSemantics = (
     objectOperations,
     functionFingerprints,
   };
-};
+}

@@ -379,7 +379,7 @@ the tool fails with a `debugger-attach-denied` reason.
 Install a Ghidra 12.1.x release and the 64-bit full JDK it declares, then configure REA to
 use them. Ghidra analysis supports Linux x64/arm64 and macOS x64/arm64; each installation requires
 the matching native decompiler. Experimental Windows x64 P0 admits native
-x86-64 PE applications on local NTFS using bundled Job Object ownership,
+x86 and x86-64 PE applications and DLLs on local NTFS using bundled Job Object ownership,
 protected runtime DACLs, and handle-based path admission. See [Windows Ghidra P0](windows-ghidra-p0.md) and
 [issue #527](https://github.com/morluto/rea/issues/527).
 On Linux and macOS, `annotate_native_function` atomically edits a function name

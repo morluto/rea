@@ -65,7 +65,7 @@ describe("artifact directory inventory", () => {
         expect.objectContaining({
           relation: "maps-source",
           parent_artifact_id: script?.artifact_id,
-          child_artifact_id: sourceMap?.artifact_id,
+          occurrence_id: sourceMap?.occurrence_id,
         }),
       ]),
     );

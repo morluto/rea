@@ -509,3 +509,75 @@ describe("AppKit keyed archive connectors", () => {
     expect(to).toEqual(expect.arrayContaining(["objc_selector", "unknown"]));
   });
 });
+
+it("names the archive once per evidence record", () => {
+  const relativePath = "Views/Main.storyboardc/scene.nib/objects.nib";
+  const result = buildInterfaceBuilderAnalysis({
+    targetSha256: hash,
+    toolVersion: "test",
+    documents: [
+      {
+        relativePath,
+        archiveSha256: hash,
+        documentKind: "storyboard_scene",
+        raw: {
+          "com.apple.ibtool.document.objects": {
+            controller: { customClass: "StoreViewController" },
+            next: { customClass: "BuildViewController" },
+          },
+          "com.apple.ibtool.document.connections": {
+            controller: [
+              { type: "segue", identifier: "showBuild", destinationId: "next" },
+            ],
+          },
+        },
+      },
+    ],
+    limits: interfaceBuilderLimitsSchema.parse({}),
+  });
+  const evidence = [...result.graph.nodes, ...result.graph.edges].flatMap(
+    (item) => item.evidence,
+  );
+  expect(new Set(evidence.map(({ artifact_path }) => artifact_path))).toEqual(
+    new Set([relativePath]),
+  );
+  expect(evidence.map(({ description }) => description)).toEqual(
+    expect.arrayContaining([
+      "compiled document",
+      "object controller",
+      "segue showBuild",
+    ]),
+  );
+  expect(
+    evidence.filter(({ description }) => description.includes(relativePath)),
+  ).toEqual([]);
+});
+
+it("states each object's class, label, and ID once", () => {
+  const { objects } = parseInterfaceBuilderRecords({
+    "com.apple.ibtool.document.objects": {
+      "7": {
+        customClass: "NSButton",
+        label: "Start",
+        objectID: "7",
+        nibValues: { NSContents: "Start" },
+      },
+      button: { class: "UIButton", title: "Build", objectID: "authored" },
+    },
+  });
+  expect(objects).toEqual([
+    expect.objectContaining({
+      id: "7",
+      class_name: "NSButton",
+      name: "Start",
+      attributes: { nibValues: { NSContents: "Start" } },
+    }),
+    expect.objectContaining({
+      id: "button",
+      class_name: "UIButton",
+      name: "Build",
+      // Values that differ from the canonical fields stay as authored.
+      attributes: { class: "UIButton", title: "Build", objectID: "authored" },
+    }),
+  ]);
+});

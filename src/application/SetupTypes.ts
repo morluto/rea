@@ -1,5 +1,6 @@
 import type { DoctorReport, DoctorScope, runDoctor } from "./Doctor.js";
 import type { LinuxDistribution } from "./LinuxHopper.js";
+import type { SkillDestination } from "./SetupSkill.js";
 import type { SetupClient } from "./SupportedClients.js";
 import type {
   SetupFailureCode,
@@ -42,7 +43,7 @@ export type ClientConfigurationInspection =
 export interface SetupHost {
   readonly platform: NodeJS.Platform;
   readonly homeDirectory: string;
-  readonly claudeCodeSkillsDirectory: string;
+  skillDestinations(clientIds: readonly string[]): readonly SkillDestination[];
   readonly registrationCommand: readonly string[];
   readonly nodeVersion: string;
   macosVersion(): Promise<string | undefined>;

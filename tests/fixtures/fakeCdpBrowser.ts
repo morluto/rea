@@ -196,22 +196,28 @@ const replyToCommand = (
     );
     return;
   }
-  socket.send(
-    JSON.stringify({
-      id: command.id,
-      result,
-    }),
-  );
-  if (options.malformedEventOnMethod === command.method)
-    socket.send("{not-json");
-  if (options.malformedEventShapeOnMethod === command.method)
-    socket.send(JSON.stringify({ method: 42 }));
+  const reply = () => {
+    socket.send(
+      JSON.stringify({
+        id: command.id,
+        result,
+      }),
+    );
+    if (options.malformedEventOnMethod === command.method)
+      socket.send("{not-json");
+    if (options.malformedEventShapeOnMethod === command.method)
+      socket.send(JSON.stringify({ method: 42 }));
+  };
+  const eventsFirst =
+    options.eventsBeforeReply?.includes(command.method) === true;
+  if (!eventsFirst) reply();
   const customEvents = options.commandEvents?.(
     command,
     `http://127.0.0.1:${String(port)}`,
   );
   if (customEvents === undefined) emitEvents(socket, command, port, options);
   else for (const event of customEvents) socket.send(JSON.stringify(event));
+  if (eventsFirst) reply();
   if (options.closeAfterMethod === command.method)
     setImmediate(() => socket.close());
 };

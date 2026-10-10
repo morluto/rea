@@ -5,13 +5,79 @@ from pathlib import Path
 import re
 import struct
 import sys
-from urllib.parse import quote, unquote, urlsplit
+import unicodedata
+from urllib.parse import unquote, urlsplit
 import xml.etree.ElementTree as ET
 from zipfile import BadZipFile, ZipFile
 
+from website import NOTES_FIXTURES, SITE_ORIGIN, authored_markdown, page_url, sync_pages
 
-SITE_ORIGIN = "https://rea.tools"
-NOTES_FIXTURES = {"examples/notes-electron/index.html", "examples/notes-web/index.html"}
+LEGACY_ORIGIN = "morluto.github.io"
+SITE_TEXT_URL = re.compile(
+    r"https?://(?:rea\.tools|morluto\.github\.io)/[^\s<>\"'`]+", re.IGNORECASE
+)
+
+
+def markdown_ids(path):
+    """Collect GitHub heading anchors and explicit HTML IDs in local Markdown."""
+    source = path.read_text(encoding="utf-8")
+    parser = HtmlReferences()
+    parser.feed(source)
+    identifiers = set(parser.ids)
+    counts = {}
+    fenced = False
+    for line in source.splitlines():
+        if line.lstrip().startswith(("```", "~~~")):
+            fenced = not fenced
+        if fenced:
+            continue
+        heading = re.match(r"^ {0,3}#{1,6}\s+(.+?)(?:\s+#+)?\s*$", line)
+        if not heading:
+            continue
+        text = re.sub(r"<[^>]*>", "", heading[1]).lower()
+        slug = "".join(c for c in text if c in "-_ " or unicodedata.category(c)[0] in "LN").replace(" ", "-")
+        count = counts.get(slug, 0)
+        identifiers.add(f"{slug}-{count}" if count else slug)
+        counts[slug] = count + 1
+    return identifiers
+
+
+def check_repository_links(root):
+    """Check local links in website Markdown and current-repository source links."""
+    errors = []
+    sources = {}
+    for path in authored_markdown(root):
+        text = re.sub(r"(?ms)^\s*(```|~~~).*?^\s*\1[^\n]*$", "", path.read_text(encoding="utf-8"))
+        text = re.sub(r"`[^`]*`", "", text)
+        sources[path] = re.findall(r"\[[^\]\n]*\]\(([^\s)]+)\)", text)
+    for path in sorted((root / "website/public").rglob("*.html")):
+        parser = HtmlReferences()
+        parser.feed(path.read_text(encoding="utf-8"))
+        sources[path] = parser.references
+    for path, references in sources.items():
+        for reference in references:
+            try:
+                url = urlsplit(reference)
+            except ValueError as error:
+                errors.append(f"{path.relative_to(root)}: invalid URL {reference!r}: {error}")
+                continue
+            if url.hostname == LEGACY_ORIGIN and (url.path == "/rea" or url.path.startswith("/rea/")):
+                errors.append(f"{path.relative_to(root)}: obsolete website URL: {reference}")
+                continue
+            if url.hostname == "github.com":
+                match = re.match(r"^/morluto/rea/(?:blob|tree)/main/(.+)$", url.path)
+                if not match:
+                    continue
+                target = (root / unquote(match[1])).resolve()
+            elif url.scheme or url.netloc or path.suffix == ".html":
+                continue
+            else:
+                target = (path.parent / unquote(url.path)).resolve() if url.path else path
+            if not target.is_relative_to(root) or not target.exists():
+                errors.append(f"{path.relative_to(root)}: missing repository target: {reference}")
+            elif target.suffix == ".md" and url.fragment and unquote(url.fragment) not in markdown_ids(target):
+                errors.append(f"{path.relative_to(root)}: missing Markdown fragment: {reference}")
+    return errors
 
 
 class HtmlReferences(HTMLParser):
@@ -30,6 +96,8 @@ class HtmlReferences(HTMLParser):
         self.canonicals = []
         self.lang = None
         self.h1_count = 0
+        self.text = []
+        self.copy_targets = []
 
     def handle_starttag(self, tag, attrs):
         attributes = dict(attrs)
@@ -67,6 +135,8 @@ class HtmlReferences(HTMLParser):
             reference = attributes.get(attribute)
             if reference is not None:
                 self.references.append(reference)
+        if attributes.get("data-copy"):
+            self.copy_targets.append(attributes["data-copy"])
 
     def handle_endtag(self, tag):
         if tag == "head":
@@ -75,6 +145,7 @@ class HtmlReferences(HTMLParser):
             self.in_title = False
 
     def handle_data(self, data):
+        self.text.append(data)
         if self.in_title:
             self.titles[-1] += data
 
@@ -104,15 +175,7 @@ def check_search_metadata(site, pages):
             )
         if page.noindex():
             continue
-        route = (
-            path.relative_to(site).parent.as_posix()
-            if path.name == "index.html"
-            else label
-        )
-        route = "" if route == "." else route
-        url = f"{SITE_ORIGIN}/{quote(route, safe='/')}" + (
-            "/" if route and path.name == "index.html" else ""
-        )
+        url = page_url(site, path)
         indexable.add(url)
         if page.canonicals != [url]:
             errors.append(f"{label}: needs exactly one head canonical for {url}")
@@ -233,15 +296,32 @@ def check_site(site):
         label = path.relative_to(site)
         for identifier in page.duplicate_ids:
             errors.append(f"{label}: duplicate ID {identifier!r}")
-        for reference in page.references:
-            url = urlsplit(reference)
-            if url.scheme or url.netloc:
+        for identifier in page.copy_targets:
+            if identifier not in page.ids:
+                errors.append(f"{label}: missing copy target: {identifier}")
+        text_urls = [match.group().rstrip(".,;)") for match in SITE_TEXT_URL.finditer(" ".join(page.text))]
+        for reference in page.references + text_urls:
+            try:
+                url = urlsplit(reference)
+            except ValueError as error:
+                errors.append(f"{label}: invalid URL {reference!r}: {error}")
                 continue
-            references += 1
-            if url.path.startswith("/"):
+            if url.hostname == LEGACY_ORIGIN and (url.path == "/rea" or url.path.startswith("/rea/")):
+                errors.append(f"{label}: obsolete website URL: {reference}; use rea.tools")
+                continue
+            if url.hostname == "rea.tools":
+                if url.scheme != "https" or url.netloc != "rea.tools":
+                    errors.append(f"{label}: website URL must use {SITE_ORIGIN}: {reference}")
+                    continue
+                target = (site / unquote(url.path).lstrip("/")).resolve()
+            elif url.scheme or url.netloc:
+                continue
+            elif url.path.startswith("/"):
                 errors.append(f"{label}: use a relative site reference: {reference}")
                 continue
-            target = (path.parent / unquote(url.path)).resolve() if url.path else path
+            else:
+                target = (path.parent / unquote(url.path)).resolve() if url.path else path
+            references += 1
             if not target.is_relative_to(site):
                 errors.append(f"{label}: reference leaves the website: {reference}")
                 continue
@@ -323,6 +403,11 @@ def main():
     pages, references, indexable, errors = check_site(root / "website/public")
     errors.extend(check_example_archive(root / "website/public"))
     errors.extend(check_publisher(root))
+    errors.extend(check_repository_links(root))
+    try:
+        sync_pages(root, check=True)
+    except (OSError, ValueError, KeyError) as error:
+        errors.append(str(error))
     if errors:
         print("Website checks failed:\n" + "\n".join(errors), file=sys.stderr)
         return 1

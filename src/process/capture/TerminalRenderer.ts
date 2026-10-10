@@ -14,6 +14,8 @@ const HeadlessPackage =
 const SerializePackage =
   require("@xterm/addon-serialize") as typeof import("@xterm/addon-serialize");
 
+const TRAILING_SPACES = / +$/u;
+
 interface TerminalRendererOptions {
   readonly columns: number;
   readonly rows: number;
@@ -106,13 +108,16 @@ export class TerminalRenderer {
     const lines: string[] = [];
     for (let row = 0; row < this.#terminal.rows; row += 1) {
       const line = buffer.getLine(buffer.viewportY + row);
+      // Trailing blank cells carry no information beyond `columns`; dropping
+      // them keeps sparse screens from costing a full row per blank line.
       lines.push(
-        this.options.normalize(
-          (line?.translateToString(false, 0, this.#terminal.cols) ?? "").padEnd(
-            this.#terminal.cols,
-            " ",
-          ),
-        ),
+        this.options
+          .normalize(
+            (
+              line?.translateToString(false, 0, this.#terminal.cols) ?? ""
+            ).padEnd(this.#terminal.cols, " "),
+          )
+          .replace(TRAILING_SPACES, ""),
       );
     }
     const serializedState = this.options.normalize(

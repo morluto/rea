@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import { CATALOG_IDENTITY } from "./catalogIdentity.js";
 import { PROMPT_CONTRACTS } from "./contracts/promptContracts.js";
 import { TOOL_CONTRACTS } from "./contracts/toolContracts.js";
+import { err, ok } from "./domain/result.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
 import { MCP_STARTUP_POLICY } from "./mcpStartupPolicy.js";
 
@@ -131,11 +132,22 @@ const inspectProductionMcpSession = async (
   signal: AbortSignal,
 ) => {
   const request = requestOptions(deadline, signal);
-  const [tools, prompts, requestFlow] = await Promise.all([
+  const [tools, prompts] = await Promise.all([
     client.listTools(undefined, request),
     client.listPrompts(undefined, request),
-    client.callTool({ name: "binary_session", arguments: {} }, request),
   ]);
+  const sessionTool = tools.tools.find(({ name }) => name === "binary_session");
+  const requestFlow = await client
+    .callTool(
+      { name: "binary_session", arguments: {} },
+      {
+        ...requestOptions(deadline, signal),
+        ...(sessionTool === undefined ? {} : { toolDefinition: sessionTool }),
+      },
+    )
+    .then(ok, (cause: unknown) =>
+      err({ kind: "request-flow" as const, detail: errorMessage(cause) }),
+    );
   const inventory = {
     tools: compareInventory(
       TOOL_CONTRACTS.map(({ name }) => name),
@@ -147,7 +159,7 @@ const inspectProductionMcpSession = async (
     ),
   };
   const observedIdentity = parseIdentityToolResult(
-    requestFlow.structuredContent,
+    requestFlow.ok ? requestFlow.value.structuredContent : undefined,
   );
   const serverVersion = client.getServerVersion();
   const protocolVersion = client.getNegotiatedProtocolVersion();
@@ -173,8 +185,10 @@ const inspectProductionMcpSession = async (
     },
     {
       name: "request-flow",
-      ok: requestFlow.isError !== true,
-      detail: "binary_session target-free request",
+      ok: requestFlow.ok && requestFlow.value.isError !== true,
+      detail: requestFlow.ok
+        ? "binary_session target-free request"
+        : requestFlow.error.detail,
     },
   ];
   return {
@@ -194,7 +208,7 @@ const inspectProductionMcpSession = async (
     },
     request_flow: {
       tool: "binary_session",
-      ok: requestFlow.isError !== true,
+      ok: requestFlow.ok && requestFlow.value.isError !== true,
     },
     checks,
   };

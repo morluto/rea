@@ -60,6 +60,18 @@ describe("artifact archive inventory", () => {
     expect(inspectionEvidence.evidence_links).toEqual(
       inspection.evidence_links,
     );
+    // The graph is delivered once, in the nested inventory Evidence.
+    expect(
+      artifactInventoryResultSchema.parse(
+        inspection.substeps[0]?.evidence.normalized_result,
+      ).occurrences,
+    ).toHaveLength(3);
+    // Occurrences name every logical path; neither Evidence repeats them.
+    expect(inspectionEvidence.locations).toEqual([]);
+    expect(inspection.substeps[0]?.evidence.locations).toEqual([]);
+    expect(inspection.observations.map(({ kind }) => kind)).toEqual([
+      "root-manifest",
+    ]);
     const cancellation = new AbortController();
     cancellation.abort();
     await expect(

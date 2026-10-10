@@ -16,27 +16,9 @@ const artifactIdSchema = prefixedDigestSchema("art");
 
 const inspectionObservationSchema = z.strictObject({
   observation_id: prefixedDigestSchema("aio"),
-  kind: z.enum(["root-manifest", "artifact", "occurrence", "integrity"]),
+  kind: z.enum(["root-manifest", "integrity"]),
   subject: textSchema,
   value: jsonValueSchema,
-  evidence_id: evidenceIdSchema,
-});
-
-const inspectionRelationshipSchema = z.strictObject({
-  relationship_id: prefixedDigestSchema("air"),
-  relation: z.enum([
-    "contains",
-    "extracts",
-    "slice-of",
-    "embeds",
-    "loads",
-    "maps-source",
-    "derived-from",
-  ]),
-  source_artifact_id: artifactIdSchema,
-  target_artifact_id: artifactIdSchema,
-  occurrence_id: prefixedDigestSchema("occ"),
-  logical_path: textSchema.nullable(),
   evidence_id: evidenceIdSchema,
 });
 
@@ -97,7 +79,6 @@ export const artifactInspectionResultSchema = z.strictObject({
     )
     .min(1),
   observations: z.array(inspectionObservationSchema),
-  derived_relationships: z.array(inspectionRelationshipSchema),
   hypotheses: z.array(inspectionHypothesisSchema),
   contradictions: z.array(inspectionContradictionSchema),
   unexplored_branches: z.array(unexploredBranchSchema),
@@ -107,8 +88,6 @@ export const artifactInspectionResultSchema = z.strictObject({
     substeps_completed: z.literal(1),
     observations_retained: z.number().int().min(0),
     observations_omitted: z.number().int().min(0),
-    relationships_retained: z.number().int().min(0),
-    relationships_omitted: z.number().int().min(0),
     hypotheses_retained: z.number().int().min(0),
     hypotheses_omitted: z.number().int().min(0),
     unexplored_branches_retained: z.number().int().min(0),
@@ -136,10 +115,6 @@ export const createArtifactInspection = (
     inventory,
     inventoryEvidence.evidence_id,
   );
-  const relationships = allRelationships(
-    inventory,
-    inventoryEvidence.evidence_id,
-  );
   const hypotheses = allHypotheses(inventory, inventoryEvidence.evidence_id);
   const nextProbes = probesFor(inventory);
   const branches = allUnexploredBranches(
@@ -149,14 +124,12 @@ export const createArtifactInspection = (
   );
   const retained = {
     observations,
-    relationships,
     hypotheses,
     branches,
     probes: nextProbes,
   };
   const omissions = {
     observations: 0,
-    relationships: 0,
     hypotheses: 0,
     branches: 0,
     probes: 0,
@@ -184,7 +157,6 @@ export const createArtifactInspection = (
       },
     ],
     observations: retained.observations,
-    derived_relationships: retained.relationships,
     hypotheses: retained.hypotheses,
     contradictions: contradictions(inventory, inventoryEvidence.evidence_id),
     unexplored_branches: retained.branches,
@@ -194,8 +166,6 @@ export const createArtifactInspection = (
       substeps_completed: 1 as const,
       observations_retained: retained.observations.length,
       observations_omitted: omissions.observations,
-      relationships_retained: retained.relationships.length,
-      relationships_omitted: omissions.relationships,
       hypotheses_retained: retained.hypotheses.length,
       hypotheses_omitted: omissions.hypotheses,
       unexplored_branches_retained: retained.branches.length,
@@ -224,6 +194,8 @@ const parseInventoryEvidence = (input: unknown): Evidence => {
   return evidence;
 };
 
+// Artifact, occurrence, and edge records stay in the nested inventory Evidence;
+// restating each one here would repeat the complete graph in every result.
 const allObservations = (
   inventory: ArtifactInventoryResult,
   evidenceId: string,
@@ -233,12 +205,6 @@ const allObservations = (
     inventory.manifest.root_artifact_id,
     inventory.manifest,
     evidenceId,
-  ),
-  ...inventory.nodes.map((node) =>
-    observation("artifact", node.artifact_id, node, evidenceId),
-  ),
-  ...inventory.occurrences.map((occurrence) =>
-    observation("occurrence", occurrence.occurrence_id, occurrence, evidenceId),
   ),
   ...inventory.integrity_contradictions.map((value) =>
     observation("integrity", value.contradiction_id, value, evidenceId),
@@ -262,25 +228,6 @@ const observation = (
     ...semantic,
   };
 };
-
-const allRelationships = (
-  inventory: ArtifactInventoryResult,
-  evidenceId: string,
-): ArtifactInspectionResult["derived_relationships"] =>
-  inventory.edges.map((edge) => {
-    const semantic = {
-      relation: edge.relation,
-      source_artifact_id: edge.parent_artifact_id,
-      target_artifact_id: edge.child_artifact_id,
-      occurrence_id: edge.occurrence_id,
-      logical_path: edge.logical_path,
-      evidence_id: evidenceId,
-    };
-    return {
-      relationship_id: `air_${digestCanonicalValue(semantic, "Artifact inspection")}`,
-      ...semantic,
-    };
-  });
 
 const allHypotheses = (
   inventory: ArtifactInventoryResult,

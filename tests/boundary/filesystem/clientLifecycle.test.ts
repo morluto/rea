@@ -59,9 +59,12 @@ describe("client configuration filesystem lifecycle", () => {
       "antigravity",
       "copilot_cli",
       "commandcode",
+      "qwen_code",
       "vscode",
       "grok_build",
       "omp",
+      "pi",
+      "hermes",
       "grok_bot",
     ]);
     expect(

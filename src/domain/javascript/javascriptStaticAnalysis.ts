@@ -1,6 +1,9 @@
 import * as t from "@babel/types";
 
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import {
+  completeSemanticSteps,
+  traverseJavaScriptAstSteps,
+} from "./javascriptSemanticTraversal.js";
 
 import { inspectElectronStaticNode } from "./electronStaticAnalysis.js";
 import {
@@ -25,9 +28,11 @@ import { finalizeLocatedFindings } from "./javascriptStaticAnalysisFindings.js";
 import {
   createJavaScriptAnalysisAccumulator,
   type JavaScriptAnalysisAccumulator as AnalysisAccumulator,
+  type JavaScriptFindingContext,
 } from "./javascriptStaticAnalysisState.js";
 import type { JavaScriptStaticAnalysis } from "./javascriptStaticAnalysisTypes.js";
 import {
+  classifyParsedJavaScriptElectronBindings,
   classifyParsedJavaScriptOpenReceivers,
   type JavaScriptOpenReceiverFact,
 } from "./javascriptSemanticAnalysis.js";
@@ -55,27 +60,40 @@ export const analyzeParsedJavaScriptStaticSource = (
   source: string,
   file: ParsedJavaScriptSource,
   openReceiverFacts?: ReadonlyMap<number, JavaScriptOpenReceiverFact>,
-): JavaScriptStaticAnalysis => {
-  const accumulator = createJavaScriptAnalysisAccumulator(source.length);
-  traverseStaticSource(source, file, accumulator, openReceiverFacts);
-  addSourceMapDirectives(source, file.comments ?? [], accumulator);
-  return finalizeStaticAnalysis(source, file, accumulator);
-};
+): JavaScriptStaticAnalysis =>
+  completeSemanticSteps(
+    analyzeParsedJavaScriptStaticSourceSteps(source, file, openReceiverFacts),
+  );
 
-const traverseStaticSource = (
+/** Static analysis that yields during its source traversal; results are unchanged. */
+export function* analyzeParsedJavaScriptStaticSourceSteps(
   source: string,
   file: ParsedJavaScriptSource,
-  accumulator: AnalysisAccumulator,
   openReceiverFacts?: ReadonlyMap<number, JavaScriptOpenReceiverFact>,
-): void => {
-  traverseJavaScriptAst(file, {
+): Generator<void, JavaScriptStaticAnalysis> {
+  const accumulator = createJavaScriptAnalysisAccumulator(source.length);
+  yield* traverseStaticSourceSteps(file, {
+    source,
+    accumulator,
+    ...(openReceiverFacts === undefined ? {} : { openReceiverFacts }),
+    electronBindings: classifyParsedJavaScriptElectronBindings(file),
+  });
+  addSourceMapDirectives(source, file.comments ?? [], accumulator);
+  return finalizeStaticAnalysis(source, file, accumulator);
+}
+
+function* traverseStaticSourceSteps(
+  file: ParsedJavaScriptSource,
+  findings: JavaScriptFindingContext,
+): Generator<void, void> {
+  yield* traverseJavaScriptAstSteps(file, {
     enter: (node) => {
-      accumulator.visitedNodes += 1;
-      inspectNode(source, node, accumulator, openReceiverFacts);
+      findings.accumulator.visitedNodes += 1;
+      inspectNode(node, findings);
       return undefined;
     },
   });
-};
+}
 
 const finalizeStaticAnalysis = (
   source: string,
@@ -156,16 +174,10 @@ const finalizeStaticAnalysis = (
 };
 
 const inspectNode = (
-  source: string,
   node: t.Node,
-  accumulator: AnalysisAccumulator,
-  openReceiverFacts?: ReadonlyMap<number, JavaScriptOpenReceiverFact>,
+  findings: JavaScriptFindingContext,
 ): void => {
-  const findings = {
-    source,
-    accumulator,
-    ...(openReceiverFacts === undefined ? {} : { openReceiverFacts }),
-  };
+  const { source, accumulator } = findings;
   inspectElectronStaticNode(node, findings);
   if (t.isCallExpression(node)) {
     inspectBundlerRegistration(source, node, accumulator);

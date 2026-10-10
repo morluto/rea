@@ -11,6 +11,7 @@ import {
   bridgeCandidateCoverageSchema,
   projectCartesianCandidates,
 } from "../bridgeCandidateProjection.js";
+import { nativeRuntimeConvention } from "../nativeConvention.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const pathSchema = z.string().min(1);
@@ -90,7 +91,9 @@ export const projectAndroidApplication = (
     parsed.inventory_evidence,
   );
   if (inventory.manifest.root_format !== "apk")
-    throw new TypeError("Android application projection requires APK Evidence");
+    throw new TypeError(
+      `Android application projection requires APK inventory Evidence; the inventory root format is ${inventory.manifest.root_format}. APK is chosen for a ZIP archive whose name ends in .apk.`,
+    );
   const nodes = new Map(
     inventory.nodes.map((node) => [node.artifact_id, node]),
   );
@@ -125,6 +128,13 @@ export const projectAndroidApplication = (
     "Manifest, resource, signing, and bytecode semantics require a dedicated Android provider; this projection reports exact inventory paths and hashes only.",
     "Runtime families are inferred from inventory formats and paths; filename suffixes do not establish valid DEX or JVM class bytes.",
     "Bridge candidates are path-based hypotheses, not decoded JNI declarations or observed runtime calls.",
+    "A bridge basis is inferred from the native path and is repeated for every managed component.",
+    "ZIP inventory cannot see the APK Signing Block, so an empty signing array does not mean the APK is unsigned.",
+    ...(all.some(({ path }) => path === "AndroidManifest.xml")
+      ? []
+      : [
+          "No root AndroidManifest.xml occurrence was observed. The APK family comes from the .apk suffix of a ZIP archive, so these bytes may not be an APK.",
+        ]),
     ...(bridgeProjection.coverage.status === "partial"
       ? [
           `Bridge candidate pairs exceeded the projection safety budget; ${bridgeProjection.coverage.omitted_candidates} hypotheses are omitted. Component arrays still include every component from the supplied inventory pages.`,
@@ -157,23 +167,12 @@ export const projectAndroidApplication = (
 };
 
 const classify = (all: readonly Component[]) => ({
-  manifests: all.filter(
-    ({ path, format }) =>
-      format === "android-manifest" ||
-      /(?:^|\/)AndroidManifest\.xml$/u.test(path),
+  manifests: all.filter(({ path }) =>
+    /(?:^|\/)AndroidManifest\.xml$/u.test(path),
   ),
-  resources: all.filter(
-    ({ path, format }) =>
-      format === "android-resources" || /(?:^|\/)resources\.arsc$/u.test(path),
-  ),
-  dex: all.filter(
-    ({ path, format }) =>
-      format === "dex" || /(?:^|\/)[^/]+\.dex$/iu.test(path),
-  ),
-  jvm_classes: all.filter(
-    ({ path, format }) =>
-      format === "jvm-class" || /(?:^|\/)[^/]+\.class$/iu.test(path),
-  ),
+  resources: all.filter(({ path }) => /(?:^|\/)resources\.arsc$/u.test(path)),
+  dex: all.filter(({ path }) => /(?:^|\/)[^/]+\.dex$/iu.test(path)),
+  jvm_classes: all.filter(({ path }) => /(?:^|\/)[^/]+\.class$/iu.test(path)),
   native_libraries: all.filter(
     ({ path, format }) =>
       format === "elf" || /(?:^|\/)lib\/[^/]+\/[^/]+\.so$/iu.test(path),
@@ -185,36 +184,20 @@ const classify = (all: readonly Component[]) => ({
 });
 
 const runtimeFamilies = (all: readonly Component[]) => {
-  const paths = all.map(({ path }) => path.toLowerCase());
   const families = new Set<
     AndroidApplicationProjectionResult["runtime_families"][number]
   >();
-  if (
-    all.some(
-      ({ path, format }) =>
-        format === "dex" || path.toLowerCase().endsWith(".dex"),
-    )
-  )
+  if (all.some(({ path }) => path.toLowerCase().endsWith(".dex")))
     families.add("dalvik-art");
-  if (
-    all.some(
-      ({ path, format }) =>
-        format === "jvm-class" || path.toLowerCase().endsWith(".class"),
-    )
-  )
+  if (all.some(({ path }) => path.toLowerCase().endsWith(".class")))
     families.add("java-kotlin");
   if (all.some(({ format }) => format === "elf")) families.add("native");
   if (all.some(({ format }) => format === "javascript-bundle"))
     families.add("javascript");
-  if (
-    paths.some(
-      (path) => path.includes("reactnative") || path.includes("hermes"),
-    )
-  )
-    families.add("react-native");
-  if (paths.some((path) => path.includes("libflutter.so")))
-    families.add("flutter");
-  if (paths.some((path) => path.includes("libunity.so"))) families.add("unity");
+  for (const { path } of all) {
+    const convention = nativeRuntimeConvention(path);
+    if (convention !== null) families.add(convention);
+  }
   return [...families].sort(compare);
 };
 
@@ -235,12 +218,12 @@ const bridgeCandidates = (
 const bridgeBasis = (
   path: string,
 ): AndroidApplicationProjectionResult["bridge_candidates"][number]["basis"] => {
-  const lower = path.toLowerCase();
-  if (lower.includes("react") || lower.includes("hermes"))
-    return "react-native-convention";
-  if (lower.includes("flutter")) return "flutter-convention";
-  if (lower.includes("unity")) return "unity-convention";
-  if (/lib\/[^/]+\/lib[^/]+\.so$/u.test(lower)) return "jni-library-convention";
+  const convention = nativeRuntimeConvention(path);
+  if (convention === "react-native") return "react-native-convention";
+  if (convention === "flutter") return "flutter-convention";
+  if (convention === "unity") return "unity-convention";
+  if (/lib\/[^/]+\/lib[^/]+\.so$/u.test(path.toLowerCase()))
+    return "jni-library-convention";
   return "managed-and-native-content";
 };
 

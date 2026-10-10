@@ -182,6 +182,13 @@ const createAttachedScenarioRelease = (
   };
 };
 
+/** One browser admission. The key is the discovery URL this endpoint already parses. */
+export const attachedScenarioLeaseKey = (
+  endpoint: string,
+  targetId: string,
+): string =>
+  JSON.stringify([new URL("/json/version", endpoint).href, targetId]);
+
 const acquireAttachedScenario = (
   scenario: Extract<BrowserScenario["browser"], { readonly mode: "connect" }>,
   signal: AbortSignal | undefined,
@@ -189,7 +196,10 @@ const acquireAttachedScenario = (
   if (signal?.aborted === true)
     return Promise.reject(new BrowserObservationError(OPERATION, "cancelled"));
 
-  const key = JSON.stringify([scenario.cdp_endpoint, scenario.target_id]);
+  const key = attachedScenarioLeaseKey(
+    scenario.cdp_endpoint,
+    scenario.target_id,
+  );
   const admission =
     attachedScenarioAdmissions.get(key) ??
     ({
