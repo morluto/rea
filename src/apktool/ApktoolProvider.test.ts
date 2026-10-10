@@ -5,6 +5,7 @@ import { expect, onTestFinished, test } from "vitest";
 
 import { ApktoolProvider } from "./ApktoolProvider.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { apktoolRequestSchema } from "../domain/apktool/apktoolResourceAnalysis.js";
 import type { ApktoolRequest } from "../domain/apktool/apktoolResourceAnalysis.js";
 
 const it = test.skipIf(process.platform === "win32");
@@ -350,4 +351,20 @@ it("retains failed workspace cleanup and retries it on close", async () => {
   if (!result.ok) expect(result.error.cleanup?.resources).toContain(owned);
   await provider.close();
   expect(attempts).toBe(2);
+});
+
+it("accepts a BCP47 resource qualifier through the public request schema", async () => {
+  const { command, root } = await writeApktoolStub((root) =>
+    decodeStub()(root).replace(
+      "  printf 'I: Using Apktool on stub",
+      '  mkdir -p "$5/res/values-b+zh+Hans+CN"\n  printf \'<resources><string name="greeting">你好</string></resources>\' > "$5/res/values-b+zh+Hans+CN/strings.xml"\n  printf \'I: Using Apktool on stub',
+    ),
+  );
+  const apk = await apkFixture(root);
+  const request = apktoolRequestSchema.parse({
+    operation: "decode_android_resources",
+    input: { path: apk.path, locale: "b+zh+Hans+CN" },
+  });
+  const result = await evidenceResult(providerOver(command), request);
+  expect(result.strings).toEqual([{ name: "greeting", value: "你好" }]);
 });

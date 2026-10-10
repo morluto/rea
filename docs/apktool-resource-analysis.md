@@ -34,11 +34,13 @@ rea decode-android-resources /targets/Example.apk --no-strings
 Equivalent MCP methods are `inspect_apktool_client` and
 `decode_android_resources`. The decode request takes `path`, an optional
 `locale` (project `res/values-<locale>/strings.xml` instead of the default
-table), and `include_strings` (default true).
+table), and `include_strings` (default true). Regional locales such as `pt-BR`
+select Android's `values-pt-rBR`; Android qualifiers such as `pt-rBR` and
+`b+zh+Hans+CN` may also be supplied directly.
 
 ## Interpret the result
 
-- **The target is digested before decoding.** `target.sha256` and
+- **An owned APK snapshot is digested and decoded.** `target.sha256` and
   `target.bytes` bind the observation to the exact APK that was decoded.
 - **Metadata comes from apktool.yml as apktool printed it.** Version codes
   keep their own spelling (`'7'` versus `7`); `package_name` is read from
@@ -55,13 +57,18 @@ table), and `include_strings` (default true).
   a follow-up lane with mutation authority.
 - **Workspaces are owned and short-lived.** Decoding happens in a
   provider-owned temporary directory that is removed before the result is
-  returned; if removal ever fails, the limitation names the residual path.
+  returned. The APK snapshot and framework cache both live inside this directory.
+  If removal fails, the result names the residual path and the provider retains
+  ownership for a cleanup retry on close, including failed decodes.
 
 ## Resource and lifecycle limits
 
 - The decode runs with a 600 s deadline and a 4 MiB output capture budget;
   a stopped decode reports `provider_timeout` and exceeded budgets report
   `resource_constraint`.
+- Manifest reads are bounded to 512 KiB before decoding UTF-8. Strings XML
+  reads are bounded to 8 MiB; larger documents are skipped with partial
+  coverage and an explicit limit, rather than reported as missing.
 - `decoded_file_count` is capped at 100,000 files; the cap is reported in
   the limitations when hit.
 - Apktool's own decode failures (`AndrolibException`, directory traversal
