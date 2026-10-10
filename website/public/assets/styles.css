@@ -1398,6 +1398,9 @@ pre code {
 .home-expert-shortcut a {
   white-space: nowrap;
 }
+.home-expert-shortcut + .home-expert-shortcut {
+  margin-top: 0.5rem;
+}
 @media (min-width: 1440px) {
   .home-page-nav {
     position: fixed;
