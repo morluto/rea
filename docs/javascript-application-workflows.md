@@ -104,6 +104,20 @@ graph and read literal values from `properties.value`, rather than decoding
 role keys or labels. Previously stored graphs and their original IDs remain
 valid inputs.
 
+Endpoint nodes keep the exact endpoint in each observation's `properties.value`;
+semantic request and response nodes keep it in `properties.endpoint`. Endpoint
+identity keys use `value-sha256:<digest>` over the canonical JSON string when
+that is shorter, or when the original value starts with the reserved digest
+prefix. Other short endpoint keys remain unchanged. Endpoint labels use the
+shorter of the exact value and `<kind> endpoint`; semantic request/response
+labels use the shorter of the endpoint and operation method. These labels are
+display metadata, not endpoint lookup values.
+
+New analyses therefore change hashed endpoint IDs and longer endpoint labels.
+Use IDs from the selected graph and read the complete endpoint properties;
+previously stored graphs still support their original IDs. Literal endpoint
+search, semantic tracing, and version comparison use the preserved values.
+
 ## Version comparison
 
 REA pairs entities only when a tier produces one unique candidate on each side.

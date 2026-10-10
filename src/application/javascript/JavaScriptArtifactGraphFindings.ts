@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
 import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
 import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
@@ -162,16 +163,22 @@ const addEndpoint = (
   const source =
     sourceNodeFor(context, input.file.path, input.value.module_key) ??
     input.asset;
+  const digestPrefix = "value-sha256:";
+  const valueKey = `${digestPrefix}${digestCanonicalValue(input.value.value, "JavaScript endpoint")}`;
+  // Reserve the digest prefix so an exact caller value cannot alias a digest key.
+  const key =
+    input.value.value.length <= valueKey.length &&
+    !input.value.value.startsWith(digestPrefix)
+      ? input.value.value
+      : valueKey;
+  const label = `${input.value.kind} endpoint`;
   const node = context.accumulator.addNode({
     kind: "endpoint",
-    identity: artifactLocalIdentity(
-      input.file.sha256,
-      input.value.kind,
-      input.value.value,
-    ),
+    identity: artifactLocalIdentity(input.file.sha256, input.value.kind, key),
     observations: [
       {
-        label: input.value.value,
+        label:
+          input.value.value.length <= label.length ? input.value.value : label,
         properties: {
           endpoint_kind: input.value.kind,
           value: input.value.value,
