@@ -372,16 +372,28 @@ const collectCommonJsExport = (
 ): void => {
   const exportedName = commonJsExportName(node.left, state);
   if (exportedName === undefined) return;
-  const origin = semanticRequireOrigin(node.right, state);
+  // Compound and logical writes depend on the prior export value, so their
+  // RHS alone cannot establish the assigned value or its callable identity.
+  let value = node.operator === "=" ? node.right : null;
+  // Recover only the CommonJS alias chain `module.exports = exports = fn`.
+  // General chains can replace an already captured property receiver or
+  // require lexical resolution beyond the module-level callable resolver.
+  if (isCommonJsModuleExports(node.left, state))
+    while (
+      t.isAssignmentExpression(value, { operator: "=" }) &&
+      isUnshadowedGlobal(value.left, state, "exports")
+    )
+      value = value.right;
+  const origin = semanticRequireOrigin(value, state);
   addModuleLink(
     state,
     {
       kind: "commonjs-export",
       specifier: origin?.specifier ?? null,
       importedName: origin?.importedPath.at(-1) ?? null,
-      localName: t.isIdentifier(node.right) ? node.right.name : null,
+      localName: t.isIdentifier(value) ? value.name : null,
       exportedName,
-      callableId: semanticCallableIdForNode(node.right),
+      callableId: value === null ? null : semanticCallableIdForNode(value),
       location: range(node),
     },
     node,
@@ -641,7 +653,8 @@ const commonJsExportName = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): string | undefined => {
-  if (isUnshadowedGlobal(node, state, "exports")) return "default";
+  // Rebinding the CommonJS `exports` alias does not replace `module.exports`.
+  // Only assignments to export properties or `module.exports` create links.
   if (!t.isMemberExpression(node) && !t.isOptionalMemberExpression(node))
     return undefined;
   const key = semanticStaticPropertyKey(node.property, node.computed);
@@ -652,15 +665,17 @@ const commonJsExportName = (
     return key === null ? "*" : key || "*";
   if (
     t.isMemberExpression(node.object) &&
-    isUnshadowedGlobal(node.object.object, state, "module") &&
-    semanticStaticPropertyKey(node.object.property, node.object.computed) ===
-      "exports"
+    isCommonJsModuleExports(node.object, state)
   )
     return key === null ? "*" : key || "default";
-  if (
-    isUnshadowedGlobal(node.object, state, "module") &&
-    semanticStaticPropertyKey(node.property, node.computed) === "exports"
-  )
-    return "default";
+  if (isCommonJsModuleExports(node, state)) return "default";
   return undefined;
 };
+
+const isCommonJsModuleExports = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
+  isUnshadowedGlobal(node.object, state, "module") &&
+  semanticStaticPropertyKey(node.property, node.computed) === "exports";

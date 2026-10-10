@@ -15,6 +15,10 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
+import {
+  OwnedCommandFailure,
+  runOwnedCommand,
+} from "../dist/process/OwnedCommand.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { mcpTextValue } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
@@ -56,6 +60,13 @@ const root = await PrivateRuntimeRoot.create({
 const environment = Object.fromEntries(
   Object.entries(process.env).filter(([, value]) => typeof value === "string"),
 );
+const limitedPython = join(root.path, "limited-python");
+const limitedEnvironment = (option) => ({
+  ...environment,
+  REA_PWNTOOLS_PYTHON: limitedPython,
+  REA_VERIFY_LIMITED_PYTHON: python,
+  REA_VERIFY_LIMIT_OPTION: option,
+});
 const client = new Client({ name: "binary-layout-verifier", version: "1" });
 const transport = new StdioClientTransport({
   command: process.execPath,
@@ -73,6 +84,46 @@ let cases = 0;
 let bootstrapCases = 0;
 const failures = [];
 try {
+  await execute(
+    "gcc",
+    [
+      "-std=c11",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      fileURLToPath(
+        new URL("./fixtures/binary-layout-limited-python.c", import.meta.url),
+      ),
+      "-o",
+      limitedPython,
+    ],
+    { timeout: 30_000, maxBuffer: 1024 * 1024 },
+  );
+  // A live limited child must retain its configured launcher's identity so
+  // timeout cleanup can still verify and terminate the entire owned group.
+  await assert.rejects(
+    runOwnedCommand(
+      {
+        command: limitedPython,
+        arguments: [
+          "-I",
+          "-c",
+          "import time; print('limited child ready', flush=True); time.sleep(60)",
+        ],
+        cwd: root.path,
+        runId: `${run.run_id}-limited-python-timeout`,
+        hostEnvironment: limitedEnvironment("--as=2147483648"),
+      },
+      { timeoutMs: 2000, diagnosticBytes: 1024 },
+    ),
+    (error) => {
+      assert.ok(error instanceof OwnedCommandFailure);
+      assert.equal(error.reason, "timeout");
+      assert.equal(error.cleanupFailure, null);
+      assert.ok(error.snapshot.stdout.text.includes("limited child ready"));
+      return true;
+    },
+  );
   const bootstrapRoot = join(root.path, "bootstrap-boundary");
   await mkdir(bootstrapRoot);
   const bootstrapPath = join(bootstrapRoot, "layout.py");
@@ -796,19 +847,12 @@ try {
     assert.deepEqual(await readFile(extendedPath), extendedObject);
     cases++;
   }
-  for (const [name, option, expected] of [
-    ["address-space", "--as=2147483648", '"address_space_bytes": 2147483648'],
-    ["cpu", "--cpu=20", '"cpu_seconds": 20'],
-    ["file-size", "--fsize=33554432", '"file_size_bytes": 33554432'],
+  for (const [option, expected] of [
+    ["--as=2147483648", '"address_space_bytes": 2147483648'],
+    ["--cpu=20", '"cpu_seconds": 20'],
+    ["--fsize=33554432", '"file_size_bytes": 33554432'],
   ]) {
-    const wrapper = join(root.path, `python-limit-${name}`);
-    const quotedPython = "'" + python.replaceAll("'", "'\"'\"'") + "'";
-    await writeFile(
-      wrapper,
-      `#!/bin/sh\nexec /usr/bin/prlimit ${option} -- ${quotedPython} "$@"\n`,
-      { mode: 0o700 },
-    );
-    const limitedEnvironment = { ...environment, REA_PWNTOOLS_PYTHON: wrapper };
+    const selectedEnvironment = limitedEnvironment(option);
     const limitedClient = new Client({
       name: "limited-layout-verifier",
       version: "1",
@@ -816,7 +860,7 @@ try {
     const limitedTransport = new StdioClientTransport({
       command: process.execPath,
       args: [entrypoint, "mcp"],
-      env: limitedEnvironment,
+      env: selectedEnvironment,
       stderr: "pipe",
     });
     try {
@@ -826,7 +870,7 @@ try {
           mode,
           join(root.path, "protected"),
           undefined,
-          limitedEnvironment,
+          selectedEnvironment,
           limitedClient,
         );
         assert.ok(value.limitations.some((item) => item.includes(expected)));
@@ -862,17 +906,29 @@ try {
   sectionHeavy.writeUInt16LE(sectionCount, 60);
   const sectionHeavyPath = join(root.path, "section-heavy.o");
   await writeFile(sectionHeavyPath, sectionHeavy);
-  const memoryWrapper = join(root.path, "python-memory-constraint");
-  const quotedPython = "'" + python.replaceAll("'", "'\"'\"'") + "'";
-  await writeFile(
-    memoryWrapper,
-    `#!/bin/sh\nexec /usr/bin/prlimit --as=100663296 -- ${quotedPython} "$@"\n`,
-    { mode: 0o700 },
+  // pwntools materializes each PT_LOAD zero-filled tail during inspection.
+  // One allocation larger than the whole address-space budget fails promptly;
+  // a large section count instead races CPU work against the command deadline.
+  const memoryHeavy = Buffer.from(await readFile(join(root.path, "protected")));
+  const memoryPhOffset = Number(memoryHeavy.readBigUInt64LE(32));
+  const memoryPhSize = memoryHeavy.readUInt16LE(54);
+  const memoryPhCount = memoryHeavy.readUInt16LE(56);
+  const lastLoadIndex = Array.from(
+    { length: memoryPhCount },
+    (_, index) => index,
+  ).findLast(
+    (index) =>
+      memoryHeavy.readUInt32LE(memoryPhOffset + index * memoryPhSize) === 1,
   );
-  const memoryEnvironment = {
-    ...environment,
-    REA_PWNTOOLS_PYTHON: memoryWrapper,
-  };
+  assert.notEqual(lastLoadIndex, undefined);
+  const memorySizeOffset = memoryPhOffset + lastLoadIndex * memoryPhSize + 40;
+  memoryHeavy.writeBigUInt64LE(
+    memoryHeavy.readBigUInt64LE(memorySizeOffset) + 128n * 1024n * 1024n,
+    memorySizeOffset,
+  );
+  const memoryHeavyPath = join(root.path, "memory-zero-tail");
+  await writeFile(memoryHeavyPath, memoryHeavy);
+  const memoryEnvironment = limitedEnvironment("--as=100663296");
   const memoryClient = new Client({
     name: "memory-layout-verifier",
     version: "1",
@@ -888,7 +944,7 @@ try {
     for (const mode of ["cli", "mcp"]) {
       const error = await inspect(
         mode,
-        sectionHeavyPath,
+        memoryHeavyPath,
         "resource_constraint",
         memoryEnvironment,
         memoryClient,
@@ -903,7 +959,7 @@ try {
       assert.ok(error.remediation.action.includes("memory"));
       cases++;
     }
-    assert.deepEqual(await readFile(sectionHeavyPath), sectionHeavy);
+    assert.deepEqual(await readFile(memoryHeavyPath), memoryHeavy);
   } finally {
     try {
       await memoryClient.close();
@@ -924,13 +980,7 @@ try {
   cpuHeavy.writeBigUInt64LE(BigInt(cpuSectionCount), sectionOffset + 32);
   const cpuHeavyPath = join(root.path, "cpu-section-heavy.o");
   await writeFile(cpuHeavyPath, cpuHeavy);
-  const cpuWrapper = join(root.path, "python-cpu-constraint");
-  await writeFile(
-    cpuWrapper,
-    `#!/bin/sh\nexec /usr/bin/prlimit --cpu=1: --core=0: -- ${quotedPython} "$@"\n`,
-    { mode: 0o700 },
-  );
-  const cpuEnvironment = { ...environment, REA_PWNTOOLS_PYTHON: cpuWrapper };
+  const cpuEnvironment = limitedEnvironment("--cpu=1:");
   const cpuClient = new Client({ name: "cpu-layout-verifier", version: "1" });
   const cpuTransport = new StdioClientTransport({
     command: process.execPath,
@@ -963,13 +1013,7 @@ try {
     }
   }
   for (const limit of [1024, 1]) {
-    const wrapper = join(root.path, `python-file-size-${limit}`);
-    await writeFile(
-      wrapper,
-      `#!/bin/sh\nexec /usr/bin/prlimit --fsize=${limit}: --core=0: -- ${quotedPython} "$@"\n`,
-      { mode: 0o700 },
-    );
-    const fileEnvironment = { ...environment, REA_PWNTOOLS_PYTHON: wrapper };
+    const fileEnvironment = limitedEnvironment(`--fsize=${limit}:`);
     const fileClient = new Client({
       name: "file-size-layout-verifier",
       version: "1",
