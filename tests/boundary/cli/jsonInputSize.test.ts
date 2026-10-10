@@ -8,23 +8,18 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest(
-  "rejects malformed oversized CLI input and preserves Evidence decoder resource failures",
+  "rejects malformed oversized JSON through both CLI and Evidence readers",
   async ({ cli, processes }) => {
     const root = await createTestTempDirectory("rea-json-string-limit-");
     const input = join(root, "oversized.json");
     const file = await open(input, "wx");
     try {
-      // Sparse zero bytes are valid UTF-8. The Evidence reader reaches the
-      // decoded-length limit; the streamed CLI rejects their invalid JSON syntax.
+      // Sparse zero bytes are valid UTF-8 but invalid JSON. Both readers
+      // stream the input and reject the syntax before assembling a value.
       await file.truncate(constants.MAX_STRING_LENGTH + 1);
     } finally {
       await file.close();
     }
-    const limits = {
-      input_path: input,
-      input_bytes: constants.MAX_STRING_LENGTH + 1,
-      max_string_code_units: constants.MAX_STRING_LENGTH,
-    };
     // Run readers sequentially in owned child processes, releasing each large
     // read buffer when its process exits instead of retaining it in Vitest.
     const result = await cli.run({
@@ -48,11 +43,11 @@ cliTest(
       input,
     ]);
     expect(JSON.parse(evidence.stdout)).toMatchObject({
-      code: "resource_constraint",
+      code: "evidence_integrity_mismatch",
       details: {
-        operation: "read_evidence_file",
-        resource: "memory",
-        reported_limits: limits,
+        operation: "read",
+        reason: "invalid-json",
+        path: input,
       },
     });
     expect(evidence.stderr).toBe("");

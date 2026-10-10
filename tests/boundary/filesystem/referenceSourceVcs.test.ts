@@ -84,6 +84,14 @@ it("reads a linked worktree's own branch and detached HEAD through shared Git re
     head: mainHead,
     dirty: null,
   });
+  // A non-regular loose ref must remain unknown even when packed-refs has
+  // a readable value. The library's promise-API probe is not a source failure.
+  await mkdir(join(repository, ".git", "refs", "heads", "main"));
+  expect(await readReferenceSourceVcs(repository)).toEqual({
+    kind: "unknown",
+    head: null,
+    dirty: null,
+  });
   const controller = new AbortController();
   controller.abort();
   expect(await readReferenceSourceVcs(linked, controller.signal)).toEqual({

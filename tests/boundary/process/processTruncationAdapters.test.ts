@@ -194,9 +194,14 @@ itWithCaptureCapability.each(["cli", "mcp"] as const)(
     expect(details.filesystem_after.enumeration_reasons).toContain(
       "files_limit",
     );
-    expect(
-      result.files_after.find(({ path }) => path === "root_0:b.txt")?.sha256,
-    ).toBeNull();
+    // The truncated subset follows filesystem enumeration order. The large
+    // file may be retained without a digest, or not enumerated at all.
+    const largeFile = result.files_after.find(
+      ({ path }) => path === "root_0:b.txt",
+    );
+    if (largeFile !== undefined) expect(largeFile.sha256).toBeNull();
+    expect(details.filesystem_after.enumeration_truncated).toBe(true);
+    expect(result.files_after.length).toBeLessThanOrEqual(3);
     expect(processSourceTruncated(result, "terminal_rendered")).toBe(true);
     expect(compareProcessCaptures(result, result)).toMatchObject({
       terminal: "unknown",

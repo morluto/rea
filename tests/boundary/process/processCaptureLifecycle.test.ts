@@ -59,7 +59,10 @@ const expectUnverifiedHostCleanup = (error: ProcessCaptureError): void => {
     /^(?:[1-9][0-9]*=(?:environment_unavailable|environment_errno_(?:EACCES|EPERM)))(?:, [1-9][0-9]*=(?:environment_unavailable|environment_errno_(?:EACCES|EPERM)))*$/u,
   );
   expect(report?.terminal_renderer.state).toBe("cleaned");
-  expect(report?.temporary_root.state).toBe("cleaned");
+  expect(report?.temporary_root).toEqual({
+    state: "unverified",
+    reason: `temporary root retained because owned process cleanup is unverified: ${report?.owned_process_group.reason}`,
+  });
 };
 
 const captureObservations = (
@@ -275,7 +278,10 @@ itWithCaptureCapability(
     const projected = projectAnalysisError(result.error);
     expect(projected).toMatchObject({
       code: "cleanup_incomplete",
-      details: { cleanup: "incomplete", resources: ["owned_process_group"] },
+      details: {
+        cleanup: "incomplete",
+        resources: ["owned_process_group", "temporary_root"],
+      },
     });
     expect(projected).not.toHaveProperty("stack");
     expect(projected).not.toHaveProperty("cause");

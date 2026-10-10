@@ -53,9 +53,24 @@ const resolveSourceHead = async (
       ...fs.promises,
       // isomorphic-git treats every read failure as absence. Preserve real
       // failures so a readable packed ref cannot hide an unreadable loose ref.
-      readFile: async (path: string) => {
+      readFile: async (
+        path: string | undefined,
+        options:
+          | BufferEncoding
+          | { readonly encoding?: BufferEncoding | null }
+          | null = null,
+      ) => {
+        // The library probes readFile() without a path to detect promise APIs.
+        // Reject that invocation without attributing it to a source read.
+        if (path === undefined)
+          throw new TypeError("Git filesystem read requires a path");
         try {
-          return await readRegularFile(path, { signal });
+          const bytes = await readRegularFile(path, { signal });
+          const encoding =
+            typeof options === "string" ? options : options?.encoding;
+          return encoding === undefined || encoding === null
+            ? bytes
+            : bytes.toString(encoding);
         } catch (cause: unknown) {
           if (errorCode(cause) !== "ENOENT") failedRead ??= { cause };
           throw cause;

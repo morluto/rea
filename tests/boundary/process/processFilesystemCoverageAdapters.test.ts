@@ -169,7 +169,13 @@ itWithCaptureCapability.each(["cli", "mcp"] as const)(
     await writeFile(join(root, "z.txt"), "unchanged");
     const scenario = {
       executable: process.execPath,
-      arguments: ["-e", "require('node:fs').writeFileSync('a.txt','added')"],
+      // Delete the known file and overflow the remaining directory capacity.
+      // Incomplete enumeration still cannot prove its absence, regardless of
+      // which new entry the filesystem returns first.
+      arguments: [
+        "-e",
+        "const fs=require('node:fs');fs.unlinkSync('z.txt');fs.writeFileSync('a.txt','added');fs.writeFileSync('b.txt','added');",
+      ],
       working_directory: root,
       filesystem_observation_paths: [root],
       limits: { files: 2 },
@@ -179,7 +185,9 @@ itWithCaptureCapability.each(["cli", "mcp"] as const)(
     );
     const capture = parseProcessCapture(evidence.normalized_result);
     expect(capture.truncated).toBe(true);
-    expect(await readFile(join(root, "z.txt"), "utf8")).toBe("unchanged");
+    await expect(readFile(join(root, "z.txt"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
     expect(
       capture.filesystem_effects.find(({ path }) => path === "root_0:z.txt")
         ?.status,

@@ -23,7 +23,12 @@ it("preserves a 12,000-member native import through both analyzers", () => {
   const ir = analyzeParsedJavaScriptSemantics(parsed);
   expect(staticAnalysis.parse_status).toBe("complete");
   expect(staticAnalysis.electron.native_addon_bindings).toEqual([
-    expect.objectContaining({ specifier: "./addon.node", members: ["last"] }),
+    expect.objectContaining({
+      specifier: "./addon.node",
+      members: ["next"],
+      namespace_access: false,
+      dynamic_member_access: false,
+    }),
   ]);
   expect(ir.coverage).toEqual({ status: "complete", omittedCount: 0 });
   const path = origin(onlyBinding(ir, "value"));

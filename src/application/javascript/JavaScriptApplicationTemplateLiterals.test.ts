@@ -31,7 +31,16 @@ const graphIdentities = async (source: string) => {
         ...(identity.strategy === "artifact-local-key"
           ? {
               namespace: identity.namespace,
-              key: identity.key.replace(/^[0-9a-f]{64}:/u, ""),
+              // Module-export identity is a JSON tuple whose first entry
+              // binds the whole container; only that digest changes here.
+              key:
+                identity.namespace === "module-export"
+                  ? JSON.stringify(
+                      (JSON.parse(identity.key) as unknown[]).slice(1),
+                    )
+                  : identity.namespace === "source-module"
+                    ? identity.key.replace(/^[0-9a-f]{64}:/u, "")
+                    : identity.key,
             }
           : {}),
       }))
