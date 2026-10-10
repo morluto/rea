@@ -36,26 +36,73 @@ export const semanticPropertyPathKeyMatches = (
   return index !== null && index >= key.startIndex;
 };
 
-/**
- * Report whether `covering` is a prefix of `path` whose keys match at least as
- * much. An escape at `covering` then reaches every slot an escape at `path`
- * can; a write does only when both paths have the same length.
- */
-export const semanticPropertyPathCovers = (
-  covering: JavaScriptSemanticPropertyPath,
-  path: JavaScriptSemanticPropertyPath,
-): boolean =>
-  covering.length <= path.length &&
-  covering.every((key, index) => keyCovers(key, path[index] ?? null));
+interface PropertyPathCoverageNode {
+  terminal: boolean;
+  readonly exact: Map<string, PropertyPathCoverageNode>;
+  readonly selectors: Map<
+    string,
+    {
+      readonly key: JavaScriptSemanticPropertyPath[number];
+      readonly node: PropertyPathCoverageNode;
+    }
+  >;
+}
 
-/** Return the most specific path whose effect covers both paths. */
-export const semanticPropertyPathUnion = (
-  left: JavaScriptSemanticPropertyPath,
-  right: JavaScriptSemanticPropertyPath,
-): JavaScriptSemanticPropertyPath =>
-  left
-    .slice(0, Math.min(left.length, right.length))
-    .map((key, index) => keyUnion(key, right[index] ?? null));
+const coverageNode = (): PropertyPathCoverageNode => ({
+  terminal: false,
+  exact: new Map(),
+  selectors: new Map(),
+});
+
+/** Index exact effect prefixes without widening distinct member paths. */
+export class SemanticPropertyPathCoverage {
+  readonly #root = coverageNode();
+
+  /** Retain a path only when no previously retained prefix covers it. */
+  retain(path: JavaScriptSemanticPropertyPath): boolean {
+    const pending = [{ node: this.#root, offset: 0 }];
+    while (pending.length > 0) {
+      const current = pending.pop();
+      if (current === undefined) break;
+      if (current.node.terminal) return false;
+      const key = path[current.offset];
+      if (key === undefined) continue;
+      if (key !== null && typeof key !== "object") {
+        const exact = current.node.exact.get(String(key));
+        if (exact !== undefined)
+          pending.push({ node: exact, offset: current.offset + 1 });
+      }
+      for (const selected of current.node.selectors.values()) {
+        if (keyCovers(selected.key, key))
+          pending.push({ node: selected.node, offset: current.offset + 1 });
+      }
+    }
+    let node = this.#root;
+    for (const key of path) {
+      if (key !== null && typeof key !== "object") {
+        const name = String(key);
+        let child = node.exact.get(name);
+        if (child === undefined) {
+          child = coverageNode();
+          node.exact.set(name, child);
+        }
+        node = child;
+      } else {
+        const identity = JSON.stringify(key);
+        let selected = node.selectors.get(identity);
+        if (selected === undefined) {
+          selected = { key, node: coverageNode() };
+          node.selectors.set(identity, selected);
+        }
+        node = selected.node;
+      }
+    }
+    node.terminal = true;
+    node.exact.clear();
+    node.selectors.clear();
+    return true;
+  }
+}
 
 const keyCovers = (
   covering: JavaScriptSemanticPropertyPath[number],
@@ -73,20 +120,4 @@ const keyCovers = (
     (covering.startIndex === undefined ||
       (key.startIndex !== undefined && covering.startIndex <= key.startIndex))
   );
-};
-
-const keyUnion = (
-  left: JavaScriptSemanticPropertyPath[number],
-  right: JavaScriptSemanticPropertyPath[number],
-): JavaScriptSemanticPropertyPath[number] => {
-  if (keyCovers(left, right)) return left;
-  if (keyCovers(right, left)) return right;
-  if (left === null || right === null) return null;
-  if (typeof left !== "object" || typeof right !== "object") return null;
-  const excludedKeys = left.excludedKeys.filter((name) =>
-    right.excludedKeys.includes(name),
-  );
-  return left.startIndex === undefined || right.startIndex === undefined
-    ? { excludedKeys }
-    : { excludedKeys, startIndex: Math.min(left.startIndex, right.startIndex) };
 };

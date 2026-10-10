@@ -9,20 +9,75 @@ const resultValue = (body: string) =>
     "result",
   ).returnSites[0]?.value;
 
-describe("reference lifetimes across calls and shallow copies", () => {
-  it("bounds dynamic destructuring across shared alias branches", () => {
-    const declarations = Array.from(
-      { length: 9 },
-      (_, index) =>
-        `const alias${index + 1} = { left: alias${index}, right: alias${index} };`,
-    ).join("\n");
-    const pattern = "{ [key]: ".repeat(9) + "[copy]" + " }".repeat(9);
+describe("bounded member path propagation", () => {
+  it("bounds cyclic member paths with no observed container origin", () => {
+    const branches = Array.from(
+      { length: 16 },
+      (_, index) => `if (flag === ${index}) node = node.m${index};`,
+    ).join(" else ");
     const start = performance.now();
-    resultValue(
-      `const alias0 = [1]; ${declarations} const ${pattern} = alias9; return alias0[0];`,
+    const callable = onlyCallable(
+      analyzeJavaScriptSemantics(
+        `export function result(seed) { let node=seed; while(node) { ${branches} use(node.state); } return seed.keep; }`,
+      ),
+      "result",
     );
+    expect(callable.returnSites[0]?.value.status).toBe("unknown");
     expect(performance.now() - start).toBeLessThan(2000);
   }, 30000);
+
+  it("preserves Array prototype effects through an otherwise unknown alias", () => {
+    expect(
+      resultValue(
+        "const values=[1]; const prototype=Array.prototype; prototype[Symbol.iterator]=custom; for(const item of values) { mutate(item); } return values[0];",
+      )?.status,
+    ).toBe("unknown");
+  });
+
+  it("bounds loops derived from a scalar member while preserving sibling facts", () => {
+    const branches = Array.from(
+      { length: 16 },
+      (_, index) => `if (flag === ${index}) node = node.m${index};`,
+    ).join(" else ");
+    const start = performance.now();
+    expect(
+      resultValue(
+        `const source={child:1,keep:{value:3}}; let node=source.child; while(node) { ${branches} use(node.state); } return source.keep.value;`,
+      ),
+    ).toEqual({ status: "literal", value: 3 });
+    expect(performance.now() - start).toBeLessThan(2000);
+  }, 30000);
+
+  it.each([
+    ["child:external,", "child", "present"],
+    ["", "missing", "unknown-coverage"],
+  ])(
+    "retains slot presence below an unobserved container: %s",
+    (property, name, presence) => {
+      expect(
+        resultValue(
+          `const source={${property}keep:3}; const alias=source.${name}; alias.deep.value=2; return source;`,
+        ),
+      ).toMatchObject({
+        status: "object",
+        properties: expect.arrayContaining([
+          {
+            name,
+            presence,
+            value: {
+              status: "unknown",
+              reason: "This property may have been mutated.",
+            },
+          },
+          {
+            name: "keep",
+            presence: "present",
+            value: { status: "literal", value: 3 },
+          },
+        ]),
+      });
+    },
+  );
 
   it.each([
     ["use(node);", "m0.value", "unknown"],
@@ -80,6 +135,51 @@ describe("reference lifetimes across calls and shallow copies", () => {
       ),
     ).toEqual({ status: "literal", value: 3 });
   });
+});
+
+describe("distinct observable mutation paths", () => {
+  it.each([
+    ["alias.value = 2;", "left"],
+    ["alias.value = 2;", "right"],
+    ["mutate(alias);", "left"],
+    ["mutate(alias);", "right"],
+  ])(
+    "propagates both conditional paths to shared bindings: %s %s",
+    (effect, target) => {
+      expect(
+        resultValue(
+          `const left={value:1}; const right={value:2}; const source={left,right}; const alias=flag?source.left:source.right; ${effect} return ${target}.value;`,
+        )?.status,
+      ).toBe("unknown");
+    },
+  );
+
+  it.each(["mutate(alias);", "alias.value = 2;"])(
+    "preserves sibling facts below a shared prefix: %s",
+    (effect) => {
+      expect(
+        resultValue(
+          `const shared={left:{value:1},right:{value:2},keep:{value:3}}; const source={nested:shared}; const alias=flag?source.nested.left:source.nested.right; ${effect} return shared.keep.value;`,
+        ),
+      ).toEqual({ status: "literal", value: 3 });
+    },
+  );
+});
+
+describe("reference lifetimes across calls and shallow copies", () => {
+  it("bounds dynamic destructuring across shared alias branches", () => {
+    const declarations = Array.from(
+      { length: 9 },
+      (_, index) =>
+        `const alias${index + 1} = { left: alias${index}, right: alias${index} };`,
+    ).join("\n");
+    const pattern = "{ [key]: ".repeat(9) + "[copy]" + " }".repeat(9);
+    const start = performance.now();
+    resultValue(
+      `const alias0 = [1]; ${declarations} const ${pattern} = alias9; return alias0[0];`,
+    );
+    expect(performance.now() - start).toBeLessThan(2000);
+  }, 30000);
 
   it("bounds conditional shallow-copy traversal while retaining shared children", () => {
     const declarations = Array.from(

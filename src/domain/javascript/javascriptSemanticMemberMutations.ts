@@ -18,9 +18,8 @@ import { semanticIterationSources } from "./javascriptSemanticIterationSources.j
 import { semanticMutationInitializers } from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticArrayIndex,
-  semanticPropertyPathCovers,
+  SemanticPropertyPathCoverage,
   semanticPropertyPathKeyMatches,
-  semanticPropertyPathUnion,
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
@@ -44,9 +43,10 @@ export const collectSemanticMemberMutations = (
       if (parent !== null) parents.set(node, parent);
     },
   });
+  const normalizePath = observableMutationPaths(state);
   const recordedEffects = new Set<string>();
   const selections = new Map<string, readonly string[]>();
-  const coveringPaths = new Map<string, PropertyPath>();
+  const coveringPaths = new Map<string, SemanticPropertyPathCoverage>();
   let arrayIterationUnknown = false;
   const pendingReferences: {
     readonly initializer: JavaScriptSemanticBindingState["referenceInitializers"][number];
@@ -96,8 +96,10 @@ export const collectSemanticMemberMutations = (
     originAt: t.Node | undefined = mutation,
   ): void => {
     const pending = [{ node, path, bindings, originAt }];
-    while (pending.length > 0) {
-      const current = pending.pop();
+    // Visit shallower alias traversals first so their exact prefixes suppress
+    // longer loop paths before those paths enumerate every assignment order.
+    for (let cursor = 0; cursor < pending.length; cursor++) {
+      const current = pending[cursor];
       if (current === undefined) break;
       const expression = unwrapJavaScriptExpression(current.node).node;
       if (t.isIdentifier(expression)) {
@@ -129,10 +131,13 @@ export const collectSemanticMemberMutations = (
         if (current.bindings.has(lifetime)) continue;
         // Union compatible copied-slot selections at each binding. Carrying every
         // combination of exclusions through branch diamonds is exponential.
-        const selectorIndex = current.path.findIndex(
+        // Preserve paths that can change observed slots or Array prototype
+        // effects; canonicalize suffixes that cannot distinguish lattice facts.
+        let path = normalizePath(binding.bindingId, current.path, effect);
+        if (path === null) continue;
+        const selectorIndex = path.findIndex(
           (key) => key !== null && typeof key === "object",
         );
-        let path = current.path;
         const selector = path[selectorIndex];
         if (selector !== null && typeof selector === "object") {
           const selectionIdentity = JSON.stringify([
@@ -160,37 +165,33 @@ export const collectSemanticMemberMutations = (
             index === selectorIndex ? { ...selector, excludedKeys } : key,
           );
         }
-        const site = [
+        // Keep an antichain of exact paths. Widening distinct member keys would
+        // also invalidate unrelated siblings that never reach this effect.
+        const pathState = JSON.stringify([
+          binding.bindingId,
+          effect,
+          // Short writes stop at owned literal slots, whereas longer writes
+          // reach shared children. Only equal-depth writes cover one another.
+          effect === "write" ? path.length : null,
           mutation?.start,
           mutation?.end,
           current.originAt?.start,
           current.originAt?.end,
-        ];
-        // Union paths at each binding state as well. Each loop assignment can
-        // prepend its member, so carrying every ordering is factorial, while
-        // one covering path keeps every effect of the paths it covers. Paths
-        // through different first members stay apart, so a union never widens
-        // which members of the binding are affected. Initializers pass on only
-        // writes at least two keys deep, so a write covers only writes of its
-        // own length.
-        const pathState = JSON.stringify([
-          binding.bindingId,
-          effect,
-          path[0],
-          effect === "write" ? path.length : null,
-          ...site,
         ]);
-        const covering = coveringPaths.get(pathState);
-        if (covering !== undefined) {
-          if (semanticPropertyPathCovers(covering, path)) continue;
-          path = semanticPropertyPathUnion(covering, path);
+        let covering = coveringPaths.get(pathState);
+        if (covering === undefined) {
+          covering = new SemanticPropertyPathCoverage();
+          coveringPaths.set(pathState, covering);
         }
-        coveringPaths.set(pathState, path);
+        if (!covering.retain(path)) continue;
         const identity = JSON.stringify([
           binding.bindingId,
           effect,
           path,
-          ...site,
+          mutation?.start,
+          mutation?.end,
+          current.originAt?.start,
+          current.originAt?.end,
         ]);
         if (recordedEffects.has(identity)) continue;
         const value =
@@ -568,6 +569,241 @@ const referencedValues = (
       { node: node.right, path },
     ];
   return [];
+};
+
+type MutationObservableOrigin =
+  | t.ObjectExpression
+  | t.ArrayExpression
+  | "ambient"
+  | "array"
+  | "array-prototype"
+  | "opaque";
+
+interface MutationObserverNode {
+  readonly origins: Set<MutationObservableOrigin>;
+  readonly sources: Set<MutationObserverNode>;
+  readonly dependents: Set<MutationObserverNode>;
+  readonly projections: Map<string, MutationObserverNode>;
+  readonly read?: {
+    readonly source: MutationObserverNode;
+    readonly key: PropertyPath[number];
+  };
+}
+
+const observableMutationPaths = (
+  state: JavaScriptSemanticAnalysisState,
+): ((
+  bindingId: string,
+  path: PropertyPath,
+  effect: ValueEffect,
+) => PropertyPath | null) => {
+  const bindingNodes = new Map<string, MutationObserverNode>();
+  const expressions = new WeakMap<t.Node, MutationObserverNode>();
+  const pendingExpressions: {
+    readonly expression: t.Node;
+    readonly observer: MutationObserverNode;
+  }[] = [];
+  const pending: MutationObserverNode[] = [];
+  const queued = new Set<MutationObserverNode>();
+  const schedule = (node: MutationObserverNode): void => {
+    if (queued.has(node)) return;
+    queued.add(node);
+    pending.push(node);
+  };
+  const create = (
+    read?: MutationObserverNode["read"],
+  ): MutationObserverNode => ({
+    origins: new Set(),
+    sources: new Set(),
+    dependents: new Set(),
+    projections: new Map(),
+    ...(read === undefined ? {} : { read }),
+  });
+  const link = (
+    source: MutationObserverNode,
+    target: MutationObserverNode,
+  ): void => {
+    if (target.sources.has(source)) return;
+    target.sources.add(source);
+    source.dependents.add(target);
+    schedule(target);
+  };
+  const expressionNode = (node: t.Node): MutationObserverNode => {
+    const expression = unwrapJavaScriptExpression(node).node;
+    const existing = expressions.get(expression);
+    if (existing !== undefined) return existing;
+    const observer = create();
+    expressions.set(expression, observer);
+    pendingExpressions.push({ expression, observer });
+    return observer;
+  };
+  const project = (
+    source: MutationObserverNode,
+    path: PropertyPath,
+  ): MutationObserverNode => {
+    let observer = source;
+    for (const key of path) {
+      const identity = JSON.stringify(
+        key === null || typeof key === "object" ? key : String(key),
+      );
+      let selected = observer.projections.get(identity);
+      if (selected === undefined) {
+        selected = create({ source: observer, key });
+        observer.projections.set(identity, selected);
+        observer.dependents.add(selected);
+        schedule(selected);
+      }
+      observer = selected;
+    }
+    return observer;
+  };
+  for (const binding of state.bindingsById.values())
+    bindingNodes.set(binding.bindingId, create());
+  for (const binding of state.bindingsById.values()) {
+    const observer = bindingNodes.get(binding.bindingId);
+    if (observer === undefined) continue;
+    for (const initializer of binding.initializers)
+      link(
+        project(expressionNode(initializer.node), initializer.projection),
+        observer,
+      );
+    // Preserve exact paths where copies, defaults or iteration need their
+    // reference-specific projections; an opaque origin prevents pruning.
+    if (binding.referenceInitializers.length > 0)
+      observer.origins.add("opaque");
+    for (const initializer of binding.referenceInitializers) {
+      for (const source of [
+        initializer,
+        ...(initializer.requiredSources ?? []),
+        ...(initializer.fallbackSources ?? []),
+      ])
+        link(expressionNode(source.node), observer);
+    }
+  }
+  const settle = (): void => {
+    while (pendingExpressions.length > 0 || pending.length > 0) {
+      while (pendingExpressions.length > 0) {
+        const selected = pendingExpressions.pop();
+        if (selected === undefined) break;
+        const { expression, observer } = selected;
+        if (t.isObjectExpression(expression) || t.isArrayExpression(expression))
+          observer.origins.add(expression);
+        else if (t.isIdentifier(expression)) {
+          const binding = resolveSemanticBindingState(
+            state,
+            expression,
+            expression.name,
+          );
+          if (binding !== undefined) {
+            const origin = bindingNodes.get(binding.bindingId);
+            if (origin !== undefined) link(origin, observer);
+          } else if (expression.name === "Array") observer.origins.add("array");
+          else if (
+            ["globalThis", "global", "window", "self"].includes(expression.name)
+          )
+            observer.origins.add("ambient");
+        } else if (
+          t.isMemberExpression(expression) ||
+          t.isOptionalMemberExpression(expression)
+        )
+          link(
+            project(expressionNode(expression.object), [
+              semanticStaticPropertyKey(
+                expression.property,
+                expression.computed,
+              ),
+            ]),
+            observer,
+          );
+        else
+          for (const reference of referencedValues(expression, [], "escape"))
+            link(
+              project(expressionNode(reference.node), reference.path),
+              observer,
+            );
+        schedule(observer);
+      }
+      const observer = pending.pop();
+      if (observer === undefined) continue;
+      queued.delete(observer);
+      let changed = false;
+      const add = (origin: MutationObservableOrigin): void => {
+        if (observer.origins.has(origin)) return;
+        observer.origins.add(origin);
+        changed = true;
+      };
+      for (const source of observer.sources)
+        for (const origin of source.origins) add(origin);
+      if (observer.read !== undefined) {
+        const { source, key } = observer.read;
+        if (key === null || typeof key === "object") {
+          // Dynamic keys and copied-slot masks retain their original paths.
+          // Enumerating their exclusion combinations would recreate the growth
+          // that the mutation collector's selection union already prevents.
+          if (source.origins.size > 0) add("opaque");
+        } else
+          for (const origin of source.origins) {
+            if (typeof origin === "string") {
+              if (origin === "array-prototype" || origin === "opaque")
+                add(origin);
+              else if (
+                origin === "ambient" &&
+                semanticPropertyPathKeyMatches(key, "Array")
+              )
+                add("array");
+              else if (
+                origin === "array" &&
+                semanticPropertyPathKeyMatches(key, "prototype")
+              )
+                add("array-prototype");
+            } else {
+              for (const reference of referencedValues(
+                origin,
+                [key],
+                "escape",
+              )) {
+                link(
+                  project(expressionNode(reference.node), reference.path),
+                  observer,
+                );
+                if (reference.iterableFallbackPath !== undefined)
+                  link(
+                    project(
+                      expressionNode(reference.node),
+                      reference.iterableFallbackPath,
+                    ),
+                    observer,
+                  );
+              }
+            }
+          }
+      }
+      if (changed)
+        for (const dependent of observer.dependents) schedule(dependent);
+    }
+  };
+  settle();
+  return (bindingId, path, effect) => {
+    let observer = bindingNodes.get(bindingId);
+    if (observer === undefined) return path;
+    if (path.some((key) => key !== null && typeof key === "object"))
+      return path;
+    if (effect === "escape") {
+      observer = project(observer, path);
+      settle();
+      return observer.origins.size === 0 ? null : path;
+    }
+    if (observer.origins.size === 0) return path.length === 0 ? path : [null];
+    for (let offset = 0; offset < path.length; offset++) {
+      const key = path[offset];
+      if (key === undefined) break;
+      observer = project(observer, [key]);
+      settle();
+      if (observer.origins.size === 0 && offset + 1 < path.length)
+        return [...path.slice(0, offset + 1), null];
+    }
+    return path;
+  };
 };
 
 const objectReferencedValues = (
