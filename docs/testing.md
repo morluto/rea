@@ -430,7 +430,10 @@ and method decompilation. The script records the engine's exact response to
 `open_jeb_project`; JEB 5.48.0 headless instances do not advertise that tool.
 REA does not install or launch JEB; see [JEB analysis](jeb-analysis.md) for
 the bring-your-own boundary. Verified against JEB 5.48.0 serving
-`jeb-mcp-server` 1.3.0.
+`jeb-mcp-server` 1.3.0, including a signed multi-dex-capable probe APK with a
+launcher activity: the full APK unit tree (manifest, v1/v2/v3 certificates,
+dex bytecode), filtered and paginated unit listing, and activity method
+decompilation through both CLI and MCP.
 Authenticated IPA and macOS application inventory projection is documented in
 [Apple application analysis](apple-application-analysis.md).
 

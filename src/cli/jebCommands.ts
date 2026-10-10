@@ -52,7 +52,8 @@ export const registerJebCommands = (
   });
   cli.command(CLI_COMMANDS.listJebUnits, {
     description: "List JEB project units by path and type with optional filter",
-    args: z.object({
+    args: z.object({}),
+    options: z.object({
       filter: z
         .string()
         .optional()
@@ -75,14 +76,14 @@ export const registerJebCommands = (
         .default(100)
         .describe("Maximum results; the engine caps unit pages at 100"),
     }),
-    run: ({ args }) =>
+    run: ({ options }) =>
       execute(CLI_COMMANDS.listJebUnits, "list_jeb_units", {
-        index: args.index,
-        count: args.count,
-        ...(args.filter === undefined ? {} : { filter: args.filter }),
-        ...(args["parent-unit-path"] === undefined
+        index: options.index,
+        count: options.count,
+        ...(options.filter === undefined ? {} : { filter: options.filter }),
+        ...(options["parent-unit-path"] === undefined
           ? {}
-          : { parent_unit_path: args["parent-unit-path"] }),
+          : { parent_unit_path: options["parent-unit-path"] }),
       }),
   });
   cli.command(CLI_COMMANDS.decompileJebItem, {
@@ -95,6 +96,8 @@ export const registerJebCommands = (
       "item-kind": z
         .enum(["type", "method"])
         .describe("Kind of item to decompile"),
+    }),
+    options: z.object({
       "unit-path": z
         .string()
         .min(1)
@@ -103,13 +106,13 @@ export const registerJebCommands = (
           "Target code unit; the engine's first code unit when omitted",
         ),
     }),
-    run: ({ args }) =>
+    run: ({ args, options }) =>
       execute(CLI_COMMANDS.decompileJebItem, "decompile_jeb_item", {
         item_address: args["item-address"],
         item_kind: args["item-kind"],
-        ...(args["unit-path"] === undefined
+        ...(options["unit-path"] === undefined
           ? {}
-          : { unit_path: args["unit-path"] }),
+          : { unit_path: options["unit-path"] }),
       }),
   });
 };
