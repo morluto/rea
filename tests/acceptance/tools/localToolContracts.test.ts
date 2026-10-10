@@ -14,6 +14,9 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const execute = promisify(execFile);
 const cli = fileURLToPath(new URL("../../../scripts/rea.mjs", import.meta.url));
+const finalizationFixture = fileURLToPath(
+  new URL("../../fixtures/processFinalization.mjs", import.meta.url),
+);
 const nul = "/tmp/selected\0filename";
 const electron = {
   executable_path: "/tmp/Electron",
@@ -350,6 +353,59 @@ captureTest.each(["untruncated", "truncated"] as const)(
     ]);
     expect(parseEvidence(JSON.parse(cliComparison.stdout))).toEqual(comparison);
   },
+);
+
+captureTest(
+  "captures a cooperative finalizer through MCP",
+  async () => {
+    const root = await createTestTempDirectory("rea-local-finalization-");
+    const { call } = await connectLocalToolsMcp();
+    const response = await call("capture_process_scenario", {
+      executable: process.execPath,
+      arguments: [finalizationFixture, "cooperative", root],
+      working_directory: root,
+      filesystem_observation_paths: [root],
+      timeout_ms: 1_500,
+      idle_timeout_ms: 10_000,
+      finalization_ms: 1_500,
+    });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    const capture = toolContract("capture_process_scenario").outputSchema.parse(
+      response.structuredContent,
+    );
+
+    expect(
+      capture.normalized_result.exit.reason,
+      "the initiating deadline remains the exit reason",
+    ).toBe("timeout");
+    expect(
+      capture.normalized_result.exit.code,
+      "a deadline exit has no normal exit code",
+    ).toBeNull();
+    expect(
+      capture.normalized_result.exit.finalization,
+      "the cooperative SIGTERM finalization is recorded",
+    ).toMatchObject({
+      requested_ms: 1_500,
+      signal: "SIGTERM",
+      outcome: "target_exited",
+    });
+    expect(
+      capture.normalized_result.manifest.scenario.finalization_ms,
+      "the committed scenario retains the finalization interval",
+    ).toBe(1_500);
+    expect(
+      capture.normalized_result.frames.map((frame) => frame.data).join(""),
+      "output written during finalization is captured",
+    ).toContain("finalized");
+    expect(
+      capture.normalized_result.files_after.find((file) =>
+        file.path.endsWith("final.json"),
+      )?.sha256,
+      "the after snapshot includes a hashed final report",
+    ).toMatch(/^[0-9a-f]{64}$/u);
+  },
+  15_000,
 );
 
 captureTest(
