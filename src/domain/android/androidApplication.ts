@@ -176,7 +176,6 @@ const classify = (all: readonly Component[]) => ({
 });
 
 const runtimeFamilies = (all: readonly Component[]) => {
-  const paths = all.map(({ path }) => path.toLowerCase());
   const families = new Set<
     AndroidApplicationProjectionResult["runtime_families"][number]
   >();
@@ -187,15 +186,10 @@ const runtimeFamilies = (all: readonly Component[]) => {
   if (all.some(({ format }) => format === "elf")) families.add("native");
   if (all.some(({ format }) => format === "javascript-bundle"))
     families.add("javascript");
-  if (
-    paths.some(
-      (path) => path.includes("reactnative") || path.includes("hermes"),
-    )
-  )
-    families.add("react-native");
-  if (paths.some((path) => path.includes("libflutter.so")))
-    families.add("flutter");
-  if (paths.some((path) => path.includes("libunity.so"))) families.add("unity");
+  for (const { path } of all) {
+    const family = frameworkConvention(path);
+    if (family !== null) families.add(family);
+  }
   return [...families].sort(compare);
 };
 
@@ -213,15 +207,26 @@ const bridgeCandidates = (
   });
 };
 
+/** Filename conventions are hints, not decoded dependencies or runtime observations. */
+const frameworkConvention = (
+  path: string,
+): "react-native" | "flutter" | "unity" | null => {
+  if (
+    /(?:^|\/)lib(?:reactnative(?:jni)?|hermes(?:_executor)?)\.so$/iu.test(path)
+  )
+    return "react-native";
+  if (/(?:^|\/)libflutter\.so$/iu.test(path)) return "flutter";
+  if (/(?:^|\/)libunity\.so$/iu.test(path)) return "unity";
+  return null;
+};
+
 const bridgeBasis = (
   path: string,
 ): AndroidApplicationProjectionResult["bridge_candidates"][number]["basis"] => {
-  const lower = path.toLowerCase();
-  if (lower.includes("react") || lower.includes("hermes"))
-    return "react-native-convention";
-  if (lower.includes("flutter")) return "flutter-convention";
-  if (lower.includes("unity")) return "unity-convention";
-  if (/lib\/[^/]+\/lib[^/]+\.so$/u.test(lower)) return "jni-library-convention";
+  const family = frameworkConvention(path);
+  if (family !== null) return `${family}-convention`;
+  if (/(?:^|\/)lib\/[^/]+\/lib[^/]+\.so$/iu.test(path))
+    return "jni-library-convention";
   return "managed-and-native-content";
 };
 

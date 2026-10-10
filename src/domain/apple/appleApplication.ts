@@ -285,7 +285,6 @@ const deduplicateComponents = (values: readonly Component[]): Component[] =>
   );
 
 const identifyRuntimeFamilies = (all: readonly Component[]) => {
-  const paths = all.map(({ path }) => path.toLowerCase());
   const families = new Set<
     z.infer<
       typeof appleApplicationProjectionResultSchema
@@ -293,28 +292,12 @@ const identifyRuntimeFamilies = (all: readonly Component[]) => {
   >();
   if (all.some(({ format }) => ["mach-o", "mach-o-universal"].includes(format)))
     families.add("native");
-  if (paths.some((path) => /\.(?:dylib|framework\/[^/]+)$/u.test(path)))
-    families.add("swift-objective-c");
   if (all.some(({ format }) => format === "javascript-bundle"))
     families.add("javascript");
-  if (
-    paths.some(
-      (path) =>
-        path.includes("reactnative") ||
-        path.includes("react.framework") ||
-        path.includes("hermes"),
-    )
-  )
-    families.add("react-native");
-  if (
-    paths.some(
-      (path) =>
-        path.includes("flutter.framework") || path.includes("app.framework"),
-    )
-  )
-    families.add("flutter");
-  if (paths.some((path) => path.includes("unityframework.framework")))
-    families.add("unity");
+  for (const { path } of all) {
+    const family = frameworkConvention(path);
+    if (family !== null) families.add(family);
+  }
   return [...families].sort(compare);
 };
 
@@ -354,6 +337,17 @@ const identifyBridgeCandidates = (
   });
 };
 
+/** Match whole framework segments; generic App.framework does not identify Flutter. */
+const frameworkConvention = (
+  path: string,
+): "react-native" | "flutter" | "unity" | null => {
+  if (/(?:^|\/)(?:react|reactnative|hermes)\.framework(?:\/|$)/iu.test(path))
+    return "react-native";
+  if (/(?:^|\/)flutter\.framework(?:\/|$)/iu.test(path)) return "flutter";
+  if (/(?:^|\/)unityframework\.framework(?:\/|$)/iu.test(path)) return "unity";
+  return null;
+};
+
 const bridgeBasis = (
   path: string,
 ):
@@ -361,11 +355,8 @@ const bridgeBasis = (
   | "react-native-convention"
   | "flutter-convention"
   | "unity-convention" => {
-  const lower = path.toLowerCase();
-  if (lower.includes("react")) return "react-native-convention";
-  if (lower.includes("flutter") || lower.includes("app.framework"))
-    return "flutter-convention";
-  if (lower.includes("unity")) return "unity-convention";
+  const family = frameworkConvention(path);
+  if (family !== null) return `${family}-convention`;
   return "javascript-and-native-content";
 };
 
@@ -422,7 +413,10 @@ const projectionLimitations = (facts: {
     : []),
   "Bundle roles follow path conventions. Read each info_plist_path with inspect_plist for CFBundleExecutable, identifiers, and declared services.",
   "Bundle identifiers and signing claims require dedicated plist and CMS parsing; this projection reports only exact paths and hashes.",
+  "Runtime families are inferred from inventory formats and bounded framework path conventions, not observed runtime loading.",
+  "Generic framework and dylib paths do not establish Swift or Objective-C; this inventory projection does not decode language metadata.",
   "Bridge candidates are path-based hypotheses, not observed runtime calls.",
+  "A bridge basis is inferred from the native path and is repeated for every managed component.",
 ];
 
 const compare = (left: string, right: string): number =>

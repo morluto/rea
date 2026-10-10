@@ -7,6 +7,16 @@ hashes, detected formats, bundle anatomy, runtime-family hints, and path-based
 bridge hypotheses. It does not parse plist or CMS semantics or claim observed
 runtime calls.
 
+Framework hints match complete path segments such as `React.framework`,
+`ReactNative.framework`, `hermes.framework`, `Flutter.framework`, and
+`UnityFramework.framework`. Substrings in `Preact.framework`,
+`Community.framework`, or `MyApp.framework` do not identify those families.
+A generic `App.framework` also does not identify Flutter by itself. Runtime
+families remain inventory-derived hints, not observed loading. Generic framework
+and dylib paths do not establish Swift or Objective-C; this projection does not
+decode language metadata. A bridge basis is inferred from the native path and
+repeated for each paired script, rather than proving a particular binding.
+
 ```sh
 rea project-apple-application-graph '{"inventory_evidence":[<inventory_artifact Evidence>]}'
 ```
