@@ -10,6 +10,7 @@ import {
 import { join } from "node:path";
 import { promisify } from "node:util";
 
+import { buildBinary } from "plist";
 import { describe, expect, it } from "vitest";
 
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
@@ -687,6 +688,71 @@ describe("iOS-style app bundle targets", () => {
       });
       if (result.ok) throw new Error("Expected an escaping program file");
       expect(result.error.message).toContain("leaves the bundle root");
+    },
+  );
+});
+
+describe("binary Info.plist app bundle targets", () => {
+  it.each([
+    ["Mac.app", ["Contents", "MacOS"], ["Contents", "Info.plist"]],
+    ["Phone.app", [], ["Info.plist"]],
+  ])(
+    "resolves %s from a binary Info.plist on every host",
+    async (bundle, programs, plist) => {
+      const directory = await createTestTempDirectory("rea-app-bplist-");
+      // Windows file names cannot hold a tab or end in a space.
+      const names =
+        process.platform === "win32"
+          ? ["Ordinary"]
+          : ["Ordinary", " App ", "Tab\t"];
+      for (const name of names) {
+        const app = join(directory, name, bundle);
+        const executable = join(app, ...programs, name);
+        await mkdir(join(app, ...programs), { recursive: true });
+        await mkdir(join(app, ...plist.slice(0, -1)), { recursive: true });
+        await writeFile(
+          join(app, ...plist),
+          buildBinary({ CFBundleExecutable: name, CFBundleVersion: "1" }),
+        );
+        await writeFile(executable, thinMach(0xfeedfacf, 0x0100000c));
+        const result = await parseBinaryTarget(app, {
+          cwd: directory,
+          hostArchitecture: "arm64",
+        });
+        expect(result.ok && result.value).toMatchObject({
+          path: await realpath(executable),
+          format: "mach-o",
+        });
+      }
+    },
+  );
+
+  it.each([
+    [
+      "XML",
+      "<plist><dict><key>__proto__</key><dict><key>CFBundleExecutable</key><string>Forged</string></dict></dict></plist>",
+    ],
+    [
+      "binary",
+      buildBinary(JSON.parse('{"__proto__":{"CFBundleExecutable":"Forged"}}')),
+    ],
+  ])(
+    "ignores CFBundleExecutable nested under __proto__ in %s Info.plist files",
+    async (_encoding, contents) => {
+      const directory = await createTestTempDirectory("rea-app-proto-only-");
+      const app = join(directory, "Proto.app");
+      await mkdir(join(app, "Contents", "MacOS"), { recursive: true });
+      await writeFile(join(app, "Contents", "Info.plist"), contents);
+      await writeFile(
+        join(app, "Contents", "MacOS", "Forged"),
+        thinMach(0xfeedfacf, 0x0100000c),
+      );
+      expect(await resolveAppBundleExecutable(app)).toMatchObject({
+        ok: false,
+        error: {
+          reason: expect.stringContaining("CFBundleExecutable is missing"),
+        },
+      });
     },
   );
 });
