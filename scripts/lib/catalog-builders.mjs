@@ -48,6 +48,11 @@ export const toolFamilyCatalog = (sources) => {
       contracts: sources.androidContracts.ANDROID_TOOL_CONTRACTS,
     },
     {
+      id: "flutter",
+      surface: "flutter-provider",
+      contracts: sources.flutterContracts.FLUTTER_TOOL_CONTRACTS,
+    },
+    {
       id: "apktool",
       surface: "apktool-provider",
       contracts: sources.apktoolContracts.APKTOOL_TOOL_CONTRACTS,
@@ -211,6 +216,10 @@ export const providerCatalog = (sources) => {
     {
       identity: sources.androidProvider.JADX_PROVIDER_IDENTITY,
       contracts: sources.androidContracts.ANDROID_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.flutterProvider.FLUTTER_PROVIDER_IDENTITY,
+      contracts: sources.flutterContracts.FLUTTER_TOOL_CONTRACTS,
     },
     {
       identity: sources.apktoolProvider.APKTOOL_PROVIDER_IDENTITY,
