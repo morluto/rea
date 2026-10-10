@@ -32,15 +32,6 @@ import {
 type PropertyPath = JavaScriptSemanticPropertyPath;
 type ValueEffect = "write" | "escape";
 
-/**
- * Distinct arrival paths that one alias state may expand. The bound keeps
- * reassignment loops polynomial: a k-member loop reaches each state along
- * O(k^2) orderings, and only the first arrivals deepen the walk. Eight covers
- * every branch diamond and sibling group in the semantic suite several times
- * over while keeping twelve-member loops in the millisecond range.
- */
-const MAX_EXPANSIONS_PER_ALIAS_STATE = 8;
-
 /** Preserve uncertainty from property writes and references exposed to calls. */
 export const collectSemanticMemberMutations = (
   program: t.Program,
@@ -54,11 +45,6 @@ export const collectSemanticMemberMutations = (
   });
   const normalizePath = observableMutationPaths(state);
   const recordedEffects = new Set<string>();
-  // A loop that reassigns one reference through k members can reach the same
-  // alias state along every injective member ordering, so per-path work alone
-  // grows factorially. Each alias state therefore expands only a bounded number
-  // of distinct arrival paths; later arrivals still record their own effect.
-  const expansionBudgets = new Map<string, number>();
   const selections = new Map<string, readonly string[]>();
   const coveringPaths = new Map<string, SemanticPropertyPathCoverage>();
   let arrayIterationUnknown = false;
@@ -220,53 +206,31 @@ export const collectSemanticMemberMutations = (
           current.originAt === undefined
             ? binding
             : semanticMutationInitializers(binding, current.originAt, parents);
-        // Every arrival keeps its own recorded effect, and each distinct arrival
-        // path expands: two arrivals that differ only in path can select
-        // different children out of the same initializer, so collapsing them
-        // would drop genuinely affected child literals. Only the replayed
-        // expansion of an already-saturated alias state is skipped: a loop that
-        // reassigns one reference through k members reaches that state along
-        // every injective member ordering, and replaying the walk for each
-        // ordering would multiply the same initializer walks factorially.
-        const expansionState = JSON.stringify([
-          binding.bindingId,
-          effect,
-          mutation?.start,
-          mutation?.end,
-          current.originAt?.start,
-          current.originAt?.end,
-        ]);
-        const expandedArrivals = expansionBudgets.get(expansionState) ?? 0;
-        const repeated = expandedArrivals >= MAX_EXPANSIONS_PER_ALIAS_STATE;
-        if (!repeated)
-          expansionBudgets.set(expansionState, expandedArrivals + 1);
         if (!primitiveWrite) {
           if (effect === "escape")
             binding.escapedPaths.push({ path, node: mutation });
           else binding.mutatedPaths.push(path);
           clearSemanticPrimitiveBindingValues(state);
-          if (!repeated)
-            for (const initializer of origins.initializers)
-              pending.push({
-                node: initializer.node,
-                path: [...initializer.projection, ...path],
-                bindings: nested,
-                originAt: initializer.node,
-              });
-        }
-        if (!repeated)
-          for (const initializer of origins.referenceInitializers) {
-            const copiedPath = copiedReferencePath(initializer, path, effect);
-            if (copiedPath === null) continue;
-            pendingReferences.push({
-              initializer,
-              path: copiedPath,
+          for (const initializer of origins.initializers)
+            pending.push({
+              node: initializer.node,
+              path: [...initializer.projection, ...path],
               bindings: nested,
-              effect,
               originAt: initializer.node,
-              ...(mutation === undefined ? {} : { mutation }),
             });
-          }
+        }
+        for (const initializer of origins.referenceInitializers) {
+          const copiedPath = copiedReferencePath(initializer, path, effect);
+          if (copiedPath === null) continue;
+          pendingReferences.push({
+            initializer,
+            path: copiedPath,
+            bindings: nested,
+            effect,
+            originAt: initializer.node,
+            ...(mutation === undefined ? {} : { mutation }),
+          });
+        }
       } else if (
         t.isMemberExpression(expression) ||
         t.isOptionalMemberExpression(expression)

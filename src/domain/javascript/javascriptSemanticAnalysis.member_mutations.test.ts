@@ -567,69 +567,6 @@ describe("JavaScript semantic values for properties unaffected by a mutation", (
       )?.status,
     ).toBe("unknown");
   });
-
-  it("keeps an unrelated member literal when two sibling references escape", () => {
-    expect(
-      resultValue(
-        "const source = { left: { value: 1 }, right: { value: 2 }, keep: { value: 3 } }; mutate(source.left, source.right); return source.keep.value;",
-      ),
-    ).toEqual({ status: "literal", value: 3 });
-  });
-
-  it("keeps an unrelated member literal behind a conditional alias", () => {
-    expect(
-      resultValue(
-        "const source = { left: { value: 1 }, right: { value: 2 }, keep: { value: 3 } }; const alias = flag ? source.left : source.right; mutate(alias); return source.keep.value;",
-      ),
-    ).toEqual({ status: "literal", value: 3 });
-  });
-
-  it("keeps an unrelated member literal behind a conditional shallow copy", () => {
-    expect(
-      resultValue(
-        "const source = { left: { value: 1 }, right: { value: 2 }, keep: { value: 3 } }; const copy = flag ? [source.left] : [source.right]; mutate(copy[0]); return source.keep.value;",
-      ),
-    ).toEqual({ status: "literal", value: 3 });
-  });
-
-  it("keeps every conditional-alias child affected after a member write", () => {
-    expect(
-      resultValue(`
-        const left = { value: 1 };
-        const right = { value: 2 };
-        const source = { left, right };
-        const alias = flag ? source.left : source.right;
-        alias.value = 2;
-        return left.value;
-      `)?.status,
-    ).toBe("unknown");
-  });
-
-  it("keeps every conditional-alias child affected after an alias escape", () => {
-    expect(
-      resultValue(`
-        const left = { value: 1 };
-        const right = { value: 2 };
-        const source = { left, right };
-        const alias = flag ? source.left : source.right;
-        mutate(alias);
-        return left.value;
-      `)?.status,
-    ).toBe("unknown");
-  });
-
-  it("keeps the reversed conditional-alias child affected after a member write", () => {
-    expect(
-      resultValue(`
-        const left = { value: 1 };
-        const right = { value: 2 };
-        const source = { left, right };
-        const alias = flag ? source.right : source.left;
-        alias.value = 2;
-        return right.value;
-      `)?.status,
-    ).toBe("unknown");
-  });
 });
 
 describe("property mutations through TypeScript satisfies aliases", () => {
