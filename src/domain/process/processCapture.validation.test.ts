@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 
 import { digestProcessCommitment } from "./processScenario.js";
 import { parseProcessCapture } from "./processCaptureParsing.js";
+import { finalizationConsistencyIssue } from "./processCapture.js";
 import {
   compareUnverifiedProcessCaptures as compareProcessCaptures,
   emptyUnverifiedProcessCapture as emptyCapture,
@@ -116,6 +117,78 @@ it("rejects finalization evidence that no deadline could have produced", () => {
       }),
     "a forced kill cannot precede the requested interval",
   ).toThrow("finalization");
+});
+
+const withCommittedFinalization = (
+  committed: number | undefined,
+  exit: Record<string, unknown>,
+) => {
+  const capture = emptyCapture();
+  const scenario = {
+    ...capture.manifest.scenario,
+    ...(committed === undefined ? {} : { finalization_ms: committed }),
+  };
+  return {
+    ...capture,
+    manifest: {
+      ...capture.manifest,
+      scenario,
+      full_scenario_sha256: digestProcessCommitment(scenario),
+    },
+    exit,
+  };
+};
+
+it("binds finalization evidence to the committed finalization interval", () => {
+  const finalization = {
+    requested_ms: 500,
+    signal: "SIGTERM",
+    outcome: "target_exited",
+    elapsed_ms: 10,
+  };
+  const exit = { code: null, signal: null, reason: "timeout", finalization };
+
+  expect(
+    parseProcessCapture(withCommittedFinalization(500, exit)).exit,
+    "a record matching the committed interval is accepted",
+  ).toMatchObject({ finalization });
+  expect(
+    () => parseProcessCapture(withCommittedFinalization(700, exit)),
+    "a different committed interval contradicts the record",
+  ).toThrow("finalization");
+  expect(
+    () => parseProcessCapture(withCommittedFinalization(undefined, exit)),
+    "a scenario that committed no interval cannot have finalized",
+  ).toThrow("finalization");
+});
+
+it("allows an early forced kill only for a cancelled exit", () => {
+  const forced = {
+    requested_ms: 500,
+    signal: "SIGTERM" as const,
+    outcome: "forced_kill" as const,
+    elapsed_ms: 1,
+  };
+
+  expect(
+    finalizationConsistencyIssue({ reason: "cancelled", finalization: forced }),
+    "cancellation ends the interval early",
+  ).toBeUndefined();
+  expect(
+    finalizationConsistencyIssue({ reason: "timeout", finalization: forced }),
+    "a deadline escalation waits for the whole interval",
+  ).toContain("requested interval");
+  expect(
+    finalizationConsistencyIssue({ reason: "exited", finalization: forced }),
+    "partial exits need a deadline reason too",
+  ).toContain("deadline exit reason");
+  expect(
+    finalizationConsistencyIssue(
+      { reason: "cancelled", finalization: forced },
+      { finalization_ms: 900 },
+    ),
+    "the committed interval must match when the manifest is known",
+  ).toContain("committed");
 });
 
 it("requires an explicit journal and validates complete journals", () => {
