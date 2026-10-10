@@ -746,8 +746,15 @@ export const awaitTerminalExit = async ({
       };
       finalizationSignals.push(record);
       recordFinalization(snapshot(null));
+      // The wait is bounded by the cleanup verification grace: a delivery that
+      // never settles is recorded as unverified instead of holding the capture.
       pendingDeliveries.push(
-        signalTarget(finalizationSignal)
+        Promise.race([
+          signalTarget(finalizationSignal),
+          delay(PROCESS_CLEANUP_VERIFICATION_GRACE_MS, "unverified" as const, {
+            ref: false,
+          }),
+        ])
           .then(
             (delivery) => {
               record.delivery = delivery;

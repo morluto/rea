@@ -661,8 +661,7 @@ const runProcessScenario = async (
       };
       observations.exit = {
         state: "unavailable",
-        reason:
-          "The captured process exit was not observed because the finalization SIGKILL could not be delivered.",
+        reason: `The captured process exit was not observed because the finalization SIGKILL could not be delivered (initiating reason: ${exit.reason}).`,
       };
       if (exit.reason === "cancelled") throw processCaptureCancelled();
       throw new Error(
