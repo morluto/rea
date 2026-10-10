@@ -60,7 +60,7 @@ export interface JavaScriptSemanticAnalysisState {
   readonly parentsByNode: WeakMap<t.Node, t.Node>;
   readonly scopes: JavaScriptSemanticScopeState[];
   readonly scopesById: Map<string, JavaScriptSemanticScopeState>;
-  /** Explicit scope boundaries; descendants inherit through parentsByNode. */
+  /** Scope boundaries and descendant scopes resolved on demand. */
   readonly scopeByNode: WeakMap<t.Node, JavaScriptSemanticScopeState>;
   readonly bindingsById: Map<string, JavaScriptSemanticBindingState>;
   readonly callables: JavaScriptSemanticCallable[];
@@ -133,7 +133,16 @@ const semanticScopeForNode = (
   let candidate: t.Node | undefined = node;
   while (candidate !== undefined) {
     const scope = state.scopeByNode.get(candidate);
-    if (scope !== undefined) return scope;
+    if (scope !== undefined) {
+      // Repeated references in a deep expression share this ancestry. Cache
+      // the traversed path without eagerly indexing nodes never resolved.
+      let descendant: t.Node | undefined = node;
+      while (descendant !== undefined && descendant !== candidate) {
+        state.scopeByNode.set(descendant, scope);
+        descendant = state.parentsByNode.get(descendant);
+      }
+      return scope;
+    }
     candidate = state.parentsByNode.get(candidate);
   }
   return undefined;
