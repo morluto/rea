@@ -14,7 +14,10 @@ import {
   immutableSemanticBindings,
   immutableSemanticScopes,
 } from "./javascriptSemanticProjection.js";
-import { semanticStaticPropertyKey } from "./javascriptAstValues.js";
+import {
+  semanticObjectPatternKeys,
+  semanticStaticPropertyKey,
+} from "./javascriptAstValues.js";
 import type {
   JavaScriptSemanticAnalysisState,
   JavaScriptSemanticBindingState,
@@ -880,14 +883,7 @@ const bindPattern = (input: BindPatternInput): void => {
           referenceOnly: true,
           copyKind: "object-rest",
           copyProjectionOffset: projection.length,
-          copyExcludedKeys: pattern.properties.flatMap((property) => {
-            if (t.isRestElement(property)) return [];
-            const key = semanticStaticPropertyKey(
-              property.key,
-              property.computed,
-            );
-            return key === null ? [] : [key];
-          }),
+          copyExcludedKeys: semanticObjectPatternKeys(pattern),
         });
       } else {
         const name = semanticStaticPropertyKey(property.key, property.computed);
