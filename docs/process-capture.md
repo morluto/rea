@@ -110,11 +110,14 @@ while comparisons and trace assertions use the normalized text. Retaining the
 original adds at most `limits.output_bytes` of text, because it comes from the
 same admitted PTY chunks rather than a second unbounded stream.
 
-Rendered frame `lines` hold the visible rows after normalization, without
-trailing spaces; pad a line to the frame's `columns` to restore the fixed-width
-row. `serialized_state` keeps the exact terminal state. Captures commit this
-line format in their comparison contract, so a capture whose lines were padded
-to full width does not compare as the same contract.
+Rendered frame `lines` hold the visible rows after normalization, with trailing
+U+0020 spaces removed. Blank rows and internal spaces remain. `columns` records
+terminal cell width; normalization and Unicode can make string lengths differ
+from that width. `serialized_state` holds terminal serialization after the
+selected normalization. Original admitted PTY chunks are available through
+`raw_data ?? data`, as described above. Captures commit this line format in their
+comparison contract, so a capture whose lines were padded to full width does not
+compare as the same contract.
 
 Port normalization recognizes explicit `port`, `tcp_port`, `udp_port`, and
 `listen` fields, URL authorities, IP endpoints, and `localhost` endpoints, with
