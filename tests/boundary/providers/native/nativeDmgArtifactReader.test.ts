@@ -802,7 +802,7 @@ describe("native DMG real verification diagnostics", () => {
     },
   );
 
-  it.skipIf(process.platform !== "darwin")(
+  it.skipIf(process.platform !== "darwin" || process.getuid?.() === 0)(
     "classifies real hdiutil target access failures as I/O, separately from malformed images",
     async () => {
       const root = await createTestTempDirectory("rea-dmg-target-errors-");
