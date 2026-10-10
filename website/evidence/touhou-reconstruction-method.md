@@ -173,3 +173,115 @@ observations, also confirmed by the author in this revision request. It is
 not attributed to a new automated website test or a fresh runtime replay.
 The 64-bit port is described as in development. The earlier four-product build
 and function-count milestones retain their historical scopes.
+
+## Autonomy, oracles and the compounding flywheel
+
+The author's requested revision emphasizes two principles: agents have broad
+autonomy to investigate, and their hypotheses are tested by oracles with concrete
+references and explicit acceptance conditions. These ideas are developed in the
+Factory's agent-autonomy and semantic-reconstruction documents listed above.
+An oracle result supports the property and inputs actually checked; the essay
+retains human responsibility for project milestones and release decisions.
+
+The flywheel is an explanatory model of this relationship. Its passing branch
+retains a checked result and its evidence; a mismatch returns to investigation.
+Code, checks and recorded lessons improve the next starting point, with TH08,
+TH095 and TH04 illustrating knowledge carried between projects. It does not
+depict a measured performance ratio or give REA sole credit for reconstruction.
+
+The first inline reference to GensokyoClub's public README links to the author's
+selected [Internet Archive capture](https://web.archive.org/web/20260909051514/https://github.com/GensokyoClub/th08#important-notice).
+The pinned source caption and 23-word excerpt retain their original provenance.
+The author approved this revision for publication on 10 October 2026.
+
+## TH08's floating-literal oracle failure
+
+The author recalled a floating-point comparison bug. The source history and
+public GitHub record identify it as a reference-data verification gap, rather
+than a rounding-tolerance problem. The original Japanese TH08 1.00d executable
+uses double `128.0` in the power arm of `ItemManager::OnUpdate`'s item-attraction
+condition. The reconstructed source used `0.0`.
+
+- [Issue #10](https://github.com/N0zoM1z0/th08/issues/10), opened on 2 September
+  2026, records the downstream Switch-port report, the target instructions and
+  the constant bytes. Normal power is non-negative, so the erroneous power arm
+  was effectively unconditional after crossing the collection line. Focus and
+  shot-type exceptions were separate, correct arms of the condition.
+- [PR #11](https://github.com/N0zoM1z0/th08/pull/11), merged on 2 September,
+  contains commit
+  [`7148a76b`](https://github.com/N0zoM1z0/th08/commit/7148a76ba224742677895c7160807a68897957d5).
+  It changes the threshold from `0.0` to `128.0`, fixes the manifest literal
+  identity, and adds source-symbol/declared-data/target-data checks for
+  explicitly recorded floating literals.
+- [PR #13](https://github.com/N0zoM1z0/th08/pull/13), merged the same day,
+  contains commit
+  [`a393f400`](https://github.com/N0zoM1z0/th08/commit/a393f400786e4cc6cbb1000af0dad3276da12c78).
+  It audits 1,548 configured floating-literal references, corrects twelve more
+  stale references across five accepted functions, and makes verification
+  automatic for every 32-bit or 64-bit `__real@...` relocation. Its tests include
+  deliberately invalid literal declarations and representations.
+
+The older comparison replayed the target address into the instruction's
+relocation field, then compared instruction bytes without checking the
+floating-literal data at that address. Source `0.0` could therefore appear
+exact against target `128.0`. The essay explains this mechanism in ordinary
+language and keeps implementation details in the linked record. The count is
+of references, not distinct values or new functions.
+
+The website work reexamined the historical diffs and retrieved the issue and
+PR metadata with `gh`; it did not rerun the game's historical compiler or
+runtime. The author supplies the first-person lesson about working as one
+human with agents and about responsibility for oracle quality.
+
+## Readability and the learned phase order
+
+The semantic discussion is based on the author's requested explanation,
+[TH08's semantic playbook](https://github.com/N0zoM1z0/th08/blob/d2a00f4acb4a13916e07a00bd13f714961714628/docs/SEMANTIC_PLAYBOOK.md),
+and the Factory's
+[semantic-reconstruction workflow](https://github.com/N0zoM1z0/touhou-reconstruction-factory/blob/717e1b8560783ed17a39fdf159d30aa16bb307a7/docs/semantic-reconstruction.md).
+The workflow's latest public change was checked using `gh` on 10 October.
+
+The recommended order is an exact baseline, a working historical-platform
+product, semantic reconstruction with both validation paths, then portable
+products. The original target/compiler comparisons and the historical
+build/runtime checks answer different questions. Both are preserved during
+semantic work. Names, ownership and protocol interpretations also need
+producer/consumer evidence; a passing check does not establish their English
+meaning. Modern ports compare behavior with the established historical build
+without requiring the new architecture's machine code to match the old one.
+
+This is a method learned from the projects. TH08's earlier portable releases
+preceded some later historical-platform audits. The essay states that history
+explicitly rather than presenting the current order as the original chronology.
+The game-RE background and the assembly/raw-offset aside are author-provided
+perspective. Transfer to other fields is a proposal to carry the principles
+while choosing references appropriate to the new domain.
+
+## Industrial analogy: instruments develop with machines
+
+The [Science Museum Group's steam-engine indicator record](https://collection.sciencemuseumgroup.org.uk/objects/co51439/watts-steam-engine-indicator),
+read on 10 October 2026, describes Boulton and Watt's introduction of the
+instrument in 1796 to assist with valve adjustment. It also explains how adding
+a pencil and moving paper made cylinder pressure through the stroke recordable.
+The essay paraphrases this description and links it directly. It does not use
+the record's images, quote its text, or date the displayed object or pressure
+diagram to 1796.
+
+The connection to reconstruction tools is the author's analogy: rapid
+execution needs measurement, and the instruments themselves require improvement.
+The claim that this is an early industrial stage is the essay's interpretation
+of the project experience. The historical example supports the measurement
+comparison rather than a measured prediction about AI productivity.
+
+## Prose revision
+
+The later prose pass reduces repeated enumerations and develops each lesson
+through its project example. It preserves the milestone figures, quotation,
+source links and four-stage method. The two author-selected emphasized sentences
+retain their wording.
+
+The opening takeaway now uses five bullets: agent autonomy, repository/Git
+memory, evidence and explicit unknowns, testing the oracle, and the early stage
+of the industrial shift. Each has a direct lead and a short explanation. The
+historical-build/semantic/port sequence remains in the body rather than becoming
+another takeaway item.
