@@ -182,6 +182,7 @@
     "verify:qwen-client": "npm run build:cached && node scripts/verify-qwen-client.mjs",
     "verify:gemini-client": "npm run build:cached && node scripts/verify-gemini-client.mjs",
     "verify:opencode-client": "npm run build:cached && node scripts/verify-opencode-client.mjs",
+    "verify:omp-client": "npm run build:cached && node scripts/verify-omp-client.mjs",
     "verify:copilot-client": "npm run build:cached && node scripts/verify-copilot-client.mjs",
     "verify:claude-client": "npm run build:cached && node scripts/verify-claude-client.mjs",
     "verify:pi-client": "npm run build:cached && node scripts/verify-native-agent-client.mjs pi",

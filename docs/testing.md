@@ -167,6 +167,23 @@ fix for that client/model limit. It preserves the complete catalog and schemas.
 Live model APIs, native Windows and default OS-home skill discovery remain
 unverified.
 
+`verify:omp-client` requires installed OMP (verified with the official Linux x64
+18.8.7 binary); select it with `REA_VERIFY_OMP_COMMAND`. This optional POSIX lane
+isolates the default agent, global config and XDG roots, guards setup targets,
+preserves unrelated registrations and backups, and checks idempotence. It
+compares native rejection of an invalid profile with REA's refusal to plan
+fallback writes. OMP's default `xd://` interface mounts the complete REA catalog
+as devices: call mode reads the complete installed skill and tool documentation,
+then dispatches analysis through native `write`. It checks full named-schema
+JavaScript Evidence with a Unicode path in the next model request. Device
+metadata and documentation are distinct from forwarding all JSON schemas as
+model functions. Native print-mode MCP readiness uses its defaults.
+Use `-- chat` for ordinary chat or `REA_VERIFY_RUNTIME_ROOT` for a production-only
+installed package. The loopback OpenAI completions/SSE model fixture declares a
+one-million-token context and synthetic usage. Live model APIs, native Windows,
+named-profile native execution and default OS-home skill discovery are
+unverified; skill discovery uses an explicit isolated custom directory.
+
 `verify:deepseek-client` requires an installed DeepSeek Harness (`dsh`;
 verified with `@deepseek-ai/dsh@0.2.0-rc.2`) and Git. Set
 `REA_VERIFY_DEEPSEEK_COMMAND` to select its executable. This optional POSIX lane

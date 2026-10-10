@@ -56,7 +56,7 @@ describe("OMP configuration paths", () => {
     expect(ompPath({ OMP_PROFILE: "", PI_PROFILE: "legacy" })?.configPath).toBe(
       "/home/a/.omp/agent/mcp.json",
     );
-    for (const profile of ["default", " ", "Bad Name", "trailing."])
+    for (const profile of ["default", " "])
       expect(ompPath({ OMP_PROFILE: profile })?.configPath).toBe(
         "/home/a/.omp/agent/mcp.json",
       );
