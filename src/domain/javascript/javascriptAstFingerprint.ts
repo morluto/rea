@@ -96,6 +96,12 @@ const collectCallExports = (
 ): void => {
   const callee = memberPath(call.callee);
   if (callee === null) return;
+  const definePropertyCall =
+    callee.length === 2 &&
+    callee[0] === "Object" &&
+    callee[1] === "defineProperty";
+  const declarationCall = callee.length >= 2 && callee.at(-1) === "d";
+  if (!definePropertyCall && !declarationCall) return;
   const target = memberPath(call.arguments[0]);
   const exportTarget =
     target !== null &&
@@ -104,15 +110,11 @@ const collectCallExports = (
         target[0] === "module" &&
         target[1] === "exports"));
   if (!exportTarget) return;
-  if (
-    callee.length === 2 &&
-    callee[0] === "Object" &&
-    callee[1] === "defineProperty"
-  ) {
+  if (definePropertyCall) {
     const name = stringValue(call.arguments[1]);
     if (name !== undefined) addExport(output, name);
+    return;
   }
-  if (callee.at(-1) !== "d") return;
   const declarations = call.arguments[1];
   if (t.isObjectExpression(declarations))
     collectObjectKeys(declarations, output);
@@ -151,7 +153,11 @@ const memberPath = (
     properties.push(property);
     current = current.object;
   }
-  if (current === undefined || current === null || !t.isIdentifier(current))
-    return null;
-  return [current.name, ...properties.reverse()];
+  if (current === undefined || current === null) return null;
+  const root = t.isIdentifier(current)
+    ? current.name
+    : t.isThisExpression(current)
+      ? "this"
+      : null;
+  return root === null ? null : [root, ...properties.reverse()];
 };

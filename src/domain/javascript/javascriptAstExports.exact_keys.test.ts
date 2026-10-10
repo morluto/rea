@@ -10,6 +10,7 @@ it.each([
   'module["exports.value"] = 1;',
   "module.exports = { [key]: 1 };",
   'Object[method](exports, "value", {});',
+  "function d() {} d(exports, { invented: 1 });",
 ])("does not invent an export name for %s", (source) => {
   expect(collectJavaScriptExports(parse(source)).values).toEqual([]);
 });
@@ -28,6 +29,13 @@ it("retains static computed and ordinary names", () => {
       parse('module["exports"]["ready"] = 1; exports.done = 2;'),
     ).values,
   ).toEqual(["done", "ready"]);
+});
+
+it("retains member helper exports on this", () => {
+  expect(
+    collectJavaScriptExports(parse("this.d(exports, { ready: () => 1 });"))
+      .values,
+  ).toEqual(["ready"]);
 });
 
 it("does not expose invented names in bundler module analysis", () => {
