@@ -2,7 +2,6 @@ import { Cli } from "incur";
 import { z } from "zod";
 
 import { captureBrowserScenario } from "./application/BrowserScenarioCaptureService.js";
-import { createBrowserScenarioProvider } from "./composition/browserScenario.js";
 import { CLI_COMMANDS } from "./cliCommandNames.js";
 import { parseCliJsonInput, resolveCliJsonPaths } from "./cliJsonInput.js";
 import { logCliCommand } from "./cliLogging.js";
@@ -44,6 +43,9 @@ export const registerBrowserScenarioCommands = (
               projectInputIssues(scenario.error.issues, input.value),
             ),
           );
+        // Load Playwright only for this command, not during CLI startup.
+        const { createBrowserScenarioProvider } =
+          await import("./composition/browserScenario.js");
         const result = await captureBrowserScenario(
           createBrowserScenarioProvider(environment),
           scenario.data,

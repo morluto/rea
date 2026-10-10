@@ -6,7 +6,26 @@ import {
   readExactJavaScriptLiteral,
   semanticStaticPropertyName,
 } from "./javascriptAstValues.js";
-import { sourceSlice } from "./javascriptStaticAnalysisHelpers.js";
+import { calleeName, sourceSlice } from "./javascriptStaticAnalysisHelpers.js";
+import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.js";
+
+/** Name a callee, spelling a root renamed from Electron as its export. */
+export const electronCalleeName = (
+  callee: t.Node,
+  context: JavaScriptFindingContext,
+): string => {
+  const name = calleeName(callee);
+  let root = callee;
+  while (t.isMemberExpression(root) || t.isOptionalMemberExpression(root)) {
+    if (!t.isNode(root.object)) return name;
+    root = root.object;
+  }
+  if (!t.isIdentifier(root)) return name;
+  const exported = context.electronBindings?.get(root.start ?? -1);
+  return exported === undefined
+    ? name
+    : `${exported}${name.slice(root.name.length)}`;
+};
 
 /** Preserve one literal value or the exact inert expression. */
 export const electronStaticValue = (

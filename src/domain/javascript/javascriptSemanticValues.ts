@@ -10,7 +10,7 @@ import { semanticSlotAtPath } from "./javascriptSemanticSlots.js";
 
 import {
   invalidateSemanticEscapedPath,
-  invalidateSemanticMutationPath,
+  invalidateSemanticMutationPaths,
 } from "./javascriptSemanticMutationValues.js";
 
 import type { JavaScriptBindingProvenance } from "./javascriptSemanticIr.js";
@@ -211,13 +211,7 @@ const evaluateBinding = (
       if (isPrimitive(captured)) value = captured;
     }
   }
-  let projected = value;
-  for (const path of binding.mutatedPaths) {
-    projected = invalidateSemanticMutationPath(projected, path);
-    // Every subsequent write returns this same root unknown. Replaying those
-    // paths at every newly collected effect otherwise becomes quadratic.
-    if (projected.status === "unknown") break;
-  }
+  let projected = invalidateSemanticMutationPaths(value, binding.mutatedPaths);
   for (const escape of binding.escapedPaths) {
     // Escapes only invalidate object references; other lattice values survive.
     if (projected.status !== "object" && projected.status !== "array") break;

@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { ToolContract } from "./toolContractTypes.js";
 import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
+import { digestCanonicalValue } from "../domain/canonicalDigest.js";
 
 const PROPERTY_DESCRIPTIONS: Readonly<Record<string, string>> = {
   addresses: "Ordered provider-normalized procedure addresses to analyze.",
@@ -69,19 +70,54 @@ export const toolInputSchemaWithMetadata = <Contract extends ToolContract>(
     },
   );
 
-/** Share repeated output definitions without changing canonical validation. */
+/** Share output definitions and content-bound validator identities on the wire. */
 export const toolOutputSchemaWithMetadata = <Contract extends ToolContract>(
   contract: Contract,
 ): Contract["outputSchema"] =>
   withAdvertisedJsonSchema(
     contract.outputSchema,
     "output",
-    (project) => (options) =>
-      project({
+    (project) => (options) => {
+      const shared = project({
         ...options,
         libraryOptions: { reused: "ref", ...options.libraryOptions },
-      }),
+      });
+      // An explicit ID owns the reference base. Relative external references
+      // also depend on that base, so leave those projections unchanged.
+      if ("$id" in shared || hasRelativeSchemaReference(shared)) return shared;
+      return {
+        ...shared,
+        $id: `urn:rea:tool-output:sha256:${digestCanonicalValue(
+          { target: options.target, schema: shared },
+          "Tool output schema",
+        )}`,
+      };
+    },
   );
+
+const hasRelativeSchemaReference = (
+  schema: Record<string, unknown>,
+): boolean => {
+  const pending: unknown[] = [schema];
+  const visited = new WeakSet<object>();
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current === null || typeof current !== "object" || visited.has(current))
+      continue;
+    visited.add(current);
+    for (const [key, value] of Object.entries(current)) {
+      if (
+        ["$id", "$ref", "$dynamicRef", "$recursiveRef"].includes(key) &&
+        typeof value === "string" &&
+        !value.startsWith("#") &&
+        !URL.canParse(value)
+      )
+        return true;
+      if (value !== null && typeof value === "object") pending.push(value);
+    }
+  }
+  return false;
+};
 
 const withAdvertisedJsonSchema = <Schema extends z.ZodType>(
   canonical: Schema,

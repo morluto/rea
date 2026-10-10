@@ -1,10 +1,68 @@
 import { Ajv } from "ajv";
 import { Ajv2020 } from "ajv/dist/2020.js";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/ajv";
 import { expect, it } from "vitest";
 import { z } from "zod";
 
 import { toolContract } from "./toolContracts.js";
 import { toolOutputSchemaWithMetadata } from "./toolSchemaMetadata.js";
+
+it("keeps dialect-specific validators distinct after JSON schema serialization", () => {
+  const contract = {
+    ...toolContract("binary_session"),
+    outputSchema: z.strictObject({ value: z.number().int().min(1).max(8) }),
+  };
+  const output = toolOutputSchemaWithMetadata(contract);
+  const provider = new AjvJsonSchemaValidator();
+  for (const target of ["draft-2020-12", "draft-07"] as const) {
+    const projected = output["~standard"].jsonSchema.output({ target });
+    const parsed = z
+      .record(z.string(), z.unknown())
+      .parse(JSON.parse(JSON.stringify(projected)));
+    const validate = provider.getValidator(parsed);
+    expect(validate({ value: 8 }).valid).toBe(true);
+    expect(validate({ value: 9 }).valid).toBe(false);
+    expect(validate({ value: 1.5 }).valid).toBe(false);
+  }
+});
+
+it("preserves explicit schema identity and relative reference resolution", () => {
+  const value = z.string();
+  const canonical = z.strictObject({ value });
+  const contract = {
+    ...toolContract("binary_session"),
+    outputSchema: canonical,
+  };
+  const projected = toolOutputSchemaWithMetadata(contract)[
+    "~standard"
+  ].jsonSchema.output({
+    target: "draft-2020-12",
+    libraryOptions: {
+      override: (context: {
+        readonly zodSchema: unknown;
+        readonly jsonSchema: Record<string, unknown>;
+      }) => {
+        if (context.zodSchema !== value) return;
+        delete context.jsonSchema.type;
+        context.jsonSchema.$ref = "child.json";
+      },
+    },
+  });
+  const ajv = new Ajv2020({ strict: false });
+  ajv.addSchema({ $id: "child.json", type: "string", minLength: 3 });
+  const validate = ajv.compile(projected);
+  expect(validate({ value: "abc" })).toBe(true);
+  expect(validate({ value: "ab" })).toBe(false);
+
+  const identified = toolOutputSchemaWithMetadata({
+    ...contract,
+    outputSchema: canonical.meta({ $id: "https://example.test/result" }),
+  })["~standard"].jsonSchema.output({ target: "draft-2020-12" });
+  expect(identified.$id).toBe("https://example.test/result");
+  const explicit = ajv.compile(identified);
+  expect(explicit({ value: "abc" })).toBe(true);
+  expect(explicit({ value: 1 })).toBe(false);
+});
 
 it.each(["draft-2020-12", "draft-07"] as const)(
   "preserves refined numeric bounds and strict repeated objects through %s references",

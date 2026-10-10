@@ -159,8 +159,11 @@ Trace assertions use coverage for the sources they select, so an assertion
 about complete raw terminal output need not fail because rendered snapshots
 were omitted. Captures missing `truncation_details` are rejected on import;
 preserve them as historical files and recapture for current comparisons.
-These diagnostics use the existing scenario
-budgets; they do not introduce a separate file-hashing budget.
+`limits.file_bytes` is already the cumulative whole-file hashing budget,
+independent of `limits.output_bytes`, which bounds retained terminal content.
+Each filesystem checkpoint starts with a fresh `file_bytes` budget across all
+selected roots; it is not a per-file allowance. File contents are read in
+64 KiB chunks for hashing and are not embedded in capture Evidence.
 
 When the host withholds an unrelated process’s ownership token, REA leaves that
 process untouched and records its PID and reason in `cleanup.unverified_processes`
@@ -175,6 +178,45 @@ while its token became unavailable after this change; npm changes its title
 as well. A newly started unreadable process can prevent verified cleanup even
 after the selected command exits. REA preserves this uncertainty and leaves
 that process untouched.
+
+## Hash a report independently of terminal output
+
+Select the producer's report directory and give `file_bytes` enough room for
+the complete files you need, including other files in those roots. For example,
+save this scenario and run `rea capture-process ./scenario.json --json > capture.json`:
+
+```json
+{
+  "executable": "node",
+  "arguments": [
+    "-e",
+    "const fs=require('node:fs');fs.mkdirSync('reports',{recursive:true});fs.writeFileSync('reports/final.json',JSON.stringify({status:'complete',data:'X'.repeat(131072)}));console.log('x'.repeat(8192));"
+  ],
+  "working_directory": ".",
+  "filesystem_observation_paths": ["./reports"],
+  "limits": { "output_bytes": 1024, "file_bytes": 262144 }
+}
+```
+
+The report exceeds the terminal budget but fits the independent 256 KiB hash
+budget. Its complete SHA-256 appears in `normalized_result.files_after` at
+`root_0:final.json`; check `truncation_details.filesystem_after` for omissions
+and actual bytes hashed. The verbose terminal output is truncated without
+preventing the report digest. The same scenario object is the MCP
+`capture_process_scenario` input. REA never returns a prefix hash as a full-file
+digest: an insufficient remaining budget produces a null digest and an
+explicit omission reason.
+
+A digest binds the complete bytes observed at that checkpoint, not the
+producer's notion of a finished report. A stable periodic or running report
+can also have a complete digest. Choose the final file and verify the
+producer's documented completion marker, exit outcome and settlement
+observations before calling it final. `after_settlement` names a filesystem
+checkpoint, not a guarantee that an application finished successfully or
+that an unobserved writer will never change the file. REA checks opened-file
+identity/state around hashing and reports observed changes or unavailable
+files; cancellation stops the hash. If an external sealer produces a manifest,
+keep its completion claims and digest separate from REA's checkpoint facts.
 
 ## Compare two captures
 

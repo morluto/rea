@@ -76,6 +76,16 @@ export const semanticStaticPropertyKey = (
   return !computed && t.isIdentifier(property) ? property.name : null;
 };
 
+/** Read exact consumed object-pattern keys, leaving dynamic keys unknown. */
+export const semanticObjectPatternKeys = (
+  pattern: t.ObjectPattern,
+): readonly string[] =>
+  pattern.properties.flatMap((property) => {
+    if (t.isRestElement(property)) return [];
+    const key = semanticStaticPropertyKey(property.key, property.computed);
+    return key === null ? [] : [key];
+  });
+
 /**
  * Display an exact JavaScript string as nonempty label text. Graph labels and
  * artifact-local keys are nonempty, so the legal empty value is shown as `""`;
