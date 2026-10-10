@@ -97,6 +97,23 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     launchesProcess: true,
     writesFilesystem: true,
   }),
+  inspect_jeb_client: effects({
+    mutatesSession: true,
+    accessesNetwork: true,
+  }),
+  open_jeb_project: effects({
+    mutatesSession: true,
+    accessesNetwork: true,
+    idempotent: false,
+  }),
+  list_jeb_units: effects({
+    mutatesSession: true,
+    accessesNetwork: true,
+  }),
+  decompile_jeb_item: effects({
+    mutatesSession: true,
+    accessesNetwork: true,
+  }),
   search_android_classes: effects({
     mutatesSession: true,
     launchesProcess: true,

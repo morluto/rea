@@ -422,6 +422,15 @@ kept under ignored `_reference/`. No Gradle build, Android SDK, emulator or
 application execution is required. The lane compares real CLI/MCP package,
 class search, class inventory, method decompilation and incoming references.
 See [Android analysis](android-analysis.md) for boundaries and resource budgets.
+
+`verify:jeb` requires a caller-started JEB client serving MCP at
+`REA_JEB_MCP_URL` (default `http://127.0.0.1:8425/mcp`) with a project
+already open, and verifies real CLI client inspection, unit listing coverage,
+and method decompilation. The script records the engine's exact response to
+`open_jeb_project`; JEB 5.48.0 headless instances do not advertise that tool.
+REA does not install or launch JEB; see [JEB analysis](jeb-analysis.md) for
+the bring-your-own boundary. Verified against JEB 5.48.0 serving
+`jeb-mcp-server` 1.3.0.
 Authenticated IPA and macOS application inventory projection is documented in
 [Apple application analysis](apple-application-analysis.md).
 

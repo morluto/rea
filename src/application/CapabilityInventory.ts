@@ -40,6 +40,7 @@ export type AvailabilityPolicy = {
   readonly firmwareInspectionEnabled?: boolean;
   readonly firmwareExtractionEnabled?: boolean;
   readonly androidAnalysisAvailability?: ProviderAvailability;
+  readonly jebAnalysisAvailability?: ProviderAvailability;
   readonly javascriptRecoveryEnabled?: boolean;
   readonly webModuleResolutionEnabled?: boolean;
   readonly browserObservationEnabled?: boolean;
@@ -353,6 +354,15 @@ const workflowAvailabilityFor = ({
           remediation:
             policy.androidAnalysisAvailability?.reason ??
             "Set REA_JADX_MCP_JAR to a caller-supplied jadx-headless-mcp 0.7.1 JAR and provide a full JDK on Linux, macOS, or Windows x64 with its matching bundled native controls.",
+        };
+  if (kind === "jeb-provider")
+    return policy.jebAnalysisAvailability?.status === "available"
+      ? { reason: "available", remediation: null }
+      : {
+          reason: "provider_missing",
+          remediation:
+            policy.jebAnalysisAvailability?.reason ??
+            "Start a JEB client serving MCP (GUI client, or headless via its programmatic launcher) and point REA_JEB_MCP_URL at it (default http://127.0.0.1:8425/mcp). REA does not install or launch JEB.",
         };
   const browser = browserProviderAvailability(name, kind, policy);
   if (browser !== null) return browser;

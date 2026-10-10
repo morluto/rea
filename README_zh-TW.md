@@ -131,20 +131,21 @@ AI 代理通過 MCP 呼叫 REA，檢查目標並追蹤相關程式碼。REA 返�
 
 REA 需要 Node.js 22.x（>=22.19）、24.x（>=24.11）或 26+，以及 npm。額外工具和主機支援取決於分析目標：
 
-| 目標                  | REA 返回的內容                                                  | 要求與指南                                                                                                             |
-| --------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| 原生二進位檔案        | 偽程式碼、組合語言、字串、符號、呼叫和引用                      | Hopper、Ghidra 或 IDA；[原生分析](https://rea.tools/guides/native/)                                                    |
-| 離線 ELF 佈局         | 節、段、原始符號/重定位資訊及靜態防護機制候選項                 | Linux x64 上由呼叫方提供的 pwntools；[二進位診斷](docs/binary-diagnostics.md)                                          |
-| EVM 位元組碼          | 分派選擇器、位元組偏移、推斷的參數和狀態可變性                  | 本地原始位元組/十六進位輸入載體；[離線 EVM 指南](docs/evm-bytecode.md)                                                 |
-| 已記錄的 Linux 崩潰   | 原始 note 記錄、每個已記錄執行緒的暫存器/訊號及可選的對映候選項 | 呼叫方提供的 pwntools；可選的 GDB/pwndbg；[已記錄崩潰](docs/recorded-crashes.md)                                       |
-| JavaScript / Electron | 模組、匯入、source map、路由、IPC 和原生附加元件關係            | Node.js 和 npm；[應用分析](https://rea.tools/guides/javascript/)                                                       |
-| 網站                  | 頁面結構、腳本、網路觀察結果和按請求獲取的螢幕擷取畫面          | Chrome 系瀏覽器；[瀏覽器分析](https://rea.tools/guides/browser/)                                                       |
-| 已保存的網路擷取      | 請求、回應、可訪問的酬載和來源位置                              | HAR；原生 mitmproxy 擷取需要 Linux 上的 mitmdump；[擷取指南](docs/web-network-captures.md)                             |
-| .NET 程式集           | 中繼資料、CIL 指令、聲明的原生依賴和建置對比                    | 靜態檢查；[托管程式碼指南](docs/managed-code-analysis.md)                                                              |
-| Android APK           | 清單聲明、類別、反編譯的方法和引用                              | Linux/macOS 上的無界面 JADX 和完整 JDK；[Android 指南](docs/android-analysis.md)                                       |
-| 韌體                  | 區域、提取結果和轉交原生分析的內容                              | Linux 上的 Binwalk / Unblob；[韌體指南](docs/firmware-analysis.md)                                                     |
-| 軟體包與資源          | 檔案清單、摘要、plist、Apple bundle 結構和提取的資源            | [製品與 JavaScript 指南](docs/javascript-artifact-reconstruction.md)、[Apple 應用](docs/apple-application-analysis.md) |
-| 處理程序行為          | 終端輸出、互動、退出和檔案系統觀察結果，以及執行對比            | 支援原生 PTY 的 Linux/macOS；[處理程序擷取](docs/process-capture.md)                                                   |
+| 目標                  | REA 返回的內容                                                            | 要求與指南                                                                                                             |
+| --------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| 原生二進位檔案        | 偽程式碼、組合語言、字串、符號、呼叫和引用                                | Hopper、Ghidra 或 IDA；[原生分析](https://rea.tools/guides/native/)                                                    |
+| 離線 ELF 佈局         | 節、段、原始符號/重定位資訊及靜態防護機制候選項                           | Linux x64 上由呼叫方提供的 pwntools；[二進位診斷](docs/binary-diagnostics.md)                                          |
+| EVM 位元組碼          | 分派選擇器、位元組偏移、推斷的參數和狀態可變性                            | 本地原始位元組/十六進位輸入載體；[離線 EVM 指南](docs/evm-bytecode.md)                                                 |
+| 已記錄的 Linux 崩潰   | 原始 note 記錄、每個已記錄執行緒的暫存器/訊號及可選的對映候選項           | 呼叫方提供的 pwntools；可選的 GDB/pwndbg；[已記錄崩潰](docs/recorded-crashes.md)                                       |
+| JavaScript / Electron | 模組、匯入、source map、路由、IPC 和原生附加元件關係                      | Node.js 和 npm；[應用分析](https://rea.tools/guides/javascript/)                                                       |
+| 網站                  | 頁面結構、腳本、網路觀察結果和按請求獲取的螢幕擷取畫面                    | Chrome 系瀏覽器；[瀏覽器分析](https://rea.tools/guides/browser/)                                                       |
+| 已保存的網路擷取      | 請求、回應、可訪問的酬載和來源位置                                        | HAR；原生 mitmproxy 擷取需要 Linux 上的 mitmdump；[擷取指南](docs/web-network-captures.md)                             |
+| .NET 程式集           | 中繼資料、CIL 指令、聲明的原生依賴和建置對比                              | 靜態檢查；[托管程式碼指南](docs/managed-code-analysis.md)                                                              |
+| Android APK           | 清單聲明、類別、反編譯的方法和引用                                        | Linux/macOS 上的無界面 JADX 和完整 JDK；[Android 指南](docs/android-analysis.md)                                       |
+| JEB projects          | Engine-backed project units, artifact digests and type/method pseudo-code | A caller-started JEB client serving MCP, selected with REA_JEB_MCP_URL; [JEB guide](docs/jeb-analysis.md)              |
+| 韌體                  | 區域、提取結果和轉交原生分析的內容                                        | Linux 上的 Binwalk / Unblob；[韌體指南](docs/firmware-analysis.md)                                                     |
+| 軟體包與資源          | 檔案清單、摘要、plist、Apple bundle 結構和提取的資源                      | [製品與 JavaScript 指南](docs/javascript-artifact-reconstruction.md)、[Apple 應用](docs/apple-application-analysis.md) |
+| 處理程序行為          | 終端輸出、互動、退出和檔案系統觀察結果，以及執行對比                      | 支援原生 PTY 的 Linux/macOS；[處理程序擷取](docs/process-capture.md)                                                   |
 
 靜態 JavaScript 和 .NET 檢查讀取提供的檔案，不執行應用。執行階段擷取會以你的使用者權限執行目標或與之互動；各執行階段指南說明瞭具體影響。
 

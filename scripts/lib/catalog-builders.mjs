@@ -48,6 +48,11 @@ export const toolFamilyCatalog = (sources) => {
       contracts: sources.androidContracts.ANDROID_TOOL_CONTRACTS,
     },
     {
+      id: "jeb",
+      surface: "jeb-provider",
+      contracts: sources.jebContracts.JEB_TOOL_CONTRACTS,
+    },
+    {
       id: "browser",
       surface: "browser-provider",
       contracts: [
@@ -187,6 +192,10 @@ export const providerCatalog = (sources) => {
     {
       identity: sources.androidProvider.JADX_PROVIDER_IDENTITY,
       contracts: sources.androidContracts.ANDROID_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.jebProvider.JEB_PROVIDER_IDENTITY,
+      contracts: sources.jebContracts.JEB_TOOL_CONTRACTS,
     },
     {
       identity: sources.webNetworkCaptureProvider.HAR_CAPTURE_PROVIDER_IDENTITY,
