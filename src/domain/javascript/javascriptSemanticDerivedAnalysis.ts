@@ -36,24 +36,6 @@ type DerivedSemanticAnalysis = Pick<
 >;
 
 /** Compose bounded semantic passes after lexical definitions are available. */
-export const collectJavaScriptDerivedSemantics = (
-  program: t.Program,
-  state: JavaScriptSemanticAnalysisState,
-  callables: readonly JavaScriptSemanticCallable[],
-  parserPartial: boolean,
-): DerivedSemanticAnalysis => {
-  const steps = collectJavaScriptDerivedSemanticsSteps(
-    program,
-    state,
-    callables,
-    parserPartial,
-  );
-  for (;;) {
-    const step = steps.next();
-    if (step.done === true) return step.value;
-  }
-};
-
 /**
  * Collect derived semantics with a yield between collectors. Each collector
  * completes before the next starts, so results equal the synchronous form.
