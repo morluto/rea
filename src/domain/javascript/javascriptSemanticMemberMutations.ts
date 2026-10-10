@@ -324,7 +324,7 @@ export const collectSemanticMemberMutations = (
           bindings: new Set(),
           effect: "escape",
           originAt: source.mutation,
-          iterationOnly: true,
+          iterationOnly: source.kind === "iteration",
         });
       if (t.isAssignmentExpression(node)) markTarget(node.left, node);
       else if (t.isUpdateExpression(node)) markTarget(node.argument, node);
@@ -369,6 +369,19 @@ export const collectSemanticMemberMutations = (
       const { initializer } = reference;
       if (referenceSourcesInactive(initializer, state))
         pendingReferences.push(reference);
+      else if (t.isForOfStatement(initializer.node))
+        deferIterable({
+          node: initializer.node.right,
+          projection: [],
+          path: [null, ...reference.path],
+          fallbackPath: [],
+          bindings: reference.bindings,
+          effect: reference.effect,
+          originAt: initializer.node,
+          ...(reference.mutation === undefined
+            ? {}
+            : { mutation: reference.mutation }),
+        });
       else if (
         initializer.copyKind === "array-rest" &&
         initializer.copyProjectionOffset !== undefined

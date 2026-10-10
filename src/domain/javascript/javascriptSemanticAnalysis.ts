@@ -565,9 +565,21 @@ const bindAssignment = (
   else if (t.isForOfStatement(node) || t.isForInStatement(node))
     for (const pattern of t.isVariableDeclaration(node.left)
       ? node.left.declarations.map(({ id }) => id)
-      : [node.left])
+      : [node.left]) {
       for (const identifier of assignedPatternIdentifiers(pattern))
         addAssignment(identifier, node, scope, state);
+      if (t.isForOfStatement(node))
+        // Keep the loop value unknown, but preserve references yielded into
+        // each bound slot so writes/escapes can reach their iterable origins.
+        bindPattern({
+          pattern,
+          initializer: node,
+          scope,
+          state,
+          mutable: true,
+          referenceOnly: true,
+        });
+    }
 };
 
 const assignedPatternIdentifiers = (
@@ -780,7 +792,11 @@ const bindPattern = (input: BindPatternInput): void => {
   }
   if (t.isIdentifier(pattern)) {
     if (referenceOnly) {
-      const binding = scope.bindings.get(pattern.name);
+      const binding = resolveSemanticBindingFromScope(
+        scope,
+        pattern.name,
+        state,
+      );
       if (binding !== undefined && initializer !== null)
         binding.referenceInitializers.push({
           node: initializer,
