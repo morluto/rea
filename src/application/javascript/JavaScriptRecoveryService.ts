@@ -23,6 +23,10 @@ const OPERATION = "recover_javascript_sources";
 export class JavaScriptRecoveryService {
   constructor(readonly provider: JavaScriptRecoveryPort) {}
 
+  close(): Promise<void> {
+    return this.provider.close?.() ?? Promise.resolve();
+  }
+
   /** Recover sources and bind the result to its original immutable input. */
   async recover(
     input: unknown,

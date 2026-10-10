@@ -8,6 +8,7 @@ import type { Result } from "../../domain/result.js";
 
 /** File-oriented firmware engines; executable admission remains a separate operation. */
 export interface FirmwareAnalysisPort {
+  close?(): Promise<void>;
   execute(
     request: FirmwareRequest,
     options?: ExecutionOptions,

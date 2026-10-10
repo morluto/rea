@@ -9,10 +9,16 @@ import { safeParseJson } from "../domain/safeJson.js";
 import type { NativeUiHelper } from "./NativeUiObservation.js";
 import { NATIVE_UI_HELPER_MAX_BUFFER } from "./NativeUiOutputBudget.js";
 
+export interface NativeUiHelperRuntime {
+  readonly invoke: NativeUiHelper;
+  close(): Promise<void>;
+  resources(): readonly string[];
+}
+
 /** Lazily compile one owned helper per observation/scenario and remove its compiler cache. */
 export const createNativeUiHelperRuntime = (
   environment: Readonly<NodeJS.ProcessEnv>,
-) => {
+): NativeUiHelperRuntime => {
   const selectedEnvironment = snapshotEnvironment(environment);
   let root: string | undefined;
   let executable: string | undefined;
@@ -62,6 +68,7 @@ export const createNativeUiHelperRuntime = (
       {
         timeout: 30_000,
         maxBuffer: NATIVE_UI_HELPER_MAX_BUFFER,
+        stopSignal: "SIGTERM",
         env: selectedEnvironment,
         ...(signal === undefined ? {} : { signal }),
       },
@@ -76,7 +83,12 @@ export const createNativeUiHelperRuntime = (
   return {
     invoke,
     close: async () => {
-      if (root !== undefined) await rm(root, { recursive: true, force: true });
+      if (root !== undefined) {
+        await rm(root, { recursive: true, force: true });
+        root = undefined;
+        executable = undefined;
+      }
     },
+    resources: () => (root === undefined ? [] : [root]),
   };
 };

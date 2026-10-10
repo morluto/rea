@@ -16,6 +16,8 @@ import { recordSessionEvidenceSources } from "./sessionEvidence.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
 import { FUNCTION_COMPARISON_PROVIDER } from "../application/InvestigationProviders.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { withAdmittedAnalysis } from "./analysisAdmission.js";
+import { runAdmittedToolOperation } from "./admittedToolOperation.js";
 
 import { compareFunctions } from "../domain/functionComparison.js";
 /** Register explicit Evidence-backed function comparison. */
@@ -24,74 +26,96 @@ export const registerFunctionComparisonTool = (
   session: BinarySessionPort,
   contract: ReturnType<typeof toolContract<"compare_functions">>,
 ): void => {
+  const admission = withAdmittedAnalysis({ kind: "session", session });
   server.registerTool(
     contract.name,
     toolRegistrationOptions(contract),
-    async (input, context) => {
-      let leftEvidence: Evidence;
-      let rightEvidence: Evidence;
-      try {
-        leftEvidence = parseEvidence(input.left);
-        rightEvidence = parseEvidence(input.right);
-      } catch (cause: unknown) {
-        return server.delivery.toCallToolResult(
-          err(
-            new EvidenceIntegrityError(
-              cause instanceof Error ? cause.message : "Invalid Evidence",
-            ),
-          ),
-          contract,
-        );
-      }
-      if (
-        leftEvidence.operation !== "analyze_function" ||
-        rightEvidence.operation !== "analyze_function" ||
-        leftEvidence.predicate_type !== "rea.analysis" ||
-        rightEvidence.predicate_type !== "rea.analysis"
-      )
-        return server.delivery.toCallToolResult(
-          err(new EvidenceIntegrityError("Expected analyze_function Evidence")),
-          contract,
-        );
-      const leftIds = [leftEvidence.evidence_id];
-      const rightIds = [rightEvidence.evidence_id];
-      const computed = await runDerivedOperation(context, contract.name, () =>
-        compareFunctions(leftEvidence, rightEvidence),
-      );
-      if (!computed.ok)
-        return server.delivery.toCallToolResult(computed, contract);
-      const comparison = computed.value;
-      const recordedSources = recordSessionEvidenceSources(
-        (evidence) => session.recordEvidence(evidence),
-        [leftEvidence, rightEvidence],
-      );
-      if (!recordedSources.ok)
-        return server.delivery.toCallToolResult(recordedSources, contract);
-      const evidence = createEvidence(undefined, FUNCTION_COMPARISON_PROVIDER, {
-        predicateType: "rea.function-comparison",
-        operation: contract.name,
-        parameters: {
-          left_evidence_id: leftEvidence.evidence_id,
-          right_evidence_id: rightEvidence.evidence_id,
+    async (input, context) =>
+      runAdmittedToolOperation(
+        server,
+        admission,
+        contract.name,
+        context.mcpReq.signal,
+        async () => {
+          let leftEvidence: Evidence;
+          let rightEvidence: Evidence;
+          try {
+            leftEvidence = parseEvidence(input.left);
+            rightEvidence = parseEvidence(input.right);
+          } catch (cause: unknown) {
+            return server.delivery.toCallToolResult(
+              err(
+                new EvidenceIntegrityError(
+                  cause instanceof Error ? cause.message : "Invalid Evidence",
+                ),
+              ),
+              contract,
+            );
+          }
+          if (
+            leftEvidence.operation !== "analyze_function" ||
+            rightEvidence.operation !== "analyze_function" ||
+            leftEvidence.predicate_type !== "rea.analysis" ||
+            rightEvidence.predicate_type !== "rea.analysis"
+          )
+            return server.delivery.toCallToolResult(
+              err(
+                new EvidenceIntegrityError(
+                  "Expected analyze_function Evidence",
+                ),
+              ),
+              contract,
+            );
+          const leftIds = [leftEvidence.evidence_id];
+          const rightIds = [rightEvidence.evidence_id];
+          const computed = await runDerivedOperation(
+            context,
+            contract.name,
+            () => compareFunctions(leftEvidence, rightEvidence),
+          );
+          if (!computed.ok)
+            return server.delivery.toCallToolResult(computed, contract);
+          const comparison = computed.value;
+          const recordedSources = recordSessionEvidenceSources(
+            (evidence) => session.recordEvidence(evidence),
+            [leftEvidence, rightEvidence],
+          );
+          if (!recordedSources.ok)
+            return server.delivery.toCallToolResult(recordedSources, contract);
+          const evidence = createEvidence(
+            undefined,
+            FUNCTION_COMPARISON_PROVIDER,
+            {
+              predicateType: "rea.function-comparison",
+              operation: contract.name,
+              parameters: {
+                left_evidence_id: leftEvidence.evidence_id,
+                right_evidence_id: rightEvidence.evidence_id,
+              },
+              result: jsonValueSchema.parse(comparison),
+              confidence: "derived",
+              authority: "analyst-inference",
+              limitations: comparison.limitations,
+              evidenceLinks: [...leftIds, ...rightIds],
+            },
+          );
+          const recorded = recordDerivedEvidence(
+            session,
+            evidence,
+            functionUnknownInput({
+              status: comparison.status,
+              leftIds,
+              rightIds,
+              comparisonEvidenceId: evidence.evidence_id,
+            }),
+          );
+          return server.delivery.toEvidenceToolResult(
+            evidence,
+            contract,
+            recorded,
+          );
         },
-        result: jsonValueSchema.parse(comparison),
-        confidence: "derived",
-        authority: "analyst-inference",
-        limitations: comparison.limitations,
-        evidenceLinks: [...leftIds, ...rightIds],
-      });
-      const recorded = recordDerivedEvidence(
-        session,
-        evidence,
-        functionUnknownInput({
-          status: comparison.status,
-          leftIds,
-          rightIds,
-          comparisonEvidenceId: evidence.evidence_id,
-        }),
-      );
-      return server.delivery.toEvidenceToolResult(evidence, contract, recorded);
-    },
+      ),
   );
 };
 

@@ -15,7 +15,10 @@ import {
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { createNativeUiHelperRuntime } from "./NativeUiHelperRuntime.js";
+import {
+  createNativeUiHelperRuntime,
+  type NativeUiHelperRuntime,
+} from "./NativeUiHelperRuntime.js";
 import {
   NATIVE_UI_OUTPUT_BUDGET_BYTES,
   NATIVE_UI_OUTPUT_WEIGHT,
@@ -47,16 +50,18 @@ export const observeNativeUi = async (
     environment: Readonly<NodeJS.ProcessEnv>;
     signal?: AbortSignal | undefined;
     invoke?: NativeUiHelper;
+    runtime?: NativeUiHelperRuntime;
   },
 ): Promise<Result<z.infer<typeof nativeUiResultSchema>, AnalysisError>> => {
-  const runtime = createNativeUiHelperRuntime(options.environment);
+  const runtime =
+    options.runtime ?? createNativeUiHelperRuntime(options.environment);
   try {
     return await observeWithHelper(target, operation, parameters, {
       ...options,
       invoke: options.invoke ?? runtime.invoke,
     });
   } finally {
-    await runtime.close();
+    if (options.runtime === undefined) await runtime.close();
   }
 };
 

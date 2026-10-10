@@ -1,4 +1,6 @@
 import type { EvidenceMcpServer } from "../EvidenceMcpServer.js";
+import type { ServerContext } from "@modelcontextprotocol/server";
+import { runAdmittedToolOperation } from "../admittedToolOperation.js";
 
 import { projectAndroidApplicationEvidence } from "../../application/android/AndroidApplicationService.js";
 import { projectAppleApplicationEvidence } from "../../application/apple/AppleApplicationService.js";
@@ -44,23 +46,33 @@ const registerProjection = (context: {
   server.registerTool(
     contract.name,
     toolRegistrationOptions(contract),
-    async (input: unknown) => {
-      const result = await logToolExecution(options.logger, contract.name, () =>
-        Promise.resolve(project(input)),
-      );
-      if (!result.ok) return server.delivery.toCallToolResult(result, contract);
-      const recordedSources = recordSessionEvidenceSources(
-        options.recordEvidence,
-        inventoryEvidenceSources(input),
-      );
-      if (!recordedSources.ok)
-        return server.delivery.toCallToolResult(recordedSources, contract);
-      return recordResult(
-        { ...options, delivery: server.delivery },
-        contract,
-        result.value,
-      );
-    },
+    async (input: unknown, request: ServerContext) =>
+      runAdmittedToolOperation(
+        server,
+        options.withAdmittedAnalysis,
+        contract.name,
+        request.mcpReq.signal,
+        async () => {
+          const result = await logToolExecution(
+            options.logger,
+            contract.name,
+            () => Promise.resolve(project(input)),
+          );
+          if (!result.ok)
+            return server.delivery.toCallToolResult(result, contract);
+          const recordedSources = recordSessionEvidenceSources(
+            options.recordEvidence,
+            inventoryEvidenceSources(input),
+          );
+          if (!recordedSources.ok)
+            return server.delivery.toCallToolResult(recordedSources, contract);
+          return recordResult(
+            { ...options, delivery: server.delivery },
+            contract,
+            result.value,
+          );
+        },
+      ),
   );
 };
 

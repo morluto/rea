@@ -50,6 +50,8 @@ export interface SetupHost {
   linuxDistribution(): Promise<LinuxDistribution | undefined>;
   initialSetupState(scope?: DoctorScope): Promise<SetupInitialState>;
   installHopper(replaceExisting: boolean): Promise<SetupHopperInstallResult>;
+  /** Retry and report any cleanup resources still owned by this setup host. */
+  close?(): Promise<string | undefined>;
   detectedClients(): Promise<readonly SetupClient[]>;
   supportedClients(): Promise<readonly SetupClient[]>;
   configureClient(
@@ -155,6 +157,8 @@ export interface SetupOptions {
   readonly structured: boolean;
   readonly proposeHopper?: boolean;
   readonly clientIds?: readonly string[];
+  /** Skill roots to update independently of MCP registrations (maintenance). */
+  readonly skillClientIds?: readonly string[];
   readonly installSkill?: boolean;
   readonly readinessScope?: DoctorScope;
   readonly dryRun?: boolean;

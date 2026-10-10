@@ -4,7 +4,10 @@ import {
 } from "@modelcontextprotocol/client";
 import { z } from "zod";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
-import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisProtocolError,
+} from "../domain/analysisErrorCore.js";
 
 /** Injectable MCP boundary used by the provider and conformance tests. */
 export interface JebMcpConnection {
@@ -61,41 +64,165 @@ export type JebMcpConnectionFactory = (endpoint: URL) => JebMcpConnection;
 export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
   endpoint,
 ) => {
-  let client: Client | undefined;
-  let serverTools: readonly string[] | undefined;
-  return {
-    async connect(signal) {
-      client ??= new Client({ name: "rea-jeb", version: "0.0.0" });
-      if (serverTools === undefined) {
-        await client.connect(
-          new StreamableHTTPClientTransport(endpoint, {
-            requestInit: { redirect: "error" },
-          }),
-          signal === undefined ? {} : { signal },
-        );
-        const listing = await client.listTools(
+  interface ConnectionState {
+    readonly client: Client;
+    readonly transport: StreamableHTTPClientTransport;
+    readonly signal: AbortController;
+    tools: readonly string[] | undefined;
+    acquisition: Promise<readonly string[]> | undefined;
+    disposal: Promise<void> | undefined;
+  }
+  let state: ConnectionState | undefined;
+  let closing: Promise<void> | undefined;
+  let closed = false;
+
+  const waitForCaller = <Value>(
+    promise: Promise<Value>,
+    signal?: AbortSignal,
+  ): Promise<Value> => {
+    if (signal?.aborted === true)
+      return Promise.reject(new AnalysisCancelledError("jeb_mcp"));
+    if (signal === undefined) return promise;
+    return new Promise((resolve, reject) => {
+      const abort = () => {
+        signal.removeEventListener("abort", abort);
+        reject(new AnalysisCancelledError("jeb_mcp"));
+      };
+      signal.addEventListener("abort", abort, { once: true });
+      void promise.then(
+        (value) => {
+          signal.removeEventListener("abort", abort);
+          resolve(value);
+        },
+        (cause: unknown) => {
+          signal.removeEventListener("abort", abort);
+          reject(cause);
+        },
+      );
+    });
+  };
+
+  const dispose = async (owner: ConnectionState): Promise<void> => {
+    if (owner.disposal !== undefined) return owner.disposal;
+    const cleanup = (async () => {
+      const settled = await Promise.allSettled([
+        owner.client.close(),
+        owner.transport.close(),
+      ]);
+      const failures = settled.flatMap((result) =>
+        result.status === "rejected" ? [result.reason] : [],
+      );
+      if (failures.length > 0)
+        throw new AggregateError(failures, "JEB MCP connection cleanup failed");
+      if (state === owner) state = undefined;
+    })();
+    owner.disposal = cleanup;
+    try {
+      await cleanup;
+    } catch (cause: unknown) {
+      owner.disposal = undefined;
+      throw cause;
+    }
+  };
+
+  const connect = async (signal?: AbortSignal): Promise<readonly string[]> => {
+    if (signal?.aborted === true) throw new AnalysisCancelledError("jeb_mcp");
+    if (closing !== undefined) await closing;
+    if (closed) {
+      if (state !== undefined) await dispose(state);
+      throw new AnalysisProtocolError("JEB MCP connection is closed");
+    }
+    if (state?.tools !== undefined && state.disposal === undefined)
+      return state.tools;
+    if (state?.acquisition !== undefined)
+      return waitForCaller(state.acquisition, signal);
+    if (state !== undefined) {
+      await dispose(state);
+      if (state !== undefined || closing !== undefined) return connect(signal);
+    }
+    const owner: ConnectionState = {
+      client: new Client({
+        name: "rea-jeb",
+        version: "0.0.0",
+      }),
+      transport: new StreamableHTTPClientTransport(endpoint, {
+        requestInit: { redirect: "error" },
+      }),
+      signal: new AbortController(),
+      tools: undefined,
+      acquisition: undefined,
+      disposal: undefined,
+    };
+    state = owner;
+    const acquisition = (async () => {
+      try {
+        await owner.client.connect(owner.transport, {
+          signal: owner.signal.signal,
+        });
+        const listing = await owner.client.listTools(
           {},
-          signal === undefined ? {} : { signal },
+          { signal: owner.signal.signal },
         );
-        serverTools = listing.tools.map((tool) => tool.name);
+        const tools = listing.tools.map((tool) => tool.name);
+        owner.tools = tools;
+        return tools;
+      } catch (cause: unknown) {
+        owner.signal.abort(cause);
+        try {
+          await dispose(owner);
+        } catch (cleanupCause: unknown) {
+          throw new AggregateError(
+            [cause, cleanupCause],
+            "JEB MCP connection acquisition and cleanup failed",
+            { cause },
+          );
+        }
+        throw cause;
       }
-      return serverTools;
-    },
+    })();
+    owner.acquisition = acquisition;
+    void acquisition.then(
+      () => {
+        if (owner.acquisition === acquisition) owner.acquisition = undefined;
+      },
+      () => {
+        if (owner.acquisition === acquisition) owner.acquisition = undefined;
+      },
+    );
+    return waitForCaller(acquisition, signal);
+  };
+
+  return {
+    connect,
     async call(name, args, signal) {
-      if (serverTools === undefined) await this.connect(signal);
-      if (client === undefined)
+      await connect(signal);
+      const owner = state;
+      if (owner === undefined || owner.tools === undefined)
         throw new AnalysisProtocolError("JEB MCP client failed to connect");
-      const result = await client.callTool(
+      const result = await owner.client.callTool(
         { name, arguments: args },
         signal === undefined ? {} : { signal },
       );
       return decodeJebToolResult(result);
     },
     async close() {
-      const active = client;
-      if (active !== undefined) await active.close();
-      client = undefined;
-      serverTools = undefined;
+      closed = true;
+      if (closing !== undefined) return closing;
+      const operation = (async () => {
+        const owner = state;
+        if (owner === undefined) return;
+        owner.tools = undefined;
+        owner.signal.abort();
+        if (owner.acquisition !== undefined)
+          await owner.acquisition.catch(() => undefined);
+        if (state === owner) await dispose(owner);
+      })();
+      closing = operation;
+      try {
+        await operation;
+      } finally {
+        if (closing === operation) closing = undefined;
+      }
     },
   };
 };

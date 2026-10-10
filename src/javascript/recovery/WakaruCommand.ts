@@ -33,6 +33,31 @@ export type WakaruLauncher = (
   options: OwnedProviderProcessSpawnOptions,
 ) => Promise<SpawnedOwnedProviderProcess>;
 
+/** Cleanup failure carrying the live supervisor so the provider can retry it. */
+export class WakaruCleanupFailure extends ProviderCleanupError {
+  constructor(
+    readonly cleanupOwner: ProviderProcessSupervisor,
+    readonly runId: string,
+    readonly cwd: string,
+    reason: string,
+    previousError: unknown,
+    snapshot: ReturnType<ProviderProcessSupervisor["snapshot"]>,
+  ) {
+    super(
+      "wakaru",
+      [runId, cwd],
+      {
+        reason,
+        previous_error:
+          previousError instanceof Error ? previousError.message : null,
+        exit_code: snapshot.exitCode ?? null,
+        signal: snapshot.signal ?? null,
+      },
+      { operation: OPERATION, cause: previousError },
+    );
+  }
+}
+
 /** Resolve and fingerprint explicitly configured tools; acquire nothing at startup. */
 export const resolveWakaruCommand = async (
   environment: Readonly<Record<string, string | undefined>>,
@@ -158,14 +183,15 @@ export const runWakaruCommand = async (context: WakaruCommandContext) => {
   }
   const stopped = await supervisor.stop();
   const snapshot = supervisor.snapshot();
-  supervisor.dispose();
   if (stopped.status === "incomplete")
-    throw new ProviderCleanupError("wakaru", [runId, context.cwd], {
-      reason: stopped.reason,
-      previous_error: failure instanceof Error ? failure.message : null,
-      exit_code: snapshot.exitCode ?? null,
-      signal: snapshot.signal ?? null,
-    });
+    throw new WakaruCleanupFailure(
+      supervisor,
+      runId,
+      context.cwd,
+      stopped.reason,
+      failure,
+      snapshot,
+    );
   if (failure !== undefined) throw failure;
   if (context.signal?.aborted === true)
     throw new AnalysisCancelledError(OPERATION);

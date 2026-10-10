@@ -20,6 +20,7 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok } from "../domain/result.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
+import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import { publishFirmwareExtraction } from "./FirmwarePublication.js";
 import {
   FIRMWARE_LIMITS,
@@ -65,6 +66,15 @@ const limitations = [
 /** Queued bring-your-own firmware adapters with private snapshots and owned cleanup. */
 export class FirmwareProvider implements FirmwareAnalysisPort {
   #tail: Promise<void> = Promise.resolve();
+  #closed = false;
+  #pendingCleanup:
+    | {
+        supervisor?: ProviderProcessSupervisor;
+        root: PrivateRuntimeRoot;
+        engine: string;
+        operation: string;
+      }
+    | undefined;
   constructor(
     readonly environment: Readonly<
       Record<string, string | undefined>
@@ -77,6 +87,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
     request: FirmwareRequest,
     options?: ExecutionOptions,
   ): Promise<Outcome> {
+    if (this.#closed) return err(new AnalysisCancelledError(request.operation));
     const predecessor = this.#tail;
     let release = () => {};
     this.#tail = new Promise<void>((resolve) => {
@@ -94,10 +105,55 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
       );
     }
     try {
+      if (this.#closed)
+        return err(new AnalysisCancelledError(request.operation));
+      try {
+        await this.#retryCleanup();
+      } catch (cause: unknown) {
+        return err(
+          cause instanceof AnalysisError
+            ? cause
+            : new ProviderCleanupError("firmware", [], {
+                reason: cause instanceof Error ? cause.message : String(cause),
+              }),
+        );
+      }
       return await this.#execute(request, options);
     } finally {
       release();
     }
+  }
+
+  /** Retry identity-bound cleanup before relinquishing private workspaces. */
+  async close(): Promise<void> {
+    this.#closed = true;
+    await this.#tail;
+    await this.#retryCleanup();
+  }
+
+  async #retryCleanup(): Promise<void> {
+    const pending = this.#pendingCleanup;
+    if (pending === undefined) return;
+    const stopped = await pending.supervisor?.stop();
+    if (stopped?.status === "incomplete")
+      throw new ProviderCleanupError(
+        pending.engine,
+        [pending.root.path],
+        { reason: stopped.reason },
+        { operation: pending.operation },
+      );
+    delete pending.supervisor;
+    try {
+      await pending.root.close();
+    } catch (cause: unknown) {
+      throw new ProviderCleanupError(
+        pending.engine,
+        [pending.root.path],
+        { reason: cause instanceof Error ? cause.message : String(cause) },
+        { operation: pending.operation, cause },
+      );
+    }
+    this.#pendingCleanup = undefined;
   }
 
   async #execute(
@@ -121,6 +177,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
         request.operation,
       );
       root = await PrivateRuntimeRoot.create({ prefix: "rea-firmware-" });
+      const ownedRoot = root;
       const target = await snapshotFirmware(request, root.path, signal);
       const run = (
         args: readonly string[],
@@ -134,6 +191,14 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
           cwd: root?.path ?? "",
           environment: this.environment,
           signal,
+          retainCleanup: (supervisor) => {
+            this.#pendingCleanup = {
+              supervisor,
+              root: ownedRoot,
+              engine: engineName,
+              operation: request.operation,
+            };
+          },
           ...(this.launcher === undefined ? {} : { launcher: this.launcher }),
           ...(outputBudget === undefined
             ? {}
@@ -315,10 +380,19 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
                     }),
       );
     }
-    // Never remove a workspace while process ownership remains uncertain.
-    // A leaked root stays recorded on this result and is not deleted. The next
-    // operation may create a new root; this failure is not replayed for it.
-    return finishFirmwareWorkspace(root, outcome, engineName, request);
+    const finished = await finishFirmwareWorkspace(
+      root,
+      outcome,
+      engineName,
+      request,
+    );
+    if (!finished.ok && finished.error.cleanupIncomplete && root !== undefined)
+      this.#pendingCleanup ??= {
+        root,
+        engine: engineName,
+        operation: request.operation,
+      };
+    return finished;
   }
 }
 

@@ -26,8 +26,12 @@ export const registerFirmwareCommands = (
   ) =>
     withCommandCancellation((signal) =>
       logCliCommand(logger, name, async () => {
-        const result = await service.execute(operation, input, { signal });
-        return result.ok ? result.value : projectAnalysisError(result.error);
+        try {
+          const result = await service.execute(operation, input, { signal });
+          return result.ok ? result.value : projectAnalysisError(result.error);
+        } finally {
+          await service.close();
+        }
       }),
     );
   const path = z.string().describe("Local firmware path; never executed");

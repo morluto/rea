@@ -39,6 +39,7 @@ const supportedClientSchema = z
     (candidate) => supportedClientIds.some((name) => name === candidate),
     "Unsupported agent integration",
   );
+const skillClientSchema = z.union([z.literal("shared"), supportedClientSchema]);
 
 /** Register setup, doctor, uninstall, and update CLI commands. */
 export const registerSetupCommands = (
@@ -72,6 +73,10 @@ const registerSetupCommand = (
         .array(supportedClientSchema)
         .default([])
         .describe("Agent integration to configure; repeat for multiple agents"),
+      skillClient: z
+        .array(skillClientSchema)
+        .default([])
+        .describe("Existing client skill destination to update; repeatable"),
       allDetected: z
         .boolean()
         .default(false)
@@ -186,6 +191,7 @@ interface SetupCommandOptions {
   readonly yes: boolean;
   readonly installHopper: boolean;
   readonly client: readonly string[];
+  readonly skillClient: readonly string[];
   readonly allDetected: boolean;
   readonly skill?: boolean | undefined;
   readonly dryRun: boolean;
@@ -224,8 +230,13 @@ const setupRunOptions = (
 ): SetupOptions => {
   const { options } = input;
   const agentIntegrationSelected =
-    options.allDetected || options.client.length > 0;
-  const hasSelectedClients = hasExplicitScope && !options.allDetected;
+    options.allDetected ||
+    options.client.length > 0 ||
+    options.skillClient.length > 0;
+  const hasSelectedClients =
+    hasExplicitScope &&
+    !options.allDetected &&
+    (options.client.length > 0 || options.skillClient.length > 0);
   return {
     approved: options.yes && !options.dryRun,
     installHopper: options.installHopper,
@@ -234,6 +245,9 @@ const setupRunOptions = (
     allDetectedClients: options.allDetected,
     proposeHopper: interactive || options.installHopper,
     ...(hasSelectedClients ? { clientIds: options.client } : {}),
+    ...(options.skillClient.length > 0
+      ? { skillClientIds: options.skillClient }
+      : {}),
     ...(hasExplicitScope
       ? { installSkill: options.skill ?? agentIntegrationSelected }
       : {}),
@@ -264,6 +278,7 @@ const setupIsInteractive = (
 const setupHasExplicitScope = (options: SetupCommandOptions): boolean =>
   options.allDetected ||
   options.client.length > 0 ||
+  options.skillClient.length > 0 ||
   options.skill !== undefined ||
   options.installHopper;
 

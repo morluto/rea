@@ -22,12 +22,15 @@ import { observeJavaScriptRuntimeInputSchema } from "../domain/javascript/javasc
 import type { Logger } from "pino";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
+import { runAdmittedToolOperation } from "./admittedToolOperation.js";
 
 interface RuntimeToolRegistration {
   readonly logger: Logger;
   readonly loadFailure?: OptionalProviderLoadFailure | undefined;
   readonly runtime: JavaScriptRuntimeObservationPort | undefined;
   readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
+  readonly withAdmittedAnalysis?: WithAdmittedAnalysis;
 }
 
 /** Register passive Inspector tools even when policy keeps them unavailable. */
@@ -35,7 +38,7 @@ export const registerJavaScriptRuntimeObservationTools = (
   server: EvidenceMcpServer,
   options: RuntimeToolRegistration,
 ): void => {
-  const registration = { ...options, delivery: server.delivery };
+  const registration = { ...options, delivery: server.delivery, server };
   const listContract = toolContract("list_javascript_runtime_targets");
   const observeContract = toolContract("observe_javascript_runtime");
   server.registerTool(
@@ -67,7 +70,10 @@ export const registerJavaScriptRuntimeObservationTools = (
 };
 
 const runRuntimeTool = async <Input>(
-  options: RuntimeToolRegistration & { readonly delivery: ToolResultDelivery },
+  options: RuntimeToolRegistration & {
+    readonly delivery: ToolResultDelivery;
+    readonly server: EvidenceMcpServer;
+  },
   contract: ToolContract,
   request: { readonly input: Input; readonly context: ServerContext },
   execute: (
@@ -81,14 +87,23 @@ const runRuntimeTool = async <Input>(
       err(optionalProviderUnavailable(options.loadFailure, contract.name)),
       contract,
     );
-  const result = await logToolExecution(options.logger, contract.name, () =>
-    execute(input, context.mcpReq.signal),
-  );
-  if (!result.ok) return options.delivery.toCallToolResult(result, contract);
-  const recorded = options.recordEvidence?.(result.value);
-  return options.delivery.toEvidenceToolResult(
-    result.value,
-    contract,
-    recorded,
+  return runAdmittedToolOperation(
+    options.server,
+    options.withAdmittedAnalysis,
+    contract.name,
+    context.mcpReq.signal,
+    async () => {
+      const result = await logToolExecution(options.logger, contract.name, () =>
+        execute(input, context.mcpReq.signal),
+      );
+      if (!result.ok)
+        return options.delivery.toCallToolResult(result, contract);
+      const recorded = options.recordEvidence?.(result.value);
+      return options.delivery.toEvidenceToolResult(
+        result.value,
+        contract,
+        recorded,
+      );
+    },
   );
 };

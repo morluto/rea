@@ -18,6 +18,10 @@ import { err, ok, type Result } from "../../domain/result.js";
 export class FirmwareAnalysisService {
   constructor(readonly provider: FirmwareAnalysisPort) {}
 
+  close(): Promise<void> {
+    return this.provider.close?.() ?? Promise.resolve();
+  }
+
   /** Execute an explicit inspection or extraction and preserve its producing identity. */
   async execute(
     operation: FirmwareOperation,

@@ -44,10 +44,8 @@ import {
   commitExecutionProfile,
   prepareSessionExecution,
 } from "./BinarySessionExecution.js";
-import {
-  analysisErrorWithCleanupFailure,
-  closeAnalysisClient,
-} from "./AnalysisClientCleanup.js";
+import { closeAnalysisClient } from "./AnalysisClientCleanup.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 const OFFICIAL_OPERATIONS: ReadonlySet<string> = new Set(
   OFFICIAL_TOOL_CONTRACTS.map(({ name }) => name),
 );

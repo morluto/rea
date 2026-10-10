@@ -1,8 +1,7 @@
-import type { BigIntStats } from "node:fs";
-import { readdir, readlink, realpath } from "node:fs/promises";
+import type { BigIntStats, Dir, Dirent } from "node:fs";
+import { opendir, readlink, realpath } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
-import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import {
   cancelled,
   entryFailure,
@@ -47,20 +46,50 @@ export const traverseDirectory = async (
     );
     return { ok: true, value: undefined };
   }
-  const names = await readDirectoryNames(current.path);
+  const directories: PendingDirectory[] = [];
+  let readFailure: string | undefined;
+  let handle: Dir | undefined;
+  try {
+    handle = await opendir(current.path);
+  } catch (cause: unknown) {
+    readFailure = directoryReadFailure(cause);
+  }
+  if (handle !== undefined) {
+    const iterator = handle[Symbol.asyncIterator]();
+    try {
+      for (;;) {
+        let child: IteratorResult<Dirent>;
+        try {
+          child = await iterator.next();
+        } catch (cause: unknown) {
+          readFailure = directoryReadFailure(cause);
+          break;
+        }
+        if (child.done) break;
+        const result = await processEntry(
+          state,
+          current,
+          child.value.name,
+          directories,
+        );
+        if (!result.ok) return result;
+      }
+    } finally {
+      await handle.close().catch(() => undefined);
+    }
+  }
   if (isAborted(state.signal)) return { ok: false, error: cancelled() };
-  if (!names.ok) {
+  if (readFailure !== undefined) {
     state.entries.push(
       entryFailure(
         pathFromRoot(state.root, current.path),
         "directory",
         "io",
-        names.message,
+        readFailure,
       ),
     );
     return { ok: true, value: undefined };
   }
-  if (isAborted(state.signal)) return { ok: false, error: cancelled() };
   const after = await validateDirectory(
     state.root,
     state.rootIdentity,
@@ -85,35 +114,15 @@ export const traverseDirectory = async (
       kind: "directory",
       path: pathFromRoot(state.root, current.path),
     });
-  const directories: PendingDirectory[] = [];
-  for (const name of names.value) {
-    const result = await processEntry(state, current, name, directories);
-    if (!result.ok) return result;
-  }
   directories.reverse();
   state.pending.push(...directories);
   return { ok: true, value: undefined };
 };
 
-const readDirectoryNames = async (
-  path: string,
-): Promise<
-  | { readonly ok: true; readonly value: string[] }
-  | { readonly ok: false; readonly message: string }
-> => {
-  try {
-    return {
-      ok: true,
-      value: (await readdir(path)).sort(compareUnicodeCodePoints),
-    };
-  } catch (cause: unknown) {
-    const message = filesystemFailureDetail(
-      cause,
-      "Directory could not be read",
-    );
-    if (message === undefined) throw cause;
-    return { ok: false, message };
-  }
+const directoryReadFailure = (cause: unknown): string => {
+  const message = filesystemFailureDetail(cause, "Directory could not be read");
+  if (message === undefined) throw cause;
+  return message;
 };
 
 const readMetadata = async (

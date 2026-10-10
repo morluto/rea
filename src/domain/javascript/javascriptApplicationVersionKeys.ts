@@ -257,7 +257,15 @@ const semanticValue = (
     return (
       joined(
         properties.specifier,
-        stringList(properties.requested_members).join(","),
+        compositeKey([
+          stringList(properties.requested_members),
+          typeof properties.namespace_access === "boolean"
+            ? properties.namespace_access
+            : null,
+          typeof properties.dynamic_member_access === "boolean"
+            ? properties.dynamic_member_access
+            : null,
+        ]),
       ) ?? firstLabel(node)
     );
   if (

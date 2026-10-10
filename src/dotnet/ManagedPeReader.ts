@@ -121,30 +121,86 @@ const architectureFor = (machine: number): ManagedPeLayout["architecture"] => {
   }
 };
 
-const mapRva = (mapping: RvaMapping): number => {
+/** Resolve one section identity for both exact reads and available-byte queries. */
+const resolveRva = (
+  mapping: RvaMapping,
+): { readonly offset: number; readonly available: number } => {
   const { bytes, sections, rva, size, scope } = mapping;
-  if (rva === 0 && size === 0) return 0;
-  for (const section of sections) {
-    const mappedSize = Math.max(section.virtualSize, section.rawSize);
-    if (rva < section.virtualAddress) continue;
+  if (
+    !Number.isSafeInteger(rva) ||
+    !Number.isSafeInteger(size) ||
+    rva < 0 ||
+    size < 0 ||
+    rva > 0xffff_ffff ||
+    (size > 0 && size > 0x1_0000_0000 - rva)
+  )
+    throw managedFailure(
+      "invalid-directory",
+      scope,
+      `${scope} has an invalid RVA range`,
+    );
+  const selected = sections.find((section) => {
     const within = rva - section.virtualAddress;
-    if (within > mappedSize || size > mappedSize - within) continue;
-    if (within > section.rawSize || size > section.rawSize - within)
+    const mappedSize = Math.max(section.virtualSize, section.rawSize);
+    return (
+      mappedSize > 0 &&
+      within >= 0 &&
+      within <= mappedSize &&
+      size <= mappedSize - within
+    );
+  });
+  if (selected === undefined)
+    throw managedFailure(
+      "invalid-directory",
+      scope,
+      `${scope} RVA is not covered by one PE section`,
+    );
+  for (const section of sections) {
+    if (
+      section === selected ||
+      Math.max(section.virtualSize, section.rawSize) === 0
+    )
+      continue;
+    const end =
+      section.virtualAddress + Math.max(section.virtualSize, section.rawSize);
+    const intersects =
+      size === 0
+        ? rva >= section.virtualAddress && rva < end
+        : rva < end && rva + size > section.virtualAddress;
+    if (intersects)
       throw managedFailure(
         "invalid-directory",
         scope,
-        `${scope} occupies virtual bytes without file-backed data`,
+        `${scope} RVA range has ambiguous overlapping PE section mappings`,
       );
-    const offset = add(section.rawOffset, within, scope);
-    requireRange(bytes, offset, size, scope);
-    return offset;
   }
-  throw managedFailure(
-    "invalid-directory",
-    scope,
-    `${scope} RVA is not covered by a PE section`,
+  const within = rva - selected.virtualAddress;
+  if (within > selected.rawSize || size > selected.rawSize - within)
+    throw managedFailure(
+      "invalid-directory",
+      scope,
+      `${scope} occupies virtual bytes without file-backed data`,
+    );
+  const offset = add(selected.rawOffset, within, scope);
+  requireRange(bytes, offset, size, scope);
+  let available = Math.min(
+    selected.rawSize - within,
+    bytes.length - offset,
+    0x1_0000_0000 - rva,
   );
+  // A future overlap ends the uniquely mapped extent even if the current byte is unique.
+  for (const section of sections)
+    if (
+      section !== selected &&
+      section.virtualAddress > rva &&
+      Math.max(section.virtualSize, section.rawSize) > 0
+    )
+      available = Math.min(available, section.virtualAddress - rva);
+  return { offset, available };
 };
+
+const mapRva = (mapping: RvaMapping): number =>
+  mapping.rva === 0 && mapping.size === 0 ? 0 : resolveRva(mapping).offset;
 
 const readDirectory = (bytes: Buffer, offset: number): PeDataDirectory => {
   requireRange(bytes, offset, 8, "pe.data-directory");
@@ -356,22 +412,7 @@ export const readManagedPeLayout = (bytes: Buffer): ManagedPeLayout => {
     cliIssue,
     rvaToOffset: (rva, size, scope) =>
       mapRva({ bytes, sections, rva, size, scope }),
-    rvaAvailableBytes: (rva, scope) => {
-      mapRva({ bytes, sections, rva, size: 1, scope });
-      for (const section of sections) {
-        if (rva < section.virtualAddress) continue;
-        const within = rva - section.virtualAddress;
-        if (within < section.rawSize)
-          return Math.min(
-            section.rawSize - within,
-            bytes.length - section.rawOffset - within,
-          );
-      }
-      throw managedFailure(
-        "invalid-directory",
-        scope,
-        `${scope} RVA is not covered by file-backed PE section data`,
-      );
-    },
+    rvaAvailableBytes: (rva, scope) =>
+      resolveRva({ bytes, sections, rva, size: 1, scope }).available,
   };
 };

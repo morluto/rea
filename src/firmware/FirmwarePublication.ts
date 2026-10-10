@@ -60,7 +60,7 @@ export const publishFirmwareExtraction = async (context: {
       await tree.write(
         entry.relativePath,
         createReadStream(entry.path),
-        sha256,
+        { sha256, bytes: entry.size },
         context.signal,
       );
       files.push({

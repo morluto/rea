@@ -127,6 +127,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
     environment: Readonly<Record<string, string | undefined>>,
     options: {
       readonly signal?: AbortSignal;
+      readonly retainCleanup?: (close: () => Promise<unknown>) => void;
     },
   ): Promise<PlaywrightScenarioSession> {
     if (options.signal?.aborted === true)
@@ -137,6 +138,9 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
     const startedAt = Date.now();
     const opening = openPlaywrightScenarioBrowser(scenario, environment, {
       signal: options.signal,
+      ...(options.retainCleanup === undefined
+        ? {}
+        : { retainCleanup: options.retainCleanup }),
     });
     let opened: OpenedScenarioBrowser;
     let events: PlaywrightScenarioEvents | undefined;
@@ -147,14 +151,18 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
         options.signal,
       );
     } catch (cause: unknown) {
-      void opening
-        .then((lateOpened) =>
-          lateOpened.cleanup.close(undefined, options.signal),
-        )
-        .catch((cause: unknown) => {
-          // best-effort cleanup: late-open cleanup must not mask the boundary failure.
-          void cause;
-        });
+      const lateCleanup = () =>
+        opening.then(
+          (lateOpened) => lateOpened.cleanup.close(undefined, options.signal),
+          () => undefined,
+        );
+      options.retainCleanup?.(() =>
+        withPlaywrightExecutionBoundary(lateCleanup, 1_000),
+      );
+      void lateCleanup().catch((cleanupCause: unknown) => {
+        // best-effort cleanup: retainCleanup keeps the retry capability.
+        void cleanupCause;
+      });
       throw cause;
     }
     let session: PlaywrightScenarioSession;
@@ -179,16 +187,19 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
         eventCapture: events,
       });
     } catch (cause: unknown) {
-      return failBrowserScenarioOperation(
-        () =>
-          opened.cleanup.close(
-            events === undefined
-              ? undefined
-              : () => events?.finish() ?? Promise.resolve(),
-            options.signal,
-          ),
-        cause,
-      );
+      const cleanup = () =>
+        opened.cleanup.close(
+          events === undefined
+            ? undefined
+            : () => events?.finish() ?? Promise.resolve(),
+          options.signal,
+        );
+      try {
+        return await failBrowserScenarioOperation(cleanup, cause);
+      } catch (failure: unknown) {
+        if (failure !== cause) options.retainCleanup?.(cleanup);
+        throw failure;
+      }
     }
     try {
       await withPlaywrightExecutionBoundary(
@@ -212,6 +223,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
       } catch (failure: unknown) {
         cleanup = "incomplete";
         cleanupFailure = { cause: failure };
+        options.retainCleanup?.(() => session.close());
       }
       throw browserScenarioOperationFailure(
         cause,

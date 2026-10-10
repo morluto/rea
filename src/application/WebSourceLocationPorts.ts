@@ -28,6 +28,7 @@ export interface WebSourceLocationArtifactPort {
 
 /** Replaceable codec receives map data and one explicit generated point. */
 export interface WebSourceMapPort {
+  close?(): Promise<void>;
   trace(
     input: {
       readonly text: string;

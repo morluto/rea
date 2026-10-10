@@ -43,6 +43,8 @@ import {
   type ProcessCaptureCleanupHost,
   type ProcessCaptureObservationBuffer,
   type PendingProcessCapture,
+  type ProcessCaptureResourceCleanupOptions,
+  ProcessCaptureResourceScope,
 } from "./ProcessCaptureLifecycle.js";
 import {
   assertNotCancelled,
@@ -86,6 +88,7 @@ const cleanupFailedStartup = async (options: {
   readonly cleanupHost?: ProcessCaptureCleanupHost;
   readonly observations?: ProcessCaptureObservationBuffer;
   readonly temporaryRoot: string;
+  readonly resourceScope?: ProcessCaptureResourceScope;
 }): Promise<never> => {
   const sampledProcessGroupIds =
     options.terminal !== undefined &&
@@ -108,7 +111,7 @@ const cleanupFailedStartup = async (options: {
       };
     }
   }
-  const cleanupFailure = await releaseProcessResources({
+  const cleanupOptions: ProcessCaptureResourceCleanupOptions = {
     timers: options.timers,
     terminal: options.terminal,
     renderer: options.renderer,
@@ -117,12 +120,17 @@ const cleanupFailedStartup = async (options: {
     ...(sampledProcessGroupIds === undefined ? {} : { sampledProcessGroupIds }),
     temporaryRoot: options.temporaryRoot,
     ...(options.cleanupHost === undefined ? {} : { host: options.cleanupHost }),
-  });
-  if (cleanupReportFailure(cleanupFailure) !== undefined) {
+  };
+  const cleanup =
+    options.resourceScope === undefined
+      ? await releaseProcessResources(cleanupOptions)
+      : await options.resourceScope.release(cleanupOptions);
+  const cleanupFailure = cleanupReportFailure(cleanup);
+  if (cleanupFailure !== undefined) {
     resolveProcessResult(
       undefined,
       options.cause,
-      cleanupFailure,
+      cleanup,
       options.observations,
       {
         scenario: options.scenario,
@@ -158,6 +166,7 @@ interface StartCaptureRuntimeOptions {
   readonly runId: string;
   readonly ownershipBaseline: ProcessOwnershipBaseline;
   readonly cleanupHost?: ProcessCaptureCleanupHost;
+  readonly resourceScope?: ProcessCaptureResourceScope;
   readonly observationBuffer: ProcessCaptureObservationBuffer;
   readonly onSpawn: (pid: number) => void;
   readonly frames: TerminalFrame[];
@@ -251,6 +260,9 @@ const startCaptureRuntime = async (
         : { cleanupHost: options.cleanupHost }),
       observations: options.observationBuffer,
       temporaryRoot: options.temporaryRoot,
+      ...(options.resourceScope === undefined
+        ? {}
+        : { resourceScope: options.resourceScope }),
     });
   }
 };
@@ -271,6 +283,7 @@ const finishProcessRun = async (options: {
   readonly rootPid?: number;
   readonly progress: ProcessCaptureProgressTracker;
   readonly progressCounts: () => ProcessCaptureProgressCounts;
+  readonly resourceScope?: ProcessCaptureResourceScope;
 }): Promise<ProcessCapture> => {
   options.progress.closeLive();
   await options.stopSampler();
@@ -281,7 +294,7 @@ const finishProcessRun = async (options: {
           options.runtime.terminal.pid,
           options.samples,
         ).filter((groupId) => groupId !== options.runtime?.terminal.pid);
-  const cleanup = await releaseProcessResources({
+  const cleanupOptions: ProcessCaptureResourceCleanupOptions = {
     timers: options.timers,
     terminal: options.runtime?.terminal,
     renderer: options.runtime?.renderer,
@@ -290,7 +303,11 @@ const finishProcessRun = async (options: {
     ...(sampledProcessGroupIds === undefined ? {} : { sampledProcessGroupIds }),
     temporaryRoot: options.temporaryRoot,
     ...(options.cleanupHost === undefined ? {} : { host: options.cleanupHost }),
-  });
+  };
+  const cleanup =
+    options.resourceScope === undefined
+      ? await releaseProcessResources(cleanupOptions)
+      : await options.resourceScope.release(cleanupOptions);
   const observedExit =
     options.observations?.exit.state === "available"
       ? options.observations.exit.value.reason
@@ -514,6 +531,7 @@ const runProcessScenario = async (
   captureSnapshot: typeof snapshotRoots = snapshotRoots,
   cleanupHost?: ProcessCaptureCleanupHost,
   progress?: ProcessCaptureProgress,
+  resourceScope?: ProcessCaptureResourceScope,
 ): Promise<ProcessCapture> => {
   const progressTracker = createProcessCaptureProgressTracker(progress);
   const frames: TerminalFrame[] = [];
@@ -539,7 +557,13 @@ const runProcessScenario = async (
       phase: "prepare",
       counts: progressCounts(),
     });
-    prepared = await prepareProcessCapture(scenario, signal, captureSnapshot);
+    prepared = await prepareProcessCapture(
+      scenario,
+      signal,
+      captureSnapshot,
+      undefined,
+      resourceScope,
+    );
   } catch (cause: unknown) {
     progressTracker.closeLive();
     await progressTracker.report({
@@ -577,6 +601,7 @@ const runProcessScenario = async (
       runId,
       ownershipBaseline,
       ...(cleanupHost === undefined ? {} : { cleanupHost }),
+      ...(resourceScope === undefined ? {} : { resourceScope }),
       observationBuffer: observations,
       onSpawn: (pid) => {
         actualRootPid = pid;
@@ -671,6 +696,7 @@ const runProcessScenario = async (
     ...(actualRootPid === undefined ? {} : { rootPid: actualRootPid }),
     progress: progressTracker,
     progressCounts,
+    ...(resourceScope === undefined ? {} : { resourceScope }),
   });
 };
 
@@ -683,6 +709,7 @@ export const captureProcessScenario = async (
   captureSnapshot?: typeof snapshotRoots,
   cleanupHost?: ProcessCaptureCleanupHost,
   progress?: ProcessCaptureProgress,
+  resourceScope?: ProcessCaptureResourceScope,
 ): Promise<Result<ProcessCapture, ProcessCaptureError | AnalysisError>> => {
   const ownershipReason = processCaptureOwnershipUnavailableReason(platform);
   if (ownershipReason !== undefined)
@@ -694,14 +721,17 @@ export const captureProcessScenario = async (
         { userMessage: ownershipReason },
       ),
     );
-  try {
-    assertNotCancelled(signal);
-    const resolvedScenario = await resolveProcessScenarioRuntimePaths(
-      scenario,
-      environment,
-    );
-    return ok(
-      await runProcessScenario(
+  const runResourceScope = resourceScope ?? new ProcessCaptureResourceScope();
+  const execute = async (): Promise<
+    Result<ProcessCapture, ProcessCaptureError | AnalysisError>
+  > => {
+    try {
+      assertNotCancelled(signal);
+      const resolvedScenario = await resolveProcessScenarioRuntimePaths(
+        scenario,
+        environment,
+      );
+      const capture = await runProcessScenario(
         resolvedScenario,
         signal,
         environment,
@@ -709,21 +739,44 @@ export const captureProcessScenario = async (
         captureSnapshot ?? snapshotRoots,
         cleanupHost,
         progress,
-      ),
-    );
-  } catch (cause: unknown) {
-    const failure = normalizeCaptureFailure(cause, signal);
-    const executionFailureReason =
-      describeProcessCaptureExecutionFailure(cause);
-    return err(
-      failure instanceof ProcessCaptureError
-        ? failure
-        : new ProcessCaptureError("process capture failed", {
-            cause,
-            ...(executionFailureReason === undefined
-              ? {}
-              : { executionFailure: executionFailureReason }),
-          }),
-    );
+        runResourceScope,
+      );
+      return ok(capture);
+    } catch (cause: unknown) {
+      const failure = normalizeCaptureFailure(cause, signal);
+      const executionFailureReason =
+        describeProcessCaptureExecutionFailure(cause);
+      return err(
+        failure instanceof ProcessCaptureError
+          ? failure
+          : new ProcessCaptureError("process capture failed", {
+              cause,
+              ...(executionFailureReason === undefined
+                ? {}
+                : { executionFailure: executionFailureReason }),
+            }),
+      );
+    }
+  };
+  if (resourceScope !== undefined) {
+    try {
+      return await resourceScope.run(execute);
+    } catch (cause: unknown) {
+      const failure = normalizeCaptureFailure(cause, signal);
+      const executionFailure = describeProcessCaptureExecutionFailure(cause);
+      return err(
+        failure instanceof ProcessCaptureError
+          ? failure
+          : new ProcessCaptureError("process capture lifecycle failed", {
+              cause,
+              reason: "cleanup_incomplete",
+              cleanupResources: ["process_capture_lifecycle"],
+              ...(executionFailure === undefined ? {} : { executionFailure }),
+            }),
+      );
+    }
   }
+  const capture = await runResourceScope.run(execute);
+  await runResourceScope.close().catch(() => undefined);
+  return capture;
 };

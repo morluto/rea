@@ -1,3 +1,7 @@
+import {
+  attachManagedDecodeBudget,
+  ManagedDecodeBudget,
+} from "./ManagedDecodeBudget.js";
 import { managedFailure } from "./ManagedReaderFailure.js";
 import {
   computeRowSize,
@@ -208,6 +212,7 @@ interface ParsedStreams {
 const readMetadataStreams = (
   bytes: Buffer,
   rootOffset: number,
+  budget: ManagedDecodeBudget,
 ): ParsedStreams => {
   if (bytes.readUInt32LE(0) !== 0x424a_5342)
     throw managedFailure(
@@ -220,8 +225,10 @@ const readMetadataStreams = (
   requireRange(bytes, 16, versionLength, "metadata.version");
   const versionBytes = bytes.subarray(16, 16 + versionLength);
   const zero = versionBytes.indexOf(0);
+  const decodedVersionLength = zero < 0 ? versionBytes.length : zero;
+  budget.reserveString(decodedVersionLength, rootOffset + 16);
   const version = versionBytes
-    .subarray(0, zero < 0 ? versionBytes.length : zero)
+    .subarray(0, decodedVersionLength)
     .toString("utf8");
   let cursor = align4(16 + versionLength);
   requireRange(bytes, cursor, 4, "metadata.stream-count");
@@ -390,7 +397,8 @@ export const readManagedMetadataLayout = (
       rootOffset,
     );
   const bytes = artifact.subarray(rootOffset, rootOffset + size);
-  const { streams, version } = readMetadataStreams(bytes, rootOffset);
+  const budget = new ManagedDecodeBudget();
+  const { streams, version } = readMetadataStreams(bytes, rootOffset, budget);
   const { tableBytes, tablesOffset, heaps, valid } = readTablesHeader(
     artifact,
     streams,
@@ -403,7 +411,7 @@ export const readManagedMetadataLayout = (
     valid,
     tablesOffset,
   });
-  return {
+  const layout: ManagedMetadataLayout = {
     rootOffset,
     size,
     version,
@@ -420,6 +428,8 @@ export const readManagedMetadataLayout = (
     tableIndexSize: (index) => tableSize(index, rowCounts),
     codedIndexSize: (name) => codedSize(name, rowCounts),
   };
+  attachManagedDecodeBudget(layout, budget);
+  return layout;
 };
 
 /** Resolve a one-based metadata row to its exact file offset. */

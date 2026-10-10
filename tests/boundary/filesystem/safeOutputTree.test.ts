@@ -43,11 +43,10 @@ describe("safe artifact output tree", () => {
     const output = join(parent, "published");
     const tree = await SafeOutputTree.create(output);
     await expect(
-      tree.write(
-        "nested/file.txt",
-        Readable.from(Buffer.from("unexpected")),
-        "0".repeat(64),
-      ),
+      tree.write("nested/file.txt", Readable.from(Buffer.from("unexpected")), {
+        sha256: "0".repeat(64),
+        bytes: Buffer.byteLength("unexpected"),
+      }),
     ).rejects.toThrow(/disagrees/u);
     expect(await tree.rollback()).toMatchObject({
       status: "complete",
@@ -64,11 +63,10 @@ describe("safe artifact output tree", () => {
       const output = join(parent, "published");
       const tree = await SafeOutputTree.create(output);
       const bytes = Buffer.from("retained until rollback can retry");
-      await tree.write(
-        "nested/file.txt",
-        Readable.from(bytes),
-        createHash("sha256").update(bytes).digest("hex"),
-      );
+      await tree.write("nested/file.txt", Readable.from(bytes), {
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        bytes: bytes.byteLength,
+      });
       try {
         await chmod(output, 0o500);
         const failure = await tree.rollback().catch((cause: unknown) => cause);
@@ -90,7 +88,10 @@ describe("safe artifact output tree", () => {
     const bytes = Buffer.from("visible before seal");
     const digest = createHash("sha256").update(bytes).digest("hex");
 
-    await tree.write("file.txt", Readable.from(bytes), digest);
+    await tree.write("file.txt", Readable.from(bytes), {
+      sha256: digest,
+      bytes: bytes.byteLength,
+    });
     expect(await readFile(join(output, "file.txt"), "utf8")).toBe(
       "visible before seal",
     );
@@ -123,7 +124,10 @@ describe("safe artifact output tree", () => {
     const bytes = Buffer.from("windows output");
     const digest = createHash("sha256").update(bytes).digest("hex");
 
-    await tree.write("nested/file.txt", Readable.from(bytes), digest);
+    await tree.write("nested/file.txt", Readable.from(bytes), {
+      sha256: digest,
+      bytes: bytes.byteLength,
+    });
     await tree.commit();
     expect(await readFile(join(output, "nested", "file.txt"), "utf8")).toBe(
       "windows output",

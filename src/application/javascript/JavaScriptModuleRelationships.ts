@@ -1,6 +1,9 @@
 import { posix } from "node:path";
 
-import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
+import {
+  compareUnicodeCodePoints,
+  compositeKey,
+} from "../../domain/unicodeCodePointOrder.js";
 import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
 import {
   completeApplicationCoverage,
@@ -177,7 +180,7 @@ const addExportRelationship = (
     identity: artifactLocalIdentity(
       file.sha256,
       "module-export",
-      `${file.container_sha256}:${file.path}:${link.exportedName}`,
+      compositeKey([file.container_sha256, file.path, link.exportedName]),
     ),
     observations: [
       {

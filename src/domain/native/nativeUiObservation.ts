@@ -156,3 +156,5 @@ export const nativeUiResultSchema = z.strictObject({
   restore: z.literal("leave-as-is"),
   limitations: z.array(z.string()),
 });
+
+export type NativeUiObservationResult = z.infer<typeof nativeUiResultSchema>;

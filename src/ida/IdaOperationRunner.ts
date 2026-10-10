@@ -2,6 +2,7 @@ import { z } from "zod";
 import { analysisSearchInput } from "../contracts/analysisSearchContract.js";
 import {
   AnalysisInputError,
+  AnalysisCancelledError,
   AnalysisProtocolError,
 } from "../domain/analysisErrorCore.js";
 import {
@@ -62,16 +63,19 @@ export class IdaOperationRunner {
     private readonly connection: IdaMcpConnection,
     private readonly protocol: "legacy" | "modern",
     private readonly database?: string,
+    private readonly signal?: AbortSignal,
   ) {}
 
   async call(
     tool: string,
     args: Readonly<Record<string, JsonValue>>,
   ): Promise<JsonValue> {
+    if (this.signal?.aborted) throw new AnalysisCancelledError(tool);
     const scoped =
       this.database === undefined ? args : { ...args, database: this.database };
     const result = await this.connection.call(tool, scoped);
     this.raw.push({ tool, arguments: scoped, result });
+    if (this.signal?.aborted) throw new AnalysisCancelledError(tool);
     return result;
   }
 

@@ -1,4 +1,5 @@
 import type { EvidenceMcpServer } from "../EvidenceMcpServer.js";
+import { runAdmittedToolOperation } from "../admittedToolOperation.js";
 
 import { evaluateReconstructionCoverage } from "../../application/ReconstructionCoverageService.js";
 import { applicationToolContract } from "../../contracts/applicationToolContracts.js";
@@ -16,11 +17,20 @@ export const registerCoverageTools = (
   server.registerTool(
     contract.name,
     toolRegistrationOptions(contract),
-    async (input) => {
-      const result = await logToolExecution(options.logger, contract.name, () =>
-        Promise.resolve(evaluateReconstructionCoverage(input)),
-      );
-      return server.delivery.toCallToolResult(result, contract);
-    },
+    async (input, context) =>
+      runAdmittedToolOperation(
+        server,
+        options.withAdmittedAnalysis,
+        contract.name,
+        context.mcpReq.signal,
+        async () => {
+          const result = await logToolExecution(
+            options.logger,
+            contract.name,
+            () => Promise.resolve(evaluateReconstructionCoverage(input)),
+          );
+          return server.delivery.toCallToolResult(result, contract);
+        },
+      ),
   );
 };

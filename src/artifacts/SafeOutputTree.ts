@@ -105,7 +105,26 @@ export class SafeOutputTree {
       }
       return new SafeOutputTree(canonicalOutput, platform);
     } catch (cause: unknown) {
-      await rm(canonicalOutput, { recursive: true, force: true });
+      let removalFailure: unknown;
+      try {
+        await rm(canonicalOutput, { recursive: true, force: true });
+      } catch (cleanupCause: unknown) {
+        removalFailure = cleanupCause;
+      }
+      let absent = false;
+      try {
+        absent = await isAbsent(canonicalOutput);
+      } catch (cleanupCause: unknown) {
+        removalFailure ??= cleanupCause;
+      }
+      if (!absent)
+        throw ArtifactReaderFailure.withCleanup(cause, {
+          reason:
+            removalFailure instanceof Error
+              ? removalFailure.message
+              : "Extraction output root remains after setup failure",
+          resources: [canonicalOutput],
+        });
       throw cause;
     }
   }
@@ -122,56 +141,84 @@ export class SafeOutputTree {
   async write(
     relativePath: string,
     source: Readable,
-    expectedSha256: string,
+    expected: { readonly sha256: string; readonly bytes: number },
     signal?: AbortSignal,
   ): Promise<SafeOutputFile> {
-    this.#assertWritable();
-    const path = normalizeArtifactPath(relativePath);
-    this.#registry.add(path, "file");
-    const destination = await this.#prepareParent(path);
-    const handle = await open(
-      destination,
-      constants.O_CREAT |
-        constants.O_EXCL |
-        constants.O_WRONLY |
-        constants.O_NOFOLLOW,
-      0o600,
-    ).catch(async (cause: unknown) => {
-      await throwIfDestinationCaseCollision(dirname(destination), path, cause);
-      throw new ArtifactReaderFailure(
-        "path",
-        `Could not exclusively create extraction path: ${path}`,
-        { cause },
-      );
-    });
-    const hash = createHash("sha256");
-    let bytes = 0;
     try {
-      for await (const raw of source) {
-        abortIfNeeded(signal);
-        const chunk = streamChunkToBuffer(raw);
-        bytes += chunk.length;
-        hash.update(chunk);
-        await writeAll(handle, chunk);
+      this.#assertWritable();
+      if (!Number.isSafeInteger(expected.bytes) || expected.bytes < 0)
+        throw new ArtifactReaderFailure(
+          "format",
+          `Invalid expected extraction size for ${relativePath}`,
+        );
+      const path = normalizeArtifactPath(relativePath);
+      this.#registry.add(path, "file");
+      const destination = await this.#prepareParent(path);
+      const handle = await open(
+        destination,
+        constants.O_CREAT |
+          constants.O_EXCL |
+          constants.O_WRONLY |
+          constants.O_NOFOLLOW,
+        0o600,
+      ).catch(async (cause: unknown) => {
+        await throwIfDestinationCaseCollision(
+          dirname(destination),
+          path,
+          cause,
+        );
+        throw new ArtifactReaderFailure(
+          "path",
+          `Could not exclusively create extraction path: ${path}`,
+          { cause },
+        );
+      });
+      const hash = createHash("sha256");
+      let bytes = 0;
+      try {
+        for await (const raw of source) {
+          abortIfNeeded(signal);
+          const chunk = streamChunkToBuffer(raw);
+          if (chunk.length > expected.bytes - bytes)
+            throw new ArtifactReaderFailure(
+              "integrity",
+              `Extracted content exceeds the inventoried size: ${path}`,
+            );
+          bytes += chunk.length;
+          hash.update(chunk);
+          await writeAll(handle, chunk);
+        }
+        if (bytes !== expected.bytes)
+          throw new ArtifactReaderFailure(
+            "integrity",
+            `Extracted content size disagrees with inventory: ${path}`,
+          );
+        const sha256 = hash.digest("hex");
+        if (sha256 !== expected.sha256)
+          throw new ArtifactReaderFailure(
+            "integrity",
+            `Extracted content disagrees with inventory: ${path}`,
+          );
+        await handle.sync();
+        await handle.close();
+        const readback = await hashFile(destination, bytes, signal);
+        if (readback.sha256 !== sha256 || readback.bytes !== bytes)
+          throw new ArtifactReaderFailure(
+            "integrity",
+            `Durable readback verification failed: ${path}`,
+          );
+        return { relativePath: path, sha256, bytesWritten: bytes };
+      } catch (cause: unknown) {
+        // best-effort cleanup: file-handle close must not mask the write failure.
+        await handle.close().catch(() => undefined);
+        throw cause;
       }
-      const sha256 = hash.digest("hex");
-      if (sha256 !== expectedSha256)
-        throw new ArtifactReaderFailure(
-          "integrity",
-          `Extracted content disagrees with inventory: ${path}`,
-        );
-      await handle.sync();
-      await handle.close();
-      const readback = await hashFile(destination, bytes, signal);
-      if (readback.sha256 !== sha256 || readback.bytes !== bytes)
-        throw new ArtifactReaderFailure(
-          "integrity",
-          `Durable readback verification failed: ${path}`,
-        );
-      return { relativePath: path, sha256, bytesWritten: bytes };
     } catch (cause: unknown) {
-      // best-effort cleanup: file-handle close must not mask the write failure.
-      await handle.close().catch(() => undefined);
+      try {
+        source.destroy();
+      } catch {
+        // Preserve the write refusal or failure as the caller-visible error.
+      }
       throw cause;
     }
   }

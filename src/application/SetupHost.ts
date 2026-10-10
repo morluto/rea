@@ -94,6 +94,10 @@ export const systemSetupHost = (
   const doctorHost = selectedDoctorHost ?? systemDoctorHost({ environment });
   const platform = doctorHost.platform;
   const { homeDirectory } = doctorHost;
+  const macHopperHost =
+    platform === "darwin"
+      ? systemMacHopperInstallHost(homeDirectory, environment)
+      : undefined;
   return {
     platform,
     homeDirectory,
@@ -106,6 +110,7 @@ export const systemSetupHost = (
     nodeVersion: process.versions.node,
     macosVersion: () => doctorHost.macosVersion(),
     linuxDistribution: readLinuxDistribution,
+    close: () => macHopperHost?.close() ?? Promise.resolve(undefined),
     initialSetupState: async (
       scope?: DoctorScope,
     ): Promise<SetupInitialState> => {
@@ -126,15 +131,33 @@ export const systemSetupHost = (
       };
     },
     installHopper: async (replaceExisting) => {
-      const result =
-        platform === "linux"
-          ? await installLinuxHopper(systemLinuxHopperInstallHost(environment))
-          : await installMacHopper(
-              { replaceExisting },
-              systemMacHopperInstallHost(homeDirectory, environment),
-            );
-      if (result.status === "installed") return result;
-      return setupInstallFailure(result.reason);
+      if (platform === "linux") {
+        const result = await installLinuxHopper(
+          systemLinuxHopperInstallHost(environment),
+        );
+        return result.status === "installed"
+          ? result
+          : setupInstallFailure(result.reason);
+      }
+      if (macHopperHost === undefined)
+        return setupInstallFailure("unsupported_host");
+      const result = await installMacHopper({ replaceExisting }, macHopperHost);
+      if (result.status === "installed")
+        return {
+          status: "installed",
+          launcherPath: result.launcherPath,
+          ...(result.cleanupFailure === undefined
+            ? {}
+            : { cleanupFailure: result.cleanupFailure }),
+        };
+      const failure = setupInstallFailure(result.reason);
+      if (result.cleanupFailure === undefined) return failure;
+      return failure.status === "failed"
+        ? {
+            ...failure,
+            remediation: `${failure.remediation} ${result.cleanupFailure}`,
+          }
+        : failure;
     },
     detectedClients: () => detectClients(homeDirectory, platform, environment),
     supportedClients: () =>

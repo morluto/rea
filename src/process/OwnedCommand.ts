@@ -22,6 +22,7 @@ export class OwnedCommandFailure extends Error {
     readonly cleanupFailure: string | null = null,
     options?: ErrorOptions,
     readonly resources: readonly string[] = [],
+    readonly cleanupOwner?: ProviderProcessSupervisor,
   ) {
     super(message, options);
   }
@@ -183,7 +184,6 @@ const collectOwnedCommand = async (
   }
   const stopped = await supervisor.stop();
   const snapshot = supervisor.snapshot();
-  supervisor.dispose();
   if (stopped.status === "incomplete")
     throw new OwnedCommandFailure(
       failure?.reason ?? "process",
@@ -197,6 +197,7 @@ const collectOwnedCommand = async (
         `pid:${launched.ownership.leaderPid}`,
         `process-group:${launched.ownership.processGroupId}`,
       ],
+      supervisor,
     );
   if (failure !== undefined)
     throw new OwnedCommandFailure(

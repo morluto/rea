@@ -25,6 +25,7 @@ import {
   type NibHierarchyNode,
 } from "./NibViewHierarchy.js";
 import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
+import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
 import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
 
@@ -49,7 +50,6 @@ export const analyzeInterfaceBuilderBundle = async (input: {
   const prototypeKeyOmissions = new Map<string, number>();
   let omitted = 0;
   let attempted = 0;
-  let candidates = 0;
   let aggregateInputBytes = 0;
   const decodeBudget = new InterfaceBuilderDecodeBudget(
     MAX_AGGREGATE_DECODE_BYTES,
@@ -60,15 +60,16 @@ export const analyzeInterfaceBuilderBundle = async (input: {
     else unreportedOmittedArchives += 1;
   };
   try {
-    for await (const entry of reader.entries(input.signal)) {
-      if (entry.kind !== "file" || !isInterfaceBuilderArchive(entry.path))
-        continue;
-      candidates += 1;
-      if (candidates > limits.max_documents) {
-        omitted += 1;
-        recordOmittedArchive(entry.path, "max_documents");
-        continue;
-      }
+    const selection = await selectInterfaceBuilderCandidates(
+      reader,
+      input.signal,
+      limits.max_documents,
+    );
+    omitted = selection.omitted;
+    for (const entry of selection.omittedSamples)
+      recordOmittedArchive(entry.path, "max_documents");
+    unreportedOmittedArchives += selection.unreportedOmitted;
+    for (const entry of selection.selected) {
       try {
         const remainingInputBytes =
           MAX_AGGREGATE_INPUT_BYTES - aggregateInputBytes;
@@ -165,6 +166,60 @@ export const analyzeInterfaceBuilderBundle = async (input: {
     attempted,
     omitted,
   });
+};
+
+/** Select lexically earliest document paths independent of host traversal order. */
+const selectInterfaceBuilderCandidates = async (
+  reader: DirectoryArtifactReader,
+  signal: AbortSignal | undefined,
+  maximumDocuments: number,
+): Promise<{
+  readonly selected: readonly ArtifactEntry[];
+  readonly omittedSamples: readonly ArtifactEntry[];
+  readonly omitted: number;
+  readonly unreportedOmitted: number;
+}> => {
+  const capacity = maximumDocuments + MAX_REPORTED_OMITTED_ARCHIVES;
+  const candidates: ArtifactEntry[] = [];
+  let total = 0;
+  for await (const entry of reader.entries(signal)) {
+    if (entry.kind !== "file" || !isInterfaceBuilderArchive(entry.path))
+      continue;
+    total += 1;
+    retainCandidate(candidates, entry, capacity);
+  }
+  const omittedSamples = candidates.slice(maximumDocuments, capacity);
+  return {
+    selected: candidates.slice(0, maximumDocuments),
+    omittedSamples,
+    omitted: Math.max(0, total - maximumDocuments),
+    unreportedOmitted: Math.max(
+      0,
+      total - maximumDocuments - omittedSamples.length,
+    ),
+  };
+};
+
+/** Keep the earliest bounded path set; directory iteration order is host-defined. */
+const retainCandidate = (
+  candidates: ArtifactEntry[],
+  entry: ArtifactEntry,
+  maximum: number,
+): void => {
+  let low = 0;
+  let high = candidates.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    const existing = candidates[middle];
+    if (
+      existing !== undefined &&
+      compareUnicodeCodePoints(existing.path, entry.path) < 0
+    )
+      low = middle + 1;
+    else high = middle;
+  }
+  candidates.splice(low, 0, entry);
+  if (candidates.length > maximum) candidates.pop();
 };
 
 const finalizeHierarchyCoverage = (

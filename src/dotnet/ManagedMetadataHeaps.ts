@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
+
 import {
   metadataRowOffset,
   type ManagedMetadataLayout,
@@ -117,6 +119,11 @@ export const readMetadataString = (
       layout.strings.offset + Math.max(index, 0),
     );
   const start = layout.strings.offset + index;
+  const cached = managedDecodeBudget(layout).cachedString(index);
+  if (cached !== undefined && cached.encodedBytes <= heapExtent) {
+    managedDecodeBudget(layout).reserveString(cached.encodedBytes, start);
+    return cached.value;
+  }
   const maximum = Math.min(
     layout.strings.offset + layout.strings.size,
     start + heapExtent + 1,
@@ -130,10 +137,14 @@ export const readMetadataString = (
       "String heap item has no terminator within #Strings",
       start,
     );
+  managedDecodeBudget(layout).reserveString(end - start, start);
   try {
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      bytes.subarray(start, end),
-    );
+    const value = new TextDecoder("utf-8", {
+      fatal: true,
+      ignoreBOM: true,
+    }).decode(bytes.subarray(start, end));
+    managedDecodeBudget(layout).cacheString(index, value, end - start);
+    return value;
   } catch (cause: unknown) {
     void cause;
     throw managedFailure(
@@ -218,12 +229,6 @@ export const metadataToken = (table: number, row: number): string =>
 export const sha256Bytes = (bytes: Buffer): string =>
   createHash("sha256").update(bytes).digest("hex");
 
-/** Derive the conventional strong-name token from a full public key. */
-export const strongNameToken = (publicKey: Buffer): string =>
-  Buffer.from(createHash("sha1").update(publicKey).digest().subarray(-8))
-    .reverse()
-    .toString("hex");
-
 /** Create a cursor bounded to one admitted metadata table row. */
 export const metadataRowCursor = (
   bytes: Buffer,
@@ -240,6 +245,8 @@ export const metadataRowCursor = (
       "Metadata table is absent",
       start,
     );
+  // Reserve per-row object/index bookkeeping before readers retain decoded facts.
+  managedDecodeBudget(layout).reserve(256, start);
   return new MetadataRowCursor(
     bytes,
     start,

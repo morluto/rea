@@ -5,6 +5,7 @@ import { toolContract } from "../contracts/toolContracts.js";
 import type { Logger } from "pino";
 import { createContractToolHandler } from "./contractToolHandler.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 
 /** Bind JEB handlers to their exact named contracts through shared workflows. */
 export const registerJebTools = (
@@ -12,12 +13,14 @@ export const registerJebTools = (
   service: JebAnalysisService,
   logger: Logger,
   recordEvidence?: EvidenceWriter["recordEvidence"],
+  withAdmittedAnalysis?: WithAdmittedAnalysis,
 ): void => {
   const handler = createContractToolHandler(
     server,
     service,
     logger,
     recordEvidence,
+    withAdmittedAnalysis,
   );
   const clientContract = toolContract("inspect_jeb_client");
   server.registerTool(

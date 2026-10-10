@@ -1,3 +1,4 @@
+import type { ManagedDecodeBudget } from "./ManagedDecodeBudget.js";
 import type { ManagedPeLayout } from "./ManagedPeReader.js";
 import type { ManagedMethodBody } from "./ManagedMemberInspectorCore.js";
 import {
@@ -62,19 +63,6 @@ const readMethodBodyHeader = (
   };
 };
 
-const readExceptionRegions = (
-  bytes: Buffer,
-  sectionOffset: number,
-  methodEnd: number,
-  ilSize: number,
-  instructionOffsets: readonly number[],
-): ReturnType<typeof parseExceptionRegions> =>
-  validateExceptionRegionRanges(
-    parseExceptionRegions(bytes, sectionOffset, methodEnd),
-    ilSize,
-    instructionOffsets,
-  );
-
 /** Decode admitted managed CIL, retaining unavailable implementation metadata as partial. */
 export const methodBody = (
   bytes: Buffer,
@@ -84,6 +72,7 @@ export const methodBody = (
     implFlags: 0,
     flags: 0,
   },
+  budget?: ManagedDecodeBudget,
 ): ManagedMethodBody => {
   if (rva === 0) return emptyMethodBody(rva, "absent", null);
   if (
@@ -108,6 +97,9 @@ export const methodBody = (
     if (ilOffset > bytes.length - header.ilSize)
       throw new RangeError("Method IL bytes leave artifact");
     const il = bytes.subarray(ilOffset, ilOffset + header.ilSize);
+    // One byte can produce an instruction record, start index, normalized tuple,
+    // and anchor. Reserve conservative bookkeeping capacity before decoding.
+    budget?.reserve(il.length * 256, ilOffset);
     const decoded = decodeInstructions(il);
     const opcodeCounts: Record<string, number> = {};
     for (const instruction of decoded.parsed)
@@ -135,10 +127,13 @@ export const methodBody = (
     const sectionOffset = (methodEnd + 3) & ~3;
     const exceptionRegions =
       header.format === "fat" && (header.flags & 8) !== 0
-        ? readExceptionRegions(
-            bytes,
-            sectionOffset,
-            offset + methodExtent,
+        ? validateExceptionRegionRanges(
+            parseExceptionRegions(
+              bytes,
+              sectionOffset,
+              offset + methodExtent,
+              budget,
+            ),
             header.ilSize,
             decoded.instructionStarts,
           )
@@ -179,6 +174,11 @@ export const methodBody = (
           : null),
     };
   } catch (cause: unknown) {
+    if (
+      cause instanceof ManagedReaderFailure &&
+      cause.issue.code === "resource-limit"
+    )
+      throw cause;
     if (
       !(cause instanceof ManagedReaderFailure) &&
       !(cause instanceof RangeError)

@@ -16,6 +16,12 @@ export class NonRegularFileReadError extends Error {
   }
 }
 
+/** One admitted file descriptor and the metadata that identified its contents. */
+export interface StableRegularFileDescriptor {
+  readonly handle: FileHandle;
+  readonly initial: Stats;
+}
+
 /** Open and verify the selected file descriptor without blocking on pipes. */
 export const openRegularFile = async (
   path: string,

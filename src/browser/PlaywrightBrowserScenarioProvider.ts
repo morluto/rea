@@ -229,14 +229,15 @@ const runScenario = async (
   openSession: BrowserScenarioSessionOpener,
   scenario: BrowserScenario,
   options: ExecutionOptions,
+  retainCleanup: (close: () => Promise<unknown>) => void,
 ): Promise<BrowserScenarioCapture> => {
   if (options.signal?.aborted === true)
     throw new BrowserObservationError(OPERATION, "cancelled");
   const startedAt = Date.now();
-  const session = await openSession(
-    scenario,
-    options.signal === undefined ? {} : { signal: options.signal },
-  );
+  const session = await openSession(scenario, {
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+    retainCleanup,
+  });
   const steps: BrowserScenarioStep[] = [];
   let operationOutcome:
     | { readonly ok: true }
@@ -279,6 +280,7 @@ const runScenario = async (
     cleanupOutcome = { ok: true, cleanup: await session.close() };
   } catch (cause: unknown) {
     cleanupOutcome = { ok: false, cause };
+    retainCleanup(() => session.close());
   }
   if (!cleanupOutcome.ok) {
     const cleanup = browserScenarioCleanupObservation(cleanupOutcome.cause);
@@ -337,18 +339,46 @@ const runScenario = async (
 
 /** Controlled Playwright/CDP scenario driver with exact process ownership. */
 export class PlaywrightBrowserScenarioProvider implements BrowserScenarioCapturePort {
+  #tail: Promise<void> = Promise.resolve();
+  #closing = false;
+  #closePromise: Promise<void> | undefined;
+  readonly #pendingCleanup = new Set<() => Promise<unknown>>();
+
   constructor(private readonly openSession: BrowserScenarioSessionOpener) {}
 
   identity(): ProviderIdentity {
     return PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY;
   }
 
-  async captureScenario(
+  captureScenario(
     scenario: BrowserScenario,
     options: ExecutionOptions = {},
   ): Promise<Result<BrowserScenarioCapture, AnalysisError>> {
+    if (this.#closing) return Promise.resolve(err(this.#closedError()));
+    const operation = this.#tail.then(() =>
+      this.#closing
+        ? err(this.#closedError())
+        : this.#captureScenario(scenario, options),
+    );
+    this.#tail = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
+  }
+
+  async #captureScenario(
+    scenario: BrowserScenario,
+    options: ExecutionOptions,
+  ): Promise<Result<BrowserScenarioCapture, AnalysisError>> {
+    const pending = await this.#retryCleanup();
+    if (pending !== undefined) return err(pending);
     try {
-      return ok(await runScenario(this.openSession, scenario, options));
+      return ok(
+        await runScenario(this.openSession, scenario, options, (close) => {
+          this.#pendingCleanup.add(close);
+        }),
+      );
     } catch (cause: unknown) {
       if (cause instanceof AnalysisError) return err(cause);
       return err(
@@ -359,5 +389,44 @@ export class PlaywrightBrowserScenarioProvider implements BrowserScenarioCapture
         ),
       );
     }
+  }
+
+  async close(): Promise<void> {
+    this.#closing = true;
+    this.#closePromise ??= this.#tail
+      .then(async () => {
+        const failure = await this.#retryCleanup();
+        if (failure !== undefined) throw failure;
+      })
+      .catch((cause: unknown) => {
+        this.#closePromise = undefined;
+        throw cause;
+      });
+    return this.#closePromise;
+  }
+
+  #closedError(): AnalysisError {
+    return new BrowserObservationError(OPERATION, "cleanup_failed", {
+      detail: "Browser scenario provider is closing.",
+      cleanup: { reason: "Provider is closing", resources: [] },
+    });
+  }
+
+  async #retryCleanup(): Promise<AnalysisError | undefined> {
+    for (const pending of this.#pendingCleanup) {
+      try {
+        await pending();
+        this.#pendingCleanup.delete(pending);
+      } catch (cause: unknown) {
+        return cause instanceof AnalysisError
+          ? cause
+          : new ProviderAdapterError(
+              PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY.id,
+              OPERATION,
+              { cause },
+            );
+      }
+    }
+    return undefined;
   }
 }

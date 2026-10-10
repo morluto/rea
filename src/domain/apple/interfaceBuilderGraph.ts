@@ -66,7 +66,9 @@ export const buildInterfaceBuilderAnalysis = (input: {
   let omittedHierarchyReferences = 0;
   for (const document of input.documents.slice(0, input.limits.max_documents)) {
     const parsed = parseInterfaceBuilderRecords(document.raw);
-    const prefix = `ib:${document.relativePath}:`;
+    const prefix = `ib:${JSON.stringify(document.relativePath)}:`;
+    const graphId = (kind: string, parts: readonly unknown[] = []): string =>
+      `${prefix}${kind}:${JSON.stringify(parts)}`;
     const rootId = `${prefix}root`;
     const objectIds = new Set(parsed.objects.map(({ id }) => id));
     const evidenceFor = (description: string) => [
@@ -104,7 +106,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
     addNode(rootNode);
     let documentObjectCount = 0;
     for (const object of parsed.objects.slice(0, input.limits.max_objects)) {
-      const id = `${prefix}object:${object.id}`;
+      const id = graphId("object", [object.id]);
       const kind = object.kind === "other" ? "unknown" : object.kind;
       if (
         !addNode({
@@ -129,7 +131,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
     let documentOmittedConnections = 0;
     let documentOmittedHierarchyEdges = 0;
     const objectNodeId = (objectId: string): string =>
-      `${prefix}object:${objectId}`;
+      graphId("object", [objectId]);
     const addEdge = (
       edge: (typeof edges)[number],
       isHierarchy: boolean,
@@ -238,7 +240,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
           const known = objectIds.has(objectId);
           const childId = known
             ? objectNodeId(objectId)
-            : `${prefix}unknown:${objectId}`;
+            : graphId("unknown", [objectId]);
           if (
             !known &&
             !addNode({
@@ -252,7 +254,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
           )
             hierarchyTruncated = true;
           connect(
-            `${prefix}hierarchy:${parentId}:${childId}`,
+            graphId("hierarchy", [parentId, childId]),
             parentId,
             childId,
             "contains",
@@ -281,11 +283,11 @@ export const buildInterfaceBuilderAnalysis = (input: {
       const destinationId =
         item.destination_id === null ? null : objectNodeId(item.destination_id);
       if (item.kind === "action") {
-        const actionId = `${prefix}action:${item.id}`;
+        const actionId = graphId("action", [item.id]);
         const selectorId =
           item.label === null
             ? null
-            : `${prefix}selector:${item.destination_id ?? "unknown"}:${item.label}`;
+            : graphId("selector", [item.destination_id, item.label]);
         addNode({
           id: actionId,
           kind: "action",
@@ -299,7 +301,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
           evidence: evidenceFor(`action ${item.id}`),
         });
         connect(
-          `${actionId}:source`,
+          graphId("action-edge", [item.id, "source"]),
           sourceId,
           actionId,
           "target_action",
@@ -315,7 +317,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
             evidence: evidenceFor(`selector ${item.label}`),
           });
           connect(
-            `${actionId}:selector`,
+            graphId("action-edge", [item.id, "selector"]),
             actionId,
             selectorId,
             "target_action",
@@ -324,7 +326,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
         }
         if (destinationId === null || !nodes.has(destinationId))
           connect(
-            `${actionId}:destination`,
+            graphId("action-edge", [item.id, "destination"]),
             actionId,
             null,
             "target_action",
@@ -333,14 +335,14 @@ export const buildInterfaceBuilderAnalysis = (input: {
           );
         else
           connect(
-            `${actionId}:destination`,
+            graphId("action-edge", [item.id, "destination"]),
             actionId,
             destinationId,
             "target_action",
             `action destination ${item.destination_id}`,
           );
       } else if (item.kind === "outlet") {
-        const outletId = `${prefix}outlet:${item.id}`;
+        const outletId = graphId("outlet", [item.id]);
         addNode({
           id: outletId,
           kind: "outlet",
@@ -350,7 +352,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
           evidence: evidenceFor(`outlet ${item.id}`),
         });
         connect(
-          `${outletId}:source`,
+          graphId("outlet-edge", [item.id, "source"]),
           sourceId,
           outletId,
           "contains",
@@ -358,7 +360,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
         );
         if (destinationId === null || !nodes.has(destinationId))
           connect(
-            `${outletId}:destination`,
+            graphId("outlet-edge", [item.id, "destination"]),
             outletId,
             null,
             "outlet_to",
@@ -367,7 +369,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
           );
         else
           connect(
-            `${outletId}:destination`,
+            graphId("outlet-edge", [item.id, "destination"]),
             outletId,
             destinationId,
             "outlet_to",
@@ -376,7 +378,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
       } else if (item.kind === "segue") {
         if (destinationId === null || !nodes.has(destinationId))
           connect(
-            `${prefix}segue:${index}`,
+            graphId("segue", [index]),
             sourceId,
             null,
             "segue_to",
@@ -385,7 +387,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
           );
         else
           connect(
-            `${prefix}segue:${index}`,
+            graphId("segue", [index]),
             sourceId,
             destinationId,
             "segue_to",
@@ -393,7 +395,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
           );
       } else {
         connect(
-          `${prefix}unknown-connection:${index}`,
+          graphId("unknown-connection", [index]),
           sourceId,
           null,
           "contains",

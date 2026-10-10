@@ -163,7 +163,11 @@ export interface ElectronNativeAddonBindingFinding {
   readonly specifier: string;
   readonly binding_kind: "import" | "require" | "re-export";
   readonly module_kind: "import" | "require";
+  /** Exact requested addon member keys; namespace and dynamic access are separate. */
   readonly members: readonly string[];
+  /** Omitted in legacy findings; omission means unknown, not false. */
+  readonly namespace_access?: boolean;
+  readonly dynamic_member_access?: boolean;
   readonly module_key: string | null;
   readonly location: JavaScriptSourceRange;
 }

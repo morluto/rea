@@ -20,14 +20,30 @@ import {
   recoveryInputFailure,
   snapshotRecoveryInput,
 } from "./RecoveryFiles.js";
-import { resolveWakaruCommand, type WakaruLauncher } from "./WakaruCommand.js";
+import {
+  resolveWakaruCommand,
+  type WakaruLauncher,
+  WakaruCleanupFailure,
+} from "./WakaruCommand.js";
+import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js";
 import { prepareWakaruExecution } from "./WakaruExecution.js";
 import { RECOVERY_LIMITS } from "./WakaruRelease.js";
 
 const OPERATION = "recover_javascript_sources";
 
-/** Stateless adapter; each recovery owns its snapshot, process and publication. */
+/** Serialized recovery adapter retaining failed process, workspace and publication cleanup. */
 export class WakaruProvider implements JavaScriptRecoveryPort {
+  #tail: Promise<void> = Promise.resolve();
+  #closing = false;
+  #closePromise: Promise<void> | undefined;
+  #pendingCleanup:
+    | {
+        root: string | undefined;
+        process: ProviderProcessSupervisor | undefined;
+        tree: SafeOutputTree | undefined;
+      }
+    | undefined;
+
   constructor(
     readonly environment: Readonly<
       Record<string, string | undefined>
@@ -36,10 +52,46 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
   ) {}
 
   /** Recover one script using validated upstream reports and verified output bytes. */
-  async recover(
+  recover(
     input: JavaScriptRecoveryInput,
     options?: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
+    if (this.#closing)
+      return Promise.resolve(
+        err(
+          new ProviderCleanupError(
+            "wakaru",
+            [],
+            { reason: "Provider is closing" },
+            { operation: OPERATION },
+          ),
+        ),
+      );
+    const operation = this.#tail.then(() =>
+      this.#closing
+        ? err(
+            new ProviderCleanupError(
+              "wakaru",
+              [],
+              { reason: "Provider is closing" },
+              { operation: OPERATION },
+            ),
+          )
+        : this.#recover(input, options),
+    );
+    this.#tail = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
+  }
+
+  async #recover(
+    input: JavaScriptRecoveryInput,
+    options?: ExecutionOptions,
+  ): Promise<Result<AnalysisExecution, AnalysisError>> {
+    const pending = await this.#retire();
+    if (pending !== undefined) return err(pending);
     let root: string | undefined;
     let tree: SafeOutputTree | undefined;
     let failure: unknown;
@@ -88,20 +140,42 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
     }
     if (failure !== undefined) {
       const residuals: string[] = [];
+      const cleanupOwner =
+        failure instanceof WakaruCleanupFailure
+          ? failure.cleanupOwner
+          : undefined;
+      let failedTree: SafeOutputTree | undefined;
       try {
         await tree?.rollback();
       } catch {
-        if (tree !== undefined) residuals.push(tree.outputRoot);
+        if (tree !== undefined) {
+          failedTree = tree;
+          residuals.push(tree.outputRoot);
+        }
+      }
+      if (cleanupOwner !== undefined)
+        residuals.push(cleanupOwner.launch.ownership?.runId ?? "wakaru-worker");
+      if (root !== undefined && cleanupOwner === undefined) {
+        const failedRoot = root;
+        try {
+          await rm(failedRoot, { recursive: true, force: true });
+          root = undefined;
+        } catch {
+          residuals.push(failedRoot);
+        }
       }
       if (
-        root !== undefined &&
-        !(failure instanceof AnalysisError && failure.cleanupIncomplete)
+        cleanupOwner !== undefined ||
+        failedTree !== undefined ||
+        root !== undefined
       ) {
-        try {
-          await rm(root, { recursive: true, force: true });
-        } catch {
-          residuals.push(root);
-        }
+        this.#pendingCleanup = {
+          root,
+          process: cleanupOwner,
+          tree: failedTree,
+        };
+        if (root !== undefined) residuals.push(root);
+        root = undefined;
       }
       if (residuals.length > 0)
         return err(
@@ -123,5 +197,68 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
           new AnalysisOutputError(OPERATION, "Recovery returned no execution"),
         )
       : ok(execution);
+  }
+
+  async close(): Promise<void> {
+    this.#closing = true;
+    this.#closePromise ??= this.#tail
+      .then(async () => {
+        const failure = await this.#retire();
+        if (failure !== undefined) throw failure;
+      })
+      .catch((cause: unknown) => {
+        this.#closePromise = undefined;
+        throw cause;
+      });
+    return this.#closePromise;
+  }
+
+  async #retire(): Promise<ProviderCleanupError | undefined> {
+    const pending = this.#pendingCleanup;
+    if (pending === undefined) return undefined;
+    if (pending.process !== undefined) {
+      const stopped = await pending.process.stop();
+      if (stopped.status === "incomplete")
+        return new ProviderCleanupError(
+          "wakaru",
+          [
+            pending.process.launch.ownership?.runId ?? "wakaru-worker",
+            ...(pending.root === undefined ? [] : [pending.root]),
+          ],
+          { reason: stopped.reason },
+          { operation: OPERATION },
+        );
+      pending.process = undefined;
+    }
+    if (pending.tree !== undefined) {
+      const tree = pending.tree;
+      try {
+        await tree.rollback();
+        pending.tree = undefined;
+      } catch (cause: unknown) {
+        return new ProviderCleanupError(
+          "wakaru",
+          [tree.outputRoot],
+          { reason: recoveryFailureMessage(cause) },
+          { operation: OPERATION, cause },
+        );
+      }
+    }
+    if (pending.root !== undefined) {
+      const root = pending.root;
+      try {
+        await rm(root, { recursive: true, force: true });
+        pending.root = undefined;
+      } catch (cause: unknown) {
+        return new ProviderCleanupError(
+          "wakaru",
+          [root],
+          { reason: recoveryFailureMessage(cause) },
+          { operation: OPERATION, cause },
+        );
+      }
+    }
+    this.#pendingCleanup = undefined;
+    return undefined;
   }
 }

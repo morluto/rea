@@ -187,6 +187,10 @@ Every capture requires `truncation_details`, with separate accounting for:
   input, so raw omissions also limit rendered coverage.
 - `filesystem_before` and `filesystem_after`: file-count/depth limits,
   enumeration failures, whole-file hash budget and bytes successfully hashed.
+  Directory names are read incrementally within the remaining entry capacity.
+  When a directory exceeds that capacity, the retained subset follows filesystem
+  enumeration order and is then sorted; it is explicitly incomplete and cannot
+  establish that an omitted path is absent.
   Each retained regular file without a digest has an aliased path, size,
   remaining budget and reason: `file_bytes_budget`,
   `file_changed_or_short_read`, or `file_unavailable`. Its `system_code` is

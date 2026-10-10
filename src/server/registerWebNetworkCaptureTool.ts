@@ -4,7 +4,8 @@ import type { WebNetworkCaptureService } from "../application/WebNetworkCaptureS
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { Logger } from "pino";
-import { logToolExecution } from "./toolLogging.js";
+import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
+import { createEvidenceToolHandler } from "./contractToolHandler.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 
 /** Bind historical inspection to its named contract and caller-owned Evidence writer. */
@@ -13,6 +14,7 @@ export const registerWebNetworkCaptureTool = (
   service: WebNetworkCaptureService,
   logger: Logger,
   recordEvidence?: EvidenceWriter["recordEvidence"],
+  withAdmittedAnalysis?: WithAdmittedAnalysis,
 ): void => {
   const contract = toolContract("inspect_web_network_capture");
   const registration = toolRegistrationOptions(contract);
@@ -26,20 +28,16 @@ export const registerWebNetworkCaptureTool = (
       validate: (value: unknown) => ({ value }),
     },
   };
+  const handler = createEvidenceToolHandler(
+    server,
+    (input, options) => service.inspect(input, options),
+    logger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
   server.registerTool(
     contract.name,
     { ...registration, inputSchema },
-    async (input, context) => {
-      const result = await logToolExecution(logger, contract.name, () =>
-        service.inspect(input, { signal: context.mcpReq.signal }),
-      );
-      if (!result.ok) return server.delivery.toCallToolResult(result, contract);
-      const recorded = recordEvidence?.(result.value);
-      return server.delivery.toEvidenceToolResult(
-        result.value,
-        contract,
-        recorded,
-      );
-    },
+    handler(contract),
   );
 };

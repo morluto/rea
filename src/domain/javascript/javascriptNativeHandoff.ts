@@ -103,7 +103,12 @@ const nativeExportNodes = (
 const requestedExports = (nodes: readonly ApplicationNode[]): string[] => {
   const values = nodes.flatMap((node) =>
     node.observations.flatMap((observation) => [
-      ...(observation.label === null ? [] : [observation.label]),
+      // Display labels can summarize several names or namespace access.
+      // Only legacy observations without structured member facts need them.
+      ...(observation.label === null ||
+      Array.isArray(observation.properties.requested_members)
+        ? []
+        : [observation.label]),
       ...stringArray(observation.properties.requested_members),
       ...stringArray(observation.properties.members),
     ]),

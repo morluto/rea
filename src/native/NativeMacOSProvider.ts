@@ -36,10 +36,13 @@ import {
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import type { NativeUiObservationResult } from "../domain/native/nativeUiObservation.js";
 import {
   omittedPrototypeKeysLimitation,
   parseXmlPropertyList,
@@ -77,6 +80,11 @@ import {
   architectureLocations,
   inspectNativeMacho,
 } from "./NativeMachoInspection.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  createNativeUiHelperRuntime,
+  type NativeUiHelperRuntime,
+} from "./NativeUiHelperRuntime.js";
 
 /** Read-only semantic provider composed from Xcode command-line utilities. */
 export class NativeMacOSProvider implements AnalysisProvider {
@@ -117,6 +125,10 @@ export class NativeMacOSProvider implements AnalysisProvider {
 }
 
 class NativeMacOSClient implements AnalysisClient {
+  readonly #pendingNativeUiRuntimes = new Set<NativeUiHelperRuntime>();
+  #nativeUiTail: Promise<void> = Promise.resolve();
+  #closed = false;
+
   constructor(
     private readonly target: BinaryTarget,
     private readonly runner: NativeCommandRunner,
@@ -129,6 +141,14 @@ class NativeMacOSClient implements AnalysisClient {
     parameters: Readonly<Record<string, JsonValue>>,
     options?: { readonly signal?: AbortSignal },
   ) {
+    if (this.#closed)
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          IDENTITY.id,
+          operation,
+          "Native provider client is closed",
+        ),
+      );
     if (options?.signal?.aborted === true)
       return err(new AnalysisCancelledError(operation));
     if (operation === "health")
@@ -212,17 +232,7 @@ class NativeMacOSClient implements AnalysisClient {
       operation === "observe_native_ui" ||
       operation === "capture_native_ui_scenario"
     ) {
-      const result = await observeNativeUi(this.target, operation, parameters, {
-        environment: this.environment,
-        signal: options?.signal,
-      });
-      return result.ok
-        ? ok(
-            createAnalysisExecution(result.value, IDENTITY, {
-              limitations: result.value.limitations,
-            }),
-          )
-        : result;
+      return this.#observeNativeUi(operation, parameters, options?.signal);
     }
     try {
       const observation = await this.#dispatch(
@@ -247,8 +257,137 @@ class NativeMacOSClient implements AnalysisClient {
     }
   }
 
-  close(): Promise<Result<null, AnalysisError>> {
-    return this.tracer.close();
+  async close(): Promise<Result<null, AnalysisError>> {
+    this.#closed = true;
+    const uiCleanupFailures = await this.#serializeNativeUi(() =>
+      this.#retryNativeUiCleanup(),
+    );
+    const tracer = await this.tracer.close();
+    if (uiCleanupFailures.length === 0) return tracer;
+    const uiCleanup = this.#nativeUiCleanupFailure(
+      uiCleanupFailures,
+      "close_binary",
+    );
+    return tracer.ok
+      ? err(uiCleanup)
+      : err(analysisErrorWithCleanupFailure(tracer.error, uiCleanup));
+  }
+
+  #observeNativeUi(
+    operation: "observe_native_ui" | "capture_native_ui_scenario",
+    parameters: Readonly<Record<string, JsonValue>>,
+    signal?: AbortSignal,
+  ) {
+    return this.#serializeNativeUi(async () => {
+      if (this.#closed)
+        return err(
+          new AnalysisCapabilityUnavailableError(
+            IDENTITY.id,
+            operation,
+            "Native provider client is closed",
+          ),
+        );
+      const earlierCleanupFailures = await this.#retryNativeUiCleanup();
+      if (earlierCleanupFailures.length > 0)
+        return err(
+          this.#nativeUiCleanupFailure(earlierCleanupFailures, operation),
+        );
+      const runtime = createNativeUiHelperRuntime(this.environment);
+      this.#pendingNativeUiRuntimes.add(runtime);
+      let result: Awaited<ReturnType<typeof observeNativeUi>>;
+      try {
+        result = await observeNativeUi(this.target, operation, parameters, {
+          environment: this.environment,
+          signal,
+          runtime,
+        });
+      } catch (cause: unknown) {
+        result = err(
+          cause instanceof AnalysisError
+            ? cause
+            : new ProviderAdapterError(IDENTITY.id, operation, { cause }),
+        );
+      }
+      try {
+        await runtime.close();
+        this.#pendingNativeUiRuntimes.delete(runtime);
+      } catch (cause: unknown) {
+        const cleanup = this.#nativeUiCleanupFailure(
+          [{ runtime, cause }],
+          operation,
+          result.ok ? result.value : undefined,
+        );
+        return err(
+          result.ok
+            ? cleanup
+            : analysisErrorWithCleanupFailure(result.error, cleanup, operation),
+        );
+      }
+      return result.ok
+        ? ok(
+            createAnalysisExecution(result.value, IDENTITY, {
+              limitations: result.value.limitations,
+            }),
+          )
+        : result;
+    });
+  }
+
+  #serializeNativeUi<Value>(operation: () => Promise<Value>): Promise<Value> {
+    const call = this.#nativeUiTail.then(operation, operation);
+    this.#nativeUiTail = call.then(
+      () => undefined,
+      () => undefined,
+    );
+    return call;
+  }
+
+  async #retryNativeUiCleanup(): Promise<
+    Array<{ readonly runtime: NativeUiHelperRuntime; readonly cause: unknown }>
+  > {
+    const failures: Array<{
+      readonly runtime: NativeUiHelperRuntime;
+      readonly cause: unknown;
+    }> = [];
+    for (const runtime of this.#pendingNativeUiRuntimes) {
+      try {
+        await runtime.close();
+        this.#pendingNativeUiRuntimes.delete(runtime);
+      } catch (cause: unknown) {
+        failures.push({ runtime, cause });
+      }
+    }
+    return failures;
+  }
+
+  #nativeUiCleanupFailure(
+    failures: readonly {
+      readonly runtime: NativeUiHelperRuntime;
+      readonly cause: unknown;
+    }[],
+    operation: string,
+    partialObservation?: NativeUiObservationResult,
+  ): ProviderCleanupError {
+    const resources = failures.flatMap(({ runtime }) => runtime.resources());
+    return new ProviderCleanupError(
+      IDENTITY.id,
+      resources.length === 0 ? ["native-ui-runtime"] : resources,
+      {
+        reason: "Native UI runtime cleanup remains incomplete",
+        failures: failures.map(({ runtime, cause }) => ({
+          resources: [...runtime.resources()],
+          reason: cause instanceof Error ? cause.message : String(cause),
+        })),
+      },
+      {
+        operation,
+        cause: new AggregateError(
+          failures.map(({ cause }) => cause),
+          "Native UI runtime cleanup failed",
+        ),
+        ...(partialObservation === undefined ? {} : { partialObservation }),
+      },
+    );
   }
 
   #dispatch(

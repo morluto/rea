@@ -78,12 +78,14 @@ export const parseApktoolVersionOutput = (
 export const inspectApktoolClient = async (
   selection: ApktoolCommandSelection,
   signal?: AbortSignal,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
 ): Promise<ApktoolClientIdentity> => {
   try {
     const { stdout } = await execFileOutput(selection.command, ["--version"], {
       timeout: VERSION_TIMEOUT_MS,
       stopSignal: "SIGTERM",
       maxBuffer: VERSION_MAX_OUTPUT_BYTES,
+      env: { ...process.env, ...environment },
       ...(signal === undefined ? {} : { signal }),
     });
     return parseApktoolVersionOutput(stdout);

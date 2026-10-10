@@ -15,7 +15,12 @@ import writeFileAtomic from "write-file-atomic";
 import { z } from "zod";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
-import { skillDestinations } from "./SetupSkill.js";
+import {
+  isManagedSkillManifest,
+  MANAGED_SKILL_FILES,
+  readSkillFile,
+  skillDestinations,
+} from "./SetupSkill.js";
 import { isOwnedClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
 import {
@@ -27,29 +32,32 @@ import {
 interface ManagedPathStats {
   readonly uid?: number;
   isFile?(): boolean;
+  isDirectory?(): boolean;
   isSymbolicLink(): boolean;
 }
 
 /** Injectable filesystem operations used to prove uninstall failure recovery. */
 export interface UninstallFileSystem {
   readText(path: string): Promise<string>;
+  readRegularText?(path: string): Promise<string>;
   /** Preserve the first backup; reject an existing destination with EEXIST. */
   copy(source: string, destination: string): Promise<void>;
   writeText(path: string, contents: string): Promise<void>;
   stat(path: string): Promise<ManagedPathStats>;
   realpath?(path: string): Promise<string>;
-  remove(path: string): Promise<void>;
+  remove(path: string, recursive?: boolean): Promise<void>;
 }
 
 const systemFileSystem: UninstallFileSystem = {
   readText: (path) => readFile(path, "utf8"),
+  readRegularText: readSkillFile,
   copy: (source, destination) =>
     copyFile(source, destination, fsConstants.COPYFILE_EXCL),
   writeText: (path, contents) =>
     writeFileAtomic(path, contents, { encoding: "utf8" }),
   stat: (path) => lstat(path),
   realpath: (path) => realpath(path),
-  remove: (path) => rm(path, { recursive: true }),
+  remove: (path, recursive = true) => rm(path, { recursive }),
 };
 
 /** One explicitly classified uninstall action. */
@@ -422,7 +430,7 @@ const removeManagedSkills = async (
   const results = await Promise.all(
     skillDestinations(home, undefined, environment, platform).map(
       ({ client, path }) =>
-        removeManagedPath(
+        removeManagedSkill(
           path,
           client === "claude_code" ? "Claude Code skill" : "skill",
           fileSystem,
@@ -455,6 +463,146 @@ const removeManagedSkills = async (
       )
       .join(" "),
   );
+};
+
+const removeManagedSkill = async (
+  path: string,
+  name: string,
+  fileSystem: UninstallFileSystem,
+): Promise<UninstallItem> => {
+  let root: ManagedPathStats;
+  try {
+    root = await fileSystem.stat(path);
+  } catch (cause: unknown) {
+    return isMissing(cause)
+      ? item(name, "skipped", "Skill directory does not exist.")
+      : item(name, "failed", "Skill directory could not be inspected.");
+  }
+  if (root.isSymbolicLink())
+    return item(name, "retained", "Skill directory is a symbolic link.");
+  if (root.isDirectory?.() !== true)
+    return item(name, "retained", "Skill path is not a directory.");
+
+  const manifestPath = join(path, "SKILL.md");
+  try {
+    const manifest = await fileSystem.stat(manifestPath);
+    if (manifest.isSymbolicLink())
+      return item(name, "retained", "Skill manifest is a symbolic link.");
+    if (manifest.isFile?.() !== true)
+      return item(name, "retained", "Skill manifest is not a regular file.");
+  } catch (cause: unknown) {
+    return isMissing(cause)
+      ? item(name, "retained", "Skill ownership could not be established.")
+      : item(name, "failed", "Skill manifest could not be inspected.");
+  }
+  let content: string;
+  try {
+    content = await (fileSystem.readRegularText?.(manifestPath) ??
+      fileSystem.readText(manifestPath));
+  } catch (cause: unknown) {
+    return isMissing(cause)
+      ? item(name, "retained", "Skill ownership could not be established.")
+      : item(name, "failed", "Skill manifest could not be read.");
+  }
+  if (!isManagedSkillManifest(content))
+    return item(name, "retained", "Skill manifest is not REA-owned.");
+
+  const manifestName = "SKILL.md";
+  const otherFiles = MANAGED_SKILL_FILES.filter(
+    (relativePath) => relativePath !== manifestName,
+  );
+  const results: UninstallItem[] = [];
+  for (const relativePath of otherFiles)
+    results.push(
+      await removeManagedSkillFile(path, relativePath, name, fileSystem),
+    );
+  if (
+    results.some(({ status }) => status === "failed" || status === "retained")
+  )
+    results.push(
+      item(
+        name,
+        "retained",
+        "REA ownership manifest was retained because a managed file could not be safely removed.",
+      ),
+    );
+  else
+    results.push(
+      await removeManagedSkillFile(path, manifestName, name, fileSystem),
+    );
+  const failed = results.find(({ status }) => status === "failed");
+  if (failed !== undefined)
+    return item(name, "failed", results.map(({ detail }) => detail).join(" "));
+  const removed = results.some(({ status }) => status === "removed");
+  return item(
+    name,
+    removed ? "removed" : "skipped",
+    "REA-managed skill files were removed; other files were preserved.",
+  );
+};
+
+const removeManagedSkillFile = async (
+  root: string,
+  relativePath: string,
+  name: string,
+  fileSystem: UninstallFileSystem,
+): Promise<UninstallItem> => {
+  const segments = relativePath.split(/[\\/]/u);
+  let parent = root;
+  for (const segment of segments.slice(0, -1)) {
+    parent = join(parent, segment);
+    try {
+      const stats = await fileSystem.stat(parent);
+      if (stats.isSymbolicLink() || stats.isDirectory?.() !== true)
+        return item(
+          name,
+          "retained",
+          `Managed path parent was retained: ${parent}.`,
+        );
+    } catch (cause: unknown) {
+      return isMissing(cause)
+        ? item(
+            name,
+            "skipped",
+            `${join(parent, segments.at(-1) ?? "")} does not exist.`,
+          )
+        : item(
+            name,
+            "failed",
+            `Managed path parent could not be inspected: ${parent}.`,
+          );
+    }
+  }
+
+  const target = join(root, relativePath);
+  let stats: ManagedPathStats;
+  try {
+    stats = await fileSystem.stat(target);
+  } catch (cause: unknown) {
+    return isMissing(cause)
+      ? item(name, "skipped", `${target} does not exist.`)
+      : item(name, "failed", `Managed file could not be inspected: ${target}.`);
+  }
+  if (stats.isSymbolicLink())
+    return item(
+      name,
+      "retained",
+      `Managed file is a symbolic link: ${target}.`,
+    );
+  if (stats.isFile?.() !== true)
+    return item(
+      name,
+      "retained",
+      `Managed path is not a regular file: ${target}.`,
+    );
+  try {
+    await fileSystem.remove(target, false);
+    return item(name, "removed", `Removed ${target}.`);
+  } catch (cause: unknown) {
+    return isMissing(cause)
+      ? item(name, "skipped", `${target} does not exist.`)
+      : item(name, "failed", `Managed file could not be removed: ${target}.`);
+  }
 };
 
 const item = (

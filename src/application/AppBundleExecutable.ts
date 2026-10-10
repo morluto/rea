@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { lstat, readdir, readFile, realpath, stat } from "node:fs/promises";
+import { lstat, opendir, readFile, realpath, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -156,13 +156,14 @@ const wrappedBundle = async (bundle: string): Promise<string | undefined> => {
     if (isAbsence(cause)) return undefined;
     throw cause;
   }
-  const apps = (await readdir(wrapper, { withFileTypes: true })).filter(
-    (entry) => entry.isDirectory() && entry.name.toLowerCase().endsWith(".app"),
-  );
-  const [app] = apps;
-  return apps.length === 1 && app !== undefined
-    ? join(wrapper, app.name)
-    : undefined;
+  let app: string | undefined;
+  for await (const entry of await opendir(wrapper)) {
+    if (!entry.isDirectory() || !entry.name.toLowerCase().endsWith(".app"))
+      continue;
+    if (app !== undefined) return undefined;
+    app = join(wrapper, entry.name);
+  }
+  return app;
 };
 
 const resolveLayoutExecutable = async (

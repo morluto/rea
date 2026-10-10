@@ -3,6 +3,11 @@ import { open, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  admitAsarHeader,
+  MAX_ASAR_HEADER_BYTES,
+} from "../artifacts/AsarHeader.js";
+
 /** Resolve one local file URL while rejecting remote hosts and encoded separators. */
 export const authorizedElectronFile = async (
   value: string,
@@ -77,7 +82,6 @@ const authorizedAsarMember = async (
 type ArchiveIdentity = Pick<Stats, "dev" | "ino" | "size" | "mtimeMs">;
 
 // This is a retained-memory budget for JSON headers, shared across all archives.
-const MAX_HEADER_BYTES = 16 * 1024 * 1024;
 const MAX_CACHED_HEADERS = 8;
 const headerCache = new Map<
   string,
@@ -105,23 +109,8 @@ const asarFiles = async (
     const opened = await handle.stat();
     if (!opened.isFile() || archiveIdentity(opened) !== identity)
       throw new Error("ASAR identity changed before header read");
-    const prefix = Buffer.alloc(16);
-    const read = await handle.read(prefix, 0, prefix.length, 0);
-    if (read.bytesRead !== prefix.length || prefix.readUInt32LE(0) !== 4)
-      throw new Error("Truncated or invalid ASAR size pickle");
-    const headerBytes = prefix.readUInt32LE(4);
-    const payloadBytes = prefix.readUInt32LE(8);
-    jsonBytes = prefix.readUInt32LE(12);
-    if (
-      headerBytes < 8 ||
-      headerBytes > opened.size - 8 ||
-      payloadBytes !== headerBytes - 4 ||
-      jsonBytes > payloadBytes - 4 ||
-      jsonBytes > MAX_HEADER_BYTES
-    )
-      throw new Error(
-        "ASAR JSON header leaves the file or exceeds its memory budget",
-      );
+    const admitted = await admitAsarHeader(handle);
+    jsonBytes = admitted.jsonBytes;
     const json = Buffer.alloc(jsonBytes);
     let offset = 0;
     while (offset < json.length) {
@@ -151,7 +140,7 @@ const asarFiles = async (
     [...headerCache.values()].reduce((sum, entry) => sum + entry.bytes, 0);
   while (
     headerCache.size > MAX_CACHED_HEADERS ||
-    retainedBytes() > MAX_HEADER_BYTES
+    retainedBytes() > MAX_ASAR_HEADER_BYTES
   )
     headerCache.delete(headerCache.keys().next().value ?? archive);
   return files;

@@ -12,6 +12,7 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { WEB_SOURCE_MAP_LIMITS } from "../../domain/webSourceLocation.js";
 import {
@@ -46,6 +47,22 @@ export interface SourceMapDecoderDependencies {
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
   /** Prepare host ownership inspection outside the codec execution deadline. */
   readonly prepareOwnership?: (signal?: AbortSignal) => Promise<void>;
+}
+
+export interface SourceMapCleanupOwner {
+  close(
+    previousError: string | null,
+  ): Promise<ProviderCleanupError | undefined>;
+}
+
+export class SourceMapCleanupFailure extends ProviderCleanupError {
+  constructor(
+    readonly cleanupOwner: SourceMapCleanupOwner,
+    resources: readonly string[],
+    diagnostics: Readonly<Record<string, JsonValue>>,
+  ) {
+    super(PROVIDER, resources, diagnostics, { operation: OPERATION });
+  }
 }
 
 /** Run a trusted codec command and release its process/root before returning output. */
@@ -94,7 +111,7 @@ export const runSourceMapCommand = async (
     : result;
 };
 
-class OwnedCodec {
+class OwnedCodec implements SourceMapCleanupOwner {
   readonly #runId = `rea-source-map-${randomUUID()}`;
   #runtime: SourceMapCodecRuntime | undefined;
   #supervisor: ProviderProcessSupervisor | undefined;
@@ -231,21 +248,27 @@ class OwnedCodec {
     previousError: string | null,
   ): Promise<ProviderCleanupError | undefined> {
     const failures: string[] = [];
+    let processReleased = this.#supervisor === undefined;
     if (this.#supervisor !== undefined) {
       const stopped = await this.#supervisor.stop();
       if (stopped.status === "incomplete") failures.push(stopped.reason);
+      else {
+        processReleased = true;
+        this.#supervisor = undefined;
+      }
     }
-    if (this.#runtime !== undefined) {
+    if (processReleased && this.#runtime !== undefined) {
       try {
         await this.#runtime.close();
+        this.#runtime = undefined;
       } catch (cause: unknown) {
         failures.push(message(cause));
       }
     }
     return failures.length === 0
       ? undefined
-      : new ProviderCleanupError(
-          PROVIDER,
+      : new SourceMapCleanupFailure(
+          this,
           [
             this.#runId,
             ...(this.#runtime === undefined ? [] : [this.#runtime.path]),
@@ -256,7 +279,6 @@ class OwnedCodec {
             previous_error: previousError,
             codec_pid: this.#supervisor?.launch.process.pid ?? null,
           },
-          { operation: OPERATION },
         );
   }
 }

@@ -24,14 +24,24 @@ export const registerEvmCommands = (
         .describe("Selected carrier representation"),
     }),
     run: ({ args }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, CLI_COMMANDS.inspectEvmInterface, async () => {
-          const result = await service.inspect(
-            { path: resolve(args.path), encoding: args.encoding },
-            { signal },
+      withCommandCancellation(async (signal) => {
+        try {
+          return await logCliCommand(
+            logger,
+            CLI_COMMANDS.inspectEvmInterface,
+            async () => {
+              const result = await service.inspect(
+                { path: resolve(args.path), encoding: args.encoding },
+                { signal },
+              );
+              return result.ok
+                ? result.value
+                : projectAnalysisError(result.error);
+            },
           );
-          return result.ok ? result.value : projectAnalysisError(result.error);
-        }),
-      ),
+        } finally {
+          await service.close();
+        }
+      }),
   });
 };
