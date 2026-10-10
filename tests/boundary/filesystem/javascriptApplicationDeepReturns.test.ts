@@ -27,7 +27,15 @@ it("analyzes direct returns after deep source without exhausting the default pro
   const { stdout, stderr } = await promisify(execFile)(
     process.execPath,
     ["--input-type=module", "-e", script],
-    { timeout: 10_000, env: { HOME: root, TMPDIR: root } },
+    {
+      timeout: 10_000,
+      // Bound the child heap while retaining Node's default stack size.
+      env: {
+        HOME: root,
+        TMPDIR: root,
+        NODE_OPTIONS: "--max-old-space-size=768",
+      },
+    },
   );
   expect(stderr).toBe("");
   const owners: unknown = JSON.parse(stdout);
