@@ -208,7 +208,7 @@ describe("empty form destinations with a document base URL", () => {
     if (nodes === undefined) throw new TypeError("Expected a DOM snapshot");
     nodes.attributes[2] = [href, guide, href, value.strings.length - 1];
     const result = capture(value);
-    expect(result.nodes[2]?.attribute_names).toEqual(["href", "href"]);
+    expect(result.nodes[2]?.attribute_names).toEqual(["href"]);
     expect(result.urls.map(({ url }) => url)).toContain(
       `${origin}/screens/guide`,
     );
