@@ -108,6 +108,10 @@ export const processComparisonContract = (
   ...(scenario.normalization.ports
     ? { port_normalization_version: "contextual-endpoints-v2" }
     : {}),
+  ...(scenario.normalization.patterns.length > 0
+    ? { pattern_normalization_version: "literal-replacements-v1" }
+    : {}),
+  rendered_line_format: "trailing-spaces-trimmed-v1",
 });
 
 /**

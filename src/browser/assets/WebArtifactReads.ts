@@ -3,6 +3,7 @@ import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
+  AnalysisAccessDeniedError,
   AnalysisCancelledError,
   AnalysisInputError,
 } from "../../domain/analysisErrorCore.js";
@@ -15,6 +16,8 @@ export interface WebArtifactReadContext {
   readonly operation: "trace_web_module_imports" | "trace_web_source_location";
   readonly field: readonly (string | number)[];
   readonly targetPath: string;
+  /** Whether the caller named this file, rather than a manifest deriving it. */
+  readonly callerSelected: boolean;
 }
 
 /** A malformed producer document, distinct from host I/O failures. */
@@ -54,6 +57,10 @@ export const webArtifactReadError = (
 ): AnalysisError => {
   if (signal?.aborted === true)
     return new AnalysisCancelledError(context.operation);
+  const selection = context.callerSelected
+    ? selectedFileError(cause, context)
+    : undefined;
+  if (selection !== undefined) return selection;
   if (cause instanceof ArtifactReaderFailure)
     return new ArtifactOperationError(
       context.operation,
@@ -90,4 +97,34 @@ export const webArtifactReadError = (
       error_message: cause instanceof Error ? cause.message : String(cause),
     },
   });
+};
+
+/**
+ * Report a missing, non-regular or unreadable caller-selected file as the
+ * caller's selection or a host permission denial, not an artifact fault.
+ */
+const selectedFileError = (
+  cause: unknown,
+  context: WebArtifactReadContext,
+): AnalysisError | undefined => {
+  const selected = (message: string) =>
+    new AnalysisInputError(context.operation, { cause }, [
+      { path: context.field, reason: "invalid_value", message },
+    ]);
+  if (cause instanceof ArtifactReaderFailure)
+    return cause.reason === "path" ? selected(cause.message) : undefined;
+  const code =
+    cause instanceof Error && "code" in cause ? String(cause.code) : "";
+  if (code === "EACCES" || code === "EPERM")
+    return new AnalysisAccessDeniedError(
+      context.operation,
+      context.targetPath,
+      code,
+      { cause },
+    );
+  if (code === "ENOENT" || code === "ENOTDIR")
+    return selected(
+      `Selected file could not be read (${code}): ${context.targetPath}`,
+    );
+  return undefined;
 };

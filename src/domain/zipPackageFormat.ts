@@ -22,8 +22,13 @@ export const zipPackageFormatForPath = (
   const lower = path.toLowerCase();
   if (lower.endsWith(".zip")) return "zip";
   if (lower.endsWith(".ipa")) return "ipa";
-  if (lower.endsWith(".apk") || lower.endsWith(".aab")) return "apk";
+  // An Android App Bundle is a ZIP archive, not a standalone APK.
+  if (lower.endsWith(".apk")) return "apk";
   if (lower.endsWith(".msix") || lower.endsWith(".msixbundle")) return "msix";
   if (lower.endsWith(".appx") || lower.endsWith(".appxbundle")) return "appx";
   return undefined;
 };
+
+/** Inventory cannot see bytes that are not central-directory entries. */
+export const ZIP_NON_ENTRY_TAIL_LIMITATION =
+  "ZIP inventory lists central-directory entries only. Bytes after the central directory, including an APK Signing Block or a ZIP comment, are not occurrences.";

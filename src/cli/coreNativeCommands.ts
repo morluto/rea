@@ -157,13 +157,6 @@ export const registerCoreNativeCommands = (
       "target-format": formatSelectionOption,
       provider: providerSelectionOption,
     }),
-    alias: {
-      maxDepth: "max-depth",
-      maxFunctions: "max-functions",
-      maxCallSites: "max-call-sites",
-      maxNodes: "max-nodes",
-      maxEdges: "max-edges",
-    },
     run: ({ args, options }) =>
       logCliCommand(logger, CLI_COMMANDS.traceNativeValues, () =>
         runDirectAnalysis(
@@ -283,7 +276,6 @@ const registerNativeDispatchMetadataCommand = (
       "target-format": formatSelectionOption,
       provider: providerSelectionOption,
     }),
-    alias: { maxRecords: "max-records" },
     run: async ({ args, options }) =>
       logCliCommand(logger, "inspect-native-dispatch-metadata", () =>
         runDirectAnalysis(
@@ -343,11 +335,6 @@ const registerNativeUiActionCommand = (
       "target-format": formatSelectionOption,
       provider: providerSelectionOption,
     }),
-    alias: {
-      maxDepth: "max-depth",
-      maxNodes: "max-nodes",
-      maxEdges: "max-edges",
-    },
     run: async ({ args, options }) =>
       logCliCommand(logger, "trace-native-ui-action", () =>
         runDirectAnalysis(

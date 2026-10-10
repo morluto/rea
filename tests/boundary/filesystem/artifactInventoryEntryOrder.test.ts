@@ -50,10 +50,9 @@ describe("artifact inventory entry order", () => {
         const parent = artifactOccurrenceAt(observed, parentPath);
         expect(observed.edges).toContainEqual(
           expect.objectContaining({
-            logical_path: path,
+            occurrence_id: occurrence.occurrence_id,
             relation: "contains",
             parent_artifact_id: parent.artifact_id,
-            child_artifact_id: occurrence.artifact_id,
           }),
         );
       }
@@ -100,7 +99,6 @@ describe("entry-order validation and reader controls", () => {
   it.each([
     ["pkg/data.txt", "pkg/data.txt/"],
     ["pkg/data.txt/", "pkg/data.txt"],
-    ["pkg/data.txt", "PKG/other.txt"],
     ["pkg/data.txt", "pkg"],
     ["../escape.txt"],
   ])("keeps invalid/colliding paths rejected for %j", async (...entries) => {
@@ -110,6 +108,25 @@ describe("entry-order validation and reader controls", () => {
     await expect(inventoryArtifact(archive)).rejects.toMatchObject({
       reason: "path",
     });
+  });
+
+  it("keeps case-distinct directory names separate in either entry order", async () => {
+    const root = await createTestTempDirectory("rea-entry-order-case-");
+    const archive = join(root, "case-distinct.zip");
+    const entries = ["pkg/", "pkg/data.txt", "PKG/", "PKG/other.txt"];
+    const parents = {
+      ".": null,
+      pkg: ".",
+      "pkg/data.txt": "pkg",
+      PKG: ".",
+      "PKG/other.txt": "PKG",
+    };
+    for (const ordered of [entries, entries.toReversed()]) {
+      await writeOrderedZip(archive, ordered);
+      expect(artifactParentPaths(await inventoryArtifact(archive))).toEqual(
+        parents,
+      );
+    }
   });
 
   it("preserves ordinary directory and ASAR structure", async () => {

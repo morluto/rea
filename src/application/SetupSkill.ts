@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import writeFileAtomic from "write-file-atomic";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { clientSkillDirectories } from "./SupportedClients.js";
 
 const SKILL_FILES = [
   "SKILL.md",
@@ -21,7 +22,7 @@ interface CanonicalSkillFile {
 
 /** Managed skill location selected for a client family. */
 export interface SkillDestination {
-  readonly client: "shared" | "claude_code";
+  readonly client: string;
   readonly path: string;
 }
 
@@ -32,44 +33,19 @@ export interface InstalledSkillIdentity {
   readonly canonical: boolean;
 }
 
-/** Resolve Claude Code personal skills from the selected environment. */
-export const claudeCodeSkillsDirectory = (
-  home: string,
-  environment: { readonly CLAUDE_CONFIG_DIR?: string } = {},
-): string =>
-  join(environment.CLAUDE_CONFIG_DIR ?? join(home, ".claude"), "skills");
-
 /** Resolve the skill roots required by a client selection, or all owned roots. */
 export const skillDestinations = (
   home: string,
   clientIds: readonly string[] | undefined,
-  claudeSkillsDirectory = claudeCodeSkillsDirectory(home),
-): readonly SkillDestination[] => {
-  const includeClaude =
-    clientIds === undefined || clientIds.includes("claude_code");
-  const includeShared =
-    clientIds === undefined ||
-    clientIds.length === 0 ||
-    clientIds.some((clientId) => clientId !== "claude_code");
-  return [
-    ...(includeShared
-      ? [
-          {
-            client: "shared" as const,
-            path: join(home, ".agents/skills", PRODUCT_IDENTITY.skillName),
-          },
-        ]
-      : []),
-    ...(includeClaude
-      ? [
-          {
-            client: "claude_code" as const,
-            path: join(claudeSkillsDirectory, PRODUCT_IDENTITY.skillName),
-          },
-        ]
-      : []),
-  ];
-};
+  environment: Readonly<NodeJS.ProcessEnv> = {},
+  platform: NodeJS.Platform = process.platform,
+): readonly SkillDestination[] =>
+  clientSkillDirectories(home, clientIds, environment, platform).map(
+    ({ client, directory }) => ({
+      client,
+      path: join(directory, PRODUCT_IDENTITY.skillName),
+    }),
+  );
 
 const readOptionalText = async (path: string): Promise<string | undefined> => {
   try {
@@ -84,10 +60,11 @@ const readOptionalText = async (path: string): Promise<string | undefined> => {
 const canonicalSkillFiles = async (
   home: string,
   clientIds: readonly string[],
-  claudeSkillsDirectory?: string,
+  environment: Readonly<NodeJS.ProcessEnv> = {},
+  platform: NodeJS.Platform = process.platform,
 ): Promise<readonly CanonicalSkillFile[]> =>
   Promise.all(
-    skillDestinations(home, clientIds, claudeSkillsDirectory).flatMap(
+    skillDestinations(home, clientIds, environment, platform).flatMap(
       ({ path: root }) =>
         SKILL_FILES.map(async (relativePath) => {
           const destination = join(root, relativePath);
@@ -110,11 +87,12 @@ const canonicalSkillFiles = async (
 export const canonicalSkillNeedsInstall = async (
   home: string,
   clientIds: readonly string[] = [],
-  claudeSkillsDirectory?: string,
+  environment: Readonly<NodeJS.ProcessEnv> = {},
+  platform: NodeJS.Platform = process.platform,
 ): Promise<boolean> => {
   try {
     return (
-      await canonicalSkillFiles(home, clientIds, claudeSkillsDirectory)
+      await canonicalSkillFiles(home, clientIds, environment, platform)
     ).some(({ content, original }) => original !== content);
   } catch (cause: unknown) {
     // Unreadable skill state fails open to install so setup can repair it.
@@ -139,14 +117,16 @@ const restoreSkillFiles = async (
 export const installCanonicalSkill = async (
   home: string,
   clientIds: readonly string[] = [],
-  claudeSkillsDirectory?: string,
+  environment: Readonly<NodeJS.ProcessEnv> = {},
+  platform: NodeJS.Platform = process.platform,
 ): Promise<"installed" | "unchanged" | "failed"> => {
   let changed: readonly CanonicalSkillFile[] = [];
   try {
     const canonical = await canonicalSkillFiles(
       home,
       clientIds,
-      claudeSkillsDirectory,
+      environment,
+      platform,
     );
     changed = canonical.filter(({ content, original }) => original !== content);
     if (changed.length === 0) return "unchanged";
@@ -179,12 +159,14 @@ export const installCanonicalSkill = async (
 export const readInstalledSkillIdentity = async (
   home: string,
   clientIds: readonly string[],
-  claudeSkillsDirectory?: string,
+  environment: Readonly<NodeJS.ProcessEnv> = {},
+  platform: NodeJS.Platform = process.platform,
 ): Promise<InstalledSkillIdentity | undefined> => {
   const destinations = skillDestinations(
     home,
     clientIds,
-    claudeSkillsDirectory,
+    environment,
+    platform,
   );
   let content: string | undefined;
   for (const destination of destinations) {
@@ -202,7 +184,8 @@ export const readInstalledSkillIdentity = async (
     canonical: !(await canonicalSkillNeedsInstall(
       home,
       clientIds,
-      claudeSkillsDirectory,
+      environment,
+      platform,
     )),
     version: /^\s{2}version:\s*"([^"]+)"\s*$/mu.exec(content)?.[1] ?? null,
     toolCount: toolCount === undefined ? null : Number.parseInt(toolCount, 10),

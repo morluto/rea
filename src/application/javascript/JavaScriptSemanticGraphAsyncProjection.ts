@@ -1,3 +1,4 @@
+import { compactStringIdentityKey } from "../../domain/compactStringIdentity.js";
 import { createJavaScriptSemanticGraphUnknown } from "../../domain/javascript/javascriptSemanticGraph.js";
 import type { JavaScriptSemanticGraphNode } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 import type {
@@ -21,7 +22,7 @@ export const projectSemanticEvents = (
     const eventKey =
       operation.eventName === null
         ? operation.eventId
-        : `${operation.emitterKey}\u0000${operation.eventName}`;
+        : `${operation.emitterKey}\u0000${compactStringIdentityKey(operation.eventName)}`;
     const event =
       eventNodes.get(eventKey) ?? addEventNode(context, operation, eventKey);
     if (event === null) continue;
@@ -59,7 +60,11 @@ const addEventNode = (
     kind: "event",
     roleKey: `event:${eventKey}`,
     location: operation.eventName === null ? operation.location : null,
-    label: operation.eventName,
+    label:
+      operation.eventName === null ||
+      operation.eventName.length <= "event".length
+        ? operation.eventName
+        : "event",
     functionNodeId: null,
     properties: {
       emitter_key: operation.emitterKey,
@@ -78,7 +83,9 @@ const addListenerNode = (
     label:
       operation.eventName === null
         ? operation.method
-        : `${operation.method}:${operation.eventName}`,
+        : operation.eventName.length <= "listener".length
+          ? `${operation.method}:${operation.eventName}`
+          : `${operation.method}:listener`,
     functionNodeId:
       operation.ownerCallableId === null
         ? null

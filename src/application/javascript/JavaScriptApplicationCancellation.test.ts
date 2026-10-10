@@ -42,6 +42,46 @@ describe("JavaScript analysis cancellation before publication", () => {
     expect(phases).not.toContain("validate_javascript_application_result");
   });
 
+  it("handles control turns and cancellation inside one large source file (#1462)", async () => {
+    const root = await createTestTempDirectory("rea-js-cancel-in-file-");
+    await writeFile(
+      join(root, "index.js"),
+      Array.from(
+        { length: 1200 },
+        (_, index) =>
+          `export function f${index}(){return {name:'f${index}',value:${index}};}`,
+      ).join("\n"),
+    );
+    const controller = new AbortController();
+    const phases: string[] = [];
+    let turns = 0;
+    // Count event-loop turns once the file starts; parsing, analysis and
+    // projection of this one file must leave room for them.
+    const tick = (): void => {
+      turns += 1;
+      if (turns === 3) controller.abort();
+      else if (!controller.signal.aborted) setImmediate(tick);
+    };
+    const result = await analyzeJavaScriptApplication(
+      { input_path: root, format: "directory" },
+      {
+        signal: controller.signal,
+        progress: {
+          async report(event) {
+            phases.push(event.phase);
+            if (event.phase === "parse_javascript_source") setImmediate(tick);
+          },
+        },
+      },
+    );
+    if (result.ok) throw new Error("Cancelled analysis must not publish");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "cancelled",
+    });
+    expect(phases).toContain("parse_javascript_source");
+    expect(phases).not.toContain("build_javascript_application_graph");
+  });
+
   it.each([
     "parse_javascript_source",
     "build_javascript_application_graph",

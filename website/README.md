@@ -42,6 +42,8 @@ HTML files. No URL list needs to be maintained.
 - `public/examples/dino-lab/index.html`: adjustable-speed mini-game, recovered rule, original-game check and browser analysis steps.
 - `public/first-investigation/index.html`: a guided Notes export investigation, from setup to a checked CSV prediction.
 - `public/showcase/index.html`: the case-study index.
+- `public/blog/index.html`: articles about reconstruction methods, ports, mods and reverse engineering.
+- `public/blog/touhou-reconstruction/index.html`: a personal essay about agent autonomy, oracle quality, knowledge carried between TH08 and TH095, PC-98 TH04, and the path from exact reconstruction to readable source and modern ports.
 - `public/showcase/aegis/index.html`: Aegis's Android login-code calculation, with an adjustable clock and reference checks.
 - `public/showcase/dx-ball/index.html`: sound-pan investigation and project status.
 - `public/showcase/notion/index.html`: Notion's Electron clipboard bridge and rich clipboard format.
@@ -121,6 +123,23 @@ and Cloudflare's [managed robots behavior](https://developers.cloudflare.com/bot
 
 ## Content
 
+Blog articles explain methods, decisions and ideas through project experience.
+Lead with a takeaway, then develop the argument through concrete examples.
+An essay can explore a change in perspective without becoming a step-by-step
+guide. Add a figure when it contributes a useful explanation; an opening flow
+is optional. Case studies remain focused on one inspected behavior. Keep engine
+details in supporting references unless they explain a relevant decision.
+
+The Touhou article is an English essay. Its provenance,
+quoted README passage and milestone counting rules are in
+[evidence/touhou-reconstruction-method.md](evidence/touhou-reconstruction-method.md).
+The completed text has normal search metadata and is included in the generated
+sitemap.
+
+Its opening flywheel connects agent autonomy, reference-based oracles and
+repository memory. The essay develops those ideas through the project examples.
+Figure labels are selectable HTML; inline SVG supplies the feedback arrows.
+
 Keep the copy direct and specific. Explain the task and the result before listing
 tool names. Setup commands and runtime requirements should match the released
 package. Keep the core learning path inside the site. Source, issue and evidence
@@ -177,11 +196,14 @@ The homepage starts with a short installation prompt and the ordinary setup
 command, then explains what reverse engineering is and why someone would use
 it. The manual/agent comparison introduces REA’s role before the examples.
 Its opening links directly to Showcases and lets experienced readers skip to
-the analysis guides. Case-study previews live on the Showcases page.
+the analysis guides. A Blog link below that shortcut leads to reconstruction
+methods and project notes. Case-study previews live on the Showcases page.
 The closing section offers copyable project prompts, from cloning `rea.tools`
 to reconstructing a game from its executable. The experienced-reader shortcut
 lands directly on the guide links below these prompts.
-The page ends with FAQ, Discord and issue-report links under “Any questions?”.
+“Any questions?” offers FAQ, Discord and issue-report links. The page ends
+with “Join the community”, which links Discord and REA's X account.
+Every content page's header and footer link GitHub, Discord and X.
 A right-side table of contents stays visible at widths of 1440px and above.
 On narrower screens it becomes a sticky, native disclosure; selecting a link
 closes the menu and focuses the destination. The homepage script follows

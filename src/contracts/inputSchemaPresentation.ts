@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 
-const schemaMaps = new Set([
+export const schemaMaps = new Set([
   "$defs",
   "definitions",
   "properties",
@@ -8,8 +8,8 @@ const schemaMaps = new Set([
   "dependentSchemas",
   "dependencies",
 ]);
-const schemaArrays = new Set(["allOf", "anyOf", "oneOf", "prefixItems"]);
-const schemaChildren = new Set([
+export const schemaArrays = new Set(["allOf", "anyOf", "oneOf", "prefixItems"]);
+export const schemaChildren = new Set([
   "items",
   "additionalItems",
   "contains",
@@ -59,7 +59,7 @@ const referencedDescription = (
 const describeSchema = (
   schema: unknown,
   root: Readonly<Record<string, unknown>>,
-  describeProperty: (property: string) => string,
+  describeProperty: (property: string) => string | undefined,
 ): unknown => {
   if (!isObject(schema)) return schema;
   return Object.fromEntries(
@@ -70,16 +70,16 @@ const describeSchema = (
           Object.fromEntries(
             Object.entries(value).map(([name, child]) => {
               const described = describeSchema(child, root, describeProperty);
+              if (key !== "properties" || !isObject(described))
+                return [name, described];
+              const description =
+                referencedDescription(root, described) ??
+                describeProperty(name);
               return [
                 name,
-                key === "properties" && isObject(described)
-                  ? {
-                      ...described,
-                      description:
-                        referencedDescription(root, described) ??
-                        describeProperty(name),
-                    }
-                  : described,
+                description === undefined
+                  ? described
+                  : { ...described, description },
               ];
             }),
           ),
@@ -223,7 +223,7 @@ const flattenRootObjectUnion = (
 /** Describe canonical input fields and present the root as one object. */
 export const presentInputJsonSchema = (
   root: Record<string, unknown>,
-  describeProperty: (property: string) => string,
+  describeProperty: (property: string) => string | undefined,
 ): Record<string, unknown> => {
   const flattened = flattenRootObjectUnion(root);
   const described = describeSchema(flattened, flattened, describeProperty);

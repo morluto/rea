@@ -56,23 +56,28 @@ it.each(["unavailable", "invalid-utf8", "oversized"])(
     });
     if (response.ok) throw new Error("expected map failure");
     const projection = projectAnalysisError(response.error);
-    if (variant === "invalid-utf8")
+    if (variant === "oversized")
+      expect(response.error).toMatchObject({
+        _tag: "ArtifactOperationError",
+        reason: "limit",
+        detail: expect.stringContaining(path),
+      });
+    else
       expect(projection).toMatchObject({
         code: "invalid_request",
         details: {
           issues: [
             {
               path: ["source_map", "path"],
-              message: expect.stringContaining("UTF-8"),
+              ...(variant === "unavailable"
+                ? { reason: "invalid_value" }
+                : { reason: "invalid_format" }),
+              message: expect.stringContaining(
+                variant === "unavailable" ? `(ENOENT): ${path}` : "UTF-8",
+              ),
             },
           ],
         },
-      });
-    else
-      expect(response.error).toMatchObject({
-        _tag: "ArtifactOperationError",
-        reason: variant === "oversized" ? "limit" : "io",
-        detail: expect.stringContaining(path),
       });
   },
 );

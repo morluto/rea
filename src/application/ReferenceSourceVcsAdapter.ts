@@ -2,8 +2,6 @@ import fs from "node:fs";
 import { lstat, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
-import { resolveRef } from "isomorphic-git";
-
 export type ReferenceSourceVcsInfo =
   | {
       readonly kind: "git";
@@ -42,6 +40,8 @@ export const readReferenceSourceVcs = async (
 };
 
 const resolveSourceHead = async (root: string): Promise<string> => {
+  // isomorphic-git is loaded on first use so CLI and MCP startup skip it.
+  const { resolveRef } = await import("isomorphic-git");
   const dotgit = join(root, ".git");
   if (!(await lstat(dotgit)).isFile())
     return resolveRef({ fs, dir: root, ref: "HEAD" });
