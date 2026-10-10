@@ -43,6 +43,12 @@ export const readReferenceSource = async (
   };
   const traversal = await traverse(state);
   if (!traversal.ok) return traversal;
+  if (isAborted(options.signal))
+    return err({
+      tag: "reference-source-reader",
+      code: "cancelled",
+      message: "Reference source traversal cancelled",
+    });
   state.entries.sort((left, right) =>
     compareUnicodeCodePoints(left.path, right.path),
   );
