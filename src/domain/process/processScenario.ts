@@ -222,6 +222,18 @@ export const processScenarioSchema = z
       }),
   })
   .superRefine((scenario, context) => {
+    // Each budget is a safe integer, but their sum is not checked anywhere
+    // else. BigInt keeps the comparison exact beyond the representable range.
+    const lifecycleBudget =
+      BigInt(scenario.timeout_ms) +
+      BigInt(scenario.finalization_ms) +
+      BigInt(scenario.settle_ms);
+    if (lifecycleBudget > BigInt(Number.MAX_SAFE_INTEGER))
+      context.addIssue({
+        code: "custom",
+        message: `timeout_ms + finalization_ms + settle_ms must stay at or below ${String(Number.MAX_SAFE_INTEGER)} ms, the largest total exactly representable as a JavaScript number`,
+        path: ["timeout_ms"],
+      });
     for (let index = 1; index < scenario.events.length; index += 1) {
       const event = scenario.events[index];
       const previous = scenario.events[index - 1];
