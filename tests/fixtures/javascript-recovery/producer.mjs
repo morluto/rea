@@ -105,7 +105,17 @@ if (args.includes("--version")) {
               message: "fixture transform failed; retained source",
             },
           ]
-        : [],
+        : mode === "additive"
+          ? [
+              {
+                filename,
+                kind: "notice",
+                is_error: false,
+                message: "future warning",
+                code: "W001",
+              },
+            ]
+          : [],
     ...(mode === "additive" ? { future_report_field: { nested: true } } : {}),
     total: modules.length,
     failed: mode === "partial" ? 1 : 0,

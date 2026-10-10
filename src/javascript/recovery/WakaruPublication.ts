@@ -109,7 +109,14 @@ export const publishWakaruArtifacts = async (
     total: parsed.report.total,
     failed: parsed.report.failed,
     modules,
-    warnings: parsed.report.warnings,
+    warnings: parsed.report.warnings.map(
+      ({ filename, kind, is_error, message }) => ({
+        filename,
+        kind,
+        is_error,
+        message,
+      }),
+    ),
     report,
     provenance,
     analysis_input:

@@ -120,7 +120,18 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
       ).toBe(true);
       expect(
         JSON.parse(await readFile(value.report.path, "utf8")),
-      ).toMatchObject({ future_report_field: { nested: true } });
+      ).toMatchObject({
+        future_report_field: { nested: true },
+        warnings: [{ code: "W001" }],
+      });
+      expect(value.warnings).toEqual([
+        {
+          filename: "module.js",
+          kind: "notice",
+          is_error: false,
+          message: "future warning",
+        },
+      ]);
       await assertRecoveryCleanup(fixture.launches);
     });
 
