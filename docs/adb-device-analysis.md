@@ -136,6 +136,12 @@ existing analysis families directly, for example
 - Pull and capture outputs are additive: the destination must not already
   exist. Re-running a completed pull refuses the existing directory instead
   of overwriting evidence.
+- Cancellation during a package pull preserves caller-selected output. The
+  error includes partial observations identifying completed artifacts and the
+  interrupted local path; remaining APKs were not attempted.
+- Failed package acquisition rollback retains its directory identity and retries
+  cleanup before later work and during shutdown. Cleanup refuses a replacement
+  directory. Terminal shutdown stops admission and drains active operations.
 - The provider holds no long-lived processes; every invocation is one
   bounded adb run. The adb server belongs to the caller.
 

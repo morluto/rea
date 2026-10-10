@@ -6,7 +6,7 @@ import {
   withClientServers,
   type ClientConfigurationDocument,
 } from "./ClientConfigurationDocument.js";
-import { copyFile, lstat, readFile, realpath, rm } from "node:fs/promises";
+import { copyFile, lstat, realpath, rm } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { join } from "node:path";
@@ -23,6 +23,7 @@ import {
 } from "./SetupSkill.js";
 import { isOwnedClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
+import { readRegularFileText } from "./RegularFileRead.js";
 import {
   manualRegistrationRemediation,
   supportedClients,
@@ -49,7 +50,7 @@ export interface UninstallFileSystem {
 }
 
 const systemFileSystem: UninstallFileSystem = {
-  readText: (path) => readFile(path, "utf8"),
+  readText: (path) => readRegularFileText(path),
   readRegularText: readSkillFile,
   copy: (source, destination) =>
     copyFile(source, destination, fsConstants.COPYFILE_EXCL),

@@ -4,10 +4,8 @@ import { dirname, join } from "node:path";
 import writeFileAtomic from "write-file-atomic";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
-import {
-  NonRegularFileReadError,
-  openRegularFile,
-} from "../filesystem/RegularFile.js";
+import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
+import { readRegularFileText } from "./RegularFileRead.js";
 import { clientSkillDirectories } from "./SupportedClients.js";
 
 export const MANAGED_SKILL_FILES = [
@@ -23,14 +21,8 @@ export const isManagedSkillManifest = (content: string): boolean =>
   content.startsWith(`---\nname: ${PRODUCT_IDENTITY.skillName}\n`) ||
   content.startsWith(`---\r\nname: ${PRODUCT_IDENTITY.skillName}\r\n`);
 
-export const readSkillFile = async (path: string): Promise<string> => {
-  const handle = await openRegularFile(path, { symlinks: "reject" });
-  try {
-    return await handle.readFile("utf8");
-  } finally {
-    await handle.close();
-  }
-};
+export const readSkillFile = (path: string): Promise<string> =>
+  readRegularFileText(path, { symlinks: "reject" });
 
 interface CanonicalSkillFile {
   readonly content: string;
@@ -199,7 +191,7 @@ export const installCanonicalSkill = async (
     for (const { destination, content } of changed)
       await writeText(destination, content);
     for (const { destination, content } of changed)
-      if ((await readFile(destination, "utf8")) !== content)
+      if ((await readSkillFile(destination)) !== content)
         throw new Error(`skill readback mismatch: ${destination}`);
     return "installed";
   } catch (cause: unknown) {
@@ -231,7 +223,7 @@ export const readInstalledSkillIdentity = async (
   let content: string | undefined;
   for (const destination of destinations) {
     try {
-      content = await readFile(join(destination.path, "SKILL.md"), "utf8");
+      content = await readSkillFile(join(destination.path, "SKILL.md"));
       break;
     } catch {
       // Another selected copy may provide metadata; canonical validation below

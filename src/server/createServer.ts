@@ -242,6 +242,7 @@ export const createServer = (
       android.close(),
       apktool.close(),
       jeb.close(),
+      adbDevice.close(),
       evmInterface.close(),
       webSourceLocation.close(),
       javascriptRecovery.close?.() ?? Promise.resolve(),

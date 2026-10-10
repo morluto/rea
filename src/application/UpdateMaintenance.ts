@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { z } from "zod";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
@@ -14,6 +13,7 @@ import { supportedClients } from "./SupportedClients.js";
 import { existingSkillDestinations } from "./SetupSkill.js";
 import type { SetupAction } from "./SetupTypes.js";
 import type { Result } from "../domain/result.js";
+import { readRegularFileText } from "./RegularFileRead.js";
 
 /** Existing REA integrations selected for maintenance, without discovering new targets. */
 export interface MaintenanceScope {
@@ -73,7 +73,7 @@ export const existingMaintenanceScope = async (
     const client = supported.find(({ name }) => name === registration.client);
     if (client === undefined) continue;
     const parsed = parseClientConfiguration(
-      await readFile(client.configPath, "utf8"),
+      await readRegularFileText(client.configPath),
       client.format,
     );
     const enabled = z

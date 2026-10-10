@@ -13,7 +13,7 @@ export const createReader = async (
   format: ArtifactOccurrence["artifact_format"],
   environment: Readonly<NodeJS.ProcessEnv>,
   signal?: AbortSignal,
-  zipSource?: StableRegularFileDescriptor,
+  rootSource?: StableRegularFileDescriptor,
 ): Promise<ArtifactReader | undefined> => {
   switch (format) {
     case "directory":
@@ -23,12 +23,12 @@ export const createReader = async (
     case "apk":
     case "msix":
     case "appx":
-      return new ZipArtifactReader(path, format, undefined, zipSource);
+      return new ZipArtifactReader(path, format, undefined, rootSource);
     case "asar":
       return new AsarArtifactReader(path);
     case "mach-o-universal":
       return process.platform === "darwin"
-        ? new MachOSliceArtifactReader(path, environment)
+        ? new MachOSliceArtifactReader(path, environment, undefined, rootSource)
         : undefined;
     case "dmg":
       if (process.platform !== "darwin") return undefined;

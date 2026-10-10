@@ -27,7 +27,10 @@ import { WebScriptExportError } from "../domain/webScriptExportError.js";
 import type { ExecutionOptions } from "./AnalysisProvider.js";
 import { WEB_SCRIPT_EXPORT_PROVIDER as PROVIDER } from "./InvestigationProviders.js";
 import { readRegularFile } from "./RegularFileRead.js";
-import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
+import {
+  NonRegularFileReadError,
+  RegularFileChangedError,
+} from "../filesystem/RegularFile.js";
 
 const OPERATION = "export_web_scripts";
 
@@ -153,7 +156,7 @@ const readCapture = async (
   signal: AbortSignal | undefined,
 ): Promise<Result<Buffer, AnalysisError>> => {
   try {
-    return ok(await readRegularFile(path, signal));
+    return ok(await readRegularFile(path, { signal }));
   } catch (cause: unknown) {
     const code =
       cause instanceof Error && "code" in cause ? String(cause.code) : "";
@@ -163,6 +166,7 @@ const readCapture = async (
       );
     if (
       cause instanceof NonRegularFileReadError ||
+      cause instanceof RegularFileChangedError ||
       code === "ENOENT" ||
       code === "ENOTDIR" ||
       code === "EISDIR" ||

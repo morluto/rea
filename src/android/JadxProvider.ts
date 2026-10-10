@@ -21,9 +21,10 @@ import { err, ok, type Result } from "../domain/result.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import {
   snapshotAndroidEngine,
-  hashAndroidFile,
   snapshotAndroidTarget,
 } from "./AndroidTargetSnapshot.js";
+import { hashStableFile } from "../filesystem/StableFileHash.js";
+import { RegularFileChangedError } from "../filesystem/RegularFile.js";
 import {
   inspectJadxAvailability,
   resolveJadxConfiguration,
@@ -104,6 +105,50 @@ const executionError = (context: {
   });
 };
 
+const androidTargetChanged = (
+  operation: string,
+  path: string,
+  cause?: unknown,
+): AnalysisInputError =>
+  new AnalysisInputError(
+    operation,
+    cause === undefined ? undefined : { cause },
+    [
+      {
+        path: ["path"],
+        reason: "invalid_value",
+        message: `APK bytes changed after admission at ${path}; retry against a stable file.`,
+      },
+    ],
+  );
+
+const androidSourceChanged = (
+  operation: string,
+  source: string,
+  cause?: unknown,
+): AnalysisCapabilityUnavailableError =>
+  new AnalysisCapabilityUnavailableError(
+    "jadx",
+    operation,
+    `Selected JADX input bytes changed during admission at ${source}; retry with a stable installation.`,
+    cause === undefined ? undefined : { cause },
+  );
+
+const hashAndroidSource = async (
+  path: string,
+  operation: string,
+  signal: AbortSignal,
+): Promise<string> => {
+  try {
+    return (await hashStableFile(path, signal)).sha256;
+  } catch (cause: unknown) {
+    if (signal.aborted) throw cause;
+    if (cause instanceof RegularFileChangedError)
+      throw androidSourceChanged(operation, path, cause);
+    throw cause;
+  }
+};
+
 interface PendingCleanup {
   session: JadxSession | undefined;
   root: PrivateRuntimeRoot | undefined;
@@ -147,17 +192,18 @@ const cleanup = async (
     await root?.close();
     resources.root = undefined;
   } catch (cause) {
-    return err(
-      new ProviderCleanupError(
-        "jadx",
-        [root?.path ?? "unknown"],
-        {
-          ...diagnostics,
-          reason: cause instanceof Error ? cause.message : String(cause),
-        },
-        { cause: previousError ?? cause },
-      ),
+    const error = new ProviderCleanupError(
+      "jadx",
+      [root?.path ?? "unknown"],
+      {
+        ...diagnostics,
+        reason: cause instanceof Error ? cause.message : String(cause),
+      },
+      { cause: previousError ?? cause },
     );
+    if (previousError?.partialObservation !== undefined)
+      error.retainPartialObservation(previousError.partialObservation);
+    return err(error);
   }
   return ok(undefined);
 };
@@ -293,17 +339,27 @@ export class JadxProvider implements AndroidAnalysisPort {
         signal,
       );
       signal.throwIfAborted();
-      const jarHash = await hashAndroidFile(configuration.jar);
-      const bridgeHash = await hashAndroidFile(BRIDGE_SOURCE);
-      if ((await hashAndroidFile(target.path)) !== target.sha256)
-        throw new AnalysisInputError(request.operation, undefined, [
-          {
-            path: ["path"],
-            reason: "invalid_value",
-            message:
-              "APK bytes changed after admission; retry against a stable file.",
-          },
-        ]);
+      const jarHash = await hashAndroidSource(
+        configuration.jar,
+        request.operation,
+        signal,
+      );
+      const bridgeHash = await hashAndroidSource(
+        BRIDGE_SOURCE,
+        request.operation,
+        signal,
+      );
+      let targetHash: string;
+      try {
+        targetHash = (await hashStableFile(target.path, signal)).sha256;
+      } catch (cause: unknown) {
+        if (signal.aborted) throw cause;
+        if (cause instanceof RegularFileChangedError)
+          throw androidTargetChanged(request.operation, target.path, cause);
+        throw cause;
+      }
+      if (targetHash !== target.sha256)
+        throw androidTargetChanged(request.operation, target.path);
       const key = JSON.stringify({
         path: target.path,
         sha256: target.sha256,
@@ -342,11 +398,16 @@ export class JadxProvider implements AndroidAnalysisPort {
         const bridge = join(root.path, "ReaJadxBridge.java");
         await copyFile(BRIDGE_SOURCE, bridge);
         await chmod(bridge, 0o400);
-        if ((await hashAndroidFile(bridge)) !== bridgeHash)
-          throw new AnalysisCapabilityUnavailableError(
-            "jadx",
+        const copiedBridgeHash = await hashAndroidSource(
+          bridge,
+          request.operation,
+          signal,
+        );
+        if (copiedBridgeHash !== bridgeHash)
+          throw androidSourceChanged(
             request.operation,
-            "REA Android bridge bytes changed during admission; retry with a stable installation.",
+            BRIDGE_SOURCE,
+            undefined,
           );
         signal.throwIfAborted();
         session = new JadxSession(

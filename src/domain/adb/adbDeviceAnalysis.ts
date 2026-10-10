@@ -699,3 +699,39 @@ export const adbResultSchemas = {
     package_name: packageNameSchema,
   }),
 } as const;
+
+/** Acquired package facts retained when cancellation leaves caller-owned output. */
+export type AdbPackagePullPartialObservation = {
+  readonly provider_id: "adb";
+  readonly operation: "pull_adb_package";
+  readonly result: z.infer<typeof adbResultSchemas.pull_adb_package>;
+};
+
+/** A completed acquisition whose digest read was cancelled before verification. */
+export type AdbAcquiredFilePartialObservation =
+  | {
+      readonly provider_id: "adb";
+      readonly operation: "pull_adb_file";
+      readonly result: {
+        readonly client: z.infer<
+          typeof adbResultSchemas.pull_adb_file
+        >["client"];
+        readonly serial: string;
+        readonly local_path: string;
+        readonly device_path: string;
+        readonly digest_status: "unknown";
+      };
+    }
+  | {
+      readonly provider_id: "adb";
+      readonly operation: "collect_adb_bugreport";
+      readonly result: {
+        readonly client: z.infer<
+          typeof adbResultSchemas.collect_adb_bugreport
+        >["client"];
+        readonly serial: string;
+        readonly local_path: string;
+        readonly adb_reported_path: string;
+        readonly digest_status: "unknown";
+      };
+    };

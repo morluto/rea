@@ -1,5 +1,5 @@
 import { err, ok, type Result } from "../domain/result.js";
-import { readFile } from "node:fs/promises";
+import { readRegularFileText } from "./RegularFileRead.js";
 import {
   effectiveClientServer,
   parseClientConfiguration,
@@ -19,7 +19,7 @@ export const readConfigurationText = async (
   path: string,
 ): Promise<Result<string | undefined, ClientConfigurationFileError>> => {
   try {
-    return ok(await readFile(path, "utf8"));
+    return ok(await readRegularFileText(path));
   } catch (cause: unknown) {
     if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
       return ok(undefined);
