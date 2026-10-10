@@ -42,13 +42,13 @@ Edit the page's HTML in `public/`. Keep the question, evidence and result easy t
 follow. The writing and design guidance in [style-guide.md](style-guide.md)
 applies to every page.
 
-| Change                         | Edit                                                        | Then run                                        |
-| ------------------------------ | ----------------------------------------------------------- | ----------------------------------------------- |
-| Page text, examples or figures | The page's HTML outside the marked shared regions           | `python3 scripts/website.py check`              |
-| Search title or description    | The page's `<title>` and first description meta tag         | `python3 scripts/website.py sync`, then `check` |
-| Main navigation                | `NAVIGATION` in `scripts/website.py`                        | `sync`, then `check`                            |
-| Header, social links or footer | `templates/header.html` or `templates/footer.html`          | `sync`, then `check`                            |
-| Shared link previews           | `templates/sharing.html` or `public/assets/social-card.svg` | `sync`, then `check`                            |
+| Change                         | Edit                                                             | Then run                                        |
+| ------------------------------ | ---------------------------------------------------------------- | ----------------------------------------------- |
+| Page text, examples or figures | The page's HTML outside the marked shared regions                | `python3 scripts/website.py check`              |
+| Search title or description    | The page's `<title>` and first description meta tag              | `python3 scripts/website.py sync`, then `check` |
+| Main navigation                | `NAVIGATION` in `scripts/website.py`                             | `sync`, then `check`                            |
+| Header, social links or footer | `templates/header.html.tmpl` or `templates/footer.html.tmpl`     | `sync`, then `check`                            |
+| Shared link previews           | `templates/sharing.html.tmpl` or `public/assets/social-card.svg` | `sync`, then `check`                            |
 
 Create a reading page with:
 
@@ -67,6 +67,10 @@ the scaffold supplies the common structure.
 
 The regions marked `website:sharing`, `website:header` and `website:footer` are
 generated from the templates. Edit the template rather than a generated copy.
+The `.html.tmpl` partials own their generated whitespace; HTML formatter-ignore
+comments keep the repository formatter from changing those regions. Their
+content is checked by `sync --check`, while ordinary page content stays subject
+to the repository formatter.
 `sync` updates only those regions; page bodies, figures and scripts remain
 authored HTML. Commit the updated pages alongside the template. Titles and
 descriptions are written once per page; their sharing fields are derived from

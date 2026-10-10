@@ -142,7 +142,7 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
             page = root / "website/public/blog/touhou-reconstruction/index.html"
             original = page.read_text()
             body = original.split('<main id="main"', 1)[1].split("</main>", 1)[0]
-            template = root / "website/templates/header.html"
+            template = root / "website/templates/header.html.tmpl"
             template.write_text(template.read_text().replace("Reverse Engineer Anything", "REA test navigation"))
             with self.assertRaisesRegex(ValueError, "Shared HTML is stale"):
                 WEBSITE.sync_pages(root, check=True)

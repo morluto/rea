@@ -9,6 +9,7 @@ from pathlib import Path, PurePosixPath
 from string import Template
 import subprocess
 import sys
+from textwrap import indent
 from urllib.parse import quote, urlsplit
 
 
@@ -101,10 +102,10 @@ def shared_blocks(root, path, source):
         attributes = ' class="nav-start"' if destination == "get-started/" else ""
         if route.startswith(destination):
             attributes += ' aria-current="page"'
-        links.append(f'          <a href="{base}{destination}"{attributes}>{label}</a>')
+        links.append(f'      <a href="{base}{destination}"{attributes}>{label}</a>')
     values = {
         "base": base,
-        "navigation": "\n".join(links),
+        "navigation": "\n" + "\n".join(links) + "\n    ",
         "canonical": escape(page_url(site, path), quote=True),
         "origin": SITE_ORIGIN,
         "title": escape(metadata.titles[0].strip(), quote=True),
@@ -112,7 +113,7 @@ def shared_blocks(root, path, source):
     }
     templates = root / "website/templates"
     return {
-        name: Template((templates / f"{name}.html").read_text(encoding="utf-8")).substitute(values)
+        name: indent(Template((templates / f"{name}.html.tmpl").read_text(encoding="utf-8")).substitute(values), "    ")
         for name in ("sharing", "header", "footer")
     }
 
