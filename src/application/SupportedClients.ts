@@ -107,12 +107,34 @@ const hermesDirectory = ({
   platform,
   env,
 }: ClientPathContext): string => {
-  const override = env.HERMES_HOME;
-  if (override !== undefined && override.trim() !== "") return override;
+  const override = env.HERMES_HOME?.trim();
+  if (override) {
+    const expandedVariables = override.replace(
+      /\$(\w+|\{[^}]*\})/gu,
+      (match, variable: string) => {
+        const key = variable.startsWith("{") ? variable.slice(1, -1) : variable;
+        return env[key] ?? match;
+      },
+    );
+    const expanded =
+      platform === "win32"
+        ? expandedVariables.replace(
+            /%([^%]+)%/gu,
+            (match, variable: string) => env[variable] ?? match,
+          )
+        : expandedVariables;
+    if (expanded === "~") return home;
+    if (
+      expanded.startsWith("~/") ||
+      (platform === "win32" && expanded.startsWith("~\\"))
+    )
+      return join(home, expanded.slice(2));
+    return resolve(expanded);
+  }
   const suffix = env.HERMES_DATA_DIR_SUFFIX ?? "";
   return platform === "win32"
     ? join(
-        env.LOCALAPPDATA ?? join(home, "AppData", "Local"),
+        env.LOCALAPPDATA?.trim() || join(home, "AppData", "Local"),
         `hermes${suffix}`,
       )
     : join(home, `.hermes${suffix}`);
@@ -339,6 +361,8 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
   {
     name: "hermes",
     displayName: "Hermes",
+    skillPath: (context: ClientPathContext) =>
+      join(hermesDirectory(context), "skills"),
     configPath: (context: ClientPathContext) =>
       join(hermesDirectory(context), "config.yaml"),
     markerPath: hermesDirectory,

@@ -45,6 +45,27 @@ describe("Hermes configuration paths", () => {
     ).toBe(join("C:\\Users\\a\\AppData\\Local", "hermes", "config.yaml"));
   });
 
+  it("expands and trims Hermes overrides without changing the suffix", () => {
+    expect(hermesPath({ HERMES_HOME: "  ~/profile  " })?.markerPath).toBe(
+      join("/home/a", "profile"),
+    );
+    expect(
+      hermesPath({
+        HERMES_HOME: "${PROFILE_ROOT}/agent",
+        PROFILE_ROOT: "/custom",
+      })?.markerPath,
+    ).toBe(join("/custom", "agent"));
+    expect(
+      hermesPath({
+        HERMES_HOME: "$PROFILE_ROOT/agent",
+        PROFILE_ROOT: "/custom",
+      })?.markerPath,
+    ).toBe(join("/custom", "agent"));
+    expect(hermesPath({ LOCALAPPDATA: "  " }, "win32")?.markerPath).toBe(
+      join("/home/a", "AppData", "Local", "hermes"),
+    );
+  });
+
   it("honours HERMES_HOME and Hermes's data-directory suffix", () => {
     expect(
       hermesPath({ HERMES_HOME: join("/srv", "hermes") })?.configPath,

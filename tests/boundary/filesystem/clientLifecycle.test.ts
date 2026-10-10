@@ -63,6 +63,7 @@ describe("client configuration filesystem lifecycle", () => {
       "vscode",
       "grok_build",
       "omp",
+      "hermes",
       "grok_bot",
     ]);
     expect(
