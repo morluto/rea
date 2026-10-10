@@ -1,4 +1,4 @@
-import { isAbsolute, join, resolve, win32 } from "node:path";
+import { dirname, isAbsolute, join, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { lstatSync } from "node:fs";
 
@@ -7,6 +7,17 @@ export interface SetupClient {
   readonly name: string;
   readonly displayName?: string;
   readonly configPath: string;
+  /** User configuration files in increasing precedence, including the write target. */
+  readonly configPaths?: readonly string[];
+  /** Read-only Gemini scopes and trust inputs; never setup write targets. */
+  readonly geminiSettings?: {
+    readonly systemPath: string;
+    readonly defaultsPath: string;
+    readonly workspaceDirectory: string;
+    readonly trustedFoldersPath: string;
+    readonly trustOverride?: boolean;
+    readonly platform: NodeJS.Platform;
+  };
   /** Unresolved path evidence only; consumers must not perform I/O on it. */
   readonly configPathError?: string;
   readonly markerPath?: string;
@@ -39,6 +50,10 @@ interface ClientDefinition {
   readonly markerPath: ClientPath;
   readonly format: NonNullable<SetupClient["format"]>;
   readonly skillPath?: ClientPath;
+  readonly configPaths?: (context: ClientPathContext) => readonly string[];
+  readonly geminiSettings?: (
+    context: ClientPathContext,
+  ) => NonNullable<SetupClient["geminiSettings"]>;
 }
 
 const vscodeUserDirectory = ({
@@ -76,7 +91,7 @@ const claudeCodeMarkerDirectory = ({ home, env }: ClientPathContext): string =>
   env.CLAUDE_CONFIG_DIR ?? join(home, ".claude");
 
 const codexDirectory = ({ home, env }: ClientPathContext): string =>
-  env.CODEX_HOME ?? join(home, ".codex");
+  env.CODEX_HOME || join(home, ".codex");
 
 /** Match Qwen Code's home override, including tilde and cwd-relative paths. */
 const qwenCodeDirectory = ({ home, env }: ClientPathContext): string => {
@@ -98,7 +113,7 @@ const qwenCodeDirectory = ({ home, env }: ClientPathContext): string => {
 };
 
 const grokDirectory = ({ home, env }: ClientPathContext): string =>
-  env.GROK_HOME ?? join(home, ".grok");
+  env.GROK_HOME || join(home, ".grok");
 
 /**
  * Hermes Agent home. `HERMES_HOME` wins; otherwise the platform default mirrors
@@ -188,17 +203,14 @@ const ompProfile = ({ env }: ClientPathContext): string | undefined => {
 /**
  * The OMP agent directory whose `mcp.json` holds user-scope MCP servers. OMP
  * joins PI_CONFIG_DIR to the home directory, and a named profile ignores
- * PI_CODING_AGENT_DIR. OMP resolves a relative agent directory against each
- * process's working directory, so only an absolute override names one file.
+ * PI_CODING_AGENT_DIR. Relative overrides use the setup process working directory.
  */
 const ompAgentDirectory = (context: ClientPathContext): string => {
   const root = join(context.home, context.env.PI_CONFIG_DIR || ".omp");
   const profile = ompProfile(context);
   if (profile !== undefined) return join(root, "profiles", profile, "agent");
   const override = context.env.PI_CODING_AGENT_DIR;
-  return override !== undefined && override !== "" && isAbsolute(override)
-    ? override
-    : join(root, "agent");
+  return override ? resolve(override) : join(root, "agent");
 };
 
 /**
@@ -242,21 +254,66 @@ const copilotDirectory = ({ home, env }: ClientPathContext): string =>
 const commandCodeDirectory = ({ home }: ClientPathContext): string =>
   join(home, ".commandcode");
 
-const opencodeDirectory = ({ home, env }: ClientPathContext): string =>
-  join(env.XDG_CONFIG_HOME ?? join(home, ".config"), "opencode");
+/**
+ * OpenCode appends `OPENCODE_CONFIG_DIR` only when the value is non-empty.
+ * An empty variable is the same as unset and leaves the XDG directory in place.
+ */
+const openCodeOverrideDirectory = (
+  env: ClientPathContext["env"],
+): string | undefined => {
+  const directory = env.OPENCODE_CONFIG_DIR;
+  return directory === undefined || directory === "" ? undefined : directory;
+};
+
+const opencodeDirectory = (context: ClientPathContext): string =>
+  openCodeOverrideDirectory(context.env) ??
+  join(
+    context.env.XDG_CONFIG_HOME ?? join(context.home, ".config"),
+    "opencode",
+  );
+
+/** OpenCode loads global JSON before JSONC, then explicit file and directory overrides. */
+const openCodeConfigurationPaths = (
+  context: ClientPathContext,
+): readonly string[] => {
+  const directory = join(
+    context.env.XDG_CONFIG_HOME ?? join(context.home, ".config"),
+    "opencode",
+  );
+  const overrideDirectory = openCodeOverrideDirectory(context.env);
+  const paths = [
+    join(directory, "config.json"),
+    join(directory, "opencode.json"),
+    join(directory, "opencode.jsonc"),
+    ...(context.env.OPENCODE_CONFIG ? [context.env.OPENCODE_CONFIG] : []),
+    ...(overrideDirectory !== undefined
+      ? [
+          join(overrideDirectory, "opencode.json"),
+          join(overrideDirectory, "opencode.jsonc"),
+        ]
+      : []),
+  ];
+  const resolved = paths.map((path) => resolve(path));
+  return resolved.filter((path, index) => resolved.lastIndexOf(path) === index);
+};
 
 const existingOpenCodeConfigPath = (context: ClientPathContext): string => {
-  if (context.env.OPENCODE_CONFIG !== undefined)
-    return context.env.OPENCODE_CONFIG;
-  const directory = opencodeDirectory(context);
-  const candidates = [
-    "opencode.json",
-    "opencode.jsonc",
-    ".opencode.json",
-    ".opencode.jsonc",
-  ].map((filename) => join(directory, filename));
+  // The selected directory is loaded after an explicit file by OpenCode V1.
+  const overrideDirectory = openCodeOverrideDirectory(context.env);
+  const candidates =
+    overrideDirectory !== undefined
+      ? [
+          join(overrideDirectory, "opencode.json"),
+          join(overrideDirectory, "opencode.jsonc"),
+        ].map((path) => resolve(path))
+      : context.env.OPENCODE_CONFIG
+        ? [resolve(context.env.OPENCODE_CONFIG)]
+        : [
+            join(opencodeDirectory(context), "opencode.json"),
+            join(opencodeDirectory(context), "opencode.jsonc"),
+          ].map((path) => resolve(path));
   return (
-    candidates.find((path) => {
+    [...candidates].reverse().find((path) => {
       try {
         lstatSync(path);
         return true;
@@ -268,15 +325,52 @@ const existingOpenCodeConfigPath = (context: ClientPathContext): string => {
         );
       }
     }) ??
-    candidates[0] ??
-    join(directory, "opencode.json")
+    resolve(
+      overrideDirectory !== undefined
+        ? join(overrideDirectory, "opencode.json")
+        : context.env.OPENCODE_CONFIG ||
+            join(opencodeDirectory(context), "opencode.json"),
+    )
   );
+};
+
+const geminiSettings = ({
+  home,
+  platform,
+  env,
+}: ClientPathContext): NonNullable<SetupClient["geminiSettings"]> => {
+  const system =
+    env.GEMINI_CLI_SYSTEM_SETTINGS_PATH ||
+    (platform === "darwin"
+      ? "/Library/Application Support/GeminiCli/settings.json"
+      : platform === "win32"
+        ? "C:\\ProgramData\\gemini-cli\\settings.json"
+        : "/etc/gemini-cli/settings.json");
+  const trustOverride =
+    env.GEMINI_RESTRICTED_MODE === "true" ||
+    env.GEMINI_CLI_TRUST_WORKSPACE === "false"
+      ? false
+      : env.GEMINI_CLI_TRUST_WORKSPACE === "true"
+        ? true
+        : undefined;
+  return {
+    systemPath: system,
+    defaultsPath:
+      env.GEMINI_CLI_SYSTEM_DEFAULTS_PATH ||
+      join(dirname(system), "system-defaults.json"),
+    workspaceDirectory: process.cwd(),
+    trustedFoldersPath:
+      env.GEMINI_CLI_TRUSTED_FOLDERS_PATH ||
+      join(env.GEMINI_CLI_HOME || home, ".gemini", "trustedFolders.json"),
+    ...(trustOverride === undefined ? {} : { trustOverride }),
+    platform,
+  };
 };
 
 const devinDirectory = ({ home, platform, env }: ClientPathContext): string =>
   platform === "win32"
     ? join(env.APPDATA ?? join(home, "AppData", "Roaming"), "devin")
-    : join(home, ".config", "devin");
+    : join(env.XDG_CONFIG_HOME || join(home, ".config"), "devin");
 
 /** Stable product metadata used to derive setup discovery and documentation. */
 export const SUPPORTED_CLIENT_DEFINITIONS = [
@@ -316,8 +410,13 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
   {
     name: "gemini_cli",
     displayName: "Gemini CLI",
-    configPath: [".gemini", "settings.json"],
-    markerPath: [".gemini"],
+    geminiSettings,
+    configPath: ({ home, env }: ClientPathContext) =>
+      join(env.GEMINI_CLI_HOME || home, ".gemini", "settings.json"),
+    markerPath: ({ home, env }: ClientPathContext) =>
+      join(env.GEMINI_CLI_HOME || home, ".gemini"),
+    skillPath: ({ home, env }: ClientPathContext) =>
+      join(env.GEMINI_CLI_HOME || home, ".agents", "skills"),
     format: "json",
   },
   {
@@ -339,12 +438,14 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     name: "opencode",
     displayName: "OpenCode",
     configPath: existingOpenCodeConfigPath,
+    configPaths: openCodeConfigurationPaths,
     markerPath: opencodeDirectory,
     format: "opencode",
   },
   {
     name: "antigravity",
     displayName: "Antigravity",
+    skillPath: [".gemini", "config", "skills"],
     configPath: [".gemini", "config", "mcp_config.json"],
     markerPath: [".gemini", "config"],
     format: "json",
@@ -427,6 +528,23 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
   },
 ] as const satisfies readonly ClientDefinition[];
 
+/**
+ * Paths whose presence means doctor and setup should inspect the client.
+ * Layered sources count: OpenCode still loads its XDG files when a custom
+ * directory override does not exist.
+ */
+export const clientEvidencePaths = (
+  client: Pick<SetupClient, "configPath" | "configPaths" | "markerPath">,
+): readonly string[] => [
+  ...new Set(
+    [
+      client.configPath,
+      ...(client.configPaths ?? []),
+      client.markerPath,
+    ].filter((path): path is string => path !== undefined && path.length > 0),
+  ),
+];
+
 const resolvePath = (path: ClientPath, context: ClientPathContext): string =>
   typeof path === "function" ? path(context) : join(context.home, ...path);
 
@@ -437,12 +555,24 @@ export const supportedClients = (
   env: ClientPathContext["env"] = process.env,
 ): readonly SetupClient[] => {
   const context = { home, platform, env };
-  return SUPPORTED_CLIENT_DEFINITIONS.map((definition) => {
+  const definitions: readonly ClientDefinition[] = SUPPORTED_CLIENT_DEFINITIONS;
+  return definitions.map((definition) => {
     try {
+      const configPath = resolvePath(definition.configPath, context);
       return {
         name: definition.name,
         displayName: definition.displayName,
-        configPath: resolvePath(definition.configPath, context),
+        configPath,
+        ...(definition.geminiSettings === undefined
+          ? {}
+          : { geminiSettings: definition.geminiSettings(context) }),
+        ...(definition.configPaths === undefined
+          ? {}
+          : {
+              configPaths: [
+                ...new Set([...definition.configPaths(context), configPath]),
+              ],
+            }),
         markerPath: resolvePath(definition.markerPath, context),
         format: definition.format,
       };

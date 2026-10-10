@@ -6,7 +6,7 @@
  * Policy divergence (deliberate, not yet unified):
  * - Local artifact paths resolve against an inventoried container root and
  *   report rejected | external | not-found. Confinement is lexical
- *   (posix.normalize must stay inside the root).
+ *   (normalizeJoinedLogicalPath must stay inside the root).
  * - Live DOM destinations resolve against the document base URL and report
  *   approved | outside_policy | unsupported against allowedOrigins
  *   (see CdpCaptureDocuments.domDestination).

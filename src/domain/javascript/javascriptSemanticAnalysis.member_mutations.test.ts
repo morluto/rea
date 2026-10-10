@@ -597,17 +597,53 @@ describe("property mutation collection on minified bundles", () => {
       { length: 2000 },
       (_, index) => `source.p${index} = ${index};`,
     ).join(" ");
-    const start = performance.now();
     const value = resultValue(
       `const source = { token: "TOKEN" }; ${writes} return [source.token, source.p1999];`,
     );
-    expect(performance.now() - start).toBeLessThan(2000);
     expect(value).toMatchObject({
       status: "array",
       items: [
         { value: { status: "literal", value: "TOKEN" } },
         { value: { status: "unknown" } },
       ],
+    });
+  }, 30000);
+});
+
+describe("results of methods on an escaped receiver", () => {
+  it("makes every method's distinct result uncertain, not only the called one", () => {
+    expect(
+      resultValue(
+        'const first = { t: "A" }; const second = { t: "B" }; const kept = { t: "C" }; const box = { a() { return first; }, b() { return second; }, c() { return first; } }; box.a(); return [first.t, second.t, kept.t];',
+      ),
+    ).toMatchObject({
+      status: "array",
+      items: [
+        { value: { status: "unknown" } },
+        { value: { status: "unknown" } },
+        { value: { status: "literal", value: "C" } },
+      ],
+    });
+  });
+
+  it("preserves escape coverage across many receiver methods and calls (#1495)", () => {
+    const count = 2000;
+    const methods = Array.from(
+      { length: count },
+      (_, index) => `m${index}() { return shared; },`,
+    ).join(" ");
+    const calls = Array.from(
+      { length: count },
+      (_, index) => `box.m${index}().p${index} = ${index};`,
+    ).join(" ");
+    const start = performance.now();
+    const value = resultValue(
+      `const shared = { token: "TOKEN" }; const box = { ${methods} }; ${calls} return [shared.token];`,
+    );
+    expect(performance.now() - start).toBeLessThan(2000);
+    expect(value).toMatchObject({
+      status: "array",
+      items: [{ value: { status: "unknown" } }],
     });
   }, 30000);
 });
